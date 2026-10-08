@@ -121,14 +121,7 @@ impl ScreenPanel for LifecycleScreen {
             loader: Loader::default(),
             selected: None,
             detail: None,
-            split: {
-                let file = crate::navigation_file::NavigationFile::global(cx);
-                InspectorSplit::new(
-                    file.inspector_width("lifecycle"),
-                    move |width, cx| file.set_inspector_width("lifecycle", width, cx),
-                    cx,
-                )
-            },
+            split: InspectorSplit::new("lifecycle", cx),
             table: TableState::new("lifecycle"),
             loading: TableLoading::new(PREFIX, cx),
             loading_columns: table::columns(&[]),

@@ -221,6 +221,7 @@ fn the_inspector_opens_with_a_selection_and_escape_closes_it(cx: &mut TestAppCon
 #[gpui_kit::test]
 fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
+    use freshkube_ui::split_size::SizeStore as _;
     let directory = std::env::temp_dir().join(format!(
         "freshkube-security-inspector-{}-{}",
         std::process::id(),
@@ -230,7 +231,7 @@ fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
             .as_nanos()
     ));
     let preferences = directory.join("preferences.json");
-    cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+    cx.update(|cx| NavigationFile::open(Some(&preferences)).install(cx));
     let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
@@ -244,8 +245,11 @@ fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     let reopened = NavigationFile::open(Some(&preferences));
-    assert_eq!(reopened.inspector_width("security"), Some(520.));
-    cx.update(|cx| cx.set_global(reopened));
+    assert_eq!(
+        reopened.size(freshkube_ui::inspector::width_key("security")),
+        Some(520.)
+    );
+    cx.update(|cx| reopened.install(cx));
     let (_runtime, screen, _handle) = mount_sized(cx, "talos-cp-fra1-01", 1500.);
     cx.read(|cx| assert_eq!(screen.read(cx).split.width(), 520.));
     let _ = std::fs::remove_dir_all(&directory);

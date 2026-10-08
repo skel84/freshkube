@@ -315,14 +315,7 @@ impl ScreenPanel for WorkloadsScreen {
             loading_columns: source::loading_columns(),
             derived: None,
             detail: None,
-            split: {
-                let file = crate::navigation_file::NavigationFile::global(cx);
-                InspectorSplit::new(
-                    file.inspector_width("health"),
-                    move |width, cx| file.set_inspector_width("health", width, cx),
-                    cx,
-                )
-            },
+            split: InspectorSplit::new("health", cx),
             name_most: f32::INFINITY,
             status: None,
             _subscription: subscription,

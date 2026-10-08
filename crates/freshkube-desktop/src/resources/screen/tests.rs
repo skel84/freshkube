@@ -10,8 +10,8 @@ use std::rc::Rc;
 use freshkube_core::resources::ResourceKind;
 
 use super::{
-    DRAWER_SAVE_DELAY, KEYBOARD_PAUSE, KubeAccess, KubeSource, ListView, NotServed,
-    ResourcesScreen, WATCH_COALESCE, row_id,
+    KEYBOARD_PAUSE, KubeAccess, KubeSource, ListView, NotServed, ResourcesScreen, WATCH_COALESCE,
+    row_id,
 };
 use crate::resources::example;
 use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};
@@ -852,6 +852,7 @@ fn open_first(
 #[gpui_kit::test]
 fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
+    use freshkube_ui::split_size::SizeStore as _;
     let directory = std::env::temp_dir().join(format!(
         "freshkube-resources-width-{}-{}",
         std::process::id(),
@@ -861,7 +862,7 @@ fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppCont
             .as_nanos()
     ));
     let preferences = directory.join("preferences.json");
-    cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+    cx.update(|cx| NavigationFile::open(Some(&preferences)).install(cx));
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
     cx.update_window(handle, |_, window, cx| {
         open_first(&screen, window, cx);
@@ -880,19 +881,26 @@ fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppCont
         // Dragged past its bounds, it stops at them.
         screen.update(cx, |screen, cx| screen.resize_drawer(50., window, cx));
         assert_eq!(
-            screen.read(cx).drawer_width,
+            screen.read(cx).drawer.size(),
             freshkube_ui::drawer::MIN_WIDTH
         );
         screen.update(cx, |screen, cx| screen.resize_drawer(560., window, cx));
     })
     .unwrap();
-    cx.executor().advance_clock(DRAWER_SAVE_DELAY * 2);
+    cx.executor()
+        .advance_clock(freshkube_ui::split_size::SAVE_DELAY * 2);
     cx.run_until_parked();
     let reopened = NavigationFile::open(Some(&preferences));
-    assert_eq!(reopened.drawer_width("resources"), Some(560.));
-    assert_eq!(reopened.inspector_width("resources"), None);
+    assert_eq!(
+        reopened.size(crate::navigation_file::DRAWER_WIDTH),
+        Some(560.)
+    );
+    assert_eq!(
+        reopened.size(freshkube_ui::inspector::width_key("resources")),
+        None
+    );
 
-    cx.update(|cx| cx.set_global(reopened));
+    cx.update(|cx| reopened.install(cx));
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
     cx.update_window(handle, |_, window, cx| {
         open_first(&screen, window, cx);
@@ -905,6 +913,31 @@ fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppCont
     })
     .unwrap();
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// A window too narrow for the width the user gave shows the drawer
+/// narrower and writes nothing: a wider window gets the width back.
+#[gpui_kit::test]
+fn a_narrow_window_bounds_the_drawer_without_saving(cx: &mut TestAppContext) {
+    use freshkube_ui::split_size::{MemorySizes, SizeStore as _, set_store};
+    let sizes = std::rc::Rc::new(MemorySizes::with(
+        crate::navigation_file::DRAWER_WIDTH,
+        900.,
+    ));
+    cx.update(|cx| set_store(sizes.clone(), cx));
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 900., 700.);
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        let width = window.find("resource-drawer").bounds().size.width;
+        assert!(width < crate::ui::dp_px(900., window), "{width:?}");
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(freshkube_ui::split_size::SAVE_DELAY * 2);
+    cx.run_until_parked();
+    assert_eq!(sizes.saves(), 0);
+    assert_eq!(sizes.size(crate::navigation_file::DRAWER_WIDTH), Some(900.));
+    cx.update(|cx| assert_eq!(screen.read(cx).drawer.size(), 900.));
 }
 
 #[gpui_kit::test]

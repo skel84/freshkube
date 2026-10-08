@@ -16,6 +16,7 @@ pub mod motion;
 pub mod page;
 pub mod palette;
 pub mod source_list;
+pub mod split_size;
 pub mod squares;
 pub mod status;
 pub mod table;

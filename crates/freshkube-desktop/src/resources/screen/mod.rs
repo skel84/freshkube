@@ -10,6 +10,7 @@ use freshkube_core::resources::{
     ResourceKind, WatchBatch, WatchEvent, builtin, list_table, watch_collection,
 };
 use freshkube_ui::drawer;
+use freshkube_ui::split_size::SplitSize;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, IndexPath, Sizable,
@@ -54,8 +55,6 @@ const AGE_TICK: Duration = Duration::from_secs(5);
 /// gathered and applied together, so a churning list re-sorts and redraws at
 /// most ten times a second instead of once per batch core sends.
 const WATCH_COALESCE: Duration = Duration::from_millis(100);
-/// How long a drag of the drawer's edge pauses before its width is saved.
-const DRAWER_SAVE_DELAY: Duration = Duration::from_millis(300);
 /// The namespace picker's width in the toolbar.
 const NAMESPACE_WIDTH: f32 = 132.;
 /// The table's header and a couple of rows.
@@ -278,9 +277,7 @@ pub(crate) struct ResourcesScreen {
     detail: Entity<DetailPane>,
     /// The drawer's width in dp, one for every kind, as the user left it;
     /// remembered in `navigation.json` under `drawer`.
-    drawer_width: f32,
-    /// Saves a dragged width once the drag pauses.
-    drawer_save: Option<Task<()>>,
+    drawer: SplitSize,
     /// The width in dp of the room the drawer lays out in, as last drawn.
     body_width: std::rc::Rc<std::cell::Cell<Option<f32>>>,
     /// Pods: problems first, or all in one list.
@@ -460,12 +457,12 @@ impl ResourcesScreen {
             namespace_job: None,
             tick: None,
             detail,
-            drawer_width: crate::ui::start_width(
-                crate::navigation_file::NavigationFile::global(cx).drawer_width("resources"),
+            drawer: SplitSize::new(
+                crate::navigation_file::DRAWER_WIDTH,
                 drawer::WIDTH,
                 drawer::MIN_WIDTH,
+                cx,
             ),
-            drawer_save: None,
             body_width: Default::default(),
             list_view: ListView::default(),
             healthy_open: false,
@@ -1130,22 +1127,9 @@ impl ResourcesScreen {
     /// allows, and saved once the drag pauses.
     fn resize_drawer(&mut self, width: f32, window: &mut Window, cx: &mut Context<Self>) {
         let fit = drawer::fit(width, self.drawer_room(window));
-        if fit.full || (fit.width - self.drawer_width).abs() < 0.5 {
-            return;
+        if !fit.full && self.drawer.drag(fit.width, cx) {
+            cx.notify();
         }
-        self.drawer_width = fit.width;
-        self.drawer_save = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(DRAWER_SAVE_DELAY).await;
-            _ = this.update(cx, |screen, cx| {
-                screen.drawer_save = None;
-                crate::navigation_file::NavigationFile::global(cx).set_drawer_width(
-                    "resources",
-                    screen.drawer_width,
-                    cx,
-                );
-            });
-        }));
-        cx.notify();
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {
