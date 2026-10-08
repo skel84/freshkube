@@ -172,7 +172,7 @@ impl Pilot {
     /// The flash over the shown page's changed rows, mounted beside the
     /// page and the cached chrome as the loading motion is. Only
     /// Resources lists flash.
-    fn page_flash(
+    pub(super) fn page_flash(
         &self,
         cx: &App,
     ) -> Option<Entity<freshkube_ui::table::FlashLayer<crate::resources::model::ResourceIdentity>>>

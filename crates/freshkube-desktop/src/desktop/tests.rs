@@ -1802,13 +1802,26 @@ fn the_change_flash_redraws_neither_the_chrome_nor_the_page(cx: &mut TestAppCont
     cx.run_until_parked();
     // The change itself draws the page once.
     motion_frame(cx, handle);
+    assert_eq!(motion_frame(cx, handle), 0, "the fade asks for no frames");
+    // A timer steps the fade: each step draws the layer, not the page.
     let flash = probe::count("table.flash-layer");
-    assert!(frames_redrawing(cx, handle, "resources") <= 1);
-    assert!(probe::count("table.flash-layer") >= flash + 60);
-    cx.background_executor
-        .advance_clock(freshkube_ui::motion::FADE);
-    cx.run_until_parked();
-    motion_frame(cx, handle);
+    let page = probe::count("resources");
+    let rail = probe::count("chrome.rail");
+    // The steps, and one past the end that clears the last.
+    for _ in 0..=freshkube_ui::motion::FLASH_STEPS {
+        cx.background_executor
+            .advance_clock(freshkube_ui::motion::FLASH_STEP);
+        cx.run_until_parked();
+    }
+    let steps = probe::count("table.flash-layer") - flash;
+    assert!((6..=8).contains(&steps), "{steps} steps drawn");
+    assert_eq!(probe::count("resources"), page);
+    assert_eq!(probe::count("chrome.rail"), rail);
+    // Once the fade ends, nothing steps.
+    let layer = cx
+        .update(|cx| view.read(cx).page_flash(cx))
+        .expect("the flash");
+    cx.read(|cx| assert!(!layer.read(cx).stepping()));
     assert_eq!(
         motion_frame(cx, handle),
         0,

@@ -10,9 +10,12 @@
 //! from the table's scroll handles, clipped to the rows' viewport, and takes
 //! no pointer events.
 //!
-//! A flash's strength is read from its change's time on the executor's
-//! clock, so it is right on any frame, and the layer asks for frames only
-//! while one fades with motion on. The line each flashing row is on is
+//! A flash fades in [`motion::FLASH_STEPS`] steps, read from its change's
+//! time on the executor's clock, so it is right on any frame. One timer
+//! steps every flash the layer can draw, redrawing the layer each
+//! [`motion::FLASH_STEP`] and stopping when the last fade ends; the layer
+//! never asks for animation frames, so a steady trickle of changes costs a
+//! few frames a second, not sixty. The line each flashing row is on is
 //! looked up when it flashes and when the rows change, never per frame.
 
 use std::collections::HashMap;
@@ -84,6 +87,8 @@ pub struct FlashLayer<K> {
     reduced: Reduced,
     /// Clears the flashes once the last has ended, with one redraw.
     clear: Option<Task<()>>,
+    /// Steps the fades while one the layer draws runs with motion on.
+    tick: Option<Task<()>>,
 }
 
 impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
@@ -110,6 +115,7 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
             revision: None,
             reduced: Reduced::Nothing,
             clear: None,
+            tick: None,
         }
     }
 
@@ -158,6 +164,7 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
         self.flashes.clear();
         self.lines.clear();
         self.clear = None;
+        self.tick = None;
         cx.notify();
     }
 
@@ -168,7 +175,7 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
         self.lines.get(key)?;
         let flash = self.flashes.live(now).find(|flash| flash.key == *key)?;
         match (cx.reduce_motion(), self.reduced) {
-            (false, _) => Some(motion::fade_left(now.saturating_duration_since(flash.at))),
+            (false, _) => Some(motion::fade_step(now.saturating_duration_since(flash.at))),
             (true, Reduced::Held) => Some(1.),
             (true, Reduced::Nothing) => None,
         }
@@ -194,6 +201,11 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
         }
     }
 
+    /// Whether the timer that steps the fades runs.
+    pub fn stepping(&self) -> bool {
+        self.tick.is_some()
+    }
+
     /// The rows flashing now, by key.
     pub fn flashing(&self, cx: &App) -> Vec<K> {
         let now = cx.background_executor().now();
@@ -201,6 +213,42 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
             .live(now)
             .map(|flash| flash.key.clone())
             .collect()
+    }
+
+    /// Whether a flash the layer can draw is fading at `now`: one whose
+    /// row is filtered out or doesn't show steps nothing.
+    fn drawing(&self, now: Instant) -> bool {
+        self.flashes
+            .live(now)
+            .any(|flash| self.lines.contains_key(&flash.key))
+    }
+
+    /// Starts the timer that steps the fades, unless it runs. Each step
+    /// redraws the layer; the timer stops once nothing it draws fades or
+    /// motion is reduced.
+    fn tick(&mut self, cx: &mut Context<Self>) {
+        if self.tick.is_some() {
+            return;
+        }
+        self.tick = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(motion::FLASH_STEP).await;
+                let go = this
+                    .update(cx, |this, cx| {
+                        cx.notify();
+                        let now = cx.background_executor().now();
+                        let go = !cx.reduce_motion() && this.drawing(now);
+                        if !go {
+                            this.tick = None;
+                        }
+                        go
+                    })
+                    .unwrap_or(false);
+                if !go {
+                    break;
+                }
+            }
+        }));
     }
 
     fn schedule_clear(&mut self, now: Instant, cx: &mut Context<Self>) {
@@ -216,7 +264,10 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
                 let live: Vec<K> = this.flashes.live(now).map(|f| f.key.clone()).collect();
                 this.lines.retain(|key, _| live.contains(key));
                 this.clear = None;
-                cx.notify();
+                // A running timer draws the clearing step itself.
+                if this.tick.is_none() {
+                    cx.notify();
+                }
             })
             .ok();
         }));
@@ -224,21 +275,14 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
 }
 
 impl<K: Clone + Eq + Hash + 'static> Render for FlashLayer<K> {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         freshkube_probe::probe::hit("table.flash-layer");
         let accent = palette(cx).accent;
         let now = cx.background_executor().now();
         let reduce = cx.reduce_motion();
         let shown = !reduce || self.reduced == Reduced::Held;
-        // Only a flash the layer can draw keeps the frames coming: one whose
-        // row is filtered out or doesn't show asks none.
-        if !reduce
-            && self
-                .flashes
-                .live(now)
-                .any(|flash| self.lines.contains_key(&flash.key))
-        {
-            motion::next_frame(window, cx);
+        if !reduce && self.drawing(now) {
+            self.tick(cx);
         }
         let tints = self
             .flashes
@@ -249,7 +293,7 @@ impl<K: Clone + Eq + Hash + 'static> Render for FlashLayer<K> {
                 let strength = if reduce {
                     1.
                 } else {
-                    motion::fade_left(now.saturating_duration_since(flash.at))
+                    motion::fade_step(now.saturating_duration_since(flash.at))
                 };
                 let tint = accent.opacity(motion::FLASH_TINT * strength);
                 Some(row_tint(self.rows.clone(), line, tint))

@@ -309,6 +309,15 @@ fn next_frame(handle: AnyWindowHandle, cx: &mut TestAppContext) -> usize {
     asked
 }
 
+/// Moves the clock on one fade step and draws what that asks; returns
+/// how many times the flash layer drew.
+fn next_step(cx: &mut TestAppContext) -> usize {
+    let layer = probe::count("table.flash-layer");
+    cx.background_executor.advance_clock(motion::FLASH_STEP);
+    cx.run_until_parked();
+    probe::count("table.flash-layer") - layer
+}
+
 fn strength(story: &Entity<FlashStory>, cx: &mut TestAppContext) -> Option<f32> {
     cx.read(|cx| {
         let layer = story.read(cx).layer().read(cx);
@@ -343,26 +352,28 @@ fn a_flash_draws_only_its_layer_and_the_views_above(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert_eq!(strength(&story, cx), Some(1.));
-    // The change itself drew the table once; the fade's frames don't.
+    cx.run_until_parked();
+    // The change itself drew the table once; the fade's steps don't.
     let table = probe::count("workbench.change-flash-table");
-    let layer = probe::count("table.flash-layer");
     let root = probe::count("workbench.change-flash");
-    for _ in 0..5 {
-        assert!(next_frame(handle, cx) > 0, "the fade asks for frames");
+    // The fade asks for no frames: a timer draws each step, once.
+    assert_eq!(next_frame(handle, cx), 0);
+    let steps = motion::FLASH_STEPS as usize;
+    for step in 1..steps {
+        assert_eq!(next_step(cx), 1, "step {step}");
+        let left = strength(&story, cx).unwrap();
+        let expected = motion::fade_left(motion::FLASH_STEP * step as u32);
+        assert!((left - expected).abs() < 0.05, "{left} at step {step}");
     }
     assert_eq!(probe::count("workbench.change-flash-table"), table);
-    assert_eq!(probe::count("table.flash-layer"), layer + 5);
     // The layer's ancestors draw with it: the story's root, and the window's.
-    assert_eq!(probe::count("workbench.change-flash"), root + 5);
-    let left = strength(&story, cx).unwrap();
-    let expected = motion::fade_left(FRAME * 5);
-    assert!((left - expected).abs() < 1e-3, "{left} after five frames");
-    // Once the fade ends, the layer stops asking.
-    cx.background_executor.advance_clock(motion::FADE);
-    cx.run_until_parked();
-    next_frame(handle, cx);
-    assert_eq!(next_frame(handle, cx), 0);
+    assert!(probe::count("workbench.change-flash") >= root + steps - 1);
+    // The fade ends, and with it the steps.
+    assert!(next_step(cx) >= 1, "the last step clears it");
     assert_eq!(strength(&story, cx), None);
+    cx.read(|cx| assert!(!story.read(cx).layer().read(cx).stepping()));
+    assert_eq!(next_step(cx), 0);
+    assert_eq!(next_frame(handle, cx), 0);
 }
 
 #[gpui_kit::test]
@@ -374,9 +385,10 @@ fn a_heavy_root_still_leaves_the_table_alone(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.read(|cx| assert!(story.read(cx).heavy()));
+    cx.run_until_parked();
     let table = probe::count("workbench.change-flash-table");
     for _ in 0..3 {
-        assert!(next_frame(handle, cx) > 0);
+        assert_eq!(next_step(cx), 1);
     }
     assert_eq!(probe::count("workbench.change-flash-table"), table);
     cx.update_window(handle, |_, window, _| {
@@ -393,6 +405,8 @@ fn under_reduced_motion_a_flash_asks_no_frames(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert_eq!(next_frame(handle, cx), 0);
+    cx.run_until_parked();
+    assert_eq!(next_step(cx), 0, "nor steps");
     // The change is still recorded, and with No tint draws nothing.
     let flashing = cx.read(|cx| story.read(cx).layer().read(cx).flashing(cx));
     assert_eq!(flashing.len(), 1);
@@ -432,10 +446,11 @@ fn full_motion_mid_flash_takes_the_fade_up_where_it_is(cx: &mut TestAppContext) 
     cx.update(|cx| motion::choose(Choice::Full, cx));
     let left = strength(&story, cx).unwrap();
     assert!(
-        (left - motion::fade_left(motion::FADE / 2)).abs() < 1e-3,
+        (left - motion::fade_step(motion::FADE / 2)).abs() < 1e-3,
         "{left}"
     );
-    assert!(next_frame(handle, cx) > 0, "and fades on from there");
+    cx.run_until_parked();
+    assert!(next_step(cx) > 0, "and fades on from there");
 }
 
 #[gpui_kit::test]
@@ -450,10 +465,11 @@ fn full_motion_after_no_tint_shows_the_fade_where_it_is(cx: &mut TestAppContext)
     cx.update(|cx| motion::choose(Choice::Full, cx));
     let left = strength(&story, cx).unwrap();
     assert!(
-        (left - motion::fade_left(motion::FADE / 2)).abs() < 1e-3,
+        (left - motion::fade_step(motion::FADE / 2)).abs() < 1e-3,
         "{left}"
     );
-    assert!(next_frame(handle, cx) > 0, "and fades on from there");
+    cx.run_until_parked();
+    assert!(next_step(cx) > 0, "and fades on from there");
 }
 
 #[gpui_kit::test]

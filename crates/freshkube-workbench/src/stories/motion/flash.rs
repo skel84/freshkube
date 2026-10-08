@@ -1,7 +1,7 @@
 //! The change flash on invented pods: a row whose status or restarts change
-//! is tinted and fades over 1.5 s. A batch past the burst cap doesn't flash
-//! at all. The story changes pods on a timer, one at a time or as a burst,
-//! and shows what each flash frame costs: the layer draws, the cached table
+//! is tinted and fades over 1.5 s in steps. A batch past the burst cap
+//! doesn't flash at all. The story changes pods on a timer, one at a time or
+//! as a burst, and shows what each fade step costs: the layer draws, the cached table
 //! doesn't, and the views above both do, which a heavy ancestor makes plain.
 
 use std::cell::Cell;
