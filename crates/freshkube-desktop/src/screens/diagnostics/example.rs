@@ -6,7 +6,7 @@ use super::*;
 /// where Kubernetes checks are unknown but Talos checks still show.
 pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, String> {
     use freshkube_core::diagnostic_runner::{
-        AddonPodSource, AddonStatus, CniFileEvidence, CniSnapshot, DiagnosticContext,
+        AddonPod, AddonPodSource, AddonStatus, CniFileEvidence, CniSnapshot, DiagnosticContext,
         EtcdStatusSnapshot, KubernetesSnapshot, LoadAverageSnapshot, MemorySnapshot,
         ServiceHealthSnapshot, ServiceSnapshot, ServicesSnapshot, SystemSnapshot,
     };
@@ -325,6 +325,7 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
             br_netfilter: FileProbe::Present,
             ..Default::default()
         },
+        cilium: None,
     };
 
     // Addons: cert-manager through CRDs and pods.
@@ -385,6 +386,22 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
                 presence: presence(false),
             },
         ],
+        cert_manager: kubernetes_ok.then(|| {
+            SourceState::Available(
+                [
+                    "cert-manager-5c9d8c7b4-q8m2z",
+                    "cert-manager-webhook-7d6f9b8c5-k4n7p",
+                    "cert-manager-cainjector-6b8d7c9f4-t5w2r",
+                ]
+                .into_iter()
+                .map(|name| AddonPod {
+                    name: Some(name.into()),
+                    phase: Some("Running".into()),
+                    ready: true,
+                })
+                .collect(),
+            )
+        }),
     };
     if kubernetes_ok {
         checks.push(DiagnosticCheck::pass(
