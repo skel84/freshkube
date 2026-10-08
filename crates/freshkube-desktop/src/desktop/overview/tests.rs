@@ -174,7 +174,8 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
             member_id: 42,
             alarm_type: talos_rs::EtcdAlarmType::NoSpace,
         }]);
-        let attention = attention::build(&rows, Some(&kube), Some(&talos), chrono::Utc::now());
+        let attention =
+            attention::build(&rows, Some(&kube), Some(&talos), None, chrono::Utc::now());
         let node = attention
             .rows
             .iter()
@@ -223,7 +224,7 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
             row.talos.as_mut().unwrap().responding = false;
             many.push(row);
         }
-        let capped = attention::build(&many, None, None, chrono::Utc::now());
+        let capped = attention::build(&many, None, None, None, chrono::Utc::now());
         assert_eq!(capped.rows.len(), 50);
         assert_eq!(capped.total, 80);
         assert_eq!(capped.more, "Show all 80");
@@ -653,7 +654,7 @@ fn needs_attention_shows_eight_then_fifty_and_says_how_many_are_left(cx: &mut Te
             })
             .collect();
         pilot.update(cx, |pilot, cx| {
-            pilot.attention = attention::build(&many, None, None, chrono::Utc::now());
+            pilot.attention = attention::build(&many, None, None, None, chrono::Utc::now());
             cx.notify();
         });
         window.render_frame(cx);
@@ -699,7 +700,7 @@ fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
             service.id = format!("extra-{ix:02}");
             talos.services.push(service);
         }
-        let built = attention::build(&rows, None, None, chrono::Utc::now());
+        let built = attention::build(&rows, None, None, None, chrono::Utc::now());
         let mine = built.by_node["talos-wk-fra1-02"].clone();
         assert!(mine.len() > 8);
         window.click("node-talos-wk-fra1-02", cx);
@@ -761,4 +762,32 @@ fn overview_says_connecting_until_talos_answers(cx: &mut TestAppContext) {
         assert_eq!(connection(window).as_deref(), Some("Connected"));
     })
     .unwrap();
+}
+
+/// The rows that Needs attention shows are derived for the open cluster and
+/// name it, so one left on screen after a context change is refused rather
+/// than opened in the next cluster.
+#[gpui_kit::test]
+fn attention_rows_name_the_open_cluster(cx: &mut TestAppContext) {
+    use crate::presentation::attention::Destination;
+    let (_runtime, _handle, pilot) = fixture(cx, 1600., 1000.);
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let pilot = pilot.read(cx);
+        let open = pilot.kube_identity();
+        assert!(open.is_some());
+        let mut seen = 0;
+        for row in &pilot.attention.rows {
+            for destination in [Some(&row.open), row.logs.as_ref(), row.open_node.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                if let Destination::Object(_, object, _) = destination {
+                    seen += 1;
+                    assert_eq!(object.connection, open, "{}", row.name);
+                }
+            }
+        }
+        assert!(seen > 0, "the fixture has object rows to check");
+    });
 }

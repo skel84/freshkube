@@ -147,6 +147,7 @@ impl TableSource for ResourcesScreen {
                 column,
                 row.owner.as_ref(),
                 &row.identity.namespace,
+                &row.identity.connection,
                 style.selected,
                 cx,
             ),

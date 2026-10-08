@@ -930,4 +930,70 @@ mod tests {
         })
         .unwrap();
     }
+
+    /// Replacing the kubeconfig's contents under the same path ends the
+    /// session that read with the old ones: a summary it had already derived
+    /// is not applied late, and the new session starts a new generation.
+    #[gpui_kit::test]
+    fn a_replaced_kubeconfig_drops_the_old_sessions_late_summary(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config");
+        // Deliberately unusable: exercising identity never needs a real API.
+        std::fs::write(&path, "before").unwrap();
+        let report = discover_contexts(std::slice::from_ref(&path));
+        let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.fixture = false;
+                let mut kube = KubernetesOnly::new(Some(path.clone()), None);
+                kube.sources = report.sources.clone();
+                kube.revision = report.revision;
+                let access =
+                    DirectAccess::new(kube.sources.clone(), "chosen".into(), report.revision);
+                kube.access = Some(access.clone());
+                kube.connection = KubeConnection::Connected {
+                    version: "synthetic".into(),
+                };
+                view.kubernetes_only = Some(kube);
+                view.applied.context = Some("chosen".into());
+                view.ensure_summary(window, cx);
+                let old = view
+                    .registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .clone();
+                let old_epoch = view.registry.summary_epoch();
+                // The old session had derived this before the file changed.
+                let late = old.derive(chrono::Utc::now());
+                let health = crate::screens::WorkloadData::from_outcome(&late.summary.workloads);
+
+                std::fs::write(&path, "after!").unwrap();
+                let replacement = discover_contexts(std::slice::from_ref(&path));
+                view.kubeconfig_checked(access.clone(), replacement, window, cx);
+                assert_ne!(view.kube_source().unwrap().id, access.id());
+                assert!(view.registry.active().kubernetes_summary.data().is_none());
+
+                // Its answer arrives now, and finds nothing to apply to.
+                view.apply_summary(late.clone(), health.clone(), window, cx);
+                assert!(view.registry.active().kubernetes_summary.data().is_none());
+
+                view.ensure_summary(window, cx);
+                let new = view.registry.active().summary_session.as_ref().unwrap();
+                assert_ne!(new.core.identity(), old.identity());
+                assert!(view.registry.summary_epoch() != old_epoch);
+
+                // And not by the session that replaced it either.
+                view.apply_summary(late, health, window, cx);
+                assert!(view.registry.active().kubernetes_summary.data().is_none());
+
+                view.kubernetes_only.as_mut().unwrap().job = None;
+                view.kubernetes_only.as_mut().unwrap().task = None;
+                view.stop_summary();
+            });
+        })
+        .unwrap();
+    }
 }
