@@ -34,6 +34,11 @@ impl Render for Pilot {
             // only places its cached panels, and only the one under the
             // pointer draws again.
             Page::Monitoring => self.monitoring.clone().into_any_element(),
+            Page::Settings => self
+                .settings_page
+                .clone()
+                .cached(cached_page_style())
+                .into_any_element(),
             Page::Resources => self
                 .resources
                 .clone()

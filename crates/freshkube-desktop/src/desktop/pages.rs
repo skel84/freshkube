@@ -21,6 +21,7 @@ pub(crate) enum Page {
     Operations,
     Monitoring,
     Observability,
+    Settings,
 }
 
 /// The retained inspection views, including those embedded in the node pane.
@@ -74,6 +75,8 @@ pub(crate) enum Area {
     /// Dashboards from Prometheus, listed in its column.
     Monitoring,
     Observability,
+    /// Settings: opened from the header, so it has no rail button.
+    Settings,
     /// A built-in group of Kubernetes kinds, by its navigation slug.
     Group(&'static str),
     Custom,
@@ -121,6 +124,7 @@ impl Area {
             | Page::Operations => Self::ControlPlane,
             Page::Monitoring => Self::Monitoring,
             Page::Observability => Self::Observability,
+            Page::Settings => Self::Settings,
         }
     }
 
@@ -132,6 +136,7 @@ impl Area {
             Self::Events => "Events",
             Self::Monitoring => "Monitoring",
             Self::Observability => "Observability",
+            Self::Settings => "Settings",
             Self::Group(slug) => navigation::NAVIGATION
                 .iter()
                 .find(|group| group.slug == slug)
@@ -150,6 +155,7 @@ impl Area {
             Self::Events => "nav-k8s-events".into(),
             Self::Monitoring => "nav-monitoring".into(),
             Self::Observability => "nav-observability".into(),
+            Self::Settings => "nav-settings".into(),
             Self::Group(slug) => format!("nav-k8s-group-{slug}").into(),
             Self::Custom => "nav-k8s-group-custom".into(),
             Self::ControlPlane => "nav-control-plane".into(),
@@ -181,7 +187,7 @@ impl Area {
 }
 
 impl Page {
-    pub(super) const ALL: [Page; 11] = [
+    pub(super) const ALL: [Page; 12] = [
         Self::Overview,
         Self::Nodes,
         Self::Health,
@@ -193,6 +199,7 @@ impl Page {
         Self::Operations,
         Self::Monitoring,
         Self::Observability,
+        Self::Settings,
     ];
 
     pub(super) fn screen(self) -> Option<ScreenKind> {
@@ -218,6 +225,7 @@ impl Page {
             Self::Operations => "Operations",
             Self::Monitoring => "Monitoring",
             Self::Observability => "Observability",
+            Self::Settings => "Settings",
         }
     }
     pub(crate) fn slug(self) -> &'static str {
@@ -233,6 +241,7 @@ impl Page {
             Self::Operations => "operations",
             Self::Monitoring => "monitoring",
             Self::Observability => "observability",
+            Self::Settings => "settings",
         }
     }
 }
@@ -315,7 +324,7 @@ impl Pilot {
             Page::Resources if self.resource_kind.key() == "namespaces" => 2,
             Page::Resources if self.resource_kind.key() == "events" => 3,
             // Between Events and Health, which has no row of its own.
-            Page::Monitoring | Page::Observability => 3,
+            Page::Monitoring | Page::Observability | Page::Settings => 3,
             Page::Health => 4,
             Page::Resources => 5,
             Page::Etcd => 6,
@@ -371,6 +380,9 @@ impl Pilot {
         } else if self.page == Page::SystemServices {
             self.system_services
                 .update(cx, |services, cx| services.focus(window, cx));
+        } else if self.page == Page::Settings {
+            self.settings_page
+                .update(cx, |settings, cx| settings.focus(window, cx));
         } else if self.page == Page::Monitoring {
             let focus = self.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
@@ -520,6 +532,7 @@ impl Pilot {
             Area::Events => self.open_builtin("events", window, cx),
             Area::Monitoring => self.navigate_from_keyboard(Page::Monitoring, window, cx),
             Area::Observability => self.navigate_from_keyboard(Page::Observability, window, cx),
+            Area::Settings => self.navigate_from_keyboard(Page::Settings, window, cx),
             Area::Group(slug) => {
                 let key = self.group_kinds.get(slug).cloned().or_else(|| {
                     navigation::NAVIGATION

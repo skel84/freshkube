@@ -267,6 +267,10 @@ impl Pilot {
                     .update(cx, |page, _| page.status().clone()),
             )),
             Page::Nodes => Some(("nodes-scope".into(), self.node_workspace.status.clone())),
+            Page::Settings => Some((
+                "settings-scope".into(),
+                self.settings_page.read(cx).status.clone(),
+            )),
             Page::SystemServices if self.kubernetes_only.is_none() => Some((
                 "system-services-scope".into(),
                 self.system_services.read(cx).status.clone(),
@@ -340,6 +344,8 @@ pub(super) fn settings_content(
     let browse_popover = popover.clone();
     let switch_pilot = pilot.clone();
     let appearance_pilot = pilot.clone();
+    let workspace_pilot = pilot.clone();
+    let workspace_popover = popover.clone();
     let field_label = |text: &'static str| {
         div()
             .text_size(dp(12.5))
@@ -501,6 +507,28 @@ pub(super) fn settings_content(
                             if let Some(size) = selected.first().and_then(|ix| text_size::STEPS.get(*ix)) {
                                 text_size::set(*size, cx);
                             }
+                        }),
+                ),
+        )
+        .child(
+            h_flex()
+                .justify_between()
+                .gap_3()
+                .child(
+                    v_flex()
+                        .child(field_label("Workspace"))
+                        .child(hint("The clusters you work with")),
+                )
+                .child(
+                    Button::new("settings-open-workspace")
+                        .outline()
+                        .small()
+                        .label("Open")
+                        .on_click(move |_, window, cx| {
+                            let _ = workspace_pilot.update(cx, |view, cx| {
+                                view.navigate_from_keyboard(Page::Settings, window, cx)
+                            });
+                            workspace_popover.update(cx, |state, cx| state.dismiss(window, cx));
                         }),
                 ),
         )

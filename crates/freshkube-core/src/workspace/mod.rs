@@ -326,5 +326,24 @@ pub fn set_aside(file: &Path, now: chrono::DateTime<chrono::Utc>) -> std::io::Re
     Ok(target)
 }
 
+/// The acme workspace of `docs/platform/`'s mocks as a workspace file:
+/// one core cluster, one for CI/CD and four environments. Names are
+/// invented, for `--fixture` and for tests.
+pub fn example() -> Workspace {
+    let entry = |id: &str, role| Entry::new(id, Some(role), id);
+    Workspace {
+        kubeconfig: None,
+        clusters: vec![
+            entry("core-fra", Role::Core).with_talosconfig("/example/acme/core-fra.talosconfig"),
+            entry("cicd-fra", Role::Cicd),
+            entry("dev-fra", Role::Environment),
+            entry("stage-fra", Role::Environment),
+            entry("prod-ams", Role::Environment),
+            entry("prod-fra", Role::Environment),
+        ],
+        extra: Default::default(),
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -70,6 +70,15 @@ parking on today's context switch would show a stale summary on switching back
 where a fresh read is shown now. The design is on
 [#44](https://github.com/skel84/freshkube/issues/44).
 
+The workspace file (`freshkube_core::workspace`, `workspace.json` beside the
+preferences) names each cluster by a stable entry id and never by a session
+key, since `AccessIdentity::key()` is process-local. The shell reads it once at
+launch and Settings › Workspace lists it; nothing yet opens a session from it.
+No file is a workspace of one. A file the app can't use (bad JSON, another
+version, a duplicate id) is named with its reason and left where it is; the
+first save will move it to `workspace.json.bak`, or to
+`workspace.<UTC time>.bak` when that exists, never over an earlier backup.
+
 This is the local configuration/session boundary from #2. Independent revisions
 for remotely rotated credentials, auth-plugin state and Prometheus/provider
 identity remain future F07/F10 integration work.

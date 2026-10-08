@@ -13,6 +13,7 @@ mod pages;
 mod search;
 mod services;
 mod session;
+mod settings;
 mod shell;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
@@ -342,6 +343,9 @@ pub(crate) struct Pilot {
     resource_kind: ResourceKind,
     last_kind: ResourceKind,
     system_services: Entity<system_services::SystemServices>,
+    settings_page: Entity<settings::SettingsPage>,
+    /// `workspace.json` beside the preferences; none without preferences.
+    workspace_file: Option<PathBuf>,
     /// The sidebar's Custom Resources, discovered when opened.
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
@@ -491,6 +495,9 @@ impl Pilot {
                 system_services::ClearService,
                 Some(system_services::CONTEXT),
             ),
+            KeyBinding::new("down", settings::NextCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("up", settings::PreviousCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("escape", settings::ClearCluster, Some(settings::CONTEXT)),
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
                 "secondary-shift-enter",
@@ -942,6 +949,11 @@ impl Pilot {
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
+            settings_page: cx.new(settings::SettingsPage::new),
+            workspace_file: options
+                .preferences
+                .as_deref()
+                .map(|preferences| preferences.with_file_name("workspace.json")),
             custom,
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             monitoring,
@@ -992,6 +1004,7 @@ impl Pilot {
             service_task: None,
             _tick: tick,
         };
+        view.load_workspace(cx);
         view.open_initial_source(
             options.kubernetes_only,
             options.kubeconfig_path,

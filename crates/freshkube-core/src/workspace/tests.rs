@@ -171,3 +171,12 @@ fn fresh_ids_come_from_the_context_and_never_repeat() {
     workspace.clusters.push(Entry::new("acme-ci", None, "x"));
     assert_eq!(workspace.fresh_id("acme-ci"), "acme-ci-2");
 }
+
+#[test]
+fn the_example_workspace_is_valid_and_starts_on_its_core() {
+    let workspace = example();
+    assert_eq!(workspace.validate(), Ok(()));
+    assert_eq!(workspace.clusters.len(), 6);
+    assert_eq!(workspace.start_entry(None).unwrap().id, "core-fra");
+    assert_eq!(parse(to_text(&workspace).as_bytes()), Ok(workspace));
+}
