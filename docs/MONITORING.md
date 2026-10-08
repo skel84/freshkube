@@ -49,7 +49,9 @@ Defaults the plan follows until the user says otherwise:
 - **The scrape interval** comes from `/api/v1/targets` where it reports one, otherwise 30 s.
 - **Example mode** (`--fixture`) answers from grafaui's `FakeSource`, so pages, tests and screenshots need no cluster.
 
-### Desktop: `freshkube-desktop::monitoring`
+### Desktop: `freshkube-monitoring`
+
+The page, the panels and the history charts are the `freshkube-monitoring` crate, which desktop reaches as `crate::monitoring`; the paths below are inside it.
 
 - **Panels.** Timeseries (lines and areas, stacked or not, linear and log axes, thresholds as a dashed line with a muted band), stat (with a sparkline), bar gauge, table (our table rules: the mono numbers, muted units, right-aligned values) and a bar list. A Grafana gauge is drawn as a stat with a bar; a pie as a bar list. A kind we don't draw (geomap, canvas, logs, nodeGraph and others) shows one line, "Not drawn here: geomap", in its grid cell.
 - **Colours: the Fog palette.** Every colour a dashboard asks for is ignored: palette modes, fixed and named colours, overrides, continuous schemes and threshold colours. The values below are the dark theme's, drawn on its card colour (#2C3037). The light theme draws each ink darker so it keeps 3:1 on its white card ([DESIGN.md](DESIGN.md#charts) lists both sets; `ChartInks` in `freshkube-ui`'s palette holds them):
