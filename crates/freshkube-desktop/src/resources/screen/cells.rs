@@ -204,6 +204,7 @@ pub(super) fn owner(
         super::super::ResourceLink::Object(
             kind,
             super::super::model::ObjectRef {
+                connection: None,
                 namespace: namespace.into(),
                 name: owner.name.clone(),
                 uid: String::new(),

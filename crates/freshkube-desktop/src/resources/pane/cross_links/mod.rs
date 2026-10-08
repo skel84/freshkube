@@ -15,7 +15,11 @@ pub(in crate::resources::pane) struct OwnerLink {
     pub(super) intent: ResourceLink,
 }
 impl OwnerLink {
-    pub(in crate::resources::pane) fn new(owner: &Owner, namespace: &str) -> Self {
+    pub(in crate::resources::pane) fn new(
+        owner: &Owner,
+        namespace: &str,
+        connection: &str,
+    ) -> Self {
         Self {
             id: format!("owner-{}-{}-{}", owner.kind, namespace, owner.name).into(),
             label: format!(
@@ -33,6 +37,7 @@ impl OwnerLink {
                 api_version: owner.api_version.clone(),
                 kind: owner.kind.clone(),
                 object: ObjectRef {
+                    connection: Some(connection.into()),
                     namespace: namespace.into(),
                     name: owner.name.clone(),
                     uid: owner.uid.clone(),
@@ -142,13 +147,14 @@ fn owner_links(
     document: &ObjectDocument,
     links: Option<&PodLinks>,
     namespace: &str,
+    connection: &str,
     errors: &mut Vec<SharedString>,
 ) -> Vec<OwnerLink> {
     let mut owners = document
         .overview
         .owners
         .iter()
-        .map(|owner| OwnerLink::new(owner, namespace))
+        .map(|owner| OwnerLink::new(owner, namespace, connection))
         .collect::<Vec<_>>();
     if let Some(links) = links {
         if let Some(chain) = &links.controller
@@ -162,7 +168,7 @@ fn owner_links(
                 chain
                     .owners
                     .iter()
-                    .map(|owner| OwnerLink::new(owner, namespace)),
+                    .map(|owner| OwnerLink::new(owner, namespace, connection)),
             );
         }
         if let Some(error) = &links.controller_error {
@@ -176,6 +182,7 @@ fn owner_links(
 fn service_links(
     document: &ObjectDocument,
     links: Option<&PodLinks>,
+    connection: &str,
     errors: &mut Vec<SharedString>,
 ) -> (Vec<ServiceLink>, SharedString) {
     let Some(links) = links else {
@@ -197,6 +204,7 @@ fn service_links(
                     id: format!("selected-service-{}-{}", service.namespace, service.name).into(),
                     label: service.name.clone().into(),
                     object: ObjectRef {
+                        connection: Some(connection.into()),
                         namespace: service.namespace.clone(),
                         name: service.name.clone(),
                         uid: service.uid.clone(),
@@ -242,9 +250,20 @@ impl DetailPane {
             node_link(name, row)
         });
         let mut errors = Vec::new();
-        let owners = owner_links(document, self.pod_links.as_ref(), namespace, &mut errors);
+        let connection = self
+            .detail
+            .as_ref()
+            .map(|detail| detail.target.identity.connection.clone())
+            .unwrap_or_default();
+        let owners = owner_links(
+            document,
+            self.pod_links.as_ref(),
+            namespace,
+            &connection,
+            &mut errors,
+        );
         let (services, services_note) =
-            service_links(document, self.pod_links.as_ref(), &mut errors);
+            service_links(document, self.pod_links.as_ref(), &connection, &mut errors);
         let containers_note = if pod.containers.len() > 200 {
             format!("First 200 of {} containers", pod.containers.len()).into()
         } else {

@@ -118,7 +118,7 @@ pub(super) struct Summary {
 }
 
 impl Summary {
-    pub(super) fn new(view: &DocumentView) -> Self {
+    pub(super) fn new(view: &DocumentView, connection: &str) -> Self {
         let document = &view.document;
         let overview = &document.overview;
         Self {
@@ -142,6 +142,7 @@ impl Summary {
                     super::cross_links::OwnerLink::new(
                         owner,
                         view.document.namespace.as_deref().unwrap_or_default(),
+                        connection,
                     )
                 })
                 .collect(),

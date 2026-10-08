@@ -577,6 +577,7 @@ impl Pilot {
                     } if this.fixture => this.open_object(
                         builtin("pods").unwrap(),
                         resources::model::ObjectRef {
+                            connection: None,
                             namespace: namespace.clone(),
                             name: name.clone(),
                             uid: String::new(),
@@ -606,6 +607,7 @@ impl Pilot {
                             this.open_object(
                                 subject.kind().clone(),
                                 resources::model::ObjectRef {
+                                    connection: Some(subject.access().into()),
                                     namespace: subject.namespace().into(),
                                     name: subject.name().into(),
                                     uid: String::new(),

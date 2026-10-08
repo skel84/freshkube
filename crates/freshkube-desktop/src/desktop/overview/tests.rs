@@ -481,6 +481,7 @@ fn object_frontdoor_navigates_at_once_while_a_shell_runs(cx: &mut TestAppContext
             pilot.open_object(
                 freshkube_core::resources::builtin("persistentvolumeclaims").unwrap(),
                 ObjectRef {
+                    connection: None,
                     namespace: "batch".into(),
                     name: "report-data".into(),
                     uid: String::new(),
