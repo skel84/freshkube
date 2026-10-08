@@ -470,6 +470,8 @@ impl MaintenanceView {
             column = column
                 .child(self.snapshot_panel(snapshot, cx))
                 .child(self.disks_panel(window, cx));
+        } else if self.collecting() {
+            column = column.child(self.disks_panel(window, cx));
         }
         if let Some(target) = &session.install_target {
             column = column.child(
@@ -775,6 +777,8 @@ impl MaintenanceView {
 
 impl Render for MaintenanceView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let collecting = self.collecting();
+        self.loading.show(collecting);
         let header = PageHeader::new(PREFIX, "Maintenance").render(window, cx);
         let banners = self.render_banners(cx);
         let columns = self.render_columns(window, cx);
@@ -795,6 +799,10 @@ impl Render for MaintenanceView {
                 ),
             )
             .child(self.status_bar(cx))
+            // After the page, so the table has drawn its loading rows. With
+            // no shell to mount it beside a cached page, its frames redraw
+            // this view while the node is first read: a few seconds.
+            .children(self.loading.motion(collecting))
     }
 }
 

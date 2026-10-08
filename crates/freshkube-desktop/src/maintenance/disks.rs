@@ -149,6 +149,9 @@ impl Disks {
     }
 }
 
+/// The loading rows the disks' table shows: a node has a disk or two.
+const LOADING_LINES: usize = 2;
+
 fn columns(rows: &[DiskRow]) -> Vec<Column> {
     let column = |field, label: &str, width| Column {
         field,
@@ -178,11 +181,26 @@ fn columns(rows: &[DiskRow]) -> Vec<Column> {
 }
 
 impl MaintenanceView {
+    /// Whether the node is being read for the first time: its disks are
+    /// still to come, and their table shows its loading rows.
+    pub(super) fn collecting(&self) -> bool {
+        self.work.is_some()
+            && self.session.as_ref().is_some_and(|session| {
+                session.insecure_snapshot.is_none()
+                    && session.phase == BootstrapPhase::CollectingInsecureData
+            })
+    }
+
     /// The disks, carded under the hardware panel and as tall as its rows.
     pub(super) fn disks_panel(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let lines = if self.collecting() {
+            LOADING_LINES
+        } else {
+            self.disks.rows.len().max(1)
+        };
         DataTable::new()
             .carded()
-            .fit(self.disks.rows.len().max(1))
+            .fit(lines)
             .render(self, window, cx)
             .w_full()
     }
@@ -318,6 +336,10 @@ impl TableSource for MaintenanceView {
     /// Choosing the install disk takes its button, never a row click.
     fn clickable(&self) -> bool {
         false
+    }
+
+    fn loading(&self) -> Option<&table::LoadingRows> {
+        self.loading.rows()
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
