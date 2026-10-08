@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use freshkube_core::resources::PodWatches;
+use freshkube_core::resources::{ForwardFailure, Listeners, PodWatches, listen_local};
 use gpui_kit::*;
 use tokio::task::JoinHandle;
 
@@ -54,6 +54,12 @@ impl Watches {
     }
 }
 
+/// Listens on the loopback for an example forward: on a typed port, or on
+/// the automatic one for the remote port. It blocks, so it runs on Tokio's
+/// blocking pool; tests put their own in its place.
+pub(crate) type Listen =
+    Arc<dyn Fn(Option<u16>, u16) -> Result<Listeners, ForwardFailure> + Send + Sync>;
+
 /// Every forward, in the order started.
 pub(crate) struct ForwardList {
     pub(crate) items: Vec<Entity<ForwardView>>,
@@ -61,6 +67,8 @@ pub(crate) struct ForwardList {
     pub(crate) running: usize,
     next_id: u64,
     watches: Watches,
+    /// How example forwards listen: [`listen_local`], but in tests.
+    pub(super) listen: Listen,
     /// Stops still letting their ports go, which quitting waits for.
     closing: Vec<JoinHandle<()>>,
     observers: HashMap<u64, Subscription>,
@@ -80,6 +88,7 @@ pub(crate) fn list(cx: &mut App) -> Entity<ForwardList> {
         running: 0,
         next_id: 1,
         watches: Watches::default(),
+        listen: Arc::new(listen_local),
         closing: Vec::new(),
         observers: HashMap::new(),
     });
@@ -125,7 +134,8 @@ impl ForwardList {
         let id = self.next_id;
         self.next_id += 1;
         let watches = self.watches.clone();
-        let view = cx.new(|_| ForwardView::new(id, spec, watches));
+        let listen = self.listen.clone();
+        let view = cx.new(|_| ForwardView::new(id, spec, watches, listen));
         let observer = cx.observe(&view, |list, _, cx| list.changed(cx));
         self.observers.insert(id, observer);
         self.items.push(view.clone());

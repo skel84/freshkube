@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use freshkube_core::resources::{
-    FailureKind, ForwardEnd, ForwardFailure, ForwardFailureKind, ForwardRequest, ForwardState,
-    ForwardStatus, ForwardTarget, Listeners, POD_WAIT, listen_local,
+    FailureKind, ForwardEnd, ForwardFailure, ForwardFailureKind, ForwardState, ForwardStatus,
+    ForwardTarget, Listeners, POD_WAIT,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -122,16 +122,12 @@ impl Drop for ExampleGuard {
     }
 }
 
-/// Listens for `request` on Tokio and answers as `route` would.
-pub(super) fn start(
+/// Answers on `listeners` as `route` would, on Tokio.
+pub(super) fn serve_on(
     runtime: &Handle,
-    request: &ForwardRequest,
+    listeners: Listeners,
     route: Option<Route>,
-) -> Result<ExampleForward, ForwardFailure> {
-    let listeners = {
-        let _tokio = runtime.enter();
-        listen_local(request.local_port, request.port)?
-    };
+) -> ExampleForward {
     let local_port = listeners.port;
     let state = match &route {
         Some(route) => ForwardState::Listening {
@@ -147,14 +143,14 @@ pub(super) fn start(
     });
     let (stop, stopping) = oneshot::channel();
     let task = runtime.spawn(serve(listeners, route, Arc::new(status), stopping));
-    Ok(ExampleForward {
+    ExampleForward {
         local_port,
         status: receiver,
         guard: ExampleGuard {
             stop: Some(stop),
             task: Some(task),
         },
-    })
+    }
 }
 
 async fn serve(
