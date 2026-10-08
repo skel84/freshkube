@@ -218,28 +218,28 @@ impl Pilot {
 
     /// The visible page's segment of the status bar, and its id. A page
     /// derives its segment when its data changes, so this only reads it.
-    fn page_segment(&mut self, cx: &mut Context<Self>) -> Option<(&'static str, Segment)> {
+    fn page_segment(&mut self, cx: &mut Context<Self>) -> Option<(SharedString, Segment)> {
         match self.page {
             Page::Resources => Some((
-                "resource-scope",
+                "resource-scope".into(),
                 self.resources.update(cx, |page, _| page.status().clone()),
             )),
             Page::Observability => Some((
-                "obs-scope",
+                "obs-scope".into(),
                 self.observability
                     .update(cx, |page, _| page.status().clone()),
             )),
-            Page::Nodes => Some(("nodes-scope", self.node_workspace.status.clone())),
+            Page::Nodes => Some(("nodes-scope".into(), self.node_workspace.status.clone())),
             Page::SystemServices if self.kubernetes_only.is_none() => Some((
-                "system-services-scope",
+                "system-services-scope".into(),
                 self.system_services.read(cx).status.clone(),
             )),
             // A page drawn by a screen: only the visible page's screen is
             // read, so a hidden one's segment never shows.
             page => {
-                let (kind, id) = (page.screen()?, page.scope_id()?);
+                let kind = page.screen()?;
                 let (_, screen) = self.screens.iter().find(|(screen, _)| *screen == kind)?;
-                Some((id, screen.status(cx)?))
+                Some((format!("{}-scope", page.slug()).into(), screen.status(cx)?))
             }
         }
     }
