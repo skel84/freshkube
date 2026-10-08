@@ -1,4 +1,4 @@
-use crate::delivery::digest::{Digest, repository, tag};
+use crate::delivery::digest::{Digest, tag, written_repository};
 use crate::delivery::github::PullRequest;
 use crate::delivery::kargo::Freight;
 use crate::delivery::source::{Source, cap_note};
@@ -411,7 +411,7 @@ pub(super) fn supply_chain_links(
                 confidence,
                 format!(
                     "{} {}; {chains}; {verdict}",
-                    repository(&image.url),
+                    written_repository(&image.url),
                     tag(&image.url)
                         .map(|t| format!("(tag {t})"))
                         .unwrap_or_default()
