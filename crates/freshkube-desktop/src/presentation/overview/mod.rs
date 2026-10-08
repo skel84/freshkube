@@ -1,5 +1,5 @@
 //! Overview text and destinations prepared from the shared snapshots.
-use super::{NodeSummary, Roster, cluster_summary};
+use super::{ClusterSummary, NodeSummary, Roster, cluster_summary};
 use crate::{
     desktop::{
         Page,
@@ -90,6 +90,15 @@ fn part<T>(
         ),
     }
 }
+/// What the Overview's parts read, shared by every card.
+#[derive(Clone, Copy)]
+struct Inputs<'a> {
+    rows: &'a [NodeRow],
+    kube: Option<&'a KubernetesSummary>,
+    talos: Option<&'a ClusterOverview>,
+    summary: &'a Option<ClusterSummary>,
+    fixture: bool,
+}
 impl Overview {
     pub(crate) fn build(
         rows: &[NodeRow],
@@ -101,6 +110,54 @@ impl Overview {
     ) -> Self {
         let mut result = Self::default();
         let summary = talos.map(|cluster| cluster_summary(cluster, nodes));
+        let inputs = Inputs {
+            rows,
+            kube,
+            talos,
+            summary: &summary,
+            fixture,
+        };
+        result.subtitle(inputs);
+        result.roster(inputs);
+        result.cards.push(nodes_card(inputs));
+        // The Talos cards wait for the first snapshot; a stale one is
+        // marked by `talos_stale`.
+        let talos_state = if summary.is_some() {
+            CardState::Current
+        } else {
+            CardState::Waiting
+        };
+        if !kube_only {
+            result.cards.push(etcd_card(inputs, talos_state.clone()));
+        }
+        result.cards.push(workloads_card(inputs));
+        result.cards.push(pods_card(inputs));
+        if !kube_only {
+            result
+                .cards
+                .push(services_card(inputs, talos_state.clone()));
+            result.cards.push(memory_card(inputs, talos_state));
+        }
+        result.cards.push(events_card(inputs));
+        if !kube_only {
+            result.cards.push(storage_card(inputs));
+        }
+        result.observation_warnings(kube);
+        result
+    }
+
+    /// The versions, platforms and counts under the title, and any version
+    /// drift.
+    fn subtitle(
+        &mut self,
+        Inputs {
+            rows,
+            kube,
+            talos,
+            summary,
+            ..
+        }: Inputs,
+    ) {
         let mut subtitles = Vec::new();
         if let Some(summary) = &summary {
             subtitles.push(format!("Talos {}", summary.versions.join(" / ")));
@@ -118,8 +175,8 @@ impl Overview {
                 ));
             }
             if summary.versions.len() > 1 {
-                result.drift = Some(format!("{} Talos versions", summary.versions.len()).into());
-                result.drift_tip = format!("Nodes run {}", summary.versions.join(" and ")).into();
+                self.drift = Some(format!("{} Talos versions", summary.versions.len()).into());
+                self.drift_tip = format!("Nodes run {}", summary.versions.join(" and ")).into();
             }
         }
         if let Some(kube) = kube {
@@ -153,7 +210,11 @@ impl Overview {
                 subtitles.push(format!("{namespaces} namespaces{suffix}"));
             }
         }
-        result.subtitle = subtitles.join(" · ").into();
+        self.subtitle = subtitles.join(" · ").into();
+    }
+
+    /// Where the node list comes from, and the Talos warnings.
+    fn roster(&mut self, Inputs { talos, fixture, .. }: Inputs) {
         if let Some(talos) = talos {
             let roster = if fixture {
                 Roster::Fixture
@@ -162,8 +223,8 @@ impl Overview {
             } else {
                 Roster::FallbackOrEndpoints
             };
-            result.roster = format!("Roster: {}", roster.label()).into();
-            result.roster_tip = format!(
+            self.roster = format!("Roster: {}", roster.label()).into();
+            self.roster_tip = format!(
                 "Node list from {}. Kubernetes access: {}.",
                 roster.label(),
                 talos
@@ -172,388 +233,21 @@ impl Overview {
                     .unwrap_or("not available")
             )
             .into();
-            result.warnings = [&talos.discovery_warning, &talos.kubeconfig_warning]
+            self.warnings = [&talos.discovery_warning, &talos.kubeconfig_warning]
                 .into_iter()
                 .flatten()
                 .map(|warning| warning.clone().into())
                 .collect();
         } else {
-            result.roster = "Roster: Kubernetes API".into();
-            result.roster_tip = "Node list from the Kubernetes API.".into();
+            self.roster = "Roster: Kubernetes API".into();
+            self.roster_tip = "Node list from the Kubernetes API.".into();
         }
-        let ready = rows
-            .iter()
-            .filter(|row| row.kubernetes.as_ref().is_some_and(|node| node.is_ready()))
-            .count();
-        let planes = rows
-            .iter()
-            .filter(|row| row.role == super::Role::ControlPlane)
-            .count();
-        let (figure, detail, tone, state) = part(kube.map(|kube| &kube.nodes), "nodes", |_| {
-            (
-                format!("{ready} / {} Ready", rows.len()),
-                format!("{planes} control planes · {} workers", rows.len() - planes),
-                if ready == rows.len() {
-                    Tone::Good
-                } else {
-                    Tone::Warn
-                },
-            )
-        });
-        result.cards.push(Card {
-            id: "tile-nodes",
-            label: "Nodes",
-            figure: figure.into(),
-            detail: detail.into(),
-            tone,
-            segments: rows.iter().map(|row| row.tone).collect(),
-            meter: None,
-            target: CardTarget::Page(Page::Nodes),
-            state,
-        });
-        // The Talos cards wait for the first snapshot; a stale one is
-        // marked by `talos_stale`.
-        let talos_state = if summary.is_some() {
-            CardState::Current
-        } else {
-            CardState::Waiting
-        };
-        if !kube_only {
-            let (figure, detail, tone) = summary
-                .as_ref()
-                .and_then(|summary| summary.etcd.as_ref())
-                .map(|etcd| {
-                    let quorum = freshkube_core::indicators::quorum(etcd.healthy, etcd.total);
-                    let tolerance = quorum.remaining_tolerance;
-                    (
-                        if quorum.state.has_quorum() {
-                            "Quorum".to_owned()
-                        } else {
-                            "Quorum unconfirmed".to_owned()
-                        },
-                        format!(
-                            "{} of {} answered · tolerates {tolerance} additional member {}",
-                            etcd.healthy,
-                            etcd.total,
-                            if tolerance == 1 {
-                                "failure"
-                            } else {
-                                "failures"
-                            }
-                        ),
-                        if quorum.state.has_quorum() && tolerance > 0 {
-                            Tone::Good
-                        } else {
-                            Tone::Warn
-                        },
-                    )
-                })
-                .unwrap_or(("—".into(), "No etcd status reported".into(), Tone::Unknown));
-            let api = kube
-                .map(|kube| match &kube.version {
-                    Part::Loaded(_) => "Kubernetes version read".to_owned(),
-                    Part::Refused(error) | Part::Failed(error) => {
-                        format!("Kubernetes API: {error}")
-                    }
-                })
-                .unwrap_or("Waiting for Kubernetes API".into());
-            result.cards.push(Card {
-                id: "tile-etcd",
-                label: "Control plane",
-                figure: figure.into(),
-                detail: format!("{detail} · {api}").into(),
-                tone,
-                segments: vec![],
-                meter: None,
-                target: CardTarget::Page(Page::Etcd),
-                state: talos_state.clone(),
-            });
-        }
-        let workloads_state = match kube {
-            Some(kube)
-                if kube.workloads.snapshot().is_some()
-                    || !kube.workloads.unavailable().is_empty() =>
-            {
-                CardState::Current
-            }
-            _ => CardState::Waiting,
-        };
-        let (figure, detail, tone) = kube
-            .and_then(|kube| kube.workloads.snapshot())
-            .map(|snapshot| {
-                let workloads: Vec<_> = snapshot
-                    .namespaces
-                    .iter()
-                    .flat_map(|ns| &ns.workloads)
-                    .collect();
-                let unhealthy = workloads
-                    .iter()
-                    .filter(|workload| {
-                        matches!(
-                            workload.health,
-                            HealthState::Failing | HealthState::Degraded
-                        )
-                    })
-                    .count();
-                let healthy = workloads
-                    .iter()
-                    .filter(|workload| workload.health == HealthState::Healthy)
-                    .count();
-                let progressing = workloads.len() - healthy - unhealthy;
-                let first = workloads
-                    .iter()
-                    .find(|workload| workload.health != HealthState::Healthy)
-                    .map(|workload| {
-                        format!(
-                            "{}/{} · {} of {} available · ",
-                            workload.namespace, workload.name, workload.ready, workload.desired
-                        )
-                    })
-                    .unwrap_or_default();
-                (
-                    format!("{unhealthy} unhealthy"),
-                    format!("{first}{healthy} healthy · {progressing} progressing"),
-                    if unhealthy > 0 {
-                        Tone::Warn
-                    } else {
-                        Tone::Good
-                    },
-                )
-            })
-            .unwrap_or((
-                "Unavailable".into(),
-                kube.map(|kube| {
-                    kube.workloads
-                        .unavailable()
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" · ")
-                })
-                .unwrap_or("Waiting for workloads".into()),
-                Tone::Unknown,
-            ));
-        let (detail, tone) =
-            if let Some(kube) = kube.filter(|kube| !kube.workloads.unavailable().is_empty()) {
-                (
-                    format!(
-                        "{detail} · {}",
-                        kube.workloads
-                            .unavailable()
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join(" · ")
-                    ),
-                    Tone::Unknown,
-                )
-            } else {
-                (detail, tone)
-            };
-        result.cards.push(Card {
-            id: "tile-workloads",
-            label: "Workloads",
-            figure: figure.into(),
-            detail: detail.into(),
-            tone,
-            segments: vec![],
-            meter: None,
-            target: CardTarget::Page(Page::Health),
-            state: workloads_state,
-        });
-        let (figure, detail, tone, state) = part(kube.map(|kube| &kube.pods), "pods", |pods| {
-            let mut parts = Vec::new();
-            let crash = pods
-                .issues_by_status
-                .get("CrashLoopBackOff")
-                .copied()
-                .unwrap_or(0);
-            if crash > 0 {
-                parts.push(format!("{crash} CrashLoopBackOff"));
-            }
-            let pending = pods.phases.get("Pending").copied().unwrap_or(0);
-            if pending > 0 {
-                parts.push(format!("{pending} Pending"));
-            }
-            if pods.on_not_ready > 0 && kube.is_some_and(|kube| kube.nodes.is_current()) {
-                parts.push(format!("{} on a NotReady node", pods.on_not_ready));
-            }
-            if parts.is_empty() {
-                parts.push("No pod issues reported".into());
-            }
-            (
-                pods.total.to_string(),
-                parts.join(" · "),
-                if pods.issues.is_empty() {
-                    Tone::Good
-                } else {
-                    Tone::Warn
-                },
-            )
-        });
-        let filter = kube
-            .and_then(|kube| kube.pods.loaded())
-            .and_then(|pods| pods.issues.first())
-            .map(|pod| pod.issue.label().to_owned())
-            .unwrap_or_default();
-        result.cards.push(Card {
-            id: "tile-pods",
-            label: "Pods",
-            figure: figure.into(),
-            detail: detail.into(),
-            tone,
-            segments: vec![],
-            meter: None,
-            target: CardTarget::Kind("pods", filter),
-            state,
-        });
-        if !kube_only {
-            let counts = summary
-                .as_ref()
-                .map(|summary| summary.services)
-                .unwrap_or_default();
-            result.cards.push(Card {
-                id: "tile-services",
-                label: "System services",
-                figure: format!("{} unhealthy", counts.unhealthy).into(),
-                detail: format!(
-                    "{}{} healthy · {} not reported",
-                    summary
-                        .as_ref()
-                        .and_then(|summary| summary.first_unhealthy.as_ref())
-                        .map(|(node, service)| format!("{node}/{service} · "))
-                        .unwrap_or_default(),
-                    counts.healthy,
-                    counts.unknown
-                )
-                .into(),
-                // Services without a health check always report unknown, so
-                // only a card with no health result at all is unknown.
-                tone: if counts.unhealthy > 0 {
-                    Tone::Warn
-                } else if counts.healthy > 0 {
-                    Tone::Good
-                } else {
-                    Tone::Unknown
-                },
-                segments: vec![],
-                meter: None,
-                target: CardTarget::Services,
-                state: talos_state.clone(),
-            });
-            let peak = summary
-                .as_ref()
-                .and_then(|summary| summary.peak_memory.as_ref());
-            let target = peak
-                .and_then(|(name, _)| rows.iter().find(|row| row.key.talos.as_ref() == Some(name)))
-                .map(|row| {
-                    CardTarget::Destination(Destination::Node(row.key.clone(), NodeTab::Processes))
-                })
-                .unwrap_or(CardTarget::Page(Page::Nodes));
-            result.cards.push(Card {
-                id: "tile-memory",
-                label: "Peak memory",
-                figure: peak
-                    .map(|(_, percent)| format!("{} %", super::whole_percent(*percent)))
-                    .unwrap_or("—".into())
-                    .into(),
-                detail: peak
-                    .map(|(name, percent)| {
-                        format!(
-                            "{name}{}",
-                            crate::ui::memory_tone(super::memory_level(*percent))
-                                .map(|(_, text)| format!(" · {text}"))
-                                .unwrap_or_default()
-                        )
-                    })
-                    .unwrap_or("No memory data reported".into())
-                    .into(),
-                // The memory level's thresholds, so the figure, the bar, the
-                // word and the rail's dot agree.
-                tone: match peak {
-                    None => Tone::Unknown,
-                    Some((_, percent)) => crate::ui::memory_tone(super::memory_level(*percent))
-                        .map_or(Tone::Good, |(tone, _)| tone),
-                },
-                segments: vec![],
-                meter: peak.map(|(_, percent)| (*percent, super::memory_level(*percent))),
-                target,
-                state: talos_state,
-            });
-        }
-        let (figure, detail, tone, state) =
-            part(kube.map(|kube| &kube.events), "events", |events| {
-                (
-                    events.total.to_string(),
-                    format!(
-                        "Warnings in the last hour · {}",
-                        events
-                            .reasons
-                            .iter()
-                            .take(3)
-                            .map(|(reason, count)| format!("{reason} {count}"))
-                            .collect::<Vec<_>>()
-                            .join(" · ")
-                    ),
-                    if events.total > 0 {
-                        Tone::Warn
-                    } else {
-                        Tone::Good
-                    },
-                )
-            });
-        result.cards.push(Card {
-            id: "tile-events",
-            label: "Events",
-            figure: figure.into(),
-            detail: detail.into(),
-            tone,
-            segments: vec![],
-            meter: None,
-            target: CardTarget::Kind("events", "Warning".into()),
-            state,
-        });
-        if !kube_only {
-            let (figure, detail, tone, state) =
-                part(kube.map(|kube| &kube.claims), "claims", |claims| {
-                    (
-                        format!("{} Pending", claims.pending_count),
-                        format!(
-                            "{}{} bound · {} PVs available",
-                            claims
-                                .pending
-                                .first()
-                                .map(|claim| format!(
-                                    "{}/{} · {} · ",
-                                    claim.namespace, claim.name, claim.reason
-                                ))
-                                .unwrap_or_default(),
-                            claims.bound,
-                            kube.and_then(|kube| kube.available_volumes.loaded())
-                                .map(ToString::to_string)
-                                .unwrap_or("unavailable".into())
-                        ),
-                        if claims.pending_count > 0 {
-                            Tone::Warn
-                        } else {
-                            Tone::Good
-                        },
-                    )
-                });
-            result.cards.push(Card {
-                id: "tile-storage",
-                label: "Storage",
-                figure: figure.into(),
-                detail: detail.into(),
-                tone,
-                segments: vec![],
-                meter: None,
-                target: CardTarget::Kind("persistentvolumeclaims", "Pending".into()),
-                state,
-            });
-        }
+    }
+
+    /// What the cluster's observations last said went wrong.
+    fn observation_warnings(&mut self, kube: Option<&KubernetesSummary>) {
         if let Some(kube) = kube {
-            result.warnings.extend(
+            self.warnings.extend(
                 kube.observations
                     .iter()
                     .filter_map(|(source, observation)| {
@@ -567,7 +261,6 @@ impl Overview {
                     }),
             );
         }
-        result
     }
 
     /// When the Talos snapshot is stale, the cards drawn from it show their
@@ -581,6 +274,391 @@ impl Overview {
             }
         }
         self
+    }
+}
+
+/// Ready nodes of all, with each node's tone as a segment.
+fn nodes_card(Inputs { rows, kube, .. }: Inputs) -> Card {
+    let ready = rows
+        .iter()
+        .filter(|row| row.kubernetes.as_ref().is_some_and(|node| node.is_ready()))
+        .count();
+    let planes = rows
+        .iter()
+        .filter(|row| row.role == super::Role::ControlPlane)
+        .count();
+    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.nodes), "nodes", |_| {
+        (
+            format!("{ready} / {} Ready", rows.len()),
+            format!("{planes} control planes · {} workers", rows.len() - planes),
+            if ready == rows.len() {
+                Tone::Good
+            } else {
+                Tone::Warn
+            },
+        )
+    });
+    Card {
+        id: "tile-nodes",
+        label: "Nodes",
+        figure: figure.into(),
+        detail: detail.into(),
+        tone,
+        segments: rows.iter().map(|row| row.tone).collect(),
+        meter: None,
+        target: CardTarget::Page(Page::Nodes),
+        state,
+    }
+}
+
+/// etcd's quorum and the Kubernetes API.
+fn etcd_card(Inputs { kube, summary, .. }: Inputs, talos_state: CardState) -> Card {
+    let (figure, detail, tone) = summary
+        .as_ref()
+        .and_then(|summary| summary.etcd.as_ref())
+        .map(|etcd| {
+            let quorum = freshkube_core::indicators::quorum(etcd.healthy, etcd.total);
+            let tolerance = quorum.remaining_tolerance;
+            (
+                if quorum.state.has_quorum() {
+                    "Quorum".to_owned()
+                } else {
+                    "Quorum unconfirmed".to_owned()
+                },
+                format!(
+                    "{} of {} answered · tolerates {tolerance} additional member {}",
+                    etcd.healthy,
+                    etcd.total,
+                    if tolerance == 1 {
+                        "failure"
+                    } else {
+                        "failures"
+                    }
+                ),
+                if quorum.state.has_quorum() && tolerance > 0 {
+                    Tone::Good
+                } else {
+                    Tone::Warn
+                },
+            )
+        })
+        .unwrap_or(("—".into(), "No etcd status reported".into(), Tone::Unknown));
+    let api = kube
+        .map(|kube| match &kube.version {
+            Part::Loaded(_) => "Kubernetes version read".to_owned(),
+            Part::Refused(error) | Part::Failed(error) => {
+                format!("Kubernetes API: {error}")
+            }
+        })
+        .unwrap_or("Waiting for Kubernetes API".into());
+    Card {
+        id: "tile-etcd",
+        label: "Control plane",
+        figure: figure.into(),
+        detail: format!("{detail} · {api}").into(),
+        tone,
+        segments: vec![],
+        meter: None,
+        target: CardTarget::Page(Page::Etcd),
+        state: talos_state.clone(),
+    }
+}
+
+/// Unhealthy workloads, and what couldn't be read.
+fn workloads_card(Inputs { kube, .. }: Inputs) -> Card {
+    let workloads_state = match kube {
+        Some(kube)
+            if kube.workloads.snapshot().is_some() || !kube.workloads.unavailable().is_empty() =>
+        {
+            CardState::Current
+        }
+        _ => CardState::Waiting,
+    };
+    let (figure, detail, tone) = kube
+        .and_then(|kube| kube.workloads.snapshot())
+        .map(|snapshot| {
+            let workloads: Vec<_> = snapshot
+                .namespaces
+                .iter()
+                .flat_map(|ns| &ns.workloads)
+                .collect();
+            let unhealthy = workloads
+                .iter()
+                .filter(|workload| {
+                    matches!(
+                        workload.health,
+                        HealthState::Failing | HealthState::Degraded
+                    )
+                })
+                .count();
+            let healthy = workloads
+                .iter()
+                .filter(|workload| workload.health == HealthState::Healthy)
+                .count();
+            let progressing = workloads.len() - healthy - unhealthy;
+            let first = workloads
+                .iter()
+                .find(|workload| workload.health != HealthState::Healthy)
+                .map(|workload| {
+                    format!(
+                        "{}/{} · {} of {} available · ",
+                        workload.namespace, workload.name, workload.ready, workload.desired
+                    )
+                })
+                .unwrap_or_default();
+            (
+                format!("{unhealthy} unhealthy"),
+                format!("{first}{healthy} healthy · {progressing} progressing"),
+                if unhealthy > 0 {
+                    Tone::Warn
+                } else {
+                    Tone::Good
+                },
+            )
+        })
+        .unwrap_or((
+            "Unavailable".into(),
+            kube.map(|kube| {
+                kube.workloads
+                    .unavailable()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+            .unwrap_or("Waiting for workloads".into()),
+            Tone::Unknown,
+        ));
+    let (detail, tone) =
+        if let Some(kube) = kube.filter(|kube| !kube.workloads.unavailable().is_empty()) {
+            (
+                format!(
+                    "{detail} · {}",
+                    kube.workloads
+                        .unavailable()
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                ),
+                Tone::Unknown,
+            )
+        } else {
+            (detail, tone)
+        };
+    Card {
+        id: "tile-workloads",
+        label: "Workloads",
+        figure: figure.into(),
+        detail: detail.into(),
+        tone,
+        segments: vec![],
+        meter: None,
+        target: CardTarget::Page(Page::Health),
+        state: workloads_state,
+    }
+}
+
+/// Pods, with their issues.
+fn pods_card(Inputs { kube, .. }: Inputs) -> Card {
+    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.pods), "pods", |pods| {
+        let mut parts = Vec::new();
+        let crash = pods
+            .issues_by_status
+            .get("CrashLoopBackOff")
+            .copied()
+            .unwrap_or(0);
+        if crash > 0 {
+            parts.push(format!("{crash} CrashLoopBackOff"));
+        }
+        let pending = pods.phases.get("Pending").copied().unwrap_or(0);
+        if pending > 0 {
+            parts.push(format!("{pending} Pending"));
+        }
+        if pods.on_not_ready > 0 && kube.is_some_and(|kube| kube.nodes.is_current()) {
+            parts.push(format!("{} on a NotReady node", pods.on_not_ready));
+        }
+        if parts.is_empty() {
+            parts.push("No pod issues reported".into());
+        }
+        (
+            pods.total.to_string(),
+            parts.join(" · "),
+            if pods.issues.is_empty() {
+                Tone::Good
+            } else {
+                Tone::Warn
+            },
+        )
+    });
+    let filter = kube
+        .and_then(|kube| kube.pods.loaded())
+        .and_then(|pods| pods.issues.first())
+        .map(|pod| pod.issue.label().to_owned())
+        .unwrap_or_default();
+    Card {
+        id: "tile-pods",
+        label: "Pods",
+        figure: figure.into(),
+        detail: detail.into(),
+        tone,
+        segments: vec![],
+        meter: None,
+        target: CardTarget::Kind("pods", filter),
+        state,
+    }
+}
+
+/// Talos system services' health.
+fn services_card(Inputs { summary, .. }: Inputs, talos_state: CardState) -> Card {
+    let counts = summary
+        .as_ref()
+        .map(|summary| summary.services)
+        .unwrap_or_default();
+    Card {
+        id: "tile-services",
+        label: "System services",
+        figure: format!("{} unhealthy", counts.unhealthy).into(),
+        detail: format!(
+            "{}{} healthy · {} not reported",
+            summary
+                .as_ref()
+                .and_then(|summary| summary.first_unhealthy.as_ref())
+                .map(|(node, service)| format!("{node}/{service} · "))
+                .unwrap_or_default(),
+            counts.healthy,
+            counts.unknown
+        )
+        .into(),
+        // Services without a health check always report unknown, so
+        // only a card with no health result at all is unknown.
+        tone: if counts.unhealthy > 0 {
+            Tone::Warn
+        } else if counts.healthy > 0 {
+            Tone::Good
+        } else {
+            Tone::Unknown
+        },
+        segments: vec![],
+        meter: None,
+        target: CardTarget::Services,
+        state: talos_state.clone(),
+    }
+}
+
+/// The node using the most memory.
+fn memory_card(Inputs { rows, summary, .. }: Inputs, talos_state: CardState) -> Card {
+    let peak = summary
+        .as_ref()
+        .and_then(|summary| summary.peak_memory.as_ref());
+    let target = peak
+        .and_then(|(name, _)| rows.iter().find(|row| row.key.talos.as_ref() == Some(name)))
+        .map(|row| CardTarget::Destination(Destination::Node(row.key.clone(), NodeTab::Processes)))
+        .unwrap_or(CardTarget::Page(Page::Nodes));
+    Card {
+        id: "tile-memory",
+        label: "Peak memory",
+        figure: peak
+            .map(|(_, percent)| format!("{} %", super::whole_percent(*percent)))
+            .unwrap_or("—".into())
+            .into(),
+        detail: peak
+            .map(|(name, percent)| {
+                format!(
+                    "{name}{}",
+                    crate::ui::memory_tone(super::memory_level(*percent))
+                        .map(|(_, text)| format!(" · {text}"))
+                        .unwrap_or_default()
+                )
+            })
+            .unwrap_or("No memory data reported".into())
+            .into(),
+        // The memory level's thresholds, so the figure, the bar, the
+        // word and the rail's dot agree.
+        tone: match peak {
+            None => Tone::Unknown,
+            Some((_, percent)) => crate::ui::memory_tone(super::memory_level(*percent))
+                .map_or(Tone::Good, |(tone, _)| tone),
+        },
+        segments: vec![],
+        meter: peak.map(|(_, percent)| (*percent, super::memory_level(*percent))),
+        target,
+        state: talos_state,
+    }
+}
+
+/// Warning events in the last hour.
+fn events_card(Inputs { kube, .. }: Inputs) -> Card {
+    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.events), "events", |events| {
+        (
+            events.total.to_string(),
+            format!(
+                "Warnings in the last hour · {}",
+                events
+                    .reasons
+                    .iter()
+                    .take(3)
+                    .map(|(reason, count)| format!("{reason} {count}"))
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            ),
+            if events.total > 0 {
+                Tone::Warn
+            } else {
+                Tone::Good
+            },
+        )
+    });
+    Card {
+        id: "tile-events",
+        label: "Events",
+        figure: figure.into(),
+        detail: detail.into(),
+        tone,
+        segments: vec![],
+        meter: None,
+        target: CardTarget::Kind("events", "Warning".into()),
+        state,
+    }
+}
+
+/// Pending claims and available volumes.
+fn storage_card(Inputs { kube, .. }: Inputs) -> Card {
+    let (figure, detail, tone, state) = part(kube.map(|kube| &kube.claims), "claims", |claims| {
+        (
+            format!("{} Pending", claims.pending_count),
+            format!(
+                "{}{} bound · {} PVs available",
+                claims
+                    .pending
+                    .first()
+                    .map(|claim| format!(
+                        "{}/{} · {} · ",
+                        claim.namespace, claim.name, claim.reason
+                    ))
+                    .unwrap_or_default(),
+                claims.bound,
+                kube.and_then(|kube| kube.available_volumes.loaded())
+                    .map(ToString::to_string)
+                    .unwrap_or("unavailable".into())
+            ),
+            if claims.pending_count > 0 {
+                Tone::Warn
+            } else {
+                Tone::Good
+            },
+        )
+    });
+    Card {
+        id: "tile-storage",
+        label: "Storage",
+        figure: figure.into(),
+        detail: detail.into(),
+        tone,
+        segments: vec![],
+        meter: None,
+        target: CardTarget::Kind("persistentvolumeclaims", "Pending".into()),
+        state,
     }
 }
 
