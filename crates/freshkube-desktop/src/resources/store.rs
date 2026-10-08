@@ -768,6 +768,51 @@ mod tests {
     }
 
     #[test]
+    fn a_long_batch_of_changes_and_deletes_reports_the_rows_still_changed() {
+        let mut store = loaded(pod_rows(60));
+        let rows: Vec<ResourceRow> = (0..60).map(|ix| restarted(&store, ix)).collect();
+        // Every row changes, across two parts, then every third goes: some
+        // changed earlier in the batch, some the last entry as it moves.
+        let first = rows[..30]
+            .iter()
+            .cloned()
+            .map(ResourceEvent::Upsert)
+            .collect();
+        let mut second: Vec<ResourceEvent> = rows[30..]
+            .iter()
+            .cloned()
+            .map(ResourceEvent::Upsert)
+            .collect();
+        let doomed: Vec<ResourceIdentity> = (0..60)
+            .rev()
+            .step_by(3)
+            .map(|ix| rows[ix].identity.clone())
+            .collect();
+        second.extend(doomed.iter().cloned().map(ResourceEvent::Delete));
+        // A row of the first part changed again after the deletes.
+        let mut again = rows[1].clone();
+        let mut pod = (**again.pod.as_ref().expect("a pod row")).clone();
+        pod.restarts += 1;
+        again.pod = Some(std::sync::Arc::new(pod));
+        second.push(ResourceEvent::Upsert(again));
+        let changes = parts(&mut store, vec![first, second]);
+        assert_index_consistent(&store);
+        let expect = |range: std::ops::Range<usize>| -> Vec<ResourceIdentity> {
+            let mut ids: Vec<ResourceIdentity> = rows[range]
+                .iter()
+                .map(|row| row.identity.clone())
+                .filter(|id| !doomed.contains(id))
+                .collect();
+            ids.sort_by_key(|id| store.slot(id));
+            ids
+        };
+        let mut second_expected = expect(30..60);
+        second_expected.push(rows[1].identity.clone());
+        second_expected.sort_by_key(|id| store.slot(id));
+        assert_eq!(changes, vec![expect(0..30), second_expected]);
+    }
+
+    #[test]
     fn a_part_past_what_is_kept_is_only_counted() {
         let mut store = loaded(pod_rows(10));
         let few = vec![ResourceEvent::Upsert(restarted(&store, 1))];
