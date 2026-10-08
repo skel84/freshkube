@@ -233,7 +233,7 @@ impl Pilot {
             }));
     }
 
-    fn apply_summary(
+    pub(super) fn apply_summary(
         &mut self,
         publication: Arc<Publication>,
         health: Result<Arc<WorkloadData>, String>,
