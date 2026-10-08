@@ -341,6 +341,10 @@ impl ResourcesScreen {
             .searchable(true)
         });
         let subscriptions = vec![
+            // Every change to the rows notifies the screen; the flash hears
+            // of it before the next frame draws, so a fade never paints on
+            // a row's old line.
+            cx.observe_self(|screen, cx| screen.flash_rows_changed(cx)),
             cx.subscribe_in(
                 &query,
                 window,
@@ -821,8 +825,10 @@ impl ResourcesScreen {
         });
     }
 
-    /// Tells the flash its rows' lines may have moved, once this update
-    /// ends, when the projection was rebuilt since it last heard.
+    /// Tells the flash its rows' lines may have moved, when the projection
+    /// was rebuilt since it last heard. The screen calls it whenever it
+    /// notifies; the layer looks the lines up once this update ends,
+    /// before the frame draws.
     fn flash_rows_changed(&mut self, cx: &mut Context<Self>) {
         let generation = self.projection.generation();
         if self.embedded || self.flash_rows == Some(generation) {

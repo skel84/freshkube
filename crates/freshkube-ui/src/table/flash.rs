@@ -201,6 +201,11 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
         }
     }
 
+    /// The line the layer draws a key's tint on, as last looked up.
+    pub fn line(&self, key: &K) -> Option<usize> {
+        self.lines.get(key).copied()
+    }
+
     /// Whether the timer that steps the fades runs.
     pub fn stepping(&self) -> bool {
         self.tick.is_some()
@@ -224,8 +229,8 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
     }
 
     /// Starts the timer that steps the fades, unless it runs. Each step
-    /// redraws the layer; the timer stops once nothing it draws fades or
-    /// motion is reduced.
+    /// redraws the layer while a fade it draws runs; the timer stops once
+    /// none does or motion is reduced.
     fn tick(&mut self, cx: &mut Context<Self>) {
         if self.tick.is_some() {
             return;
@@ -235,10 +240,13 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
                 cx.background_executor().timer(motion::FLASH_STEP).await;
                 let go = this
                     .update(cx, |this, cx| {
-                        cx.notify();
+                        // The last fade's end clears itself, on time
+                        // (`schedule_clear`); a step after it draws nothing.
                         let now = cx.background_executor().now();
                         let go = !cx.reduce_motion() && this.drawing(now);
-                        if !go {
+                        if go {
+                            cx.notify();
+                        } else {
                             this.tick = None;
                         }
                         go
@@ -264,10 +272,7 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
                 let live: Vec<K> = this.flashes.live(now).map(|f| f.key.clone()).collect();
                 this.lines.retain(|key, _| live.contains(key));
                 this.clear = None;
-                // A running timer draws the clearing step itself.
-                if this.tick.is_none() {
-                    cx.notify();
-                }
+                cx.notify();
             })
             .ok();
         }));

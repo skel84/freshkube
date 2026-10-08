@@ -2695,6 +2695,35 @@ fn a_changed_pod_flashes_and_a_relist_forgets_it(cx: &mut TestAppContext) {
     cx.update(|cx| assert!(screen.read(cx).flashing(cx).is_empty()));
 }
 
+/// A sort moves a fading row's tint with it before the next frame draws.
+#[gpui_kit::test]
+fn a_sort_moves_the_flash_with_its_row(cx: &mut TestAppContext) {
+    use crate::resources::model::SortKey;
+    use freshkube_ui::table::TableSource;
+    let (_runtime, screen, _window) = mount(cx, Some("demo"));
+    cx.update(|cx| cx.set_reduce_motion(false));
+    let changed = cx.update(|cx| screen.read(cx).restarted(0));
+    let id = changed.identity.clone();
+    cx.update(|cx| deliver(&screen, vec![ResourceEvent::Upsert(changed)], cx));
+    cx.run_until_parked();
+    let line = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let screen = screen.read(cx);
+            let drawn = screen.flash.read(cx).line(&id);
+            (drawn, TableSource::line_of(screen, &id))
+        })
+    };
+    let (before, _) = line(cx);
+    assert!(before.is_some());
+    for key in [SortKey::Restarts, SortKey::Ready] {
+        // No frame between the sort and the check.
+        cx.update(|cx| screen.update(cx, |screen, cx| screen.sort_by(key, cx)));
+        let (drawn, now) = line(cx);
+        assert_eq!(drawn, now, "{key:?}");
+    }
+    assert_ne!(line(cx).0, before, "the sorts moved the row");
+}
+
 /// With reduced motion, nothing flashes.
 #[gpui_kit::test]
 fn reduced_motion_flashes_nothing(cx: &mut TestAppContext) {

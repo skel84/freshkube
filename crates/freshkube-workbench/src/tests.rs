@@ -376,6 +376,42 @@ fn a_flash_draws_only_its_layer_and_the_views_above(cx: &mut TestAppContext) {
     assert_eq!(next_frame(handle, cx), 0);
 }
 
+/// A flash that starts between two steps still clears when its fade
+/// ends, not at the next step.
+#[gpui_kit::test]
+fn a_flash_between_steps_clears_on_time(cx: &mut TestAppContext) {
+    let (handle, story) = open_flash(cx, Choice::Full);
+    let change = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, _, cx| {
+            story.update(cx, |story, cx| story.change(1, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    let flashing =
+        |cx: &mut TestAppContext| cx.read(|cx| story.read(cx).layer().read(cx).flashing(cx).len());
+    change(cx);
+    let offset = motion::FLASH_STEP / 2;
+    cx.background_executor.advance_clock(offset);
+    cx.run_until_parked();
+    change(cx);
+    assert_eq!(flashing(cx), 2);
+    // The first ends on a step; the second half a step later, between two.
+    cx.background_executor.advance_clock(motion::FADE - offset);
+    cx.run_until_parked();
+    assert_eq!(flashing(cx), 1);
+    let layer = probe::count("table.flash-layer");
+    cx.background_executor.advance_clock(offset);
+    cx.run_until_parked();
+    assert_eq!(flashing(cx), 0);
+    assert_eq!(
+        probe::count("table.flash-layer"),
+        layer + 1,
+        "cleared at its end"
+    );
+    assert_eq!(next_step(cx), 0, "and nothing steps after");
+}
+
 #[gpui_kit::test]
 fn a_heavy_root_still_leaves_the_table_alone(cx: &mut TestAppContext) {
     let (handle, story) = open_flash(cx, Choice::Full);
