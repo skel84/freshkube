@@ -11,6 +11,7 @@
 
 mod argo;
 mod build;
+mod conflict;
 mod kargo;
 mod observe;
 mod render;
@@ -18,6 +19,8 @@ mod workload;
 
 use argo::rollout_namespace;
 use build::{commit_link, pull_request_links, supply_chain_links};
+pub use conflict::{BuiltDigest, DigestConflict};
+use conflict::{conflict_reason, digest_conflicts};
 use kargo::{freight_summary, stage_links};
 pub use render::render;
 
@@ -120,6 +123,10 @@ pub struct Link {
     /// What was read to say so, from which objects. Empty when nothing was
     /// read: a source that couldn't be read leaves its links with none.
     pub evidence: Vec<Observation>,
+    /// A SHA-joined Freight's images that no read build reports by their
+    /// digest while a build of the commit reports another; empty otherwise.
+    /// Never a failure: rebuilds of one commit report different digests.
+    pub conflicts: Vec<DigestConflict>,
 }
 
 impl Link {
@@ -139,6 +146,7 @@ impl Link {
             confidence,
             reason: reason.into(),
             evidence: Vec::new(),
+            conflicts: Vec::new(),
         }
     }
 
@@ -257,12 +265,22 @@ impl Trail {
                 .filter(|link| link.confidence == confidence)
                 .count()
         };
-        let counts = format!(
+        let mut counts = format!(
             "{} confirmed, {} claimed, {} unknown",
             count(Confidence::Confirmed),
             count(Confidence::Claimed),
             count(Confidence::Unknown)
         );
+        match self
+            .links
+            .iter()
+            .filter(|link| !link.conflicts.is_empty())
+            .count()
+        {
+            0 => {}
+            1 => counts.push_str("; 1 link has a digest no read build reports"),
+            n => counts.push_str(&format!("; {n} links have a digest no read build reports")),
+        }
         let running = match self.running() {
             Some(Confidence::Confirmed) => "running, confirmed: pods run the digest".to_owned(),
             Some(Confidence::Claimed) => {
@@ -333,29 +351,70 @@ fn matching_freight<'a>(
 /// build reports the commit; a build tied to it by its PaC label alone makes
 /// the link a claim, and with no build at all the Freight's own commit stands
 /// against the change.
+///
+/// A build that reports the commit and another digest for one of the
+/// Freight's images, when no read build reports the Freight's, leaves the
+/// link a claim with the digests as its conflicts.
 fn build_freight(
     builds: &[Build],
     names: &CommitNames,
     sha: &str,
     freight: &Freight,
     key: &Key,
-) -> (Hop, Confidence, String, Vec<Observation>) {
+    builds_capped: bool,
+) -> (
+    Hop,
+    Confidence,
+    String,
+    Vec<Observation>,
+    Vec<DigestConflict>,
+) {
     let summary = freight_summary(freight, sha);
     let mut seen = observe::builds_side(builds, names, key);
     if matches!(key, Key::Digest(_)) {
         seen.extend(observe::freight_side(freight, key));
-        return (Hop::PipelineRun, Confidence::Confirmed, summary, seen);
+        return (
+            Hop::PipelineRun,
+            Confidence::Confirmed,
+            summary,
+            seen,
+            Vec::new(),
+        );
     }
     if builds.is_empty() {
         let mut seen = vec![observe::change(sha)];
         seen.extend(observe::freight_side(freight, key));
-        return (Hop::Commit, Confidence::Confirmed, summary, seen);
+        return (
+            Hop::Commit,
+            Confidence::Confirmed,
+            summary,
+            seen,
+            Vec::new(),
+        );
     }
     let reported = seen.iter().any(|seen| seen.fact == Fact::Reported);
     seen.extend(observe::freight_side(freight, key));
-    if reported {
+    let conflicts = digest_conflicts(builds, names, sha, freight, builds_capped);
+    if !conflicts.is_empty() {
         seen.retain(|seen| seen.fact == Fact::Reported);
-        (Hop::PipelineRun, Confidence::Confirmed, summary, seen)
+        seen.extend(observe::conflict_sides(builds, freight, &conflicts));
+        let reason = format!("{}; {summary}", conflict_reason(sha, &conflicts));
+        (
+            Hop::PipelineRun,
+            Confidence::Claimed,
+            reason,
+            seen,
+            conflicts,
+        )
+    } else if reported {
+        seen.retain(|seen| seen.fact == Fact::Reported);
+        (
+            Hop::PipelineRun,
+            Confidence::Confirmed,
+            summary,
+            seen,
+            Vec::new(),
+        )
     } else {
         let tie = if builds
             .iter()
@@ -376,6 +435,7 @@ fn build_freight(
             Confidence::Claimed,
             format!("the Freight reports the commit; the build's tie to it is {tie}; {summary}"),
             seen,
+            Vec::new(),
         )
     }
 }
@@ -541,19 +601,21 @@ pub fn join(evidence: &Evidence) -> Trail {
             ),
         ));
     }
+    let builds_capped = evidence.builds.capped().is_some();
     for (freight, key) in &matched {
-        let (from, confidence, reason, seen) = build_freight(builds, names, sha, freight, key);
-        links.push(
-            Link::new(
-                from,
-                Hop::Freight,
-                id(&freight.project, &freight.name),
-                key.clone(),
-                confidence,
-                reason,
-            )
-            .observed(seen),
-        );
+        let (from, confidence, reason, seen, conflicts) =
+            build_freight(builds, names, sha, freight, key, builds_capped);
+        let mut link = Link::new(
+            from,
+            Hop::Freight,
+            id(&freight.project, &freight.name),
+            key.clone(),
+            confidence,
+            reason,
+        )
+        .observed(seen);
+        link.conflicts = conflicts;
+        links.push(link);
         links.extend(stage_links(evidence, freight));
     }
     Trail {

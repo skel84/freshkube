@@ -2,8 +2,9 @@
 
 use std::collections::BTreeSet;
 
+use super::digest::Digest;
 use super::fixtures::*;
-use super::join::{Confidence, Hop, Key, Link, Trail, render};
+use super::join::{BuiltDigest, Confidence, DigestConflict, Hop, Key, Link, Trail, render};
 use super::observation::{Fact, Observation, role};
 use super::source::Source;
 use super::tests::{
@@ -488,6 +489,191 @@ async fn a_sha_joined_freight_whose_build_reports_the_commit_stays_confirmed() {
     );
 }
 
+const COMPLETED: &str = "2026-10-01T09:30:00Z";
+/// A digest of this repository that no Freight holds: another build of the
+/// commit.
+const REBUILT: &str = "sha256:3333333333333333333333333333333333333333333333333333333333333333";
+
+/// A succeeded build of `name` whose clone task reports `SHA` and whose
+/// results report `digest` for the image at `url`, finished at `COMPLETED`.
+fn build_of_sha(name: &str, url: &str, digest: &str) -> (serde_json::Value, serde_json::Value) {
+    let mut run_value = pipeline_run(SHA, false, Some(digest));
+    run_value["metadata"]["name"] = serde_json::json!(name);
+    run_value["status"]["results"][0]["value"] = serde_json::json!(url);
+    run_value["status"]["completionTime"] = serde_json::json!(COMPLETED);
+    (run_value, clone_task_run(name, SHA))
+}
+
+/// The healthy world, whose Freight holds `NEW` and names `SHA`, built by
+/// `builds`, with a task run besides each clone.
+fn conflict_world(builds: Vec<(serde_json::Value, serde_json::Value)>) -> World {
+    let mut world = healthy().with_meta();
+    let (runs, clones): (Vec<_>, Vec<_>) = builds.into_iter().unzip();
+    let mut tasks = vec![task_run()];
+    tasks.extend(clones);
+    world.tekton = world
+        .tekton
+        .with("pipelineruns", runs)
+        .with("taskruns", tasks);
+    world
+}
+
+fn tagged() -> String {
+    format!("{REPO}:v1.4.0")
+}
+
+#[tokio::test]
+async fn a_sha_joined_freight_no_build_reports_by_its_digest_is_a_claim_with_a_conflict() {
+    let world = conflict_world(vec![build_of_sha("storefront-push-x", &tagged(), REBUILT)]);
+    let trail = run(&world, &ENV).await;
+    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+    assert_eq!(freight.key, Key::Sha(SHA.into()));
+    assert_eq!(freight.confidence, Confidence::Claimed);
+    assert_eq!(
+        freight.conflicts,
+        vec![DigestConflict {
+            repository: REPO.into(),
+            freight: Digest::parse(NEW).unwrap(),
+            builds: vec![BuiltDigest {
+                build: "acme-builds/storefront-push-x".into(),
+                digest: Digest::parse(REBUILT).unwrap(),
+                completed: Some(COMPLETED.into()),
+            }],
+        }]
+    );
+    assert!(
+        freight.reason.starts_with(&format!(
+            "no build read for aaaaaaa reports this Freight's digest ({REPO}@sha256:111111111111); \
+             acme-builds/storefront-push-x reported sha256:333333333333, completed {COMPLETED}; "
+        )),
+        "{}",
+        freight.reason
+    );
+    // Both sides stand on what was reported: the build's commit and digest,
+    // the Freight's commit and digest.
+    for hop in [Hop::PipelineRun, Hop::Freight] {
+        assert!(stands_on(freight, hop), "{hop:?}: {freight:#?}");
+    }
+    assert!(
+        freight
+            .evidence
+            .iter()
+            .all(|seen| seen.fact == Fact::Reported)
+    );
+    let reports = |kind: &str, value: &str| {
+        freight
+            .evidence
+            .iter()
+            .any(|seen| seen.object.kind == kind && seen.value.as_deref() == Some(value))
+    };
+    assert!(reports("PipelineRun", REBUILT), "{freight:#?}");
+    assert!(reports("Freight", NEW), "{freight:#?}");
+    // A claim, never a failure: the chain on from the Freight is unchanged.
+    assert_eq!(trail.running(), Some(Confidence::Confirmed));
+    assert!(
+        trail
+            .summary()
+            .ends_with("; 1 link has a digest no read build reports"),
+        "{}",
+        trail.summary()
+    );
+    assert!(render(&trail).contains("no build read for aaaaaaa"));
+}
+
+#[tokio::test]
+async fn a_rebuild_that_reports_the_freights_digest_confirms_it_with_no_conflict() {
+    let world = conflict_world(vec![
+        build_of_sha("storefront-push-x", &tagged(), REBUILT),
+        build_of_sha("storefront-push-y", &tagged(), NEW),
+    ]);
+    let trail = run(&world, &ENV).await;
+    let freight = one(&trail, Hop::PipelineRun, Hop::Freight);
+    assert_eq!(freight.key, Key::Digest(Digest::parse(NEW).unwrap()));
+    assert_eq!(freight.confidence, Confidence::Confirmed);
+    assert!(freight.conflicts.is_empty(), "{freight:#?}");
+    assert!(!trail.summary().contains("no read build reports"));
+}
+
+/// What each exclusion leaves: today's confidence and no conflict.
+fn no_conflict(trail: &Trail, confidence: Confidence) {
+    let freight = one(trail, Hop::PipelineRun, Hop::Freight);
+    assert_eq!(freight.key, Key::Sha(SHA.into()), "{freight:#?}");
+    assert_eq!(freight.confidence, confidence, "{}", freight.reason);
+    assert!(freight.conflicts.is_empty(), "{freight:#?}");
+    assert!(
+        !freight.reason.contains("no build read"),
+        "{}",
+        freight.reason
+    );
+    assert!(!trail.summary().contains("no read build reports"));
+}
+
+#[tokio::test]
+async fn a_build_tied_to_the_commit_by_declared_fields_never_conflicts() {
+    // The label and a revision parameter, no result: the build may be of
+    // another commit.
+    let mut world = healthy().with_meta();
+    world.tekton = world
+        .tekton
+        .with("pipelineruns", vec![pipeline_run(SHA, true, Some(REBUILT))])
+        .with("taskruns", vec![task_run()]);
+    no_conflict(&run(&world, &ENV).await, Confidence::Claimed);
+}
+
+#[tokio::test]
+async fn a_capped_build_listing_never_conflicts() {
+    let mut world = conflict_world(vec![build_of_sha("storefront-push-x", &tagged(), REBUILT)]);
+    world.tekton = world.tekton.capped("pipelineruns");
+    no_conflict(&run(&world, &ENV).await, Confidence::Confirmed);
+}
+
+#[tokio::test]
+async fn a_build_whose_task_runs_were_not_read_never_conflicts() {
+    // The run's own result reports the commit; its tasks may hold the
+    // Freight's digest.
+    let (mut run_value, _) = build_of_sha("storefront-push-x", &tagged(), REBUILT);
+    run_value["status"]["results"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"name": "commit", "value": SHA}));
+    let mut world = healthy().with_meta();
+    world.tekton = world
+        .tekton
+        .with("pipelineruns", vec![run_value])
+        .refusing("taskruns");
+    no_conflict(&run(&world, &ENV).await, Confidence::Confirmed);
+}
+
+#[tokio::test]
+async fn a_build_that_has_not_succeeded_never_conflicts() {
+    for status in ["Unknown", "False"] {
+        let (mut run_value, clone) = build_of_sha("storefront-push-x", &tagged(), REBUILT);
+        run_value["status"]["conditions"][0]["status"] = serde_json::json!(status);
+        let world = conflict_world(vec![(run_value, clone)]);
+        no_conflict(&run(&world, &ENV).await, Confidence::Confirmed);
+    }
+}
+
+#[tokio::test]
+async fn a_build_with_no_image_or_another_repository_never_conflicts() {
+    no_conflict(
+        &run(&sha_joined(true, Some(SHA)), &ENV).await,
+        Confidence::Confirmed,
+    );
+    let other = "registry.example/acme/checkout:v2.0.0";
+    let world = conflict_world(vec![build_of_sha("storefront-push-x", other, REBUILT)]);
+    no_conflict(&run(&world, &ENV).await, Confidence::Confirmed);
+}
+
+#[tokio::test]
+async fn a_freight_image_with_a_tag_only_never_conflicts() {
+    let mut world = conflict_world(vec![build_of_sha("storefront-push-x", &tagged(), REBUILT)]);
+    let mut item = freight("f-new", NEW, SHA);
+    item["images"][0].as_object_mut().unwrap().remove("digest");
+    world.kargo = world.kargo.with("freights", vec![item]);
+    no_conflict(&run(&world, &ENV).await, Confidence::Confirmed);
+}
+
 #[tokio::test]
 async fn chains_signed_annotation_is_a_claim_never_a_confirmation() {
     let signed = |annotation: Option<&str>| {
@@ -831,6 +1017,7 @@ fn the_rule_fails_on_a_side_with_nothing_read() {
         confidence: Confidence::Confirmed,
         reason: String::new(),
         evidence,
+        conflicts: Vec::new(),
     };
     let declared =
         Observation::declared(role::ENVIRONMENT, object("Rollout"), "/spec", Some(digest));

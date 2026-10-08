@@ -181,6 +181,29 @@ pub(super) fn builds_side(builds: &[Build], names: &CommitNames, key: &Key) -> V
     }
 }
 
+/// The two sides of each conflict: the result where a build reported its
+/// digest, and the Freight's images holding another.
+pub(super) fn conflict_sides(
+    builds: &[Build],
+    freight: &Freight,
+    conflicts: &[super::DigestConflict],
+) -> Vec<Observation> {
+    let mut seen = Vec::new();
+    for conflict in conflicts {
+        for built in &conflict.builds {
+            let build = builds
+                .iter()
+                .find(|build| format!("{}/{}", build.run.namespace, build.run.name) == built.build);
+            seen.extend(build.and_then(|build| built_image(build, &built.digest)));
+        }
+        seen.extend(freight_side(
+            freight,
+            &Key::Digest(conflict.freight.clone()),
+        ));
+    }
+    seen
+}
+
 // ---- Kargo -----------------------------------------------------------
 
 /// The Freight side of a link on `key`: the digest or the commit that the
