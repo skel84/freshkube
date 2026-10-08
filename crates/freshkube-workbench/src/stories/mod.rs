@@ -5,6 +5,7 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{AnyView, App, Window};
 
+pub mod change;
 pub mod data_table;
 pub mod dock;
 pub mod drawer;
@@ -31,6 +32,12 @@ pub const STORIES: &[Story] = &[
         title: "DataTable",
         icon: || IconName::Boxes,
         build: data_table::build,
+    },
+    Story {
+        slug: "change-trail",
+        title: "Change page",
+        icon: || IconName::Waypoints,
+        build: change::build,
     },
     Story {
         slug: "graph",
