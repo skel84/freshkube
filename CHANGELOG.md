@@ -4,6 +4,197 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.9.0 (2026-10-08)
+
+### Other changes
+
+- **Changed rows flash:** on the Resources page, a row whose pod changes
+  state, reason or restarts, or whose object's status changes, is tinted
+  briefly as the watch reports it. A reload flashes nothing, and a burst of
+  changes starts no new flashes while rows already tinted fade on. Reduced
+  motion turns the flash off.
+- **One loading state:** Health, etcd, Security, Lifecycle and the node
+  pane's Processes, Storage, Network and Diagnostics tabs now show their
+  table's header over the same pulsing loading rows as Pods while their
+  first answer is to come, instead of a block of grey bars.
+- **Less duplicated code:** the desktop app uses the shared helpers for
+  plurals, digit grouping, bounded config reads, base64 and column widths
+  instead of local copies, and drops unused icon entries, wrappers and
+  port-table code. Two things you can see: a missing or unreadable
+  talosconfig now reads "Cannot open talosconfig: file not found" or
+  "Cannot open talosconfig: permission denied" in place of the operating
+  system's text, and a packet capture's save dialog starts in the Downloads
+  folder: the XDG one on Linux, else the home folder, and the Downloads
+  folder on Windows, instead of the temp folder.
+- **Sidebar:** in the folded sidebar, Lifecycle now has the same icon as in the open one.
+- **Loading tables cost less:** while Pods, Nodes or System services wait
+  for their first answer, the moving loading rows no longer redraw the
+  page, the header, the rail or the column on every frame. Refresh buttons
+  show a read in flight with an accent icon and "Refreshing…" instead of a
+  spinner. Nodes now draws its table's header over the loading rows from
+  the first frame, before Talos or Kubernetes answers.
+- **Delivery trails no longer confirm a build from declared fields alone:**
+  a build ties to a commit only when a result reports it (the run's, then its
+  TaskRuns'); a PaC label and a revision parameter that agree are two declared
+  fields, so Commit → PipelineRun, Pull request → PipelineRun and a Pull
+  request → Freight joined through a head build are Claimed, and so is a link
+  whose build reports other commits. A Freight that joins on the commit stays
+  Confirmed only when a build reports it, becomes Claimed when the build's tie
+  is declared, and with no build, the commit joins the Freight directly.
+  Chains' `signed` annotation is now a claim, since nothing verifies the
+  signature, so no supply-chain link is Confirmed. The Rollout links are
+  unchanged.
+- **Rollouts confirmed by what runs:** a change's trail confirms a Rollout
+  only from what the cluster reports. Its pods count when their owner
+  references lead through a ReplicaSet to the Rollout and they carry its
+  current pod hash, so a canary's stable pods and a sidecar's image are
+  never judged. The Application's link to the Rollout needs Argo CD's image
+  summary to list the digest and those pods to run it. A spec that only
+  pins the digest is shown as claimed, with what is missing.
+- **Port forwards on Windows:** starting a forward no longer freezes the window while Windows checks the port, which can take a couple of seconds; it shows Starting until the port answers. A typed local port that Windows reserves says so and offers "Use an automatic port", instead of a bare bind error.
+- **One way to say how long:** Needs attention gives how long a node has
+  been NotReady as Pods does, in days past a day ("NotReady for 198d"),
+  instead of a count of hours ("4775 h").
+- **Health's details open beside or under the table only when you pick a row:**
+  Health (workloads) no longer keeps an empty "Select a namespace,
+  workload or pod" card beside or under its table. Picking a row opens the
+  shared inspector, as Nodes and Incidents have it: beside the table on a
+  wide window and under it on a narrow one, resizable, with its width
+  remembered. Escape clears the filters first, then closes it.
+- **Lifecycle's details open beside or under the roster only when you pick
+  a node or an alert:** they now use the shared inspector, as Nodes and
+  Incidents do: beside the roster when the window has room for it whole,
+  under it otherwise, resizable, with its width remembered. Escape closes
+  it.
+- **Diagnostics judged from what was read:** the Cilium operator, Hubble
+  Relay and cert-manager states are now read with the rest of a node's
+  diagnostics, and one function derives every check from them, with tests
+  for refused and failed reads. Nothing on screen changes.
+- **One set of Diagnostics rules:** the example data's Diagnostics are now
+  judged by the same rules as a live node's, instead of a hand-written
+  copy of them. Nothing on screen changes.
+- **A smaller cluster refresh:** the Talos overview's refresh is split into
+  one step per source, with tests that a failed discovery or Kubernetes
+  roster keeps the nodes already known. Nothing on screen changes.
+- **Lifecycle is a table page:** it has the toolbar header and draws the
+  node roster edge to edge, without a card, as Pods does. The first read
+  shows the roster's loading rows under its header. A node's or an alert's
+  details open beside the roster, or below it when it wouldn't fit whole,
+  only when one is selected. The alerts follow in a section under a
+  hairline, and the etcd check and sources cards sit side by side when
+  there is room.
+- **Operations' node table matches the other tables:** the nodes an
+  operation runs on are listed in the shared table, edge to edge under the
+  toolbar, with sentence-case column labels in place of uppercase ones.
+  The row the arrows are on is highlighted as a selection, and nodes in the
+  run are marked, with their order in the Order column. The plan sits
+  beside the table, or under it in a narrow window. Review still opens the
+  confirmation before anything runs.
+- **Observability's column stays put:** its caption and rows now sit where
+  every other column's do, so switching areas no longer makes the column
+  jump.
+- **Readable flame graph hover:** on Observability → Profiling and an
+  application's live profiles, a frame under the pointer now turns a little
+  lighter in its own colour instead of a pale fill, so its white label stays
+  readable in the light theme. Tab still reaches each frame, now with a focus
+  ring, and Enter zooms it.
+- **Deployments in a narrow window:** when Observability → Deployments
+  stacks Releases above What changed, each now spans the page instead of
+  keeping only its own width.
+- **Cut navigation shows it scrolls:** when the rail or a column is too
+  short for its items, as in a small window or at a large text size, the
+  edge it cuts fades into the background, and the icon strips (the rail and
+  a collapsed column) keep a thin scrollbar. An item brought into view,
+  such as the page you open, stops clear of the fade.
+- **Observability:** an application's example threshold dialog reads the report tab on screen, with its title and default (CPU threshold, 85), and saves under that report, instead of always using the report the application opened on.
+- **Header fixes:** the Refresh button's tooltip counts down with the ring while it's open, and reads "Refreshing…" while a refresh runs, instead of keeping the number it opened with. The Settings gear goes back to its idle colour when Settings closes from a click elsewhere, instead of keeping its hover colour until the pointer moves.
+- **Opening from Finder with only a kubeconfig:** a default talosconfig
+  that lists no contexts, such as an empty stub, now counts as absent, so
+  the app starts in Kubernetes-only mode as it does without the file. A
+  named talosconfig, or a default file that can't be read or parsed, stays in
+  Talos mode and keeps saying what's wrong.
+- **Kubernetes only from inside the app:** the "can't read your talosconfig"
+  screen has a **Use Kubernetes only** button, and the context switcher in
+  Talos mode has a **Use Kubernetes only…** entry. Both open the kubeconfig
+  chooser; nothing connects until you pick a file and then a context, and
+  choosing another kubeconfig file in Settings works the same way. The
+  switch asks first when a shell is open, as another connection does; port
+  forwards keep running on the connection they started with. The choice is
+  remembered, so the next launch opens on that kubeconfig and context;
+  choosing a talosconfig again returns to Talos and is remembered. A
+  terminal's options and its `KUBECONFIG` or `TALOSCONFIG` still win. A
+  kubeconfig that can't be read now gets its own message in Kubernetes-only
+  mode instead of the talosconfig one.
+- **No false "No node selected":** while the Talos overview is still loading,
+  etcd, Security, Lifecycle, Health, Operations and the node pane's Processes,
+  Storage, Network and Diagnostics tabs show their loading state instead. If
+  the first read fails they say so, with a Retry. "No node selected" now
+  appears only once the overview has answered with no node to pick, and its
+  hint points to the Nodes page.
+- **Security lists its audit in the shared table, with details only when
+  you pick a row:** certificates, the RBAC role and volume encryption are
+  group rows in the table every other page uses, edge to edge under the
+  toolbar, each showing its worst status and how many rows it holds. The
+  stat cards and banners sit above it. Picking a row opens the shared
+  inspector, beside the table on a wide window and under it on a narrow
+  one, resizable, with its width remembered; Escape closes it. A renewed
+  certificate stays selected, and a row a refresh drops keeps its name
+  there, marked as no longer listed.
+- **Back to Talos keeps your context:** going from Kubernetes-only mode back
+  to Talos now uses the kubeconfig context you picked, not the file's current
+  one. If that context belongs to another cluster than the Talos one, or is no
+  longer in the file, it is refused with a message, and no other context is
+  tried in its place.
+- **Service map's Inspector stays beside the map:** dragging the Inspector
+  wider now stops at the map's edge. A width saved wider than that no longer
+  moves the Inspector under the map for good, where it had no edge to drag
+  back.
+- **Overview no longer says "Connected" too early:** until the cluster
+  answers, its heading says "Connecting…", as the header does, and
+  "Couldn't connect" when connecting failed.
+- **Health waits for the cluster in Kubernetes-only mode:** it shows its
+  loading state until the Kubernetes summary first answers, instead of
+  briefly saying no node is selected. When the kubeconfig or its context
+  can't be read, it says why, with a Retry that reads the kubeconfig and
+  connects again; with no context chosen, it asks for one.
+- **Internal:** `talos-rs` drops unused `talosctl` helpers and the single-variant `RebootMode`, and `rustls` is now a dev-dependency there.
+- **Connected means Talos answered:** the cluster overview reports a Talos
+  context as connected only when Talos answered the latest refresh. A node
+  list kept from earlier or read from Kubernetes no longer counts. Nothing
+  on screen changes.
+- **Design docs match the pages:** DESIGN.md and the guide to adding a
+  screen say which pages show a selection in the shared Inspector and
+  which keep a fixed detail pane, and name the layout checks for the
+  Inspector and the Resources drawer.
+- **Request guard in core:** the guard that cancels a page's background
+  request when the page moves on now lives in `freshkube-core`, with tests
+  of its deadline and cancellation, so Monitoring can become a crate of its
+  own. Nothing on screen changes.
+- **Layout checks beside the components:** the tests that measure a page against the design now live in the shared UI crate, behind its testing feature, beside the components they measure. Nothing on screen changes.
+- **Monitoring in its own crate:** the dashboards and the history charts
+  now build as `freshkube-monitoring`, apart from the rest of the app.
+  Nothing changes on screen.
+- **Page widths in the shared components:** the widths pages compare their
+  breakpoints with now live in `freshkube-ui`, so Monitoring can become a
+  crate of its own. Every page lays out as before.
+- **Secret store in core:** the interface Monitoring and Coroot use to
+  remember a key in the system's credential store now lives in
+  `freshkube-core`, with tests, so Monitoring can become a crate of its own.
+  The Keychain, Credential Manager and Secret Service access stays in the
+  app. Nothing on screen changes.
+- **Named connection state:** the header's context switcher and Overview's
+  heading read the connection as connecting, connected or failed, rather
+  than as a number. Nothing you see changes.
+- **Lifecycle names a Talos it has no support range for:** the cluster
+  card said "Talos v1.13.2 supports not in the support table"; it now says
+  "Talos v1.13.2 isn't in the support table".
+- **No crate can be published by mistake:** `freshkube-core`, `talos-rs`
+  and the `freshkube` binary now set `publish = false`, as the other
+  workspace crates do, since Freshkube ships as an app.
+- **One wait for a stacked inspector's row:** Nodes and Health share the
+  code that keeps the opened row in view while a stacked inspector settles
+  the table's height. Nothing changes on screen.
+
 ## 0.8.0 (2026-10-07)
 
 ### Coroot
