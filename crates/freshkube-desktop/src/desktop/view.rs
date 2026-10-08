@@ -39,6 +39,11 @@ impl Render for Pilot {
                 .clone()
                 .cached(cached_page_style())
                 .into_any_element(),
+            Page::Applications => self
+                .applications
+                .clone()
+                .cached(cached_page_style())
+                .into_any_element(),
             Page::Resources => self
                 .resources
                 .clone()
@@ -201,6 +206,7 @@ impl Pilot {
         match self.page {
             Page::Resources => self.resources.read(cx).loading_motion(),
             Page::Observability => self.observability.read(cx).loading_motion(cx),
+            Page::Applications => self.applications.read(cx).loading_motion(),
             _ if self.kubernetes_only.is_some()
                 && !matches!(self.page, Page::Overview | Page::Health | Page::Nodes) =>
             {
