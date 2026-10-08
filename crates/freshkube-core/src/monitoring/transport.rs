@@ -47,13 +47,6 @@ enum Transport {
     },
 }
 
-/// What the server says it is. Servers other than Prometheus may not
-/// answer `buildinfo`, or answer with the Prometheus version they imitate.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BuildInfo {
-    pub version: Option<String>,
-}
-
 /// A panel's data, with the PromQL that was sent for it, after
 /// interpolation, for the page to show on hover.
 #[derive(Clone, Debug, Default)]
@@ -279,8 +272,10 @@ impl Prometheus {
         Ok(())
     }
 
-    /// The version from `/api/v1/status/buildinfo`.
-    pub async fn build_info(&self) -> Result<BuildInfo, QueryError> {
+    /// The version from `/api/v1/status/buildinfo`. Servers other than
+    /// Prometheus may not answer it, or answer with the Prometheus version
+    /// they imitate.
+    pub async fn read_version(&self) -> Result<String, QueryError> {
         let value = self
             .get(&ApiRequest::new("status/buildinfo", Vec::new()))
             .await?;
@@ -290,9 +285,7 @@ impl Prometheus {
             .and_then(Value::as_str)
             .filter(|version| !version.is_empty())
             .ok_or_else(|| bad_answer("The answer has no Prometheus version"))?;
-        Ok(BuildInfo {
-            version: Some(version.to_owned()),
-        })
+        Ok(version.to_owned())
     }
 
     /// The scrape interval most active targets use, from `/api/v1/targets`,

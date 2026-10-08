@@ -5,8 +5,8 @@
 //! what was looked for and the candidates to pick from), refused and failed.
 use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::monitoring::{
-    Backend, BuildInfo, Candidate, Discovery, ErrorKind, Prometheus, PrometheusService, QueryError,
-    Tried, cluster_client, confirm, confirm_url, discover, forget_after,
+    Backend, Candidate, Discovery, ErrorKind, Prometheus, PrometheusService, QueryError, Tried,
+    cluster_client, confirm, confirm_url, discover, forget_after,
 };
 use gpui_kit::{Context, SharedString};
 
@@ -214,11 +214,11 @@ impl MonitoringPage {
     /// The answer for a source chosen in Settings: nothing else is tried.
     fn confirmed(
         &mut self,
-        result: Result<(Prometheus, BuildInfo), QueryError>,
+        result: Result<(Prometheus, Option<String>), QueryError>,
         cx: &mut Context<Self>,
     ) {
         match result {
-            Ok((prometheus, build)) => self.use_prometheus(prometheus, build, cx),
+            Ok((prometheus, version)) => self.use_prometheus(prometheus, version, cx),
             Err(error) => {
                 self.discovered(Err(error), cx);
             }
@@ -232,8 +232,10 @@ impl MonitoringPage {
     ) {
         match result {
             Ok(Discovery::Found {
-                prometheus, build, ..
-            }) => self.use_prometheus(prometheus, build, cx),
+                prometheus,
+                version,
+                ..
+            }) => self.use_prometheus(prometheus, version, cx),
             Ok(Discovery::Missing { candidates, tried }) => {
                 self.connection = Connection::missing(candidates, tried);
             }
@@ -264,7 +266,7 @@ impl MonitoringPage {
             },
             cx,
             |this, result, cx| match result {
-                Ok((prometheus, build)) => this.use_prometheus(prometheus, build, cx),
+                Ok((prometheus, version)) => this.use_prometheus(prometheus, version, cx),
                 Err(error) if error.is_refused() => this.discovered(Err(error), cx),
                 Err(error) => this.confirm_failed(error, cx),
             },
@@ -290,9 +292,14 @@ impl MonitoringPage {
         cx.notify();
     }
 
-    fn use_prometheus(&mut self, prometheus: Prometheus, build: BuildInfo, cx: &mut Context<Self>) {
+    fn use_prometheus(
+        &mut self,
+        prometheus: Prometheus,
+        version: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let label = prometheus.endpoint().label().into();
-        let version = describe(prometheus.endpoint().backend(), &build).into();
+        let version = describe(prometheus.endpoint().backend(), version.as_deref()).into();
         if let Some(context) = self.context()
             && !self.saved.choices.contains_key(&context)
             && let Some(service) = prometheus.service().cloned()
@@ -329,8 +336,8 @@ impl MonitoringPage {
 /// The server and its version, as the source's tooltip says it.
 /// VictoriaMetrics answers `buildinfo` with the Prometheus version it
 /// imitates, so its own name stands alone.
-pub(super) fn describe(backend: Backend, build: &BuildInfo) -> String {
-    match (&build.version, backend) {
+pub(super) fn describe(backend: Backend, version: Option<&str>) -> String {
+    match (version, backend) {
         (Some(version), Backend::Prometheus | Backend::Thanos | Backend::Mimir) => {
             format!("{} {version}", backend.label())
         }

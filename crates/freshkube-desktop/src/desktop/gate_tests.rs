@@ -17,8 +17,8 @@ use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, Window};
 
 const PATIENCE: Duration = Duration::from_secs(5);
-/// What a page shows while its first answer is to come: a table's loading
-/// rows, or the old skeleton on Operations, which isn't a table yet.
+/// What a page shows while its first answer is to come: its table's
+/// loading rows.
 const WAITING: [&str; 9] = [
     "etcd-loading",
     "security-loading",
@@ -28,7 +28,7 @@ const WAITING: [&str; 9] = [
     "storage-loading",
     "network-loading",
     "diagnostics-loading",
-    "screen-waiting",
+    "ops-loading",
 ];
 const UNREACHABLE: &str = "screen-unreachable";
 const NO_NODE: &str = "screen-no-node";
