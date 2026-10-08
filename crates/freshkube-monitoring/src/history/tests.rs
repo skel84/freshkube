@@ -12,6 +12,7 @@ fn example() -> Option<HistorySource> {
     Some(HistorySource {
         id: "example".into(),
         kind: HistoryKind::Example,
+        client: 0,
     })
 }
 
@@ -168,6 +169,7 @@ fn another_pod_or_cluster_starts_over(cx: &mut TestAppContext) {
             Some(HistorySource {
                 id: "other".into(),
                 kind: HistoryKind::Example,
+                client: 0,
             }),
             cx,
         )
@@ -241,4 +243,30 @@ fn the_cursor_on_one_chart_shows_on_the_other(cx: &mut TestAppContext) {
         assert!(linked.crosshair(1).is_some());
         assert!(linked.crosshair(0).is_none());
     });
+}
+
+#[gpui_kit::test]
+fn a_rebuilt_client_reads_again_through_it(cx: &mut TestAppContext) {
+    let (_runtime, _handle, history) = mount(cx);
+    update(cx, &history, |view, cx| {
+        view.set_source(example(), cx);
+        view.set_subject(pod("api-7f9c6d-2xk4p"), cx);
+        view.set_visible(true, cx);
+    });
+    cx.run_until_parked();
+    let asks = |cx: &mut TestAppContext| cx.read(|cx| history.read(cx).asks());
+    assert_eq!(asks(cx), 1);
+
+    // The same source again keeps the answer; one whose client the page
+    // built again reads at once, without waiting for the minute.
+    update(cx, &history, |view, cx| view.set_source(example(), cx));
+    assert_eq!(asks(cx), 1);
+    update(cx, &history, |view, cx| {
+        let mut source = example();
+        source.as_mut().unwrap().client = 1;
+        view.set_source(source, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(asks(cx), 2);
+    assert_eq!(answered(cx, &history), 2);
 }

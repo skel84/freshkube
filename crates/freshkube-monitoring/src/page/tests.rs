@@ -1684,3 +1684,210 @@ fn held_example_data_leaves_the_table_on_its_loading_rows_with_their_motion(
     assert!(!shown(cx, handle, &loading));
     assert_eq!(motions(cx), 0);
 }
+
+/// A fake API server on loopback, through which every client of
+/// `FakeCluster` reaches it. Lists are empty, a variable's values are
+/// `a`, and every other read through the proxy answers `panels`.
+fn fake_api(runtime: &tokio::runtime::Runtime, panels: u16) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    runtime.spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buffer = vec![0; 16 * 1024];
+                let mut read = 0;
+                while !buffer[..read].windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut buffer[read..]).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => read += n,
+                    }
+                }
+                let head = String::from_utf8_lossy(&buffer[..read]);
+                let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+                let (status, body) = if path.contains("/proxy/api/v1/label/") {
+                    (200, r#"{"status":"success","data":["a"]}"#)
+                } else if path.contains("/proxy/api/v1/series") {
+                    (
+                        200,
+                        r#"{"status":"success","data":[{"node":"a","namespace":"a"}]}"#,
+                    )
+                } else if path.contains("/proxy/") {
+                    (panels, "the proxy says no")
+                } else {
+                    (
+                        200,
+                        r#"{"apiVersion":"v1","kind":"List","metadata":{"resourceVersion":"1"},"items":[]}"#,
+                    )
+                };
+                let answer = format!(
+                    "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(answer.as_bytes()).await;
+            });
+        }
+    });
+    format!("http://{address}")
+}
+
+/// A live cluster at `fake_api`, counting what it was told to forget.
+struct FakeCluster {
+    url: String,
+    forgot: std::sync::atomic::AtomicUsize,
+}
+
+impl FakeCluster {
+    fn new(url: String) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            url,
+            forgot: Default::default(),
+        })
+    }
+
+    fn forgot(&self) -> usize {
+        self.forgot.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl KubeClientSource for FakeCluster {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
+        let config = kube::Config::new(self.url.parse().unwrap());
+        Box::pin(async move { kube::Client::try_from(config).map_err(|error| error.to_string()) })
+    }
+
+    fn forget(&self) {
+        self.forgot
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// The page Ready on a Service of `cluster`, as discovery leaves it, with
+/// the generation it was at.
+async fn ready_on(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    cluster: &std::sync::Arc<FakeCluster>,
+) -> (AnyWindowHandle, Entity<MonitoringPage>, u64) {
+    let source = ClusterSource {
+        id: "live".into(),
+        context: "prod-ams".into(),
+        access: ClusterAccess::Live(cluster.clone()),
+    };
+    let (handle, page) = mount_with(cx, runtime, Some(source), None, None);
+    show(cx, handle, &page);
+    settled(cx, handle, &page).await;
+    assert_eq!(cx.read(|cx| page.read(cx).connection_name()), "missing");
+    let client = runtime.block_on(cluster.client()).unwrap();
+    let service = PrometheusService::new("monitoring", "prometheus-operated", 9090);
+    let found = Discovery::Found {
+        prometheus: freshkube_core::monitoring::Prometheus::new(client, service),
+        version: None,
+        tried: Vec::new(),
+    };
+    let generation = cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let generation = page.generation;
+            page.discovered(Ok(found), cx);
+            generation
+        })
+    });
+    (handle, page, generation)
+}
+
+/// Waits until every panel asked in this generation has answered, the
+/// client isn't being built again, and `forgot` forgets were counted.
+async fn panels_answered(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    page: &Entity<MonitoringPage>,
+    cluster: &std::sync::Arc<FakeCluster>,
+    forgot: usize,
+) {
+    let (observed, cluster) = (page.clone(), cluster.clone());
+    cx.wait_for(handle, Duration::from_secs(10), move |_, cx| {
+        let page = observed.read(cx);
+        let Some(board) = &page.board else {
+            return false;
+        };
+        cluster.forgot() == forgot
+            && page.rebuild_name() != "building"
+            && board.resolving.is_none()
+            && board
+                .slots
+                .iter()
+                .any(|slot| slot.asked == Some(page.generation))
+            && board.slots.iter().all(|slot| slot.request.is_none())
+    })
+    .await;
+}
+
+#[gpui_kit::test]
+async fn panels_that_lose_the_cluster_build_its_client_again_once(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let cluster = FakeCluster::new(fake_api(&runtime, 503));
+    let (handle, page, generation) = ready_on(cx, &runtime, &cluster).await;
+
+    // The panels fail through the proxy: the client is forgotten and built
+    // again, and the variables and panels are read again through it, which
+    // history takes too.
+    panels_answered(cx, handle, &page, &cluster, 1).await;
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert_eq!(page.rebuild_name(), "used");
+        assert_eq!(page.generation, generation + 2);
+        assert_eq!(page.history().unwrap().client, 1);
+        // Every panel in reach failed, and they built it again only once.
+        let failed = page
+            .board
+            .as_ref()
+            .unwrap()
+            .slots
+            .iter()
+            .filter(|slot| slot.failed);
+        assert!(failed.count() >= 2);
+    });
+
+    // Failing again stays a failure, as on the next automatic read.
+    cx.update(|cx| page.update(cx, |page, cx| page.ask_again(cx)));
+    panels_answered(cx, handle, &page, &cluster, 1).await;
+    assert_eq!(cx.read(|cx| page.read(cx).rebuild_name()), "used");
+    assert_eq!(cluster.forgot(), 1);
+
+    // Refresh lets the next failure build it again.
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    panels_answered(cx, handle, &page, &cluster, 2).await;
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert_eq!(page.rebuild_name(), "used");
+        assert_eq!(page.history().unwrap().client, 2);
+    });
+}
+
+#[gpui_kit::test]
+async fn panels_refused_by_rbac_keep_the_client(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let cluster = FakeCluster::new(fake_api(&runtime, 403));
+    let (handle, page, generation) = ready_on(cx, &runtime, &cluster).await;
+
+    panels_answered(cx, handle, &page, &cluster, 0).await;
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert_eq!(page.rebuild_name(), "unused");
+        assert_eq!(page.generation, generation + 1);
+        assert_eq!(page.history().unwrap().client, 0);
+        assert!(
+            page.board
+                .as_ref()
+                .unwrap()
+                .slots
+                .iter()
+                .any(|slot| slot.failed)
+        );
+    });
+    assert_eq!(cluster.forgot(), 0);
+}
