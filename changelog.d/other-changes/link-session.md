@@ -1,1 +1,1 @@
-- Object links name the cluster they were made in, and a link made in another cluster than the open one is refused instead of opening a same-named object here.
+- A link from another cluster is refused instead of opening a same-named object in the cluster that's open.

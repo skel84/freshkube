@@ -118,7 +118,7 @@ pub(super) struct Summary {
 }
 
 impl Summary {
-    pub(super) fn new(view: &DocumentView, connection: &str) -> Self {
+    pub(super) fn new(view: &DocumentView, connection: Option<&str>) -> Self {
         let document = &view.document;
         let overview = &document.overview;
         Self {

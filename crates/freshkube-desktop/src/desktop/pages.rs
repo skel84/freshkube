@@ -595,6 +595,10 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Before anything moves: not the page, not the list.
+        if self.refuse_foreign_link(&object, window, cx) {
+            return;
+        }
         let object = resources::model::ObjectRef {
             namespace: if kind.namespaced {
                 object.namespace.clone()
@@ -607,9 +611,6 @@ impl Pilot {
             self.open_kind(kind, window, cx);
             return;
         };
-        if self.refuse_foreign_link(&object, window, cx) {
-            return;
-        }
         let identity = resources::model::ResourceIdentity {
             connection: source.id.clone(),
             resource: kind.key(),
@@ -636,6 +637,7 @@ impl Pilot {
 
     /// A link made in another cluster than the one that is open is never
     /// opened against this one: the same name here is a different object.
+    /// While no cluster is open, a link that names one is refused too.
     /// Says so and returns true.
     pub(super) fn refuse_foreign_link(
         &self,
@@ -646,7 +648,7 @@ impl Pilot {
         let Some(connection) = &object.connection else {
             return false;
         };
-        if self.kube_identity().is_none_or(|open| open == *connection) {
+        if self.kube_identity().is_some_and(|open| open == *connection) {
             return false;
         }
         window.push_notification(

@@ -626,9 +626,8 @@ impl DetailPane {
         let connection = self
             .detail
             .as_ref()
-            .map(|detail| detail.target.identity.connection.clone())
-            .unwrap_or_default();
-        self.summary = Some(Summary::new(&view, &connection));
+            .map(|detail| detail.target.identity.connection.clone());
+        self.summary = Some(Summary::new(&view, connection.as_deref()));
         self.rebuild_links();
         self.start_links(cx);
         self.matches = view.find(&self.query);

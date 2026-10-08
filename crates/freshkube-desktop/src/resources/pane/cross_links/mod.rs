@@ -18,7 +18,7 @@ impl OwnerLink {
     pub(in crate::resources::pane) fn new(
         owner: &Owner,
         namespace: &str,
-        connection: &str,
+        connection: Option<&str>,
     ) -> Self {
         Self {
             id: format!("owner-{}-{}-{}", owner.kind, namespace, owner.name).into(),
@@ -37,7 +37,7 @@ impl OwnerLink {
                 api_version: owner.api_version.clone(),
                 kind: owner.kind.clone(),
                 object: ObjectRef {
-                    connection: Some(connection.into()),
+                    connection: connection.map(Into::into),
                     namespace: namespace.into(),
                     name: owner.name.clone(),
                     uid: owner.uid.clone(),
@@ -147,7 +147,7 @@ fn owner_links(
     document: &ObjectDocument,
     links: Option<&PodLinks>,
     namespace: &str,
-    connection: &str,
+    connection: Option<&str>,
     errors: &mut Vec<SharedString>,
 ) -> Vec<OwnerLink> {
     let mut owners = document
@@ -182,7 +182,7 @@ fn owner_links(
 fn service_links(
     document: &ObjectDocument,
     links: Option<&PodLinks>,
-    connection: &str,
+    connection: Option<&str>,
     errors: &mut Vec<SharedString>,
 ) -> (Vec<ServiceLink>, SharedString) {
     let Some(links) = links else {
@@ -204,7 +204,7 @@ fn service_links(
                     id: format!("selected-service-{}-{}", service.namespace, service.name).into(),
                     label: service.name.clone().into(),
                     object: ObjectRef {
-                        connection: Some(connection.into()),
+                        connection: connection.map(Into::into),
                         namespace: service.namespace.clone(),
                         name: service.name.clone(),
                         uid: service.uid.clone(),
@@ -253,17 +253,20 @@ impl DetailPane {
         let connection = self
             .detail
             .as_ref()
-            .map(|detail| detail.target.identity.connection.clone())
-            .unwrap_or_default();
+            .map(|detail| detail.target.identity.connection.clone());
         let owners = owner_links(
             document,
             self.pod_links.as_ref(),
             namespace,
-            &connection,
+            connection.as_deref(),
             &mut errors,
         );
-        let (services, services_note) =
-            service_links(document, self.pod_links.as_ref(), &connection, &mut errors);
+        let (services, services_note) = service_links(
+            document,
+            self.pod_links.as_ref(),
+            connection.as_deref(),
+            &mut errors,
+        );
         let containers_note = if pod.containers.len() > 200 {
             format!("First 200 of {} containers", pod.containers.len()).into()
         } else {
