@@ -62,6 +62,8 @@ fn workload(namespace: &str, name: &str, part_of: &str) -> LabelledWorkload {
         name: name.into(),
         kind: WorkloadKind::Deployment,
         part_of: part_of.into(),
+        tracking_id: None,
+        instance: None,
     }
 }
 
@@ -258,6 +260,38 @@ fn a_workload_argo_cd_manages_goes_to_that_application_with_the_label_noted() {
         n,
         Note::LowerClaim { rule: Rule::PartOf, name, .. } if name == "storefront"
     )));
+}
+
+#[test]
+fn a_managed_workload_that_names_its_application_back_is_tracked() {
+    let mut core = session("core-fra");
+    core.argo_applications =
+        Source::Read(vec![argo("cart", managing("Deployment", "shop", "web"))]);
+    let named = |tracking_id: Option<&str>, instance: Option<&str>| {
+        let mut web = workload("shop", "web", "storefront");
+        web.tracking_id = tracking_id.map(str::to_owned);
+        web.instance = instance.map(str::to_owned);
+        web
+    };
+    let basis = |web: LabelledWorkload| {
+        let mut core = core.clone();
+        core.workloads = Source::Read(vec![web]);
+        let found = derived(vec![core]);
+        let cart = found.find(&app_id("cart")).unwrap();
+        cart.members
+            .iter()
+            .find(|m| m.at.name == "web")
+            .unwrap()
+            .basis
+    };
+    let tracked = named(Some("cart:apps/Deployment:shop/web"), None);
+    assert_eq!(basis(tracked), Basis::Tracked);
+    assert_eq!(basis(named(None, Some("cart"))), Basis::Tracked);
+    assert_eq!(basis(named(None, Some("argocd_cart"))), Basis::Tracked);
+    // Another Application's name, or none, leaves the inventory's word alone.
+    let other = named(Some("orders:apps/Deployment:shop/web"), Some("orders"));
+    assert_eq!(basis(other), Basis::ManagedBy);
+    assert_eq!(basis(named(None, None)), Basis::ManagedBy);
 }
 
 #[test]
@@ -1296,4 +1330,31 @@ fn splitting_off_the_member_that_crossed_clusters_drops_the_join_note() {
     assert_eq!(left.members[0].basis, Basis::Direct, "no longer a guess");
     let moved = found.find(&id(Rule::Manual, "prod web")).unwrap();
     assert_eq!(moved.members[0].basis, Basis::Override);
+}
+
+#[test]
+fn a_workloads_tracking_annotation_and_instance_label_are_read() {
+    let web = read::parse_labelled_workload(
+        &json!({"metadata": {
+            "namespace": "shop", "name": "web",
+            "labels": {"app.kubernetes.io/part-of": "storefront", "app.kubernetes.io/instance": " cart "},
+            "annotations": {"argocd.argoproj.io/tracking-id": "cart:apps/Deployment:shop/web"},
+        }}),
+        WorkloadKind::Deployment,
+    )
+    .unwrap();
+    assert_eq!(web.instance.as_deref(), Some("cart"));
+    assert_eq!(
+        web.tracking_id.as_deref(),
+        Some("cart:apps/Deployment:shop/web")
+    );
+    let bare = read::parse_labelled_workload(
+        &json!({"metadata": {
+            "namespace": "shop", "name": "web",
+            "labels": {"app.kubernetes.io/part-of": "storefront", "app.kubernetes.io/instance": ""},
+        }}),
+        WorkloadKind::Deployment,
+    )
+    .unwrap();
+    assert_eq!((bare.instance, bare.tracking_id), (None, None));
 }

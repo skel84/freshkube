@@ -21,6 +21,7 @@ use crate::delivery::kargo::{Stage, Warehouse};
 use crate::delivery::source::{Source, Truncation};
 use crate::workloads::WorkloadKind;
 
+pub mod claims;
 mod derive;
 pub mod example;
 mod overrides;
@@ -138,7 +139,8 @@ enum WorkloadKindDef {
 }
 
 impl MemberKind {
-    fn rank(self) -> u8 {
+    /// The order the kinds are listed in: Kargo, Argo CD, then workloads.
+    pub fn rank(self) -> u8 {
         match self {
             Self::KargoStage => 0,
             Self::KargoWarehouse => 1,
@@ -165,8 +167,12 @@ pub enum Basis {
     /// The rule's own object names it: a Project's Stage, an ApplicationSet's
     /// Application, a workload's `part-of` label.
     Direct,
-    /// Argo CD's inventory of an Application lists it.
+    /// Argo CD's inventory of an Application lists it, but nothing on the
+    /// object names that Application back: a claim from one side.
     ManagedBy,
+    /// Argo CD's inventory of an Application lists it, and the object's
+    /// tracking annotation or instance label names that Application back.
+    Tracked,
     /// An Argo CD Application that names a Kargo Stage or Project (its
     /// authorized-stage annotation, or the configured naming).
     NamesProject,
@@ -351,6 +357,12 @@ pub struct LabelledWorkload {
     pub name: String,
     pub kind: WorkloadKind,
     pub part_of: String,
+    /// `argocd.argoproj.io/tracking-id`, which Argo CD writes on what it
+    /// applies with annotation tracking.
+    pub tracking_id: Option<String>,
+    /// `app.kubernetes.io/instance`, which Argo CD writes with label
+    /// tracking, its default.
+    pub instance: Option<String>,
 }
 
 /// Where an Argo CD read looked.

@@ -437,7 +437,7 @@ pub(super) fn argo(
     home
 }
 
-fn kind_name(kind: WorkloadKind) -> &'static str {
+pub(super) fn kind_name(kind: WorkloadKind) -> &'static str {
     match kind {
         WorkloadKind::Deployment => "Deployment",
         WorkloadKind::StatefulSet => "StatefulSet",
@@ -466,6 +466,21 @@ fn managing_application<'a>(
         .min_by(|a, b| (&a.namespace, &a.name).cmp(&(&b.namespace, &b.name)))
 }
 
+/// Whether the workload names the Application whose inventory lists it:
+/// its tracking annotation's application part, or its instance label, is
+/// the Application's name, or `<namespace>_<name>` as Argo CD writes it for
+/// an Application outside its own namespace.
+fn names_back(workload: &super::LabelledWorkload, application: &ArgoApplication) -> bool {
+    let qualified = format!("{}_{}", application.namespace, application.name);
+    let is_it = |value: &str| value == application.name || value == qualified;
+    let tracked = workload
+        .tracking_id
+        .as_deref()
+        .and_then(|id| id.split_once(':'))
+        .is_some_and(|(app, _)| is_it(app));
+    tracked || workload.instance.as_deref().is_some_and(is_it)
+}
+
 /// Rule 3: the `part-of` label, for the workloads no higher rule has.
 pub(super) fn part_of(
     builder: &mut Builder,
@@ -486,10 +501,18 @@ pub(super) fn part_of(
                     application.namespace.clone(),
                     application.name.clone(),
                 ))
+                .map(|id| (application, id))
             });
             let same_name = same_name_target(builder, value);
             let (id, basis) = match (managed, same_name) {
-                (Some(id), _) => (id.clone(), Basis::ManagedBy),
+                (Some((application, id)), _) => {
+                    let basis = if names_back(workload, application) {
+                        Basis::Tracked
+                    } else {
+                        Basis::ManagedBy
+                    };
+                    (id.clone(), basis)
+                }
                 (None, Some(id)) => (id, Basis::SameName),
                 (None, None) => {
                     let evidence = Evidence::PartOfLabel {
@@ -516,7 +539,7 @@ pub(super) fn part_of(
             }
             // A workload that stays with its label, in a cluster whose
             // Applications were not all read, may be managed by one.
-            if basis != Basis::ManagedBy && !argo_whole(session) {
+            if !matches!(basis, Basis::ManagedBy | Basis::Tracked) && !argo_whole(session) {
                 builder.note(
                     &id,
                     Note::ManagerUnknown {
