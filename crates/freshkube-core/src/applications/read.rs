@@ -19,6 +19,12 @@ use crate::workloads::WorkloadKind;
 
 /// The label that groups workloads into an application.
 pub const PART_OF: &str = "app.kubernetes.io/part-of";
+/// The annotation Argo CD's annotation tracking writes on what it applies:
+/// `<application>:<group>/<kind>:<namespace>/<name>`.
+pub const TRACKING_ID: &str = "argocd.argoproj.io/tracking-id";
+/// The label Argo CD's label tracking, its default, writes: the
+/// Application's name.
+pub const INSTANCE: &str = "app.kubernetes.io/instance";
 /// The most Kargo Projects whose Stages and Warehouses are read; two lists
 /// each, so this bounds the requests. The rest are reported as capped.
 pub const MAX_PROJECTS: usize = 50;
@@ -154,14 +160,21 @@ pub fn parse_labelled_workload(value: &Value, kind: WorkloadKind) -> Option<Labe
         namespace: text(value, "/metadata/namespace")?.to_owned(),
         name: text(value, "/metadata/name")?.to_owned(),
         kind,
-        part_of: value
-            .pointer("/metadata/labels")?
-            .get(PART_OF)?
-            .as_str()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())?
-            .to_owned(),
+        part_of: entry(value, "/metadata/labels", PART_OF)?,
+        tracking_id: entry(value, "/metadata/annotations", TRACKING_ID),
+        instance: entry(value, "/metadata/labels", INSTANCE),
     })
+}
+
+/// One label's or annotation's value, trimmed; none when empty.
+fn entry(value: &Value, map: &str, key: &str) -> Option<String> {
+    value
+        .pointer(map)?
+        .get(key)?
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 /// Deployments, StatefulSets and DaemonSets carrying the label, in every

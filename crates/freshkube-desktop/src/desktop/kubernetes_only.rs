@@ -31,7 +31,7 @@ pub(super) struct KubernetesOnly {
     explicit: Option<PathBuf>,
     /// The files read, in merge order.
     pub(super) sources: Vec<PathBuf>,
-    revision: freshkube_core::ConfigurationRevision,
+    pub(super) revision: freshkube_core::ConfigurationRevision,
     /// `--kube-context`, used once the contexts first load.
     requested: Option<String>,
     /// The chosen context; its client is shared with every read.
@@ -80,6 +80,11 @@ impl KubernetesOnly {
         self.explicit
             .clone()
             .filter(|path| self.remember && path.is_absolute())
+    }
+
+    #[cfg(test)]
+    pub(super) fn explicit_file(&self) -> Option<&std::path::Path> {
+        self.explicit.as_deref()
     }
 
     pub(super) fn access(&self) -> Option<&DirectAccess> {
@@ -554,6 +559,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.leave_entry(cx);
         self.config_task = None;
         self.config_job = None;
         self.config_generation = self.config_generation.wrapping_add(1);

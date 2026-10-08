@@ -105,8 +105,19 @@ fn read_applied_config(
         .map(|(path, config, catalog, _)| (path, config, catalog))
 }
 
+#[cfg(test)]
 fn read_applied_config_with_identity(
     applied: AppliedConfig,
+) -> Result<(PathBuf, TalosConfig, ContextCatalog, ConfigIdentity), String> {
+    read_applied_config_leniently(applied, false)
+}
+
+/// With `lenient`, a file whose own current context names nothing still
+/// lists its contexts when none was asked for: the caller picks one, or
+/// says why it can't.
+fn read_applied_config_leniently(
+    applied: AppliedConfig,
+    lenient: bool,
 ) -> Result<(PathBuf, TalosConfig, ContextCatalog, ConfigIdentity), String> {
     let path = match applied.path {
         Some(path) => path,
@@ -115,8 +126,9 @@ fn read_applied_config_with_identity(
     let path = std::path::absolute(path)
         .map_err(|error| format!("Cannot resolve talosconfig path: {error}"))?;
     let (loaded, identity) = read_config_file_with_identity(&path)?;
+    let unasked = applied.context.is_none();
     let current = applied.context.unwrap_or_else(|| loaded.context.clone());
-    if !loaded.contexts.contains_key(&current) {
+    if !loaded.contexts.contains_key(&current) && !(lenient && unasked) {
         return Err(format!("Talos context '{current}' was not found"));
     }
     let mut names: Vec<_> = loaded.contexts.keys().cloned().collect();
@@ -137,9 +149,10 @@ fn read_applied_config_with_identity(
 async fn read_config(
     runtime: &Handle,
     config: AppliedConfig,
+    lenient: bool,
 ) -> Result<(PathBuf, TalosConfig, ContextCatalog, ConfigIdentity), String> {
     runtime
-        .spawn_blocking(move || read_applied_config_with_identity(config))
+        .spawn_blocking(move || read_applied_config_leniently(config, lenient))
         .await
         .map_err(|error| format!("Talos configuration worker failed: {error}"))?
 }
@@ -152,7 +165,7 @@ pub(crate) fn load_contexts(
     let worker_runtime = runtime.clone();
     let task = runtime.spawn(async move {
         let operation = async move {
-            let (_, _, catalog, _) = read_config(&worker_runtime, config).await?;
+            let (_, _, catalog, _) = read_config(&worker_runtime, config, true).await?;
             Ok(catalog)
         };
         tokio::select! {
@@ -222,7 +235,7 @@ pub(crate) fn collect(
             let configuration = configuration_revision(&config, &kubeconfig).await?;
             let mut access = None;
             let cluster = async {
-            let (path, loaded, catalog, identity) = read_config(&worker_runtime, config.clone()).await?;
+            let (path, loaded, catalog, identity) = read_config(&worker_runtime, config.clone(), false).await?;
             // Never refresh a previously populated snapshot: optional-source failures
             // in the shared collector retain data, which must not be labeled fresh here.
             let mut collector = ClusterOverviewCollector::new(Some(path), Some(catalog.current));

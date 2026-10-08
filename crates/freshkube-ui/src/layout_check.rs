@@ -3,10 +3,12 @@
 //!
 //! `assert_page_frame` checks a padded page's padding and toolbar (and
 //! `assert_page_frame_from` one whose header leads with a breadcrumb),
-//! `assert_edge_frame` an edge-to-edge page's inset and toolbar,
+//! `assert_edge_frame` an edge-to-edge page's inset and toolbar (and
+//! `assert_edge_frame_from` one whose header leads with a breadcrumb),
 //! `assert_table` checks one table's header and rows (a page may hold
 //! several), and `assert_table_page` checks a table page with the edge
-//! frame and its table, and that the table sits in no card;
+//! frame and its table, and that the table sits in no card (and
+//! `assert_table_page_from` one with a breadcrumb);
 //! `assert_inspector` checks an inspector against its table, and
 //! `assert_drawer` a drawer over its list; `settle_header` draws until a
 //! page's header settles. A page names a few
@@ -102,7 +104,18 @@ pub struct TableLayout {
 /// Asserts DESIGN.md's table page: `assert_edge_frame` on its frame,
 /// `assert_table` on its table, and `assert_bare` on the table.
 pub fn assert_table_page(window: &mut Window, cx: &mut App, page: &TablePage) -> TableLayout {
-    let frame = assert_edge_frame(
+    assert_table_page_from(window, cx, page, page.title)
+}
+
+/// [`assert_table_page`] for a header that leads with a breadcrumb: the
+/// title inset is measured from `lead`, its parent.
+pub fn assert_table_page_from(
+    window: &mut Window,
+    cx: &mut App,
+    page: &TablePage,
+    lead: &str,
+) -> TableLayout {
+    let frame = assert_edge_frame_from(
         window,
         cx,
         &PageFrame {
@@ -111,6 +124,7 @@ pub fn assert_table_page(window: &mut Window, cx: &mut App, page: &TablePage) ->
             title_text: page.title_text,
             content: page.table,
         },
+        lead,
     );
     let rows = assert_table(
         window,
@@ -315,9 +329,23 @@ pub fn assert_page_frame_from(
 /// page's left edge, with a hairline under it across the page. The layout's
 /// paddings are the title's inset and the space right of the content.
 pub fn assert_edge_frame(window: &mut Window, cx: &mut App, frame: &PageFrame) -> FrameLayout {
+    assert_edge_frame_from(window, cx, frame, frame.title)
+}
+
+/// [`assert_edge_frame`] for a header that leads with something before the
+/// title, such as a breadcrumb's parent: the title inset is measured from
+/// `lead`, and the toolbar checks still go by the title.
+pub fn assert_edge_frame_from(
+    window: &mut Window,
+    cx: &mut App,
+    frame: &PageFrame,
+    lead: &str,
+) -> FrameLayout {
     window.render_frame(cx);
-    let layout = measure_frame(window, frame);
+    let mut layout = measure_frame(window, frame);
     let root = window.find(frame.page).bounds();
+    let lead = window.find(SharedString::from(lead.to_owned())).bounds();
+    layout.padding_left = lead.left() - root.left();
     let content = window.find(frame.content).bounds();
     let check = |what: &str, actual: Pixels, expected: f32| {
         close(window, frame, &layout, what, actual, expected)
