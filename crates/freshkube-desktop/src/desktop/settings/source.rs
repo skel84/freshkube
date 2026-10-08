@@ -8,7 +8,6 @@ enum Field {
     Role,
     Context,
     Talosconfig,
-    Starts,
 }
 
 pub(crate) struct Column {
@@ -63,7 +62,6 @@ pub(super) fn columns(rows: &[ClusterRow]) -> (Vec<Column>, f32) {
             "Context",
             fit("Context", rows.iter().map(|row| &row.context)),
         ),
-        column(Field::Starts, "Opens at launch", 130.),
         column(Field::Talosconfig, "Talosconfig", 240.),
     ];
     let width = columns.iter().map(|column| column.width).sum();
@@ -128,9 +126,6 @@ impl TableSource for SettingsPage {
             Field::Name => cell.child(row.id.clone()).into_any_element(),
             Field::Role => cell.child(row.role.clone()).into_any_element(),
             Field::Context => cell.child(row.context.clone()).into_any_element(),
-            Field::Starts => cell
-                .child(if row.starts { "Yes" } else { "" })
-                .into_any_element(),
             Field::Talosconfig => cell
                 .text_color(style.p.muted)
                 .child(row.talosconfig.clone())

@@ -39,8 +39,6 @@ pub(crate) struct ClusterRow {
     role: SharedString,
     context: SharedString,
     talosconfig: SharedString,
-    /// Whether the app opens on this cluster when it starts.
-    starts: bool,
 }
 
 /// What the workspace file is, for the line above the table.
@@ -62,8 +60,12 @@ pub(crate) struct SettingsPage {
     width: f32,
     table: table::TableState,
     origin: Origin,
-    /// `~/.config/freshkube/workspace.json`'s kubeconfig line, or none.
+    /// The line under the page's title about what the list is.
+    note: SharedString,
+    /// The workspace's kubeconfig line: its path, or the automatic one.
     kubeconfig: SharedString,
+    /// Why a file isn't used, for the banner; none while it is.
+    banner: Option<SharedString>,
     selected: Option<SharedString>,
     page_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -80,7 +82,9 @@ impl SettingsPage {
             width,
             table: table::TableState::new(PREFIX),
             origin: Origin::Alone,
+            note: "".into(),
             kubeconfig: "".into(),
+            banner: None,
             selected: None,
             page_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -88,15 +92,9 @@ impl SettingsPage {
         }
     }
 
-    /// Takes what the workspace file held. `remembered` is the entry the
-    /// app last had open; the start entry is derived with it.
-    pub(super) fn set_workspace(
-        &mut self,
-        loaded: &Loaded,
-        example: bool,
-        remembered: Option<&str>,
-        cx: &mut Context<Self>,
-    ) {
+    /// Takes what the workspace file held, and derives the page's lines
+    /// from it, so `render` only reads them.
+    pub(super) fn set_workspace(&mut self, loaded: &Loaded, example: bool, cx: &mut Context<Self>) {
         let (workspace, origin) = match loaded {
             Loaded::Workspace(workspace) if example => (workspace.clone(), Origin::Example),
             Loaded::Workspace(workspace) => (workspace.clone(), Origin::File),
@@ -106,15 +104,12 @@ impl SettingsPage {
                 Origin::Refused(why.to_string().into()),
             ),
         };
-        let start = workspace
-            .start_entry(remembered)
-            .map(|entry| entry.id.clone());
         self.rows = workspace
             .clusters
             .iter()
             .map(|entry| ClusterRow {
                 id: entry.id.clone().into(),
-                role: entry.role.map_or("", workspace::Role::label).into(),
+                role: entry.role.label().into(),
                 context: entry.context.clone().into(),
                 talosconfig: entry
                     .talosconfig
@@ -123,12 +118,26 @@ impl SettingsPage {
                     .map(|path| path.to_string())
                     .unwrap_or_default()
                     .into(),
-                starts: start.as_deref() == Some(entry.id.as_str()),
             })
             .collect();
         self.kubeconfig = match &workspace.kubeconfig {
-            Some(path) => path.display().to_string().into(),
-            None => "Automatic: KUBECONFIG, then the home default".into(),
+            Some(path) => format!("Kubeconfig: {}", path.display()).into(),
+            None => "Kubeconfig: automatic (KUBECONFIG, then the home default)".into(),
+        };
+        self.note = match &origin {
+            Origin::Alone | Origin::Refused(_) => {
+                "A workspace of one: the cluster this window opened. Nothing is saved."
+            }
+            Origin::Example => "Example workspace; nothing is read or saved.",
+            Origin::File => "The clusters of workspace.json, in the order kept.",
+        }
+        .into();
+        self.banner = match &origin {
+            Origin::Refused(why) => Some(
+                format!("workspace.json isn’t used: {why}. Freshkube leaves the file as it is.")
+                    .into(),
+            ),
+            _ => None,
         };
         (self.columns, self.width) = source::columns(&self.rows);
         self.origin = origin;
@@ -176,49 +185,23 @@ impl SettingsPage {
     }
 
     #[cfg(test)]
-    pub(super) fn rows_starting(&self) -> Vec<&str> {
-        self.rows
-            .iter()
-            .filter(|row| row.starts)
-            .map(|row| row.id.as_ref())
-            .collect()
-    }
-
-    #[cfg(test)]
     pub(super) fn origin(&self) -> &Origin {
         &self.origin
     }
 
     fn render_banner(&self, cx: &App) -> Option<impl IntoElement> {
-        match &self.origin {
-            Origin::Refused(why) => Some(
-                ui::warning_banner(
-                    Some("Workspace file not used".into()),
-                    format!(
-                        "workspace.json isn’t used: {why}. It stays where it is until the \
-                         first save sets it aside."
-                    ),
-                    None,
-                    cx,
-                )
+        let body = self.banner.clone()?;
+        Some(
+            ui::warning_banner(Some("Workspace file not used".into()), body, None, cx)
                 .id("settings-banner")
                 .test_support(),
-            ),
-            _ => None,
-        }
+        )
     }
 
-    /// The line above the table: what the kubeconfig is and what the list
-    /// means.
+    /// The lines above the table: what the list is and which kubeconfig the
+    /// workspace reads.
     fn render_intro(&self, cx: &App) -> Div {
         let p = crate::palette::palette(cx);
-        let note = match &self.origin {
-            Origin::Alone | Origin::Refused(_) => {
-                "A workspace of one: the cluster this window opened. Nothing is saved."
-            }
-            Origin::Example => "Example workspace; nothing is read or saved.",
-            Origin::File => "The clusters of workspace.json, in the order kept.",
-        };
         page::inset()
             .flex_none()
             .gap(dp(2.))
@@ -228,13 +211,13 @@ impl SettingsPage {
                 div()
                     .id("settings-workspace-note")
                     .test_support()
-                    .child(note),
+                    .child(self.note.clone()),
             )
             .child(
                 div()
                     .id("settings-kubeconfig")
                     .test_support()
-                    .child(format!("Kubeconfig: {}", self.kubeconfig)),
+                    .child(self.kubeconfig.clone()),
             )
     }
 }
@@ -273,6 +256,9 @@ impl Render for SettingsPage {
 
 impl super::Pilot {
     /// Reads the workspace file once, at startup, and hands it to the page.
+    /// The read is bounded (256 KiB) and runs on the UI thread, as the
+    /// connection preference's does at startup: it happens before the first
+    /// frame, once, and nothing waits on it later.
     /// Example data shows the acme workspace and touches no file. A file
     /// the app can't use is left where it is; the page says why.
     pub(super) fn load_workspace(&mut self, cx: &mut Context<Self>) {
@@ -282,8 +268,7 @@ impl super::Pilot {
             (None, false) => Loaded::Missing,
         };
         let example = self.fixture;
-        self.settings_page.update(cx, |page, cx| {
-            page.set_workspace(&loaded, example, None, cx)
-        });
+        self.settings_page
+            .update(cx, |page, cx| page.set_workspace(&loaded, example, cx));
     }
 }

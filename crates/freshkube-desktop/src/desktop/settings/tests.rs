@@ -4,7 +4,7 @@ use crate::desktop::{
     Page, layout_check,
     tests::{fixture, mount},
 };
-use freshkube_core::workspace::{self, Invalid, Loaded};
+use freshkube_core::workspace::{Invalid, Loaded};
 use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 
 const SETTINGS: layout_check::TablePage = layout_check::TablePage {
@@ -28,7 +28,7 @@ fn the_gear_opens_settings_with_the_example_workspace(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         open_settings(window, cx);
         assert_eq!(view.read(cx).page, Page::Settings);
-        // Six invented clusters, and the app starts on the first core one.
+        // Six invented clusters.
         for id in [
             "core-fra",
             "cicd-fra",
@@ -44,7 +44,6 @@ fn the_gear_opens_settings_with_the_example_workspace(cx: &mut TestAppContext) {
         }
         let page = view.read(cx).settings_page.read(cx);
         assert_eq!(page.origin(), &Origin::Example);
-        assert_eq!(page.rows_starting(), vec!["core-fra"]);
     })
     .unwrap();
 }
@@ -73,7 +72,7 @@ fn no_file_is_a_workspace_of_one(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.settings_page.update(cx, |page, cx| {
-                page.set_workspace(&Loaded::Missing, false, None, cx)
+                page.set_workspace(&Loaded::Missing, false, cx)
             });
             pilot.navigate_from_keyboard(Page::Settings, window, cx);
         });
@@ -91,12 +90,7 @@ fn a_refused_file_says_why_and_lists_nothing(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.settings_page.update(cx, |page, cx| {
-                page.set_workspace(
-                    &Loaded::Refused(Invalid::UnknownVersion(Some(2))),
-                    false,
-                    None,
-                    cx,
-                )
+                page.set_workspace(&Loaded::Refused(Invalid::UnknownVersion(2)), false, cx)
             });
             pilot.navigate_from_keyboard(Page::Settings, window, cx);
         });
@@ -124,8 +118,16 @@ fn launch(
 
 #[gpui_kit::test]
 fn a_launch_reads_the_workspace_file_beside_the_preferences(cx: &mut TestAppContext) {
+    // Tokio wakes GPUI from its own threads.
+    cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
-    workspace::save(&guard.path().join("workspace.json"), &workspace::example()).unwrap();
+    std::fs::write(
+        guard.path().join("workspace.json"),
+        r#"{"version":1,"clusters":[
+            {"id":"core-fra","role":"core","context":"core-fra"},
+            {"id":"prod-fra","role":"environment","context":"prod-fra"}]}"#,
+    )
+    .unwrap();
     let (_runtime, handle, view) = launch(cx, guard.path());
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
@@ -134,25 +136,29 @@ fn a_launch_reads_the_workspace_file_beside_the_preferences(cx: &mut TestAppCont
         window.render_frame(cx);
         let page = view.read(cx).settings_page.read(cx);
         assert_eq!(page.origin(), &Origin::File);
-        assert_eq!(page.rows_starting(), vec!["core-fra"]);
         assert!(window.find("settings-cluster-prod-fra").visible());
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-fn a_launch_without_a_file_writes_none_and_a_refused_file_stays_put(cx: &mut TestAppContext) {
+fn a_launch_without_a_file_writes_none(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    cx.update_window(handle, |_, _, cx| {
+        let page = view.read(cx).settings_page.read(cx);
+        assert_eq!(page.origin(), &Origin::Alone);
+    })
+    .unwrap();
+    assert!(!guard.path().join("workspace.json").exists());
+}
+
+#[gpui_kit::test]
+fn a_refused_file_stays_where_it_is_after_a_launch(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     let file = guard.path().join("workspace.json");
-    {
-        let (_runtime, handle, view) = launch(cx, guard.path());
-        cx.update_window(handle, |_, _, cx| {
-            let page = view.read(cx).settings_page.read(cx);
-            assert_eq!(page.origin(), &Origin::Alone);
-        })
-        .unwrap();
-        assert!(!file.exists());
-    }
     std::fs::write(&file, "{\"version\":9}").unwrap();
     let (_runtime, handle, view) = launch(cx, guard.path());
     cx.update_window(handle, |_, _, cx| {

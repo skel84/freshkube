@@ -72,12 +72,14 @@ where a fresh read is shown now. The design is on
 
 The workspace file (`freshkube_core::workspace`, `workspace.json` beside the
 preferences) names each cluster by a stable entry id and never by a session
-key, since `AccessIdentity::key()` is process-local. The shell reads it once at
+key, since `AccessIdentity::key()` is process-local. Every entry has a role
+(`core`, `cicd` or `environment`); having none is reserved for the implicit
+workspace of one, which is never written. The shell reads the file once at
 launch and Settings › Workspace lists it; nothing yet opens a session from it.
 No file is a workspace of one. A file the app can't use (bad JSON, another
-version, a duplicate id) is named with its reason and left where it is; the
-first save will move it to `workspace.json.bak`, or to
-`workspace.<UTC time>.bak` when that exists, never over an earlier backup.
+version, a duplicate id, an entry without a role) is named with its reason and
+left exactly where it is. Writing the file, setting a refused one aside and
+starting on a remembered entry arrive with the callers that need them.
 
 This is the local configuration/session boundary from #2. Independent revisions
 for remotely rotated credentials, auth-plugin state and Prometheus/provider
