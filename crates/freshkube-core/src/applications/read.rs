@@ -5,9 +5,11 @@
 //! scoped, and stops at its page cap; each source is its own [`Source`], so
 //! one refusal leaves the others standing.
 
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 
-use super::{ArgoScope, KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey};
+use super::{ArgoFound, ArgoScope, KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey};
 use crate::delivery::argocd::{read_application_sets, read_applications};
 use crate::delivery::kargo::{parse_stage, parse_warehouse, read_kind, read_project_names};
 use crate::delivery::read::{ListRequest, Reader, Resource, Scope};
@@ -21,23 +23,86 @@ pub const PART_OF: &str = "app.kubernetes.io/part-of";
 /// each, so this bounds the requests. The rest are reported as capped.
 pub const MAX_PROJECTS: usize = 50;
 
-/// Reads one cluster. `argocd_namespace` is where its Argo CD keeps
-/// Applications and ApplicationSets. Only that namespace is listed (a
-/// cluster-wide list needs a selector the kind does not have), so the read
-/// is marked [`ArgoScope::Namespace`] and never counts as whole: Applications
-/// elsewhere, where Argo CD allows them, are not known to be absent.
-pub async fn read_session<R: Reader>(
-    reader: &R,
-    key: SessionKey,
-    argocd_namespace: &str,
-) -> SessionInputs {
+/// The `part-of` value Argo CD's own workloads carry, and the namespace it
+/// installs into by default.
+pub const ARGOCD: &str = "argocd";
+/// The most namespaces Argo CD's Applications are read in; the rest are
+/// named as skipped.
+pub const MAX_ARGO_NAMESPACES: usize = 3;
+
+/// Reads one cluster. Its workloads come first: the ones labelled
+/// `app.kubernetes.io/part-of=argocd` say where Argo CD runs, and its
+/// Applications and ApplicationSets are read there, in at most
+/// [`MAX_ARGO_NAMESPACES`] namespaces by name, else in [`ARGOCD`]. Only
+/// those namespaces are listed (a cluster-wide list needs a selector the
+/// kind does not have), so the read is marked [`ArgoScope::Namespace`] and
+/// never counts as whole: Applications elsewhere, where Argo CD allows them,
+/// are not known to be absent.
+pub async fn read_session<R: Reader>(reader: &R, key: SessionKey) -> SessionInputs {
+    let workloads = read_workloads(reader).await;
+    let (namespaces, found) = argo_namespaces(&workloads);
+    let mut applications = Vec::new();
+    let mut sets = Vec::new();
+    for namespace in &namespaces {
+        applications.push(read_applications(reader, namespace).await);
+        sets.push(read_application_sets(reader, namespace).await);
+    }
     SessionInputs {
         key,
         kargo: read_kargo(reader).await,
-        argo_scope: ArgoScope::Namespace(argocd_namespace.to_owned()),
-        argo_applications: read_applications(reader, argocd_namespace).await,
-        argo_application_sets: read_application_sets(reader, argocd_namespace).await,
-        workloads: read_workloads(reader).await,
+        argo_applications: merge(applications),
+        argo_application_sets: merge(sets),
+        argo_scope: ArgoScope::Namespace { namespaces, found },
+        workloads,
+    }
+}
+
+/// Where Argo CD runs, from its labelled workloads: their namespaces by
+/// name, the first [`MAX_ARGO_NAMESPACES`] read and the rest skipped; with
+/// none, [`ARGOCD`].
+pub fn argo_namespaces(workloads: &Source<Vec<LabelledWorkload>>) -> (Vec<String>, ArgoFound) {
+    let found: BTreeSet<&str> = workloads
+        .read()
+        .into_iter()
+        .flatten()
+        .filter(|workload| workload.part_of == ARGOCD)
+        .map(|workload| workload.namespace.as_str())
+        .collect();
+    if found.is_empty() {
+        return (vec![ARGOCD.to_owned()], ArgoFound::Default);
+    }
+    let mut namespaces: Vec<String> = found.into_iter().map(str::to_owned).collect();
+    let skipped = namespaces.split_off(namespaces.len().min(MAX_ARGO_NAMESPACES));
+    (namespaces, ArgoFound::Labelled { skipped })
+}
+
+/// One source from its reads in several namespaces. A refusal or a failure
+/// in any one stands for the whole, since a partial list would read as
+/// complete; the kind not being served is the same in every namespace.
+fn merge<T>(reads: Vec<Source<Vec<T>>>) -> Source<Vec<T>> {
+    let mut items = Vec::new();
+    let mut capped: Option<Truncation> = None;
+    let mut not_installed = None;
+    let mut unreadable = None;
+    for read in reads {
+        match read {
+            Source::Read(found) => items.extend(found),
+            Source::Capped(found, truncation) => {
+                items.extend(found);
+                capped = Some(Truncation {
+                    read: capped.map_or(0, |t| t.read) + truncation.read,
+                });
+            }
+            Source::NotInstalled(why) => not_installed = Some(why),
+            Source::Refused(why) => return Source::Refused(why),
+            Source::Unreadable(why) => unreadable = unreadable.or(Some(why)),
+        }
+    }
+    match (unreadable, not_installed, capped) {
+        (Some(why), _, _) => Source::Unreadable(why),
+        (None, Some(why), _) if items.is_empty() => Source::NotInstalled(why),
+        (None, _, Some(truncation)) => Source::Capped(items, truncation),
+        _ => Source::Read(items),
     }
 }
 

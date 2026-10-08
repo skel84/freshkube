@@ -5,8 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{
-    Application, ApplicationId, ArgoScope, Basis, Coverage, CoverageState, Destination, Evidence,
-    Inputs, Member, MemberKind, MemberRef, Note, Rule, SessionInputs, SessionKey, SourceKind,
+    Application, ApplicationId, ArgoFound, ArgoScope, Basis, Coverage, CoverageState, Destination,
+    Evidence, Inputs, Member, MemberKind, MemberRef, Note, Rule, SessionInputs, SessionKey,
+    SourceKind,
 };
 use crate::delivery::argocd::{
     Application as ArgoApplication, IN_CLUSTER_NAME, IN_CLUSTER_SERVER, normalize_server,
@@ -87,11 +88,30 @@ pub(super) fn coverage(inputs: &Inputs) -> Vec<Coverage> {
                 CoverageState::of(&project.warehouses),
             );
         }
-        let argo = |state: CoverageState| match (&session.argo_scope, state) {
-            (ArgoScope::Namespace(namespace), CoverageState::Read) => {
-                CoverageState::NamespaceOnly(namespace.clone())
+        // Argo CD's default namespace, read because nothing marked where
+        // Argo CD runs, and holding no Applications: not found, so what
+        // runs elsewhere is unknown rather than absent.
+        let not_found = match (&session.argo_scope, &session.argo_applications) {
+            (
+                ArgoScope::Namespace {
+                    namespaces,
+                    found: ArgoFound::Default,
+                },
+                Source::Read(applications),
+            ) if applications.is_empty() => namespaces.first().cloned(),
+            _ => None,
+        };
+        let argo = |state: CoverageState| match (&session.argo_scope, &not_found, state) {
+            (_, Some(namespace), CoverageState::Read) => {
+                CoverageState::NamespaceNotFound(namespace.clone())
             }
-            (_, state) => state,
+            (ArgoScope::Namespace { namespaces, found }, None, CoverageState::Read) => {
+                CoverageState::NamespaceOnly {
+                    namespaces: namespaces.clone(),
+                    found: found.clone(),
+                }
+            }
+            (_, _, state) => state,
         };
         push(
             SourceKind::ArgoApplications,
