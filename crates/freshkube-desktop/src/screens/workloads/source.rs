@@ -207,6 +207,14 @@ fn name_width(rows: &[WorkloadRow]) -> f32 {
     fit("Name", rows.iter().map(|row| &row.name), WIDEST) + NESTED_INDENT.max(CHEVRON)
 }
 
+/// The columns the table has before any row sizes them, and their width:
+/// the loading rows' columns.
+pub(super) fn loading_columns() -> (Vec<Column>, f32) {
+    let columns = columns(&[], name_width(&[]));
+    let width = columns.iter().map(|column| column.width).sum();
+    (columns, width)
+}
+
 fn columns(rows: &[WorkloadRow], name: f32) -> Vec<Column> {
     let column = |field, label: &str, width| Column {
         field,
@@ -390,11 +398,15 @@ impl TableSource for WorkloadsScreen {
     fn columns(&self) -> &[Column] {
         self.derived
             .as_ref()
-            .map_or(&[], |derived| derived.columns.as_slice())
+            .map_or(&self.loading_columns.0, |derived| {
+                derived.columns.as_slice()
+            })
     }
 
     fn width(&self) -> f32 {
-        self.derived.as_ref().map_or(0., |derived| derived.width)
+        self.derived
+            .as_ref()
+            .map_or(self.loading_columns.1, |derived| derived.width)
     }
 
     fn list_label(&self) -> String {
@@ -528,6 +540,10 @@ impl TableSource for WorkloadsScreen {
             self.toggle_expanded(cx);
         }
         window.focus(&self.focus, cx);
+    }
+
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

@@ -26,8 +26,8 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    page_width, panel, partial_notice, refresh_control, segment,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, failure_banner, field,
+    first_read, gate, mono, page_width, panel, partial_notice, refresh_control, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -84,9 +84,8 @@ pub(crate) struct LifecycleScreen {
     split: InspectorSplit,
     table: TableState,
     /// The roster's rows until the first answer, under the columns the
-    /// table has before any row sizes them, and their motion.
-    loading: data_table::LoadingRows,
-    loading_motion: Entity<data_table::LoadingMotion>,
+    /// table has before any row sizes them.
+    loading: TableLoading,
     loading_columns: (Vec<table::Column>, f32),
     focus: FocusHandle,
     /// The status bar's segment, and what it was derived from.
@@ -102,6 +101,10 @@ type StatusKey = (u64, Option<(SessionIdentity, u64)>, Option<(String, bool)>);
 impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 
 impl ScreenPanel for LifecycleScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
     fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
@@ -110,8 +113,6 @@ impl ScreenPanel for LifecycleScreen {
             KeyBinding::new("end", LastItem, Some(CONTEXT)),
             KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
         ]);
-        let loading = data_table::LoadingRows::new(PREFIX);
-        let loading_motion = cx.new(|_| loading.motion(data_table::Look::Pulse));
         Self {
             runtime,
             source: None,
@@ -129,8 +130,7 @@ impl ScreenPanel for LifecycleScreen {
                 )
             },
             table: TableState::new("lifecycle"),
-            loading,
-            loading_motion,
+            loading: TableLoading::new(PREFIX, cx),
             loading_columns: table::columns(&[]),
             focus: cx.focus_handle(),
             status: None,
@@ -919,12 +919,6 @@ impl LifecycleScreen {
         cx.notify();
     }
 
-    /// The motion over the roster's loading rows, which the shell mounts
-    /// beside the page while they show.
-    pub(crate) fn loading_motion(&self) -> &Entity<data_table::LoadingMotion> {
-        &self.loading_motion
-    }
-
     /// Forgets the answer and waits for another, as a first read does, for
     /// the shell's tests of the loading rows.
     #[cfg(test)]
@@ -949,12 +943,15 @@ impl LifecycleScreen {
         cx.notify();
     }
 
-    /// Whether the first answer for the target is still to come: the table
-    /// shows its loading rows rather than a state.
+    /// Whether the first answer is still to come, the overview's or the
+    /// target's: the table shows its loading rows rather than a state.
+    fn first_read(&self, cx: &App) -> bool {
+        first_read(self.source.as_ref(), &self.loader, Scope::Cluster, cx)
+    }
+
+    /// Whether the table shows its loading rows this frame.
     fn waiting(&self) -> bool {
-        self.source.is_some()
-            && self.loader.data().is_none()
-            && (self.loader.is_loading() || self.loader.error().is_none())
+        self.loading.rows().is_some()
     }
 
     fn can_target(&self, node: &str) -> bool {

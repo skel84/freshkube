@@ -997,6 +997,10 @@ impl TableSource for NetworkScreen {
     }
 
     /// Says whether the node reported none or the filters hide them all.
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if self.row_count() > 0 {
             return None;

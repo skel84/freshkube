@@ -196,12 +196,20 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     fn status(&mut self) -> Option<&freshkube_ui::status::Segment> {
         None
     }
+
+    /// The motion over the table's loading rows while its first answer is
+    /// to come ([`TableLoading::motion`]); the shell draws it beside the
+    /// page, so its frames redraw neither the page nor the cached chrome.
+    fn loading_motion(&self, _cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        None
+    }
 }
 
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
 type StatusFn = Rc<dyn Fn(&mut App) -> Option<freshkube_ui::status::Segment>>;
+type MotionFn = Rc<dyn Fn(&App) -> Option<Entity<freshkube_ui::table::LoadingMotion>>>;
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
@@ -213,6 +221,7 @@ pub(crate) struct ScreenHandle {
     focus: WindowFn,
     embedded: EmbeddedFn,
     status: StatusFn,
+    motion: MotionFn,
 }
 
 impl ScreenHandle {
@@ -223,8 +232,9 @@ impl ScreenHandle {
             entity.clone(),
             entity.clone(),
         );
-        let (embedded, status) = (entity.clone(), entity.clone());
+        let (embedded, status, motion) = (entity.clone(), entity.clone(), entity.clone());
         Self {
+            motion: Rc::new(move |cx| motion.read(cx).loading_motion(cx)),
             status: Rc::new(move |cx| status.update(cx, |screen, _| screen.status().cloned())),
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
@@ -245,6 +255,14 @@ impl ScreenHandle {
                 focused.update(cx, |screen, cx| screen.focus(window, cx))
             }),
         }
+    }
+
+    /// The motion over the screen's loading rows, while they show.
+    pub(crate) fn loading_motion(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        (self.motion)(cx)
     }
 
     /// The screen's status bar segment, if it has one.
@@ -709,8 +727,75 @@ pub(crate) fn waiting(cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// What to show instead of data: no target yet, a silent node, the first
-/// load, or a first load that failed. `None` means render the data.
+/// Whether a screen's first answer is still to come: the overview is read
+/// before there is a source, or the screen's first read is in flight or not
+/// asked yet. Its table shows loading rows meanwhile ([`TableLoading`]); a
+/// silent node or a failed first read shows its state instead.
+pub(crate) fn first_read<T: Send + 'static>(
+    source: Option<&ScreenSource>,
+    loader: &Loader<T>,
+    scope: Scope,
+    cx: &App,
+) -> bool {
+    if loader.data().is_some() {
+        return false;
+    }
+    let Some(source) = source else {
+        return reading(cx) == Reading::Waiting;
+    };
+    if loader.is_loading() {
+        return true;
+    }
+    if scope == Scope::Node && !source.responding() {
+        return false;
+    }
+    loader.error().is_none()
+}
+
+/// What a table screen shows until its first answer: the shared loading
+/// rows under its real header, which its `TableSource::loading` returns
+/// while [`showing`](Self::showing), and their motion, which the shell
+/// draws beside the page ([`ScreenPanel::loading_motion`]). The screen sets
+/// it from [`first_read`] as it renders; it holds no state of its own.
+pub(crate) struct TableLoading {
+    rows: freshkube_ui::table::LoadingRows,
+    motion: Entity<freshkube_ui::table::LoadingMotion>,
+    showing: std::cell::Cell<bool>,
+}
+
+impl TableLoading {
+    pub(crate) fn new(prefix: &str, cx: &mut App) -> Self {
+        let rows = freshkube_ui::table::LoadingRows::new(prefix);
+        let motion = cx.new(|_| rows.motion(freshkube_ui::table::Look::Pulse));
+        Self {
+            rows,
+            motion,
+            showing: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Says whether the table shows the rows this frame: [`first_read`].
+    pub(crate) fn show(&self, showing: bool) {
+        self.showing.set(showing);
+    }
+
+    /// For `TableSource::loading`.
+    pub(crate) fn rows(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.showing.get().then_some(&self.rows)
+    }
+
+    /// For [`ScreenPanel::loading_motion`], from the screen's [`first_read`].
+    pub(crate) fn motion(
+        &self,
+        showing: bool,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        showing.then(|| self.motion.clone())
+    }
+}
+
+/// What to show instead of data: no target yet, a silent node, or a first
+/// load that failed. `None` means render the table: its data, or its
+/// loading rows while the first answer is to come ([`first_read`]).
 pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
     source: Option<&ScreenSource>,
     loader: &Loader<T>,
@@ -718,15 +803,12 @@ pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
     what: &str,
     cx: &mut Context<V>,
 ) -> Option<AnyElement> {
-    if loader.data().is_some() {
+    if loader.data().is_some() || first_read(source, loader, scope, cx) {
         return None;
     }
     let Some(source) = source else {
         return Some(unsourced(what, cx));
     };
-    if loader.is_loading() {
-        return Some(skeleton(cx));
-    }
     if scope == Scope::Node && !source.responding() {
         let target = &source.target;
         return Some(
@@ -758,8 +840,8 @@ pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
             .into_any_element(),
         );
     }
-    // Not requested yet; the shell activates visible screens right away.
-    Some(skeleton(cx))
+    // Not requested yet: `first_read` answered above.
+    None
 }
 
 /// Data is still shown, but the latest refresh failed.

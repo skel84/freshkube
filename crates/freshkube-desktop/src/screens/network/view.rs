@@ -801,6 +801,7 @@ impl Render for NetworkScreen {
         crate::desktop::probe::hit("network");
         self.sync_rows(cx);
         let data = self.loader.data().cloned();
+        self.loading.show(self.first_read(cx));
         let header = self.render_header(data.as_deref(), window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -825,6 +826,9 @@ impl Render for NetworkScreen {
                     .child(state),
             ),
             (None, Some(data), Some(source)) => self.render_body(page, &data, &source, window, cx),
+            (None, None, _) if self.loading.rows().is_some() => {
+                page.child(self.render_table(window, cx))
+            }
             _ => page,
         };
         // The keys live on a wrapper drawn in every state, so Tab, the
