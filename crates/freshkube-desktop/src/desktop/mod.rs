@@ -195,8 +195,11 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                         }
                         .into(),
                     ),
-                    // Centred in the 52 px header.
-                    traffic_light_position: Some(point(px(18.), px(20.))),
+                    // Centred in the header at the saved text size; the
+                    // shell moves them when it changes.
+                    traffic_light_position: Some(freshkube_ui::page::traffic_light_position(
+                        crate::text_size::current(cx),
+                    )),
                     ..TitleBar::title_bar_options()
                 }),
                 ..TitleBar::window_options()
@@ -275,6 +278,17 @@ impl Render for PageHost {
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
+}
+
+/// Centres macOS's traffic lights on the header at the current text size:
+/// the header is in dp and grows with it, the lights don't.
+pub(crate) fn place_traffic_lights(window: &mut Window, cx: &App) {
+    #[cfg(target_os = "macos")]
+    window.set_traffic_light_position(freshkube_ui::page::traffic_light_position(
+        crate::text_size::current(cx),
+    ));
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, cx);
 }
 
 /// What a cached page view is laid out as: the whole space it is given.
@@ -367,7 +381,14 @@ pub(crate) struct Pilot {
     last_control: Page,
     /// Problem dots on the rail, from the overview's cards.
     rail_marks: shell::RailMarks,
-    column_scroll: ScrollHandle,
+    /// The expanded column's lines, keyboard and scroll.
+    column_list: freshkube_ui::source_list::SourceList<shell::ColumnKey>,
+    /// The column's line that `column_reveal` lands on, derived with it.
+    column_reveal_line: Option<usize>,
+    /// Whether the column's rows to reveal have all arrived.
+    column_settled: bool,
+    /// Whether what the column shows changed since its lines were derived.
+    column_stale: bool,
     /// The icon rail, which scrolls when the window is short or the text
     /// large.
     rail_scroll: ScrollHandle,
@@ -454,6 +475,7 @@ impl Pilot {
 
     /// The shell's global key bindings, by key context.
     fn bind_shell_keys(cx: &mut App) {
+        freshkube_ui::source_list::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
@@ -516,6 +538,25 @@ impl Pilot {
             KeyBinding::new("down", settings::NextCluster, Some(settings::CONTEXT)),
             KeyBinding::new("up", settings::PreviousCluster, Some(settings::CONTEXT)),
             KeyBinding::new("escape", settings::ClearCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("a", settings::AddCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("e", settings::EditCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("enter", settings::EditCluster, Some(settings::CONTEXT)),
+            KeyBinding::new(
+                "backspace",
+                settings::RemoveCluster,
+                Some(settings::CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-alt-up",
+                settings::MoveClusterUp,
+                Some(settings::CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-alt-down",
+                settings::MoveClusterDown,
+                Some(settings::CONTEXT),
+            ),
+            KeyBinding::new("r", settings::ReloadWorkspace, Some(settings::CONTEXT)),
         ]);
         cx.bind_keys(crate::applications::key_bindings());
         cx.bind_keys([
@@ -889,6 +930,7 @@ impl Pilot {
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
         subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
+            place_traffic_lights(window, cx);
             view.prepare_context_display(window, cx);
             view.notify_cached(cx);
             cx.notify();
@@ -988,7 +1030,10 @@ impl Pilot {
             last_custom: None,
             last_control: Page::Etcd,
             rail_marks: Default::default(),
-            column_scroll: ScrollHandle::new(),
+            column_list: freshkube_ui::source_list::SourceList::new("nav-column-list", cx),
+            column_reveal_line: None,
+            column_settled: true,
+            column_stale: true,
             rail_scroll: ScrollHandle::new(),
             compact_column_scroll: ScrollHandle::new(),
             column_reveal: None,

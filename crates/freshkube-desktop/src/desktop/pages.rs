@@ -8,7 +8,7 @@ use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::WindowExt;
 use gpui_kit::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Page {
     Overview,
     Nodes,
@@ -147,7 +147,7 @@ impl Area {
                 .iter()
                 .find(|group| group.slug == slug)
                 .map_or(slug, |group| group.label),
-            Self::Custom => "Custom Resources",
+            Self::Custom => "Custom resources",
             Self::ControlPlane => "Control plane",
         }
     }
@@ -443,6 +443,7 @@ impl Pilot {
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_object_open();
         self.page = page;
+        self.column_changed();
         self.deliver_summary_nodes(cx);
         let area = Area::of(page, &self.resource_kind);
         if area == Area::ControlPlane {
@@ -540,6 +541,7 @@ impl Pilot {
             return;
         }
         self.area = area;
+        self.column_changed();
         self.custom
             .update(cx, |custom, cx| custom.set_open(area == Area::Custom, cx));
         cx.notify();
@@ -592,6 +594,7 @@ impl Pilot {
     pub(super) fn show_custom(&mut self, cx: &mut Context<Self>) {
         self.set_area(Area::Custom, cx);
         self.column_reveal = Some(ColumnReveal::Custom);
+        self.column_changed();
         cx.notify();
     }
 
@@ -601,6 +604,7 @@ impl Pilot {
         if self.custom.read(cx).is_group_open(name) {
             self.column_reveal = Some(ColumnReveal::ApiGroup(name.to_owned()));
         }
+        self.column_changed();
         cx.notify();
     }
 

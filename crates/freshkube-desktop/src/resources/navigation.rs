@@ -61,7 +61,7 @@ pub(crate) const NAVIGATION: [NavGroup; 6] = [
         ],
     },
     NavGroup {
-        label: "Access Control",
+        label: "Access control",
         slug: "access-control",
         items: &[
             ("Service Accounts", "serviceaccounts"),
