@@ -5,25 +5,6 @@
 //! through apid - talosctl connects directly to machined via Unix socket.
 
 use crate::error::TalosError;
-use std::process::Command;
-
-/// Execute a talosctl command and return stdout (blocking)
-fn exec_talosctl(args: &[&str]) -> Result<String, TalosError> {
-    let output = Command::new("talosctl")
-        .args(args)
-        .output()
-        .map_err(TalosError::Io)?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(TalosError::Connection(format!(
-            "talosctl failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
 
 /// Execute cancellable inspections or local generation asynchronously.
 ///
@@ -357,14 +338,6 @@ pub async fn apply_config_insecure(
     }
 }
 
-/// Get KubeSpan peer status for a node
-///
-/// Executes: talosctl get kubespanpeerstatus --nodes <node> -o yaml
-pub fn get_kubespan_peers(node: &str) -> Result<Vec<KubeSpanPeerStatus>, TalosError> {
-    let output = exec_talosctl(&["get", "kubespanpeerstatus", "--nodes", node, "-o", "yaml"])?;
-    parse_kubespan_peers_yaml(&output)
-}
-
 /// Get discovery members for a context (async, non-blocking)
 ///
 /// Executes: talosctl --context <context> -n <node> get members -o yaml
@@ -374,7 +347,7 @@ pub fn get_kubespan_peers(node: &str) -> Result<Vec<KubeSpanPeerStatus>, TalosEr
 /// It extracts a node IP from the context's endpoints to target the query.
 ///
 /// If `config_path` is provided, loads config from that path instead of the default.
-pub async fn get_discovery_members_for_context(
+async fn get_discovery_members_for_context(
     context: &str,
     config_path: Option<&str>,
 ) -> Result<Vec<DiscoveryMember>, TalosError> {
@@ -489,21 +462,6 @@ pub async fn get_discovery_members_with_retry(
     }
 
     Err(last_error.unwrap_or_else(|| TalosError::NoEndpoints(context.to_string())))
-}
-
-/// Check if KubeSpan is enabled for a node
-///
-/// Executes: talosctl get kubespanconfig --nodes <node> -o yaml
-/// Returns true only if the command succeeds AND shows enabled: true
-///
-/// Note: We check kubespanconfig instead of kubespanidentity because
-/// kubespanconfig exists on all nodes where KubeSpan is configured,
-/// while kubespanidentity may be empty on single-node clusters.
-pub fn is_kubespan_enabled(node: &str) -> bool {
-    match exec_talosctl(&["get", "kubespanconfig", "--nodes", node, "-o", "yaml"]) {
-        Ok(output) => kubespan_config_enabled(&output),
-        Err(_) => false,
-    }
 }
 
 /// Build the explicit-context argument list for `talosctl get <resource> -o yaml`.

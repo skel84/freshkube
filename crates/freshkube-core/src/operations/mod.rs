@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
-use talos_rs::{RebootMode, TalosClient};
+use talos_rs::TalosClient;
 use thiserror::Error;
 
 use crate::indicators::SafetyStatus;
@@ -1038,7 +1038,7 @@ async fn destructive_operation(
             Err(error) => Err(format!("Talos shutdown request failed: {error}")),
         }
     } else {
-        match talos_target.reboot(RebootMode::Default).await {
+        match talos_target.reboot().await {
             Ok(_) => Ok(()),
             Err(error) => Err(format!("Talos reboot request failed: {error}")),
         }
