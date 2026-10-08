@@ -769,7 +769,7 @@ pub async fn read_application_sets<R: Reader>(
 /// The name Argo CD gives the cluster it runs in.
 pub const IN_CLUSTER_NAME: &str = "in-cluster";
 /// The address Argo CD gives the cluster it runs in, as seen from inside it.
-const IN_CLUSTER_SERVER: &str = "https://kubernetes.default.svc";
+pub const IN_CLUSTER_SERVER: &str = "https://kubernetes.default.svc";
 
 /// How an Application's destination matches the kubeconfig contexts. Several
 /// matches are never resolved by guessing.
