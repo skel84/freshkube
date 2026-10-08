@@ -11,6 +11,7 @@ pub mod dock;
 pub mod drawer;
 pub mod graph;
 pub mod motion;
+pub mod source_list;
 pub mod squares;
 
 /// A story the list offers.
@@ -56,6 +57,12 @@ pub const STORIES: &[Story] = &[
         title: "Drawer",
         icon: || IconName::PanelRight,
         build: drawer::build,
+    },
+    Story {
+        slug: "source-list",
+        title: "Source list",
+        icon: || IconName::PanelLeft,
+        build: source_list::build,
     },
     Story {
         slug: "squares",

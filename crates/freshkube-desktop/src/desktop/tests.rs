@@ -1206,7 +1206,7 @@ fn reveal(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
         if shown_in_column(window, id) {
             return;
         }
-        let area = window.find("nav-column").bounds();
+        let area = column_area(window);
         let above = window
             .try_find(SharedString::from(id.to_owned()))
             .is_some_and(|element| element.bounds().top() < area.top());
@@ -1224,8 +1224,17 @@ fn reveal(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
 }
 
 /// Whether `id` shows in full inside the scrolled navigation column.
+/// Where the column's rows show: the source list under the title, or the
+/// collapsed column's strip.
+fn column_area(window: &mut gpui_kit::Window) -> gpui_kit::Bounds<gpui_kit::Pixels> {
+    window
+        .try_find("nav-column-list")
+        .unwrap_or_else(|| window.find("nav-column"))
+        .bounds()
+}
+
 fn shown_in_column(window: &mut gpui_kit::Window, id: &str) -> bool {
-    let area = window.find("nav-column").bounds();
+    let area = column_area(window);
     window
         .try_find(SharedString::from(id.to_owned()))
         .is_some_and(|element| {
@@ -1556,6 +1565,11 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
         view.update(cx, |view, cx| {
             view.custom.update(cx, |custom, cx| custom.retry(cx))
         });
+    })
+    .unwrap();
+    // The column hears of the groups found when the shell does.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).column_reveal, None);
@@ -2208,6 +2222,154 @@ fn the_column_redraws_for_the_pages_it_reads(cx: &mut TestAppContext) {
                 resources.set_namespace(Some("payments".into()), window, cx)
             })),
         ["chrome.column"]
+    );
+}
+
+/// The column's rows, and its section labels, are the table's rows: 26 dp
+/// at any text size.
+#[gpui_kit::test]
+fn the_column_rows_are_the_tables_height(cx: &mut TestAppContext) {
+    // Wide enough to keep the column expanded at 20.
+    let (_runtime, handle, view) = fixture(cx, 2000., 1000.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
+        for (text_size, height) in [(13., 26.), (20., 40.)] {
+            crate::text_size::set(text_size, cx);
+            window.render_frame(cx);
+            for id in [
+                "nav-health",
+                "nav-k8s-pods",
+                "nav-k8s-deployments.apps",
+                "nav-namespaces",
+                "nav-all-namespaces",
+            ] {
+                assert_eq!(
+                    window.find(id).bounds().size.height,
+                    px(height),
+                    "{id} at {text_size}"
+                );
+            }
+        }
+    })
+    .unwrap();
+}
+
+/// The column takes the keyboard as the table does: the arrows, Home and
+/// End move over its rows, passing its labels, and Enter opens the row;
+/// Escape hands the keyboard back to the page.
+#[gpui_kit::test]
+fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
+    use super::shell::ColumnKey;
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
+        window.render_frame(cx);
+        // The page's row is the selected one, and only it.
+        assert_eq!(window.find("nav-k8s-pods").selected(), Some(true));
+        assert_eq!(window.find("nav-health").selected(), Some(false));
+        assert_eq!(
+            window.find("nav-k8s-deployments.apps").selected(),
+            Some(false)
+        );
+        let focus = view.read(cx).column_list.focus_handle().clone();
+        window.focus(&focus, cx);
+        window.render_frame(cx);
+        let cursor = |cx: &gpui_kit::App| view.read(cx).column_list.cursor().cloned();
+        // The keyboard starts on the page's row.
+        assert_eq!(cursor(cx), Some(ColumnKey::Kind("pods")));
+        window.press("down", cx);
+        assert_eq!(cursor(cx), Some(ColumnKey::Kind("deployments.apps")));
+        assert_eq!(
+            view.read(cx).resource_kind.key(),
+            "pods",
+            "only Enter opens"
+        );
+        window.press("up", cx);
+        window.press("up", cx);
+        assert_eq!(cursor(cx), Some(ColumnKey::Page(Page::Health)));
+        window.press("up", cx);
+        assert_eq!(
+            cursor(cx),
+            Some(ColumnKey::Page(Page::Health)),
+            "the first stays"
+        );
+        // End passes the Namespaces label to the last namespace.
+        window.press("end", cx);
+        let last = view
+            .read(cx)
+            .column_list
+            .lines()
+            .iter()
+            .rev()
+            .find_map(|line| line.row())
+            .map(|row| row.key().clone());
+        assert!(matches!(last, Some(ColumnKey::Namespace(Some(_)))));
+        assert_eq!(cursor(cx), last);
+        window.press("home", cx);
+        assert_eq!(cursor(cx), Some(ColumnKey::Page(Page::Health)));
+        window.press("down", cx);
+        window.press("down", cx);
+        window.press("enter", cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).resource_kind.key(), "deployments.apps");
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("nav-k8s-deployments.apps").selected(),
+            Some(true)
+        );
+        assert_eq!(window.find("nav-k8s-pods").selected(), Some(false));
+        assert!(
+            !focus.is_focused(window),
+            "Enter hands the keyboard to the page"
+        );
+        // Escape hands it back without opening anything.
+        window.focus(&focus, cx);
+        window.render_frame(cx);
+        window.press("down", cx);
+        window.press("escape", cx);
+        assert!(!focus.is_focused(window));
+        assert_eq!(view.read(cx).resource_kind.key(), "deployments.apps");
+    })
+    .unwrap();
+}
+
+/// A page's own redraws leave the column as it was drawn, and the
+/// keyboard moving in the column draws the column alone.
+#[gpui_kit::test]
+fn the_column_draws_for_itself_alone(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (resources, health) = cx.update(|cx| {
+        let pilot = view.read(cx);
+        (pilot.resources.clone(), pilot.workloads())
+    });
+    assert!(
+        chrome_redrawn(cx, handle, |_, cx| resources
+            .update(cx, |_, cx| cx.notify()))
+        .is_empty()
+    );
+    assert!(chrome_redrawn(cx, handle, |_, cx| health.update(cx, |_, cx| cx.notify())).is_empty());
+    let focus = cx.update(|cx| view.read(cx).column_list.focus_handle().clone());
+    cx.update_window(handle, |_, window, cx| window.focus(&focus, cx))
+        .unwrap();
+    cx.run_until_parked();
+    // Not `window.press`, which draws whole frames and so passes every
+    // cache.
+    assert_eq!(
+        chrome_redrawn(cx, handle, |window, cx| focus.dispatch_action(
+            &freshkube_ui::source_list::SelectNext,
+            window,
+            cx
+        )),
+        ["chrome.column"]
+    );
+    assert_eq!(
+        cx.update(|cx| view.read(cx).column_list.cursor().cloned()),
+        Some(super::shell::ColumnKey::Kind("deployments.apps"))
     );
 }
 
@@ -4297,7 +4459,7 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let pilot = pilot.read(cx);
         assert_eq!(cut_edges(&pilot.rail_scroll), (false, false));
-        assert_eq!(cut_edges(&pilot.column_scroll), (false, false));
+        assert_eq!(cut_edges(pilot.column_list.scroll()), (false, false));
         assert_eq!(cut_edges(&pilot.obs_column_scroll), (false, false));
     })
     .unwrap();
@@ -4360,16 +4522,12 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
             "nav-obs-deployments",
             &scroll,
         );
-        // Expanded, its rows are taller.
+        // Expanded, its rows are taller, in the source list.
         window.click("nav-collapse", cx);
         settle(window, cx);
         assert!(!pilot.read(cx).column_collapsed(window));
-        assert_clear_of_fades(
-            window,
-            "obs-navigation-scroll",
-            "nav-obs-deployments",
-            &scroll,
-        );
+        let column = pilot.read(cx).column_list.scroll().clone();
+        assert_clear_of_fades(window, "nav-column-list", "nav-obs-deployments", &column);
         // From a short column, a kind low in a long group; the column's
         // scroll is shared by every area.
         pilot.update(cx, |pilot, cx| pilot.navigate(Page::Etcd, window, cx));
@@ -4377,8 +4535,7 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
         let key = "validatingadmissionpolicybindings.admissionregistration.k8s.io";
         pilot.update(cx, |pilot, cx| pilot.open_builtin(key, window, cx));
         settle(window, cx);
-        let column = pilot.read(cx).column_scroll.clone();
-        assert_clear_of_fades(window, "nav-column", format!("nav-k8s-{key}"), &column);
+        assert_clear_of_fades(window, "nav-column-list", format!("nav-k8s-{key}"), &column);
         // And the rail shows Control plane, low in it, as Command-9 opens.
         pilot.update(cx, |pilot, cx| pilot.navigate(Page::Lifecycle, window, cx));
         settle(window, cx);

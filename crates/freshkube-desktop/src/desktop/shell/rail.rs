@@ -1,21 +1,48 @@
 //! The icon rail: one button per area, with a dot where the overview
 //! found a problem in it.
 use super::*;
-use crate::presentation::overview::Card;
+use crate::presentation::overview::{Card, CardTarget};
 use std::collections::HashMap;
 
-/// The rail's problem dots and what each one is about, derived with the
-/// overview's cards so the rail only reads them.
+/// The rail's problem dots and the column's marks, and what each one is
+/// about, derived with the overview's cards so the rail and the column
+/// only read them.
 #[derive(Default)]
-pub(in crate::desktop) struct RailMarks(HashMap<Area, (Tone, SharedString)>);
+pub(in crate::desktop) struct RailMarks {
+    areas: HashMap<Area, (Tone, SharedString)>,
+    rows: HashMap<RowTarget, (Tone, SharedString)>,
+}
+
+/// A column row a card can mark: a page, or a built-in kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(in crate::desktop) enum RowTarget {
+    Page(Page),
+    Kind(&'static str),
+}
 
 impl RailMarks {
     /// A warning or critical card marks its area; critical wins.
     pub(in crate::desktop) fn from_cards(cards: &[Card], fixture: bool) -> Self {
         let mut marks: HashMap<Area, (Tone, Vec<String>)> = HashMap::new();
+        let mut rows = HashMap::new();
         for card in cards {
             if !matches!(card.tone, Tone::Warn | Tone::Crit) {
                 continue;
+            }
+            let row = match &card.target {
+                CardTarget::Page(page) => Some(RowTarget::Page(*page)),
+                CardTarget::Kind(key, _) => Some(RowTarget::Kind(key)),
+                CardTarget::Services => Some(RowTarget::Page(Page::SystemServices)),
+                CardTarget::Destination(_) => None,
+            };
+            if let Some(row) = row {
+                rows.insert(
+                    row,
+                    (
+                        card.tone,
+                        format!("{}: {} · {}", card.label, card.figure, card.detail).into(),
+                    ),
+                );
             }
             let area = match card.id {
                 "tile-nodes" | "tile-memory" => Area::Nodes,
@@ -37,17 +64,23 @@ impl RailMarks {
                 (Tone::Crit, vec!["Example data · 2 open incidents".into()]),
             );
         }
-        Self(
-            marks
+        Self {
+            areas: marks
                 .into_iter()
                 .map(|(area, (tone, lines))| (area, (tone, lines.join("\n").into())))
                 .collect(),
-        )
+            rows,
+        }
+    }
+
+    /// The mark on a column row, and what it is about.
+    pub(in crate::desktop) fn row(&self, target: RowTarget) -> Option<&(Tone, SharedString)> {
+        self.rows.get(&target)
     }
 
     #[cfg(test)]
     pub(in crate::desktop) fn tone(&self, area: Area) -> Option<Tone> {
-        self.0.get(&area).map(|(tone, _)| *tone)
+        self.areas.get(&area).map(|(tone, _)| *tone)
     }
 }
 
@@ -139,7 +172,7 @@ impl Pilot {
     fn rail_button(&self, area: Area, cx: &Context<Self>) -> AnyElement {
         let p = palette(cx);
         let active = self.area == area;
-        let mark = self.rail_marks.0.get(&area).cloned();
+        let mark = self.rail_marks.areas.get(&area).cloned();
         let why = mark.as_ref().map(|(_, why)| why.clone());
         let tone = mark.map(|(tone, _)| {
             if tone == Tone::Crit {

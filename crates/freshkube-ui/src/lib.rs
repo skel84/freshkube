@@ -3,7 +3,6 @@
 //! ([docs/DESIGN.md](../../docs/DESIGN.md#components)).
 
 pub mod card;
-pub mod column;
 pub mod dock;
 pub mod document;
 pub mod drawer;
@@ -16,6 +15,7 @@ pub mod meters;
 pub mod motion;
 pub mod page;
 pub mod palette;
+pub mod source_list;
 pub mod squares;
 pub mod status;
 pub mod table;

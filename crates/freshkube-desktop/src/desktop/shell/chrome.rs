@@ -6,7 +6,8 @@
 //!
 //! A part draws with `Pilot`'s own `render_*`, so its controls still act
 //! on the shell. It draws again when the shell notifies, and the column
-//! also when what it reads from the pages changes (`ChromeParts::watch`).
+//! also when what it reads from the pages changes (`ChromeParts::watch`),
+//! deriving its lines again on that draw alone.
 //! Never cache an ancestor of the pages instead: a cached view that draws
 //! again draws every cached view inside it again.
 use super::*;
@@ -44,8 +45,17 @@ impl Chrome {
         Self {
             pilot: pilot.downgrade(),
             part,
-            _subscriptions: vec![cx.observe(pilot, |_, _, cx| cx.notify())],
+            _subscriptions: vec![cx.observe(pilot, |chrome, _, cx| chrome.redraw(cx))],
         }
+    }
+
+    /// Draws again; the column derives its lines again first, since what
+    /// it shows changed.
+    fn redraw(&mut self, cx: &mut Context<Self>) {
+        if self.part == Part::Column {
+            _ = self.pilot.update(cx, |pilot, _| pilot.column_changed());
+        }
+        cx.notify();
     }
 }
 
@@ -65,7 +75,7 @@ impl Chrome {
                     .upgrade()
                     .is_some_and(|pilot| shows(pilot.read(cx).area))
                 {
-                    cx.notify();
+                    chrome.redraw(cx);
                 }
             }));
     }
@@ -125,11 +135,11 @@ impl ChromeParts {
             let mut shown = resources.read(cx).namespace().map(str::to_owned);
             column
                 ._subscriptions
-                .push(cx.observe(&resources, move |_, resources, cx| {
+                .push(cx.observe(&resources, move |column, resources, cx| {
                     let namespace = resources.read(cx).namespace().map(str::to_owned);
                     if namespace != shown {
                         shown = namespace;
-                        cx.notify();
+                        column.redraw(cx);
                     }
                 }));
         });
