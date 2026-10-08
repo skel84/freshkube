@@ -279,7 +279,7 @@ A diagnostic showing failure for a healthy system is worse than showing unknown.
 
 ### Using Snapshot<T, I> and Loader<T>
 
-Desktop's [state::Snapshot](crates/freshkube-desktop/src/state.rs) retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. This small example uses the same identity labels as its unit tests:
+Desktop's [state::Snapshot](crates/freshkube-desktop/src/state.rs), core's [`snapshot::Snapshot`](crates/freshkube-core/src/snapshot.rs) with a default identity, retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. This small example uses the same identity labels as its unit tests:
 
 ```rust
 use crate::state::Snapshot;

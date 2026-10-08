@@ -1,186 +1,32 @@
-use std::time::SystemTime;
+//! Desktop's name for core's [`Snapshot`](freshkube_core::snapshot::Snapshot),
+//! whose identity defaults to the applied configuration.
 
 use crate::backend::AppliedConfig;
 
-/// A completion token belongs to one identity and one request generation.
-#[derive(Clone, Debug)]
-pub(crate) struct Request<I> {
-    identity: I,
-    generation: u64,
-}
+pub(crate) use freshkube_core::snapshot::Request;
 
-/// Retains the last successful value only while its target identity is unchanged.
-pub(crate) struct Snapshot<T, I = AppliedConfig> {
-    identity: Option<I>,
-    generation: u64,
-    data: Option<T>,
-    loading: bool,
-    error: Option<String>,
-    stale: bool,
-    last_successful: Option<SystemTime>,
-    last_failure: Option<SystemTime>,
-}
-
-impl<T, I> Default for Snapshot<T, I> {
-    fn default() -> Self {
-        Self {
-            identity: None,
-            generation: 0,
-            data: None,
-            loading: false,
-            error: None,
-            stale: false,
-            last_successful: None,
-            last_failure: None,
-        }
-    }
-}
-
-impl<T, I: Clone + Eq> Snapshot<T, I> {
-    pub(crate) fn begin(&mut self, identity: I) -> Request<I> {
-        if self.identity.as_ref() != Some(&identity) {
-            self.data = None;
-            self.last_successful = None;
-            self.last_failure = None;
-        }
-        self.generation = self
-            .generation
-            .checked_add(1)
-            .expect("request generation exhausted");
-        self.identity = Some(identity.clone());
-        self.loading = true;
-        self.error = None;
-        self.stale = self.data.is_some();
-        Request {
-            identity,
-            generation: self.generation,
-        }
-    }
-
-    pub(crate) fn is_current(&self, request: &Request<I>) -> bool {
-        request.generation == self.generation && self.identity.as_ref() == Some(&request.identity)
-    }
-
-    /// Returns false without mutation for an obsolete or already-applied request.
-    pub(crate) fn apply(&mut self, request: &Request<I>, result: Result<T, String>) -> bool {
-        if !self.loading || !self.is_current(request) {
-            return false;
-        }
-        self.loading = false;
-        match result {
-            Ok(data) => {
-                self.data = Some(data);
-                self.error = None;
-                self.stale = false;
-                self.last_successful = Some(SystemTime::now());
-                self.last_failure = None;
-            }
-            Err(error) => {
-                self.error = Some(error);
-                self.last_failure = Some(SystemTime::now());
-                self.stale = self.data.is_some();
-            }
-        }
-        true
-    }
-
-    pub(crate) fn data(&self) -> Option<&T> {
-        self.data.as_ref()
-    }
-
-    /// Updates an independent projection without changing the request, its
-    /// coverage, error or success/failure timestamps.
-    pub(crate) fn data_mut(&mut self) -> Option<&mut T> {
-        self.data.as_mut()
-    }
-
-    pub(crate) fn error(&self) -> Option<&str> {
-        self.error.as_deref()
-    }
-
-    pub(crate) fn is_loading(&self) -> bool {
-        self.loading
-    }
-
-    pub(crate) fn is_stale(&self) -> bool {
-        self.stale
-    }
-
-    pub(crate) fn last_successful(&self) -> Option<SystemTime> {
-        self.last_successful
-    }
-
-    /// When the most recent request for this target failed, if it did.
-    pub(crate) fn last_failure(&self) -> Option<SystemTime> {
-        self.last_failure
-    }
-}
+/// Retains the last successful value only while its target identity is
+/// unchanged; by default, the applied configuration.
+pub(crate) type Snapshot<T, I = AppliedConfig> = freshkube_core::snapshot::Snapshot<T, I>;
 
 #[cfg(test)]
 mod tests {
-    use super::Snapshot;
+    use crate::state::Snapshot;
 
+    /// The agent guide's example, through desktop's name for it.
     #[test]
-    fn same_target_failure_retains_data_and_success_time() {
-        let mut snapshot = Snapshot::<u32, &str>::default();
-        let initial = snapshot.begin("node-a");
-        assert!(snapshot.apply(&initial, Ok(7)));
-        let successful = snapshot.last_successful();
-        assert!(successful.is_some());
-        assert!(!snapshot.is_stale());
+    fn the_agent_guide_example_runs_through_the_alias() {
+        let mut state = Snapshot::<u32, &str>::default();
+        let initial = state.begin("node-a");
+        assert!(state.apply(&initial, Ok(7)));
+        let refresh = state.begin("node-a");
+        assert!(state.apply(&refresh, Err("offline".into())));
+        assert_eq!(state.data(), Some(&7));
+        assert!(state.is_stale());
 
-        let refresh = snapshot.begin("node-a");
-        assert_eq!(snapshot.data(), Some(&7));
-        assert!(snapshot.is_loading());
-        assert!(snapshot.is_stale());
-        assert!(snapshot.apply(&refresh, Err("offline".into())));
-        assert_eq!(snapshot.data(), Some(&7));
-        assert_eq!(snapshot.last_successful(), successful);
-        assert!(snapshot.last_failure().is_some());
-        assert_eq!(snapshot.error(), Some("offline"));
-        assert!(snapshot.is_stale());
-        assert!(!snapshot.is_loading());
-
-        let recovery = snapshot.begin("node-a");
-        assert!(snapshot.apply(&recovery, Ok(8)));
-        assert_eq!(snapshot.data(), Some(&8));
-        assert_eq!(snapshot.error(), None);
-        assert!(!snapshot.is_stale());
-        assert!(snapshot.last_failure().is_none());
-    }
-
-    #[test]
-    fn target_switch_clears_data_and_rejects_late_completions() {
-        let mut snapshot = Snapshot::<u32, &str>::default();
-        let initial = snapshot.begin("node-a");
-        assert!(snapshot.apply(&initial, Ok(7)));
-        let old = snapshot.begin("node-a");
-        let current = snapshot.begin("node-b");
-        assert_eq!(snapshot.data(), None);
-        assert_eq!(snapshot.last_successful(), None);
-        assert!(!snapshot.is_stale());
-        assert!(!snapshot.apply(&old, Ok(99)));
-        assert!(snapshot.is_loading());
-        assert!(snapshot.apply(&current, Err("unavailable".into())));
-        assert_eq!(snapshot.data(), None);
-        assert!(!snapshot.is_stale());
-    }
-
-    #[test]
-    fn superseded_generation_and_duplicate_completion_are_ignored() {
-        let mut snapshot = Snapshot::<u32, &str>::default();
-        let old = snapshot.begin("node-a");
-        let current = snapshot.begin("node-a");
-        assert!(!snapshot.apply(&old, Err("late failure".into())));
-        assert_eq!(snapshot.error(), None);
-        assert!(snapshot.apply(&current, Ok(4)));
-        assert!(!snapshot.apply(&current, Ok(5)));
-        assert_eq!(snapshot.data(), Some(&4));
-
-        let switched = snapshot.begin("node-b");
-        let returned = snapshot.begin("node-a");
-        assert!(!snapshot.apply(&switched, Ok(6)));
-        assert!(!snapshot.apply(&old, Ok(7)));
-        assert!(snapshot.apply(&returned, Ok(8)));
+        let replacement = state.begin("node-b");
+        assert!(state.data().is_none());
+        assert!(!state.apply(&refresh, Ok(99)));
+        assert!(state.apply(&replacement, Ok(8)));
     }
 }
