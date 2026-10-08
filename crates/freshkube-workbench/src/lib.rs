@@ -5,6 +5,7 @@
 
 use freshkube_ui::motion::{self, Choice};
 use freshkube_ui::palette::palette;
+use freshkube_ui::source_list::{self, Line, Row, SourceList, SourceListHost};
 use freshkube_ui::text_size;
 use freshkube_ui::theme;
 use freshkube_ui::ui::{self, dp};
@@ -12,7 +13,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::{ActiveTheme, Sizable, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyView, App, Context, Div, KeyBinding, Pixels, Role, SharedString, Size, TestSupportExt,
+    AnyView, App, Context, Div, KeyBinding, Pixels, SharedString, Size, TestSupportExt,
     TitlebarOptions, Window, WindowBounds, WindowOptions, div, px, size,
 };
 
@@ -28,7 +29,7 @@ pub const WIDTHS: [f32; 2] = [1280., 760.];
 /// The window's height when it opens.
 pub const HEIGHT: f32 = 880.;
 /// The story list's width, as the app's column.
-pub(crate) const LIST_WIDTH: f32 = 208.;
+pub(crate) const LIST_WIDTH: f32 = source_list::WIDTH;
 
 /// Opens the workbench window on the first story, or in a debug build on
 /// `FRESHKUBE_STORY`, at `FRESHKUBE_THEME` and `FRESHKUBE_WINDOW_SIZE` as the
@@ -43,6 +44,7 @@ pub fn run() {
             text_size::install(None, cx);
             motion::follow_system(cx);
             cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
+            source_list::bind_keys(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
@@ -125,14 +127,18 @@ fn window_size(value: &str) -> Option<Size<Pixels>> {
 pub struct Workbench {
     story: usize,
     view: AnyView,
+    list: SourceList<usize>,
 }
 
 impl Workbench {
     pub fn new(story: usize, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let story = story.min(STORIES.len() - 1);
+        let mut list = SourceList::new("workbench-stories", cx);
+        list.set_lines(lines(story));
         Self {
             story,
             view: (STORIES[story].build)(window, cx),
+            list,
         }
     }
 
@@ -151,49 +157,27 @@ impl Workbench {
         if story != self.story && story < STORIES.len() {
             self.story = story;
             self.view = (STORIES[story].build)(window, cx);
+            self.list.set_lines(lines(story));
             cx.notify();
         }
     }
 
-    fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The stories, as the app's column lists its pages.
+    fn render_list(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = palette(cx);
         v_flex()
-            .id("workbench-stories")
-            .test_support()
-            .role(Role::List)
             .flex_none()
             .w(dp(LIST_WIDTH))
             .h_full()
-            .p(dp(12.))
-            .gap(dp(4.))
             .border_r_1()
             .border_color(p.line)
-            .child(ui::caption("Stories", cx).pb(dp(4.)))
-            .children(
-                STORIES
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, story)| self.render_item(ix, story, cx)),
+            .child(source_list::title("Stories", div(), cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(source_list::list(&mut self.list, window, cx)),
             )
-    }
-
-    /// A story in the list, drawn as the app's column draws a page: the
-    /// one shown is raised.
-    fn render_item(
-        &self,
-        ix: usize,
-        story: &Story,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        freshkube_ui::column::item(
-            SharedString::from(format!("story-{}", story.slug)),
-            story.title.into(),
-            (story.icon)(),
-            dp(8.),
-            ix == self.story,
-            cx,
-        )
-        .on_click(cx.listener(move |this, _, window, cx| this.select(ix, window, cx)))
     }
 
     /// Theme, text size and width: what every story is checked at.
@@ -276,6 +260,32 @@ impl Workbench {
     }
 }
 
+/// The story list's lines, with `shown` selected.
+fn lines(shown: usize) -> Vec<Line<usize>> {
+    STORIES
+        .iter()
+        .enumerate()
+        .map(|(ix, story)| {
+            Row::new(ix, format!("story-{}", story.slug), story.title)
+                .icon((story.icon)())
+                .current(ix == shown)
+                .into()
+        })
+        .collect()
+}
+
+impl SourceListHost for Workbench {
+    type Key = usize;
+
+    fn source_list(&mut self) -> &mut SourceList<usize> {
+        &mut self.list
+    }
+
+    fn open(&mut self, story: &usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.select(*story, window, cx);
+    }
+}
+
 /// One option of a strip group.
 fn choice(id: String, label: impl Into<SharedString>, selected: bool, cx: &App) -> Button {
     ui::segment(Button::new(SharedString::from(id)), selected, cx)
@@ -306,7 +316,7 @@ impl Render for Workbench {
             .size_full()
             .bg(cx.theme().background)
             .text_color(palette(cx).ink)
-            .child(self.render_list(cx))
+            .child(self.render_list(window, cx))
             .child(
                 v_flex()
                     .flex_1()

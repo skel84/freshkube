@@ -28,7 +28,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         if self.area == Area::Observability {
-            return self.render_observability_column(true, window, cx);
+            return self.render_observability_column(window, cx);
         }
         let mut column = self.compact_column().child(self.expand_toggle(cx));
         match self.area {
@@ -71,7 +71,7 @@ impl Pilot {
                     }));
                 }
                 if slug == "workloads" {
-                    column = column.child(self.namespace_menu(true, cx));
+                    column = column.child(self.namespace_menu(cx));
                 }
             }
             Area::Monitoring => {
@@ -116,7 +116,7 @@ impl Pilot {
                         .ghost()
                         .size(dp(36.))
                         .icon(IconName::Puzzle)
-                        .tooltip("Custom Resources · expand to choose")
+                        .tooltip("Custom resources · expand to choose")
                         .tooltip_placement(Placement::Right)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.toggle_column(window, cx)),
@@ -161,9 +161,40 @@ impl Pilot {
             .tooltip_placement(Placement::Right)
             .on_click(cx.listener(|this, _, window, cx| this.toggle_column(window, cx)))
     }
-    pub(super) fn render_observability_column(
+    /// Keeps the destination in view whenever it, whether the column is
+    /// collapsed, or the room changes: a short window or large text
+    /// scrolls the list.
+    pub(super) fn reveal_destination(
         &mut self,
         collapsed: bool,
+        scroll: &ScrollHandle,
+        window: &mut Window,
+        cx: &Context<Self>,
+    ) {
+        let destination = self.observability.read(cx).destination();
+        let key = (destination, collapsed, column::room(window));
+        let revealed = Some(key);
+        let active = self.obs_destinations().into_iter().position(|item| {
+            item == destination
+                || (item == Destination::Applications && destination == Destination::Application)
+        });
+        if self.obs_column_revealed != revealed
+            && column::reveal_item(
+                scroll,
+                &mut self.obs_column_reveal_pass,
+                key,
+                active,
+                window,
+            )
+        {
+            self.obs_column_revealed = revealed;
+        }
+    }
+
+    /// Observability's collapsed column: a button per destination, then
+    /// Dashboards and the data source.
+    fn render_observability_column(
+        &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -173,26 +204,8 @@ impl Pilot {
             item == destination
                 || (item == Destination::Applications && destination == Destination::Application)
         };
-        // Deployments has no live source yet; only example data shows it.
-        let items: Vec<_> = Destination::NAVIGATION
-            .into_iter()
-            .filter(|item| self.fixture || *item != Destination::Deployments)
-            .collect();
-        // A short window or large text scrolls the list; keep the
-        // destination in view whenever it, or the column's width, changes.
-        let key = (destination, collapsed, column::room(window));
-        let revealed = Some(key);
-        if self.obs_column_revealed != revealed
-            && column::reveal_item(
-                &self.obs_column_scroll,
-                &mut self.obs_column_reveal_pass,
-                key,
-                items.iter().position(|&item| active(item)),
-                window,
-            )
-        {
-            self.obs_column_revealed = revealed;
-        }
+        let scroll = self.obs_column_scroll.clone();
+        self.reveal_destination(true, &scroll, window, cx);
         let incidents = self.observability.read(cx).incident_count();
         let mut rows = v_flex()
             .id("obs-navigation-scroll")
@@ -201,49 +214,25 @@ impl Pilot {
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .track_scroll(&self.obs_column_scroll)
-            .gap(dp(if collapsed { 4. } else { 2. }));
-        for item in items {
-            rows = rows.child(self.render_obs_destination(
-                item,
-                active(item),
-                incidents,
-                collapsed,
-                cx,
-            ));
+            .gap(dp(4.));
+        for item in self.obs_destinations() {
+            rows = rows.child(self.render_obs_destination(item, active(item), incidents, cx));
         }
-        rows = rows.child(self.render_obs_dashboards(collapsed, cx));
-        let sources = self.obs_sources_button(collapsed, cx);
+        rows = rows.child(self.render_obs_dashboards(cx));
         v_flex()
             .id("nav-column")
             .test_support()
-            .w(dp(if collapsed { 52. } else { COLUMN_WIDTH }))
+            .w(dp(52.))
             .h_full()
             .flex_none()
             .border_r_1()
             .border_color(p.line)
-            // Expanded, the column keeps the shared frame (`render_column`),
-            // so its caption and rows don't move when the area changes.
-            .when_else(
-                collapsed,
-                |this| {
-                    this.px(dp(8.))
-                        .py(dp(14.))
-                        .gap(dp(14.))
-                        .child(self.expand_toggle(cx))
-                },
-                |this| {
-                    this.px(dp(10.))
-                        .py(dp(16.))
-                        .gap(dp(2.))
-                        .child(self.column_header("Observability", cx))
-                },
-            )
+            .px(dp(8.))
+            .py(dp(14.))
+            .gap(dp(14.))
+            .child(self.expand_toggle(cx))
             .child(
-                if collapsed {
-                    column::icon_strip
-                } else {
-                    column::with_scrollbar
-                }(
+                column::icon_strip(
                     rows,
                     &self.obs_column_scroll,
                     "obs-navigation-scrollbar",
@@ -252,43 +241,23 @@ impl Pilot {
                 .flex_1()
                 .min_h_0(),
             )
-            .child(sources.when(!collapsed, |sources| sources.mt(dp(12.))))
+            .child(self.obs_sources_button(true, cx))
             .into_any_element()
     }
-    /// A destination's row, or its icon with the incidents' dot when the
-    /// column is collapsed.
+    /// A destination's icon, with the incidents' dot.
     fn render_obs_destination(
         &self,
         item: Destination,
         active: bool,
         incidents: Option<&str>,
-        collapsed: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let p = palette(cx);
         let open = cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.observability
                 .update(cx, |page, cx| page.open(item, cx));
             this.navigate_from_keyboard(Page::Observability, window, cx);
         });
         let count = incidents.filter(|_| item == Destination::Incidents);
-        if !collapsed {
-            let suffix = count.map(|count| {
-                div()
-                    .px(dp(5.))
-                    .rounded_full()
-                    .bg(if self.fixture { p.crit } else { p.surface })
-                    .text_color(if self.fixture { p.on_fill } else { p.ink_2 })
-                    .text_size(dp(11.))
-                    .font_weight(FontWeight::NORMAL)
-                    .child(count.to_string())
-                    .into_any_element()
-            });
-            let mut row = NavRow::new(format!("nav-obs-{}", item.slug()), item.label(), dp(10.))
-                .suffix(suffix);
-            row.icon = item.icon();
-            return self.column_item(row, active, open, cx);
-        }
         let button = Button::new(SharedString::from(format!("nav-obs-{}", item.slug())))
             .ghost()
             .small()
@@ -323,37 +292,22 @@ impl Pilot {
     }
 
     /// Dashboards, which opens Monitoring.
-    fn render_obs_dashboards(&self, collapsed: bool, cx: &Context<Self>) -> AnyElement {
-        let p = palette(cx);
-        let dashboards = cx.listener(|this, _: &ClickEvent, window, cx| {
-            this.navigate_from_keyboard(Page::Monitoring, window, cx)
-        });
-        if collapsed {
-            Button::new("nav-obs-dashboards")
-                .ghost()
-                .small()
-                .icon(IconName::ChartLine)
-                .tooltip("Prometheus dashboards, in Monitoring")
-                .tooltip_placement(Placement::Right)
-                .size(dp(36.))
-                .on_click(dashboards)
-                .into_any_element()
-        } else {
-            let mut row = NavRow::new("nav-obs-dashboards", "Dashboards", dp(10.))
-                .tooltip("Prometheus dashboards, in Monitoring")
-                .suffix(Some(
-                    Icon::new(IconName::ChevronRight)
-                        .size(dp(13.))
-                        .text_color(p.muted)
-                        .into_any_element(),
-                ));
-            row.icon = IconName::ChartLine;
-            self.column_item(row, false, dashboards, cx)
-        }
+    fn render_obs_dashboards(&self, cx: &Context<Self>) -> AnyElement {
+        Button::new("nav-obs-dashboards")
+            .ghost()
+            .small()
+            .icon(IconName::ChartLine)
+            .tooltip("Prometheus dashboards, in Monitoring")
+            .tooltip_placement(Placement::Right)
+            .size(dp(36.))
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.navigate_from_keyboard(Page::Monitoring, window, cx)
+            }))
+            .into_any_element()
     }
 
     /// The Coroot connection, or what example data is.
-    fn obs_sources_button(&self, collapsed: bool, cx: &Context<Self>) -> Button {
+    pub(super) fn obs_sources_button(&self, collapsed: bool, cx: &Context<Self>) -> Button {
         Button::new("obs-data-sources")
             .ghost().small().icon(IconName::Database)
             .tooltip(if self.fixture { "Sanitized example observations" } else { "Coroot connection and project" })
@@ -371,7 +325,8 @@ impl Pilot {
                 }
             }))
     }
-    fn namespace_menu(&self, compact: bool, cx: &Context<Self>) -> AnyElement {
+    /// The collapsed Workloads column's namespaces, as a menu.
+    fn namespace_menu(&self, cx: &Context<Self>) -> AnyElement {
         let namespaces = self.column_state.namespaces.clone();
         let pilot = cx.weak_entity();
         Button::new("nav-all-namespaces")
@@ -380,23 +335,15 @@ impl Pilot {
             .accessibility_label("All namespaces")
             .tooltip("Choose namespace")
             .tooltip_placement(Placement::Right)
-            .when_else(
-                compact,
-                |b| {
-                    b.w(dp(36.)).h(dp(44.)).px_0().child(
-                        v_flex()
-                            .items_center()
-                            .gap(dp(2.))
-                            .child(Icon::new(IconName::Folder).size(dp(14.)))
-                            .child(div().text_size(dp(11.)).child("all")),
-                    )
-                },
-                |b| {
-                    b.w_full()
-                        .justify_start()
-                        .icon(IconName::Folder)
-                        .label(format!("All namespaces  {}", self.column_state.total))
-                },
+            .w(dp(36.))
+            .h(dp(44.))
+            .px_0()
+            .child(
+                v_flex()
+                    .items_center()
+                    .gap(dp(2.))
+                    .child(Icon::new(IconName::Folder).size(dp(14.)))
+                    .child(div().text_size(dp(11.)).child("all")),
             )
             .dropdown_menu(move |mut menu, _, _| {
                 let mut entries = vec![("All namespaces".into(), "".into())];
@@ -414,54 +361,7 @@ impl Pilot {
             })
             .into_any_element()
     }
-    pub(super) fn render_namespaces(&self, cx: &Context<Self>) -> AnyElement {
-        v_flex()
-            .gap(dp(2.))
-            .pt(dp(20.))
-            .child(
-                div()
-                    .px(dp(10.))
-                    .pb(dp(8.))
-                    .child(ui::caption("Namespaces", cx)),
-            )
-            .child(self.namespace_menu(false, cx))
-            .children(
-                self.column_state
-                    .namespaces
-                    .iter()
-                    .take(20)
-                    .map(|(name, count)| {
-                        let namespace = name.to_string();
-                        let p = palette(cx);
-                        Button::new(SharedString::from(format!("nav-namespace-{name}")))
-                            .ghost()
-                            .small()
-                            .w_full()
-                            .justify_start()
-                            .icon(IconName::Folder)
-                            .selected(self.resources.read(cx).namespace() == Some(name.as_ref()))
-                            .child(
-                                div()
-                                    .font_family(MONO_FONT)
-                                    .text_size(dp(12.))
-                                    .truncate()
-                                    .flex_1()
-                                    .child(name.clone()),
-                            )
-                            .child(
-                                div()
-                                    .text_size(dp(12.))
-                                    .text_color(p.muted)
-                                    .child(count.clone()),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.choose_sidebar_namespace(Some(namespace.clone()), window, cx)
-                            }))
-                    }),
-            )
-            .into_any_element()
-    }
-    fn choose_sidebar_namespace(
+    pub(super) fn choose_sidebar_namespace(
         &mut self,
         namespace: Option<String>,
         window: &mut Window,

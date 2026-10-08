@@ -348,6 +348,7 @@ impl Pilot {
 
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
         self.publish_reading(cx);
+        self.column_changed();
         self.column_state.prepare(
             self.registry
                 .active()
@@ -426,6 +427,7 @@ impl Pilot {
             self.overview_display =
                 std::mem::take(&mut self.overview_display).talos_stale(reason.to_owned().into());
         }
+        self.column_changed();
         self.rail_marks = crate::desktop::shell::RailMarks::from_cards(
             &self.overview_display.cards,
             self.fixture,

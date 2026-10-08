@@ -366,7 +366,14 @@ pub(crate) struct Pilot {
     last_control: Page,
     /// Problem dots on the rail, from the overview's cards.
     rail_marks: shell::RailMarks,
-    column_scroll: ScrollHandle,
+    /// The expanded column's lines, keyboard and scroll.
+    column_list: freshkube_ui::source_list::SourceList<shell::ColumnKey>,
+    /// The column's line that `column_reveal` lands on, derived with it.
+    column_reveal_line: Option<usize>,
+    /// Whether the column's rows to reveal have all arrived.
+    column_settled: bool,
+    /// Whether what the column shows changed since its lines were derived.
+    column_stale: bool,
     /// The icon rail, which scrolls when the window is short or the text
     /// large.
     rail_scroll: ScrollHandle,
@@ -436,6 +443,7 @@ impl Pilot {
 
     /// The shell's global key bindings, by key context.
     fn bind_shell_keys(cx: &mut App) {
+        freshkube_ui::source_list::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
@@ -965,7 +973,10 @@ impl Pilot {
             last_custom: None,
             last_control: Page::Etcd,
             rail_marks: Default::default(),
-            column_scroll: ScrollHandle::new(),
+            column_list: freshkube_ui::source_list::SourceList::new("nav-column-list", cx),
+            column_reveal_line: None,
+            column_settled: true,
+            column_stale: true,
             rail_scroll: ScrollHandle::new(),
             compact_column_scroll: ScrollHandle::new(),
             column_reveal: None,
