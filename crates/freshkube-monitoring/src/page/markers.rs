@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use freshkube_core::monitoring::{
-    ErrorKind, QueryError,
+    QueryError, cluster_client,
     markers::{self, Marker, MarkerKind, Markers},
     model::time::TimeWindow,
 };
@@ -181,10 +181,7 @@ impl MonitoringPage {
         let access = source.access.clone();
         self.markers.kube_request = Some(self.run(
             async move {
-                let client = access
-                    .client()
-                    .await
-                    .map_err(|message| QueryError::new(ErrorKind::Unavailable, message))?;
+                let client = cluster_client(&access).await?;
                 Ok(markers::read_markers(client, since).await)
             },
             cx,

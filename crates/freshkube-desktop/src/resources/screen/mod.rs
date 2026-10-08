@@ -132,6 +132,10 @@ impl freshkube_core::cluster_source::KubeClientSource for KubeAccess {
     fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
         Box::pin(KubeAccess::client(self))
     }
+
+    fn forget(&self) {
+        KubeAccess::forget(self);
+    }
 }
 
 impl KubeSource {

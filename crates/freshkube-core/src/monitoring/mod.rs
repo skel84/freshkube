@@ -24,6 +24,7 @@ mod tests;
 use std::fmt;
 
 use crate::base_url::{BaseUrlError, parse_base_url};
+use crate::cluster_source::ClusterAccess;
 
 pub use discovery::{
     Candidate, Discovery, LOOKED_FOR, Rank, Tried, confirm, confirm_url, discover, list_candidates,
@@ -213,6 +214,9 @@ pub enum ErrorKind {
     /// The identity may not proxy to the Service, or a URL refused the
     /// token (401 or 403).
     Refused,
+    /// The cluster refused the context's credentials (401). Shown and
+    /// handled as [`ErrorKind::Refused`]; only the client is built again.
+    Unauthorized,
     /// The Service, its port or the API path doesn't exist (404).
     NotFound,
     /// The Service has no ready endpoint, or the connection failed.
@@ -248,6 +252,15 @@ impl QueryError {
         )
     }
 
+    /// The cluster refused the context's credentials through the proxy:
+    /// shown as [`Self::refused`] is.
+    pub fn unauthorized() -> Self {
+        Self {
+            kind: ErrorKind::Unauthorized,
+            ..Self::refused()
+        }
+    }
+
     /// A URL's server refused the token, or asked for one.
     pub fn token_refused() -> Self {
         Self::new(
@@ -261,9 +274,41 @@ impl QueryError {
         Self::new(ErrorKind::Unsupported, message)
     }
 
-    /// Retrying won't help until RBAC or the Service changes.
+    /// Not allowed, whether for the identity's RBAC or its credentials.
+    pub fn is_refused(&self) -> bool {
+        matches!(self.kind, ErrorKind::Refused | ErrorKind::Unauthorized)
+    }
+
+    /// Retrying won't help until the credentials, RBAC or the Service
+    /// change.
     pub fn is_permanent(&self) -> bool {
-        matches!(self.kind, ErrorKind::Refused | ErrorKind::NotFound)
+        self.is_refused() || self.kind == ErrorKind::NotFound
+    }
+
+    /// The cluster's client may be the cause, as Resources judges it: its
+    /// credentials were refused, or it couldn't connect or answer in time.
+    pub fn implicates_client(&self) -> bool {
+        matches!(
+            self.kind,
+            ErrorKind::Unauthorized | ErrorKind::Unavailable | ErrorKind::TimedOut
+        )
+    }
+}
+
+/// The cluster's Kubernetes client for a Prometheus read. A failure drops
+/// the client the access reuses, so the next ask builds it again.
+pub async fn cluster_client(access: &ClusterAccess) -> Result<kube::Client, QueryError> {
+    access.client().await.map_err(|message| {
+        access.forget();
+        QueryError::new(ErrorKind::Unavailable, message)
+    })
+}
+
+/// Drops the access's reused client after `error` when the client may be
+/// its cause; a refusal by RBAC (403) keeps it.
+pub fn forget_after(access: &ClusterAccess, error: &QueryError) {
+    if error.implicates_client() {
+        access.forget();
     }
 }
 
