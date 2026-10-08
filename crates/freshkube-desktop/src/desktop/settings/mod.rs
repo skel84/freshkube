@@ -27,6 +27,9 @@ use source::Column;
 use std::path::{Path, PathBuf};
 
 /// The page's id prefix: `settings-title`, `-list`, `-banner`.
+/// The most unknown keys the page names before it says how many more.
+const MOST_KEYS_NAMED: usize = 5;
+
 const PREFIX: &str = "settings";
 /// The list's key context, around the table.
 pub(super) const CONTEXT: &str = "SettingsWorkspace";
@@ -49,7 +52,9 @@ gpui_kit::actions!(
         /// Moves the selected cluster up one place.
         MoveClusterUp,
         /// Moves the selected cluster down one place.
-        MoveClusterDown
+        MoveClusterDown,
+        /// Reads workspace.json again.
+        ReloadWorkspace
     ]
 );
 
@@ -95,6 +100,9 @@ pub(crate) struct SettingsPage {
     workspace: Workspace,
     /// `workspace.json`; none without a preferences folder.
     file: Option<PathBuf>,
+    /// What the file held when it was last read or written, to refuse a
+    /// save over a change made since.
+    seen: workspace::Seen,
     /// Why a file isn't used, for the banner; none while it is.
     banner: Option<SharedString>,
     /// Keys the file holds that this version doesn't know.
@@ -121,6 +129,7 @@ impl SettingsPage {
             origin: Origin::Alone,
             workspace: Workspace::default(),
             file: None,
+            seen: workspace::Seen::Missing,
             banner: None,
             warning: None,
             notice: None,
@@ -147,14 +156,27 @@ impl SettingsPage {
         self.workspace = workspace.clone();
         self.warning = match workspace.unknown_keys().as_slice() {
             [] => None,
-            keys => Some(
-                format!(
-                    "workspace.json has keys this version doesn’t use: {}. They are kept when \
-                     the file is saved; check them for a misspelling.",
-                    keys.join(", ")
+            keys => {
+                let shown = keys
+                    .iter()
+                    .take(MOST_KEYS_NAMED)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let more = keys.len().saturating_sub(MOST_KEYS_NAMED);
+                Some(
+                    format!(
+                        "workspace.json has keys this version doesn’t use: {}{}. They are kept \
+                         when the file is saved; check them for a misspelling.",
+                        shown.join(", "),
+                        if more > 0 {
+                            format!(" and {more} more")
+                        } else {
+                            String::new()
+                        }
+                    )
+                    .into(),
                 )
-                .into(),
-            ),
+            }
         };
         self.rows = workspace
             .clusters
@@ -380,12 +402,24 @@ impl SettingsPage {
             |this, _, cx| this.move_selected(1, cx),
             cx,
         );
+        let reloadable =
+            self.file.is_some() && self.origin != Origin::Example && self.saving.is_none();
+        let (reload, reload_fold) = self.render_action(
+            "reload",
+            "Reload",
+            reloadable,
+            "Read workspace.json again",
+            &ReloadWorkspace,
+            |this, _, cx| this.reload(cx),
+            cx,
+        );
         header
             .foldable(add, add_fold)
             .foldable(edit, edit_fold)
             .foldable(remove, remove_fold)
             .foldable(up, up_fold)
             .foldable(down, down_fold)
+            .foldable(reload, reload_fold)
             .render(window, cx)
     }
 
@@ -481,15 +515,19 @@ impl super::Pilot {
     /// Example data shows the acme workspace and touches no file. A file
     /// the app can't use is left where it is; the page says why.
     pub(super) fn load_workspace(&mut self, cx: &mut Context<Self>) {
-        let loaded = match (&self.workspace_file, self.fixture) {
-            (_, true) => Loaded::Workspace(workspace::example()),
-            (Some(file), false) => workspace::load(file),
-            (None, false) => Loaded::Missing,
+        let (loaded, seen) = match (&self.workspace_file, self.fixture) {
+            (_, true) => (
+                Loaded::Workspace(workspace::example()),
+                workspace::Seen::Missing,
+            ),
+            (Some(file), false) => workspace::load_seen(file),
+            (None, false) => (Loaded::Missing, workspace::Seen::Missing),
         };
         let example = self.fixture;
         let file = self.workspace_file.clone();
         self.settings_page.update(cx, |page, cx| {
             page.file = file;
+            page.seen = seen;
             page.set_workspace(&loaded, example, cx)
         });
     }

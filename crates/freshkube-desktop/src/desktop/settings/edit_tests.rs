@@ -35,7 +35,7 @@ async fn open_settings(
     .unwrap();
 }
 
-/// Waits for the save in flight to land on the page.
+/// Waits for the save in flight to answer.
 async fn saved(
     cx: &mut TestAppContext,
     handle: gpui_kit::AnyWindowHandle,
@@ -43,8 +43,8 @@ async fn saved(
 ) {
     let view = view.clone();
     cx.wait_for(handle, Duration::from_secs(5), move |_, cx| {
-        let page = view.read(cx).settings_page.read(cx);
-        page.notice.is_some()
+        // A click starts the save at once; it is over when it has answered.
+        view.read(cx).settings_page.read(cx).saving.is_none()
     })
     .await;
 }
@@ -104,7 +104,9 @@ async fn editing_a_cluster_changes_its_role_and_keeps_its_place(cx: &mut TestApp
         window.click("settings-cluster-prod", cx);
         window.press("e", cx);
         window.render_frame(cx);
-        assert_eq!(window.find("settings-form-id").label(), None);
+        // The id is fixed: typing at it changes nothing.
+        window.click("settings-form-id", cx);
+        window.input("zz", cx);
         window.click(("settings-role", 1usize), cx);
         window.click("settings-form-save", cx);
     })
@@ -170,7 +172,7 @@ async fn moving_a_cluster_saves_the_new_order(cx: &mut TestAppContext) {
     open_settings(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-cluster-prod", cx);
-        window.press("alt-up", cx);
+        window.press("secondary-alt-up", cx);
     })
     .unwrap();
     saved(cx, handle, &view).await;
@@ -181,7 +183,7 @@ async fn moving_a_cluster_saves_the_new_order(cx: &mut TestAppContext) {
             .settings_page
             .clone()
             .update(cx, |page, _| page.notice = None);
-        window.press("alt-up", cx);
+        window.press("secondary-alt-up", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -232,9 +234,16 @@ async fn a_save_that_cannot_set_the_file_aside_changes_nothing(cx: &mut TestAppC
         window.render_frame(cx);
         let page = view.read(cx).settings_page.read(cx);
         assert!(matches!(page.origin(), Origin::Refused(_)));
-        assert!(matches!(page.notice, Some(Notice::Failed(_))));
-        assert!(window.find("settings-save-failed").visible());
         assert!(window.try_find("settings-cluster-acme-ci").is_none());
+        // The form stays open with what was typed, and says why.
+        let error = window.find("settings-form-error");
+        assert!(error.visible());
+        let text = error.label().unwrap_or_default().to_owned();
+        assert!(
+            text.starts_with("Couldn’t set the unused workspace.json aside:"),
+            "{text}"
+        );
+        assert!(window.find("settings-cluster-form").visible());
     })
     .unwrap();
     assert!(guard.path().join("workspace.json").is_dir());
@@ -309,7 +318,7 @@ async fn example_data_never_writes_and_its_actions_are_off(cx: &mut TestAppConte
     open_settings(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-cluster-prod-fra", cx);
-        for key in ["a", "e", "backspace", "alt-up"] {
+        for key in ["a", "e", "backspace", "secondary-alt-up"] {
             window.press(key, cx);
         }
         window.click("settings-add", cx);
@@ -324,6 +333,198 @@ async fn example_data_never_writes_and_its_actions_are_off(cx: &mut TestAppConte
         let page = view.read(cx).settings_page.read(cx);
         assert!(page.notice.is_none() && page.saving.is_none());
         assert_eq!(page.origin(), &Origin::Example);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn a_hand_edit_made_while_the_app_runs_is_kept_and_reload_shows_it(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    // Someone edits the file in an editor.
+    let edited = TWO.replace("acme-prod", "acme-prod-edited");
+    write(guard.path(), &edited);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-cluster-prod", cx);
+        window.press("secondary-alt-up", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = view.read(cx).settings_page.read(cx);
+        let Some(Notice::Failed(why)) = &page.notice else {
+            panic!("{:?}", page.notice);
+        };
+        assert!(why.contains("changed on disk"), "{why}");
+        assert!(window.find("settings-save-failed").visible());
+    })
+    .unwrap();
+    // Nothing was written or moved.
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("workspace.json")).unwrap(),
+        edited
+    );
+    assert_eq!(std::fs::read_dir(guard.path()).unwrap().count(), 1);
+
+    // Reload shows the file as it is, and a change then goes through.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-reload", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("settings-save-failed").is_none());
+        window.click("settings-cluster-prod", cx);
+        window.press("secondary-alt-up", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    assert_eq!(ids(guard.path()), vec!["prod", "mgmt"]);
+    let kept = std::fs::read_to_string(guard.path().join("workspace.json")).unwrap();
+    assert!(kept.contains("acme-prod-edited"), "{kept}");
+}
+
+#[gpui_kit::test]
+async fn a_file_made_after_launch_is_not_replaced_by_the_first_save(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    // Another window, or an editor, makes the file after this one launched.
+    write(guard.path(), TWO);
+    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci", ""))
+        .unwrap();
+    saved(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let text = window
+            .find("settings-form-error")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(text.contains("changed on disk"), "{text}");
+    })
+    .unwrap();
+    assert_eq!(ids(guard.path()), vec!["mgmt", "prod"]);
+}
+
+#[gpui_kit::test]
+async fn the_form_stays_open_with_what_was_typed_when_the_save_fails(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-add", cx);
+        window.render_frame(cx);
+        window.click("settings-form-context", cx);
+        window.input("acme-ci", cx);
+    })
+    .unwrap();
+    write(guard.path(), TWO);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-form-save", cx)
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-form-error").visible());
+        // What was typed is still there: saving again after a reload works.
+        window.click("settings-form-cancel", cx);
+        window.render_frame(cx);
+        window.click("settings-reload", cx);
+        add(window, cx, "acme-ci", "");
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    assert_eq!(ids(guard.path()), vec!["mgmt", "prod", "acme-ci"]);
+}
+
+#[gpui_kit::test]
+async fn a_second_change_while_a_save_runs_is_refused(cx: &mut TestAppContext) {
+    use freshkube_core::workspace::Role;
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        add(window, cx, "first", "");
+        let page = view.read(cx).settings_page.clone();
+        let second = page.update(cx, |page, cx| {
+            page.upsert(None, Role::Cicd, "second", "", cx)
+        });
+        assert!(second.is_err(), "a save is running");
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    assert_eq!(ids(guard.path()), vec!["first"]);
+}
+
+#[gpui_kit::test]
+async fn an_empty_context_names_the_field_and_a_too_large_file_says_so(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    // Compact this stays inside what a launch reads; written with
+    // indentation it would not.
+    let many: Vec<_> = (0..12_000).map(|n| serde_json::json!({"a": n})).collect();
+    let big = serde_json::json!({"version": 1, "destinations": many}).to_string();
+    assert!(big.len() < workspace::MAX_BYTES as usize);
+    write(guard.path(), &big);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-add", cx);
+        window.render_frame(cx);
+        window.click("settings-form-save", cx);
+        window.render_frame(cx);
+        let empty = window
+            .find("settings-form-error")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(empty.contains("context"), "{empty}");
+        window.click("settings-form-context", cx);
+        window.input("acme-ci", cx);
+        window.click("settings-form-save", cx);
+        window.render_frame(cx);
+        let large = window
+            .find("settings-form-error")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(large.contains("256 KiB"), "{large}");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("workspace.json")).unwrap(),
+        big
+    );
+}
+
+#[gpui_kit::test]
+async fn many_unknown_keys_are_capped_in_the_banner(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(
+        guard.path(),
+        r#"{"version":1,"a1":1,"a2":1,"a3":1,"a4":1,"a5":1,"a6":1,"a7":1,"clusters":[]}"#,
+    );
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, _, cx| {
+        let warning = view
+            .read(cx)
+            .settings_page
+            .read(cx)
+            .warning
+            .clone()
+            .unwrap();
+        assert!(warning.contains("a5"), "{warning}");
+        assert!(!warning.contains("a6"), "{warning}");
+        assert!(warning.contains("and 2 more"), "{warning}");
     })
     .unwrap();
 }

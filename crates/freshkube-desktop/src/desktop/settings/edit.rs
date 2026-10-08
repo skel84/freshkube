@@ -42,7 +42,7 @@ impl SettingsPage {
         if !self.editable() || window.has_active_dialog(cx) {
             return;
         }
-        form::open(cx.entity().downgrade(), editing, window, cx);
+        form::open(cx.entity(), editing, window, cx);
     }
 
     pub(super) fn edit_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -66,6 +66,9 @@ impl SettingsPage {
         }
         let context = context.trim();
         let talosconfig = talosconfig.trim();
+        if context.is_empty() {
+            return Err("Enter the kubeconfig context this cluster opens".into());
+        }
         let mut next = self.workspace.clone();
         let talosconfig = (!talosconfig.is_empty()).then(|| PathBuf::from(talosconfig));
         let what = match editing {
@@ -88,10 +91,8 @@ impl SettingsPage {
                 format!("Added {id}.")
             }
         };
-        next.validate().map_err(|why| {
-            let why = why.to_string();
-            SharedString::from(why[..1].to_uppercase() + &why[1..])
-        })?;
+        next.check_saveable()
+            .map_err(|why| SharedString::from(capitalized(&why.to_string())))?;
         self.commit(next, what, cx);
         Ok(())
     }
@@ -184,25 +185,21 @@ impl SettingsPage {
 
     /// Writes `next` off the UI thread. The page shows it once it is on
     /// disk; if the write fails, the page and the file stay as they were.
+    /// The file is read again just before the write and compared with what
+    /// was last read or written: a hand edit, or a file another window made,
+    /// is never replaced.
     pub(super) fn commit(&mut self, next: Workspace, what: String, cx: &mut Context<Self>) {
         let Some(file) = self.file.clone() else {
             return;
         };
         let refused = matches!(self.origin, Origin::Refused(_));
+        let expected = self.seen.clone();
         self.notice = None;
         let shown = next.clone();
         self.saving = Some(cx.spawn(async move |this, cx| {
             let outcome = cx
                 .background_spawn(async move {
-                    let aside = if refused {
-                        Some(workspace::set_aside(&file, Utc::now()).map_err(|e| (None, e))?)
-                    } else {
-                        None
-                    };
-                    match workspace::save(&file, &next) {
-                        Ok(()) => Ok(aside),
-                        Err(error) => Err((aside, error)),
-                    }
+                    workspace::commit(&file, &expected, refused, &next, Utc::now())
                 })
                 .await;
             _ = this.update(cx, |this, cx| this.saved(shown, what, outcome, cx));
@@ -214,38 +211,83 @@ impl SettingsPage {
         &mut self,
         saved: Workspace,
         what: String,
-        outcome: Result<Option<PathBuf>, (Option<PathBuf>, std::io::Error)>,
+        outcome: Result<(Option<PathBuf>, workspace::Seen), workspace::SaveError>,
         cx: &mut Context<Self>,
     ) {
+        use workspace::SaveError;
         self.saving = None;
         match outcome {
-            Ok(aside) => {
+            Ok((aside, seen)) => {
                 self.set_workspace(&Loaded::Workspace(saved), false, cx);
+                self.seen = seen;
                 self.notice = Some(Notice::Saved(
                     match aside {
-                        Some(path) => {
-                            format!(
-                                "{what} The earlier file was set aside as {}.",
-                                path.display()
-                            )
-                        }
+                        Some(path) => format!(
+                            "{what} The earlier file was set aside as {}.",
+                            path.display()
+                        ),
                         None => what,
                     }
                     .into(),
                 ));
             }
-            Err((aside, error)) => {
-                // The refused file was moved before the write failed: the
-                // page now has no file to protect.
+            Err(SaveError::Changed) => {
+                self.notice = Some(Notice::Failed(
+                    "workspace.json changed on disk since it was read. Nothing was written; \
+                     reload to see the file as it is."
+                        .into(),
+                ));
+            }
+            Err(SaveError::Invalid(why)) => {
+                self.notice = Some(Notice::Failed(capitalized(&why.to_string()).into()));
+            }
+            Err(SaveError::Aside(error)) => {
+                self.notice = Some(Notice::Failed(
+                    format!(
+                        "Couldn’t set the unused workspace.json aside: {error}. Nothing was \
+                         written."
+                    )
+                    .into(),
+                ));
+            }
+            Err(SaveError::Write { aside, error }) => {
+                // An unused file moved before the write failed: the page now
+                // has no file to protect.
                 let moved = aside
                     .map(|path| format!(" The earlier file was set aside as {}.", path.display()));
                 if moved.is_some() {
                     self.set_workspace(&Loaded::Missing, false, cx);
+                    self.seen = workspace::Seen::Missing;
                 }
                 let rest = moved.unwrap_or_else(|| " The file is as it was.".into());
                 self.notice = Some(Notice::Failed(format!("{error}.{rest}").into()));
             }
         }
         cx.notify();
+    }
+
+    /// Reads the file again, as the person asked: after a change made by
+    /// hand, or by another window. The read is the bounded one the launch
+    /// makes, on the UI thread, and happens only on this action.
+    pub(super) fn reload(&mut self, cx: &mut Context<Self>) {
+        let Some(file) = self.file.clone() else {
+            return;
+        };
+        if self.origin == Origin::Example || self.saving.is_some() {
+            return;
+        }
+        let (loaded, seen) = workspace::load_seen(&file);
+        self.set_workspace(&loaded, false, cx);
+        self.seen = seen;
+        self.notice = None;
+        cx.notify();
+    }
+}
+
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }

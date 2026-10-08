@@ -506,12 +506,17 @@ impl Pilot {
                 settings::RemoveCluster,
                 Some(settings::CONTEXT),
             ),
-            KeyBinding::new("alt-up", settings::MoveClusterUp, Some(settings::CONTEXT)),
             KeyBinding::new(
-                "alt-down",
+                "secondary-alt-up",
+                settings::MoveClusterUp,
+                Some(settings::CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-alt-down",
                 settings::MoveClusterDown,
                 Some(settings::CONTEXT),
             ),
+            KeyBinding::new("r", settings::ReloadWorkspace, Some(settings::CONTEXT)),
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
                 "secondary-shift-enter",

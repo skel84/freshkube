@@ -315,3 +315,130 @@ fn fresh_ids_come_from_the_context_and_never_repeat() {
     assert_eq!(workspace.fresh_id("acme-ci"), "acme-ci-2");
     assert!(workspace.fresh_id(&"x".repeat(200)).len() <= MAX_ID_BYTES);
 }
+
+fn now() -> chrono::DateTime<chrono::Utc> {
+    use chrono::TimeZone;
+    chrono::Utc
+        .with_ymd_and_hms(2026, 10, 8, 14, 30, 5)
+        .unwrap()
+}
+
+#[test]
+fn a_workspace_the_next_launch_would_refuse_for_its_size_is_not_written() {
+    // Compact, the file is well inside the limit; written with indentation it
+    // is not.
+    let many: Vec<_> = (0..12_000).map(|n| serde_json::json!({"a": n})).collect();
+    let source = text(serde_json::json!({"version": 1, "destinations": many}));
+    assert!(source.len() < MAX_BYTES as usize);
+    let workspace = parse(&source).unwrap();
+    assert_eq!(workspace.check_saveable(), Err(Invalid::TooLarge));
+
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    assert!(save(&file, &workspace).is_err());
+    assert!(!file.exists());
+    assert!(matches!(
+        commit(&file, &Seen::Missing, false, &workspace, now()),
+        Err(SaveError::Invalid(Invalid::TooLarge))
+    ));
+    assert!(!file.exists());
+}
+
+#[test]
+fn a_commit_writes_when_the_file_is_as_it_was_read_and_hands_back_what_it_wrote() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    let (loaded, seen) = load_seen(&file);
+    assert_eq!((loaded, &seen), (Loaded::Missing, &Seen::Missing));
+    let (aside, seen) = commit(&file, &seen, false, &sample(), now()).unwrap();
+    assert_eq!(aside, None);
+    assert_eq!(seen, Seen::Bytes(std::fs::read(&file).unwrap()));
+    // The next commit goes by what the last one wrote.
+    let mut smaller = sample();
+    smaller.clusters.truncate(1);
+    let (_, seen) = commit(&file, &seen, false, &smaller, now()).unwrap();
+    assert_eq!(load(&file), Loaded::Workspace(smaller));
+    assert_eq!(seen, Seen::Bytes(std::fs::read(&file).unwrap()));
+}
+
+#[test]
+fn a_hand_edit_between_the_read_and_the_save_is_kept_and_nothing_is_written() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    save(&file, &sample()).unwrap();
+    let (_, seen) = load_seen(&file);
+    let edited = std::fs::read_to_string(&file)
+        .unwrap()
+        .replace("acme-ci", "acme-ci-edited");
+    std::fs::write(&file, &edited).unwrap();
+
+    let mut other = sample();
+    other.clusters.truncate(1);
+    assert!(matches!(
+        commit(&file, &seen, false, &other, now()),
+        Err(SaveError::Changed)
+    ));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn a_file_another_window_created_after_the_read_is_not_replaced() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    let (_, seen) = load_seen(&file);
+    assert_eq!(seen, Seen::Missing);
+    std::fs::write(&file, "{\"version\":1}").unwrap();
+    assert!(matches!(
+        commit(&file, &seen, false, &sample(), now()),
+        Err(SaveError::Changed)
+    ));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "{\"version\":1}");
+}
+
+#[test]
+fn a_refused_file_that_changed_is_not_set_aside() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    std::fs::write(&file, "{\"version\":9}").unwrap();
+    let (loaded, seen) = load_seen(&file);
+    assert!(matches!(loaded, Loaded::Refused(_)));
+    std::fs::write(&file, "{\"version\":1}").unwrap();
+    assert!(matches!(
+        commit(&file, &seen, true, &sample(), now()),
+        Err(SaveError::Changed)
+    ));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "{\"version\":1}");
+    assert!(!directory.path().join("workspace.json.bak").exists());
+}
+
+#[test]
+fn a_refused_file_that_is_unchanged_is_set_aside_and_the_new_one_written() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    std::fs::write(&file, "{\"version\":9}").unwrap();
+    let (_, seen) = load_seen(&file);
+    let (aside, seen) = commit(&file, &seen, true, &sample(), now()).unwrap();
+    assert_eq!(aside, Some(directory.path().join("workspace.json.bak")));
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("workspace.json.bak")).unwrap(),
+        "{\"version\":9}"
+    );
+    assert_eq!(load(&file), Loaded::Workspace(sample()));
+    assert_eq!(seen, Seen::Bytes(std::fs::read(&file).unwrap()));
+}
+
+#[test]
+fn a_file_that_cannot_be_set_aside_stops_the_commit_before_any_write() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    std::fs::create_dir(&file).unwrap();
+    let (_, seen) = load_seen(&file);
+    assert_eq!(seen, Seen::Unreadable);
+    assert!(matches!(
+        commit(&file, &seen, true, &sample(), now()),
+        Err(SaveError::Aside(_))
+    ));
+    assert!(file.is_dir());
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}

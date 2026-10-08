@@ -83,8 +83,13 @@ reason and left exactly where it is until the first save, which links it to
 replaced) and only then writes the new file; if it can't be set aside, nothing
 is written. A change is a changed copy of the workspace, validated, then
 written whole through a temporary file off the UI thread; the page shows it
-once it is on disk. Keys this version doesn't know are kept on save and named
-on the page. Example data and a window without a preferences folder never
+once it is on disk. Before writing, the file is read again and compared with
+what was last read or written; if it differs (an edit by hand, or a file
+another window made), nothing is written and Reload reads it again. A
+workspace whose written form would exceed what a launch reads (256 KiB) is not
+written. A `workspace.json` that is a symlink becomes a regular file on the
+first save. Keys this version doesn't know are kept on save and named on the
+page. Example data and a window without a preferences folder never
 write. Starting on a remembered entry arrives with the switcher that opens one.
 
 This is the local configuration/session boundary from #2. Independent revisions

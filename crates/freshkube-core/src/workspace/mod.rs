@@ -176,8 +176,18 @@ impl Workspace {
         Ok(())
     }
 
-    /// Keys this version doesn't know, as `key` or `cluster-id.key`, in file
-    /// order. They are kept when the file is saved; the page names them so a
+    /// What [`validate`](Self::validate) checks, and that the written file
+    /// stays within what [`load`] reads: a file the next launch would refuse
+    /// for its size is not written.
+    pub fn check_saveable(&self) -> Result<(), Invalid> {
+        self.validate()?;
+        if to_text(self).len() as u64 > MAX_BYTES {
+            return Err(Invalid::TooLarge);
+        }
+        Ok(())
+    }
+
+    /// Keys this version doesn't know, as `key` or `cluster-id.key`, sorted. They are kept when the file is saved; the page names them so a
     /// misspelt key doesn't go unnoticed. The reserved `destinations` and
     /// `sources` are not listed.
     pub fn unknown_keys(&self) -> Vec<String> {
@@ -190,7 +200,9 @@ impl Workspace {
             .clusters
             .iter()
             .flat_map(|entry| entry.extra.keys().map(|key| format!("{}.{key}", entry.id)));
-        top.chain(entries).collect()
+        let mut keys: Vec<String> = top.chain(entries).collect();
+        keys.sort();
+        keys
     }
 
     /// An id for a new entry that no entry uses, from the context's name.
@@ -249,9 +261,36 @@ pub fn parse(bytes: &[u8]) -> Result<Workspace, Invalid> {
     Ok(workspace)
 }
 
+/// What a file held when it was read, to tell whether it changed before a
+/// save wrote over it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Seen {
+    Missing,
+    Bytes(Vec<u8>),
+    /// Too large, not a regular file, or not readable.
+    Unreadable,
+}
+
+fn read_seen(file: &Path) -> (Seen, Result<Vec<u8>, BoundedReadError>) {
+    let read = read_bounded_regular_file(file, MAX_BYTES);
+    let seen = match &read {
+        Ok(bytes) => Seen::Bytes(bytes.clone()),
+        Err(BoundedReadError::NotFound) => Seen::Missing,
+        Err(_) => Seen::Unreadable,
+    };
+    (seen, read)
+}
+
 /// Reads `file`. A missing file is not an error.
 pub fn load(file: &Path) -> Loaded {
-    match read_bounded_regular_file(file, MAX_BYTES) {
+    load_seen(file).0
+}
+
+/// Reads `file` and what it held, so a later save can tell whether the file
+/// changed in between.
+pub fn load_seen(file: &Path) -> (Loaded, Seen) {
+    let (seen, read) = read_seen(file);
+    let loaded = match read {
         Ok(bytes) => match parse(&bytes) {
             Ok(workspace) => Loaded::Workspace(workspace),
             Err(invalid) => Loaded::Refused(invalid),
@@ -259,7 +298,8 @@ pub fn load(file: &Path) -> Loaded {
         Err(BoundedReadError::TooLarge) => Loaded::Refused(Invalid::TooLarge),
         Err(BoundedReadError::NotFound) => Loaded::Missing,
         Err(error) => Loaded::Refused(Invalid::NotReadable(error.to_string())),
-    }
+    };
+    (loaded, seen)
 }
 
 /// The file's text, with its version first.
@@ -277,7 +317,7 @@ pub fn to_text(workspace: &Workspace) -> String {
 /// Writes the workspace through a temporary file renamed into place, so a
 /// failed save leaves the old file whole. An invalid workspace writes nothing.
 pub fn save(file: &Path, workspace: &Workspace) -> std::io::Result<()> {
-    workspace.validate().map_err(|invalid| {
+    workspace.check_saveable().map_err(|invalid| {
         std::io::Error::new(std::io::ErrorKind::InvalidInput, invalid.to_string())
     })?;
     if let Some(parent) = file.parent() {
@@ -337,6 +377,52 @@ pub fn set_aside(file: &Path, now: chrono::DateTime<chrono::Utc>) -> std::io::Re
     Err(std::io::Error::other(
         "too many backups of the workspace file",
     ))
+}
+
+/// Why [`commit`] wrote nothing, or what it did before failing.
+#[derive(Debug)]
+pub enum SaveError {
+    /// The file is not what it was when it was read: someone changed,
+    /// created or removed it. Nothing was written or moved.
+    Changed,
+    /// The workspace is invalid, or too large for the next launch to read.
+    Invalid(Invalid),
+    /// The unused file could not be set aside; nothing was written.
+    Aside(std::io::Error),
+    /// The write failed. `aside` is where the unused file went before it,
+    /// if it was moved.
+    Write {
+        aside: Option<PathBuf>,
+        error: std::io::Error,
+    },
+}
+
+/// Saves `workspace` if the file is still as it was when it was read
+/// (`expected`). `refused` says that file was one the app doesn't use, which
+/// is set aside first. Returns where it went, if it was, and what the file now
+/// holds, for the next save. Re-reading just before the write narrows the
+/// window in which a hand edit can be lost to a few microseconds; it cannot
+/// close it, as no portable compare-and-rename exists.
+pub fn commit(
+    file: &Path,
+    expected: &Seen,
+    refused: bool,
+    workspace: &Workspace,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<(Option<PathBuf>, Seen), SaveError> {
+    workspace.check_saveable().map_err(SaveError::Invalid)?;
+    if &read_seen(file).0 != expected {
+        return Err(SaveError::Changed);
+    }
+    let aside = if refused {
+        Some(set_aside(file, now).map_err(SaveError::Aside)?)
+    } else {
+        None
+    };
+    match save(file, workspace) {
+        Ok(()) => Ok((aside, Seen::Bytes(to_text(workspace).into_bytes()))),
+        Err(error) => Err(SaveError::Write { aside, error }),
+    }
 }
 
 /// The acme workspace of `docs/platform/`'s mocks as a workspace: one core

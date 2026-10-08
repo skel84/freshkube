@@ -4,7 +4,7 @@
 use super::*;
 use freshkube_core::workspace::{Entry, Role as ClusterRole};
 use gpui_kit::component::{
-    Sizable, WindowExt,
+    Disableable, Sizable, WindowExt,
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -12,7 +12,10 @@ use gpui_kit::component::{
 };
 
 pub(super) struct ClusterForm {
-    page: WeakEntity<SettingsPage>,
+    page: Entity<SettingsPage>,
+    /// A save the form started is in flight: it closes when the page says it
+    /// landed, and shows why when it did not.
+    pending: bool,
     /// The id of the cluster being changed; none when adding.
     editing: Option<SharedString>,
     role: ClusterRole,
@@ -23,7 +26,7 @@ pub(super) struct ClusterForm {
 }
 
 pub(super) fn open(
-    page: WeakEntity<SettingsPage>,
+    page: Entity<SettingsPage>,
     editing: Option<Entry>,
     window: &mut Window,
     cx: &mut App,
@@ -47,7 +50,7 @@ pub(super) fn open(
 
 impl ClusterForm {
     fn new(
-        page: WeakEntity<SettingsPage>,
+        page: Entity<SettingsPage>,
         editing: Option<Entry>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -83,9 +86,13 @@ impl ClusterForm {
         let subscriptions = vec![
             cx.subscribe_in(&context, window, submit),
             cx.subscribe_in(&talosconfig, window, submit),
+            cx.observe_in(&page, window, |this, page, window, cx| {
+                this.saved(&page, window, cx)
+            }),
         ];
         Self {
             page,
+            pending: false,
             editing: id,
             role,
             context,
@@ -96,17 +103,49 @@ impl ClusterForm {
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending {
+            return;
+        }
         let context = self.context.read(cx).value().to_string();
         let talosconfig = self.talosconfig.read(cx).value().to_string();
         let role = self.role;
         let editing = self.editing.clone();
-        let result = self.page.update(cx, |page, cx| {
+        let started = self.page.update(cx, |page, cx| {
             page.upsert(editing.as_deref(), role, &context, &talosconfig, cx)
         });
-        match result {
-            Ok(Ok(())) => window.close_dialog(cx),
-            Ok(Err(why)) => self.error = Some(why),
-            Err(_) => window.close_dialog(cx),
+        match started {
+            // The save has started; the form stays until it answers, so a
+            // failed write loses nothing that was typed.
+            Ok(()) => self.pending = true,
+            Err(why) => self.error = Some(why),
+        }
+        let _ = window;
+        cx.notify();
+    }
+
+    /// The page changed: if our save has answered, close on success, or show
+    /// why not and keep what was typed.
+    fn saved(&mut self, page: &Entity<SettingsPage>, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.pending {
+            return;
+        }
+        let (saving, notice) = {
+            let page = page.read(cx);
+            (page.saving.is_some(), page.notice.clone())
+        };
+        if saving {
+            return;
+        }
+        self.pending = false;
+        match notice {
+            Some(super::Notice::Failed(why)) => {
+                self.error = Some(why);
+                page.update(cx, |page, cx| {
+                    page.notice = None;
+                    cx.notify();
+                });
+            }
+            _ => window.close_dialog(cx),
         }
         cx.notify();
     }
@@ -204,6 +243,7 @@ impl Render for ClusterForm {
                         Button::new("settings-form-save")
                             .primary()
                             .label("Save")
+                            .disabled(self.pending)
                             .on_click(cx.listener(|form, _, window, cx| form.submit(window, cx))),
                     ),
             )
