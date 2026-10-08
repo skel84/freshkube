@@ -146,6 +146,41 @@ async fn a_rollout_that_pins_the_digest_is_confirmed() {
 }
 
 #[tokio::test]
+async fn a_rollout_joins_a_freight_on_another_spelling_of_its_repository() {
+    // Docker Hub, spelled three ways: the Freight names no registry, the
+    // Rollout pins its legacy host, and the pods and Argo CD name docker.io.
+    let pin = format!("index.docker.io/acme/storefront@{NEW}");
+    let running = "docker.io/acme/storefront:v1.4.0";
+    let mut world = healthy();
+    world.kargo = world.kargo.with("freights", freights_on("acme/storefront"));
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![summarised(
+            application(Some("https://env-a.example:6443")),
+            &[&format!("docker.io/acme/storefront@{NEW}")],
+        )],
+    );
+    world.environment = world
+        .environment
+        .with("rollouts", vec![rollout(&pin)])
+        .with("replicasets", vec![replica_set("5d9c", &pin, 1, 1)])
+        .with(
+            "pods",
+            vec![pod(
+                "storefront-5d9c-x",
+                running,
+                &format!("docker-pullable://docker.io/acme/storefront@{NEW}"),
+            )],
+        );
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Confirmed, "{rollout:#?}");
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed, "{pods:#?}");
+    assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
+}
+
+#[tokio::test]
 async fn only_a_label_is_claimed_and_leads_nowhere() {
     let mut world = healthy();
     // The run has the PaC label but names no revision and builds no digest,

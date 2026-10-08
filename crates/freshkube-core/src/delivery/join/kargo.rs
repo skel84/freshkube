@@ -1,4 +1,4 @@
-use crate::delivery::digest::{Digest, repository};
+use crate::delivery::digest::{Digest, repository, written_repository};
 use crate::delivery::kargo::{Freight, Promotion, Stage};
 use crate::delivery::observation::Observation;
 use crate::delivery::source::{cap_note, redact_message};
@@ -36,7 +36,7 @@ pub(super) fn freight_summary(freight: &Freight, sha: &str) -> String {
                     )
                 })
                 .unwrap_or_default();
-            format!("{}{tag}{revision}", repository(&image.repo_url))
+            format!("{}{tag}{revision}", written_repository(&image.repo_url))
         })
         .collect();
     let alias = freight

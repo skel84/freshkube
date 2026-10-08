@@ -91,6 +91,35 @@ async fn a_digest_listed_under_another_repository_is_not_a_match() {
 }
 
 #[tokio::test]
+async fn a_warehouse_matches_a_freight_on_another_spelling_of_its_repository() {
+    // Docker Hub, spelled three ways: the Freight names no registry, the
+    // subscription docker.io, and the discoveries its legacy host.
+    let spelled = |discovered: &[&str]| {
+        let mut value = warehouse(discovered);
+        value["spec"]["subscriptions"] =
+            json!([{"image": {"repoURL": "docker.io/acme/storefront"}}]);
+        value["status"]["discoveredArtifacts"]["images"][0]["repoURL"] =
+            json!("index.docker.io/acme/storefront");
+        let mut world = with_warehouse(value);
+        world.kargo = world.kargo.with("freights", freights_on("acme/storefront"));
+        world
+    };
+    let link = warehouse_link(&spelled(&[NEW])).await;
+    assert_eq!(link.confidence, Confidence::Confirmed, "{link:#?}");
+    assert!(matches!(&link.key, Key::Digest(d) if d.as_str() == NEW));
+
+    // Without the digest, the subscription alone still names the repository.
+    let link = warehouse_link(&spelled(&[OLD])).await;
+    assert_eq!(link.confidence, Confidence::Claimed);
+    assert!(
+        link.reason
+            .contains("a subscription of the Warehouse (declared) names"),
+        "{}",
+        link.reason
+    );
+}
+
+#[tokio::test]
 async fn warehouses_that_cannot_be_read_or_found_are_unknown() {
     let mut world = healthy();
     world.kargo = world.kargo.refusing("warehouses");

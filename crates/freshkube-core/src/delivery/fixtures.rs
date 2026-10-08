@@ -235,6 +235,17 @@ pub fn warehouse(discovered: &[&str]) -> Value {
     })
 }
 
+/// [`healthy`]'s two Freights with their image repository spelled `repo`.
+pub fn freights_on(repo: &str) -> Vec<Value> {
+    [freight("f-new", NEW, SHA), freight("f-old", OLD, OTHER_SHA)]
+        .into_iter()
+        .map(|mut freight| {
+            freight["images"][0]["repoURL"] = json!(repo);
+            freight
+        })
+        .collect()
+}
+
 pub fn stage(current: &[&str]) -> Value {
     let items: serde_json::Map<String, Value> = current
         .iter()
