@@ -58,6 +58,8 @@ impl Pilot {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
+            // After the shell question, so Cancel keeps the entry.
+            this.leave_entry(cx);
             this.kubeconfig = selection;
             this.invalidate_target(window, cx);
             this.refresh(window, cx);

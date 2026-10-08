@@ -264,6 +264,13 @@ impl Observation {
     pub fn is_current(&self) -> bool {
         self.status == ReadStatus::Live
     }
+    /// A live read kept as an earlier one: its data stays, it no longer
+    /// says it is current.
+    pub(super) fn last_known(&mut self) {
+        if self.status == ReadStatus::Live {
+            self.status = ReadStatus::Retrying;
+        }
+    }
     pub fn has_data(&self) -> bool {
         self.synchronized_at.is_some()
     }

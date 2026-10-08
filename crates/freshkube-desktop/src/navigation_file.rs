@@ -1,10 +1,11 @@
 //! `navigation.json` beside the preferences: whether the sidebar is
 //! collapsed, the size of every split the user dragged, in dp
 //! (`freshkube_ui::split_size`: `inspector.<page>`, `drawer.resources`,
-//! `dock.height`), and the dock's state and log tabs
-//! (`desktop/dock/saved.rs`). The shell opens it once and makes it a
-//! global, so every writer saves the same snapshot and none drops another's
-//! key.
+//! `dock.height`), the dock's state and log tabs (`desktop/dock/saved.rs`),
+//! and which workspace entry was active (`workspace.active`, an entry id
+//! from `workspace.json`, never a session key). The shell opens it once and
+//! makes it a global, so every writer saves the same snapshot and none drops
+//! another's key.
 //!
 //! An older build reads the file too: it reads `collapsed` and ignores the
 //! keys it doesn't know, and a file it wrote without a split's size gives
@@ -18,6 +19,8 @@ use serde_json::{Map, Value};
 
 const COLLAPSED: &str = "collapsed";
 const DOCK: &str = "dock";
+const WORKSPACE: &str = "workspace";
+const ACTIVE: &str = "active";
 
 /// Resources' drawer width: one for the page, whatever kind it shows.
 pub(crate) const DRAWER_WIDTH: SizeKey = SizeKey::new("drawer", "resources");
@@ -102,6 +105,32 @@ impl NavigationFile {
             let dock = object(map, DOCK);
             for (field, value) in fields {
                 dock.insert(field, value);
+            }
+        });
+    }
+
+    /// The workspace entry that was active when the app last switched.
+    pub(crate) fn active_cluster(&self) -> Option<String> {
+        self.read(|map| {
+            let id = map.get(WORKSPACE)?.get(ACTIVE)?.as_str()?;
+            (!id.is_empty()).then(|| id.to_owned())
+        })
+    }
+
+    pub(crate) fn set_active_cluster(&self, id: &str, cx: &App) {
+        self.change(cx, |map| {
+            object(map, WORKSPACE).insert(ACTIVE.into(), id.into());
+        });
+    }
+
+    /// Forgets the remembered entry: the window left it by hand.
+    pub(crate) fn clear_active_cluster(&self, cx: &App) {
+        if self.active_cluster().is_none() {
+            return;
+        }
+        self.change(cx, |map| {
+            if let Some(Value::Object(group)) = map.get_mut(WORKSPACE) {
+                group.remove(ACTIVE);
             }
         });
     }
@@ -369,5 +398,27 @@ mod tests {
         let file = NavigationFile::open(None);
         assert_eq!(file.collapsed(), None);
         assert_eq!(file.size(width_key("incidents")), None);
+    }
+
+    #[gpui_kit::test]
+    fn the_active_cluster_is_an_entry_id_that_keeps_the_other_keys(cx: &mut TestAppContext) {
+        let directory = directory("navigation-active");
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        std::fs::write(
+            directory.join("navigation.json"),
+            "{\"collapsed\":true,\"workspace\":\"not an object\",\"future\":1}\n",
+        )
+        .unwrap();
+        let file = NavigationFile::open(Some(&preferences));
+        assert_eq!(file.active_cluster(), None);
+        cx.update(|cx| file.set_active_cluster("acme-core", cx));
+        cx.run_until_parked();
+        let reopened = NavigationFile::open(Some(&preferences));
+        assert_eq!(reopened.active_cluster().as_deref(), Some("acme-core"));
+        assert_eq!(reopened.collapsed(), Some(true));
+        let text = std::fs::read_to_string(directory.join("navigation.json")).unwrap();
+        assert!(text.contains("\"future\":1"), "{text}");
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -89,6 +89,9 @@ impl Pilot {
             self.publish_reading(cx);
         }
         self.registry.active_mut().access_configuration = Some(collected.configuration);
+        // The talosconfig and kubeconfig contents are known now, so a summary
+        // parked under the same ones may be shown while this one reads.
+        self.restore_parked_summary(window, cx);
         if collected.access.is_some() {
             self.registry.active_mut().access = collected.access;
         }

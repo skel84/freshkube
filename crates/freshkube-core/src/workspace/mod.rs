@@ -68,6 +68,11 @@ pub struct Entry {
     pub context: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub talosconfig: Option<PathBuf>,
+    /// The talosconfig context this cluster opens. Only read with a
+    /// `talosconfig`. Unset, the entry's `context` names it when the file has
+    /// one by that name; the file's own current context is never used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub talos_context: Option<String>,
     /// Keys this version doesn't know, written back as they were read.
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
@@ -80,6 +85,7 @@ impl Entry {
             role,
             context: context.into(),
             talosconfig: None,
+            talos_context: None,
             extra: Default::default(),
         }
     }
@@ -116,6 +122,8 @@ pub enum Invalid {
     LongId(String),
     DuplicateId(String),
     EmptyContext(String),
+    EmptyTalosContext(String),
+    TalosContextWithoutConfig(String),
     RelativePath(String),
     NotReadable(String),
     Malformed(String),
@@ -136,6 +144,15 @@ impl std::fmt::Display for Invalid {
             Invalid::LongId(id) => write!(f, "the id “{id}” is longer than {MAX_ID_BYTES} bytes"),
             Invalid::DuplicateId(id) => write!(f, "the id “{id}” is used twice"),
             Invalid::EmptyContext(id) => write!(f, "the cluster “{id}” names no context"),
+            Invalid::TalosContextWithoutConfig(id) => {
+                write!(
+                    f,
+                    "the cluster “{id}” names a Talos context but no talosconfig"
+                )
+            }
+            Invalid::EmptyTalosContext(id) => {
+                write!(f, "the cluster “{id}” names an empty Talos context")
+            }
             Invalid::RelativePath(id) => write!(f, "a path for “{id}” isn’t absolute"),
             Invalid::NotReadable(reason) => write!(f, "it can’t be read: {reason}"),
             Invalid::Malformed(reason) => write!(f, "it isn’t a workspace: {reason}"),
@@ -144,6 +161,15 @@ impl std::fmt::Display for Invalid {
 }
 
 impl Workspace {
+    /// A workspace of these clusters, in this order, reading the automatic
+    /// kubeconfig.
+    pub fn new(clusters: Vec<Entry>) -> Self {
+        Self {
+            clusters,
+            ..Self::default()
+        }
+    }
+
     /// Checks what a file must hold before the app uses it: unique ids that
     /// stay short, a context for each, absolute paths, a bounded count.
     pub fn validate(&self) -> Result<(), Invalid> {
@@ -168,6 +194,14 @@ impl Workspace {
             }
             if entry.context.trim().is_empty() {
                 return Err(Invalid::EmptyContext(entry.id.clone()));
+            }
+            if let Some(context) = &entry.talos_context {
+                if context.trim().is_empty() {
+                    return Err(Invalid::EmptyTalosContext(entry.id.clone()));
+                }
+                if entry.talosconfig.is_none() {
+                    return Err(Invalid::TalosContextWithoutConfig(entry.id.clone()));
+                }
             }
             if entry.talosconfig.as_ref().is_some_and(|p| !p.is_absolute()) {
                 return Err(Invalid::RelativePath(entry.id.clone()));
@@ -424,6 +458,33 @@ pub fn commit(
         Ok(()) => Ok((aside, Seen::Bytes(to_text(workspace).into_bytes()))),
         Err(error) => Err(SaveError::Write { aside, error }),
     }
+}
+
+/// Where a launch with no named source starts, and what to tell the person.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Start<'a> {
+    pub entry: &'a Entry,
+    /// Said once when the remembered entry could not be used.
+    pub note: Option<String>,
+}
+
+/// The entry a launch starts on, once any source named on the command line
+/// has been ruled out: the remembered entry, else the first `core` entry,
+/// else the first listed. An empty workspace has none, which is today's
+/// start. A remembered entry that is gone is named in the note.
+pub fn choose_start<'a>(workspace: &'a Workspace, remembered: Option<&str>) -> Option<Start<'a>> {
+    let found = remembered.and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id));
+    if let Some(entry) = found {
+        return Some(Start { entry, note: None });
+    }
+    let entry = workspace
+        .clusters
+        .iter()
+        .find(|entry| entry.role == Role::Core)
+        .or_else(|| workspace.clusters.first())?;
+    let note =
+        remembered.map(|gone| format!("{gone} is no longer in the workspace; opened {}", entry.id));
+    Some(Start { entry, note })
 }
 
 /// The acme workspace of `docs/platform/`'s mocks as a workspace: one core
