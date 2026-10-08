@@ -84,18 +84,18 @@ impl MonitoringPage {
                 page::submenu_value("Time range", board.range_label.clone(), items),
             );
         }
-        let refresh = page::handler(cx, |page: &mut Self, _, cx| page.refresh(cx));
         let button = Button::new("monitoring-refresh")
             .ghost()
             .small()
             .size(dp(ui::CONTROL_HEIGHT))
             .icon(IconName::RefreshCw)
             .accessibility_label("Refresh dashboard")
-            .tooltip("Refresh dashboard")
-            .on_click({
-                let refresh = refresh.clone();
-                move |_, window, cx| refresh(window, cx)
-            });
+            .tooltip_with_action(
+                "Refresh dashboard",
+                &page::Refresh,
+                Some(page::SHELL_CONTEXT),
+            )
+            .on_click(page::dispatch(page::Refresh, &self.focus));
         let every = self.refresh_every;
         let items = self.refresh_items(cx);
         let auto_refresh = Fold::from(page::submenu_value(

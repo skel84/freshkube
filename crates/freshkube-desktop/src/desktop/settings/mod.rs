@@ -10,7 +10,7 @@ mod edit_tests;
 mod form;
 mod source;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 use crate::ui::{self, dp};
 use freshkube_core::workspace::{self, Loaded, Workspace};

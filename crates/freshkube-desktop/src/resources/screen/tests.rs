@@ -204,8 +204,15 @@ fn pods_list_every_namespace_and_select_by_identity(cx: &mut TestAppContext) {
             Some("Name, sorted descending")
         );
 
-        // Listing again finds the same object and selects it again.
+        // Refresh runs ⌘R's action, which the shell handles by listing
+        // again; mounted alone, the screen lists again itself.
+        let refreshed = Rc::new(Cell::new(0));
+        let count = refreshed.clone();
+        cx.on_action(move |_: &freshkube_ui::page::Refresh, _| count.set(count.get() + 1));
         window.click("resource-refresh", cx);
+        assert_eq!(refreshed.get(), 1);
+        // Listing again finds the same object and selects it again.
+        screen.update(cx, |screen, cx| screen.refresh(window, cx));
         window.render_frame(cx);
         assert_eq!(selected(&screen, cx), Some(fourth.clone()));
         assert_eq!(window.find(row_id(&fourth)).selected(), Some(true));

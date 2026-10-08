@@ -65,27 +65,40 @@ impl ResourcesScreen {
                 page::columns_fold(items, hidden, hidden == 0),
             );
         }
-        let refresh = page::handler(cx, |view: &mut Self, window, cx| view.refresh(window, cx));
-        let button = Button::new(header.id("refresh"))
-            .ghost()
-            .small()
-            .size(dp(ui::CONTROL_HEIGHT))
-            .icon(IconName::RefreshCw)
-            .tooltip(if self.lists_pods() {
-                "Refresh pods"
-            } else {
-                "Refresh"
-            })
-            .on_click({
-                let refresh = refresh.clone();
-                move |_, window, cx| refresh(window, cx)
-            });
-        // ⌘R reads this list again only on the Resources page; the node
-        // pane's pods list is the Nodes page's, which ⌘R refreshes.
-        let fold = if self.embedded {
-            page::item("Refresh", refresh)
+        let tip = if self.lists_pods() {
+            "Refresh pods"
         } else {
-            page::action_item("Refresh", page::Refresh, &self.focus)
+            "Refresh"
+        };
+        let id = header.id("refresh");
+        // On the Resources page the button, its fold and ⌘R are one action.
+        // The node pane's pods list is the Nodes page's, where ⌘R refreshes
+        // the nodes, so there both read only this list.
+        let (button, fold) = if self.embedded {
+            let refresh = page::handler(cx, |view: &mut Self, window, cx| view.refresh(window, cx));
+            let button = Button::new(id)
+                .ghost()
+                .small()
+                .size(dp(ui::CONTROL_HEIGHT))
+                .icon(IconName::RefreshCw)
+                .tooltip(tip)
+                .on_click({
+                    let refresh = refresh.clone();
+                    move |_, window, cx| refresh(window, cx)
+                });
+            (button, page::item("Refresh", refresh))
+        } else {
+            let button = Button::new(id)
+                .ghost()
+                .small()
+                .size(dp(ui::CONTROL_HEIGHT))
+                .icon(IconName::RefreshCw)
+                .tooltip_with_action(tip, &page::Refresh, Some(page::SHELL_CONTEXT))
+                .on_click(page::dispatch(page::Refresh, &self.focus));
+            (
+                button,
+                page::action_item("Refresh", page::Refresh, &self.focus),
+            )
         };
         header.foldable(button, fold).render(window, cx)
     }

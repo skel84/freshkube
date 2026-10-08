@@ -7,12 +7,21 @@
 //! keymap binds it in the page's context, in the platform's form
 //! (`⇧X` on macOS, `Shift+X` elsewhere).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{
-    Action, App, Context, DismissEvent, FocusHandle, Focusable as _, SharedString, Window,
+    Action, App, Context, DismissEvent, EntityId, FocusHandle, Focusable as _, SharedString, Window,
 };
+
+thread_local! {
+    /// The open menus [`return_focus`] watches, each with the lists its
+    /// items run on: a "…" menu gathers one from each folded control.
+    static WATCHED: RefCell<HashMap<EntityId, Rc<RefCell<Vec<FocusHandle>>>>> =
+        RefCell::default();
+}
 
 /// One line of a menu that runs the page's commands.
 pub enum MenuAction {
@@ -92,7 +101,6 @@ pub fn actions(
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
-    crate::tooltip::hide_while_open(cx);
     return_focus(Some(focus), window, cx);
     let live = Rc::new(live);
     let mut menu = menu.action_context(focus.clone());
@@ -138,14 +146,27 @@ pub fn actions(
 /// that ran on `focus` leaves it: Kit would leave it on `focus`, the
 /// entries' list, or on the menu that's gone, where no page key works. An
 /// item that moved it on, as one that opens a dialog does, keeps it there.
+/// While it's open, no row tooltip draws over it. A menu is watched once,
+/// however many of its parts call this, and each call adds its `focus`.
 pub fn return_focus(focus: Option<&FocusHandle>, window: &mut Window, cx: &mut Context<PopupMenu>) {
+    let id = cx.entity_id();
+    if let Some(lists) = WATCHED.with_borrow(|watched| watched.get(&id).cloned()) {
+        lists.borrow_mut().extend(focus.cloned());
+        return;
+    }
+    let lists = Rc::new(RefCell::new(Vec::from_iter(focus.cloned())));
+    WATCHED.with_borrow_mut(|watched| watched.insert(id, lists.clone()));
+    cx.on_release(move |_, _| {
+        WATCHED.with_borrow_mut(|watched| watched.remove(&id));
+    })
+    .detach();
+    crate::tooltip::hide_while_open(cx);
     let Some(prior) = window.focused(cx) else {
         return;
     };
     // Weak, so a view the menu closed, such as a tab's log, isn't kept or
     // focused again.
     let prior = prior.downgrade();
-    let focus = focus.cloned();
     let menu = cx.entity();
     cx.subscribe_in(
         &menu,
@@ -158,7 +179,7 @@ pub fn return_focus(focus: Option<&FocusHandle>, window: &mut Window, cx: &mut C
                 None => true,
                 Some(now) if now == prior => false,
                 Some(now) => {
-                    Some(&now) == focus.as_ref()
+                    lists.borrow().contains(&now)
                         || menu.focus_handle(cx).contains_focused(window, cx)
                 }
             };

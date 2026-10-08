@@ -477,7 +477,11 @@ impl Pilot {
     fn bind_shell_keys(cx: &mut App) {
         freshkube_ui::source_list::bind_keys(cx);
         cx.bind_keys([
-            KeyBinding::new("secondary-r", Refresh, Some("Freshkube")),
+            KeyBinding::new(
+                "secondary-r",
+                Refresh,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
             KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
             KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),

@@ -28,6 +28,10 @@ gpui_kit::actions!(
     ]
 );
 
+/// The app shell's key context, where [`Refresh`]'s key is bound: a
+/// Refresh button's `tooltip_with_action` names it to find the key.
+pub const SHELL_CONTEXT: &str = "Freshkube";
+
 /// Left and right padding of a [`padded`] page.
 pub const PAGE_PADDING: f32 = 26.;
 /// Padding above a padded page's header and below its body.
@@ -290,6 +294,18 @@ pub fn action_entry(entry: MenuAction, focus: &FocusHandle) -> MenuItems {
     Rc::new(move |menu, window, cx| {
         menu::actions(menu, vec![entry.clone()], &focus, |_| true, window, cx)
     })
+}
+
+/// A button's click that runs `action` on `focus`, the page's, so the
+/// button, its folded entry and its key are one action: a Refresh button's
+/// click is ⌘R's. Give the button `tooltip_with_action` with the same
+/// action, so its tooltip names the key.
+pub fn dispatch(
+    action: impl Action,
+    focus: &FocusHandle,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    let focus = focus.clone();
+    move |_, window, cx| focus.dispatch_action(&action, window, cx)
 }
 
 /// The folded form of a button that is disabled: `label`, greyed.

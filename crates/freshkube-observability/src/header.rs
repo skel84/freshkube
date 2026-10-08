@@ -92,25 +92,16 @@ impl ObservabilityPage {
                 move |menu, window, cx| ranges(menu, window, cx)
             });
         let enabled = self.fixture || self.live.source.is_some();
-        let refresh = page::handler(cx, |this: &mut Self, _, cx| this.refresh_current(cx));
+        let what = format!("Refresh {}", self.destination.label().to_lowercase());
         let button = Button::new(header.id("refresh"))
             .ghost()
             .small()
             .size(dp(crate::ui::CONTROL_HEIGHT))
             .icon(IconName::RefreshCw)
-            .accessibility_label(format!(
-                "Refresh {}",
-                self.destination.label().to_lowercase()
-            ))
-            .tooltip(format!(
-                "Refresh {}",
-                self.destination.label().to_lowercase()
-            ))
+            .accessibility_label(what.clone())
+            .tooltip_with_action(what, &page::Refresh, Some(page::SHELL_CONTEXT))
             .disabled(!enabled)
-            .on_click({
-                let refresh = refresh.clone();
-                move |_, window, cx| refresh(window, cx)
-            });
+            .on_click(page::dispatch(page::Refresh, &self.focus));
         let folded_refresh = page::action_entry(
             freshkube_ui::menu::MenuAction::new("Refresh", page::Refresh).enabled(enabled),
             &self.focus,
