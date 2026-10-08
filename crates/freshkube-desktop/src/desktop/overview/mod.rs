@@ -1,5 +1,5 @@
 //! Cluster cards and shared attention subjects.
-use super::{Pilot, clock};
+use super::{Pilot, clock, shell::Connection};
 use crate::palette::palette;
 use crate::ui::{self, dp};
 use gpui_kit::assets::IconName;
@@ -188,9 +188,9 @@ impl Pilot {
         // The header's switcher reads the same state, so the two agree.
         let (connection, ink) = match self.context_display.state {
             _ if stale => ("Stale snapshot", Some(p.warn_ink)),
-            1 => ("Connected", None),
-            2 => ("Couldn't connect", Some(p.crit_ink)),
-            _ => ("Connecting…", None),
+            Connection::Connected => ("Connected", None),
+            Connection::Failed => ("Couldn't connect", Some(p.crit_ink)),
+            Connection::Connecting => ("Connecting…", None),
         };
         let mut meta = vec![
             div()
