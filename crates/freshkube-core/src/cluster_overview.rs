@@ -450,73 +450,10 @@ impl ClusterOverviewCollector {
             return;
         };
 
-        let mut endpoint_failed = false;
-        match client.etcd_members().await {
-            Ok(members) => {
-                replace_node_ips_from_etcd(cluster, &members);
-                cluster.etcd_members = members;
-            }
-            Err(error) => {
-                endpoint_failed = error.is_transport_failure();
-                tracing::warn!(
-                    "Failed to fetch etcd members for {}: {}",
-                    cluster.name,
-                    error
-                );
-                cluster.etcd_members.clear();
-            }
-        }
+        let endpoint_failed = refresh_etcd_members(cluster, &client).await;
 
         let mut kubeconfig = None;
-        let fallback_ips = cluster
-            .etcd_members
-            .iter()
-            .filter_map(|member| member.ip_address())
-            .collect::<Vec<_>>();
-        let discovery_config_path = self.config_path.as_deref().and_then(|path| path.to_str());
-        if self.config_path.is_some() && discovery_config_path.is_none() {
-            cluster.discovery_warning = Some(
-                "Discovery roster unavailable because talosctl does not support the selected non-UTF-8 talosconfig path."
-                    .into(),
-            );
-            self.refresh_roster_from_kubernetes(cluster, &client, &mut kubeconfig)
-                .await;
-        } else {
-            match get_discovery_members_with_retry(
-                &cluster.name,
-                discovery_config_path,
-                &fallback_ips,
-            )
-            .await
-            {
-                Ok(members) if !members.is_empty() => {
-                    replace_node_ips_from_discovery(cluster, &members);
-                    cluster.discovery_members = members;
-                    cluster.discovery_warning = None;
-                }
-                outcome => {
-                    match &outcome {
-                        Ok(_) => tracing::warn!(
-                            "Discovery returned no members for {} (discovery service likely disabled)",
-                            cluster.name
-                        ),
-                        Err(error) => tracing::warn!(
-                            "Failed to fetch discovery members for {} after retries: {}",
-                            cluster.name,
-                            error
-                        ),
-                    }
-
-                    // Preserve a known roster through transient discovery failures.
-                    if cluster.discovery_members.is_empty()
-                        || matches!(self.kubeconfig_selection, KubeconfigSelection::File { .. })
-                    {
-                        self.refresh_roster_from_kubernetes(cluster, &client, &mut kubeconfig)
-                            .await;
-                    }
-                }
-            }
-        }
+        self.refresh_roster(cluster, &client, &mut kubeconfig).await;
 
         // Resolve source/validation even when Talos discovery succeeded. Keep
         // the prepared config for roster fallback so Talos serves it only once.
@@ -529,49 +466,8 @@ impl ClusterOverviewCollector {
         let mut node_transport_failures = Vec::new();
         let nodes_to_query = nodes_to_query(cluster);
         if !nodes_to_query.is_empty() {
-            let base = client.clone();
-            let per_node = collect_bounded(nodes_to_query, NODE_CONCURRENCY, move |name, ip| {
-                let node_client = base.with_node(&ip);
-                async move { collect_node(node_client, name, NODE_CALL_TIMEOUT).await }
-            })
-            .await;
-
-            let mut versions = Vec::new();
-            let mut services = Vec::new();
-            let mut memory = Vec::new();
-            let mut load_avg = Vec::new();
-            let mut cpu_info = Vec::new();
-            for node in per_node {
-                node_transport_failures.push(node.version_transport_failure);
-                versions.extend(node.versions);
-                services.extend(node.services);
-                memory.extend(node.memory);
-                load_avg.extend(node.load_avg);
-                cpu_info.extend(node.cpu_info);
-            }
-
-            cluster.versions = versions;
-            cluster.services = services;
-            cluster.memory = memory;
-            cluster.load_avg = load_avg;
-            cluster.cpu_info = cpu_info;
-
-            // Target IPs rather than hostnames: hostnames are not guaranteed to
-            // resolve from the frontend host.
-            let control_plane_ips = cluster
-                .etcd_members
-                .iter()
-                .filter_map(|member| member.ip_address())
-                .collect::<Vec<_>>();
-            let (statuses, alarms) = tokio::join!(
-                client.etcd_status_for_nodes(&control_plane_ips),
-                tokio::time::timeout(NODE_CALL_TIMEOUT, client.etcd_alarms()),
-            );
-            cluster.etcd_alarms = alarms.ok().and_then(Result::ok);
-            if let Ok(statuses) = statuses {
-                cluster.etcd_summary =
-                    Some(EtcdSummary::from_statuses(&cluster.etcd_members, &statuses));
-            }
+            node_transport_failures = collect_nodes_into(cluster, &client, nodes_to_query).await;
+            refresh_etcd_health(cluster, &client).await;
         }
 
         // Reconnect next time rather than keep reusing a dead channel.
@@ -581,17 +477,66 @@ impl ClusterOverviewCollector {
             client_cache::forget_talos_client(&key);
         }
 
-        let has_any_data = !cluster.versions.is_empty()
-            || !cluster.etcd_members.is_empty()
-            || !cluster.discovery_members.is_empty();
-        if has_any_data {
-            cluster.connection = ClusterConnectionStatus::Connected;
-        } else {
-            cluster.connection = ClusterConnectionStatus::Unreachable(
-                "Unable to reach any configured Talos endpoint. Check network connectivity and the endpoints in your talosconfig."
-                    .to_string(),
+        cluster.connection = connection_status(cluster);
+    }
+
+    /// The node roster from Talos discovery, falling back to Kubernetes when
+    /// discovery can't be used or returns nothing.
+    async fn refresh_roster(
+        &self,
+        cluster: &mut ClusterOverview,
+        client: &TalosClient,
+        kubeconfig: &mut Option<PreparedKubeconfig>,
+    ) {
+        let fallback_ips = cluster
+            .etcd_members
+            .iter()
+            .filter_map(|member| member.ip_address())
+            .collect::<Vec<_>>();
+        let discovery_config_path = self.config_path.as_deref().and_then(|path| path.to_str());
+        if self.config_path.is_some() && discovery_config_path.is_none() {
+            cluster.discovery_warning = Some(
+                "Discovery roster unavailable because talosctl does not support the selected non-UTF-8 talosconfig path."
+                    .into(),
             );
+            self.refresh_roster_from_kubernetes(cluster, client, kubeconfig)
+                .await;
+            return;
         }
+        match get_discovery_members_with_retry(&cluster.name, discovery_config_path, &fallback_ips)
+            .await
+        {
+            Ok(members) if !members.is_empty() => {
+                replace_node_ips_from_discovery(cluster, &members);
+                cluster.discovery_members = members;
+                cluster.discovery_warning = None;
+            }
+            outcome => {
+                match &outcome {
+                    Ok(_) => tracing::warn!(
+                        "Discovery returned no members for {} (discovery service likely disabled)",
+                        cluster.name
+                    ),
+                    Err(error) => tracing::warn!(
+                        "Failed to fetch discovery members for {} after retries: {}",
+                        cluster.name,
+                        error
+                    ),
+                }
+
+                if self.roster_needs_kubernetes(cluster) {
+                    self.refresh_roster_from_kubernetes(cluster, client, kubeconfig)
+                        .await;
+                }
+            }
+        }
+    }
+
+    /// Whether a discovery that gave no members falls back to Kubernetes.
+    /// A known roster is preserved through transient discovery failures.
+    fn roster_needs_kubernetes(&self, cluster: &ClusterOverview) -> bool {
+        cluster.discovery_members.is_empty()
+            || matches!(self.kubeconfig_selection, KubeconfigSelection::File { .. })
     }
 
     fn load_config(&self) -> Result<TalosConfig, ClusterOverviewError> {
@@ -649,37 +594,47 @@ impl ClusterOverviewCollector {
         prepared
     }
 
+    /// The roster from the desktop's shared Node observation, when there is
+    /// one: its last complete roster, else the cluster's own is kept, with
+    /// any failure as the warning. Returns whether that observation answered.
+    fn roster_from_observed(&self, cluster: &mut ClusterOverview) -> bool {
+        let Some(observed) = &self.observed_nodes else {
+            return false;
+        };
+        if let Some(nodes) = observed.loaded() {
+            let members = k8s_nodes_to_discovery_members(
+                nodes
+                    .iter()
+                    .map(|node| K8sNodeInfo {
+                        name: node.name.clone(),
+                        internal_ip: node
+                            .addresses
+                            .iter()
+                            .find(|(kind, _)| kind == "InternalIP")
+                            .map(|(_, address)| address.clone()),
+                        is_control_plane: node
+                            .roles
+                            .iter()
+                            .any(|role| matches!(role.as_str(), "control-plane" | "master")),
+                    })
+                    .collect(),
+            );
+            replace_node_ips_from_discovery(cluster, &members);
+            cluster.discovery_members = members;
+        }
+        cluster.discovery_warning = observed
+            .error()
+            .map(|reason| format!("Shared Kubernetes roster: {reason}"));
+        true
+    }
+
     async fn refresh_roster_from_kubernetes(
         &self,
         cluster: &mut ClusterOverview,
         client: &TalosClient,
         prepared: &mut Option<PreparedKubeconfig>,
     ) {
-        if let Some(observed) = &self.observed_nodes {
-            if let Some(nodes) = observed.loaded() {
-                let members = k8s_nodes_to_discovery_members(
-                    nodes
-                        .iter()
-                        .map(|node| K8sNodeInfo {
-                            name: node.name.clone(),
-                            internal_ip: node
-                                .addresses
-                                .iter()
-                                .find(|(kind, _)| kind == "InternalIP")
-                                .map(|(_, address)| address.clone()),
-                            is_control_plane: node
-                                .roles
-                                .iter()
-                                .any(|role| matches!(role.as_str(), "control-plane" | "master")),
-                        })
-                        .collect(),
-                );
-                replace_node_ips_from_discovery(cluster, &members);
-                cluster.discovery_members = members;
-            }
-            cluster.discovery_warning = observed
-                .error()
-                .map(|reason| format!("Shared Kubernetes roster: {reason}"));
+        if self.roster_from_observed(cluster) {
             return;
         }
         let control_plane_ip = cluster.control_plane_ip();
@@ -904,6 +859,99 @@ fn root_cause(error: &dyn std::error::Error) -> String {
         deepest = source;
     }
     deepest.to_string()
+}
+
+/// etcd members and the node IPs they give. A failure clears them; returns
+/// whether it was a transport failure.
+async fn refresh_etcd_members(cluster: &mut ClusterOverview, client: &TalosClient) -> bool {
+    match client.etcd_members().await {
+        Ok(members) => {
+            replace_node_ips_from_etcd(cluster, &members);
+            cluster.etcd_members = members;
+            false
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Failed to fetch etcd members for {}: {}",
+                cluster.name,
+                error
+            );
+            cluster.etcd_members.clear();
+            error.is_transport_failure()
+        }
+    }
+}
+
+/// Collects each node's version, services, memory, load and CPU, replacing
+/// the previous answers. Returns each node's version transport failure.
+async fn collect_nodes_into(
+    cluster: &mut ClusterOverview,
+    client: &TalosClient,
+    nodes_to_query: Vec<(String, String)>,
+) -> Vec<bool> {
+    let base = client.clone();
+    let per_node = collect_bounded(nodes_to_query, NODE_CONCURRENCY, move |name, ip| {
+        let node_client = base.with_node(&ip);
+        async move { collect_node(node_client, name, NODE_CALL_TIMEOUT).await }
+    })
+    .await;
+
+    let mut node_transport_failures = Vec::new();
+    let mut versions = Vec::new();
+    let mut services = Vec::new();
+    let mut memory = Vec::new();
+    let mut load_avg = Vec::new();
+    let mut cpu_info = Vec::new();
+    for node in per_node {
+        node_transport_failures.push(node.version_transport_failure);
+        versions.extend(node.versions);
+        services.extend(node.services);
+        memory.extend(node.memory);
+        load_avg.extend(node.load_avg);
+        cpu_info.extend(node.cpu_info);
+    }
+
+    cluster.versions = versions;
+    cluster.services = services;
+    cluster.memory = memory;
+    cluster.load_avg = load_avg;
+    cluster.cpu_info = cpu_info;
+    node_transport_failures
+}
+
+/// etcd's quorum summary and alarms from the control plane nodes. A failed
+/// status read keeps the previous summary; failed alarms become unknown.
+async fn refresh_etcd_health(cluster: &mut ClusterOverview, client: &TalosClient) {
+    // Target IPs rather than hostnames: hostnames are not guaranteed to
+    // resolve from the frontend host.
+    let control_plane_ips = cluster
+        .etcd_members
+        .iter()
+        .filter_map(|member| member.ip_address())
+        .collect::<Vec<_>>();
+    let (statuses, alarms) = tokio::join!(
+        client.etcd_status_for_nodes(&control_plane_ips),
+        tokio::time::timeout(NODE_CALL_TIMEOUT, client.etcd_alarms()),
+    );
+    cluster.etcd_alarms = alarms.ok().and_then(Result::ok);
+    if let Ok(statuses) = statuses {
+        cluster.etcd_summary = Some(EtcdSummary::from_statuses(&cluster.etcd_members, &statuses));
+    }
+}
+
+/// Connected when any version, etcd member or roster entry is known.
+fn connection_status(cluster: &ClusterOverview) -> ClusterConnectionStatus {
+    let has_any_data = !cluster.versions.is_empty()
+        || !cluster.etcd_members.is_empty()
+        || !cluster.discovery_members.is_empty();
+    if has_any_data {
+        ClusterConnectionStatus::Connected
+    } else {
+        ClusterConnectionStatus::Unreachable(
+            "Unable to reach any configured Talos endpoint. Check network connectivity and the endpoints in your talosconfig."
+                .to_string(),
+        )
+    }
 }
 
 fn replace_node_ips_from_etcd(cluster: &mut ClusterOverview, members: &[EtcdMemberInfo]) {
@@ -1605,5 +1653,62 @@ mod tests {
             (summary.healthy, summary.total, summary.has_quorum),
             (1, 2, false)
         );
+    }
+
+    fn known_roster() -> ClusterOverview {
+        let roster = vec![
+            member("cp1", "10.0.0.1", "controlplane"),
+            member("worker1", "10.0.0.2", "worker"),
+        ];
+        let mut cluster = ClusterOverview {
+            name: "example".into(),
+            ..Default::default()
+        };
+        replace_node_ips_from_discovery(&mut cluster, &roster);
+        cluster.discovery_members = roster;
+        cluster
+    }
+
+    #[test]
+    fn a_failed_discovery_keeps_a_known_roster_unless_a_kubeconfig_was_chosen() {
+        let mut collector = ClusterOverviewCollector::default();
+        assert!(!collector.roster_needs_kubernetes(&known_roster()));
+        assert!(collector.roster_needs_kubernetes(&ClusterOverview::default()));
+
+        collector.set_kubeconfig_selection(KubeconfigSelection::File {
+            path: PathBuf::from("/nonexistent/explicit-kubeconfig"),
+            context: None,
+        });
+        assert!(collector.roster_needs_kubernetes(&known_roster()));
+    }
+
+    #[test]
+    fn a_failed_shared_roster_keeps_the_known_roster_as_stale_evidence() {
+        for failed in [
+            crate::kubernetes_summary::Part::Failed("connection reset".into()),
+            crate::kubernetes_summary::Part::Refused("nodes is forbidden".into()),
+        ] {
+            let reason = failed.error().unwrap().to_owned();
+            let mut collector = ClusterOverviewCollector::default();
+            collector.set_observed_nodes(Some(failed));
+            let mut cluster = known_roster();
+
+            assert!(collector.roster_from_observed(&mut cluster));
+
+            let names = |cluster: &ClusterOverview| {
+                cluster
+                    .discovery_members
+                    .iter()
+                    .map(|member| (member.hostname.clone(), member.addresses.clone()))
+                    .collect::<Vec<_>>()
+            };
+            let known = known_roster();
+            assert_eq!(names(&cluster), names(&known));
+            assert_eq!(cluster.node_ips, known.node_ips);
+            assert_eq!(
+                cluster.discovery_warning.as_deref(),
+                Some(format!("Shared Kubernetes roster: {reason}").as_str())
+            );
+        }
     }
 }
