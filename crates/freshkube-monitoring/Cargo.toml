@@ -1,0 +1,45 @@
+[package]
+name = "freshkube-monitoring"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Grafana dashboards drawn from the cluster's own Prometheus, and the CPU and memory history charts"
+
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
+[dependencies]
+gpui-kit = "=0.7.0"
+# Queries, dashboards, the cluster source and series colours.
+freshkube-core.workspace = true
+freshkube-probe.workspace = true
+freshkube-ui.workspace = true
+# Boot times for the node markers (`TalosNodes`).
+talos-rs.workspace = true
+tokio.workspace = true
+futures.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+
+[features]
+# Read-outs for tests in crates that embed the views (`HistoryView::reading`,
+# `PanelView::marker_labels`, `series_colors`); turned on from
+# dev-dependencies.
+testing = []
+# The stress binary answers the example dashboard at once
+# (`answer_example_now`), as debug builds do.
+stress = []
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+# Render probes count in tests (`probe::count`).
+freshkube-probe = { workspace = true, features = ["counting"] }
+# The page tests remember keys in `secrets::MemoryStore`.
+freshkube-core = { workspace = true, features = ["testing"] }
+# The page tests settle the header and measure the frame (`layout_check`).
+freshkube-ui = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
+# The page tests' cluster source answers with a client.
+kube.workspace = true

@@ -15,6 +15,7 @@ fastrand = "2"
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-logs.workspace = true
+freshkube-monitoring.workspace = true
 freshkube-probe.workspace = true
 freshkube-terminal.workspace = true
 freshkube-ui.workspace = true
@@ -42,6 +43,7 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 # synthetic Kubernetes API. A binary rather than an example, because
 # examples get the dev-dependencies, and with them GPUI's test support.
 stress = [
+    "freshkube-monitoring/stress",
     "freshkube-probe/stress",
     "freshkube-terminal/stress",
     "dep:bytes",
@@ -69,6 +71,8 @@ freshkube-terminal = { workspace = true, features = ["testing"] }
 freshkube-core = { workspace = true, features = ["testing"] }
 # The log tests read the view's state (`applied_and_held`, `retained`, …).
 freshkube-logs = { workspace = true, features = ["testing"] }
+# The startup and Observability tests read the charts (`reading`, `marker_labels`).
+freshkube-monitoring = { workspace = true, features = ["testing"] }
 # The status bar tests read which line a segment drew (`status::shown`).
 freshkube-ui = { workspace = true, features = ["testing"] }
 # Operations' tests run the example on a paused Tokio clock (`start_paused`).
