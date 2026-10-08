@@ -776,8 +776,6 @@ struct AuditView {
 pub(crate) struct OperationsScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
-    /// Set once the screen has been shown; before that nothing is requested.
-    activated: bool,
     operation: OperationKind,
     options: Options,
     /// Selected targets in run order.
@@ -841,7 +839,6 @@ impl ScreenPanel for OperationsScreen {
         Self {
             runtime,
             source: None,
-            activated: false,
             operation: OperationKind::Drain,
             options: Options::default(),
             selected: Vec::new(),
@@ -869,12 +866,9 @@ impl ScreenPanel for OperationsScreen {
         }
     }
 
-    fn set_source(
-        &mut self,
-        source: Option<ScreenSource>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
+        // Every retained screen gets the source, shown or not, so this only
+        // invalidates; `activate` reads, and only the shown screen is activated.
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);
         self.source = source;
@@ -910,15 +904,10 @@ impl ScreenPanel for OperationsScreen {
         }
         self.derive_order();
         self.cursor = self.cursor.min(self.roster.len().saturating_sub(1));
-        if self.activated {
-            self.ensure_preview(false, window, cx);
-            self.load_audit(cx);
-        }
         cx.notify();
     }
 
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.activated = true;
         self.ensure_preview(false, window, cx);
         if self.audit.data().is_none() && !self.audit.is_loading() {
             self.load_audit(cx);
