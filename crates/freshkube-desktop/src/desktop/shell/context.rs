@@ -2,12 +2,22 @@
 use super::*;
 use freshkube_core::pluralize;
 
+/// Where the applied context's connection stands, as the header's switcher
+/// and Overview's heading show it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::desktop) enum Connection {
+    #[default]
+    Connecting,
+    Connected,
+    Failed,
+}
+
 #[derive(Default)]
 pub(in crate::desktop) struct ContextDisplay {
     pub(in crate::desktop) name: SharedString,
     pub(in crate::desktop) detail: SharedString,
     pub(in crate::desktop) status: SharedString,
-    pub(in crate::desktop) state: u8,
+    pub(in crate::desktop) state: Connection,
     pub(in crate::desktop) open: bool,
     pub(in crate::desktop) counts: std::collections::BTreeMap<String, SharedString>,
 }
@@ -62,11 +72,11 @@ impl Pilot {
                 .is_some_and(|kube| matches!(kube.connection, KubeConnection::Failed(_)))
             || (!connected && self.overview.error().is_some());
         self.context_display.state = if failed {
-            2
+            Connection::Failed
         } else if connected {
-            1
+            Connection::Connected
         } else {
-            0
+            Connection::Connecting
         };
         self.context_display.detail = if failed {
             "Couldn't connect".into()
