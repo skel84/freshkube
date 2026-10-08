@@ -5,8 +5,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{
-    Application, ApplicationId, Basis, Coverage, CoverageState, Destination, Evidence, Inputs,
-    Member, MemberKind, MemberRef, Note, Rule, SessionInputs, SessionKey, SourceKind,
+    Application, ApplicationId, ArgoScope, Basis, Coverage, CoverageState, Destination, Evidence,
+    Inputs, Member, MemberKind, MemberRef, Note, Rule, SessionInputs, SessionKey, SourceKind,
 };
 use crate::delivery::argocd::{
     Application as ArgoApplication, IN_CLUSTER_NAME, IN_CLUSTER_SERVER, normalize_server,
@@ -87,15 +87,21 @@ pub(super) fn coverage(inputs: &Inputs) -> Vec<Coverage> {
                 CoverageState::of(&project.warehouses),
             );
         }
+        let argo = |state: CoverageState| match (&session.argo_scope, state) {
+            (ArgoScope::Namespace(namespace), CoverageState::Read) => {
+                CoverageState::NamespaceOnly(namespace.clone())
+            }
+            (_, state) => state,
+        };
         push(
             SourceKind::ArgoApplications,
             None,
-            CoverageState::of(&session.argo_applications),
+            argo(CoverageState::of(&session.argo_applications)),
         );
         push(
             SourceKind::ArgoApplicationSets,
             None,
-            CoverageState::of(&session.argo_application_sets),
+            argo(CoverageState::of(&session.argo_application_sets)),
         );
         push(
             SourceKind::Workloads,
@@ -148,7 +154,7 @@ pub(super) fn kargo(builder: &mut Builder, inputs: &Inputs) -> BTreeSet<String> 
             let ns = Some(project.name.as_str());
             match &project.stages {
                 Source::Read(stages) | Source::Capped(stages, _) => {
-                    capped_members(builder, &id, "Stages", &project.stages);
+                    capped_members(builder, &id, &session.key, "Stages", &project.stages);
                     for stage in stages {
                         let m = member(
                             &session.key,
@@ -160,11 +166,17 @@ pub(super) fn kargo(builder: &mut Builder, inputs: &Inputs) -> BTreeSet<String> 
                         builder.join(&id, m);
                     }
                 }
-                other => unknown_members(builder, &id, "Stages", other),
+                other => unknown_members(builder, &id, &session.key, "Stages", other),
             }
             match &project.warehouses {
                 Source::Read(items) | Source::Capped(items, _) => {
-                    capped_members(builder, &id, "Warehouses", &project.warehouses);
+                    capped_members(
+                        builder,
+                        &id,
+                        &session.key,
+                        "Warehouses",
+                        &project.warehouses,
+                    );
                     for warehouse in items {
                         let m = member(
                             &session.key,
@@ -176,18 +188,25 @@ pub(super) fn kargo(builder: &mut Builder, inputs: &Inputs) -> BTreeSet<String> 
                         builder.join(&id, m);
                     }
                 }
-                other => unknown_members(builder, &id, "Warehouses", other),
+                other => unknown_members(builder, &id, &session.key, "Warehouses", other),
             }
         }
     }
     projects
 }
 
-fn unknown_members<T>(builder: &mut Builder, id: &ApplicationId, what: &str, source: &Source<T>) {
+fn unknown_members<T>(
+    builder: &mut Builder,
+    id: &ApplicationId,
+    session: &SessionKey,
+    what: &str,
+    source: &Source<T>,
+) {
     let why = source.why_not_read().unwrap_or_default();
     builder.note(
         id,
         Note::MembersUnknown {
+            session: session.clone(),
             why: format!("{what}: {why}"),
         },
     );
@@ -195,11 +214,18 @@ fn unknown_members<T>(builder: &mut Builder, id: &ApplicationId, what: &str, sou
 
 /// A listing that stopped at the page cap read real items, but may not have
 /// read them all.
-fn capped_members<T>(builder: &mut Builder, id: &ApplicationId, what: &str, source: &Source<T>) {
+fn capped_members<T>(
+    builder: &mut Builder,
+    id: &ApplicationId,
+    session: &SessionKey,
+    what: &str,
+    source: &Source<T>,
+) {
     if let Some(truncation) = source.capped() {
         builder.note(
             id,
             Note::MembersUnknown {
+                session: session.clone(),
                 why: format!(
                     "{what}: the listing stopped at the page cap after {} items",
                     truncation.read
@@ -207,6 +233,31 @@ fn capped_members<T>(builder: &mut Builder, id: &ApplicationId, what: &str, sour
             },
         );
     }
+}
+
+/// The Kargo Project an Application names by its authorized-stage annotation
+/// when that Project was not among those read, and why: Kargo's Projects were
+/// capped or could not be read somewhere.
+fn unread_project(
+    inputs: &Inputs,
+    application: &ArgoApplication,
+    claimed: bool,
+) -> Option<(String, String)> {
+    let (project, _) = application.authorized_stage.as_ref().filter(|_| !claimed)?;
+    let why = inputs
+        .sessions
+        .iter()
+        .find_map(|session| match &session.kargo {
+            Source::Capped(_, truncation) => Some(format!(
+                "the Project list stopped at the cap after {} in {}",
+                truncation.read, session.key.0
+            )),
+            Source::Refused(_) | Source::Unreadable(_) => {
+                Some(format!("Projects were not readable in {}", session.key.0))
+            }
+            _ => None,
+        })?;
+    Some((project.clone(), why))
 }
 
 fn destination(application: &ArgoApplication) -> Destination {
@@ -293,6 +344,7 @@ pub(super) fn argo(
                     }
                 },
             };
+            let unread_project = unread_project(inputs, application, project.is_some());
             let mut m = member(
                 &session.key,
                 MemberKind::ArgoApplication,
@@ -306,6 +358,16 @@ pub(super) fn argo(
                     &id,
                     Note::UnmappedDestination {
                         member: m.at.clone(),
+                    },
+                );
+            }
+            if let Some((project, why)) = unread_project {
+                builder.note(
+                    &id,
+                    Note::ProjectNotRead {
+                        member: m.at.clone(),
+                        project,
+                        why,
                     },
                 );
             }
@@ -434,7 +496,7 @@ pub(super) fn part_of(
             }
             // A workload that stays with its label, in a cluster whose
             // Applications were not all read, may be managed by one.
-            if basis != Basis::ManagedBy && !fully_read(&session.argo_applications) {
+            if basis != Basis::ManagedBy && !argo_whole(session) {
                 builder.note(
                     &id,
                     Note::ManagerUnknown {
@@ -447,10 +509,15 @@ pub(super) fn part_of(
     }
 }
 
-/// Whether a source answered completely, or is not served at all (then there
-/// is nothing it could have held).
-fn fully_read<T>(source: &Source<T>) -> bool {
-    matches!(source, Source::Read(_) | Source::NotInstalled(_))
+/// Whether the cluster's Argo CD Applications are all known: read in every
+/// namespace they may be in, or not served at all (then there is nothing
+/// they could have held).
+fn argo_whole(session: &SessionInputs) -> bool {
+    match &session.argo_applications {
+        Source::NotInstalled(_) => true,
+        Source::Read(_) => session.argo_scope == ArgoScope::AllNamespaces,
+        _ => false,
+    }
 }
 
 /// The one Kargo, else the one Argo CD, application a `part-of` value is the

@@ -22,7 +22,9 @@ use crate::delivery::source::{Source, Truncation};
 use crate::workloads::WorkloadKind;
 
 mod derive;
+pub mod example;
 mod overrides;
+pub mod read;
 mod rules;
 
 #[cfg(test)]
@@ -234,7 +236,15 @@ pub enum Note {
     Merged { from: Vec<ApplicationId> },
     /// Kargo Stage and Warehouse reads for this Project did not answer or
     /// stopped at the page cap, so its members may be missing.
-    MembersUnknown { why: String },
+    MembersUnknown { session: SessionKey, why: String },
+    /// An Argo CD Application names a Kargo Project that was not read, so it
+    /// is not in that Project's application. Kargo's Projects were capped or
+    /// unreadable.
+    ProjectNotRead {
+        member: MemberRef,
+        project: String,
+        why: String,
+    },
     /// The same name was found in several clusters and joined into this one
     /// application, which is an inference.
     JoinedAcrossSessions {
@@ -262,6 +272,9 @@ pub enum CoverageState {
     Read,
     /// The listing stopped at the page cap after this many items.
     Capped(usize),
+    /// Read in this one namespace only. Argo CD may allow Applications in
+    /// others, which were not listed, so what is missing may exist.
+    NamespaceOnly(String),
     /// The API isn't served there: a fact, not an error.
     NotInstalled(String),
     Refused(String),
@@ -283,7 +296,7 @@ impl CoverageState {
     pub fn is_unknown(&self) -> bool {
         matches!(
             self,
-            Self::Capped(_) | Self::Refused(_) | Self::Unreadable(_)
+            Self::Capped(_) | Self::NamespaceOnly(_) | Self::Refused(_) | Self::Unreadable(_)
         )
     }
 }
@@ -328,6 +341,16 @@ pub struct LabelledWorkload {
     pub part_of: String,
 }
 
+/// Where an Argo CD read looked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArgoScope {
+    /// Every namespace Applications may be in.
+    AllNamespaces,
+    /// The one namespace Argo CD's own Applications live in. Applications in
+    /// any namespace are not listed, so this read is not known to be whole.
+    Namespace(String),
+}
+
 /// One Kargo Project as read: its Stages and Warehouses, each its own read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KargoProjectRead {
@@ -341,6 +364,7 @@ pub struct KargoProjectRead {
 pub struct SessionInputs {
     pub key: SessionKey,
     pub kargo: Source<Vec<KargoProjectRead>>,
+    pub argo_scope: ArgoScope,
     pub argo_applications: Source<Vec<ArgoApplication>>,
     pub argo_application_sets: Source<Vec<ApplicationSet>>,
     pub workloads: Source<Vec<LabelledWorkload>>,
@@ -355,6 +379,7 @@ impl SessionInputs {
         Self {
             key,
             kargo: unreadable(why),
+            argo_scope: ArgoScope::AllNamespaces,
             argo_applications: unreadable(why),
             argo_application_sets: unreadable(why),
             workloads: unreadable(why),
