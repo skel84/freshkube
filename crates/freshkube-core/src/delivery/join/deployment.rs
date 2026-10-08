@@ -6,13 +6,13 @@
 
 use crate::delivery::argocd::Application;
 use crate::delivery::deployments::{Deployment, DeploymentSet, current_set};
-use crate::delivery::digest::Digest;
+use crate::delivery::digest::{Digest, repository};
 use crate::delivery::kargo::Freight;
 use crate::delivery::pods::RunningImage;
 use crate::delivery::source::cap_note;
 
 use super::argo::{not_the_environment, rollout_namespace};
-use super::observe::{deployment_revision, deployment_state, deployment_tie, manages};
+use super::observe::{concluded, deployment_revision, deployment_state, deployment_tie, manages};
 use super::workload::{Controller, judge_revision, pinned_containers, pinned_link, running};
 use super::*;
 
@@ -50,6 +50,7 @@ pub(super) fn deployment_links(
         )];
     };
     let mut links = Vec::new();
+    let mut elsewhere: Vec<&str> = Vec::new();
     for object in managed {
         let Some(namespace) = rollout_namespace(app, object) else {
             links.push(unknown(
@@ -72,6 +73,11 @@ pub(super) fn deployment_links(
             ));
             continue;
         };
+        // A Deployment that pins another repository is not part of this hop.
+        if !pins_repository_of(deployment, freight) {
+            elsewhere.push(deployment.name.as_str());
+            continue;
+        }
         let pinned = deployment
             .images
             .iter()
@@ -118,7 +124,27 @@ pub(super) fn deployment_links(
         });
         links.push(pods);
     }
+    if links.is_empty() {
+        links.push(unknown(
+            app_id,
+            format!(
+                "no Deployment the Application manages pins an image of the Freight's repository (read {})",
+                elsewhere.join(", ")
+            ),
+        ));
+    }
     links
+}
+
+/// Whether the Deployment's pod template names an image of one of the
+/// Freight's repositories.
+fn pins_repository_of(deployment: &Deployment, freight: &Freight) -> bool {
+    deployment.images.iter().any(|image| {
+        freight
+            .images
+            .iter()
+            .any(|wanted| repository(&wanted.repo_url) == repository(image))
+    })
 }
 
 /// What the Deployment controller reports of the Deployment, for a reason.
@@ -204,13 +230,7 @@ fn pod_link(
         read.pods.capped(),
         freight,
     );
-    let which = which_pods(
-        evidence,
-        deployment,
-        &read.hash,
-        &tie,
-        pods.len() - tied.len(),
-    );
+    let which = which_pods(&read.hash, deployment, &tie, pods.len() - tied.len());
     let unobserved = deployment.observed_latest() != Some(true);
     match &tie {
         Ok(set) => {
@@ -244,16 +264,46 @@ fn pod_link(
     }
     let mut seen = deployment_revision(deployment);
     seen.append(&mut link.evidence);
+    seen.extend(rolling(evidence, deployment, &read.hash));
     link.evidence = seen;
     link
 }
 
-/// Which pods were judged, and which of the Deployment's other ReplicaSets
-/// with pods were not.
+/// The pods of the Deployment's older ReplicaSets that still exist, as one
+/// observation: a rolling update is not a mismatch, so it is never a reason
+/// for a claim, only something to see.
+fn rolling(evidence: &Evidence, deployment: &Deployment, hash: &str) -> Option<Observation> {
+    let older: Vec<&DeploymentSet> = evidence
+        .deployment_sets
+        .read()
+        .into_iter()
+        .flatten()
+        .filter(|set| {
+            set.replicas > 0
+                && set.namespace == deployment.namespace
+                && deployment.meta.uid.is_some()
+                && set.owner_uid == deployment.meta.uid
+                && set.pod_hash.as_deref() != Some(hash)
+        })
+        .collect();
+    let pods: u64 = older.iter().map(|set| set.replicas).sum();
+    if pods == 0 {
+        return None;
+    }
+    let names: Vec<&str> = older.iter().map(|set| set.name.as_str()).collect();
+    Some(concluded(
+        &format!(
+            "rolling: {pods} pod(s) of the previous revision, ReplicaSet {}",
+            names.join(", ")
+        ),
+        hash,
+    ))
+}
+
+/// Which pods were judged.
 fn which_pods(
-    evidence: &Evidence,
-    deployment: &Deployment,
     hash: &str,
+    deployment: &Deployment,
     tie: &Result<&DeploymentSet, String>,
     foreign: usize,
 ) -> String {
@@ -270,26 +320,5 @@ fn which_pods(
             "; {foreign} pod container(s) with that hash label belong to another owner and were not judged"
         ));
     }
-    let others: Vec<&str> = evidence
-        .deployment_sets
-        .read()
-        .into_iter()
-        .flatten()
-        .filter(|set| {
-            set.replicas > 0
-                && set.namespace == deployment.namespace
-                && deployment.meta.uid.is_some()
-                && set.owner_uid == deployment.meta.uid
-                && set.pod_hash.as_deref() != Some(hash)
-        })
-        .map(|set| set.name.as_str())
-        .collect();
-    if others.is_empty() {
-        which
-    } else {
-        format!(
-            "{which}; not judged: the pods of ReplicaSet {}",
-            others.join(", ")
-        )
-    }
+    which
 }

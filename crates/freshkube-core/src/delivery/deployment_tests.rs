@@ -110,11 +110,13 @@ async fn pods_of_an_older_revision_are_not_judged() {
     // Only the current hash's pods are asked for.
     let (_, link) = chain(&world).await;
     assert_eq!(link.confidence, Confidence::Confirmed, "{link:#?}");
+    // A rolling update is seen, and is no reason for a claim.
+    assert!(!link.reason.contains("7f3b"), "{}", link.reason);
     assert!(
-        link.reason
-            .contains("not judged: the pods of ReplicaSet storefront-7f3b"),
-        "{}",
-        link.reason
+        link.evidence.iter().any(|seen| seen.object.name
+            == "rolling: 1 pod(s) of the previous revision, ReplicaSet storefront-7f3b"),
+        "{:#?}",
+        link.evidence
     );
 }
 
@@ -322,5 +324,44 @@ async fn a_namesake_in_another_group_is_not_the_deployment() {
     assert_eq!(
         one(&trail, Hop::Application, Hop::Pod).confidence,
         Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_deployment_that_pins_another_repository_is_not_part_of_the_hop() {
+    let mut world = world(parts());
+    let mut proxy = deployment_proxy();
+    proxy["metadata"]["name"] = json!("storefront-proxy");
+    let mut app = unannotated_application();
+    app["status"]["resources"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"group": "apps", "kind": "Deployment", "namespace": "shop", "name": "storefront-proxy"}));
+    world.argocd = world.argocd.with("applications", vec![app]);
+    world.environment = world
+        .environment
+        .with("deployments", vec![deployment(&pinned_image()), proxy]);
+    let trail = trail(&world).await;
+    let links = super::tests::link(&trail, Hop::Application, Hop::Deployment);
+    assert_eq!(links.len(), 1, "{links:#?}");
+    assert_eq!(links[0].subject, "shop/storefront");
+    assert_eq!(links[0].confidence, Confidence::Confirmed);
+}
+
+fn deployment_proxy() -> Value {
+    deployment(&format!("registry.example/acme/proxy@{OLD}"))
+}
+
+#[tokio::test]
+async fn an_application_none_of_whose_deployments_pin_the_repository_is_unknown() {
+    let (_, sets, pods) = parts();
+    let other = deployment(&format!("registry.example/acme/proxy@{OLD}"));
+    let (app, _) = trail_links(&world((other, sets, pods))).await;
+    assert_eq!(app.confidence, Confidence::Unknown);
+    assert!(
+        app.reason
+            .contains("pins an image of the Freight's repository"),
+        "{}",
+        app.reason
     );
 }
