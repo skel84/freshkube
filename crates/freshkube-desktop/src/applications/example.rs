@@ -32,12 +32,19 @@ pub(crate) enum Variant {
     /// Nothing marks Argo CD in `core-fra`, and `argocd` holds no
     /// Applications.
     NotFound,
+    /// `checkout`'s Stages didn't answer in `core-fra`: its page shows
+    /// what may be missing as a group row.
+    Stages,
+    /// Deployments refused in `prod-fra`: labelled parts there may be
+    /// missing, as `checkout`'s page says in a group row.
+    Workloads,
 }
 
 impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
-    /// `spread` or `not-found` from `FRESHKUBE_APPLICATIONS`; debug and
-    /// stress builds only.
+    /// `spread`, `not-found`, `stages` or `workloads` from
+    /// `FRESHKUBE_APPLICATIONS`;
+    /// debug and stress builds only.
     pub(crate) fn from_env() -> Self {
         if !cfg!(any(debug_assertions, feature = "stress")) {
             return Self::default();
@@ -51,6 +58,8 @@ impl Variant {
             Ok("capped") => Self::Capped,
             Ok("spread") => Self::Spread,
             Ok("not-found") => Self::NotFound,
+            Ok("stages") => Self::Stages,
+            Ok("workloads") => Self::Workloads,
             _ => Self::Acme,
         }
     }
@@ -122,6 +131,20 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
             let core = core(&mut inputs);
             core.argo_applications = Source::Read(Vec::new());
             core.argo_application_sets = Source::Read(Vec::new());
+        }
+        Variant::Stages => {
+            if let Source::Read(projects) = &mut core(&mut inputs).kargo
+                && let Some(checkout) = projects.iter_mut().find(|p| p.name == "checkout")
+            {
+                checkout.stages = Source::Unreadable(
+                    "stages.kargo.akuity.io: the read timed out after 10s".into(),
+                );
+            }
+        }
+        Variant::Workloads => {
+            if let Some(prod) = inputs.sessions.iter_mut().find(|s| s.key.0 == "prod-fra") {
+                prod.workloads = refused("deployments.apps");
+            }
         }
     }
     inputs

@@ -198,6 +198,9 @@ impl ApplicationsPage {
 
     /// The selection's details; nothing while no row is selected.
     fn render_details(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.inspect {
+            return None;
+        }
         let row: &AppRow = self.selected_row()?;
         let p = palette(cx);
         let title = div()
@@ -224,7 +227,20 @@ impl ApplicationsPage {
                 row.mark_short.clone(),
                 cx,
             ));
-        let heading = h_flex().gap_2().min_w_0().child(title).child(mark);
+        // A Kargo Project and an Argo CD Application may share a name.
+        let what = div()
+            .id("applications-detail-what")
+            .test_support()
+            .aria_label(row.what.clone())
+            .flex_none()
+            .text_color(p.muted)
+            .child(row.what.clone());
+        let heading = h_flex()
+            .gap_2()
+            .min_w_0()
+            .child(title)
+            .child(what)
+            .child(mark);
         let notes = row.notes.iter().enumerate().map(|(ix, note)| {
             div()
                 .id(SharedString::from(format!("applications-detail-note-{ix}")))
@@ -275,6 +291,16 @@ impl ApplicationsPage {
 impl Render for ApplicationsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
+        self.refocus(window, cx);
+        // An open application's page shows in the list's place.
+        if let Some((open, _)) = &self.open {
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .min_h_0()
+                .child(open.clone());
+        }
         let header = self.render_header(window, cx);
         let body = match self.render_state(cx) {
             Some(state) => state,
@@ -288,6 +314,9 @@ impl Render for ApplicationsPage {
             .on_action(cx.listener(|this, _: &NextApplication, _, cx| this.step(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousApplication, _, cx| this.step(-1, cx)))
             .on_action(cx.listener(|this, _: &ClearApplication, _, cx| this.clear_selection(cx)))
+            .on_action(
+                cx.listener(|this, _: &OpenApplication, window, cx| this.open_selected(window, cx)),
+            )
             .flex()
             .flex_col()
             .size_full()

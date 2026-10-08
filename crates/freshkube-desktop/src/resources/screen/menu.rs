@@ -3,7 +3,7 @@
 //! and acts on the selection, which the right-click sets first.
 use super::super::projection::{Cause, Group};
 use super::*;
-use table::RowAction;
+use freshkube_ui::menu::MenuAction;
 
 impl ResourcesScreen {
     /// A right-click on a row selects it, as an arrow key would: an open
@@ -32,7 +32,7 @@ impl ResourcesScreen {
         group: &Group,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (Vec<RowAction>, Option<ResourceIdentity>) {
+    ) -> (Vec<MenuAction>, Option<ResourceIdentity>) {
         let first = (group.shown > 0)
             .then(|| self.projection.row(&self.store, group.start))
             .flatten()
@@ -50,16 +50,16 @@ impl ResourcesScreen {
     }
 
     /// The selected row's actions, with the list's keys.
-    pub(super) fn menu_actions(&self, _cx: &App) -> Vec<RowAction> {
+    pub(super) fn menu_actions(&self, _cx: &App) -> Vec<MenuAction> {
         let Some(identity) = self.projection.selected() else {
             return Vec::new();
         };
-        let mut actions = vec![RowAction::new("Open", OpenSelected)];
+        let mut actions = vec![MenuAction::new("Open", OpenSelected)];
         if self.lists_pods() {
-            actions.push(RowAction::new("Logs", OpenLogs));
+            actions.push(MenuAction::new("Logs", OpenLogs));
         }
-        actions.push(RowAction::Separator);
-        actions.push(RowAction::new(
+        actions.push(MenuAction::Separator);
+        actions.push(MenuAction::new(
             if self.marked.contains(identity) {
                 "Unmark"
             } else {
@@ -71,26 +71,26 @@ impl ResourcesScreen {
             .selected_group()
             .filter(|group| group.cause != Cause::Healthy)
         {
-            actions.push(RowAction::new(
+            actions.push(MenuAction::new(
                 format!("Select all {} in group", group.total),
                 SelectGroup,
             ));
         }
         if let Some(node) = self.selected_node() {
-            actions.push(RowAction::Separator);
-            actions.push(RowAction::new(format!("Open node {node}"), OpenNode));
+            actions.push(MenuAction::Separator);
+            actions.push(MenuAction::new(format!("Open node {node}"), OpenNode));
         }
         if let Some(fold) = self.fold_action() {
-            actions.push(RowAction::Separator);
+            actions.push(MenuAction::Separator);
             actions.push(fold);
         }
         actions
     }
 
     /// Expand or collapse the healthy pods, while they may fold.
-    fn fold_action(&self) -> Option<RowAction> {
+    fn fold_action(&self) -> Option<MenuAction> {
         self.projection.folds_healthy().then(|| {
-            RowAction::new(
+            MenuAction::new(
                 if self.healthy_open {
                     "Collapse healthy pods"
                 } else {

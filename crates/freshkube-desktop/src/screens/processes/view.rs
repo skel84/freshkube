@@ -24,7 +24,7 @@ impl ProcessesScreen {
                 // The rightmost folds first: the widest, the states.
                 let header = header
                     .filter(filter)
-                    .foldable(self.render_tree(cx), self.tree_fold(cx));
+                    .foldable(self.render_tree(cx), self.tree_fold());
                 let header = match self.tree {
                     ProcessTree::Subtree { root_pid } => header.foldable(
                         self.render_subtree(root_pid, cx),
@@ -74,13 +74,14 @@ impl ProcessesScreen {
             .on_click(cx.listener(|view, _, _, cx| view.toggle_tree(cx)))
     }
 
-    /// Tree folded: a checked item.
-    fn tree_fold(&self, cx: &mut Context<Self>) -> page::Fold {
+    /// Tree folded: a checked item, with its key.
+    fn tree_fold(&self) -> page::Fold {
         let full = self.tree == ProcessTree::Full;
-        page::Fold::from(page::checked_item(
+        page::Fold::from(page::checked_action_item(
             "Tree",
             full,
-            page::handler(cx, |view: &mut Self, _, cx| view.toggle_tree(cx)),
+            ToggleTree,
+            &self.focus,
         ))
         .changed(full.then(|| "Tree".into()))
     }

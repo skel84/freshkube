@@ -167,19 +167,19 @@ impl TableSource for SettingsPage {
         key: &SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<table::RowAction> {
+    ) -> Vec<menu::MenuAction> {
         self.select(key.clone(), cx);
         self.focus(window, cx);
         let editable = self.editable();
         let at = self.rows.iter().position(|row| &row.id == key);
         let last = self.rows.len().saturating_sub(1);
         vec![
-            table::RowAction::new("Edit", EditCluster).enabled(editable),
-            table::RowAction::new("Remove", RemoveCluster).enabled(editable),
-            table::RowAction::Separator,
-            table::RowAction::new("Move up", MoveClusterUp)
+            menu::MenuAction::new("Edit", EditCluster).enabled(editable),
+            menu::MenuAction::new("Remove", RemoveCluster).enabled(editable),
+            menu::MenuAction::Separator,
+            menu::MenuAction::new("Move up", MoveClusterUp)
                 .enabled(editable && at.is_some_and(|at| at > 0)),
-            table::RowAction::new("Move down", MoveClusterDown)
+            menu::MenuAction::new("Move down", MoveClusterDown)
                 .enabled(editable && at.is_some_and(|at| at < last)),
         ]
     }

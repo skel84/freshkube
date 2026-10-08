@@ -169,7 +169,7 @@ impl ResourcesScreen {
                     .upgrade()
                     .is_some_and(|view| view.read(cx).projection.selected() == Some(row)),
             };
-            table::row_menu(menu, actions, &focus, live, cx)
+            freshkube_ui::menu::actions(menu, actions, &focus, live, window, cx)
         });
         Some(line.into_any_element())
     }

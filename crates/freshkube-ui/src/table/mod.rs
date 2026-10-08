@@ -18,7 +18,6 @@ use crate::palette::palette;
 mod data;
 mod flash;
 mod loading;
-mod menu;
 mod pinned;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 pub use data::{
@@ -27,7 +26,6 @@ pub use data::{
 };
 pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look, TableLoading};
-pub use menu::{RowAction, row_menu};
 pub use pinned::widest_pinned_run;
 
 /// Every table's row height. Group rows take the same height, so the list

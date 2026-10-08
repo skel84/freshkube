@@ -10,7 +10,7 @@ use crate::{
     ui::{self, dp},
 };
 use freshkube_ui::status::Segment;
-use freshkube_ui::{page, table};
+use freshkube_ui::{menu, page, table};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     assets::IconName,
@@ -394,9 +394,9 @@ impl SystemServices {
         let nodes = self.node_items(cx);
         let picked = self.node.clone();
         let value = picked.clone().unwrap_or_else(|| "All nodes".into());
-        let (logs, logs_fold) = self.render_action("logs", "Logs", Act::Logs, &ServiceLogs, cx);
+        let (logs, logs_fold) = self.render_action("logs", "Logs", Act::Logs, ServiceLogs, cx);
         let (open, open_fold) =
-            self.render_action("open", "Open node", Act::Open, &OpenServiceNode, cx);
+            self.render_action("open", "Open node", Act::Open, OpenServiceNode, cx);
         header
             .filter(filter)
             .chips(Some(chips))
@@ -418,16 +418,11 @@ impl SystemServices {
         id: &str,
         label: &'static str,
         act: Act,
-        action: &dyn Action,
+        action: impl Action,
         cx: &Context<Self>,
     ) -> (Button, page::MenuItems) {
         let enabled = self.selected.is_some();
         let run = page::handler(cx, move |this, _, cx| this.act(act, cx));
-        let fold = if enabled {
-            page::item(label, run.clone())
-        } else {
-            page::disabled_item(label)
-        };
         let tooltip = if enabled {
             format!("{label} for the selected service")
         } else {
@@ -439,8 +434,12 @@ impl SystemServices {
             .h(dp(crate::ui::CONTROL_HEIGHT))
             .label(label)
             .disabled(!enabled)
-            .tooltip_with_action(tooltip, action, Some(CONTEXT))
+            .tooltip_with_action(tooltip, &action, Some(CONTEXT))
             .on_click(move |_, window, cx| run(window, cx));
+        let fold = page::action_entry(
+            menu::MenuAction::new(label, action).enabled(enabled),
+            &self.focus,
+        );
         (button, fold)
     }
     /// All nodes, then each node, as checked items: the node picker's menu,

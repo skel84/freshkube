@@ -5,6 +5,7 @@
 use std::rc::Rc;
 
 use freshkube_ui::dock::{self, Frame};
+use freshkube_ui::menu;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
@@ -75,8 +76,9 @@ impl Dock {
     fn render_chrome(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let this = cx.entity().downgrade();
         let selected = self.selected;
+        let focus = self.focus.clone();
         let menu = dock::chrome_button("dock-menu", IconName::Ellipsis, "Close tabs")
-            .dropdown_menu(move |menu, _, _| {
+            .dropdown_menu(move |menu, window, cx| {
                 let item = |label: &'static str,
                             enabled: bool,
                             close: fn(&mut Dock, u64, &mut Window, &mut Context<Dock>)| {
@@ -90,7 +92,18 @@ impl Dock {
                         })
                 };
                 let has = selected.is_some();
-                menu.item(item("Close", has, Dock::close_tab))
+                // Close is the key's: it closes the selected tab, while
+                // that is still the tab the menu opened for.
+                let live = {
+                    let this = this.clone();
+                    move |cx: &App| {
+                        has && this
+                            .upgrade()
+                            .is_some_and(|dock| dock.read(cx).selected == selected)
+                    }
+                };
+                let close = menu::MenuAction::new("Close", CloseDockTab).enabled(has);
+                menu::actions(menu, vec![close], &focus, live, window, cx)
                     .item(item("Close others", has, Dock::close_others))
                     .item(item("Close to the right", has, Dock::close_to_right))
                     .separator()
