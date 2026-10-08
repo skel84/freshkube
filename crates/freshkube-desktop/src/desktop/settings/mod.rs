@@ -1,7 +1,13 @@
 //! The Settings page: sections of what the person chooses, Workspace first.
 //! Workspace lists the clusters of the workspace file (`workspace.json`,
-//! `freshkube_core::workspace`); it reads and writes nothing itself, the
-//! shell hands it what the file held.
+//! `freshkube_core::workspace`) and edits them: the shell hands it what the
+//! file held at launch, and every change is saved at once, off the UI thread
+//! (`edit.rs`). Example data and a window without a preferences folder show
+//! the list and change nothing.
+mod edit;
+#[cfg(test)]
+mod edit_tests;
+mod form;
 mod source;
 #[cfg(test)]
 mod tests;
@@ -10,10 +16,15 @@ use crate::ui::{self, dp};
 use freshkube_core::workspace::{self, Loaded, Workspace};
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{page, table};
+use gpui_kit::component::{
+    Disableable, Sizable, WindowExt,
+    button::{Button, ButtonVariants},
+    h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use source::Column;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The page's id prefix: `settings-title`, `-list`, `-banner`.
 const PREFIX: &str = "settings";
@@ -28,7 +39,17 @@ gpui_kit::actions!(
         /// Selects the previous cluster.
         PreviousCluster,
         /// Clears the selection.
-        ClearCluster
+        ClearCluster,
+        /// Opens the form for a new cluster.
+        AddCluster,
+        /// Opens the form for the selected cluster.
+        EditCluster,
+        /// Asks to remove the selected cluster from the workspace.
+        RemoveCluster,
+        /// Moves the selected cluster up one place.
+        MoveClusterUp,
+        /// Moves the selected cluster down one place.
+        MoveClusterDown
     ]
 );
 
@@ -41,6 +62,13 @@ pub(crate) struct ClusterRow {
     talosconfig: SharedString,
     /// The row's tooltip: the cluster, and the talosconfig path in full.
     tooltip: SharedString,
+}
+
+/// What the last save did, under the table's banners.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Notice {
+    Saved(SharedString),
+    Failed(SharedString),
 }
 
 /// What the workspace file is.
@@ -62,8 +90,19 @@ pub(crate) struct SettingsPage {
     width: f32,
     table: table::TableState,
     origin: Origin,
+    /// The workspace as the file holds it, with the keys this version
+    /// doesn't know; every save writes a changed copy of it.
+    workspace: Workspace,
+    /// `workspace.json`; none without a preferences folder.
+    file: Option<PathBuf>,
     /// Why a file isn't used, for the banner; none while it is.
     banner: Option<SharedString>,
+    /// Keys the file holds that this version doesn't know.
+    warning: Option<SharedString>,
+    /// Why the last save failed, or what the last one did.
+    notice: Option<Notice>,
+    /// The save in flight; changes wait for it.
+    saving: Option<Task<()>>,
     selected: Option<SharedString>,
     page_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -80,7 +119,12 @@ impl SettingsPage {
             width,
             table: table::TableState::new(PREFIX),
             origin: Origin::Alone,
+            workspace: Workspace::default(),
+            file: None,
             banner: None,
+            warning: None,
+            notice: None,
+            saving: None,
             selected: None,
             page_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -98,6 +142,18 @@ impl SettingsPage {
             Loaded::Refused(why) => (
                 Workspace::default(),
                 Origin::Refused(why.to_string().into()),
+            ),
+        };
+        self.workspace = workspace.clone();
+        self.warning = match workspace.unknown_keys().as_slice() {
+            [] => None,
+            keys => Some(
+                format!(
+                    "workspace.json has keys this version doesn’t use: {}. They are kept when \
+                     the file is saved; check them for a misspelling.",
+                    keys.join(", ")
+                )
+                .into(),
             ),
         };
         self.rows = workspace
@@ -126,8 +182,11 @@ impl SettingsPage {
             .collect();
         self.banner = match &origin {
             Origin::Refused(why) => Some(
-                format!("workspace.json isn’t used: {why}. Freshkube leaves the file as it is.")
-                    .into(),
+                format!(
+                    "workspace.json isn’t used: {why}. Freshkube leaves the file as it is until \
+                     you save a change, which sets it aside first."
+                )
+                .into(),
             ),
             _ => None,
         };
@@ -207,21 +266,164 @@ impl SettingsPage {
         &self.origin
     }
 
-    fn render_banner(&self, cx: &App) -> Option<impl IntoElement> {
-        let body = self.banner.clone()?;
-        Some(
+    /// The banners under the toolbar: a file not used, unknown keys, and what
+    /// the last save did. Each reads text derived when it changed.
+    fn render_banners(&self, cx: &App) -> Vec<AnyElement> {
+        let banner = |id: &'static str, lead: &str, body: SharedString, tone: ui::Tone| {
             page::inset()
-                .id("settings-banner")
+                .id(id)
                 .test_support()
                 .role(Role::Alert)
                 .aria_label(body.clone())
-                .child(ui::warning_banner(
-                    Some("Workspace file not used".into()),
+                .child(ui::banner(
+                    tone,
+                    Some(lead.to_owned().into()),
                     body,
                     None,
                     cx,
-                )),
-        )
+                ))
+                .into_any_element()
+        };
+        let mut banners = Vec::new();
+        if let Some(body) = &self.banner {
+            banners.push(banner(
+                "settings-banner",
+                "Workspace file not used",
+                body.clone(),
+                ui::Tone::Warn,
+            ));
+        }
+        if let Some(body) = &self.warning {
+            banners.push(banner(
+                "settings-unknown-keys",
+                "Unknown keys",
+                body.clone(),
+                ui::Tone::Warn,
+            ));
+        }
+        match &self.notice {
+            Some(Notice::Failed(body)) => banners.push(banner(
+                "settings-save-failed",
+                "Not saved",
+                body.clone(),
+                ui::Tone::Crit,
+            )),
+            Some(Notice::Saved(body)) => banners.push(banner(
+                "settings-saved",
+                "Saved",
+                body.clone(),
+                ui::Tone::Good,
+            )),
+            None => {}
+        }
+        banners
+    }
+}
+
+impl SettingsPage {
+    /// The toolbar: Add, and the actions on the selected cluster. Each acts
+    /// on the selection, and each is off, with its reason in the tooltip,
+    /// while nothing can be saved or nothing is selected.
+    fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let header = page::PageHeader::new(PREFIX, "Settings");
+        let editable = self.editable();
+        let selected = self.selected.is_some();
+        let at = self.selected.as_ref().and_then(|key| {
+            self.workspace
+                .clusters
+                .iter()
+                .position(|e| e.id == key.as_ref())
+        });
+        let last = self.workspace.clusters.len().saturating_sub(1);
+        let (add, add_fold) = self.render_action(
+            "add",
+            "Add",
+            editable,
+            "Add a cluster to the workspace",
+            &AddCluster,
+            |this, window, cx| this.open_form(None, window, cx),
+            cx,
+        );
+        let (edit, edit_fold) = self.render_action(
+            "edit",
+            "Edit",
+            editable && selected,
+            "Change the selected cluster",
+            &EditCluster,
+            |this, window, cx| this.edit_selected(window, cx),
+            cx,
+        );
+        let (remove, remove_fold) = self.render_action(
+            "remove",
+            "Remove",
+            editable && selected,
+            "Remove the selected cluster from the workspace",
+            &RemoveCluster,
+            |this, window, cx| this.ask_remove_selected(window, cx),
+            cx,
+        );
+        let (up, up_fold) = self.render_action(
+            "up",
+            "Move up",
+            editable && at.is_some_and(|at| at > 0),
+            "Move the selected cluster up",
+            &MoveClusterUp,
+            |this, _, cx| this.move_selected(-1, cx),
+            cx,
+        );
+        let (down, down_fold) = self.render_action(
+            "down",
+            "Move down",
+            editable && at.is_some_and(|at| at < last),
+            "Move the selected cluster down",
+            &MoveClusterDown,
+            |this, _, cx| this.move_selected(1, cx),
+            cx,
+        );
+        header
+            .foldable(add, add_fold)
+            .foldable(edit, edit_fold)
+            .foldable(remove, remove_fold)
+            .foldable(up, up_fold)
+            .foldable(down, down_fold)
+            .render(window, cx)
+    }
+
+    /// A toolbar button and its folded form, one handler for both; off with
+    /// `enabled` false, and then its tooltip says why.
+    #[allow(clippy::too_many_arguments)]
+    fn render_action(
+        &self,
+        id: &str,
+        label: &'static str,
+        enabled: bool,
+        tooltip: &'static str,
+        action: &dyn Action,
+        run: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &Context<Self>,
+    ) -> (Button, page::MenuItems) {
+        let handler = page::handler(cx, run);
+        let fold = if enabled {
+            page::item(label, handler.clone())
+        } else {
+            page::disabled_item(label)
+        };
+        let tooltip = if !self.editable() {
+            self.why_not_editable().to_owned()
+        } else if enabled {
+            tooltip.to_owned()
+        } else {
+            format!("{label}: select a cluster first")
+        };
+        let button = Button::new(SharedString::from(format!("settings-{id}")))
+            .outline()
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .label(label)
+            .disabled(!enabled)
+            .tooltip_with_action(tooltip, action, Some(CONTEXT))
+            .on_click(move |_, window, cx| handler(window, cx));
+        (button, fold)
     }
 }
 
@@ -229,14 +431,14 @@ impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         let short = page::is_short(window);
-        let header = page::PageHeader::new(PREFIX, "Settings").render(window, cx);
+        let header = self.render_header(window, cx);
         page::page("settings-page")
             .track_scroll(&self.page_scroll)
             .when(short, |this| {
                 this.overflow_y_scroll().restrict_scroll_to_axis()
             })
             .child(page::toolbar(cx).child(header))
-            .children(self.render_banner(cx))
+            .children(self.render_banners(cx))
             .child(
                 div()
                     .key_context(CONTEXT)
@@ -245,6 +447,21 @@ impl Render for SettingsPage {
                     .on_action(cx.listener(|this, _: &PreviousCluster, _, cx| this.step(-1, cx)))
                     .on_action(
                         cx.listener(|this, _: &ClearCluster, _, cx| this.clear_selection(cx)),
+                    )
+                    .on_action(cx.listener(|this, _: &AddCluster, window, cx| {
+                        this.open_form(None, window, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &EditCluster, window, cx| {
+                        this.edit_selected(window, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &RemoveCluster, window, cx| {
+                        this.ask_remove_selected(window, cx)
+                    }))
+                    .on_action(
+                        cx.listener(|this, _: &MoveClusterUp, _, cx| this.move_selected(-1, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &MoveClusterDown, _, cx| this.move_selected(1, cx)),
                     )
                     .flex()
                     .flex_col()
@@ -270,7 +487,10 @@ impl super::Pilot {
             (None, false) => Loaded::Missing,
         };
         let example = self.fixture;
-        self.settings_page
-            .update(cx, |page, cx| page.set_workspace(&loaded, example, cx));
+        let file = self.workspace_file.clone();
+        self.settings_page.update(cx, |page, cx| {
+            page.file = file;
+            page.set_workspace(&loaded, example, cx)
+        });
     }
 }

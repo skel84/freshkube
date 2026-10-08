@@ -75,11 +75,17 @@ preferences) names each cluster by a stable entry id and never by a session
 key, since `AccessIdentity::key()` is process-local. Every entry has a role
 (`core`, `cicd` or `environment`); having none is reserved for the implicit
 workspace of one, which is never written. The shell reads the file once at
-launch and Settings › Workspace lists it; nothing yet opens a session from it.
-No file is a workspace of one. A file the app can't use (bad JSON, another
-version, a duplicate id, an entry without a role) is named with its reason and
-left exactly where it is. Writing the file, setting a refused one aside and
-starting on a remembered entry arrive with the callers that need them.
+launch and Settings › Workspace lists and edits it; nothing yet opens a session
+from it. No file is a workspace of one. A file the app can't use (bad JSON,
+another version, a duplicate id, an entry without a role) is named with its
+reason and left exactly where it is until the first save, which links it to
+`workspace.json.bak` (or `workspace.<UTC time>.bak`; a backup is never
+replaced) and only then writes the new file; if it can't be set aside, nothing
+is written. A change is a changed copy of the workspace, validated, then
+written whole through a temporary file off the UI thread; the page shows it
+once it is on disk. Keys this version doesn't know are kept on save and named
+on the page. Example data and a window without a preferences folder never
+write. Starting on a remembered entry arrives with the switcher that opens one.
 
 This is the local configuration/session boundary from #2. Independent revisions
 for remotely rotated credentials, auth-plugin state and Prometheus/provider

@@ -156,6 +156,34 @@ impl TableSource for SettingsPage {
         self.focus(window, cx);
     }
 
+    fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
+        Some(self.focus.clone())
+    }
+
+    /// A right-click selects the row as a click does; its menu is the
+    /// toolbar's actions on it, with their keys.
+    fn row_menu(
+        &mut self,
+        key: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<table::RowAction> {
+        self.select(key.clone(), cx);
+        self.focus(window, cx);
+        let editable = self.editable();
+        let at = self.rows.iter().position(|row| &row.id == key);
+        let last = self.rows.len().saturating_sub(1);
+        vec![
+            table::RowAction::new("Edit", EditCluster).enabled(editable),
+            table::RowAction::new("Remove", RemoveCluster).enabled(editable),
+            table::RowAction::Separator,
+            table::RowAction::new("Move up", MoveClusterUp)
+                .enabled(editable && at.is_some_and(|at| at > 0)),
+            table::RowAction::new("Move down", MoveClusterDown)
+                .enabled(editable && at.is_some_and(|at| at < last)),
+        ]
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if !self.rows.is_empty() {
             return None;

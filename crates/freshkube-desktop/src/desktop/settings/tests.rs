@@ -4,7 +4,7 @@ use crate::desktop::{
     Page, layout_check,
     tests::{fixture, mount},
 };
-use freshkube_core::workspace::{Invalid, Loaded};
+use freshkube_core::workspace::{self, Invalid, Loaded};
 use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 
 const SETTINGS: layout_check::TablePage = layout_check::TablePage {
@@ -115,7 +115,7 @@ fn a_refused_file_says_why_and_lists_nothing(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-fn launch(
+pub(super) fn launch(
     cx: &mut TestAppContext,
     directory: &std::path::Path,
 ) -> (
@@ -185,18 +185,25 @@ fn a_refused_file_stays_where_it_is_after_a_launch(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn a_row_tooltip_holds_the_full_talosconfig_path(cx: &mut TestAppContext) {
-    use freshkube_core::workspace::{Entry, Role, Workspace};
     use freshkube_ui::table::{Line, TableSource};
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     let path = std::env::temp_dir()
         .join("acme")
         .join("core-fra.talosconfig");
-    let mut entry = Entry::new("core-fra", Role::Core, "core-fra");
-    entry.talosconfig = Some(path.clone());
-    let loaded = Loaded::Workspace(Workspace {
-        kubeconfig: None,
-        clusters: vec![entry, Entry::new("dev-fra", Role::Environment, "dev-fra")],
-    });
+    let loaded = Loaded::Workspace(
+        workspace::parse(
+            serde_json::json!({
+                "version": 1,
+                "clusters": [
+                    {"id": "core-fra", "role": "core", "context": "core-fra", "talosconfig": path},
+                    {"id": "dev-fra", "role": "environment", "context": "dev-fra"},
+                ],
+            })
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap(),
+    );
     cx.update_window(handle, |_, _, cx| {
         let page = view.read(cx).settings_page.clone();
         page.update(cx, |page, cx| page.set_workspace(&loaded, false, cx));
