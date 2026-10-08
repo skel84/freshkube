@@ -251,7 +251,7 @@ impl TableSource for ResourcesScreen {
         key: &ResourceIdentity,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<table::RowAction> {
+    ) -> Vec<freshkube_ui::menu::MenuAction> {
         self.select_for_menu(key, window, cx);
         self.menu_actions(cx)
     }

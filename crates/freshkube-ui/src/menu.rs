@@ -1,4 +1,6 @@
-//! A row's context menu, built from the page's actions (DESIGN.md change 10).
+//! Menus that run the page's commands: a row's context menu (DESIGN.md
+//! change 10) and, from the same entries, the others that show keys
+//! ([docs/DESIGN.md](../../docs/DESIGN.md#menus-show-their-keys)).
 //!
 //! Each item dispatches the same action as the page's key and toolbar, so
 //! the three never drift, and the menu draws each one's key as the
@@ -11,7 +13,7 @@ use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::{Action, App, Context, FocusHandle, SharedString};
 
 /// One line of a row's menu.
-pub enum RowAction {
+pub enum MenuAction {
     /// An item that runs `action` on the page's list.
     Item {
         label: SharedString,
@@ -21,7 +23,7 @@ pub enum RowAction {
     Separator,
 }
 
-impl RowAction {
+impl MenuAction {
     pub fn new(label: impl Into<SharedString>, action: impl Action) -> Self {
         Self::Item {
             label: label.into(),
@@ -52,9 +54,9 @@ impl RowAction {
 /// While the menu is open, no row tooltip draws over it. An item runs its
 /// action at once, while Kit holds the menu, so a handler must not update
 /// the menu itself, such as by opening another.
-pub fn row_menu(
+pub fn actions(
     menu: PopupMenu,
-    actions: Vec<RowAction>,
+    actions: Vec<MenuAction>,
     focus: &FocusHandle,
     live: impl Fn(&App) -> bool + 'static,
     cx: &mut Context<PopupMenu>,
@@ -66,8 +68,8 @@ pub fn row_menu(
     let mut any = false;
     for action in actions {
         match action {
-            RowAction::Separator => separate = any,
-            RowAction::Item {
+            MenuAction::Separator => separate = any,
+            MenuAction::Item {
                 label,
                 action,
                 enabled,

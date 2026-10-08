@@ -1,6 +1,7 @@
 //! Nodes' G7 table. The shell retains the data, selection and pane.
 use super::*;
 use freshkube_core::pluralize;
+use freshkube_ui::menu;
 use freshkube_ui::table::{
     self, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
 };
@@ -374,9 +375,9 @@ impl TableSource for Pilot {
             line.context_menu(move |menu, window, cx| {
                 window.focus(&focus, cx);
                 // The fold acts on the group, not a row.
-                table::row_menu(
+                menu::actions(
                     menu,
-                    vec![table::RowAction::new(label, ToggleHealthyNodes)],
+                    vec![menu::MenuAction::new(label, ToggleHealthyNodes)],
                     &focus,
                     |_| true,
                     cx,
@@ -425,7 +426,7 @@ impl TableSource for Pilot {
         key: &NodeKey,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<table::RowAction> {
+    ) -> Vec<menu::MenuAction> {
         if self.node_workspace.selected.as_ref() != Some(key) {
             if self.node_workspace.open {
                 self.open_node(key.clone(), window, cx);
@@ -435,10 +436,10 @@ impl TableSource for Pilot {
             }
         }
         window.focus(&self.node_focus, cx);
-        let mut actions = vec![table::RowAction::new("Open", OpenNode)];
+        let mut actions = vec![menu::MenuAction::new("Open", OpenNode)];
         if self.node_workspace.folds_healthy() {
-            actions.push(table::RowAction::Separator);
-            actions.push(table::RowAction::new(
+            actions.push(menu::MenuAction::Separator);
+            actions.push(menu::MenuAction::new(
                 if self.node_workspace.healthy_collapsed() {
                     "Expand healthy nodes"
                 } else {

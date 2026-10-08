@@ -10,7 +10,7 @@ use crate::{
     ui::{self, dp},
 };
 use freshkube_ui::status::Segment;
-use freshkube_ui::{page, table};
+use freshkube_ui::{menu, page, table};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     assets::IconName,

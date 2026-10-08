@@ -11,6 +11,7 @@ pub mod grid;
 pub mod inspector;
 #[cfg(feature = "testing")]
 pub mod layout_check;
+pub mod menu;
 pub mod meters;
 pub mod motion;
 pub mod page;

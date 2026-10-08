@@ -15,7 +15,7 @@ mod tests;
 use crate::ui::{self, dp};
 use freshkube_core::workspace::{self, Loaded, Workspace};
 use freshkube_ui::status::{Part, Segment};
-use freshkube_ui::{page, table};
+use freshkube_ui::{menu, page, table};
 use gpui_kit::component::{
     Disableable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
