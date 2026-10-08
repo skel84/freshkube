@@ -1,29 +1,11 @@
 //! Keys the user asked Freshkube to remember, kept in the system's credential
 //! store: the Keychain on macOS, Credential Manager on Windows and the Secret
-//! Service on Linux. Nothing secret goes into the preferences folder; when no
-//! store is available, a key stays in memory only.
-//!
-//! Every call can block, or make the system ask the user for permission, so
-//! callers run them off the UI thread.
-use std::sync::Arc;
-
-pub(crate) trait SecretStore: Send + Sync {
-    fn read(&self, account: &str) -> Result<Option<String>, String>;
-    fn write(&self, account: &str, secret: &str) -> Result<(), String>;
-    /// Forgetting a key that isn't there succeeds.
-    fn forget(&self, account: &str) -> Result<(), String>;
-}
-
-pub(crate) type Secrets = Arc<dyn SecretStore>;
-
-/// What the store is called on this platform, for labels and errors.
-pub(crate) const STORE_NAME: &str = if cfg!(target_os = "macos") {
-    "Keychain"
-} else if cfg!(windows) {
-    "Credential Manager"
-} else {
-    "system keyring"
-};
+//! Service on Linux. The trait and the in-memory store for tests are core's
+//! (`freshkube_core::secrets`); the platform's store stays here, with the
+//! `keyring` dependency.
+#[cfg(test)]
+pub(crate) use freshkube_core::secrets::MemoryStore;
+pub(crate) use freshkube_core::secrets::{STORE_NAME, SecretStore, Secrets};
 
 const SERVICE: &str = "Freshkube";
 
@@ -63,47 +45,5 @@ fn describe(error: keyring::Error) -> String {
         }
         keyring::Error::PlatformFailure(error) => format!("The {STORE_NAME} failed: {error}"),
         _ => format!("The {STORE_NAME} refused the key"),
-    }
-}
-
-/// A store in memory, so tests never touch the user's.
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct MemoryStore {
-    pub(crate) keys: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
-    pub(crate) unavailable: std::sync::atomic::AtomicBool,
-}
-
-#[cfg(test)]
-impl MemoryStore {
-    fn check(&self) -> Result<(), String> {
-        if self.unavailable.load(std::sync::atomic::Ordering::SeqCst) {
-            Err(format!("No {STORE_NAME} is available"))
-        } else {
-            Ok(())
-        }
-    }
-}
-
-#[cfg(test)]
-impl SecretStore for MemoryStore {
-    fn read(&self, account: &str) -> Result<Option<String>, String> {
-        self.check()?;
-        Ok(self.keys.lock().unwrap().get(account).cloned())
-    }
-
-    fn write(&self, account: &str, secret: &str) -> Result<(), String> {
-        self.check()?;
-        self.keys
-            .lock()
-            .unwrap()
-            .insert(account.into(), secret.into());
-        Ok(())
-    }
-
-    fn forget(&self, account: &str) -> Result<(), String> {
-        self.check()?;
-        self.keys.lock().unwrap().remove(account);
-        Ok(())
     }
 }

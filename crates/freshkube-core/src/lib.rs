@@ -46,6 +46,7 @@ pub mod node_health;
 pub mod operations;
 pub mod pcap;
 pub mod resources;
+pub mod secrets;
 pub mod security_lifecycle;
 pub mod talos_nodes;
 pub mod types;
