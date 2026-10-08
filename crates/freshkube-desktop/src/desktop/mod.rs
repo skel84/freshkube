@@ -307,12 +307,6 @@ pub(crate) struct Pilot {
     config_loading: bool,
     config_generation: u64,
     epoch: u64,
-    access: Option<freshkube_core::AccessIdentity>,
-    access_configuration: Option<freshkube_core::ConfigurationRevision>,
-    prompted_access: Option<(
-        freshkube_core::ConfigurationRevision,
-        Option<freshkube_core::AccessIdentity>,
-    )>,
     overview: Snapshot<ClusterOverview>,
     /// The cluster sessions: a workspace of one.
     registry: session::Registry,
@@ -917,9 +911,6 @@ impl Pilot {
             config_loading: false,
             config_generation: 0,
             epoch: 0,
-            access: None,
-            access_configuration: None,
-            prompted_access: None,
             overview: Snapshot::default(),
             registry: session::Registry::new(),
             object_open_job: None,
@@ -1045,9 +1036,9 @@ impl Pilot {
 
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.epoch = self.epoch.wrapping_add(1);
-        self.access = None;
-        self.access_configuration = None;
-        self.prompted_access = None;
+        // The whole session goes, with its summary tasks, before anything
+        // below rebuilds from it.
+        self.registry.reset_active();
         self.search.update(cx, |search, cx| search.invalidate(cx));
         self.overview_task = None;
         self.overview_job = None;
@@ -1061,7 +1052,6 @@ impl Pilot {
         self.service_display = services::ServiceDisplay::default();
         self.load_history.clear();
         self.overview = Snapshot::default();
-        self.registry.active_mut().kubernetes_summary = Snapshot::default();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
@@ -1071,8 +1061,6 @@ impl Pilot {
             .document
             .update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
-        self.registry.active_mut().summary_health = None;
-        self.stop_summary();
         self.attention_expanded = false;
         self.object_open_job = None;
         self.object_open_task = None;
@@ -1302,8 +1290,8 @@ impl Pilot {
         Some(resources::talos::AppliedAccess {
             config_path: self.applied.path.clone(),
             selection: self.kubeconfig.clone(),
-            configuration: self.access_configuration?,
-            identity: self.access?,
+            configuration: self.registry.active().access_configuration?,
+            identity: self.registry.active().access?,
         })
     }
 
@@ -1319,7 +1307,7 @@ impl Pilot {
         if let Some(kube) = &self.kubernetes_only {
             return kube.access().map(|access| access.id());
         }
-        self.access.map(|access| access.key())
+        self.registry.active().access.map(|access| access.key())
     }
 
     /// Where the Resources page reads: example objects, or the Kubernetes
@@ -1348,10 +1336,10 @@ impl Pilot {
             ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));
         collector.set_kubeconfig_selection(self.kubeconfig.clone());
         Some(KubeSource {
-            id: self.access?.key(),
+            id: self.registry.active().access?.key(),
             context: cluster.name.clone(),
             access: KubeAccess::Talos(Box::new(resources::talos::TalosAccess {
-                configuration: self.access_configuration?,
+                configuration: self.registry.active().access_configuration?,
                 selection: self.kubeconfig.clone(),
                 live: LiveSource {
                     client: cluster.client.clone()?,
@@ -1425,7 +1413,7 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.prompted_access = None;
+        self.registry.active_mut().prompted_access = None;
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
         if self.page == Page::Resources {

@@ -9,7 +9,7 @@ impl Pilot {
     pub(super) fn observed_nodes(&self) -> Option<ObservedNodes> {
         self.registry.active().summary_session.as_ref()?;
         Some(ObservedNodes {
-            access: self.access?,
+            access: self.registry.active().access?,
             nodes: self
                 .registry
                 .active()
@@ -40,11 +40,13 @@ impl Pilot {
         match result {
             Ok(collected) => {
                 let changed = self
+                    .registry
+                    .active()
                     .access_configuration
                     .is_some_and(|old| old != collected.configuration)
-                    || collected
-                        .access
-                        .is_some_and(|new| self.access.is_some_and(|old| old != new));
+                    || collected.access.is_some_and(|new| {
+                        self.registry.active().access.is_some_and(|old| old != new)
+                    });
                 if changed && !resources::shell::running_anywhere(cx).is_empty() {
                     // Cancel leaves the original explicit session in place. Mark
                     // ordinary data stale, and ask once per replacement; manual
@@ -52,8 +54,8 @@ impl Pilot {
                     self.overview.apply(&request, Err("Access changed; refresh to reconnect after confirming the running shell can end".into()));
                     self.rebuild_joined_nodes(cx);
                     let replacement = (collected.configuration, collected.access);
-                    if self.prompted_access != Some(replacement) {
-                        self.prompted_access = Some(replacement);
+                    if self.registry.active().prompted_access != Some(replacement) {
+                        self.registry.active_mut().prompted_access = Some(replacement);
                         self.unless_shell(window, cx, move |view, window, cx| {
                             if view.epoch == epoch && view.overview.is_current(&request) {
                                 view.install_overview(request, collected, true, window, cx);
@@ -86,9 +88,9 @@ impl Pilot {
             request = self.overview.begin(self.applied.clone());
             self.publish_reading(cx);
         }
-        self.access_configuration = Some(collected.configuration);
+        self.registry.active_mut().access_configuration = Some(collected.configuration);
         if collected.access.is_some() {
-            self.access = collected.access;
+            self.registry.active_mut().access = collected.access;
         }
         if self.overview.apply(&request, collected.cluster) {
             let fresh = !self.overview.is_stale() && self.overview.error().is_none();
