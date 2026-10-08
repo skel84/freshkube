@@ -28,6 +28,7 @@ fn kinds(hop: Hop) -> &'static [&'static str] {
         // Kargo records the push on the Promotion, not on the Stage.
         Hop::Stage => &["Stage", "Promotion"],
         Hop::Application => &["Application"],
+        // A Rollout reports no image; see `rollout_stands_on_its_pods`.
         Hop::Rollout => &["Rollout", "ReplicaSet"],
         Hop::Pod => &["Pod"],
     }
@@ -43,8 +44,12 @@ fn key_text(key: &Key) -> String {
 
 /// Whether the link has, on `hop`'s side, an observation of a read object
 /// that is reported, never declared or derived, and carries the link's key.
+/// A Rollout's side stands on its own pods.
 fn stands_on(link: &Link, hop: Hop) -> bool {
     let key = key_text(&link.key);
+    if hop == Hop::Rollout && rollout_stands_on_its_pods(link, &key) {
+        return true;
+    }
     link.evidence.iter().any(|seen| {
         kinds(hop).contains(&seen.object.kind.as_str())
             // Only what a controller reported stands for a side. A derived
@@ -58,19 +63,49 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
     })
 }
 
+/// A Rollout reports no image, and its spec's pin is declared, so its side
+/// stands on its own pods through a chain of reported values: the Rollout's
+/// current pod hash; a ReplicaSet whose owner reference names the Rollout's
+/// UID and whose label carries the hash; a pod whose owner reference names
+/// that ReplicaSet's UID, whose label carries the hash, and that reports the
+/// key.
+fn rollout_stands_on_its_pods(link: &Link, key: &str) -> bool {
+    let label = "/metadata/labels/rollouts-pod-template-hash";
+    let reported = |kind: &'static str, field: &'static str| {
+        link.evidence.iter().filter(move |seen| {
+            seen.fact == Fact::Reported && seen.object.kind == kind && seen.field == field
+        })
+    };
+    let on = |kind, field, object: &super::observation::ObjectRef, value: Option<&str>| {
+        reported(kind, field).any(|seen| &seen.object == object && seen.value.as_deref() == value)
+    };
+    reported("Rollout", "/status/currentPodHash").any(|rollout| {
+        let hash = rollout.value.as_deref();
+        reported("ReplicaSet", "/metadata/ownerReferences")
+            .filter(|set| set.value.is_some() && set.value == rollout.object.uid)
+            .filter(|set| on("ReplicaSet", label, &set.object, hash))
+            .any(|set| {
+                reported("Pod", "/metadata/ownerReferences")
+                    .filter(|pod| pod.value.is_some() && pod.value == set.object.uid)
+                    .any(|pod| {
+                        on("Pod", label, &pod.object, hash)
+                            && reported("Pod", "/status/containerStatuses").any(|running| {
+                                running.object == pod.object
+                                    && running
+                                        .value
+                                        .as_deref()
+                                        .is_some_and(|value| value.eq_ignore_ascii_case(key))
+                            })
+                    })
+            })
+    })
+}
+
 /// The sides of confirmed links that no read object stands on: `(from, to,
-/// side)`. Each is a confirmed link, on main, whose evidence on that side is
-/// declared only, or absent. Provenance shows them as they are; whether they
-/// stay confirmed is for the confidence slice (#387).
-const KNOWN_GAPS: &[(&str, &str, &str)] = &[
-    // #387: the Rollout's spec pin is declared, and Argo CD's resource list names
-    // the Rollout, not the digest.
-    ("Application", "Rollout", "Application"),
-    ("Application", "Rollout", "Rollout"),
-    // #387: the Rollout reports its pod-template hash, which the pods' label
-    // matches; neither carries the digest.
-    ("Rollout", "pods", "Rollout"),
-];
+/// side)`, each a confirmed link whose evidence on that side is declared
+/// only, or absent. #387 closed the last of them; a side that stands on
+/// nothing reported is Claimed instead, so a new entry needs a reason.
+const KNOWN_GAPS: &[(&str, &str, &str)] = &[];
 
 fn github() -> FixtureGitHub {
     FixtureGitHub::with(vec![pull_request(7, OTHER_SHA, Some(SHA))])
@@ -78,12 +113,18 @@ fn github() -> FixtureGitHub {
 
 /// Every kind of link confirmed at once: a squash-merged pull request whose
 /// head build shipped, signed by Chains, promoted to a Stage whose
-/// Application synced the pushed commit, pinned by its Rollout, running.
+/// Application synced the pushed commit and whose image summary lists the
+/// digest, pinned by its Rollout, running.
 async fn confirmed() -> Trail {
     let mut world = promoted(NEW, "Succeeded", PUSHED).with_meta();
+    let image = format!("{REPO}@{NEW}");
+    let mut app = summarised(application(Some("https://env-a.example:6443")), &[&image]);
+    app["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    world.argocd = world.argocd.with("applications", vec![app]);
     world.environment = world
         .environment
-        .with("rollouts", vec![rollout(&format!("{REPO}@{NEW}"))]);
+        .with("rollouts", vec![rollout(&image)])
+        .with("replicasets", vec![replica_set("5d9c", &image, 1, 1)]);
     world.tekton = world.tekton.with(
         "pipelineruns",
         vec![
@@ -610,6 +651,7 @@ async fn a_capped_source_never_yields_none() {
     assert!(
         pods.evidence
             .iter()
+            .filter(|seen| seen.object.kind == "Pod")
             .all(|seen| seen.value.as_deref() == Some(OLD)),
         "{pods:#?}"
     );
@@ -768,6 +810,10 @@ const COUNTS: [[usize; 3]; 4] = [[2, 6, 0], [5, 3, 0], [11, 1, 0], [3, 9, 0]];
 // squash: Commit -> PipelineRun, both PullRequest -> PipelineRun links, PipelineRun ->
 // supply chain, and PullRequest -> Freight (the head build is tied to the head commit by
 // declared fields only; `storefront-pr-y` has no clone TaskRun there).
+// #387 moved none: Rollout -> pods stays Confirmed in every fixture on its current pods'
+// owner chain to the Rollout, which the fixtures serve as a cluster does; Application ->
+// Rollout stays Confirmed in `confirmed`, whose Application's image summary lists the
+// digest its pods run.
 
 #[test]
 fn the_rule_fails_on_a_side_with_nothing_read() {
@@ -875,4 +921,343 @@ fn each_value_keeps_the_field_it_was_read_from() {
     .unwrap();
     assert_eq!(new.pointer("images"), "/images");
     assert_eq!(pointer_segment("a/b"), "a~1b");
+}
+
+/// A pod of the Rollout's current revision, `5d9c`, owned by its ReplicaSet,
+/// with these containers: `(name, image, imageID, ready)`.
+fn current_pod(name: &str, containers: &[(&str, &str, Option<&str>, bool)]) -> serde_json::Value {
+    let mut pod = pod_of(name, "5d9c", "", "", true);
+    pod["status"]["containerStatuses"] = containers
+        .iter()
+        .map(|(container, image, id, ready)| {
+            serde_json::json!({"name": container, "image": image, "imageID": id, "ready": ready})
+        })
+        .collect();
+    pod
+}
+
+async fn current_pods(pods: Vec<serde_json::Value>) -> Trail {
+    let mut world = healthy();
+    world.environment = world.environment.with("pods", pods);
+    run(&world, &ENV).await
+}
+
+fn running(digest: &str) -> String {
+    format!("docker-pullable://{REPO}@{digest}")
+}
+
+#[tokio::test]
+async fn a_ready_current_pod_reporting_the_digest_confirms_through_owner_uids() {
+    let tagged = format!("{REPO}:v1.4.0");
+    let trail = current_pods(vec![current_pod(
+        "storefront-5d9c-a",
+        &[("app", &tagged, Some(&running(NEW)), true)],
+    )])
+    .await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed);
+    for hop in [Hop::Rollout, Hop::Pod] {
+        assert!(stands_on(pods, hop), "{hop:?}: {pods:#?}");
+    }
+    let rule = pods
+        .evidence
+        .iter()
+        .find(|seen| seen.object.kind == "Join")
+        .expect("the join's conclusion");
+    assert_eq!(
+        rule.object.name,
+        "pod -> ReplicaSet -> Rollout by owner UID; pod-template-hash == currentPodHash"
+    );
+}
+
+#[tokio::test]
+async fn every_form_of_an_image_id_compares_by_its_digest() {
+    let tagged = format!("{REPO}:v1.4.0");
+    for id in [running(NEW), format!("{REPO}@{NEW}"), NEW.to_owned()] {
+        let trail = current_pods(vec![current_pod(
+            "storefront-5d9c-a",
+            &[("app", &tagged, Some(&id), true)],
+        )])
+        .await;
+        let pods = one(&trail, Hop::Rollout, Hop::Pod);
+        assert_eq!(pods.confidence, Confidence::Confirmed, "{id}");
+        assert!(
+            matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW),
+            "{id}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_sidecar_of_another_image_does_not_count() {
+    let tagged = format!("{REPO}:v1.4.0");
+    let sidecar = format!("registry.example/acme/proxy@{OLD}");
+    let trail = current_pods(vec![current_pod(
+        "storefront-5d9c-a",
+        &[
+            ("app", &tagged, Some(&running(NEW)), true),
+            ("proxy", &sidecar, Some(&sidecar), true),
+        ],
+    )])
+    .await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed, "{}", pods.reason);
+    assert!(
+        pods.reason.contains(
+            "1 container(s) run the Freight's digest, 1 ready of 1 pod container(s) read"
+        ),
+        "{}",
+        pods.reason
+    );
+}
+
+#[tokio::test]
+async fn the_pins_container_counts_by_name_whatever_repository_it_reports() {
+    // The runtime reports a mirror's name for the Rollout's `app` container.
+    let mirrored = "mirror.example/acme/storefront:v1.4.0";
+    for (id, confidence) in [
+        (running(NEW), Confidence::Confirmed),
+        (running(OLD), Confidence::Claimed),
+    ] {
+        let trail = current_pods(vec![current_pod(
+            "storefront-5d9c-a",
+            &[("app", mirrored, Some(&id), true)],
+        )])
+        .await;
+        let pods = one(&trail, Hop::Rollout, Hop::Pod);
+        assert_eq!(pods.confidence, confidence, "{}", pods.reason);
+    }
+}
+
+#[tokio::test]
+async fn a_current_pod_on_another_digest_keeps_the_link_claimed_and_names_it() {
+    let tagged = format!("{REPO}:v1.4.0");
+    let trail = current_pods(vec![
+        current_pod(
+            "storefront-5d9c-a",
+            &[("app", &tagged, Some(&running(NEW)), true)],
+        ),
+        current_pod(
+            "storefront-5d9c-b",
+            &[("app", &tagged, Some(&running(OLD)), true)],
+        ),
+    ])
+    .await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed);
+    let old = super::Digest::parse(OLD).unwrap().short();
+    assert!(
+        pods.reason.contains(&format!(
+            "the current revision's pods run another digest ({old})"
+        )),
+        "{}",
+        pods.reason
+    );
+    assert!(
+        pods.evidence.iter().any(|seen| seen.object.kind == "Pod"
+            && seen.fact == Fact::Reported
+            && seen.value.as_deref() == Some(OLD)),
+        "{pods:#?}"
+    );
+}
+
+#[tokio::test]
+async fn without_a_ready_current_pod_reporting_the_digest_the_link_only_claims() {
+    let tagged = format!("{REPO}:v1.4.0");
+    for (id, ready, words) in [
+        (
+            Some(running(NEW)),
+            false,
+            "1 container(s) of the current revision report the Freight's digest, none ready yet",
+        ),
+        (
+            None,
+            false,
+            "no pod of the current revision reports a digest yet",
+        ),
+    ] {
+        let trail = current_pods(vec![current_pod(
+            "storefront-5d9c-a",
+            &[("app", &tagged, id.as_deref(), ready)],
+        )])
+        .await;
+        let pods = one(&trail, Hop::Rollout, Hop::Pod);
+        assert_eq!(pods.confidence, Confidence::Claimed, "{}", pods.reason);
+        assert!(pods.reason.contains(words), "{}", pods.reason);
+    }
+    let trail = current_pods(Vec::new()).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed, "{}", pods.reason);
+    assert!(
+        pods.reason
+            .contains("no pod of the current revision reports a digest yet"),
+        "{}",
+        pods.reason
+    );
+}
+
+/// [`pinned`] with Argo CD's image summary listing `images`.
+fn pinned_listing(images: &[&str]) -> World {
+    let mut world = pinned();
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![summarised(
+            application(Some("https://env-a.example:6443")),
+            images,
+        )],
+    );
+    world
+}
+
+#[tokio::test]
+async fn argo_cds_summary_and_the_current_pods_confirm_a_pinned_rollout() {
+    let trail = run(&pinned(), &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(
+        rollout.confidence,
+        Confidence::Confirmed,
+        "{}",
+        rollout.reason
+    );
+    for hop in [Hop::Application, Hop::Rollout] {
+        assert!(stands_on(rollout, hop), "{hop:?}: {rollout:#?}");
+    }
+    let summary = rollout
+        .evidence
+        .iter()
+        .find(|seen| seen.field == "/status/summary/images")
+        .expect("Argo CD's summary");
+    assert_eq!(summary.fact, Fact::Reported);
+    assert_eq!(summary.value.as_deref(), Some(NEW));
+    // The pin is still shown, as what it is.
+    assert!(rollout.evidence.iter().any(|seen| {
+        seen.object.kind == "Rollout"
+            && seen.fact == Fact::Declared
+            && seen.value.as_deref() == Some(NEW)
+    }));
+}
+
+#[tokio::test]
+async fn a_spec_pin_without_argo_cds_summary_only_claims() {
+    let mut world = pinned();
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![application(Some("https://env-a.example:6443"))],
+    );
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Claimed);
+    for words in [
+        "the Rollout's spec pins the Freight's digest, declared only",
+        "Argo CD reports no image summary for the Application",
+    ] {
+        assert!(
+            rollout.reason.contains(words),
+            "{words}: {}",
+            rollout.reason
+        );
+    }
+    assert!(!stands_on(rollout, Hop::Application));
+    // The pods still confirm their own link.
+    assert_eq!(
+        one(&trail, Hop::Rollout, Hop::Pod).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_summary_that_lists_another_image_keeps_it_claimed_and_names_it() {
+    let old = format!("{REPO}@{OLD}");
+    let tagged = format!("{REPO}:v1.4.0");
+    let other = format!("registry.example/acme/proxy@{NEW}");
+    let short = super::Digest::parse(OLD).unwrap().short();
+    for (images, words) in [
+        (
+            vec![old.as_str()],
+            format!("Argo CD's image summary lists {short} instead"),
+        ),
+        (
+            vec![tagged.as_str()],
+            "Argo CD's image summary lists tag v1.4.0 instead".to_owned(),
+        ),
+        (
+            vec![other.as_str()],
+            "Argo CD's image summary does not list its image".to_owned(),
+        ),
+    ] {
+        let trail = run(&pinned_listing(&images), &ENV).await;
+        let rollout = one(&trail, Hop::Application, Hop::Rollout);
+        assert_eq!(rollout.confidence, Confidence::Claimed, "{images:?}");
+        assert!(
+            rollout.reason.contains(&words),
+            "{words}: {}",
+            rollout.reason
+        );
+        assert!(!stands_on(rollout, Hop::Application), "{images:?}");
+    }
+    // What the summary lists of the image is kept, as reported.
+    let trail = run(&pinned_listing(&[&old]), &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert!(rollout.evidence.iter().any(|seen| {
+        seen.field == "/status/summary/images"
+            && seen.fact == Fact::Reported
+            && seen.value.as_deref() == Some(old.as_str())
+    }));
+}
+
+#[tokio::test]
+async fn current_pods_on_another_digest_keep_a_pinned_rollout_claimed() {
+    let mut world = pinned();
+    world.environment = world.environment.with(
+        "pods",
+        vec![pod(
+            "storefront-5d9c-x",
+            &format!("{REPO}@{NEW}"),
+            &format!("docker-pullable://{REPO}@{OLD}"),
+        )],
+    );
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Claimed);
+    let short = super::Digest::parse(OLD).unwrap().short();
+    assert!(
+        rollout
+            .reason
+            .contains(&format!("its current pods: the Stage claims this Freight but the current revision's pods run another digest ({short})")),
+        "{}",
+        rollout.reason
+    );
+    assert!(stands_on(rollout, Hop::Application));
+    assert!(!stands_on(rollout, Hop::Rollout));
+}
+
+#[tokio::test]
+async fn a_capped_pod_listing_only_claims_even_when_every_pod_read_matches() {
+    let tagged = format!("{REPO}:v1.4.0");
+    let mut world = healthy();
+    world.environment = world
+        .environment
+        .with(
+            "pods",
+            vec![current_pod(
+                "storefront-5d9c-a",
+                &[("app", &tagged, Some(&running(NEW)), true)],
+            )],
+        )
+        .capped("pods");
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed, "{}", pods.reason);
+    for words in [
+        "1 container(s) run the Freight's digest, 1 ready of 1 pod container(s) read",
+        "the pod listing stopped at the page cap after 1 items, so a pod not read may run another digest",
+    ] {
+        assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
+    }
+    // What was read is still shown, as reported.
+    assert!(pods.evidence.iter().any(|seen| {
+        seen.object.kind == "Pod"
+            && seen.fact == Fact::Reported
+            && seen.value.as_deref() == Some(NEW)
+    }));
 }
