@@ -2,6 +2,7 @@
 //! instances and dependencies, then one report per tab, each with its checks
 //! and the charts, tables and other widgets Coroot drew for it.
 use super::{tracing::plain, *};
+use coroot_rs::{AppCharts, ChartHistory, ChartLimits, DeploymentRevision, Envelope};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -10,6 +11,14 @@ pub struct AppView {
     pub map: AppMap,
     /// In Coroot's order: SLO, Instances, CPU, … Profiling, Tracing.
     pub reports: Vec<AppReport>,
+    /// Why some or all charts carry no [`Chart::history`]: coroot-rs
+    /// couldn't decode the answer the layout came from, or a report's charts
+    /// didn't line up with it.
+    pub history_error: Option<ReadError>,
+    /// The application's deployments, newest first, decoded from the same
+    /// answer; a failure here leaves the rest of the page. None when they
+    /// weren't read, as for example data that has none.
+    pub revisions: Option<Result<Vec<DeploymentRevision>, ReadError>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -185,6 +194,10 @@ pub struct Chart {
     pub shift_colors: bool,
     pub hide_legend: bool,
     pub annotations: Vec<Annotation>,
+    /// The chart's history as coroot-rs decodes it: where each sample sits
+    /// in time, the gaps and how much of the window each series covers.
+    /// The fields above stay the layout: colours, fill, stacking, legend.
+    pub history: Option<Box<ChartHistory>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -563,6 +576,8 @@ pub(super) fn decode(data: serde_json::Value) -> Result<AppView, ReadError> {
             .into_iter()
             .map(report)
             .collect::<Result<_, _>>()?,
+        history_error: None,
+        revisions: None,
     })
 }
 
@@ -718,6 +733,7 @@ pub(super) fn chart(raw: RawChart) -> Result<Chart, ReadError> {
                 })
             })
             .collect(),
+        history: None,
     })
 }
 
@@ -813,11 +829,94 @@ impl Provider {
         let project = self.project(source, range)?;
         let path = format!("app/{}", coroot_rs::util::encode_segment(app.as_str()));
         let envelope = self.read(project.get(&path, &[])).await?;
-        let view = decode(envelope.data)?;
-        if view.map.app.id != *app {
-            return Err(ReadError::InvalidResponse);
-        }
-        limits::app_view(&view)?;
-        Ok(view)
+        decode_all(envelope, app)
     }
+}
+
+/// Coroot's application page within core's bounds: every chart's history
+/// and the revisions come from the one answer the layout came from, so the
+/// three can't disagree.
+pub(super) const CHART_LIMITS: ChartLimits = ChartLimits {
+    max_reports: 32,
+    max_charts: 512,
+    max_series: 128,
+    max_points: 4_096,
+    max_annotations: 256,
+    max_total_samples: 2_000_000,
+};
+
+pub(super) fn decode_all(envelope: Envelope, app: &AppId) -> Result<AppView, ReadError> {
+    let histories = AppCharts::from_envelope(&envelope, app, &CHART_LIMITS)
+        .map_err(|error| refused("chart histories", app, error));
+    let revisions =
+        DeploymentRevision::list_from_envelope(&envelope, app, coroot_rs::DEFAULT_MAX_REVISIONS)
+            .map_err(|error| refused("deployment revisions", app, error))
+            .and_then(|revisions| limits::revisions(&revisions).map(|()| revisions));
+    let mut view = decode(envelope.data)?;
+    if view.map.app.id != *app {
+        return Err(ReadError::InvalidResponse);
+    }
+    limits::app_view(&view)?;
+    match histories {
+        Ok(histories) => view.history_error = attach(&mut view.reports, histories).err(),
+        Err(error) => view.history_error = Some(error),
+    }
+    view.revisions = Some(revisions);
+    Ok(view)
+}
+
+/// What coroot-rs refused in the answer, logged with its own words, which
+/// name the field or the bound. coroot-rs gives a bound it passed no kind of
+/// its own, only a decode error that says so; that reads as a limit here.
+fn refused(what: &str, app: &AppId, error: coroot_rs::Error) -> ReadError {
+    ::tracing::warn!(app = app.as_str(), "Coroot's {what}: {}", error.message());
+    let message = error.message();
+    let over = message.contains("exceeds ChartLimits::") || message.contains("over the limit of");
+    match error.kind() {
+        coroot_rs::ErrorKind::Decode if over => ReadError::Limit,
+        _ => ReadError::from(error),
+    }
+}
+
+/// Gives each chart its history. coroot-rs lists a report's charts in
+/// widget order, a group's in place, as the layout does; a report that
+/// doesn't line up keeps none rather than take another chart's.
+fn attach(reports: &mut [AppReport], histories: AppCharts) -> Result<(), ReadError> {
+    if histories.reports.len() != reports.len() {
+        return Err(ReadError::InvalidResponse);
+    }
+    let mut result = Ok(());
+    for (report, decoded) in reports.iter_mut().zip(histories.reports) {
+        let mut charts: Vec<&mut Chart> = report
+            .widgets
+            .iter_mut()
+            .flat_map(|w| match &mut w.kind {
+                WidgetKind::Chart(chart) => std::slice::from_mut(chart),
+                WidgetKind::ChartGroup { charts, .. } => charts.as_mut_slice(),
+                _ => &mut [],
+            })
+            .collect();
+        if decoded.name != report.name || decoded.charts.len() != charts.len() {
+            result = Err(ReadError::InvalidResponse);
+            continue;
+        }
+        for (chart, history) in charts.iter_mut().zip(decoded.charts) {
+            // coroot-rs bounds each series' data, not the window `ctx`
+            // implies, which sets how many points a panel lays out.
+            let points = history.expected_points();
+            if points > CHART_LIMITS.max_points {
+                ::tracing::warn!(
+                    report = report.name.as_str(),
+                    chart = chart.title.as_str(),
+                    "Coroot's chart window has {points} points, over the limit of {}",
+                    CHART_LIMITS.max_points
+                );
+                chart.history = None;
+                result = result.and(Err(ReadError::Limit));
+                continue;
+            }
+            chart.history = Some(Box::new(history));
+        }
+    }
+    result
 }

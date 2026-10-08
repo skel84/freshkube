@@ -160,6 +160,7 @@ pub(crate) fn app_view(app: &api::AppId) -> api::AppView {
     api::AppView {
         map: map(app, record, &apps, &pods),
         reports,
+        ..Default::default()
     }
 }
 

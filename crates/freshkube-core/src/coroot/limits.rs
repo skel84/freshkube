@@ -130,6 +130,20 @@ pub(super) fn app_view(value: &AppView) -> Result<(), ReadError> {
     count(cells, 50_000)?;
     Ok(())
 }
+/// An application's deployments: coroot-rs bounds how many and their
+/// findings; the text is bounded here, as the page's is.
+pub(super) fn revisions(values: &[coroot_rs::DeploymentRevision]) -> Result<(), ReadError> {
+    for revision in values {
+        text(&revision.id, 1024)?;
+        text(&revision.version, 4096)?;
+        text(revision.note.as_deref().unwrap_or_default(), 4096)?;
+        for finding in &revision.findings {
+            text(&finding.report, 256)?;
+            text(&finding.message, 4096)?;
+        }
+    }
+    Ok(())
+}
 fn map_app(app: &MapApp) -> Result<(), ReadError> {
     text(app.id.as_str(), 1024)?;
     text(&app.cluster, 1024)?;

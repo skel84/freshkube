@@ -16,11 +16,12 @@ pub use app_view::{
     DeploymentSummary, Heatmap as AppHeatmap, MapApp, MapInstance, MapLink, Series, Table, Widget,
     WidgetKind,
 };
-pub use chart_panel::{ChartPanel, SeriesColor};
+pub use chart_panel::{ChartPanel, Coverage, SeriesColor, revision_marker};
 pub use connection::{Association, Provider, ProviderId, Source};
 pub use coroot_rs::{
-    AppHealth, AppId, Application, BurnRate, Credentials, Incident, IncidentQuery, IncidentState,
-    IncidentView, Issue, MapEdge, MapNode, ProjectInfo, Rca, Report, ServiceMap, Signal, Slo,
+    AppHealth, AppId, Application, BurnRate, ChartHistory, Credentials, DeploymentRevision,
+    Incident, IncidentQuery, IncidentState, IncidentView, Issue, MapEdge, MapNode, ProjectInfo,
+    Rca, Report, RevisionFinding, SeriesCoverage, SeriesHistory, ServiceMap, Signal, Slo,
     SloObjective, StateFilter, Status, TimeRange,
 };
 pub use coroot_rs::{Span, SpanEvent};
