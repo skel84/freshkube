@@ -1168,6 +1168,13 @@ impl Pilot {
     ) {
         match event {
             ScreenEvent::Back => self.node_back(window, cx),
+            // With nothing reading yet, Health's Retry reads the kubeconfig
+            // and connects again too.
+            ScreenEvent::RefreshSummary
+                if self.kubernetes_only.is_some() && self.summary_session.is_none() =>
+            {
+                self.refresh(window, cx)
+            }
             ScreenEvent::RefreshSummary => self.refresh_summary(window, cx),
             ScreenEvent::RetryCluster => self.refresh(window, cx),
             ScreenEvent::OpenLogs(service) => {
@@ -1299,6 +1306,7 @@ impl Pilot {
         if let Some(data) = self.summary_health.clone() {
             self.deliver_workloads(data, cx);
         }
+        self.sync_unread_health(cx);
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
         }

@@ -25,8 +25,8 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    partial_notice, refresh_control, retry_button, segment,
+    Loader, Reading, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate,
+    mono, partial_notice, reading, refresh_control, retry_button, segment, waiting,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -198,6 +198,9 @@ fn age(created: Option<DateTime<Utc>>) -> String {
 pub(crate) struct WorkloadsScreen {
     _runtime: Handle,
     summary_managed: bool,
+    /// Nothing reads the summary: Kubernetes-only mode with no context
+    /// applied. Without it, a page with no source waits for the summary.
+    idle: bool,
     source: Option<ScreenSource>,
     loader: Loader<Arc<WorkloadData>>,
     selected: Option<ItemKey>,
@@ -278,6 +281,7 @@ impl ScreenPanel for WorkloadsScreen {
         Self {
             _runtime: runtime,
             summary_managed: false,
+            idle: false,
             source: None,
             loader: Loader::default(),
             selected: None,
@@ -387,6 +391,14 @@ impl WorkloadsScreen {
         self.loader.resolve(source.target.clone(), data);
         self.sync(cx);
         cx.notify();
+    }
+
+    /// Whether anything reads the summary, as the shell knows it.
+    pub(crate) fn set_idle(&mut self, idle: bool, cx: &mut Context<Self>) {
+        if self.idle != idle {
+            self.idle = idle;
+            cx.notify();
+        }
     }
 
     fn filter_text(&self, cx: &App) -> String {
