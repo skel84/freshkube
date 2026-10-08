@@ -90,6 +90,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+publish = false
 description = "Native desktop app for Talos Linux and Kubernetes clusters"
 
 [features]
