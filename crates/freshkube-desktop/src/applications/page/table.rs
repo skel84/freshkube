@@ -88,7 +88,13 @@ pub(super) fn columns(rows: &[PartRow]) -> (Vec<Column>, f32) {
             "Found by",
             fit("Found by", rows.iter().map(|row| &row.found_by)),
         ),
-        column(Field::ReadFrom, "Read from", 96.),
+        // Fitted to its words, so a narrow page scrolls sideways rather than
+        // cut them off.
+        column(
+            Field::ReadFrom,
+            "Read from",
+            fit("Read from", rows.iter().map(|row| &row.read_from)),
+        ),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)

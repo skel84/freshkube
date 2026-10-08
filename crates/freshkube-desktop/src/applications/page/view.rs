@@ -10,6 +10,14 @@ use freshkube_ui::palette::palette;
 use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::{Disableable, IconName, Sizable, button::Button, h_flex, v_flex};
 
+/// A field's value: names in the monospace face, prose in the UI's.
+fn value_text(label: &str, value: &SharedString) -> Div {
+    match label {
+        "Cluster" | "Namespace" => mono(value.clone()).whitespace_normal(),
+        _ => div().child(value.clone()),
+    }
+}
+
 impl ApplicationPage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let this = cx.entity().downgrade();
@@ -46,17 +54,29 @@ impl ApplicationPage {
             .child(table::link_mark(row.confidence, row.word, cx));
         let fields = |rows: &[(&'static str, SharedString)], cx: &App| {
             rows.iter()
-                .map(|(label, value)| field(label, mono(value.clone()).whitespace_normal(), cx))
+                .map(|(label, value)| field(label, value_text(label, value), cx))
                 .collect::<Vec<_>>()
         };
+        // A lower rule's claim follows Why in its value column.
         let lower = row.lower.iter().enumerate().map(|(ix, lower)| {
             div()
                 .id(SharedString::from(format!("application-detail-lower-{ix}")))
                 .test_support()
                 .aria_label(lower.clone())
-                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child(lower.clone())
+        });
+        let why = row.why.clone().map(|why| {
+            field(
+                "Why",
+                v_flex()
+                    .id("application-detail-why")
+                    .test_support()
+                    .gap(dp(4.))
+                    .child(why)
+                    .children(lower),
+                cx,
+            )
         });
         let link = v_flex()
             .id("application-detail-link")
@@ -64,7 +84,7 @@ impl ApplicationPage {
             .gap(dp(8.))
             .child(ui::caption("Link", cx))
             .children(fields(&row.link, cx))
-            .children(lower);
+            .children(why);
         Some(
             Inspector::new("application-detail")
                 .heading(heading)

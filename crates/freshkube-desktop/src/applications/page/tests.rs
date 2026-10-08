@@ -5,7 +5,8 @@ use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 
 use std::time::Duration;
 
-use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, test::TestWindowExt};
+use freshkube_ui::table::TableColumn as _;
+use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, test::TestWindowExt};
 
 const APPLICATION: layout_check::TablePage = layout_check::TablePage {
     page: "application-page",
@@ -144,10 +145,91 @@ fn a_lower_claim_shows_on_its_part(cx: &mut TestAppContext) {
         );
         assert_eq!(
             window.find("application-detail-lower-0").label(),
-            Some("part-of label would put it in checkout")
+            Some("Its app.kubernetes.io/part-of label puts it in checkout.")
         );
         let link = window.find("application-detail-link");
         assert!(link.visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_lower_claim_stays_in_whys_value_column(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open(cx, 760., 880., Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(WORKER, cx);
+        window.render_frame(cx);
+        let why = window.find("application-detail-why").bounds();
+        let lower = window.find("application-detail-lower-0").bounds();
+        let link = window.find("application-detail-link").bounds();
+        // Past the label column, under Why's own words.
+        assert!(why.left() > link.left() + px(100.), "{why:?} in {link:?}");
+        assert_eq!(lower.left(), why.left());
+        assert!(lower.top() > why.top(), "{lower:?} under {why:?}");
+    })
+    .unwrap();
+}
+
+/// At 760 the columns are wider than the page: the table scrolls sideways
+/// with its header, so Read from comes into view rather than staying cut off.
+#[gpui_kit::test]
+fn a_narrow_page_scrolls_the_table_sideways_to_read_from(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point};
+    let (_runtime, handle, view) = open(cx, 760., 560., Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = shown(&view, cx).unwrap();
+        let (columns, width) = {
+            let page = page.read(cx);
+            (page.columns.len(), page.width)
+        };
+        let read_from = ("application-sort", columns - 1);
+        let viewport = window.find("application-table-scroll").bounds();
+        assert!(
+            crate::ui::dp_px(width, window) > viewport.size.width,
+            "{width} fits in {viewport:?}"
+        );
+        let before = window.find(read_from).bounds();
+        assert!(
+            before.right() > viewport.right(),
+            "{before:?} in {viewport:?}"
+        );
+        window.scroll(
+            "application-table-scroll",
+            ScrollDelta::Pixels(point(px(-400.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        let after = window.find(read_from).bounds();
+        assert!(after.left() < before.left(), "{after:?} from {before:?}");
+        assert!(
+            after.right() <= viewport.right() + px(1.),
+            "{after:?} in {viewport:?}"
+        );
+    })
+    .unwrap();
+}
+
+/// Read from is as wide as its words, up to the widest column, so what
+/// wasn't checked shows in full once scrolled to.
+#[gpui_kit::test]
+fn read_from_fits_what_was_not_checked(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 760., 560., Variant::Acme);
+    cx.update_window(handle, |_, _, cx| {
+        let page = shown(&view, cx).unwrap();
+        let mut rows = page.read(cx).rows.clone();
+        let words = |rows: &[super::PartRow]| {
+            let (columns, _) = super::table::columns(rows);
+            let read_from = columns.last().unwrap();
+            assert_eq!(read_from.label().as_ref(), "Read from");
+            read_from.width()
+        };
+        let short = words(&rows);
+        rows[0].read_from = "Argo CD read in gitops only on core-fra".into();
+        // 39 characters would be 316.5; the widest column is 280.
+        assert_eq!(words(&rows), 280.);
+        assert!(short < words(&rows));
     })
     .unwrap();
 }

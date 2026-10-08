@@ -20,7 +20,7 @@ mod view;
 
 use freshkube_core::applications::claims::{Claim, Claims, Gap, Side, Unchecked, claims};
 use freshkube_core::applications::{
-    Application, ApplicationId, Basis, Evidence, MemberKind, MemberRef,
+    Application, ApplicationId, Basis, Evidence, MemberKind, MemberRef, Rule,
 };
 use freshkube_core::delivery::join::Confidence;
 use freshkube_ui::inspector::InspectorSplit;
@@ -29,7 +29,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::Read;
-use super::display::{Labels, kind_label, rule_label, what_it_is};
+use super::display::{Labels, kind_label, what_it_is};
 use super::links::{self, Connections};
 use crate::resources::ResourceLink;
 
@@ -89,6 +89,8 @@ pub(crate) struct PartRow {
     /// The Inspector's fields about the part, then about its link.
     pub(super) fields: Vec<(&'static str, SharedString)>,
     pub(super) link: Vec<(&'static str, SharedString)>,
+    /// Why the link is what it is, which the lower rules' claims follow.
+    pub(super) why: Option<SharedString>,
     /// Lower rules' claims, in words.
     pub(super) lower: Vec<SharedString>,
     /// The link that opens the part in Resources.
@@ -386,6 +388,16 @@ fn unchecked_words(unchecked: &Unchecked, cluster: &str) -> String {
     }
 }
 
+/// A lower rule's claim, as a sentence: where that rule would put the part.
+fn lower_words(rule: Rule, name: &str) -> String {
+    match rule {
+        Rule::Kargo => format!("Kargo Project {name} would also claim it."),
+        Rule::ArgoCd => format!("Argo CD would also put it in {name}."),
+        Rule::PartOf => format!("Its app.kubernetes.io/part-of label puts it in {name}."),
+        Rule::Manual => format!("Your override puts it in {name}."),
+    }
+}
+
 fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connections) -> PartRow {
     let member = &claim.member;
     let cluster = labels.of(&member.session);
@@ -407,7 +419,7 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
     let lower: Vec<SharedString> = claim
         .lower
         .iter()
-        .map(|(rule, name)| format!("{} would put it in {name}", rule_label(*rule)).into())
+        .map(|(rule, name)| lower_words(*rule, name).into())
         .collect();
     let key = format!(
         "{}/{}/{}/{}",
@@ -416,9 +428,10 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
         namespace,
         member.name
     );
-    let mut tooltip = format!("{word}: {}", claim.why);
+    let mut tooltip = format!("{word}: {}.", claim.why.trim_end_matches('.'));
     for lower in &lower {
-        tooltip.push_str(&format!(". {lower}"));
+        tooltip.push(' ');
+        tooltip.push_str(lower);
     }
     PartRow {
         key: key.into(),
@@ -452,11 +465,12 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
             Some(("Application", side_words(&claim.app_side, labels).into())),
             Some(("This part", side_words(&claim.member_side, labels).into())),
             unchecked.map(|unchecked| ("Not checked", unchecked.into())),
-            Some(("Why", claim.why.clone().into())),
         ]
         .into_iter()
         .flatten()
         .collect(),
+        why: (!claim.why.is_empty())
+            .then(|| format!("{}.", claim.why.trim_end_matches('.')).into()),
         lower,
         open: links::link(member, connections),
         closed: (!connections.opens(&member.session)).then(|| {
