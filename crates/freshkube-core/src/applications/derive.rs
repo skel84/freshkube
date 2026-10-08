@@ -1,7 +1,7 @@
 //! The pure function from what was read to the applications.
 
 use super::overrides::apply;
-use super::rules::{Builder, argo, coverage, kargo, part_of};
+use super::rules::{Builder, argo, coverage, infer_across_sessions, kargo, part_of};
 use super::{Derived, Inputs, Override};
 
 /// Applications from what was read, by precedence (Kargo Project, Argo CD,
@@ -12,9 +12,7 @@ pub fn derive(inputs: &Inputs, over: &Override) -> Derived {
     let projects = kargo(&mut builder, inputs);
     let home = argo(&mut builder, inputs, &projects);
     part_of(&mut builder, inputs, &home);
-    for app in builder.apps.values_mut() {
-        app.members.sort_by(|a, b| a.at.order().cmp(&b.at.order()));
-    }
+    infer_across_sessions(&mut builder);
     let applied = apply(builder.apps, over);
     let by_name = |apps: &mut Vec<super::Application>| {
         apps.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));

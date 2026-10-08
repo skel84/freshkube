@@ -144,6 +144,7 @@ impl Reader for FixtureReader {
 
     async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
         let (namespace, selector) = match &request.scope {
+            Scope::Cluster => (None, None),
             Scope::Namespace(namespace) => (Some(namespace.clone()), None),
             Scope::Labels {
                 namespace,

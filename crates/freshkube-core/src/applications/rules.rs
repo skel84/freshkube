@@ -20,8 +20,13 @@ pub(super) struct Builder {
 }
 
 impl Builder {
-    fn app(&mut self, rule: Rule, name: &str, evidence: Evidence) -> &mut Application {
-        let id = ApplicationId::new(rule, name);
+    fn app(
+        &mut self,
+        id: ApplicationId,
+        rule: Rule,
+        name: &str,
+        evidence: Evidence,
+    ) -> &mut Application {
         let app = self.apps.entry(id.clone()).or_insert_with(|| Application {
             id,
             name: name.to_owned(),
@@ -131,10 +136,19 @@ pub(super) fn kargo(builder: &mut Builder, inputs: &Inputs) -> BTreeSet<String> 
                 session: session.key.clone(),
                 project: project.name.clone(),
             };
-            let id = builder.app(Rule::Kargo, &project.name, evidence).id.clone();
+            let id = builder
+                .app(
+                    ApplicationId::new(Rule::Kargo, &project.name),
+                    Rule::Kargo,
+                    &project.name,
+                    evidence,
+                )
+                .id
+                .clone();
             let ns = Some(project.name.as_str());
             match &project.stages {
                 Source::Read(stages) | Source::Capped(stages, _) => {
+                    capped_members(builder, &id, "Stages", &project.stages);
                     for stage in stages {
                         let m = member(
                             &session.key,
@@ -146,10 +160,11 @@ pub(super) fn kargo(builder: &mut Builder, inputs: &Inputs) -> BTreeSet<String> 
                         builder.join(&id, m);
                     }
                 }
-                other => unknown_members(builder, &id, "Stages", other.why_not_read()),
+                other => unknown_members(builder, &id, "Stages", other),
             }
             match &project.warehouses {
                 Source::Read(items) | Source::Capped(items, _) => {
+                    capped_members(builder, &id, "Warehouses", &project.warehouses);
                     for warehouse in items {
                         let m = member(
                             &session.key,
@@ -161,21 +176,37 @@ pub(super) fn kargo(builder: &mut Builder, inputs: &Inputs) -> BTreeSet<String> 
                         builder.join(&id, m);
                     }
                 }
-                other => unknown_members(builder, &id, "Warehouses", other.why_not_read()),
+                other => unknown_members(builder, &id, "Warehouses", other),
             }
         }
     }
     projects
 }
 
-fn unknown_members(builder: &mut Builder, id: &ApplicationId, what: &str, why: Option<String>) {
-    let why = why.unwrap_or_default();
+fn unknown_members<T>(builder: &mut Builder, id: &ApplicationId, what: &str, source: &Source<T>) {
+    let why = source.why_not_read().unwrap_or_default();
     builder.note(
         id,
         Note::MembersUnknown {
             why: format!("{what}: {why}"),
         },
     );
+}
+
+/// A listing that stopped at the page cap read real items, but may not have
+/// read them all.
+fn capped_members<T>(builder: &mut Builder, id: &ApplicationId, what: &str, source: &Source<T>) {
+    if let Some(truncation) = source.capped() {
+        builder.note(
+            id,
+            Note::MembersUnknown {
+                why: format!(
+                    "{what}: the listing stopped at the page cap after {} items",
+                    truncation.read
+                ),
+            },
+        );
+    }
 }
 
 fn destination(application: &ArgoApplication) -> Destination {
@@ -226,17 +257,19 @@ pub(super) fn argo(
                 ),
                 None => match &application.owner_application_set {
                     Some(set) => {
-                        let known = sets.iter().find(|s| &s.name == set);
+                        // An owner reference stays in the owner's namespace.
+                        let known = sets
+                            .iter()
+                            .find(|s| &s.name == set && s.namespace == application.namespace);
                         let evidence = Evidence::ArgoApplicationSet {
                             session: session.key.clone(),
-                            namespace: known
-                                .map_or(&application.namespace, |s| &s.namespace)
-                                .clone(),
+                            namespace: application.namespace.clone(),
                             name: set.clone(),
                             read: known.is_some(),
                         };
+                        let id = ApplicationId::argo_application_set(&application.namespace, set);
                         (
-                            builder.app(Rule::ArgoCd, set, evidence).id.clone(),
+                            builder.app(id, Rule::ArgoCd, set, evidence).id.clone(),
                             Basis::Direct,
                         )
                     }
@@ -246,9 +279,13 @@ pub(super) fn argo(
                             namespace: application.namespace.clone(),
                             name: application.name.clone(),
                         };
+                        let id = ApplicationId::argo_application(
+                            &application.namespace,
+                            &application.name,
+                        );
                         (
                             builder
-                                .app(Rule::ArgoCd, &application.name, evidence)
+                                .app(id, Rule::ArgoCd, &application.name, evidence)
                                 .id
                                 .clone(),
                             Basis::Direct,
@@ -300,17 +337,18 @@ pub(super) fn argo(
             .read()
             .map_or(&[][..], Vec::as_slice);
         for set in sets {
-            if !applications
-                .iter()
-                .any(|a| a.owner_application_set.as_deref() == Some(&set.name))
-            {
+            if !applications.iter().any(|a| {
+                a.owner_application_set.as_deref() == Some(&set.name)
+                    && a.namespace == set.namespace
+            }) {
                 let evidence = Evidence::ArgoApplicationSet {
                     session: session.key.clone(),
                     namespace: set.namespace.clone(),
                     name: set.name.clone(),
                     read: true,
                 };
-                builder.app(Rule::ArgoCd, &set.name, evidence);
+                let id = ApplicationId::argo_application_set(&set.namespace, &set.name);
+                builder.app(id, Rule::ArgoCd, &set.name, evidence);
             }
         }
     }
@@ -367,10 +405,7 @@ pub(super) fn part_of(
                     application.name.clone(),
                 ))
             });
-            let same_name = [Rule::Kargo, Rule::ArgoCd]
-                .map(|rule| ApplicationId::new(rule, value))
-                .into_iter()
-                .find(|id| builder.apps.contains_key(id));
+            let same_name = same_name_target(builder, value);
             let (id, basis) = match (managed, same_name) {
                 (Some(id), _) => (id.clone(), Basis::ManagedBy),
                 (None, Some(id)) => (id, Basis::SameName),
@@ -378,8 +413,9 @@ pub(super) fn part_of(
                     let evidence = Evidence::PartOfLabel {
                         value: value.to_owned(),
                     };
+                    let id = ApplicationId::new(Rule::PartOf, value);
                     (
-                        builder.app(Rule::PartOf, value, evidence).id.clone(),
+                        builder.app(id, Rule::PartOf, value, evidence).id.clone(),
                         Basis::Direct,
                     )
                 }
@@ -396,7 +432,85 @@ pub(super) fn part_of(
                     },
                 );
             }
+            // A workload that stays with its label, in a cluster whose
+            // Applications were not all read, may be managed by one.
+            if basis != Basis::ManagedBy && !fully_read(&session.argo_applications) {
+                builder.note(
+                    &id,
+                    Note::ManagerUnknown {
+                        member: m.at.clone(),
+                    },
+                );
+            }
             builder.join(&id, m);
         }
+    }
+}
+
+/// Whether a source answered completely, or is not served at all (then there
+/// is nothing it could have held).
+fn fully_read<T>(source: &Source<T>) -> bool {
+    matches!(source, Source::Read(_) | Source::NotInstalled(_))
+}
+
+/// The one Kargo, else the one Argo CD, application a `part-of` value is the
+/// name of. Two of a kind is not guessed between.
+fn same_name_target(builder: &Builder, value: &str) -> Option<ApplicationId> {
+    for rule in [Rule::Kargo, Rule::ArgoCd] {
+        let mut found = builder
+            .apps
+            .values()
+            .filter(|app| app.rule == rule && app.name == value);
+        match (found.next(), found.next()) {
+            (None, _) => continue,
+            (Some(app), None) => return Some(app.id.clone()),
+            (Some(_), Some(_)) => return None,
+        }
+    }
+    None
+}
+
+/// An id found in more than one cluster is one application only because the
+/// name is the same, which is an inference. Within one cluster joining stays
+/// direct; where the rule's own objects sit in several clusters, or a member
+/// sits in a cluster the rule's own objects do not, the member is inferred
+/// and a note names the clusters.
+pub(super) fn infer_across_sessions(builder: &mut Builder) {
+    for app in builder.apps.values_mut() {
+        let own: BTreeSet<SessionKey> = match app.rule {
+            Rule::PartOf => app
+                .members
+                .iter()
+                .filter(|m| m.basis == Basis::Direct)
+                .map(|m| m.at.session.clone())
+                .collect(),
+            _ => app
+                .evidence
+                .iter()
+                .filter_map(|evidence| match evidence {
+                    Evidence::KargoProject { session, .. }
+                    | Evidence::ArgoApplicationSet { session, .. }
+                    | Evidence::ArgoApplication { session, .. } => Some(session.clone()),
+                    _ => None,
+                })
+                .collect(),
+        };
+        let mut all = own.clone();
+        all.extend(app.members.iter().map(|m| m.at.session.clone()));
+        if all.len() < 2 {
+            continue;
+        }
+        let several = own.len() > 1;
+        for member in &mut app.members {
+            if matches!(member.basis, Basis::Direct | Basis::NamesProject)
+                && (several || !own.contains(&member.at.session))
+            {
+                member.basis = Basis::Inferred;
+            }
+        }
+        app.notes.push(Note::JoinedAcrossSessions {
+            name: app.name.clone(),
+            sessions: all.into_iter().collect(),
+        });
     }
 }

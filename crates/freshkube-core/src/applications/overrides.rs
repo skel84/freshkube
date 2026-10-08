@@ -65,6 +65,9 @@ pub(super) fn apply(mut apps: Apps, over: &Override) -> Applied {
             None => unmatched.push(Unmatched::Hide(id.clone())),
         }
     }
+    for app in apps.values_mut().chain(hidden.iter_mut()) {
+        app.members.sort_by(|a, b| a.at.order().cmp(&b.at.order()));
+    }
     Applied {
         shown: apps.into_values().collect(),
         hidden,
@@ -85,7 +88,13 @@ fn split_off(apps: &mut Apps, split: &Split) -> bool {
     }) else {
         return false;
     };
-    let mut member = apps.get_mut(&from).expect("found above").members.remove(at);
+    let source = apps.get_mut(&from).expect("found above");
+    let mut member = source.members.remove(at);
+    // What was said about the member goes with it.
+    let (moved, kept) = std::mem::take(&mut source.notes)
+        .into_iter()
+        .partition::<Vec<_>, _>(|note| note.is_about(&split.member));
+    source.notes = kept;
     member.basis = Basis::Override;
     let id = ApplicationId::new(Rule::Manual, name);
     let target = apps.entry(id.clone()).or_insert_with(|| Application {
@@ -97,6 +106,7 @@ fn split_off(apps: &mut Apps, split: &Split) -> bool {
         notes: Vec::new(),
     });
     target.members.push(member);
+    target.notes.extend(moved);
     true
 }
 
@@ -106,7 +116,12 @@ fn merge_into(apps: &mut Apps, merge: &Merge, unmatched: &mut Vec<Unmatched>) {
         return;
     }
     let mut merged = Vec::new();
-    for id in merge.from.iter().filter(|id| **id != merge.into) {
+    let mut seen = BTreeSet::new();
+    for id in merge
+        .from
+        .iter()
+        .filter(|id| **id != merge.into && seen.insert((*id).clone()))
+    {
         let Some(from) = apps.remove(id) else {
             unmatched.push(Unmatched::MergeFrom(id.clone()));
             continue;
@@ -129,5 +144,17 @@ fn merge_into(apps: &mut Apps, merge: &Merge, unmatched: &mut Vec<Unmatched>) {
         let into = apps.get_mut(&merge.into).expect("checked above");
         into.evidence.push(Evidence::Override("merge"));
         into.notes.push(Note::Merged { from: merged });
+    }
+}
+
+impl Note {
+    /// Whether the note is about this one member.
+    fn is_about(&self, at: &MemberRef) -> bool {
+        match self {
+            Self::LowerClaim { member, .. }
+            | Self::UnmappedDestination { member }
+            | Self::ManagerUnknown { member } => member == at,
+            _ => false,
+        }
     }
 }
