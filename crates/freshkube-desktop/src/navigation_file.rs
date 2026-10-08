@@ -1,6 +1,8 @@
 //! `navigation.json` beside the preferences: whether the sidebar is
 //! collapsed, how wide each page's inspector and drawer are, in dp, and
-//! the dock's state and log tabs (`desktop/dock/saved.rs`). The shell opens
+//! the dock's state and log tabs (`desktop/dock/saved.rs`), and which
+//! workspace entry was active (`workspace.active`, an entry id from
+//! `workspace.json`, never a session key). The shell opens
 //! it once and makes it a global, so every writer saves the same snapshot
 //! and none drops another's key.
 //!
@@ -17,6 +19,8 @@ const COLLAPSED: &str = "collapsed";
 const INSPECTOR: &str = "inspector";
 const DRAWER: &str = "drawer";
 const DOCK: &str = "dock";
+const WORKSPACE: &str = "workspace";
+const ACTIVE: &str = "active";
 
 #[derive(Clone, Default)]
 pub(crate) struct NavigationFile(Option<Arc<File>>);
@@ -118,6 +122,28 @@ impl NavigationFile {
         };
         self.change(cx, |map| {
             map.insert(DOCK.into(), value);
+        });
+    }
+
+    /// The workspace entry that was active when the app last switched.
+    pub(crate) fn active_cluster(&self) -> Option<String> {
+        self.read(|map| {
+            let id = map.get(WORKSPACE)?.get(ACTIVE)?.as_str()?;
+            (!id.is_empty()).then(|| id.to_owned())
+        })
+    }
+
+    pub(crate) fn set_active_cluster(&self, id: &str, cx: &App) {
+        self.change(cx, |map| {
+            let group = map
+                .entry(WORKSPACE)
+                .or_insert_with(|| Value::Object(Map::new()));
+            if !group.is_object() {
+                *group = Value::Object(Map::new());
+            }
+            if let Value::Object(group) = group {
+                group.insert(ACTIVE.into(), id.into());
+            }
         });
     }
 

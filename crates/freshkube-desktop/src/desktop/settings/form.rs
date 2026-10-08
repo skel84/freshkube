@@ -21,6 +21,7 @@ pub(super) struct ClusterForm {
     role: ClusterRole,
     context: Entity<InputState>,
     talosconfig: Entity<InputState>,
+    talos_context: Entity<InputState>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -60,8 +61,14 @@ impl ClusterForm {
         let talosconfig = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Optional: absolute path of a talosconfig")
         });
+        let talos_context = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Optional: the talosconfig's own selected one")
+        });
         let mut role = ClusterRole::Environment;
         let mut id = None;
+        let saved_talos_context = editing
+            .as_ref()
+            .and_then(|entry| entry.talos_context.clone());
         if let Some(entry) = editing {
             role = entry.role;
             id = Some(SharedString::from(entry.id.clone()));
@@ -73,6 +80,9 @@ impl ClusterForm {
                     input.set_value(path.display().to_string(), window, cx)
                 });
             }
+        }
+        if let Some(name) = saved_talos_context {
+            talos_context.update(cx, |input, cx| input.set_value(name, window, cx));
         }
         let submit = |this: &mut Self,
                       _: &Entity<InputState>,
@@ -86,6 +96,7 @@ impl ClusterForm {
         let subscriptions = vec![
             cx.subscribe_in(&context, window, submit),
             cx.subscribe_in(&talosconfig, window, submit),
+            cx.subscribe_in(&talos_context, window, submit),
             cx.observe_in(&page, window, |this, page, window, cx| {
                 this.saved(&page, window, cx)
             }),
@@ -97,6 +108,7 @@ impl ClusterForm {
             role,
             context,
             talosconfig,
+            talos_context,
             error: None,
             _subscriptions: subscriptions,
         }
@@ -108,10 +120,18 @@ impl ClusterForm {
         }
         let context = self.context.read(cx).value().to_string();
         let talosconfig = self.talosconfig.read(cx).value().to_string();
+        let talos_context = self.talos_context.read(cx).value().to_string();
         let role = self.role;
         let editing = self.editing.clone();
         let started = self.page.update(cx, |page, cx| {
-            page.upsert(editing.as_deref(), role, &context, &talosconfig, cx)
+            page.upsert(
+                editing.as_deref(),
+                role,
+                &context,
+                &talosconfig,
+                &talos_context,
+                cx,
+            )
         });
         match started {
             // The save has started; the form stays until it answers, so a
@@ -217,6 +237,14 @@ impl Render for ClusterForm {
                     Input::new(&self.talosconfig)
                         .id("settings-form-talosconfig")
                         .aria_label("Talosconfig path")
+                        .small(),
+                ),
+            )
+            .child(
+                v_flex().gap_1p5().child(label("Talos context")).child(
+                    Input::new(&self.talos_context)
+                        .id("settings-form-talos-context")
+                        .aria_label("Talos context")
                         .small(),
                 ),
             )

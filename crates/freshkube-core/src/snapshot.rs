@@ -65,6 +65,20 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
         }
     }
 
+    /// Puts back an answer kept from an earlier time, marked stale until a
+    /// read of the same identity replaces it, with the time it was taken.
+    /// Nothing is loading; a [`begin`](Self::begin) for another identity
+    /// drops it, as it drops any data.
+    pub fn restore(&mut self, identity: I, data: T, taken: SystemTime) {
+        self.identity = Some(identity);
+        self.data = Some(data);
+        self.loading = false;
+        self.error = None;
+        self.stale = true;
+        self.last_successful = Some(taken);
+        self.last_failure = None;
+    }
+
     pub fn is_current(&self, request: &Request<I>) -> bool {
         request.generation == self.generation && self.identity.as_ref() == Some(&request.identity)
     }
@@ -172,6 +186,26 @@ mod tests {
         assert!(snapshot.apply(&current, Err("unavailable".into())));
         assert_eq!(snapshot.data(), None);
         assert!(!snapshot.is_stale());
+    }
+
+    #[test]
+    fn a_restored_answer_is_stale_with_its_own_time_until_another_identity_drops_it() {
+        let taken = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let mut snapshot = Snapshot::<u32, &str>::default();
+        snapshot.restore("node-a", 7, taken);
+        assert_eq!(snapshot.data(), Some(&7));
+        assert!(snapshot.is_stale() && !snapshot.is_loading());
+        assert_eq!(snapshot.last_successful(), Some(taken));
+
+        let refresh = snapshot.begin("node-a");
+        assert_eq!(snapshot.data(), Some(&7));
+        assert!(snapshot.apply(&refresh, Ok(8)));
+        assert!(!snapshot.is_stale());
+
+        snapshot.restore("node-a", 9, taken);
+        snapshot.begin("node-b");
+        assert_eq!(snapshot.data(), None);
+        assert_eq!(snapshot.last_successful(), None);
     }
 
     #[test]

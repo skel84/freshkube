@@ -472,7 +472,7 @@ async fn a_second_change_while_a_save_runs_is_refused(cx: &mut TestAppContext) {
         add(window, cx, "first", "");
         let page = view.read(cx).settings_page.clone();
         let second = page.update(cx, |page, cx| {
-            page.upsert(None, Role::Cicd, "second", "", cx)
+            page.upsert(None, Role::Cicd, "second", "", "", cx)
         });
         assert!(second.is_err(), "a save is running");
     })
