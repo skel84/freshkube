@@ -54,6 +54,7 @@ pub mod snapshot;
 pub mod talos_nodes;
 pub mod types;
 pub mod workloads;
+pub mod workspace;
 
 // Re-export commonly used items at crate root
 pub use client_cache::{AccessIdentity, AccessSessionId, ConfigurationRevision};
