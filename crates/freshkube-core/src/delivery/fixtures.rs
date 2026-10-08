@@ -21,6 +21,9 @@ pub const REPO: &str = "registry.example/acme/storefront";
 /// An invented UID for the storefront Rollout.
 pub const ROLLOUT_UID: &str = "0f0e0d0c-0000-4000-8000-000000000001";
 
+/// An invented UID for the storefront Deployment.
+pub const DEPLOYMENT_UID: &str = "0f0e0d0c-0000-4000-8000-0000000000d1";
+
 #[derive(Default)]
 pub struct FixtureReader {
     groups: Vec<ServedGroup>,
@@ -572,21 +575,78 @@ pub fn unannotated_application() -> Value {
     })
 }
 
-/// [`without_rollouts`] with another Application.
+/// [`without_rollouts`] with another Application. The storefront Deployment
+/// pins the Freight's digest, its current revision `2` is the ReplicaSet
+/// `6fdf`, and that ReplicaSet's pod runs the digest.
 pub fn without_rollouts_with(application: Value) -> World {
     let mut world = healthy();
+    let image = format!("{REPO}@{NEW}");
     world.argocd = FixtureReader::default()
         .serves("argoproj.io", "v1alpha1", &["applications"])
         .with("applications", vec![application]);
-    world.environment = FixtureReader::default().with(
-        "pods",
-        vec![pod(
-            "storefront-6fdf-x",
-            &format!("{REPO}@{NEW}"),
-            &format!("docker-pullable://{REPO}@{NEW}"),
-        )],
-    );
+    world.environment = FixtureReader::default()
+        .with("deployments", vec![deployment(&image)])
+        .with(
+            "replicasets",
+            vec![deployment_set("6fdf", "2", &image, 1, 1)],
+        )
+        .with(
+            "pods",
+            vec![deployment_pod(
+                "storefront-6fdf-x",
+                "6fdf",
+                &image,
+                &format!("docker-pullable://{image}"),
+                true,
+            )],
+        );
     world
+}
+
+/// The storefront Deployment, as the controller reports it once it has acted
+/// on its latest spec: generation 3, revision `2`.
+pub fn deployment(image: &str) -> Value {
+    json!({
+        "metadata": {"name": "storefront", "namespace": "shop", "uid": DEPLOYMENT_UID,
+                      "generation": 3,
+                      "annotations": {"deployment.kubernetes.io/revision": "2"}},
+        "spec": {"template": {"spec": {"containers": [{"name": "app", "image": image}]}}},
+        "status": {"observedGeneration": 3, "replicas": 1, "updatedReplicas": 1,
+                    "availableReplicas": 1}
+    })
+}
+
+/// The UID of the storefront Deployment's ReplicaSet with this hash.
+pub fn deployment_set_uid(hash: &str) -> String {
+    format!("0f0e0d0c-0000-4000-8000-0000000d{hash}")
+}
+
+/// A ReplicaSet the storefront Deployment owns, made at `revision`.
+pub fn deployment_set(hash: &str, revision: &str, image: &str, replicas: u64, ready: u64) -> Value {
+    json!({
+        "metadata": {"name": format!("storefront-{hash}"), "namespace": "shop",
+                      "uid": deployment_set_uid(hash),
+                      "labels": {"pod-template-hash": hash},
+                      "annotations": {"deployment.kubernetes.io/revision": revision},
+                      "ownerReferences": [{"apiVersion": "apps/v1", "kind": "Deployment",
+                                           "name": "storefront", "uid": DEPLOYMENT_UID,
+                                           "controller": true}]},
+        "spec": {"template": {"spec": {"containers": [{"name": "app", "image": image}]}}},
+        "status": {"replicas": replicas, "readyReplicas": ready}
+    })
+}
+
+/// A pod of one ReplicaSet of the storefront Deployment, owned by it.
+pub fn deployment_pod(name: &str, hash: &str, image: &str, image_id: &str, ready: bool) -> Value {
+    json!({
+        "metadata": {"name": name, "namespace": "shop",
+                      "labels": {"pod-template-hash": hash},
+                      "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet",
+                                           "name": format!("storefront-{hash}"),
+                                           "uid": deployment_set_uid(hash), "controller": true}]},
+        "status": {"containerStatuses": [
+            {"name": "app", "image": image, "imageID": image_id, "ready": ready}]}
+    })
 }
 
 pub const GH_REPO: &str = "acme/storefront";
