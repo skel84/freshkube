@@ -18,7 +18,7 @@ impl Pilot {
             .id("overview-cards")
             .test_support()
             .grid()
-            .grid_cols(if Self::content_width(window) < 900. {
+            .grid_cols(if crate::screens::content_width(window) < 900. {
                 2
             } else {
                 4

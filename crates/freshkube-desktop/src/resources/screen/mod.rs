@@ -438,8 +438,10 @@ impl ResourcesScreen {
             namespace_job: None,
             tick: None,
             detail,
-            drawer_width: drawer::start_width(
+            drawer_width: crate::ui::start_width(
                 crate::navigation_file::NavigationFile::global(cx).drawer_width("resources"),
+                drawer::WIDTH,
+                drawer::MIN_WIDTH,
             ),
             drawer_save: None,
             body_width: Default::default(),

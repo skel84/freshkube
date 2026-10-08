@@ -1492,12 +1492,6 @@ impl Pilot {
         format!("{state} · {refreshed}")
     }
 
-    /// Width available to page content in `dp`, for choosing grid column
-    /// counts.
-    fn content_width(window: &Window) -> f32 {
-        crate::screens::content_width(window)
-    }
-
     /// Marks every cached view dirty, for state they read from outside their
     /// own entity.
     fn notify_cached(&self, cx: &mut App) {

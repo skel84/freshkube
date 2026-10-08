@@ -481,15 +481,7 @@ impl Pilot {
     ) -> AnyElement {
         let mut row =
             NavRow::new(format!("nav-{}", page.slug()), page.title(), dp(10.)).suffix(suffix);
-        row.icon = match page {
-            Page::Health => IconName::HeartPulse,
-            Page::Etcd => IconName::Database,
-            Page::SystemServices => IconName::ServerCog,
-            Page::Security => IconName::ShieldCheck,
-            Page::Lifecycle => IconName::RefreshCw,
-            Page::Operations => IconName::Wrench,
-            _ => IconName::Box,
-        };
+        row.icon = page_icon(page);
         if let Some(key) = key {
             row = row.key(key);
         }
@@ -499,5 +491,18 @@ impl Pilot {
             cx.listener(move |view, _, window, cx| view.navigate_from_keyboard(page, window, cx)),
             cx,
         )
+    }
+}
+
+/// A page's icon, in the column and in the folded column alike.
+pub(super) fn page_icon(page: Page) -> IconName {
+    match page {
+        Page::Health => IconName::HeartPulse,
+        Page::Etcd => IconName::Database,
+        Page::SystemServices => IconName::ServerCog,
+        Page::Security => IconName::ShieldCheck,
+        Page::Lifecycle => IconName::RefreshCw,
+        Page::Operations => IconName::Wrench,
+        _ => IconName::Box,
     }
 }
