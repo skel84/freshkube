@@ -83,6 +83,38 @@ async fn a_pinned_deployment_whose_current_pods_run_the_digest_is_confirmed() {
 }
 
 #[tokio::test]
+async fn a_deployment_joins_a_freight_on_another_spelling_of_its_repository() {
+    // Docker Hub, spelled three ways: the Freight names its legacy host,
+    // Argo CD no registry, and the Deployment and its pod docker.io.
+    let image = format!("docker.io/acme/storefront@{NEW}");
+    let mut world = world((
+        deployment(&image),
+        vec![deployment_set("6fdf", "2", &image, 1, 1)],
+        vec![deployment_pod(
+            "storefront-6fdf-x",
+            "6fdf",
+            &image,
+            &image_id(&image),
+            true,
+        )],
+    ));
+    world.kargo = world
+        .kargo
+        .with("freights", freights_on("index.docker.io/acme/storefront"));
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![summarised(
+            unannotated_application(),
+            &[&format!("acme/storefront@{NEW}")],
+        )],
+    );
+    let (app, pods) = chain(&world).await;
+    assert_eq!(app.confidence, Confidence::Confirmed, "{app:#?}");
+    assert_eq!(pods.confidence, Confidence::Confirmed, "{pods:#?}");
+    assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
+}
+
+#[tokio::test]
 async fn a_sidecar_on_another_digest_does_not_count_against_the_pinned_container() {
     let (deployment, sets, mut pods) = parts();
     let other = format!("registry.example/acme/proxy@{OLD}");
