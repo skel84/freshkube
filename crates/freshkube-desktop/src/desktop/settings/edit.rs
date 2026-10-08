@@ -71,6 +71,9 @@ impl SettingsPage {
         }
         let mut next = self.workspace.clone();
         let talosconfig = (!talosconfig.is_empty()).then(|| PathBuf::from(talosconfig));
+        if talosconfig.as_ref().is_some_and(|path| !path.is_absolute()) {
+            return Err("Talosconfig must be an absolute path".into());
+        }
         let what = match editing {
             Some(id) => {
                 let entry = next
@@ -88,6 +91,8 @@ impl SettingsPage {
                 let mut entry = Entry::new(id.clone(), role, context);
                 entry.talosconfig = talosconfig;
                 next.clusters.push(entry);
+                // The new row is the selected one once it is saved.
+                self.select_on_save = Some(id.clone().into());
                 format!("Added {id}.")
             }
         };
@@ -216,15 +221,24 @@ impl SettingsPage {
     ) {
         use workspace::SaveError;
         self.saving = None;
+        if outcome.is_err() {
+            self.select_on_save = None;
+        }
         match outcome {
             Ok((aside, seen)) => {
                 self.set_workspace(&Loaded::Workspace(saved), false, cx);
                 self.seen = seen;
+                if let Some(id) = self.select_on_save.take() {
+                    self.select(id, cx);
+                }
                 self.notice = Some(Notice::Saved(
                     match aside {
                         Some(path) => format!(
-                            "{what} The earlier file was set aside as {}.",
-                            path.display()
+                            "{what} The earlier file was set aside as {}, beside it.",
+                            path.file_name().map_or_else(
+                                || path.display().to_string(),
+                                |name| name.to_string_lossy().into_owned()
+                            )
                         ),
                         None => what,
                     }

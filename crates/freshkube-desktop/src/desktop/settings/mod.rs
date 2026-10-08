@@ -111,6 +111,8 @@ pub(crate) struct SettingsPage {
     notice: Option<Notice>,
     /// The save in flight; changes wait for it.
     saving: Option<Task<()>>,
+    /// The cluster to select once the save in flight has landed.
+    select_on_save: Option<SharedString>,
     selected: Option<SharedString>,
     page_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -134,6 +136,7 @@ impl SettingsPage {
             warning: None,
             notice: None,
             saving: None,
+            select_on_save: None,
             selected: None,
             page_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -497,6 +500,7 @@ impl Render for SettingsPage {
                     .on_action(
                         cx.listener(|this, _: &MoveClusterDown, _, cx| this.move_selected(1, cx)),
                     )
+                    .on_action(cx.listener(|this, _: &ReloadWorkspace, _, cx| this.reload(cx)))
                     .flex()
                     .flex_col()
                     .flex_1()

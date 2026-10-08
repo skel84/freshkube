@@ -69,6 +69,9 @@ async fn adding_a_cluster_creates_the_file_and_lists_it(cx: &mut TestAppContext)
         window.render_frame(cx);
         assert!(window.find("settings-cluster-acme-staging").visible());
         assert!(window.find("settings-saved").visible());
+        // The new row is the selected one.
+        let page = view.read(cx).settings_page.read(cx);
+        assert_eq!(page.selected.as_deref(), Some("acme-staging"));
         let page = view.read(cx).settings_page.read(cx);
         assert_eq!(page.origin(), &Origin::File);
         assert!(matches!(page.notice, Some(Notice::Saved(_))));
@@ -300,6 +303,16 @@ async fn a_form_the_file_would_refuse_says_why_and_saves_nothing(cx: &mut TestAp
         add(window, cx, "acme-ci", "relative/talosconfig");
         window.render_frame(cx);
         assert!(window.find("settings-form-error").visible());
+        // The message names the field that is wrong, not an id.
+        let text = window
+            .find("settings-form-error")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(
+            text.starts_with("Talosconfig must be an absolute path"),
+            "{text}"
+        );
         window.click("settings-form-cancel", cx);
     })
     .unwrap();
@@ -531,6 +544,30 @@ async fn many_unknown_keys_are_capped_in_the_banner(cx: &mut TestAppContext) {
         assert!(warning.contains("a5"), "{warning}");
         assert!(!warning.contains("a6"), "{warning}");
         assert!(warning.contains("and 2 more"), "{warning}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn the_r_key_reloads_the_file_behind_the_page(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    write(
+        guard.path(),
+        &TWO.replace("\"id\":\"prod\"", "\"id\":\"prod-new\""),
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("settings-cluster-prod-new").is_none());
+        // A click on a row puts the keyboard on the list, where R is bound.
+        window.click("settings-cluster-mgmt", cx);
+        window.press("r", cx);
+        window.render_frame(cx);
+        assert!(window.find("settings-cluster-prod-new").visible());
+        assert!(window.try_find("settings-cluster-prod").is_none());
     })
     .unwrap();
 }
