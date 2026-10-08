@@ -388,36 +388,10 @@ impl Pilot {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let p = palette(cx);
-        h_flex()
-            .id(row.id)
-            .test_support()
-            .role(Role::Tab)
-            .aria_selected(active)
-            .aria_label(row.label.clone())
-            .tab_index(0)
-            .h(dp(30.))
-            .flex_none()
-            .pl(row.indent)
-            .pr(dp(8.))
-            .gap_2()
-            .rounded(px(8.))
-            .border_1()
-            .border_color(gpui_kit::transparent_black())
-            .cursor_pointer()
-            .text_size(dp(13.))
-            .text_color(if active { p.ink } else { p.ink_2 })
-            .when(active, |this| {
-                this.bg(p.surface_2)
-                    .border_color(p.line_strong)
-                    .font_weight(ui::HEADING_WEIGHT)
-            })
-            .when(!active, |this| this.hover(|style| style.bg(p.hover)))
+        freshkube_ui::column::item(row.id, row.label, row.icon, row.indent, active, cx)
             .when_some(row.tooltip, |this, tip| {
                 this.tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
             })
-            .child(Icon::new(row.icon).size(dp(15.)).text_color(p.muted))
-            .child(div().min_w_0().truncate().child(row.label))
             .child(div().flex_1())
             .children(row.suffix)
             .children(

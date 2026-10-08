@@ -9,7 +9,7 @@ use freshkube_ui::text_size;
 use freshkube_ui::theme;
 use freshkube_ui::ui::{self, dp};
 use gpui_kit::component::button::Button;
-use gpui_kit::component::{ActiveTheme, Icon, Sizable, Theme, ThemeMode, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Sizable, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     AnyView, App, Context, Div, KeyBinding, Pixels, Role, SharedString, Size, TestSupportExt,
@@ -185,34 +185,15 @@ impl Workbench {
         story: &Story,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let p = palette(cx);
-        let active = ix == self.story;
-        h_flex()
-            .id(SharedString::from(format!("story-{}", story.slug)))
-            .test_support()
-            .role(Role::Tab)
-            .aria_selected(active)
-            .aria_label(story.title)
-            .tab_index(0)
-            .h(dp(30.))
-            .flex_none()
-            .px(dp(8.))
-            .gap_2()
-            .rounded(px(8.))
-            .border_1()
-            .border_color(gpui_kit::transparent_black())
-            .cursor_pointer()
-            .text_size(dp(13.))
-            .text_color(if active { p.ink } else { p.ink_2 })
-            .when(active, |this| {
-                this.bg(p.surface_2)
-                    .border_color(p.line_strong)
-                    .font_weight(ui::HEADING_WEIGHT)
-            })
-            .when(!active, |this| this.hover(|style| style.bg(p.hover)))
-            .child(Icon::new((story.icon)()).size(dp(15.)).text_color(p.muted))
-            .child(div().min_w_0().truncate().child(story.title))
-            .on_click(cx.listener(move |this, _, window, cx| this.select(ix, window, cx)))
+        freshkube_ui::column::item(
+            SharedString::from(format!("story-{}", story.slug)),
+            story.title.into(),
+            (story.icon)(),
+            dp(8.),
+            ix == self.story,
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, window, cx| this.select(ix, window, cx)))
     }
 
     /// Theme, text size and width: what every story is checked at.
