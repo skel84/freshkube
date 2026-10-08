@@ -16,6 +16,7 @@ gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
+freshkube-observability.workspace = true
 freshkube-probe.workspace = true
 freshkube-terminal.workspace = true
 freshkube-ui.workspace = true
@@ -73,6 +74,7 @@ freshkube-core = { workspace = true, features = ["testing"] }
 freshkube-logs = { workspace = true, features = ["testing"] }
 # The startup and Observability tests read the charts (`reading`, `marker_labels`).
 freshkube-monitoring = { workspace = true, features = ["testing"] }
+freshkube-observability = { workspace = true, features = ["testing"] }
 # The status bar tests read which line a segment drew (`status::shown`).
 freshkube-ui = { workspace = true, features = ["testing"] }
 # Operations' tests run the example on a paused Tokio clock (`start_paused`).

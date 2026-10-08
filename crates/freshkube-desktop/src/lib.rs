@@ -276,7 +276,6 @@ mod logs;
 mod maintenance;
 mod mutation;
 mod navigation_file;
-mod observability;
 mod presentation;
 mod resources;
 // Framework pieces land before the screens that use them; drop this once
@@ -292,6 +291,8 @@ mod ui;
 use freshkube_probe::perf;
 // Monitoring's dashboards and history charts, by their old path.
 use freshkube_monitoring as monitoring;
+// Observability's Coroot pages, by their old path.
+use freshkube_observability as observability;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
 use freshkube_ui::{meters, palette, text_size, theme};
 // The pod shell's terminal view, by its old path.

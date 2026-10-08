@@ -7,10 +7,10 @@
 //! - `pod`: one pod container's log, for the pane's Logs tab.
 //! - `workload`: every container of a workload's pods, interleaved by
 //!   time, for a workload pane's Logs tab.
-//! - `coroot`: an application's messages from Coroot, for the
-//!   Application page's Logs report.
+//!
+//! Coroot's source, for the Application page's Logs report, is
+//! `freshkube-observability`'s; desktop names its view here.
 
-mod coroot;
 mod pod;
 mod talos;
 mod workload;
@@ -26,8 +26,8 @@ use gpui_kit::{
 
 use crate::ui;
 
-pub(crate) use coroot::{CorootLogView, CorootPanel};
 pub(crate) use freshkube_logs::{ClearSelection, Columns, DownloadLines, LogSource, LogView};
+pub(crate) use freshkube_observability::CorootLogView;
 pub(crate) use pod::{PodLogPanel, PodLogView, choice_label, role_heading};
 pub(crate) use talos::{TalosLogs, TalosPanel};
 pub(crate) use workload::{WorkloadLogPanel, WorkloadLogView};

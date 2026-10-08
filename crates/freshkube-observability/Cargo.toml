@@ -1,0 +1,49 @@
+[package]
+name = "freshkube-observability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Coroot's applications, service map, incidents, traces, profiles and logs, drawn in the Console look"
+
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
+[dependencies]
+gpui-kit = "=0.7.0"
+# Coroot's client and model, the request guards and the remembered key.
+freshkube-core.workspace = true
+# The service map's layout.
+freshkube-graph.workspace = true
+# The Logs report's view.
+freshkube-logs.workspace = true
+# The application charts and the logs histogram (`PanelView`).
+freshkube-monitoring.workspace = true
+freshkube-ui.workspace = true
+tokio.workspace = true
+futures.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+
+[features]
+# Read-outs for tests in crates that embed the page; turned on from
+# dev-dependencies.
+testing = []
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+# Render probes count in tests (`probe::count`).
+freshkube-probe = { workspace = true, features = ["counting"] }
+# The connection tests remember keys in `secrets::MemoryStore`.
+freshkube-core = { workspace = true, features = ["testing"] }
+# The page tests settle the header and measure the frame (`layout_check`),
+# and keep inspector widths in `inspector::MemoryWidths`.
+freshkube-ui = { workspace = true, features = ["testing"] }
+# The Logs report's tests read the view's lines (`retained`, `visible_rows`).
+freshkube-logs = { workspace = true, features = ["testing"] }
+# The chart tests read their markers and series colours.
+freshkube-monitoring = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
+# The remembered-key tests write preferences under a fresh directory.
+tempfile = "3"
