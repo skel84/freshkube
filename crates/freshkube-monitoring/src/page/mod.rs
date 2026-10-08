@@ -132,6 +132,8 @@ pub struct MonitoringPage {
     form: Option<source::SourceForm>,
     /// Unix seconds now. Tests fix it, so example data is the same each run.
     now: fn() -> i64,
+    /// Example data never answers: [`hold_examples`](Self::hold_examples).
+    hold: bool,
 }
 
 impl EventEmitter<MonitoringEvent> for MonitoringPage {}
@@ -169,9 +171,17 @@ impl MonitoringPage {
             secret_queue: None,
             form: None,
             now: || chrono::Utc::now().timestamp(),
+            hold: false,
         };
         page.read_folder(cx);
         page
+    }
+
+    /// Example data never answers, so every panel stays on its loading
+    /// state, for captures (`FRESHKUBE_FIXTURE_HOLD=monitoring`). A real
+    /// source still answers.
+    pub fn hold_examples(&mut self) {
+        self.hold = true;
     }
 
     pub fn catalog(&self) -> &Catalog {

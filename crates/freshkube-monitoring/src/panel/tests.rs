@@ -89,7 +89,7 @@ fn mount_sized(
         panels = specs
             .into_iter()
             .enumerate()
-            .map(|(index, spec)| cx.new(|_| PanelView::new(index.to_string(), spec)))
+            .map(|(index, spec)| cx.new(|cx| PanelView::new(index.to_string(), spec, cx)))
             .collect();
         let host = cx.new(|_| Host {
             panels: panels.clone(),
@@ -1332,4 +1332,69 @@ fn a_narrow_readout_stays_inside_the_plot_on_either_side(cx: &mut TestAppContext
         .unwrap();
         assert!(cx.read(|cx| panel.read(cx).cursor.is_some()));
     }
+}
+
+#[gpui_kit::test]
+fn a_table_panel_waits_under_its_header_and_loading_rows(cx: &mut TestAppContext) {
+    use freshkube_ui::table::TableColumn;
+    let (dashboard, specs) = cluster();
+    let alerts = index_of(&specs, "Firing alerts");
+    let cpu = index_of(&specs, "CPU usage by node");
+    let (handle, panels) = mount(cx, specs);
+    let loading = format!("monitoring-panel-{alerts}-table-loading");
+    assert!(shown(cx, handle, &loading));
+    // The organize transform names the columns, in its order, after the
+    // severity's glyph.
+    let table = cx.read(|cx| panels[alerts].read(cx).table()).unwrap();
+    let labels: Vec<String> = cx.read(|cx| {
+        table
+            .read(cx)
+            .columns()
+            .iter()
+            .map(|column| column.label().to_string())
+            .collect()
+    });
+    assert_eq!(labels, ["", "Severity", "Alert", "Namespace"]);
+    assert!(cx.read(|cx| panels[alerts].read(cx).loading_motion(cx).is_some()));
+    // Only a table waits on rows: a chart keeps its skeleton, and no motion.
+    assert!(!shown(
+        cx,
+        handle,
+        &format!("monitoring-panel-{cpu}-table-loading")
+    ));
+    assert!(cx.read(|cx| panels[cpu].read(cx).loading_motion(cx).is_none()));
+
+    // The answer takes the same table, with its rows and no motion.
+    answer(cx, &dashboard, &panels);
+    assert!(!shown(cx, handle, &loading));
+    assert!(shown(
+        cx,
+        handle,
+        &format!("monitoring-panel-{alerts}-table-list")
+    ));
+    assert_eq!(
+        cx.read(|cx| panels[alerts].read(cx).table()).unwrap(),
+        table
+    );
+    assert!(cx.read(|cx| panels[alerts].read(cx).loading_motion(cx).is_none()));
+}
+
+#[gpui_kit::test]
+fn a_failed_first_read_replaces_a_tables_loading_rows(cx: &mut TestAppContext) {
+    let (_, specs) = cluster();
+    let alerts = index_of(&specs, "Firing alerts");
+    let (handle, panels) = mount(cx, specs);
+    let error = QueryError::refused();
+    cx.update(|cx| panels[alerts].update(cx, |panel, cx| panel.set_error(&error, cx)));
+    assert!(shown(
+        cx,
+        handle,
+        &format!("monitoring-panel-{alerts}-failed")
+    ));
+    assert!(!shown(
+        cx,
+        handle,
+        &format!("monitoring-panel-{alerts}-table-loading")
+    ));
+    assert!(cx.read(|cx| panels[alerts].read(cx).loading_motion(cx).is_none()));
 }

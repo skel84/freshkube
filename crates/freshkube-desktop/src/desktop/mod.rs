@@ -661,12 +661,16 @@ impl Pilot {
             std::sync::Arc::new(crate::secrets::SystemStore)
         });
         let monitoring = cx.new(|cx| {
-            MonitoringPage::new(
+            let mut page = MonitoringPage::new(
                 runtime.clone(),
                 options.preferences.as_deref(),
                 secrets.clone(),
                 cx,
-            )
+            );
+            if crate::fixture::hold().monitoring {
+                page.hold_examples();
+            }
+            page
         });
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
