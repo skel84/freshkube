@@ -274,7 +274,6 @@ mod fixture;
 mod forwards;
 mod logs;
 mod maintenance;
-mod monitoring;
 mod mutation;
 mod navigation_file;
 mod observability;
@@ -291,6 +290,8 @@ mod stress;
 mod ui;
 
 use freshkube_probe::perf;
+// Monitoring's dashboards and history charts, by their old path.
+use freshkube_monitoring as monitoring;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
 use freshkube_ui::{meters, palette, text_size, theme};
 // The pod shell's terminal view, by its old path.

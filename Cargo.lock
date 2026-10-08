@@ -2471,6 +2471,7 @@ dependencies = [
  "freshkube-core",
  "freshkube-graph",
  "freshkube-logs",
+ "freshkube-monitoring",
  "freshkube-probe",
  "freshkube-terminal",
  "freshkube-ui",
@@ -2507,6 +2508,22 @@ dependencies = [
  "freshkube-ui",
  "gpui-kit",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "freshkube-monitoring"
+version = "0.8.0"
+dependencies = [
+ "chrono",
+ "freshkube-core",
+ "freshkube-probe",
+ "freshkube-ui",
+ "futures",
+ "gpui-kit",
+ "kube",
+ "serde_json",
+ "talos-rs",
  "tokio",
 ]
 
