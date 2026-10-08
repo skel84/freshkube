@@ -93,6 +93,11 @@ fn a_file_the_app_cannot_use_is_refused_with_a_reason() {
             Invalid::RelativePath("a".into()),
         ),
         (
+            serde_json::json!({"version":1,"clusters":[
+                {"id":"a","role":"core","context":"x","talos_context":" "}]}),
+            Invalid::EmptyTalosContext("a".into()),
+        ),
+        (
             serde_json::json!({"version":1,"kubeconfig":"relative"}),
             Invalid::RelativePath("the workspace".into()),
         ),
@@ -441,4 +446,22 @@ fn a_file_that_cannot_be_set_aside_stops_the_commit_before_any_write() {
     ));
     assert!(file.is_dir());
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn a_talos_context_is_kept_and_an_absent_one_writes_nothing() {
+    let mut entry = Entry::new("mgmt", Role::Core, "acme-mgmt");
+    let mut workspace = Workspace {
+        clusters: vec![entry.clone()],
+        ..Default::default()
+    };
+    assert_eq!(to_text(&workspace).matches("talos_context").count(), 0);
+    entry.talos_context = Some("acme-talos".into());
+    workspace.clusters = vec![entry];
+    let written = to_text(&workspace);
+    assert_eq!(parse(written.as_bytes()), Ok(workspace));
+    assert_eq!(
+        written.matches("\"talos_context\": \"acme-talos\"").count(),
+        1
+    );
 }

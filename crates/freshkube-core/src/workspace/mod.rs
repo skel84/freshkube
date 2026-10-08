@@ -68,6 +68,10 @@ pub struct Entry {
     pub context: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub talosconfig: Option<PathBuf>,
+    /// The talosconfig context this cluster opens; `None` is that file's own
+    /// selected one. Only read with a `talosconfig`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub talos_context: Option<String>,
     /// Keys this version doesn't know, written back as they were read.
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
@@ -80,6 +84,7 @@ impl Entry {
             role,
             context: context.into(),
             talosconfig: None,
+            talos_context: None,
             extra: Default::default(),
         }
     }
@@ -116,6 +121,7 @@ pub enum Invalid {
     LongId(String),
     DuplicateId(String),
     EmptyContext(String),
+    EmptyTalosContext(String),
     RelativePath(String),
     NotReadable(String),
     Malformed(String),
@@ -136,6 +142,9 @@ impl std::fmt::Display for Invalid {
             Invalid::LongId(id) => write!(f, "the id “{id}” is longer than {MAX_ID_BYTES} bytes"),
             Invalid::DuplicateId(id) => write!(f, "the id “{id}” is used twice"),
             Invalid::EmptyContext(id) => write!(f, "the cluster “{id}” names no context"),
+            Invalid::EmptyTalosContext(id) => {
+                write!(f, "the cluster “{id}” names an empty Talos context")
+            }
             Invalid::RelativePath(id) => write!(f, "a path for “{id}” isn’t absolute"),
             Invalid::NotReadable(reason) => write!(f, "it can’t be read: {reason}"),
             Invalid::Malformed(reason) => write!(f, "it isn’t a workspace: {reason}"),
@@ -168,6 +177,13 @@ impl Workspace {
             }
             if entry.context.trim().is_empty() {
                 return Err(Invalid::EmptyContext(entry.id.clone()));
+            }
+            if entry
+                .talos_context
+                .as_ref()
+                .is_some_and(|context| context.trim().is_empty())
+            {
+                return Err(Invalid::EmptyTalosContext(entry.id.clone()));
             }
             if entry.talosconfig.as_ref().is_some_and(|p| !p.is_absolute()) {
                 return Err(Invalid::RelativePath(entry.id.clone()));
