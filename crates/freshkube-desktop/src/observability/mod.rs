@@ -41,6 +41,13 @@ mod reports;
 mod settings;
 mod status;
 mod tables;
+/// What the example threshold dialog edits, and how it opens.
+struct ThresholdDialog {
+    key: (String, Report),
+    title: SharedString,
+    value: String,
+}
+
 #[cfg(test)]
 mod tests;
 mod traces;
@@ -473,29 +480,51 @@ impl ObservabilityPage {
         self.app_page = None;
         self.open(Destination::Application, cx);
     }
-    fn edit_threshold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.fixture {
-            return;
+    /// The report on screen: the one the application opened on while its
+    /// tab shows, else the first that tab holds (#408). A tab holds several
+    /// reports, SLO both Errors and Latency.
+    fn shown_report(&self) -> Option<Report> {
+        if self.report.server_name() == self.report_name {
+            return Some(self.report);
         }
-        let Some(app) = self.selected_application() else {
-            return;
-        };
-        let key = (app.key.clone(), self.report);
+        Report::ALL
+            .into_iter()
+            .find(|report| report.server_name() == self.report_name)
+    }
+
+    /// The threshold dialog for the selected application's report on screen.
+    fn threshold_dialog(&self) -> Option<ThresholdDialog> {
+        let app = self.selected_application()?;
+        let report = self.shown_report()?;
+        let key = (app.key.clone(), report);
         let value = self
             .thresholds
             .get(&key)
             .cloned()
-            .unwrap_or_else(|| self.report.default_threshold().into());
+            .unwrap_or_else(|| report.default_threshold().into());
+        Some(ThresholdDialog {
+            key,
+            title: format!("{} threshold", report.label()).into(),
+            value,
+        })
+    }
+
+    fn edit_threshold(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.fixture {
+            return;
+        }
+        let Some(ThresholdDialog { key, title, value }) = self.threshold_dialog() else {
+            return;
+        };
         self.threshold
             .update(cx, |input, cx| input.set_value(value, window, cx));
         let input = self.threshold.clone();
         let owner = cx.entity().downgrade();
-        let report = self.report.label();
         window.open_alert_dialog(cx, move |dialog, _, _| {
             dialog
                 .confirm()
                 .ok_text("Save threshold")
-                .title(format!("{report} threshold"))
+                .title(title.clone())
                 .child(
                     v_flex()
                         .gap(dp(12.))
