@@ -1230,3 +1230,34 @@ async fn current_pods_on_another_digest_keep_a_pinned_rollout_claimed() {
     assert!(stands_on(rollout, Hop::Application));
     assert!(!stands_on(rollout, Hop::Rollout));
 }
+
+#[tokio::test]
+async fn a_capped_pod_listing_only_claims_even_when_every_pod_read_matches() {
+    let tagged = format!("{REPO}:v1.4.0");
+    let mut world = healthy();
+    world.environment = world
+        .environment
+        .with(
+            "pods",
+            vec![current_pod(
+                "storefront-5d9c-a",
+                &[("app", &tagged, Some(&running(NEW)), true)],
+            )],
+        )
+        .capped("pods");
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed, "{}", pods.reason);
+    for words in [
+        "1 container(s) run the Freight's digest, 1 ready of 1 pod container(s) read",
+        "the pod listing stopped at the page cap after 1 items, so a pod not read may run another digest",
+    ] {
+        assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
+    }
+    // What was read is still shown, as reported.
+    assert!(pods.evidence.iter().any(|seen| {
+        seen.object.kind == "Pod"
+            && seen.fact == Fact::Reported
+            && seen.value.as_deref() == Some(NEW)
+    }));
+}

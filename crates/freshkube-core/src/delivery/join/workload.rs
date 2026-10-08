@@ -411,6 +411,20 @@ fn judge_revision(
         .observed(pods_running_other(&other));
     }
     let ready = matching.iter().filter(|(pod, _)| pod.ready).count();
+    // That none runs another digest is known only of the pods read.
+    if let (true, Some(truncation)) = (ready > 0, capped) {
+        return link(
+            Confidence::Claimed,
+            Key::None,
+            format!(
+                "{} container(s) run the Freight's digest, {ready} ready of {} pod container(s) read; the pod listing stopped at the page cap after {} items, so a pod not read may run another digest",
+                matching.len(),
+                containers.len(),
+                truncation.read
+            ),
+        )
+        .observed(pods_running(&matching));
+    }
     if ready > 0 {
         let (_, digest) = matching[0];
         return link(
