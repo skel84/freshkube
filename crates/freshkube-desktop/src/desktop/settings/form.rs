@@ -62,7 +62,8 @@ impl ClusterForm {
             InputState::new(window, cx).placeholder("Optional: absolute path of a talosconfig")
         });
         let talos_context = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("Optional: the talosconfig's own selected one")
+            InputState::new(window, cx)
+                .placeholder("Optional: else the Context above, if the talosconfig has it")
         });
         let mut role = ClusterRole::Environment;
         let mut id = None;

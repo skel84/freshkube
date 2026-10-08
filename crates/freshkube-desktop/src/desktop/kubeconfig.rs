@@ -76,6 +76,7 @@ impl Pilot {
         if self.fixture {
             return;
         }
+        self.leave_entry(cx);
         self.kubeconfig_draft.mode = mode;
         match mode {
             KubeconfigMode::Automatic => {
@@ -117,6 +118,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         if let Some(selection) = self.kubeconfig_file_selection(Some(context)) {
+            self.leave_entry(cx);
             self.apply_kubeconfig(selection, window, cx);
         }
     }

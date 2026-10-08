@@ -147,6 +147,18 @@ impl NavigationFile {
         });
     }
 
+    /// Forgets the remembered entry: the window left it by hand.
+    pub(crate) fn clear_active_cluster(&self, cx: &App) {
+        if self.active_cluster().is_none() {
+            return;
+        }
+        self.change(cx, |map| {
+            if let Some(Value::Object(group)) = map.get_mut(WORKSPACE) {
+                group.remove(ACTIVE);
+            }
+        });
+    }
+
     fn read<T>(&self, read: impl FnOnce(&Map<String, Value>) -> Option<T>) -> Option<T> {
         let file = self.0.as_ref()?;
         read(&*file.value.lock().ok()?)

@@ -16,8 +16,9 @@ pub struct GpuiOptions {
     /// The kubeconfig and context came from the remembered choice, not from
     /// the command line; later context changes are remembered too.
     remembered_kubernetes: bool,
-    /// The command line named a talosconfig, a Talos context, a kubeconfig or
-    /// a kubeconfig context; set before a remembered choice fills any in.
+    /// The launch named a source: `--config` or `TALOSCONFIG`, `--context`,
+    /// `--kubeconfig`, `--kube-context` or `--kubernetes-only`. Set before a
+    /// remembered choice fills any in; the workspace file's start yields to it.
     named_source: bool,
     preferences: Option<PathBuf>,
     keyring: bool,
@@ -43,6 +44,12 @@ impl GpuiOptions {
             keyring: false,
             hold_talos: false,
         }
+    }
+    /// Marks the launch as naming its source (`--kubernetes-only` asked for
+    /// outright), so the workspace file's start rule yields to it.
+    pub fn naming_source(mut self, named: bool) -> Self {
+        self.named_source |= named;
+        self
     }
     /// Opens without Talos: the Kubernetes pages read `kubeconfig`, or the
     /// files `KUBECONFIG` names, or `~/.kube/config`, connecting to `context`
@@ -117,7 +124,7 @@ impl GpuiOptions {
     }
 
     fn with_preferences_in(mut self, path: Option<PathBuf>, kubeconfig_environment: bool) -> Self {
-        self.named_source = self.config_path.is_some()
+        self.named_source |= self.config_path.is_some()
             || self.context.is_some()
             || self.kubeconfig_path.is_some()
             || self.kube_context.is_some();
@@ -451,5 +458,20 @@ mod connection_tests {
         // Nothing remembered: the default talosconfig decides.
         assert!(talos_available(None, || true) && !talos_available(None, || false));
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn asking_for_kubernetes_only_names_the_source_but_finding_no_talosconfig_does_not() {
+        let asked = GpuiOptions::kubernetes_only(None, None, 100)
+            .naming_source(true)
+            .with_preferences_in(None, false);
+        assert!(asked.named_source);
+        let found_none = GpuiOptions::kubernetes_only(None, None, 100)
+            .naming_source(false)
+            .with_preferences_in(None, false);
+        assert!(!found_none.named_source);
+        let by_context =
+            GpuiOptions::new(None, Some("acme".into()), 100).with_preferences_in(None, false);
+        assert!(by_context.named_source);
     }
 }

@@ -31,7 +31,7 @@ pub(super) struct KubernetesOnly {
     explicit: Option<PathBuf>,
     /// The files read, in merge order.
     pub(super) sources: Vec<PathBuf>,
-    revision: freshkube_core::ConfigurationRevision,
+    pub(super) revision: freshkube_core::ConfigurationRevision,
     /// `--kube-context`, used once the contexts first load.
     requested: Option<String>,
     /// The chosen context; its client is shared with every read.
@@ -559,6 +559,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.leave_entry(cx);
         self.config_task = None;
         self.config_job = None;
         self.config_generation = self.config_generation.wrapping_add(1);

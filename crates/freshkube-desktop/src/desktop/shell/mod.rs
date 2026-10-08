@@ -121,6 +121,17 @@ impl Pilot {
         let p = palette(cx);
         let current = self.active_cluster() == Some(item.id.as_ref());
         let chosen = item.id.to_string();
+        // A parked cluster says how old the summary it would show is. The
+        // list draws only while the popover is open, so this is not per frame.
+        let parked = self
+            .registry
+            .parked_since(&super::session::SessionKey::Entry(chosen.clone()))
+            .map(|taken| {
+                let elapsed = std::time::SystemTime::now()
+                    .duration_since(taken)
+                    .unwrap_or_default();
+                format!("last known {}", super::switch::age_text(elapsed))
+            });
         h_flex()
             .id(("cluster", ix))
             .test_support()
@@ -152,6 +163,15 @@ impl Pilot {
                     .text_size(dp(12.5))
                     .child(item.id.clone()),
             )
+            .children(parked.map(|text| {
+                div()
+                    .id(("cluster-last-known", ix))
+                    .test_support()
+                    .aria_label(text.clone())
+                    .text_size(dp(11.5))
+                    .text_color(p.warn_ink)
+                    .child(text)
+            }))
             .child(
                 div()
                     .text_size(dp(11.5))

@@ -292,6 +292,9 @@ impl Pilot {
             .active_mut()
             .kubernetes_summary
             .apply(&request, Ok(publication.summary.clone()));
+        if self.restored_taken.take().is_some() {
+            self.age_label.update(cx, |label, cx| label.set(None, cx));
+        }
         self.registry.active_mut().summary_health = Some(health.clone());
         self.deliver_workloads(health, cx);
         self.rebuild_joined_nodes(cx);

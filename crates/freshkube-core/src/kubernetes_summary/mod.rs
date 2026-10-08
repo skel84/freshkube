@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
 
-use crate::workloads::{PodInfo, WorkloadCollectionOutcome};
+use crate::workloads::{PodInfo, WorkloadCollectionOutcome, WorkloadSource, WorkloadSourceError};
 
 mod driver;
 mod observation;
@@ -23,6 +23,9 @@ pub use retained::{RetainedObject, SummaryResource};
 pub use session::{Limits, Publication, Session, Subscription};
 
 pub const ISSUE_LIMIT: usize = 200;
+
+/// Why a part kept from an earlier read is not current.
+pub const LAST_KNOWN: &str = "Last known; reading again";
 
 /// A successful part, or the reason that this list cannot be shown.
 #[derive(Clone, Debug, PartialEq)]
@@ -81,6 +84,18 @@ impl<T> std::fmt::Display for Unavailable<T> {
 impl<T> Part<T> {
     pub fn is_current(&self) -> bool {
         matches!(self, Self::Loaded(_))
+    }
+    /// A loaded part kept from an earlier read: still readable through
+    /// [`loaded`](Self::loaded), no longer current. Other parts are unchanged.
+    pub fn last_known(self) -> Self {
+        match self {
+            Self::Loaded(value) => Self::Failed(Unavailable {
+                failure: None,
+                message: LAST_KNOWN.into(),
+                last_good: Some(value),
+            }),
+            other => other,
+        }
     }
     fn observed(value: T, observation: &Observation) -> Self {
         if observation.is_current() {
@@ -210,6 +225,34 @@ pub struct KubernetesSummary {
 mod session_tests;
 
 impl KubernetesSummary {
+    /// This summary as an earlier read of it, to show again before a new read
+    /// answers: every part keeps its value but is no longer current, and no
+    /// source is live. Nothing in it can pass for what the cluster says now.
+    pub fn last_known(&self) -> Self {
+        let mut summary = self.clone();
+        summary.version = summary.version.last_known();
+        summary.nodes = summary.nodes.last_known();
+        summary.pods = summary.pods.last_known();
+        summary.events = summary.events.last_known();
+        summary.claims = summary.claims.last_known();
+        summary.available_volumes = summary.available_volumes.last_known();
+        summary.namespaces = summary.namespaces.last_known();
+        summary.workloads = match summary.workloads {
+            WorkloadCollectionOutcome::Complete(snapshot) => WorkloadCollectionOutcome::Partial {
+                snapshot,
+                unavailable: vec![WorkloadSourceError {
+                    source: WorkloadSource::Pods,
+                    message: LAST_KNOWN.into(),
+                }],
+            },
+            other => other,
+        };
+        for observation in summary.observations.values_mut() {
+            observation.last_known();
+        }
+        summary
+    }
+
     /// Last committed roster plus explicit coverage. Partial evidence is useful
     /// for retaining rows, but cannot prove that an unobserved node is absent.
     pub fn node_roster(

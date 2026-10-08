@@ -69,11 +69,11 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
     /// read of the same identity replaces it, with the time it was taken.
     /// Nothing is loading; a [`begin`](Self::begin) for another identity
     /// drops it, as it drops any data.
-    pub fn restore(&mut self, identity: I, data: T, taken: SystemTime) {
+    pub fn restore(&mut self, identity: I, data: T, taken: SystemTime, note: &str) {
         self.identity = Some(identity);
         self.data = Some(data);
         self.loading = false;
-        self.error = None;
+        self.error = Some(note.to_owned());
         self.stale = true;
         self.last_successful = Some(taken);
         self.last_failure = None;
@@ -192,9 +192,10 @@ mod tests {
     fn a_restored_answer_is_stale_with_its_own_time_until_another_identity_drops_it() {
         let taken = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
         let mut snapshot = Snapshot::<u32, &str>::default();
-        snapshot.restore("node-a", 7, taken);
+        snapshot.restore("node-a", 7, taken, "kept");
         assert_eq!(snapshot.data(), Some(&7));
         assert!(snapshot.is_stale() && !snapshot.is_loading());
+        assert_eq!(snapshot.error(), Some("kept"));
         assert_eq!(snapshot.last_successful(), Some(taken));
 
         let refresh = snapshot.begin("node-a");
@@ -202,7 +203,7 @@ mod tests {
         assert!(snapshot.apply(&refresh, Ok(8)));
         assert!(!snapshot.is_stale());
 
-        snapshot.restore("node-a", 9, taken);
+        snapshot.restore("node-a", 9, taken, "kept");
         snapshot.begin("node-b");
         assert_eq!(snapshot.data(), None);
         assert_eq!(snapshot.last_successful(), None);

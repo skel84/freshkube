@@ -77,6 +77,7 @@ thing the shell holds:
 | Summary session, its job and task | Dropped with the parked session; nothing reads for a parked cluster. |
 | Summary epoch | Advances, so a late answer from the old session is recognised and dropped. |
 | Last Kubernetes summary | Kept, with the time it was read, for that entry only. |
+| Manual context, kubeconfig or talosconfig pick | Leaves the entry: the window is no entry's, and `workspace.active` is forgotten. A launch that names the source an entry describes belongs to that entry. |
 | Overview, nodes, services, selected node and service | Cleared, as for a context change. |
 | Resources and Observability pages | Hand over to the new source; their reads are cancelled by the source change. |
 | Dock log tabs | Dropped with the access, as for a context change; saved tabs return for their context only. |
@@ -84,18 +85,31 @@ thing the shell holds:
 | Port forwards | Keep running on the connection they started with, as for a context change. |
 | Active entry | Saved as `workspace.active` in `navigation.json` (an entry id), read at the next launch. |
 
-Coming back to an entry puts its last summary back as last known: stale, with
-the time it was read, until the first read answers. It is put back only when
-the entry is defined as it was and the applied configuration is the one it was
-read under; an edited entry, another talosconfig or another context starts
-empty. A parked summary of an entry the file no longer lists is dropped.
-A launch that names a source on the command line (a talosconfig, a Talos
-context, a kubeconfig or a kubeconfig context) ignores the file's start rule;
-without one, the launch starts the remembered entry, else the first `core`
-entry, else the first listed (example data and maintenance never do). Links
-that switch to the cluster they name, and a second cluster read at once,
-arrive later; today `refuse_foreign_link` still refuses a link to a cluster
-that is not open. The design is on
+Coming back to an entry puts its last summary back as last known: every part
+keeps its value but is no longer current (`Part::last_known`, no source live),
+so Nodes, Health and Attention treat it as stale, and the Overview reads `Last
+known · 3 min ago` on its own timer until a read replaces it. It is put back
+only when the entry is defined as it was (field by field), the applied
+configuration is the same, and the kubeconfig or talosconfig contents are the
+same (`ConfigurationRevision`, known when the kubeconfig is read or the
+overview first answers); an edited entry, a changed file or another context
+starts empty. A parked summary of an entry the file no longer lists is dropped.
+A Talos entry opens with its `talos_context`, else the talosconfig context its
+`context` names; the talosconfig's own current context is never used. If it
+has none by that name the entry opens without Talos, with a note on its row in
+Settings. Its kubeconfig context is read from the workspace kubeconfig, else
+from the default kubeconfig file that defines it, and the control plane's
+kubeconfig is used meanwhile, never the ambient current context.
+
+A launch that names a source (`--config` or `TALOSCONFIG`, `--context`,
+`--kubeconfig`, `--kube-context`, or `--kubernetes-only` asked for outright)
+ignores the file's start rule. Without one, `workspace::choose_start` picks
+the remembered entry, else the first `core` entry, else the first listed; an
+empty workspace starts as before, and a remembered entry that is gone is named
+once ("⟨x⟩ is no longer in the workspace; opened ⟨y⟩"). Example data and
+maintenance never use it. Links that switch to the cluster they name, and a
+second cluster read at once, arrive later; today `refuse_foreign_link` still
+refuses a link to a cluster that is not open. The design is on
 [#44](https://github.com/skel84/freshkube/issues/44).
 
 The workspace file (`freshkube_core::workspace`, `workspace.json` beside the

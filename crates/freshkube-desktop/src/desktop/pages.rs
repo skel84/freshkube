@@ -261,6 +261,7 @@ impl Pilot {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
+            this.leave_entry(cx);
             if this.kubernetes_only.is_some() {
                 this.use_kube_context(Some(context), window, cx);
                 return;

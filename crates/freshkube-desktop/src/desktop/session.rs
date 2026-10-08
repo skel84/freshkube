@@ -62,12 +62,23 @@ pub(super) enum SessionKey {
     Entry(String),
 }
 
+/// How a workspace entry was defined: the entry and the kubeconfig every
+/// entry reads. Compared field by field, so an edit to either is a change.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct Definition {
+    pub(super) entry: Option<freshkube_core::workspace::Entry>,
+    pub(super) kubeconfig: Option<std::path::PathBuf>,
+}
+
 /// What a parked session keeps: its last summary.
 struct Parked {
     key: SessionKey,
     /// How the entry was defined when the summary was read.
-    definition: String,
+    definition: Definition,
     identity: AppliedConfig,
+    /// The kubeconfig and talosconfig contents the summary was read under.
+    /// A summary without one is never put back.
+    revision: Option<ConfigurationRevision>,
     summary: Arc<KubernetesSummary>,
     taken: SystemTime,
 }
@@ -122,8 +133,9 @@ impl Registry {
     pub(super) fn activate(
         &mut self,
         key: SessionKey,
-        left_definition: &str,
+        left_definition: &Definition,
         left_applied: &AppliedConfig,
+        left_revision: Option<ConfigurationRevision>,
     ) {
         if self.active_key == key {
             return;
@@ -134,13 +146,20 @@ impl Registry {
             self.parked.retain(|parked| parked.key != leaving);
             self.parked.push(Parked {
                 key: leaving,
-                definition: left_definition.to_owned(),
+                definition: left_definition.clone(),
                 identity: left_applied.clone(),
+                revision: left_revision,
                 summary: data.clone(),
                 taken,
             });
         }
         self.reset_active();
+    }
+
+    /// Makes `key` the active one without parking anything: the session is
+    /// the one already open, now known to belong to that entry (or to none).
+    pub(super) fn adopt(&mut self, key: SessionKey) {
+        self.active_key = key;
     }
 
     /// Drops what is parked for entries that are no longer listed.
@@ -152,7 +171,12 @@ impl Registry {
     /// it was read, when it was read for this definition and configuration.
     /// One that does not fit stays until the entry is parked again or is no
     /// longer listed. True when it was put back.
-    pub(super) fn restore_parked(&mut self, definition: &str, applied: &AppliedConfig) -> bool {
+    pub(super) fn restore_parked(
+        &mut self,
+        definition: &Definition,
+        applied: &AppliedConfig,
+        revision: Option<ConfigurationRevision>,
+    ) -> bool {
         let Some(ix) = self
             .parked
             .iter()
@@ -164,14 +188,31 @@ impl Registry {
             return false;
         }
         let parked = &self.parked[ix];
-        if parked.definition != definition || &parked.identity != applied {
+        if &parked.definition != definition
+            || &parked.identity != applied
+            || parked.revision.is_none()
+            || parked.revision != revision
+        {
             return false;
         }
         let parked = self.parked.remove(ix);
-        self.active
-            .kubernetes_summary
-            .restore(applied.clone(), parked.summary, parked.taken);
+        // Shown as an earlier read: no part is current until a new one answers.
+        let summary = Arc::new(parked.summary.last_known());
+        self.active.kubernetes_summary.restore(
+            applied.clone(),
+            summary,
+            parked.taken,
+            freshkube_core::kubernetes_summary::LAST_KNOWN,
+        );
         true
+    }
+
+    /// When the summary parked for `key` was read.
+    pub(super) fn parked_since(&self, key: &SessionKey) -> Option<SystemTime> {
+        self.parked
+            .iter()
+            .find(|parked| &parked.key == key)
+            .map(|parked| parked.taken)
     }
 
     pub(super) fn active(&self) -> &ClusterSession {
@@ -214,6 +255,24 @@ mod tests {
         SessionKey::Entry(id.into())
     }
 
+    fn definition(id: &str, context: &str) -> Definition {
+        Definition {
+            entry: Some(freshkube_core::workspace::Entry::new(
+                id,
+                freshkube_core::workspace::Role::Environment,
+                context,
+            )),
+            kubeconfig: None,
+        }
+    }
+
+    /// The revision of a kubeconfig holding `text`.
+    fn revision(directory: &std::path::Path, text: &str) -> Option<ConfigurationRevision> {
+        let file = directory.join("kubeconfig");
+        std::fs::write(&file, text).unwrap();
+        Some(ConfigurationRevision::from_kubeconfig_sources(&[file]))
+    }
+
     /// A registry whose active session read a summary of its own.
     fn read(registry: &mut Registry, applied: &AppliedConfig) {
         let request = registry
@@ -230,67 +289,128 @@ mod tests {
     }
 
     #[test]
-    fn a_parked_summary_comes_back_stale_for_the_same_entry_only() {
+    fn a_parked_summary_comes_back_as_last_known_for_the_same_entry_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let rev = revision(directory.path(), "a: 1");
+        let (a, b) = (definition("a", "acme-a"), definition("b", "acme-b"));
         let mut registry = Registry::new();
-        registry.activate(key("a"), "", &applied("none"));
+        registry.activate(key("a"), &Definition::default(), &applied("none"), None);
         read(&mut registry, &applied("acme-a"));
         let taken = registry.active().kubernetes_summary.last_successful();
+        let read_parts = registry.active().kubernetes_summary.data().cloned();
 
-        registry.activate(key("b"), "a:v1", &applied("acme-a"));
+        registry.activate(key("b"), &a, &applied("acme-a"), rev);
         assert!(registry.active().kubernetes_summary.data().is_none());
         assert_eq!(registry.active_key(), &key("b"));
         // Another entry's summary is never put into this one.
-        assert!(!registry.restore_parked("b:v1", &applied("acme-a")));
+        assert!(!registry.restore_parked(&b, &applied("acme-a"), rev));
         assert!(registry.active().kubernetes_summary.data().is_none());
 
-        registry.activate(key("a"), "b:v1", &applied("acme-b"));
+        registry.activate(key("a"), &b, &applied("acme-b"), None);
         // Defined differently since, or read with another configuration:
         // not put back, and kept for the right one.
-        assert!(!registry.restore_parked("a:v2", &applied("acme-a")));
-        assert!(!registry.restore_parked("a:v1", &applied("acme-other")));
+        assert!(!registry.restore_parked(&definition("a", "acme-x"), &applied("acme-a"), rev));
+        assert!(!registry.restore_parked(&a, &applied("acme-other"), rev));
         assert!(registry.active().kubernetes_summary.data().is_none());
-        assert!(registry.restore_parked("a:v1", &applied("acme-a")));
+        assert!(registry.restore_parked(&a, &applied("acme-a"), rev));
         let summary = &registry.active().kubernetes_summary;
-        assert!(summary.data().is_some() && summary.is_stale());
+        assert!(summary.is_stale());
         assert_eq!(summary.last_successful(), taken);
+        assert_eq!(
+            summary.error(),
+            Some(freshkube_core::kubernetes_summary::LAST_KNOWN)
+        );
+        // Every part is readable and none is current.
+        let kept = summary.data().unwrap();
+        assert_eq!(
+            kept.nodes.loaded(),
+            read_parts.as_ref().unwrap().nodes.loaded()
+        );
+        assert!(!kept.nodes.is_current() && !kept.pods.is_current());
+        assert!(!kept.events.is_current() && !kept.version.is_current());
+        assert!(kept.observations.values().all(|o| !o.is_current()));
         // Put back once: the entry's next parking stores the next answer.
-        assert!(!registry.restore_parked("a:v1", &applied("acme-a")));
+        assert!(!registry.restore_parked(&a, &applied("acme-a"), rev));
+    }
+
+    #[test]
+    fn a_changed_kubeconfig_or_talosconfig_never_gets_the_old_summary() {
+        let directory = tempfile::tempdir().unwrap();
+        let before = revision(directory.path(), "token: one");
+        let after = revision(directory.path(), "token: two");
+        assert_ne!(before, after);
+        let a = definition("a", "acme-a");
+        let mut registry = Registry::new();
+        registry.activate(key("a"), &Definition::default(), &applied("none"), None);
+        read(&mut registry, &applied("acme-a"));
+        registry.activate(key("b"), &a, &applied("acme-a"), before);
+        registry.activate(
+            key("a"),
+            &definition("b", "acme-b"),
+            &applied("acme-b"),
+            None,
+        );
+        // The files changed while it was parked.
+        assert!(!registry.restore_parked(&a, &applied("acme-a"), after));
+        // Not yet known is not a match either.
+        assert!(!registry.restore_parked(&a, &applied("acme-a"), None));
+        assert!(registry.restore_parked(&a, &applied("acme-a"), before));
+    }
+
+    #[test]
+    fn a_summary_parked_without_a_revision_is_never_put_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let rev = revision(directory.path(), "x");
+        let a = definition("a", "acme-a");
+        let mut registry = Registry::new();
+        registry.activate(key("a"), &Definition::default(), &applied("none"), None);
+        read(&mut registry, &applied("acme-a"));
+        registry.activate(key("b"), &a, &applied("acme-a"), None);
+        registry.activate(key("a"), &definition("b", "b"), &applied("acme-b"), None);
+        assert!(!registry.restore_parked(&a, &applied("acme-a"), rev));
     }
 
     #[test]
     fn parking_stops_the_session_and_keeps_one_summary_per_entry() {
+        let directory = tempfile::tempdir().unwrap();
+        let rev = revision(directory.path(), "x");
+        let (a, b) = (definition("a", "acme-a"), definition("b", "acme-b"));
         let mut registry = Registry::new();
-        registry.activate(key("a"), "", &applied("none"));
+        registry.activate(key("a"), &Definition::default(), &applied("none"), None);
         let epoch = registry.summary_epoch();
         registry.active_mut().summary_health = Some(Err("down".into()));
         read(&mut registry, &applied("acme-a"));
-        registry.activate(key("b"), "a:v1", &applied("acme-a"));
+        registry.activate(key("b"), &a, &applied("acme-a"), rev);
         assert!(registry.summary_epoch() != epoch);
         assert!(registry.active().summary_health.is_none());
         assert!(registry.active().summary_job.is_none());
+        assert!(registry.parked_since(&key("a")).is_some());
 
         // Switching to the active entry again does nothing, and parks nothing.
         let epoch = registry.summary_epoch();
-        registry.activate(key("b"), "b:v1", &applied("acme-b"));
+        registry.activate(key("b"), &b, &applied("acme-b"), rev);
         assert_eq!(registry.summary_epoch(), epoch);
 
         // Parking a with a newer answer replaces the older one.
-        registry.activate(key("a"), "b:v1", &applied("acme-b"));
+        registry.activate(key("a"), &b, &applied("acme-b"), None);
         read(&mut registry, &applied("acme-a"));
-        registry.activate(key("b"), "a:v1", &applied("acme-a"));
-        registry.activate(key("a"), "b:v1", &applied("acme-b"));
-        assert!(registry.restore_parked("a:v1", &applied("acme-a")));
+        registry.activate(key("b"), &a, &applied("acme-a"), rev);
+        registry.activate(key("a"), &b, &applied("acme-b"), None);
+        assert!(registry.restore_parked(&a, &applied("acme-a"), rev));
         assert_eq!(registry.parked.len(), 0);
     }
 
     #[test]
     fn an_entry_that_is_no_longer_listed_loses_what_was_parked() {
+        let directory = tempfile::tempdir().unwrap();
+        let rev = revision(directory.path(), "x");
+        let a = definition("a", "acme-a");
         let mut registry = Registry::new();
-        registry.activate(key("a"), "", &applied("none"));
+        registry.activate(key("a"), &Definition::default(), &applied("none"), None);
         read(&mut registry, &applied("acme-a"));
-        registry.activate(key("b"), "a:v1", &applied("acme-a"));
+        registry.activate(key("b"), &a, &applied("acme-a"), rev);
         registry.retain_parked(|key| key == &self::key("b"));
-        registry.activate(key("a"), "b:v1", &applied("acme-b"));
-        assert!(!registry.restore_parked("a:v1", &applied("acme-a")));
+        registry.activate(key("a"), &definition("b", "b"), &applied("acme-b"), None);
+        assert!(!registry.restore_parked(&a, &applied("acme-a"), rev));
     }
 }
