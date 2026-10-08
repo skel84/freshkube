@@ -1,0 +1,1 @@
+- Documented the session registry as it is: one active cluster session, links that name their cluster, and what waits for the workspace file.
