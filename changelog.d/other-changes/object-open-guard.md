@@ -1,1 +1,0 @@
-- Gave object links one helper for their identity and owner-kind reads, so the stale-answer check (epoch, sequence, caller's own test) exists once, with tests for each way an answer is dropped.

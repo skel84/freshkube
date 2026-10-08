@@ -1,1 +1,0 @@
-- Split the shell's constructor into key binding, page event routing, the one-second tick and the first source, with no change in behaviour.
