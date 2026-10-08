@@ -70,9 +70,13 @@ struct SpanRow {
 impl Traces {
     /// A new application or window: start from its latest spans. The filter
     /// stays, since its field still shows it, and so does the heatmap's
-    /// cursor, clamped when the new heatmap arrives.
+    /// cursor, clamped when the new heatmap arrives. The columns stay too,
+    /// so the first read shows their header over its loading rows; the
+    /// answer fits them again.
     pub(super) fn reset(&mut self) {
         *self = Self {
+            columns: std::mem::take(&mut self.columns),
+            width: self.width,
             source: std::mem::take(&mut self.source),
             default_source: self.default_source.take(),
             app: self.app.take(),

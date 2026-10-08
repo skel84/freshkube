@@ -1711,6 +1711,9 @@ fn a_hovered_flame_frame_keeps_its_colour_in_light(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn held_tables_show_the_shared_loading_rows(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
+    // A connection clears what was observed; the headers stay known.
+    cx.update(|cx| page.update(cx, |page, _| page.clear_observations()));
+    assert!(cx.read(|cx| !page.read(cx).trace_columns().is_empty()));
     for (destination, table) in [
         (Destination::Applications, "obs-applications-table"),
         (Destination::Incidents, "obs-incidents-table"),
@@ -1729,6 +1732,10 @@ fn held_tables_show_the_shared_loading_rows(cx: &mut TestAppContext) {
             assert!(table.contains(&rows.origin), "{rows:?} {table:?}");
             assert!(window.try_find("obs-loading").is_none());
             assert!(page.read(cx).loading_motion(cx).is_some());
+            // Reading an application's traces anew keeps their header.
+            if destination == Destination::Traces {
+                assert!(!page.read(cx).trace_columns().is_empty());
+            }
         })
         .unwrap();
         cx.update(|cx| page.update(cx, |page, _| page.hold = false));
