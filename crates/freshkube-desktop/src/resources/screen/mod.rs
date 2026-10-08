@@ -32,7 +32,7 @@ use super::model::{
 };
 use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab};
 use super::projection::ResourceProjection;
-use super::store::{ResourceBatch, ResourceEvent, ResourceStore};
+use super::store::{ResourceEvent, ResourceStore};
 use super::{ResourceLink, example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
@@ -258,6 +258,11 @@ pub(crate) struct ResourcesScreen {
     /// drawn over the table so its frames don't redraw it.
     loading: table::LoadingRows,
     loading_motion: Entity<table::LoadingMotion>,
+    /// The rows a watch changed, tinted over the list and fading, drawn
+    /// by the shell beside the cached page (`flash_layer`).
+    flash: Entity<table::FlashLayer<ResourceIdentity>>,
+    /// The projection's generation the flash last looked its lines up in.
+    flash_rows: Option<u64>,
     page_scroll: ScrollHandle,
     /// The dock's height under the page when it last drew, in dp: when the
     /// dock takes more, the shorter list keeps its selected row in sight.
@@ -405,6 +410,13 @@ impl ResourcesScreen {
         ];
         let loading = table::LoadingRows::new("resource");
         let loading_motion = cx.new(|_| loading.motion(table::Look::Pulse));
+        let table = table::TableState::new("resource");
+        let screen = cx.entity().downgrade();
+        let flash = cx.new(|_| {
+            table::FlashLayer::new("resource", table.rows_at(), move |key, cx| {
+                table::TableSource::line_of(screen.upgrade()?.read(cx), key)
+            })
+        });
         Self {
             field_selector: None,
             embedded: false,
@@ -429,9 +441,11 @@ impl ResourcesScreen {
             updated: None,
             status: Default::default(),
             focus: cx.focus_handle(),
-            table: table::TableState::new("resource"),
+            table,
             loading,
             loading_motion,
+            flash,
+            flash_rows: None,
             page_scroll: ScrollHandle::new(),
             below: 0.,
             watch: None,
@@ -491,17 +505,39 @@ impl ResourcesScreen {
         self.detail.read(cx).tab()
     }
 
+    /// Applies events as one watch batch of the current read.
+    #[cfg(test)]
+    pub(crate) fn deliver(&mut self, events: Vec<ResourceEvent>, cx: &mut Context<Self>) {
+        let epoch = self.store.epoch();
+        self.apply(epoch, vec![events], cx);
+    }
+
+    /// The `ix`th row the list shows as a watch would send it once its
+    /// pod restarted again.
+    #[cfg(test)]
+    pub(crate) fn restarted(&self, ix: usize) -> super::model::ResourceRow {
+        let mut row = self
+            .projection
+            .row(&self.store, ix)
+            .expect("a shown row")
+            .clone();
+        let mut pod = (**row.pod.as_ref().expect("a pod row")).clone();
+        pod.restarts += 1;
+        row.pod = Some(std::sync::Arc::new(pod));
+        row
+    }
+
+    /// The rows flashing now.
+    #[cfg(test)]
+    pub(crate) fn flashing(&self, cx: &App) -> Vec<ResourceIdentity> {
+        self.flash.read(cx).flashing(cx)
+    }
+
     /// Applies a read state as if the current read delivered it.
     #[cfg(test)]
     pub(crate) fn deliver_read(&mut self, state: ReadState, cx: &mut Context<Self>) {
         let epoch = self.store.epoch();
-        self.apply(
-            ResourceBatch {
-                epoch,
-                events: vec![ResourceEvent::Read(state)],
-            },
-            cx,
-        );
+        self.apply(epoch, vec![vec![ResourceEvent::Read(state)]], cx);
     }
 
     /// Called only after the shell's navigation question has been accepted.
@@ -685,6 +721,7 @@ impl ResourcesScreen {
         } else {
             self.watch = None;
             self.tick = None;
+            self.clear_flash(cx);
             self.usage = None;
             if self.namespace_job.take().is_some() {
                 self.namespaces_for = None;
@@ -747,10 +784,53 @@ impl ResourcesScreen {
             .then(|| self.loading_motion.clone())
     }
 
+    /// The flash over the page's rows, which the shell mounts beside the
+    /// cached page, as it does the loading motion, so its frames redraw
+    /// neither the page nor its table. Only while the table draws rows.
+    pub(crate) fn flash_layer(&self) -> Option<Entity<table::FlashLayer<ResourceIdentity>>> {
+        (!self.embedded && table::TableSource::loading(self).is_none()).then(|| self.flash.clone())
+    }
+
+    /// Flashes the rows a watch changed, one part per watch batch, so a
+    /// burst holds back only the batch that brought it. Reported once
+    /// this update ends, since the layer looks the rows' lines up in the
+    /// list. An embedded list doesn't flash, nor does any with reduced
+    /// motion.
+    fn flash(&self, changes: Vec<Vec<ResourceIdentity>>, cx: &mut Context<Self>) {
+        if self.embedded || cx.reduce_motion() || changes.iter().all(Vec::is_empty) {
+            return;
+        }
+        let layer = self.flash.clone();
+        cx.defer(move |cx| {
+            layer.update(cx, |layer, cx| {
+                for part in changes {
+                    layer.changed(part, cx);
+                }
+            })
+        });
+    }
+
+    /// Tells the flash its rows' lines may have moved, once this update
+    /// ends, when the projection was rebuilt since it last heard.
+    fn flash_rows_changed(&mut self, cx: &mut Context<Self>) {
+        let generation = self.projection.generation();
+        if self.embedded || self.flash_rows == Some(generation) {
+            return;
+        }
+        self.flash_rows = Some(generation);
+        let layer = self.flash.clone();
+        cx.defer(move |cx| layer.update(cx, |layer, cx| layer.rows_changed(generation, cx)));
+    }
+
+    fn clear_flash(&self, cx: &mut Context<Self>) {
+        self.flash.update(cx, |layer, cx| layer.clear(cx));
+    }
+
     /// Starts a new read session: forgets the rows, and when visible lists
     /// and watches the kind for the current connection and namespace.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch = None;
+        self.clear_flash(cx);
         self.usage = None;
         self.usage_generation = self.usage_generation.wrapping_add(1);
         if let Some(selected) = self.projection.selected() {
@@ -804,7 +884,7 @@ impl ResourcesScreen {
                 ],
                 None => vec![ResourceEvent::Read(ReadState::Loaded)],
             };
-            self.apply(ResourceBatch { epoch, events }, cx);
+            self.apply(epoch, vec![events], cx);
             self.poll_usage(window, cx);
             return;
         }
@@ -824,7 +904,8 @@ impl ResourcesScreen {
 
     /// Applies what a read sends until it stops, at most once per
     /// `WATCH_COALESCE`: a batch arriving sooner waits, and everything sent
-    /// meanwhile is applied with it.
+    /// meanwhile is applied with it, each watch batch kept as its own part
+    /// so the flash counts bursts as the watch sent them.
     fn receive(
         &self,
         epoch: u64,
@@ -833,19 +914,18 @@ impl ResourcesScreen {
     ) -> Task<()> {
         cx.spawn(async move |this, cx| {
             let mut last_applied = None;
-            while let Some(mut events) = receiver.recv().await {
+            while let Some(events) = receiver.recv().await {
                 if let Some(due) = last_applied.map(|at| at + WATCH_COALESCE) {
                     let now = cx.background_executor().now();
                     if now < due {
                         cx.background_executor().timer(due - now).await;
                     }
                 }
+                let mut parts = vec![events];
                 while let Ok(more) = receiver.try_recv() {
-                    events.extend(more);
+                    parts.push(more);
                 }
-                let applied = this.update(cx, |view, cx| {
-                    view.apply(ResourceBatch { epoch, events }, cx)
-                });
+                let applied = this.update(cx, |view, cx| view.apply(epoch, parts, cx));
                 if applied.is_err() {
                     break;
                 }
@@ -854,21 +934,22 @@ impl ResourcesScreen {
         })
     }
 
-    fn apply(&mut self, batch: ResourceBatch, cx: &mut Context<Self>) {
+    fn apply(&mut self, epoch: u64, parts: Vec<Vec<ResourceEvent>>, cx: &mut Context<Self>) {
         let _span = crate::perf::span("table.apply");
-        crate::perf::value("table.batch", batch.events.len() as f64);
-        let reset = batch
-            .events
+        let events: usize = parts.iter().map(Vec::len).sum();
+        crate::perf::value("table.batch", events as f64);
+        let reset = parts
             .iter()
+            .flatten()
             .any(|event| matches!(event, ResourceEvent::Reset(_)));
         let served = !matches!(self.store.read_state(), ReadState::Missing(_));
-        let stored = {
+        let changes = {
             let _span = crate::perf::span("table.store");
-            self.store.apply(batch)
+            self.store.apply(epoch, parts)
         };
-        if !stored {
+        let Some(changes) = changes else {
             return;
-        }
+        };
         if served && let ReadState::Missing(_) = self.store.read_state() {
             // Nothing of the kind can be shown any more.
             self.close_detail(cx);
@@ -879,6 +960,8 @@ impl ResourcesScreen {
         self.projection.rebuild(&self.store);
         self.prune_marks();
         if reset {
+            // The list was read again: nothing it shows is a change.
+            self.clear_flash(cx);
             let _span = crate::perf::span("table.layout");
             self.layout = TableLayout::new(
                 &self.store,
@@ -897,6 +980,7 @@ impl ResourcesScreen {
                 self.scroll_to_selection(ScrollStrategy::Nearest);
             }
         }
+        self.flash(changes, cx);
         self.follow_detail(cx);
         cx.notify();
     }

@@ -100,15 +100,29 @@ impl Widest {
     }
 }
 
-/// Events observed within one session. The store applies a batch as one
-/// revision and rejects a batch from any other session, so a late result from
-/// a replaced connection, kind or namespace cannot populate the current view.
-/// A producer captures the epoch `ResourceStore::start_session` returned when
-/// its work began; it never reads the store's epoch when results arrive.
-#[derive(Clone, Debug)]
-pub(crate) struct ResourceBatch {
-    pub(crate) epoch: u64,
-    pub(crate) events: Vec<ResourceEvent>,
+/// The printed columns that tell how an object is doing, for kinds other
+/// than pods: a change to one of them flashes the row.
+const STATUS_COLUMNS: &[&str] = &[
+    "Status",
+    "Ready",
+    "Phase",
+    "Up-to-date",
+    "Available",
+    "Completions",
+    "Conditions",
+];
+
+/// Whether `new` changes how `old` is doing: a pod's state, reason or
+/// restarts, or another kind's [`STATUS_COLUMNS`].
+fn state_changed(old: &ResourceRow, new: &ResourceRow, columns: &[ResourceColumn]) -> bool {
+    if let (Some(old), Some(new)) = (&old.pod, &new.pod) {
+        return old.state != new.state || old.reason != new.reason || old.restarts != new.restarts;
+    }
+    columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| STATUS_COLUMNS.contains(&column.name.as_str()))
+        .any(|(ix, _)| old.cells.get(ix) != new.cells.get(ix))
 }
 
 /// A retained observation plus a search key derived once when it arrives, so
@@ -289,24 +303,52 @@ impl ResourceStore {
         self.slot(identity).map(|slot| &self.entries[slot].row)
     }
 
-    /// Applies every event in order as one revision. Returns false, changing
-    /// nothing, when the batch belongs to another session. Epoch 0 means no
-    /// session has started, so nothing is accepted.
-    pub(crate) fn apply(&mut self, batch: ResourceBatch) -> bool {
-        if self.epoch == 0 || batch.epoch != self.epoch {
-            return false;
+    /// Applies the parts' events in order as one revision. Returns `None`,
+    /// changing nothing, when they belong to another session: a producer
+    /// captures the epoch [`start_session`](Self::start_session) returned
+    /// when its work began, so a late result from a replaced connection,
+    /// kind or namespace cannot populate the current view. Epoch 0 means
+    /// no session has started, so nothing is accepted.
+    ///
+    /// For each part it returns the rows whose state changed in it: a
+    /// pod's state, reason or restarts, or another kind's status cells
+    /// ([`STATUS_COLUMNS`]). A part is what one watch batch sent, so a list
+    /// can flash each as it would have flashed alone. A reset reports
+    /// nothing before it, in its part or earlier ones: the list was read
+    /// again. A row that arrives or goes isn't a change, nor is one that
+    /// changed only its other cells.
+    pub(crate) fn apply(
+        &mut self,
+        epoch: u64,
+        parts: Vec<Vec<ResourceEvent>>,
+    ) -> Option<Vec<Vec<ResourceIdentity>>> {
+        if self.epoch == 0 || epoch != self.epoch {
+            return None;
         }
-        for event in batch.events {
-            match event {
-                ResourceEvent::Reset(snapshot) => self.reset(snapshot),
-                ResourceEvent::Upsert(row) => self.upsert(row),
-                ResourceEvent::Delete(identity) => self.delete(&identity),
-                // A failure with rows on screen leaves them up, marked stale.
-                ResourceEvent::Read(ReadState::Failed(reason)) if !self.entries.is_empty() => {
-                    self.read_state = ReadState::Stale(reason)
+        let mut changes = Vec::with_capacity(parts.len());
+        for events in parts {
+            let mut changed = Vec::new();
+            for event in events {
+                match event {
+                    ResourceEvent::Reset(snapshot) => {
+                        changed.clear();
+                        changes.iter_mut().for_each(Vec::clear);
+                        self.reset(snapshot)
+                    }
+                    ResourceEvent::Upsert(row) => {
+                        if let Some(slot) = self.upsert(row) {
+                            changed.push(self.entries[slot].row.identity.clone());
+                        }
+                    }
+                    ResourceEvent::Delete(identity) => self.delete(&identity),
+                    // A failure with rows on screen leaves them up, marked stale.
+                    ResourceEvent::Read(ReadState::Failed(reason)) if !self.entries.is_empty() => {
+                        self.read_state = ReadState::Stale(reason)
+                    }
+                    ResourceEvent::Read(state) => self.read_state = state,
                 }
-                ResourceEvent::Read(state) => self.read_state = state,
             }
+            changes.push(changed);
         }
         self.node_prefix = rows::shared_prefix(
             self.entries
@@ -315,23 +357,35 @@ impl ResourceStore {
                 .map(|pod| pod.node.as_str()),
         );
         self.revision += 1;
-        true
+        // A part that changed a row twice reports it once.
+        for changed in &mut changes {
+            if changed.len() > 1 {
+                let mut seen = std::collections::HashSet::with_capacity(changed.len());
+                changed.retain(|identity| seen.insert(identity.clone()));
+            }
+        }
+        Some(changes)
     }
 
-    fn upsert(&mut self, row: ResourceRow) {
+    /// Stores the row, and returns its slot when it replaced one whose
+    /// state it changes.
+    fn upsert(&mut self, row: ResourceRow) -> Option<usize> {
         self.widest.include(&row);
         let usage = Self::usage_of(&self.usage, &row);
-        let slot = if let Some(slot) = self.slot(&row.identity) {
-            let seq = self.entries[slot].seq;
+        let (slot, changed) = if let Some(slot) = self.slot(&row.identity) {
+            let old = &self.entries[slot];
+            let changed = state_changed(&old.row, &row, &self.columns);
+            let seq = old.seq;
             self.entries[slot] = ResourceEntry::new(row, seq);
-            slot
+            (slot, changed)
         } else {
             self.index.insert(row.identity.clone(), self.entries.len());
             self.entries.push(ResourceEntry::new(row, self.next_seq));
             self.next_seq += 1;
-            self.entries.len() - 1
+            (self.entries.len() - 1, false)
         };
         self.entries[slot].usage = usage;
+        changed.then_some(slot)
     }
 
     fn delete(&mut self, identity: &ResourceIdentity) {
@@ -366,19 +420,23 @@ mod tests {
     fn loaded(rows: Vec<ResourceRow>) -> ResourceStore {
         let mut store = ResourceStore::new();
         let epoch = store.start_session();
-        assert!(store.apply(ResourceBatch {
-            epoch,
-            events: vec![
-                ResourceEvent::reset(pod_columns(), rows),
-                ResourceEvent::Read(ReadState::Loaded)
-            ],
-        }));
+        assert!(
+            store
+                .apply(
+                    epoch,
+                    vec![vec![
+                        ResourceEvent::reset(pod_columns(), rows),
+                        ResourceEvent::Read(ReadState::Loaded)
+                    ]]
+                )
+                .is_some()
+        );
         store
     }
 
     fn apply(store: &mut ResourceStore, events: Vec<ResourceEvent>) {
         let epoch = store.epoch();
-        assert!(store.apply(ResourceBatch { epoch, events }));
+        assert!(store.apply(epoch, vec![events]).is_some());
     }
 
     fn reset(rows: Vec<ResourceRow>) -> ResourceEvent {
@@ -395,10 +453,7 @@ mod tests {
     #[test]
     fn nothing_is_accepted_before_a_session_starts() {
         let mut store = ResourceStore::new();
-        assert!(!store.apply(ResourceBatch {
-            epoch: 0,
-            events: vec![reset(pod_rows(3))],
-        }));
+        assert!(!store.apply(0, vec![vec![reset(pod_rows(3))]]).is_some());
         assert!(store.is_empty());
     }
 
@@ -412,10 +467,17 @@ mod tests {
         assert!(store.columns().is_empty());
         assert_eq!(store.read_state(), &ReadState::Loading);
         let revision = store.revision();
-        assert!(!store.apply(ResourceBatch {
-            epoch: old_epoch,
-            events: vec![reset(pod_rows(10)), ResourceEvent::Read(ReadState::Loaded)],
-        }));
+        assert!(
+            !store
+                .apply(
+                    old_epoch,
+                    vec![vec![
+                        reset(pod_rows(10)),
+                        ResourceEvent::Read(ReadState::Loaded)
+                    ]]
+                )
+                .is_some()
+        );
         assert!(store.is_empty());
         assert_eq!(store.revision(), revision);
         assert_eq!(store.read_state(), &ReadState::Loading);
@@ -567,10 +629,192 @@ mod tests {
         assert_eq!(store.len(), 3);
         let mut empty = ResourceStore::new();
         let epoch = empty.start_session();
-        empty.apply(ResourceBatch {
+        empty.apply(
             epoch,
-            events: vec![ResourceEvent::Read(ReadState::Failed("gone".into()))],
-        });
+            vec![vec![ResourceEvent::Read(ReadState::Failed("gone".into()))]],
+        );
         assert_eq!(empty.read_state(), &ReadState::Failed("gone".into()));
+    }
+
+    /// The row at `ix` with its pod's restarts one higher.
+    fn restarted(store: &ResourceStore, ix: usize) -> ResourceRow {
+        let mut row = store.entries()[ix].row().clone();
+        let mut pod = (**row.pod.as_ref().expect("a pod row")).clone();
+        pod.restarts += 1;
+        row.pod = Some(std::sync::Arc::new(pod));
+        row
+    }
+
+    fn parts(
+        store: &mut ResourceStore,
+        parts: Vec<Vec<ResourceEvent>>,
+    ) -> Vec<Vec<ResourceIdentity>> {
+        let epoch = store.epoch();
+        store.apply(epoch, parts).expect("the session's batch")
+    }
+
+    #[test]
+    fn a_pods_new_state_is_a_change_and_its_other_cells_are_not() {
+        let mut store = loaded(pod_rows(10));
+        let restarted = restarted(&store, 3);
+        let id = restarted.identity.clone();
+        let mut moved = store.entries()[4].row().clone();
+        moved.resource_version.push('1');
+        moved.cells[0].push('x');
+        let changes = parts(
+            &mut store,
+            vec![vec![
+                ResourceEvent::Upsert(restarted.clone()),
+                ResourceEvent::Upsert(moved),
+                ResourceEvent::Upsert(restarted),
+            ]],
+        );
+        // Once, though it came twice.
+        assert_eq!(changes, vec![vec![id]]);
+    }
+
+    #[test]
+    fn another_kinds_status_cells_are_its_state() {
+        let rows: Vec<ResourceRow> = pod_rows(4)
+            .into_iter()
+            .map(|row| ResourceRow { pod: None, ..row })
+            .collect();
+        let mut store = loaded(rows);
+        let mut status = store.entries()[1].row().clone();
+        status.cells[2] = "Failed".into();
+        let mut restarts = store.entries()[2].row().clone();
+        restarts.cells[3] = "99".into();
+        let changes = parts(
+            &mut store,
+            vec![
+                vec![ResourceEvent::Upsert(status.clone())],
+                vec![ResourceEvent::Upsert(restarts)],
+            ],
+        );
+        assert_eq!(changes, vec![vec![status.identity], vec![]]);
+    }
+
+    #[test]
+    fn lists_arrivals_and_deletes_are_no_change() {
+        let mut store = ResourceStore::new();
+        let epoch = store.start_session();
+        let changes = store.apply(epoch, vec![vec![reset(pod_rows(10))]]).unwrap();
+        assert_eq!(changes, vec![Vec::<ResourceIdentity>::new()]);
+        let gone = store.entries()[0].row().identity.clone();
+        let changes = parts(
+            &mut store,
+            vec![vec![
+                ResourceEvent::Upsert(inserted_pod(99)),
+                ResourceEvent::Delete(gone),
+            ]],
+        );
+        assert_eq!(changes, vec![Vec::<ResourceIdentity>::new()]);
+    }
+
+    #[test]
+    fn a_relist_reports_nothing_before_it_and_what_follows_it() {
+        let mut store = loaded(pod_rows(10));
+        let before = restarted(&store, 1);
+        let after = restarted(&store, 2);
+        let relisted = restarted(&store, 5);
+        let changes = parts(
+            &mut store,
+            vec![
+                vec![ResourceEvent::Upsert(before)],
+                vec![ResourceEvent::Upsert(relisted), reset(pod_rows(10))],
+                vec![ResourceEvent::Upsert(after.clone())],
+            ],
+        );
+        assert_eq!(changes, vec![vec![], vec![], vec![after.identity]]);
+    }
+
+    /// What flashes when the watch's batches arrive at `times` (ms) and
+    /// are applied either one by one or coalesced as the screen does: a
+    /// batch within `WATCH_COALESCE` of the last apply waits and joins the
+    /// next. A batch is how many pods it restarts, or `None` for a relist.
+    fn flashed(batches: &[(u64, Option<usize>)], coalesce: bool) -> Vec<ResourceIdentity> {
+        use freshkube_ui::motion::Flashes;
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let mut store = loaded(pod_rows(40));
+        let mut flashes = Flashes::new();
+        let mut next = 0;
+        let mut pending: Vec<Vec<ResourceEvent>> = Vec::new();
+        let mut last: Option<u64> = None;
+        let apply = |store: &mut ResourceStore,
+                     flashes: &mut Flashes<ResourceIdentity>,
+                     pending: Vec<Vec<ResourceEvent>>,
+                     at: u64| {
+            let relist = pending
+                .iter()
+                .flatten()
+                .any(|event| matches!(event, ResourceEvent::Reset(_)));
+            let changes = parts(store, pending);
+            if relist {
+                flashes.clear();
+            }
+            for part in changes {
+                flashes.changed(part, start + Duration::from_millis(at));
+            }
+        };
+        let mut end = 0;
+        for &(at, batch) in batches {
+            let events = match batch {
+                Some(count) => (0..count)
+                    .map(|_| {
+                        next = (next + 1) % 40;
+                        ResourceEvent::Upsert(restarted(&store, next))
+                    })
+                    .collect(),
+                None => vec![reset(pod_rows(40))],
+            };
+            if !coalesce {
+                apply(&mut store, &mut flashes, vec![events], at);
+                end = at;
+                continue;
+            }
+            // Applied when due: at once if the last apply is old enough.
+            let due = last.map_or(at, |last| (last + 100).max(at));
+            if due > at {
+                pending.push(events);
+            } else {
+                if !pending.is_empty() {
+                    let earlier = std::mem::take(&mut pending);
+                    apply(&mut store, &mut flashes, earlier, at);
+                }
+                apply(&mut store, &mut flashes, vec![events], at);
+                last = Some(at);
+            }
+            end = at;
+        }
+        if !pending.is_empty() {
+            end = last.map_or(end, |last| (last + 100).max(end));
+            apply(&mut store, &mut flashes, pending, end);
+        }
+        let mut live: Vec<ResourceIdentity> = flashes
+            .live(start + Duration::from_millis(end))
+            .map(|flash| flash.key.clone())
+            .collect();
+        live.sort();
+        live
+    }
+
+    #[test]
+    fn coalesced_batches_flash_as_the_watch_sent_them() {
+        let cases: [&[(u64, Option<usize>)]; 3] = [
+            // Three small batches flash; the burst after them doesn't.
+            &[(0, Some(2)), (20, Some(2)), (40, Some(2)), (60, Some(20))],
+            // After a quiet fade, a small batch flashes again.
+            &[(0, Some(20)), (1_600, Some(2)), (1_620, Some(2))],
+            // A relist forgets what came before it; what follows flashes.
+            &[(0, Some(3)), (30, None), (60, Some(2))],
+        ];
+        for (ix, batches) in cases.into_iter().enumerate() {
+            let alone = flashed(batches, false);
+            assert!(!alone.is_empty(), "case {ix} flashes something");
+            assert_eq!(alone, flashed(batches, true), "case {ix}");
+        }
+        assert_eq!(flashed(cases[0], true).len(), 6);
+        assert_eq!(flashed(cases[2], true).len(), 2);
     }
 }

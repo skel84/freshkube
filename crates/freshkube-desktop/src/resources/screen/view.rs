@@ -463,6 +463,7 @@ impl Render for ResourcesScreen {
         let _span = crate::perf::span("table.render");
         let _page = crate::perf::span("page.render");
         self.status();
+        self.flash_rows_changed(cx);
         // A dock that opens or grows takes the list's room from below;
         // the list scrolls as it lays out to keep its selection in sight.
         let below = page::below();
