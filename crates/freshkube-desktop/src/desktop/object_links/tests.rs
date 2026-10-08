@@ -670,3 +670,72 @@ async fn cancelling_an_object_open_drops_its_answer(cx: &mut TestAppContext) {
     assert_eq!(applied.get(), 0);
     assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_none()));
 }
+
+/// What the link would open in: nothing, or the open object's identity.
+fn opened(
+    pilot: &gpui_kit::Entity<crate::desktop::Pilot>,
+    cx: &gpui_kit::App,
+) -> Option<ResourceIdentity> {
+    pilot
+        .read(cx)
+        .resources
+        .read(cx)
+        .detail_identity(cx)
+        .cloned()
+}
+
+fn link_to(
+    identity: &ResourceIdentity,
+    connection: Option<String>,
+) -> crate::resources::ResourceLink {
+    let mut object: crate::resources::model::ObjectRef = identity.clone().into();
+    object.connection = connection;
+    crate::resources::ResourceLink::Object(example::kind("pods").unwrap(), object, Tab::Overview)
+}
+
+#[gpui_kit::test]
+fn a_link_made_in_the_open_cluster_opens_its_object(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
+    let (identity, _) = pod();
+    cx.update_window(handle, |_, window, cx| {
+        // `From<ResourceIdentity>` names the identity's own connection.
+        let link = link_to(&identity, Some(identity.connection.clone()));
+        pilot.update(cx, |pilot, cx| pilot.resource_link(link, window, cx));
+        window.render_frame(cx);
+        assert_eq!(
+            opened(&pilot, cx).map(|opened| opened.name),
+            Some(identity.name.clone())
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_link_made_in_another_cluster_opens_nothing_here(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
+    let (identity, _) = pod();
+    cx.update_window(handle, |_, window, cx| {
+        let page = pilot.read(cx).page;
+        // The same pod name exists here, in this cluster. The link names
+        // another one, so it is not this pod.
+        let other = crate::resources::example::connection("staging-eu");
+        assert_ne!(other, identity.connection);
+        let link = link_to(&identity, Some(other.clone()));
+        pilot.update(cx, |pilot, cx| pilot.resource_link(link, window, cx));
+        window.render_frame(cx);
+        assert_eq!(opened(&pilot, cx), None);
+        assert_eq!(pilot.read(cx).page, page, "no page change either");
+        // The owner path refuses it too, before reading anything.
+        let mut object: crate::resources::model::ObjectRef = identity.clone().into();
+        object.connection = Some(other);
+        let owner = crate::resources::ResourceLink::Owner {
+            api_version: "apps/v1".into(),
+            kind: "ReplicaSet".into(),
+            object,
+        };
+        pilot.update(cx, |pilot, cx| pilot.resource_link(owner, window, cx));
+        assert!(pilot.read(cx).object_open_job.is_none());
+        assert_eq!(opened(&pilot, cx), None);
+    })
+    .unwrap();
+}

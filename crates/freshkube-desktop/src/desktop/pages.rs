@@ -607,6 +607,9 @@ impl Pilot {
             self.open_kind(kind, window, cx);
             return;
         };
+        if self.refuse_foreign_link(&object, window, cx) {
+            return;
+        }
         let identity = resources::model::ResourceIdentity {
             connection: source.id.clone(),
             resource: kind.key(),
@@ -629,6 +632,31 @@ impl Pilot {
             return;
         }
         self.resolve_identity_remote(source, kind, object, identity, tab, window, cx);
+    }
+
+    /// A link made in another cluster than the one that is open is never
+    /// opened against this one: the same name here is a different object.
+    /// Says so and returns true.
+    pub(super) fn refuse_foreign_link(
+        &self,
+        object: &resources::model::ObjectRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(connection) = &object.connection else {
+            return false;
+        };
+        if self.kube_identity().is_none_or(|open| open == *connection) {
+            return false;
+        }
+        window.push_notification(
+            format!(
+                "Can’t open {}: it belongs to a cluster that isn’t open",
+                object.name
+            ),
+            cx,
+        );
+        true
     }
 
     /// Finds the object's UID without a read: in the open list, or, with

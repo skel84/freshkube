@@ -52,6 +52,9 @@ impl Pilot {
                     }
                     return;
                 }
+                if self.refuse_foreign_link(&object, window, cx) {
+                    return;
+                }
                 let Some(source) = self.kube_source() else {
                     return;
                 };
