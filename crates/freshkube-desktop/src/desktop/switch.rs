@@ -300,7 +300,8 @@ impl Pilot {
             self.sync_nodes_source_mode();
             self.applied.path = Some(talosconfig.clone());
             self.applied.context = entry.talos_context.clone();
-            self.entry_open = Some(EntryOpen {
+            // Only an entry that names no Talos context needs the rule for one.
+            self.entry_open = entry.talos_context.is_none().then(|| EntryOpen {
                 id: entry.id.clone(),
                 context: entry.context.clone(),
                 kubeconfig: workspace.kubeconfig.clone(),
