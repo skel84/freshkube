@@ -1,5 +1,6 @@
 use super::*;
 use crate::logs::TalosPanel;
+use crate::mutation::Running;
 use freshkube_ui::status::Segment;
 
 impl Pilot {
@@ -13,45 +14,12 @@ impl Pilot {
         let compact = window.viewport_size().width < ui::dp_px(1080., window);
         // Narrow, the shell's status gives a page's segment its room.
         let glyph_only = compact && segment.is_some();
-        let status = Self::status(&self.overview);
         let context = self.applied.context.clone().unwrap_or_default();
-        let glyph = |tone: Tone| ui::status_glyph(tone, cx);
         // The context the shell's status names, which a page's segment then
         // leaves out.
         let mut named = None;
         let left = if let Some(running) = Operations::current(cx) {
-            let cancelling = running.cancel_requested();
-            let line = match (&running.step, cancelling) {
-                (_, true) => format!("{} · stopping after the current step…", running.label),
-                (Some(step), false) => format!("{} · {step}", running.label),
-                (None, false) => running.label.to_string(),
-            };
-            h_flex()
-                .id("operation-status")
-                .test_support()
-                .role(Role::Status)
-                .aria_label(line.clone())
-                .gap_2()
-                .min_w_0()
-                .child(
-                    Icon::new(IconName::LoaderCircle)
-                        .size(dp(13.))
-                        .text_color(p.accent),
-                )
-                .child(div().min_w_0().truncate().child(line))
-                .child(
-                    Button::new("operation-cancel")
-                        .ghost()
-                        .xsmall()
-                        .label("Cancel")
-                        .disabled(cancelling)
-                        .tooltip("Stop before the next step; a step already sent still completes")
-                        .on_click(|_, _, cx| {
-                            Operations::global(cx)
-                                .update(cx, |operations, cx| operations.request_cancel(cx))
-                        }),
-                )
-                .into_any_element()
+            self.render_operation_status(running, cx)
         } else if self.kubernetes_only.is_some() {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
             named = names.then(|| context.clone());
@@ -61,9 +29,91 @@ impl Pilot {
             && self.node_workspace.tab == crate::desktop::nodes::NodeTab::Logs)
             && self.config_error.is_none()
         {
-            let logs = self.logs.read(cx);
-            let line = logs.status_line();
-            h_flex()
+            self.render_logs_status(cx)
+        } else {
+            let (status, names) = self.render_overview_status(&context, glyph_only, cx);
+            named = names;
+            status
+        };
+        let page = segment.and_then(|(id, segment)| {
+            freshkube_ui::status::segment(id, &segment, named.as_deref(), cx)
+        });
+        let right = self.render_status_right(compact, cx);
+        StatusBar::new()
+            .h(dp(freshkube_ui::page::STATUS_BAR_HEIGHT))
+            .px_3()
+            .text_size(dp(11.5))
+            // The bar's centre takes only the room the right side leaves, so
+            // a long segment truncates instead of pushing the right side out;
+            // Kit's left region would shrink with it.
+            .child(
+                h_flex()
+                    .id("status-bar")
+                    .test_support()
+                    .min_w_0()
+                    .gap_3()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .when(page.is_some(), |this| this.flex_none().max_w(dp(360.)))
+                            .when(compact && page.is_none(), |this| this.max_w(dp(160.)))
+                            .child(left),
+                    )
+                    .children(page.map(|page| {
+                        h_flex()
+                            .min_w_0()
+                            .gap_3()
+                            .child(div().flex_none().w(px(1.)).h(dp(14.)).bg(p.line))
+                            .child(page)
+                    })),
+            )
+            .right(right.child(self.fps.clone()))
+            .into_any_element()
+    }
+
+    /// A running operation's step, with Cancel.
+    fn render_operation_status(&self, running: Running, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let cancelling = running.cancel_requested();
+        let line = match (&running.step, cancelling) {
+            (_, true) => format!("{} · stopping after the current step…", running.label),
+            (Some(step), false) => format!("{} · {step}", running.label),
+            (None, false) => running.label.to_string(),
+        };
+        h_flex()
+            .id("operation-status")
+            .test_support()
+            .role(Role::Status)
+            .aria_label(line.clone())
+            .gap_2()
+            .min_w_0()
+            .child(
+                Icon::new(IconName::LoaderCircle)
+                    .size(dp(13.))
+                    .text_color(p.accent),
+            )
+            .child(div().min_w_0().truncate().child(line))
+            .child(
+                Button::new("operation-cancel")
+                    .ghost()
+                    .xsmall()
+                    .label("Cancel")
+                    .disabled(cancelling)
+                    .tooltip("Stop before the next step; a step already sent still completes")
+                    .on_click(|_, _, cx| {
+                        Operations::global(cx)
+                            .update(cx, |operations, cx| operations.request_cancel(cx))
+                    }),
+            )
+            .into_any_element()
+    }
+
+    /// The node's log, while the Nodes pane shows its Logs tab.
+    fn render_logs_status(&self, cx: &mut Context<Self>) -> AnyElement {
+        let glyph = |tone: Tone| ui::status_glyph(tone, cx);
+        let logs = self.logs.read(cx);
+        let line = logs.status_line();
+        h_flex()
                 .id("logs-status")
                 .test_support()
                 .role(Role::Status)
@@ -83,48 +133,65 @@ impl Pilot {
                     .build(window, cx)
                 })
                 .into_any_element()
+    }
+
+    /// The Talos overview's state, and the context it names, if any.
+    fn render_overview_status(
+        &self,
+        context: &str,
+        glyph_only: bool,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, Option<String>) {
+        let p = palette(cx);
+        let status = Self::status(&self.overview);
+        let glyph = |tone: Tone| ui::status_glyph(tone, cx);
+        let mut named = None;
+        let (indicator, text) = if let Some(error) = &self.config_error {
+            (
+                glyph(Tone::Crit),
+                format!("No configuration loaded: {error}"),
+            )
+        } else if self.config_loading
+            || (self.overview.is_loading() && self.overview.data().is_none())
+        {
+            named = Some(context.to_owned());
+            (
+                Some(
+                    Icon::new(IconName::RefreshCw)
+                        .size(dp(13.))
+                        .text_color(p.accent)
+                        .into_any_element(),
+                ),
+                format!("Connecting to {context}…"),
+            )
+        } else if self.overview.is_stale() {
+            (
+                glyph(Tone::Warn),
+                "Showing the previous snapshot".to_owned(),
+            )
+        } else if self.overview.data().is_some() {
+            named = Some(context.to_owned());
+            (glyph(Tone::Good), self.context_display.status.to_string())
         } else {
-            let (indicator, text) = if let Some(error) = &self.config_error {
-                (
-                    glyph(Tone::Crit),
-                    format!("No configuration loaded: {error}"),
-                )
-            } else if self.config_loading
-                || (self.overview.is_loading() && self.overview.data().is_none())
-            {
-                named = Some(context.clone());
-                (
-                    Some(
-                        Icon::new(IconName::RefreshCw)
-                            .size(dp(13.))
-                            .text_color(p.accent)
-                            .into_any_element(),
-                    ),
-                    format!("Connecting to {context}…"),
-                )
-            } else if self.overview.is_stale() {
-                (
-                    glyph(Tone::Warn),
-                    "Showing the previous snapshot".to_owned(),
-                )
-            } else if self.overview.data().is_some() {
-                named = Some(context.clone());
-                (glyph(Tone::Good), self.context_display.status.to_string())
-            } else {
-                (
-                    glyph(Tone::Unknown),
-                    self.overview
-                        .error()
-                        .map(|error| format!("Unavailable: {error}"))
-                        .unwrap_or_else(|| "Unavailable".into()),
-                )
-            };
-            status_text("overview-status", status, indicator, text, glyph_only)
+            (
+                glyph(Tone::Unknown),
+                self.overview
+                    .error()
+                    .map(|error| format!("Unavailable: {error}"))
+                    .unwrap_or_else(|| "Unavailable".into()),
+            )
         };
-        let page = segment.and_then(|(id, segment)| {
-            freshkube_ui::status::segment(id, &segment, named.as_deref(), cx)
-        });
-        let right = if self.kubernetes_only.is_some() {
+        (
+            status_text("overview-status", status, indicator, text, glyph_only),
+            named,
+        )
+    }
+
+    /// The bar's right side: the dock and forwards, then the Talos refresh
+    /// or the Kubernetes-only tag, and example mode's controls.
+    fn render_status_right(&self, compact: bool, cx: &mut Context<Self>) -> Div {
+        let p = palette(cx);
+        if self.kubernetes_only.is_some() {
             h_flex()
                 .flex_none()
                 .gap_3()
@@ -183,37 +250,7 @@ impl Pilot {
                 .when(self.fixture, |this| {
                     this.child(ui::tag(Tone::Outline, None, "Example data", cx))
                 })
-        };
-        StatusBar::new()
-            .h(dp(freshkube_ui::page::STATUS_BAR_HEIGHT))
-            .px_3()
-            .text_size(dp(11.5))
-            // The bar's centre takes only the room the right side leaves, so
-            // a long segment truncates instead of pushing the right side out;
-            // Kit's left region would shrink with it.
-            .child(
-                h_flex()
-                    .id("status-bar")
-                    .test_support()
-                    .min_w_0()
-                    .gap_3()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .when(page.is_some(), |this| this.flex_none().max_w(dp(360.)))
-                            .when(compact && page.is_none(), |this| this.max_w(dp(160.)))
-                            .child(left),
-                    )
-                    .children(page.map(|page| {
-                        h_flex()
-                            .min_w_0()
-                            .gap_3()
-                            .child(div().flex_none().w(px(1.)).h(dp(14.)).bg(p.line))
-                            .child(page)
-                    })),
-            )
-            .right(right.child(self.fps.clone()))
-            .into_any_element()
+        }
     }
 
     /// The visible page's segment of the status bar, and its id. A page
