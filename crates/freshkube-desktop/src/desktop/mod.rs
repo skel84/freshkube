@@ -1223,8 +1223,16 @@ impl Pilot {
                                     cx.notify();
                                     return;
                                 }
-                            } else {
+                            } else if view.contexts.contains(&catalog.current) {
                                 view.applied.context = Some(catalog.current);
+                            } else {
+                                view.config_error = Some(format!(
+                                    "Talos context '{}' was not found",
+                                    catalog.current
+                                ));
+                                view.rebuild_joined_nodes(cx);
+                                cx.notify();
+                                return;
                             }
                         }
                         view.remember_connection(window, cx);

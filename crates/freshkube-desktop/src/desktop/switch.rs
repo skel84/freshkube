@@ -188,6 +188,8 @@ impl Pilot {
         self.entry_open = None;
         self.entry_locate = None;
         self.entry_generation = self.entry_generation.wrapping_add(1);
+        self.restored_taken = None;
+        self.age_label.update(cx, |label, cx| label.set(None, cx));
         NavigationFile::global(cx).clear_active_cluster(cx);
         cx.notify();
     }
@@ -507,6 +509,11 @@ impl AgeLabel {
             })
         });
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_idle(&self) -> bool {
+        self.taken.is_none() && self._timer.is_none() && self.text.is_empty()
     }
 
     fn refresh_text(&mut self) {

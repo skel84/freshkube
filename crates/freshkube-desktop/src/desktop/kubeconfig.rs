@@ -58,6 +58,8 @@ impl Pilot {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
+            // After the shell question, so Cancel keeps the entry.
+            this.leave_entry(cx);
             this.kubeconfig = selection;
             this.invalidate_target(window, cx);
             this.refresh(window, cx);
@@ -76,7 +78,6 @@ impl Pilot {
         if self.fixture {
             return;
         }
-        self.leave_entry(cx);
         self.kubeconfig_draft.mode = mode;
         match mode {
             KubeconfigMode::Automatic => {
@@ -118,7 +119,6 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         if let Some(selection) = self.kubeconfig_file_selection(Some(context)) {
-            self.leave_entry(cx);
             self.apply_kubeconfig(selection, window, cx);
         }
     }

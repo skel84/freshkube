@@ -1,7 +1,7 @@
 //! Switching between the clusters of the workspace file.
 use super::session::SessionKey;
 use super::tests::{fixture, mount, start_shell};
-use super::{Page, Pilot};
+use super::{KubeconfigSelection, Page, Pilot};
 use crate::GpuiOptions;
 use crate::navigation_file::NavigationFile;
 use crate::resources::{example, live, shell};
@@ -303,6 +303,86 @@ fn switching_asks_before_ending_a_running_shell(cx: &mut TestAppContext) {
     assert!(cx.read(shell::running_anywhere).is_empty());
 }
 
+#[gpui_kit::test]
+fn cancelling_the_shell_question_for_a_kubeconfig_pick_keeps_the_entry(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 800.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.switch_cluster("dev-fra".into(), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(active(cx, &view), key("dev-fra"));
+    let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
+    let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
+    let pod = rows
+        .iter()
+        .find(|row| row.cells[2] == "Running")
+        .unwrap()
+        .identity
+        .clone();
+    start_shell(handle, &view, &pod, cx);
+    // Example mode ignores kubeconfig picks; let this one through to the question.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.fixture = false;
+            pilot.apply_kubeconfig(KubeconfigSelection::TalosControlPlane, window, cx);
+        });
+    })
+    .unwrap();
+    assert!(cx.pending_prompt().is_some());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    cx.update(|cx| view.update(cx, |pilot, _| pilot.fixture = true));
+    assert_eq!(active(cx, &view), key("dev-fra"));
+}
+
+#[gpui_kit::test]
+async fn a_talosconfig_whose_current_context_names_nothing_still_opens_an_entry(
+    cx: &mut TestAppContext,
+) {
+    // Its `context:` is not among its contexts; the entry's own is.
+    let config = "context: gone\ncontexts:\n  acme-mgmt:\n    endpoints: [127.0.0.1]\n    ca: YQ==\n    crt: Yg==\n    key: Yw==\n";
+    let guard = talos_folder_with(config, true);
+    let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
+    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+        let pilot = view.read(cx);
+        !pilot.config_loading && pilot.applied.context.as_deref() == Some("acme-mgmt")
+    })
+    .await;
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert!(pilot.config_error.is_none(), "{:?}", pilot.config_error);
+        assert!(pilot.kubernetes_only.is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn leaving_an_entry_stops_the_last_known_label(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 800.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.restored_taken = Some(std::time::SystemTime::now());
+            pilot
+                .age_label
+                .update(cx, |label, cx| label.set(pilot.restored_taken, cx));
+            pilot.switch_cluster("dev-fra".into(), window, cx);
+            pilot.restored_taken = Some(std::time::SystemTime::now());
+            pilot
+                .age_label
+                .update(cx, |label, cx| label.set(pilot.restored_taken, cx));
+            pilot.leave_entry(cx);
+        });
+    })
+    .unwrap();
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.restored_taken, None);
+        assert!(pilot.age_label.read(cx).is_idle());
+    });
+}
+
 /// A preferences folder with a workspace file whose entries read files that
 /// do not exist, so a launch connects to nothing and reads nothing outside
 /// the folder.
@@ -477,15 +557,27 @@ const TALOSCONFIG_ONLY_OTHER: &str = "context: other\ncontexts:\n  other:\n    e
 const KUBECONFIG: &str = "apiVersion: v1\nkind: Config\ncurrent-context: alpha\nclusters:\n- name: example\n  cluster:\n    server: https://127.0.0.1:1\ncontexts:\n- name: alpha\n  context:\n    cluster: example\n    user: example\n- name: beta\n  context:\n    cluster: example\n    user: example\nusers:\n- name: example\n  user:\n    token: not-a-real-token\n";
 
 /// A folder with one Talos entry (`acme-mgmt`, no `talos_context`) over
-/// `talosconfig`, and no workspace kubeconfig.
+/// `talosconfig`, and no workspace kubeconfig. A Kubernetes-only open with
+/// none reads the home default, so `with_kubeconfig` names one in the folder.
 fn talos_folder(talosconfig: &str) -> tempfile::TempDir {
+    talos_folder_with(talosconfig, false)
+}
+
+fn talos_folder_with(talosconfig: &str, with_kubeconfig: bool) -> tempfile::TempDir {
     let guard = tempfile::tempdir().unwrap();
     let file = guard.path().join("talosconfig");
     std::fs::write(&file, talosconfig).unwrap();
+    let kubeconfig = if with_kubeconfig {
+        let path = guard.path().join("kubeconfig");
+        std::fs::write(&path, KUBECONFIG.replace("alpha", "acme-mgmt")).unwrap();
+        format!(r#","kubeconfig":{}"#, serde_json::to_string(&path).unwrap())
+    } else {
+        String::new()
+    };
     std::fs::write(
         guard.path().join("workspace.json"),
         format!(
-            r#"{{"version":1,"clusters":[{{"id":"mgmt","role":"core","context":"acme-mgmt","talosconfig":{}}}]}}"#,
+            r#"{{"version":1,"clusters":[{{"id":"mgmt","role":"core","context":"acme-mgmt","talosconfig":{}{kubeconfig}}}]}}"#,
             serde_json::to_string(&file).unwrap()
         ),
     )
@@ -517,8 +609,7 @@ async fn a_talos_entry_takes_the_context_it_names_never_the_files_current_one(
 async fn a_talos_entry_the_file_has_no_context_for_opens_with_its_kubeconfig_context_alone(
     cx: &mut TestAppContext,
 ) {
-    let guard = talos_folder(TALOSCONFIG_ONLY_OTHER);
-    super::switch::search_kubeconfigs_in(vec![guard.path().join("none")]);
+    let guard = talos_folder_with(TALOSCONFIG_ONLY_OTHER, true);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
     cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
         view.read(cx).kubernetes_only.is_some()
