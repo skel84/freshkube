@@ -10,8 +10,7 @@ use talos_rs::{
 /// What example data never answers, so the pages that wait for it stay on
 /// their loading rows, for captures and the stress binary:
 /// `FRESHKUBE_FIXTURE_HOLD=talos` holds the Talos overview and the
-/// Kubernetes summary (Nodes, System services, Operations) and maintenance's
-/// first read of its node, `lists` the Resources lists,
+/// Kubernetes summary (Nodes, System services, Operations), `lists` the Resources lists,
 /// `coroot` Observability's applications, incidents and traces, `all`
 /// every one. Debug and stress builds only; a release build ignores it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

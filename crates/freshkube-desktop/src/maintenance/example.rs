@@ -41,8 +41,7 @@ impl MaintenanceView {
                 Theme::change(mode, Some(window), cx)
             });
         }
-        let held = crate::fixture::hold().talos;
-        let mut view = Self::with_runner(NODE.into(), runtime, runner(held), window, cx);
+        let mut view = Self::with_runner(NODE.into(), runtime, runner(), window, cx);
         view.example = true;
         let output = output.display().to_string();
         view.fields
@@ -87,16 +86,8 @@ impl MaintenanceView {
 }
 
 /// The example node: it inspects and generates, and refuses everything else.
-/// `held` (`FRESHKUBE_FIXTURE_HOLD=talos`) leaves its first read unanswered.
-pub(super) fn runner(held: bool) -> Runner {
-    Arc::new(move |action, _| {
-        Box::pin(async move {
-            if held && matches!(action, MaintenanceAction::CollectInsecure { .. }) {
-                std::future::pending::<()>().await;
-            }
-            answer(action)
-        })
-    })
+pub(super) fn runner() -> Runner {
+    Arc::new(|action, _| Box::pin(async move { answer(action) }))
 }
 
 pub(super) fn answer(action: MaintenanceAction) -> MaintenanceEvent {

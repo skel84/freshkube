@@ -42,9 +42,6 @@ struct World {
     /// Bootstrap waits until released or cancelled.
     hold_bootstrap: bool,
     release_bootstrap: Arc<AtomicBool>,
-    /// The first read waits until released or cancelled.
-    hold_collection: bool,
-    release_collection: Arc<AtomicBool>,
 }
 
 impl World {
@@ -63,8 +60,6 @@ impl World {
             fail_collection: false,
             hold_bootstrap: false,
             release_bootstrap: Arc::default(),
-            hold_collection: false,
-            release_collection: Arc::default(),
         }
     }
 
@@ -118,12 +113,6 @@ impl World {
         match action {
             MaintenanceAction::CollectInsecure { endpoint } => {
                 self.log("collect");
-                while self.hold_collection && !self.release_collection.load(Ordering::SeqCst) {
-                    if cancelled() {
-                        return MaintenanceEvent::Cancelled;
-                    }
-                    tokio::time::sleep(Duration::from_millis(2)).await;
-                }
                 if self.fail_collection {
                     return MaintenanceEvent::OperationFailed(
                         MaintenanceError::InsecureDiskCollectionFailed {
@@ -1118,36 +1107,4 @@ async fn a_stacked_form_fills_the_row(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
-}
-
-/// While the node is first read, its disks' table shows the shared loading
-/// rows, moved by its motion; the disks replace them when it answers.
-#[gpui_kit::test]
-async fn the_disks_show_loading_rows_while_the_node_is_read(cx: &mut TestAppContext) {
-    let mut world = World::new("disks-loading");
-    world.hold_collection = true;
-    let (_runtime, handle, view) = mount(cx, &world, NODE);
-    use_output_directory(cx, handle, &view, &world);
-    click(cx, handle, "maint-start");
-    let motion = |cx: &mut TestAppContext| {
-        cx.read(|cx| view.read(cx).loading.motion(view.read(cx).collecting()))
-    };
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let rows = window.find("maint-disks-loading").bounds();
-        let table = window.find("maint-disks-list").bounds();
-        assert!(table.contains(&rows.origin), "{rows:?} {table:?}");
-        assert!(window.try_find(("maint-disk-select", 0usize)).is_none());
-    })
-    .unwrap();
-    assert!(motion(cx).is_some());
-    world.release_collection.store(true, Ordering::SeqCst);
-    wait_phase(cx, handle, &view, BootstrapPhase::SelectingInstallTarget).await;
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(window.try_find("maint-disks-loading").is_none());
-        assert!(window.find(("maint-disk-select", 0usize)).visible());
-    })
-    .unwrap();
-    assert!(motion(cx).is_none());
 }

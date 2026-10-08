@@ -118,8 +118,6 @@ pub(crate) struct MaintenanceView {
     review: Option<Review>,
     /// The install disks' table, derived when the session changes.
     disks: Disks,
-    /// The disks' loading rows while the node is first read.
-    loading: crate::screens::TableLoading,
     /// Example data (debug builds): the session stops at the review.
     example: bool,
     error: Option<String>,
@@ -230,7 +228,6 @@ impl MaintenanceView {
             auto_poll: false,
             review: None,
             disks: Disks::default(),
-            loading: crate::screens::TableLoading::new("maint-disks", cx),
             example: false,
             error: None,
             progress: ProgressLog::default(),
