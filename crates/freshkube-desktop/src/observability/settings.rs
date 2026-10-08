@@ -3,7 +3,8 @@ use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 impl ObservabilityPage {
     pub(super) fn read_placeholder(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        if self.fixture {
+        // A table shows its own loading rows.
+        if self.fixture || self.first_read() {
             return None;
         }
         let (has_data, loading, error) = match self.destination {

@@ -80,6 +80,9 @@ impl TableColumn for Column {
 
 pub(in crate::observability) struct PatternTable {
     state: TableState,
+    /// The loading rows while the patterns asked for are still to come.
+    loading: crate::screens::TableLoading,
+    waiting: bool,
     columns: Vec<Column>,
     width: f32,
     rows: Rc<Vec<PatternRow>>,
@@ -88,11 +91,14 @@ pub(in crate::observability) struct PatternTable {
 }
 
 impl PatternTable {
-    pub(super) fn new(page: WeakEntity<ObservabilityPage>) -> Self {
+    pub(super) fn new(page: WeakEntity<ObservabilityPage>, cx: &mut App) -> Self {
+        let columns = columns(&[]);
         Self {
             state: TableState::new("obs-log-patterns"),
-            columns: vec![],
-            width: 0.,
+            loading: crate::screens::TableLoading::new("obs-log-patterns", cx),
+            waiting: false,
+            width: columns.iter().map(|c| c.width).sum(),
+            columns,
             rows: Rc::default(),
             selected: None,
             page,
@@ -101,40 +107,25 @@ impl PatternTable {
 
     /// Coroot's patterns, in its order: the most frequent first.
     pub(super) fn set(&mut self, rows: Rc<Vec<PatternRow>>, cx: &mut Context<Self>) {
-        let column = |kind, label: &str, texts: Vec<&SharedString>, most| Column {
-            kind,
-            width: shared::fit(label, texts.into_iter(), most),
-            label: label.to_owned().into(),
-        };
-        self.columns = vec![
-            Column {
-                kind: Kind::Glyph,
-                label: SharedString::default(),
-                width: shared::GLYPH_WIDTH,
-            },
-            column(
-                Kind::Level,
-                "Level",
-                rows.iter().map(|r| &r.level).collect(),
-                shared::WIDEST,
-            ),
-            column(
-                Kind::Count,
-                "Messages",
-                rows.iter().map(|r| &r.count).collect(),
-                shared::WIDEST,
-            ),
-            column(
-                Kind::Sample,
-                "Pattern",
-                rows.iter().map(|r| &r.sample).collect(),
-                shared::WIDEST_FLEXIBLE,
-            ),
-        ];
+        self.columns = columns(&rows);
         self.width = self.columns.iter().map(|c| c.width).sum();
         self.selected = self.selected.filter(|&ix| ix < rows.len());
         self.rows = rows;
         cx.notify();
+    }
+
+    /// Whether the table waits for the patterns the query asked for, and
+    /// shows its loading rows meanwhile.
+    pub(super) fn set_waiting(&mut self, waiting: bool, cx: &mut Context<Self>) {
+        if self.waiting != waiting {
+            self.waiting = waiting;
+            cx.notify();
+        }
+    }
+
+    /// The motion over the loading rows, while the table waits.
+    pub(super) fn loading_motion(&self) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.waiting)
     }
 
     pub(super) fn rows(&self) -> &Rc<Vec<PatternRow>> {
@@ -146,11 +137,54 @@ impl PatternTable {
     }
 }
 
+/// The columns for these patterns: fixed, fitted to their texts.
+fn columns(rows: &[PatternRow]) -> Vec<Column> {
+    let column = |kind, label: &str, texts: Vec<&SharedString>, most| Column {
+        kind,
+        width: shared::fit(label, texts.into_iter(), most),
+        label: label.to_owned().into(),
+    };
+    vec![
+        Column {
+            kind: Kind::Glyph,
+            label: SharedString::default(),
+            width: shared::GLYPH_WIDTH,
+        },
+        column(
+            Kind::Level,
+            "Level",
+            rows.iter().map(|r| &r.level).collect(),
+            shared::WIDEST,
+        ),
+        column(
+            Kind::Count,
+            "Messages",
+            rows.iter().map(|r| &r.count).collect(),
+            shared::WIDEST,
+        ),
+        column(
+            Kind::Sample,
+            "Pattern",
+            rows.iter().map(|r| &r.sample).collect(),
+            shared::WIDEST_FLEXIBLE,
+        ),
+    ]
+}
+
+/// The loading rows a table of patterns shows.
+const LOADING_LINES: usize = 6;
+
 impl Render for PatternTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.loading.show(self.waiting);
+        let lines = if self.waiting {
+            LOADING_LINES
+        } else {
+            self.rows.len().clamp(1, MOST_LINES)
+        };
         DataTable::new()
             .carded()
-            .fit(self.rows.len().clamp(1, MOST_LINES))
+            .fit(lines)
             .render(self, window, cx)
     }
 }
@@ -237,6 +271,9 @@ impl TableSource for PatternTable {
     }
     fn group(&self, _: usize, _: &mut Context<Self>) -> Option<AnyElement> {
         None
+    }
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
     }
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         self.rows

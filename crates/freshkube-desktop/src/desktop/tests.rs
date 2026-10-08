@@ -1987,21 +1987,24 @@ fn screen_tables_show_the_shared_loading_rows_until_the_first_answer(cx: &mut Te
     let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
     cx.update(|cx| cx.set_reduce_motion(false));
     let pages = [
-        ("secondary-5", "workloads", "Workloads"),
-        ("secondary-6", "etcd", "etcd"),
-        ("secondary-8", "security", "Security"),
-        ("secondary-9", "lifecycle", "Lifecycle"),
+        (Page::Health, "workloads", "Workloads"),
+        (Page::Etcd, "etcd", "etcd"),
+        (Page::Security, "security", "Security"),
+        (Page::Operations, "ops", "Operations"),
+        // Last: the answer below is checked on it.
+        (Page::Lifecycle, "lifecycle", "Lifecycle"),
     ];
-    for (key, prefix, title) in pages {
-        cx.update_window(handle, |_, window, cx| window.press(key, cx))
-            .unwrap();
+    for (page, prefix, title) in pages {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.navigate(page, window, cx))
+        })
+        .unwrap();
         cx.run_until_parked();
         motion_frame(cx, handle);
         assert!(motion_frame(cx, handle) > 0, "{prefix}'s rows move");
         cx.update_window(handle, |_, window, cx| {
             let loading: &'static str = format!("{prefix}-loading").leak();
             assert!(window.find(loading).visible());
-            assert!(window.try_find("screen-waiting").is_none());
             super::layout_check::assert_edge_frame(
                 window,
                 cx,
@@ -3503,7 +3506,6 @@ fn kubernetes_only_health_failure(
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("screen-no-node").is_none());
-        assert!(window.try_find("screen-waiting").is_none());
         assert!(window.try_find("workloads-loading").is_none());
         match &view.read(cx).summary_health {
             Some(Err(reason)) => reason.clone(),

@@ -78,6 +78,11 @@ impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 
 pub(crate) struct ObservabilityPage {
     fixture: bool,
+    /// Example data holds its applications, incidents and traces
+    /// (`fixture::hold`), so their tables stay on their loading rows.
+    hold: bool,
+    /// The shown table's loading rows until its first answer.
+    loading: crate::screens::TableLoading,
     live: connection::Live,
     url: Entity<InputState>,
     secret: Entity<InputState>,
@@ -319,6 +324,8 @@ impl ObservabilityPage {
         };
         let mut this = Self {
             fixture,
+            hold: fixture && crate::fixture::hold().coroot,
+            loading: crate::screens::TableLoading::new("obs-table", cx),
             live: connection::Live::new(runtime, cx.background_executor().now()),
             url,
             secret,
@@ -406,13 +413,17 @@ impl ObservabilityPage {
         };
         this.visible_frames = (0..this.frames.len()).collect();
         this.flame_matches = vec![true; this.frames.len()];
-        if fixture {
+        if fixture && !this.hold {
             this.apply_applications(&example::applications());
             this.answer_example_incidents();
         }
         this.fill_from_memory(window, cx);
         this.project();
+        // Every table's header is known before its first answer, which its
+        // loading rows sit under.
         this.prepare_application_columns();
+        this.prepare_incident_columns();
+        this.prepare_trace_columns();
         this.prepare_map();
         this.prepare_report();
         this.prepare_release();
