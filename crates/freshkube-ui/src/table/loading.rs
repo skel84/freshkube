@@ -20,9 +20,9 @@ use std::rc::Rc;
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Bounds, ContentMask, Context, Corners, EntityId, Hsla, Pixels, Role,
-    SharedString, TestSupportExt, Window, canvas, div, fill, linear_color_stop, linear_gradient,
-    point, px, size, white,
+    AnyElement, App, AppContext, Bounds, ContentMask, Context, Corners, Entity, EntityId, Hsla,
+    Pixels, Role, SharedString, TestSupportExt, Window, canvas, div, fill, linear_color_stop,
+    linear_gradient, point, px, size, white,
 };
 
 use super::{CELL_PAD, GLYPH_WIDTH, ROW_HEIGHT, TableColumn};
@@ -358,4 +358,42 @@ fn paint_shimmer(painted: &Painted, at: f32, band: Hsla, window: &mut Window) {
 fn snap(x: Pixels, window: &Window) -> Pixels {
     let scale = window.scale_factor();
     px((f32::from(x) * scale).round() / scale)
+}
+
+/// Both halves for a page whose table waits for its first answer: the
+/// [`LoadingRows`] its `TableSource::loading` returns while
+/// [`showing`](Self::show), and a [`LoadingMotion`] (Pulse) to mount beside
+/// the page. The page says each frame whether the rows show; it holds no
+/// other state.
+pub struct TableLoading {
+    rows: LoadingRows,
+    motion: Entity<LoadingMotion>,
+    showing: std::cell::Cell<bool>,
+}
+
+impl TableLoading {
+    pub fn new(prefix: &str, cx: &mut App) -> Self {
+        let rows = LoadingRows::new(prefix);
+        let motion = cx.new(|_| rows.motion(Look::Pulse));
+        Self {
+            rows,
+            motion,
+            showing: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Says whether the table shows the rows this frame.
+    pub fn show(&self, showing: bool) {
+        self.showing.set(showing);
+    }
+
+    /// For `TableSource::loading`.
+    pub fn rows(&self) -> Option<&LoadingRows> {
+        self.showing.get().then_some(&self.rows)
+    }
+
+    /// The motion to mount beside the page while the rows show.
+    pub fn motion(&self, showing: bool) -> Option<Entity<LoadingMotion>> {
+        showing.then(|| self.motion.clone())
+    }
 }

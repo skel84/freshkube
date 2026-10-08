@@ -26,7 +26,7 @@ pub use data::{
     reveal_when_settled, step,
 };
 pub use flash::{FlashLayer, Reduced, RowsAt};
-pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look};
+pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look, TableLoading};
 pub use menu::{RowAction, row_menu};
 pub use pinned::widest_pinned_run;
 
