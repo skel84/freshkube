@@ -29,6 +29,18 @@ pub(super) fn rule_index(rule: Rule) -> usize {
 }
 
 /// A group row's label: what found the applications under it.
+/// What an application is, by what found it, for beside its name: a
+/// Kargo Project and an Argo CD Application may share one.
+pub(super) fn what_it_is(app: &Application) -> &'static str {
+    match (app.rule, app.evidence.first()) {
+        (_, Some(Evidence::KargoProject { .. })) => "Kargo Project",
+        (_, Some(Evidence::ArgoApplicationSet { .. })) => "Argo CD ApplicationSet",
+        (_, Some(Evidence::ArgoApplication { .. })) => "Argo CD Application",
+        (Rule::Manual, _) => "Your override",
+        _ => "part-of label",
+    }
+}
+
 pub(super) fn rule_label(rule: Rule) -> &'static str {
     match rule {
         Rule::Kargo => "Kargo Projects",
@@ -140,6 +152,8 @@ pub(crate) struct AppRow {
     pub(super) key: SharedString,
     pub(super) name: SharedString,
     pub(super) rule: Rule,
+    /// What it is, beside its name: "Kargo Project", "Argo CD Application".
+    pub(super) what: SharedString,
     pub(super) mark: Mark,
     /// The mark in this row's words: Scoped names its namespaces.
     pub(super) mark_words: SharedString,
@@ -306,10 +320,12 @@ pub(super) fn note_words(note: &Note, labels: &Labels) -> String {
         Note::ProjectNotRead {
             member,
             project,
+            session,
             why,
         } => format!(
-            "{} names Kargo Project {project}, which wasn't read: {why}",
-            member_words(member, labels)
+            "{} names Kargo Project {project}, which wasn't read: {why} on {}",
+            member_words(member, labels),
+            labels.of(session)
         ),
         Note::JoinedAcrossSessions { name, sessions } => format!(
             "Joined by the name “{name}” across {}: an inference",
@@ -628,6 +644,7 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         key: app.id.as_str().to_owned().into(),
         name: app.name.clone().into(),
         rule: app.rule,
+        what: what_it_is(app).into(),
         mark,
         tooltip: format!("{} · {}", app.name, capital(&mark_words)).into(),
         mark_words: capital(&mark_words).into(),
