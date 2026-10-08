@@ -400,7 +400,7 @@ impl Pilot {
                 .update(cx, |services, cx| services.focus(window, cx));
         } else if self.page == Page::Applications {
             self.applications
-                .update(cx, |page, cx| page.focus(window, cx));
+                .update(cx, |page, cx| page.focus_shown(window, cx));
         } else if self.page == Page::Settings {
             self.settings_page
                 .update(cx, |settings, cx| settings.focus(window, cx));

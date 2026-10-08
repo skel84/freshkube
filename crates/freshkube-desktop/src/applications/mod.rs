@@ -7,8 +7,14 @@
 //! [`FRESH_FOR`], Refresh reads again, and hiding drops the read in flight.
 //! A read is keyed by the connection's id, so another connection's answer
 //! is never shown as this one's.
+//!
+//! Enter, a double-click or the row menu's Open shows the selected
+//! application's own page (`page/`) in the list's place; its breadcrumb
+//! comes back to the list with the selection kept. Each new read reaches the
+//! open page, and one without its application closes it.
 mod display;
 mod example;
+mod page;
 mod table;
 #[cfg(test)]
 mod tests;
@@ -32,6 +38,7 @@ use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource};
 use display::{Body, Display, Labels, MARKS, Mark};
 pub(crate) use example::Variant;
+use page::{ApplicationEvent, ApplicationPage};
 
 /// The page's id prefix: `applications-title`, `-list`, `-tally-…`.
 const PREFIX: &str = "applications";
@@ -50,16 +57,21 @@ gpui_kit::actions!(
         /// Selects the previous application.
         PreviousApplication,
         /// Clears the selection, which closes the Inspector.
-        ClearApplication
+        ClearApplication,
+        /// Opens the selected application's page.
+        OpenApplication
     ]
 );
 
-pub(crate) fn key_bindings() -> [KeyBinding; 3] {
-    [
+pub(crate) fn key_bindings() -> Vec<KeyBinding> {
+    let mut bindings = vec![
         KeyBinding::new("down", NextApplication, Some(CONTEXT)),
         KeyBinding::new("up", PreviousApplication, Some(CONTEXT)),
         KeyBinding::new("escape", ClearApplication, Some(CONTEXT)),
-    ]
+        KeyBinding::new("enter", OpenApplication, Some(CONTEXT)),
+    ];
+    bindings.extend(page::key_bindings());
+    bindings
 }
 
 /// One read: what was derived and what its clusters are called.
@@ -126,6 +138,11 @@ pub(crate) struct ApplicationsPage {
     page_scroll: ScrollHandle,
     /// The selected application's id, kept while a read or filter shows it.
     selected: Option<SharedString>,
+    /// Whether the Inspector shows the selection. A right-click selects
+    /// without opening it, so the table keeps its place under the menu.
+    inspect: bool,
+    /// The application whose page shows in the list's place.
+    open: Option<(Entity<ApplicationPage>, Subscription)>,
     /// `5 applications in 6 clusters`, in the status bar.
     pub(crate) status: Segment,
     _subscription: Subscription,
@@ -175,6 +192,8 @@ impl ApplicationsPage {
             split,
             page_scroll: ScrollHandle::new(),
             selected: None,
+            inspect: false,
+            open: None,
             status: Segment::default(),
             _subscription: subscription,
         }
@@ -207,6 +226,7 @@ impl ApplicationsPage {
         self.snapshot = Snapshot::default();
         self.read_at = None;
         self.selected = None;
+        self.open = None;
         self.show_read(cx);
         if self.visible {
             self.read(cx);
@@ -364,7 +384,106 @@ impl ApplicationsPage {
         });
         (self.columns, self.width) = table::columns(&self.display.rows);
         self.status = self.segment();
+        self.update_open(cx);
         self.rebuild(cx);
+    }
+
+    /// Hands the open page its application's new read; without it there,
+    /// the page closes.
+    fn update_open(&mut self, cx: &mut Context<Self>) {
+        let Some((open, _)) = &self.open else {
+            return;
+        };
+        let id = open.read(cx).id().clone();
+        let found = self
+            .snapshot
+            .data()
+            .and_then(|read| Some((read.derived.find(&id)?.clone(), read)));
+        match found {
+            Some((app, read)) => {
+                let (derived, labels) = (read.derived.clone(), read.labels.clone());
+                open.update(cx, |page, cx| page.update(&app, &derived, &labels, cx));
+            }
+            None => self.open = None,
+        }
+    }
+
+    /// Shows the application's own page in the list's place, with the
+    /// keyboard on it.
+    fn open_application(
+        &mut self,
+        key: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(read) = self.snapshot.data() else {
+            return;
+        };
+        let Some(app) = read
+            .derived
+            .applications
+            .iter()
+            .find(|app| app.id.as_str() == key.as_ref())
+        else {
+            return;
+        };
+        let (derived, labels) = (&read.derived, &read.labels);
+        let page = cx.new(|cx| ApplicationPage::new(app, derived, labels, cx));
+        let subscription =
+            cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
+                ApplicationEvent::Back => this.close_application(window, cx),
+            });
+        window.focus(&page.read(cx).focus_handle(), cx);
+        self.open = Some((page, subscription));
+        cx.notify();
+    }
+
+    /// Back to the list, with the selection it had.
+    fn close_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open.take().is_some() {
+            self.focus(window, cx);
+            cx.notify();
+        }
+    }
+
+    /// Enter on the list: the selection's page.
+    fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(key) = self.selected.clone() {
+            self.open_application(&key, window, cx);
+        }
+    }
+
+    /// Opens an application by its name, selecting it on the list first,
+    /// for `FRESHKUBE_PAGE=application`.
+    pub(crate) fn open_named(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = self
+            .display
+            .rows
+            .iter()
+            .find(|row| row.name.as_ref() == name)
+            .map(|row| row.key.clone())
+        else {
+            return;
+        };
+        self.select(key.clone(), cx);
+        self.open_application(&key, window, cx);
+    }
+
+    /// The open application's page, if one shows.
+    pub(crate) fn open_page(&self) -> Option<&Entity<ApplicationPage>> {
+        self.open.as_ref().map(|(page, _)| page)
+    }
+
+    /// Puts the keyboard on what shows: the open application's page, or
+    /// the list.
+    pub(crate) fn focus_shown(&self, window: &mut Window, cx: &mut App) {
+        match self.open_page() {
+            Some(page) => {
+                let focus = page.read(cx).focus_handle();
+                window.focus(&focus, cx);
+            }
+            None => self.focus(window, cx),
+        }
     }
 
     fn segment(&self) -> Segment {
@@ -430,6 +549,7 @@ impl ApplicationsPage {
 
     fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
         self.selected = Some(key);
+        self.inspect = true;
         kit::reveal(self, ScrollStrategy::Nearest);
         cx.notify();
     }
@@ -441,6 +561,7 @@ impl ApplicationsPage {
     }
 
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.inspect = false;
         if self.selected.take().is_some() {
             cx.notify();
         } else {
