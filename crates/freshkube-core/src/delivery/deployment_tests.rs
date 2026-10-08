@@ -353,15 +353,110 @@ fn deployment_proxy() -> Value {
 }
 
 #[tokio::test]
-async fn an_application_none_of_whose_deployments_pin_the_repository_is_unknown() {
+async fn an_application_none_of_whose_deployments_pin_the_repository_falls_back_to_the_namespace_pods()
+ {
     let (_, sets, pods) = parts();
     let other = deployment(&format!("registry.example/acme/proxy@{OLD}"));
-    let (app, _) = trail_links(&world((other, sets, pods))).await;
-    assert_eq!(app.confidence, Confidence::Unknown);
+    let trail = trail(&world((other, sets, pods))).await;
+    assert!(super::tests::link(&trail, Hop::Application, Hop::Deployment).is_empty());
+    let pods = one(&trail, Hop::Application, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed, "{pods:#?}");
+}
+
+#[tokio::test]
+async fn a_deployment_beside_a_stateful_set_does_not_hide_the_namespace_pods() {
+    // The Freight is of the API, which a StatefulSet runs; the Deployment is
+    // another image's.
+    let mut world = world(parts());
+    let mut app = unannotated_application();
+    app["status"]["resources"] = json!([
+        {"group": "apps", "kind": "Deployment", "namespace": "shop", "name": "redis"},
+        {"group": "apps", "kind": "StatefulSet", "namespace": "shop", "name": "storefront"}]);
+    world.argocd = world.argocd.with("applications", vec![app]);
+    let mut redis = deployment("registry.example/acme/redis:7");
+    redis["metadata"]["name"] = json!("redis");
+    world.environment = world.environment.with("deployments", vec![redis]);
+    let trail = trail(&world).await;
+    assert!(super::tests::link(&trail, Hop::Application, Hop::Deployment).is_empty());
+    assert_eq!(
+        one(&trail, Hop::Application, Hop::Pod).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_rollout_and_a_deployment_under_one_application_are_both_joined() {
+    let mut world = world(parts());
+    let mut app = unannotated_application();
+    app["status"]["resources"] = json!([
+        {"group": "argoproj.io", "kind": "Rollout", "namespace": "shop", "name": "storefront"},
+        {"group": "apps", "kind": "Deployment", "namespace": "shop", "name": "storefront"}]);
+    world.argocd = world.argocd.with("applications", vec![app]);
+    let image = pinned_image();
+    world.environment = FixtureReader::default()
+        .serves("argoproj.io", "v1alpha1", &["rollouts", "analysisruns"])
+        .with("rollouts", vec![rollout("registry.example/acme/web:v1")])
+        .with("deployments", vec![deployment(&image)])
+        .with(
+            "replicasets",
+            vec![
+                replica_set("5d9c", "registry.example/acme/web:v1", 1, 1),
+                deployment_set("6fdf", "2", &image, 1, 1),
+            ],
+        )
+        .with(
+            "pods",
+            vec![deployment_pod(
+                "storefront-6fdf-x",
+                "6fdf",
+                &image,
+                &image_id(&image),
+                true,
+            )],
+        );
+    let trail = trail(&world).await;
+    assert_eq!(
+        one(&trail, Hop::Application, Hop::Rollout).confidence,
+        Confidence::Claimed
+    );
+    let deployment = one(&trail, Hop::Application, Hop::Deployment);
+    assert_eq!(
+        deployment.confidence,
+        Confidence::Confirmed,
+        "{deployment:#?}"
+    );
+    assert_eq!(
+        one(&trail, Hop::Deployment, Hop::Pod).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_current_replica_set_found_in_a_capped_listing_only_claims() {
+    let mut world = world(parts());
+    world.environment = world.environment.capped("replicasets");
+    let (app, pods) = chain(&world).await;
+    assert_eq!(pods.confidence, Confidence::Claimed, "{pods:#?}");
+    assert_eq!(pods.key, Key::None);
     assert!(
-        app.reason
-            .contains("pins an image of the Freight's repository"),
+        pods.reason
+            .contains("another ReplicaSet with the same revision"),
         "{}",
-        app.reason
+        pods.reason
+    );
+    assert_eq!(app.confidence, Confidence::Claimed);
+}
+
+#[tokio::test]
+async fn two_replica_sets_with_the_current_revision_are_unknown() {
+    let (deployment, mut sets, pods) = parts();
+    sets.push(deployment_set("7f3b", "2", &pinned_image(), 1, 1));
+    let (_, pods) = chain(&world((deployment, sets, pods))).await;
+    assert_eq!(pods.confidence, Confidence::Unknown);
+    assert!(
+        pods.reason
+            .contains("several ReplicaSets the Deployment owns carry its current revision 2"),
+        "{}",
+        pods.reason
     );
 }

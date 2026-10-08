@@ -482,12 +482,9 @@ impl ControllerKind {
     }
 }
 
-/// Whether Argo CD lists a controller of either kind among the
-/// Application's objects.
-fn manages_controller(app: &Application) -> bool {
-    app.managed
-        .iter()
-        .any(|m| ControllerKind::Rollout.is(m) || ControllerKind::Deployment.is(m))
+/// Whether Argo CD lists a Rollout among the Application's objects.
+fn manages_rollout(app: &Application) -> bool {
+    app.managed.iter().any(|m| ControllerKind::Rollout.is(m))
 }
 
 fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<WantedRollout> {
@@ -529,7 +526,7 @@ fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<W
 }
 
 /// The Applications of a stage that holds the change's Freight and manage no
-/// Rollout, with the namespace their workload runs in: the pods there are
+/// Rollout, nor a Deployment of the Freight's repository, with the namespace their workload runs in: the pods there are
 /// read instead, when the destination is the environment cluster.
 pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
     let (Some(builds), Some(freight), Some(stages), Some(apps)) = (
@@ -549,7 +546,8 @@ pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
             for app in apps.iter().filter(|app| {
                 app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
                     .is_some()
-                    && !manages_controller(app)
+                    && !manages_rollout(app)
+                    && !deployment::speaks_for(evidence, item, app)
                     && evidence.deploys_to_environment(&id(&app.namespace, &app.name))
             }) {
                 let Some(namespace) = app.destination_namespace.clone() else {

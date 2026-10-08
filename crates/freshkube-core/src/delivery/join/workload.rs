@@ -7,30 +7,38 @@ use crate::delivery::rollouts::{AnalysisRun, Container, ReplicaSet, Rollout};
 use crate::delivery::source::{Truncation, cap_note};
 
 use super::argo::{not_the_environment, rollout_namespace};
-use super::deployment::deployment_links;
+use super::deployment::{deployment_links, speaks_for};
 use super::observe::{
     freight_side, manages, pods_running, pods_running_other, revision_tie, rollout_hash,
     rollout_state as rollout_seen, summary_entries, summary_images,
 };
 use super::*;
 
+/// The Application's links to what runs it: each Rollout it manages, each
+/// Deployment whose pin is the Freight's repository, and, when it manages
+/// neither, the pods of its namespace.
 pub(super) fn rollout_links(
     evidence: &Evidence,
     freight: &Freight,
     app: &Application,
 ) -> Vec<Link> {
+    let mut links = Vec::new();
+    if app.managed.iter().any(|m| m.kind == "Rollout") {
+        links = rollout_chain(evidence, freight, app);
+    }
+    if speaks_for(evidence, freight, app) {
+        links.extend(deployment_links(evidence, freight, app));
+    }
+    if links.is_empty() {
+        let app_id = id(&app.namespace, &app.name);
+        links.push(workload_pod_link(evidence, freight, app, &app_id));
+    }
+    links
+}
+
+fn rollout_chain(evidence: &Evidence, freight: &Freight, app: &Application) -> Vec<Link> {
     let app_id = id(&app.namespace, &app.name);
     let managed: Vec<_> = app.managed.iter().filter(|m| m.kind == "Rollout").collect();
-    let deployments = app
-        .managed
-        .iter()
-        .any(|m| m.group == "apps" && m.kind == "Deployment");
-    if managed.is_empty() && deployments {
-        return deployment_links(evidence, freight, app);
-    }
-    if managed.is_empty() {
-        return vec![workload_pod_link(evidence, freight, app, &app_id)];
-    }
     if !evidence.deploys_to_environment(&app_id) {
         let why = not_the_environment(evidence, &app_id);
         return vec![Link::new(

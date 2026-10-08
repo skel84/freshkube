@@ -16,6 +16,38 @@ use super::observe::{concluded, deployment_revision, deployment_state, deploymen
 use super::workload::{Controller, judge_revision, pinned_containers, pinned_link, running};
 use super::*;
 
+/// Whether the Deployment chain speaks for the Application: it manages a
+/// Deployment, and none that was read is known to pin another repository
+/// than the Freight's. An unread, unfound or unplaced Deployment is not known
+/// to, so the chain speaks, as unknown. Otherwise the Application is judged
+/// by its namespace's pods, as one that manages no controller is.
+pub(super) fn speaks_for(evidence: &Evidence, freight: &Freight, app: &Application) -> bool {
+    let managed: Vec<_> = app
+        .managed
+        .iter()
+        .filter(|m| m.group == "apps" && m.kind == "Deployment")
+        .collect();
+    if managed.is_empty() {
+        return false;
+    }
+    let app_id = id(&app.namespace, &app.name);
+    if !evidence.deploys_to_environment(&app_id) {
+        return true;
+    }
+    let Some(found) = evidence.deployments.read() else {
+        return true;
+    };
+    managed.iter().any(|object| {
+        let Some(namespace) = rollout_namespace(app, object) else {
+            return true;
+        };
+        found
+            .iter()
+            .find(|d| d.namespace == namespace && d.name == object.name)
+            .is_none_or(|deployment| pins_repository_of(deployment, freight))
+    })
+}
+
 pub(super) fn deployment_links(
     evidence: &Evidence,
     freight: &Freight,
@@ -50,7 +82,6 @@ pub(super) fn deployment_links(
         )];
     };
     let mut links = Vec::new();
-    let mut elsewhere: Vec<&str> = Vec::new();
     for object in managed {
         let Some(namespace) = rollout_namespace(app, object) else {
             links.push(unknown(
@@ -75,7 +106,6 @@ pub(super) fn deployment_links(
         };
         // A Deployment that pins another repository is not part of this hop.
         if !pins_repository_of(deployment, freight) {
-            elsewhere.push(deployment.name.as_str());
             continue;
         }
         let pinned = deployment
@@ -124,21 +154,12 @@ pub(super) fn deployment_links(
         });
         links.push(pods);
     }
-    if links.is_empty() {
-        links.push(unknown(
-            app_id,
-            format!(
-                "no Deployment the Application manages pins an image of the Freight's repository (read {})",
-                elsewhere.join(", ")
-            ),
-        ));
-    }
     links
 }
 
 /// Whether the Deployment's pod template names an image of one of the
 /// Freight's repositories.
-fn pins_repository_of(deployment: &Deployment, freight: &Freight) -> bool {
+pub(super) fn pins_repository_of(deployment: &Deployment, freight: &Freight) -> bool {
     deployment.images.iter().any(|image| {
         freight
             .images
@@ -242,6 +263,13 @@ fn pod_link(
                         "{}; the Deployment controller has not reported acting on the latest spec ({}), so its status doesn't describe the pods that spec asks for",
                         link.reason,
                         deployment_summary(deployment)
+                    );
+                } else if let Some(truncation) = evidence.deployment_sets.capped() {
+                    link.confidence = Confidence::Claimed;
+                    link.key = Key::None;
+                    link.reason = format!(
+                        "{}; the ReplicaSet listing stopped at the page cap after {} items, so another ReplicaSet with the same revision may be among those not read",
+                        link.reason, truncation.read
                     );
                 } else {
                     let mut seen = deployment_tie(deployment, set, &running(&containers, freight));
