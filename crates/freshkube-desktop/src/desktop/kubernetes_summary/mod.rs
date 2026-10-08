@@ -121,10 +121,7 @@ impl Pilot {
         });
         self.sync_unread_health(cx);
         if matches!(source.access, KubeAccess::Example) {
-            if self.fixture_hold {
-                return;
-            }
-            self.publish_fixture(window, cx);
+            self.start_fixture_summary(window, cx);
             return;
         }
         if let Some(super::kubernetes_only::KubernetesOnly {
@@ -134,47 +131,28 @@ impl Pilot {
         {
             session.version(0, version.clone(), chrono::Utc::now());
         }
-        let mut publications = session.publications();
-        let (sender, mut receiver) = tokio::sync::watch::channel(None);
-        self.summary_job = Some(OwnedJob::new(self.runtime.spawn(async move {
-            let mut backoff = Duration::from_secs(1);
-            let client = loop {
-                match tokio::time::timeout(Duration::from_secs(45), source.access.client()).await {
-                    Ok(Ok(client)) => break client,
-                    result => {
-                        let failure = ObservationFailure::Read(if result.is_err() {
-                            FailureKind::Timeout
-                        } else {
-                            FailureKind::Config
-                        });
-                        for source in Source::WATCHED.into_iter().chain([Source::Version]) {
-                            session.fail(session.generation(), source, failure.clone());
-                        }
-                        let publication = session.derive(chrono::Utc::now());
-                        let health = WorkloadData::from_outcome(&publication.summary.workloads);
-                        session.publish(publication.clone());
-                        sender.send_replace(Some((publication, health)));
-                        tokio::time::sleep(backoff).await;
-                        backoff = (backoff * 2).min(Duration::from_secs(30));
-                    }
-                }
-            };
-            let driver = session.run(client);
-            tokio::pin!(driver);
-            loop {
-                tokio::select! {
-                    _ = &mut driver => break,
-                    changed = publications.changed() => {
-                        if changed.is_err() { break; }
-                        let publication = publications.borrow_and_update().clone();
-                        if let Some(publication) = publication {
-                            let health = WorkloadData::from_outcome(&publication.summary.workloads);
-                            sender.send_replace(Some((publication, health)));
-                        }
-                    }
-                }
-            }
-        })));
+        let (job, receiver) = spawn_summary_driver(&self.runtime, session, source.access);
+        self.summary_job = Some(job);
+        self.deliver_summary(receiver, window, cx);
+        self.deliver_summary_nodes(cx);
+    }
+
+    /// The example session: nothing publishes while the hold keeps its data
+    /// back, otherwise it is seeded and watched.
+    fn start_fixture_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.fixture_hold {
+            return;
+        }
+        self.publish_fixture(window, cx);
+    }
+
+    /// Applies each answer from the driver to the shell, while the task lives.
+    fn deliver_summary(
+        &mut self,
+        mut receiver: tokio::sync::watch::Receiver<SummaryAnswer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.summary_task = Some(cx.spawn_in(window, async move |this, cx| {
             while receiver.changed().await.is_ok() {
                 let answer = receiver.borrow_and_update().clone();
@@ -189,7 +167,6 @@ impl Pilot {
                 }
             }
         }));
-        self.deliver_summary_nodes(cx);
     }
 
     /// Seeds the example session, publishes what it derives at its own
@@ -310,6 +287,61 @@ impl Pilot {
         self.deliver_summary_nodes(cx);
         cx.notify();
     }
+}
+
+/// What the driver sends the shell: a publication and the workload health
+/// derived from it.
+type SummaryAnswer = Option<(Arc<Publication>, Result<Arc<WorkloadData>, String>)>;
+
+/// Runs one cluster's observation session on Tokio: waits for a client,
+/// drives the reflectors and sends each publication down the channel.
+fn spawn_summary_driver(
+    runtime: &tokio::runtime::Handle,
+    session: Session,
+    access: KubeAccess,
+) -> (OwnedJob, tokio::sync::watch::Receiver<SummaryAnswer>) {
+    let mut publications = session.publications();
+    let (sender, receiver) = tokio::sync::watch::channel(None);
+    let job = OwnedJob::new(runtime.spawn(async move {
+        let mut backoff = Duration::from_secs(1);
+        let client = loop {
+            match tokio::time::timeout(Duration::from_secs(45), access.client()).await {
+                Ok(Ok(client)) => break client,
+                result => {
+                    let failure = ObservationFailure::Read(if result.is_err() {
+                        FailureKind::Timeout
+                    } else {
+                        FailureKind::Config
+                    });
+                    for source in Source::WATCHED.into_iter().chain([Source::Version]) {
+                        session.fail(session.generation(), source, failure.clone());
+                    }
+                    let publication = session.derive(chrono::Utc::now());
+                    let health = WorkloadData::from_outcome(&publication.summary.workloads);
+                    session.publish(publication.clone());
+                    sender.send_replace(Some((publication, health)));
+                    tokio::time::sleep(backoff).await;
+                    backoff = (backoff * 2).min(Duration::from_secs(30));
+                }
+            }
+        };
+        let driver = session.run(client);
+        tokio::pin!(driver);
+        loop {
+            tokio::select! {
+                _ = &mut driver => break,
+                changed = publications.changed() => {
+                    if changed.is_err() { break; }
+                    let publication = publications.borrow_and_update().clone();
+                    if let Some(publication) = publication {
+                        let health = WorkloadData::from_outcome(&publication.summary.workloads);
+                        sender.send_replace(Some((publication, health)));
+                    }
+                }
+            }
+        }
+    }));
+    (job, receiver)
 }
 
 #[cfg(test)]

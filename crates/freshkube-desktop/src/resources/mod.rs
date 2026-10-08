@@ -64,4 +64,7 @@ pub(crate) struct LogsRequest {
 pub(crate) struct LogsAt {
     pub(crate) container: String,
     pub(crate) previous: bool,
+    /// Every app container at once; `container` is the one a pod with a
+    /// single app container falls back to.
+    pub(crate) all: bool,
 }

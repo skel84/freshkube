@@ -3,6 +3,7 @@
 
 use serde_json::Value;
 
+use super::deployments::TEMPLATE_HASH_LABEL;
 use super::digest::{Digest, text};
 use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Listing, Reader, Resource, Scope, label_equals};
@@ -23,6 +24,9 @@ pub struct RunningImage {
     pub ready: bool,
     /// The pod's `rollouts-pod-template-hash` label.
     pub pod_hash: Option<String>,
+    /// The pod's `pod-template-hash` label, which the Deployment controller
+    /// puts on the pods of a Deployment's ReplicaSet.
+    pub template_hash: Option<String>,
     /// The UID of the ReplicaSet its controller owner reference names.
     pub owner_uid: Option<String>,
 }
@@ -53,6 +57,12 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
         .and_then(Value::as_str)
         .filter(|hash| !hash.is_empty())
         .map(str::to_owned);
+    let template_hash = value
+        .pointer("/metadata/labels")
+        .and_then(|labels| labels.get(TEMPLATE_HASH_LABEL))
+        .and_then(Value::as_str)
+        .filter(|hash| !hash.is_empty())
+        .map(str::to_owned);
     let owner_uid = value
         .pointer("/metadata/ownerReferences")
         .and_then(Value::as_array)
@@ -76,6 +86,7 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
                 namespace: namespace.clone(),
                 meta: meta.clone(),
                 pod_hash: pod_hash.clone(),
+                template_hash: template_hash.clone(),
                 owner_uid: owner_uid.clone(),
                 container: text(status, "/name")?,
                 image: text(status, "/image"),
@@ -107,6 +118,32 @@ pub async fn read_rollout_pods<R: Reader>(
                 scope: Scope::Labels {
                     namespace: Some(namespace.to_owned()),
                     selector: label_equals(POD_HASH_LABEL, pod_hash)?,
+                },
+            })
+            .await?;
+        Ok(running(&listing))
+    }
+    Source::from_listing(run(reader, namespace, pod_hash).await)
+}
+
+/// Reads a Deployment's pods by their `pod-template-hash` label, in its
+/// namespace, and returns what each container runs.
+pub async fn read_deployment_pods<R: Reader>(
+    reader: &R,
+    namespace: &str,
+    pod_hash: &str,
+) -> Source<Vec<RunningImage>> {
+    async fn run<R: Reader>(
+        reader: &R,
+        namespace: &str,
+        pod_hash: &str,
+    ) -> Result<(Vec<RunningImage>, Option<Truncation>), Failure> {
+        let listing = reader
+            .list(&ListRequest {
+                resource: Resource::new("", "v1", "pods", true),
+                scope: Scope::Labels {
+                    namespace: Some(namespace.to_owned()),
+                    selector: label_equals(TEMPLATE_HASH_LABEL, pod_hash)?,
                 },
             })
             .await?;

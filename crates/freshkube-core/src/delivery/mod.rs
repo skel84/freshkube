@@ -8,6 +8,7 @@
 
 pub mod argocd;
 pub mod collect;
+pub mod deployments;
 pub mod digest;
 pub mod github;
 pub mod join;
@@ -20,6 +21,8 @@ pub mod source;
 pub mod tekton;
 mod versions;
 
+#[cfg(test)]
+mod deployment_tests;
 #[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]

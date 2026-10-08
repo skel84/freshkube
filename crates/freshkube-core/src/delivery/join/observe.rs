@@ -8,6 +8,7 @@
 //! nothing here makes up an observation to fill the gap.
 
 use crate::delivery::argocd::{AUTHORIZED_STAGE, Application};
+use crate::delivery::deployments::{Deployment, DeploymentSet, REVISION, TEMPLATE_HASH_LABEL};
 use crate::delivery::digest::Digest;
 use crate::delivery::github::PullRequest;
 use crate::delivery::kargo::{Freight, Promotion, Stage};
@@ -347,12 +348,12 @@ pub(super) fn application_revision(app: &Application) -> Option<Observation> {
 
 /// The Application's side of a link to a Rollout it manages: Argo CD lists
 /// it among the Application's resources.
-pub(super) fn manages(app: &Application, rollout: &Rollout) -> Observation {
+pub(super) fn manages(app: &Application, kind: &str, name: &str) -> Observation {
     Observation::reported(
         role::ARGOCD,
         app.object_ref(),
         "/status/resources",
-        Some(&format!("Rollout/{}", rollout.name)),
+        Some(&format!("{kind}/{name}")),
     )
 }
 
@@ -501,4 +502,108 @@ pub(super) fn pods_running_other(pods: &[(&RunningImage, Option<Digest>)]) -> Ve
             )
         })
         .collect()
+}
+
+/// What the Deployment controller reports of a Deployment: the generation it
+/// has acted on and the revision it calls current. The spec's pin of
+/// `digest`, when the join found one, is declared.
+pub(super) fn deployment_state(
+    deployment: &Deployment,
+    pinned: Option<&Digest>,
+) -> Vec<Observation> {
+    let mut seen = Vec::new();
+    if let Some(observed) = deployment.observed_generation {
+        seen.push(Observation::reported(
+            role::ENVIRONMENT,
+            deployment.object_ref(),
+            "/status/observedGeneration",
+            Some(&observed.to_string()),
+        ));
+    }
+    if let Some(digest) = pinned {
+        seen.push(Observation::declared(
+            role::ENVIRONMENT,
+            deployment.object_ref(),
+            "/spec/template/spec/containers",
+            Some(digest.as_str()),
+        ));
+        seen.push(concluded(
+            "Deployment spec pins the Freight's digest",
+            digest.as_str(),
+        ));
+    }
+    seen
+}
+
+fn revision_field() -> String {
+    format!("/metadata/annotations/{}", pointer_segment(REVISION))
+}
+
+/// The revision the controller reports as the Deployment's current one.
+pub(super) fn deployment_revision(deployment: &Deployment) -> Vec<Observation> {
+    deployment
+        .revision
+        .as_deref()
+        .map(|revision| {
+            Observation::reported(
+                role::ENVIRONMENT,
+                deployment.object_ref(),
+                &revision_field(),
+                Some(revision),
+            )
+        })
+        .into_iter()
+        .collect()
+}
+
+/// What ties a Deployment to the pods of its current revision, every step
+/// reported by a controller: the ReplicaSet whose owner reference names the
+/// Deployment's UID and that carries the Deployment's revision, and each pod
+/// whose owner reference names that ReplicaSet's UID and whose label carries
+/// the ReplicaSet's hash. The first few pods of `pods`, as [`pods_running`]
+/// names them.
+pub(super) fn deployment_tie(
+    deployment: &Deployment,
+    set: &DeploymentSet,
+    pods: &[(&RunningImage, &Digest)],
+) -> Vec<Observation> {
+    let label = format!("/metadata/labels/{}", pointer_segment(TEMPLATE_HASH_LABEL));
+    let (Some(revision), Some(hash)) = (deployment.revision.as_deref(), set.pod_hash.as_deref())
+    else {
+        return Vec::new();
+    };
+    let mut seen = vec![
+        Observation::reported(
+            role::ENVIRONMENT,
+            set.object_ref(),
+            "/metadata/ownerReferences",
+            set.owner_uid.as_deref(),
+        ),
+        Observation::reported(
+            role::ENVIRONMENT,
+            set.object_ref(),
+            &revision_field(),
+            set.revision.as_deref(),
+        ),
+        Observation::reported(role::ENVIRONMENT, set.object_ref(), &label, Some(hash)),
+    ];
+    for (pod, _) in pods.iter().take(MOST_PODS) {
+        seen.push(Observation::reported(
+            role::ENVIRONMENT,
+            pod.object_ref(),
+            "/metadata/ownerReferences",
+            pod.owner_uid.as_deref(),
+        ));
+        seen.push(Observation::reported(
+            role::ENVIRONMENT,
+            pod.object_ref(),
+            &label,
+            pod.template_hash.as_deref(),
+        ));
+    }
+    seen.push(concluded(
+        "pod -> ReplicaSet -> Deployment by owner UID; ReplicaSet revision == Deployment revision",
+        revision,
+    ));
+    seen
 }
