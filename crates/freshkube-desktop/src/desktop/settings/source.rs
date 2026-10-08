@@ -106,7 +106,7 @@ impl TableSource for SettingsPage {
             key: row.id.clone(),
             id: format!("settings-cluster-{}", row.id).into(),
             label: format!("{} · {} · {}", row.id, row.role, row.context).into(),
-            tooltip: None,
+            tooltip: Some(row.tooltip.clone()),
             marked: false,
             muted: false,
             data: row,

@@ -44,6 +44,10 @@ fn the_gear_opens_settings_with_the_example_workspace(cx: &mut TestAppContext) {
         }
         let page = view.read(cx).settings_page.read(cx);
         assert_eq!(page.origin(), &Origin::Example);
+        // The header's location reads Settings, and the line is in the bar.
+        assert_eq!(window.find("page-title").label(), Some("Settings"));
+        let scope = window.find("settings-scope");
+        assert!(scope.label().unwrap_or_default().contains("6 clusters"));
     })
     .unwrap();
 }
@@ -78,7 +82,15 @@ fn no_file_is_a_workspace_of_one(cx: &mut TestAppContext) {
         });
         window.render_frame(cx);
         assert!(window.find("settings-empty").visible());
-        assert!(window.find("settings-workspace-note").visible());
+        // The implicit workspace of one counts as a cluster, so the bar and
+        // the empty table agree.
+        let scope = window.find("settings-scope");
+        assert!(
+            scope
+                .path()
+                .contains(&gpui_kit::ElementId::from("status-bar"))
+        );
+        assert!(scope.label().unwrap_or_default().contains("1 cluster"));
         assert!(window.try_find("settings-banner").is_none());
     })
     .unwrap();
@@ -169,4 +181,32 @@ fn a_refused_file_stays_where_it_is_after_a_launch(cx: &mut TestAppContext) {
     // Reading never moves or rewrites it; only a save would set it aside.
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "{\"version\":9}");
     assert!(!guard.path().join("workspace.json.bak").exists());
+}
+
+#[gpui_kit::test]
+fn a_row_tooltip_holds_the_full_talosconfig_path(cx: &mut TestAppContext) {
+    use freshkube_core::workspace::{Entry, Role, Workspace};
+    use freshkube_ui::table::{Line, TableSource};
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let path = std::env::temp_dir()
+        .join("acme")
+        .join("core-fra.talosconfig");
+    let mut entry = Entry::new("core-fra", Role::Core, "core-fra");
+    entry.talosconfig = Some(path.clone());
+    let loaded = Loaded::Workspace(Workspace {
+        kubeconfig: None,
+        clusters: vec![entry, Entry::new("dev-fra", Role::Environment, "dev-fra")],
+    });
+    cx.update_window(handle, |_, _, cx| {
+        let page = view.read(cx).settings_page.clone();
+        page.update(cx, |page, cx| page.set_workspace(&loaded, false, cx));
+        let page = page.read(cx);
+        let tooltip = |ix| match page.line(ix, cx) {
+            Some(Line::Row(row)) => row.tooltip.map(|t| t.to_string()),
+            _ => None,
+        };
+        assert!(tooltip(0).unwrap().contains(&path.display().to_string()));
+        assert!(!tooltip(1).unwrap().contains("Talosconfig"));
+    })
+    .unwrap();
 }

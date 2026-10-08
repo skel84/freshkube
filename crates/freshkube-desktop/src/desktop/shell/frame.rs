@@ -510,6 +510,7 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
+        .child(div().h(px(1.)).bg(p.line))
         .child(
             h_flex()
                 .justify_between()

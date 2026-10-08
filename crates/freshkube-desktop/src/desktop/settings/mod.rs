@@ -8,7 +8,7 @@ mod tests;
 
 use crate::ui::{self, dp};
 use freshkube_core::workspace::{self, Loaded, Workspace};
-use freshkube_ui::status::Segment;
+use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{page, table};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -39,9 +39,11 @@ pub(crate) struct ClusterRow {
     role: SharedString,
     context: SharedString,
     talosconfig: SharedString,
+    /// The row's tooltip: the cluster, and the talosconfig path in full.
+    tooltip: SharedString,
 }
 
-/// What the workspace file is, for the line above the table.
+/// What the workspace file is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Origin {
     /// No file: a workspace of one, the cluster this window opened.
@@ -60,16 +62,12 @@ pub(crate) struct SettingsPage {
     width: f32,
     table: table::TableState,
     origin: Origin,
-    /// The line under the page's title about what the list is.
-    note: SharedString,
-    /// The workspace's kubeconfig line: its path, or the automatic one.
-    kubeconfig: SharedString,
     /// Why a file isn't used, for the banner; none while it is.
     banner: Option<SharedString>,
     selected: Option<SharedString>,
     page_scroll: ScrollHandle,
     focus: FocusHandle,
-    /// `6 clusters`, in the status bar.
+    /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
 }
 
@@ -82,8 +80,6 @@ impl SettingsPage {
             width,
             table: table::TableState::new(PREFIX),
             origin: Origin::Alone,
-            note: "".into(),
-            kubeconfig: "".into(),
             banner: None,
             selected: None,
             page_scroll: ScrollHandle::new(),
@@ -107,31 +103,27 @@ impl SettingsPage {
         self.rows = workspace
             .clusters
             .iter()
-            .map(|entry| ClusterRow {
-                id: entry.id.clone().into(),
-                role: entry.role.label().into(),
-                context: entry.context.clone().into(),
-                talosconfig: entry
+            .map(|entry| {
+                let talosconfig = entry
                     .talosconfig
                     .as_deref()
                     .map(Path::display)
                     .map(|path| path.to_string())
-                    .unwrap_or_default()
-                    .into(),
+                    .unwrap_or_default();
+                let mut tooltip =
+                    format!("{} · {} · {}", entry.id, entry.role.label(), entry.context);
+                if !talosconfig.is_empty() {
+                    tooltip.push_str(&format!("\nTalosconfig: {talosconfig}"));
+                }
+                ClusterRow {
+                    id: entry.id.clone().into(),
+                    role: entry.role.label().into(),
+                    context: entry.context.clone().into(),
+                    talosconfig: talosconfig.into(),
+                    tooltip: tooltip.into(),
+                }
             })
             .collect();
-        self.kubeconfig = match &workspace.kubeconfig {
-            Some(path) => format!("Kubeconfig: {}", path.display()).into(),
-            None => "Kubeconfig: automatic (KUBECONFIG, then the home default)".into(),
-        };
-        self.note = match &origin {
-            Origin::Alone | Origin::Refused(_) => {
-                "A workspace of one: the cluster this window opened. Nothing is saved."
-            }
-            Origin::Example => "Example workspace; nothing is read or saved.",
-            Origin::File => "The clusters of workspace.json, in the order kept.",
-        }
-        .into();
         self.banner = match &origin {
             Origin::Refused(why) => Some(
                 format!("workspace.json isn’t used: {why}. Freshkube leaves the file as it is.")
@@ -141,14 +133,40 @@ impl SettingsPage {
         };
         (self.columns, self.width) = source::columns(&self.rows);
         self.origin = origin;
-        let count = self.rows.len();
-        self.status = Segment::new(
-            None::<SharedString>,
-            [format!(
-                "{count} {}",
-                if count == 1 { "cluster" } else { "clusters" }
-            )],
-        );
+        let kubeconfig = match &workspace.kubeconfig {
+            Some(path) => format!("Kubeconfig: {}", path.display()),
+            None => "Kubeconfig: automatic (KUBECONFIG, then the home default)".to_owned(),
+        };
+        // The implicit workspace of one counts as the cluster this window
+        // opened, so the bar and the empty table agree.
+        self.status = match self.origin {
+            Origin::Alone | Origin::Refused(_) => Segment::new(
+                None::<SharedString>,
+                [
+                    Part::new("1 cluster"),
+                    Part::new("implicit: the one this window opened").minor(),
+                ],
+            ),
+            Origin::Example | Origin::File => {
+                let count = self.rows.len();
+                Segment::new(
+                    None::<SharedString>,
+                    [
+                        Part::new(format!(
+                            "{count} {}",
+                            if count == 1 { "cluster" } else { "clusters" }
+                        )),
+                        Part::new(if self.origin == Origin::Example {
+                            "Example workspace".to_owned()
+                        } else {
+                            "workspace.json".to_owned()
+                        })
+                        .minor(),
+                        Part::new(kubeconfig).minor(),
+                    ],
+                )
+            }
+        };
         if self
             .selected
             .as_ref()
@@ -192,33 +210,18 @@ impl SettingsPage {
     fn render_banner(&self, cx: &App) -> Option<impl IntoElement> {
         let body = self.banner.clone()?;
         Some(
-            ui::warning_banner(Some("Workspace file not used".into()), body, None, cx)
+            page::inset()
                 .id("settings-banner")
-                .test_support(),
+                .test_support()
+                .role(Role::Alert)
+                .aria_label(body.clone())
+                .child(ui::warning_banner(
+                    Some("Workspace file not used".into()),
+                    body,
+                    None,
+                    cx,
+                )),
         )
-    }
-
-    /// The lines above the table: what the list is and which kubeconfig the
-    /// workspace reads.
-    fn render_intro(&self, cx: &App) -> Div {
-        let p = crate::palette::palette(cx);
-        page::inset()
-            .flex_none()
-            .gap(dp(2.))
-            .text_size(dp(12.))
-            .text_color(p.muted)
-            .child(
-                div()
-                    .id("settings-workspace-note")
-                    .test_support()
-                    .child(self.note.clone()),
-            )
-            .child(
-                div()
-                    .id("settings-kubeconfig")
-                    .test_support()
-                    .child(self.kubeconfig.clone()),
-            )
     }
 }
 
@@ -234,7 +237,6 @@ impl Render for SettingsPage {
             })
             .child(page::toolbar(cx).child(header))
             .children(self.render_banner(cx))
-            .child(self.render_intro(cx))
             .child(
                 div()
                     .key_context(CONTEXT)
