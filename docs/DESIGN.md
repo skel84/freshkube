@@ -155,6 +155,36 @@ Nothing else resizes. The log views have no handle of their own: a log fills a d
 
 Rejected: *one `splits` key holding every size*, since an earlier build would lose every width on a downgrade and this one would need a migration; *a drawer width per kind*, since #290 settled one width for the page; *saving the size Kit rescales to when the window changes*, since a smaller window would then shrink the saved width for good.
 
+### Menus show their keys
+
+[#244](https://github.com/skel84/freshkube/issues/244) item 4, settled on 8 October 2026. Every menu entry that runs a command shows the command's key in the platform's label, as the row menu has since change 10 (`⇧X` on macOS, `Shift+X` on Windows and Linux; `⌘R`, `Ctrl+R`). The entry, the toolbar's button and the key run the same action, so the three can't drift: a key bound to the action shows in every menu that offers it, and a menu has no key the keymap doesn't bind. Every menu is a Kit `PopupMenu` drawn by the app; the macOS menu bar is [#244](https://github.com/skel84/freshkube/issues/244) item 3's.
+
+The menus today, and what changes:
+
+| Menu | Opens from | Its entries | Keys today | After |
+| --- | --- | --- | --- | --- |
+| Row menu | A right-click on a table row or group row (Pods, Nodes, System services, any `TableSource` with `menu_focus`) | The page's actions on the selection | Shown (change 10) | Builds on the shared menu module; no change on screen |
+| Folded controls | A page toolbar's "…" when the window is narrow | Each folded control: Refresh, a segment, a picker, a toggle | None, though the buttons show theirs in their tooltips | A folded control with a key shows it: Refresh `⌘R` (Resources, Nodes, Monitoring, Observability), Processes' Tree `⇧T`, System services' Logs `L` and Open node `O`, Settings' Add `A`, Edit `E`, Remove `⌫`, Move up `⌘⌥↑`, Move down `⌘⌥↓` and Reload `R`. A folded picker is a submenu of values and shows none, as a picker does (Network's and Storage's `Tab` steps through their views; no view has a key of its own) |
+| Dock tab menu | The dock bar's "…" | Close, Close others, Close to the right, Close all | None; Close is bound to `⌘W` (`Ctrl+Shift+W`) but doesn't say so | Close shows `⌘W` |
+| Shell | The pod pane's header | Start shell in ⟨container⟩ | None, none bound | Unchanged |
+| More | The node pane's tab strip when narrow | Events, YAML | None, none bound | Unchanged |
+| Pickers | A picker's button or its folded submenu | Values: namespaces, columns, a container, a pod, the tail, a time range, auto refresh, levels, a node, a project, a category, a limit, an instance | None | Unchanged: a value is chosen, not run, and has no key |
+| Download | A log's toolbar | Visible lines (N), All retained lines (N) | None, none bound | Unchanged |
+| Text fields | A right-click in any Kit input | Cut, Copy, Paste, Select all | The native menu's own | Unchanged: Kit's input draws the system's menu |
+
+No menu is added: context menus on dock tabs, log lines, YAML documents and the terminal are [#531](https://github.com/skel84/freshkube/issues/531)'s, built with this change's builder.
+
+The rules:
+
+- **One builder.** `table::row_menu` becomes `freshkube_ui::menu`, which every menu that runs commands uses: a list of `MenuAction`s (a label, the action, whether it is enabled, and for a toggle whether it is on), separators, and the focus whose key context binds the actions. Kit shows each entry's key from the binding it finds on that focus's path, in the platform's form, so the menu names no key itself. An entry runs its action on that focus at once, as the key does, and only while the menu's subject holds (the row still listed and selected, the tab still open). A menu opened from a button sets the same focus, not the button's, since a page's keys are bound on its list, not on its toolbar.
+- **Folded controls carry their action.** A control with a key gives its folded form from the action its button's tooltip names (`page::action_item(label, action, focus)`, beside `page::checked_action_item`), so the button's tooltip, the folded entry and the key show one binding. A control with no key keeps `page::item` and its handler.
+- **An action acts on the selection.** The dock tab menu's entries act on the selected tab, as the row menu's act on the row it selected; no action takes its subject from the menu.
+- **No key is invented for a menu.** An entry whose action has no binding in the menu's context shows none (Close others, Start shell). Adding a key is a keymap change, which then shows in every menu that offers the action.
+- **Keys in the UI font,** at the menu's size, after the label at the right edge, in `muted`, as Kit draws them and as the row menu does in a monospace table.
+- **Cost.** Menus are built when they open, from the actions and the bindings, and kept while open; nothing is derived in a page's render.
+
+Rejected: *keys on the pickers' values*, since a value is a choice and a key per value would need a binding per namespace or column; *a context menu on every card and chart*, since cards act through their links and charts have no command to run; *keys typed into labels* (`Close  ⌘W`), since they'd drift from the keymap and show the wrong platform's form.
+
 ## Status and links
 
 Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette for every state, drawn 10 dp, whose inside carries the meaning. `ui::status_glyph` draws it ([change 13](#from-todays-app-to-desktop-grade)): each drawing is a single-colour SVG on a 16 grid in `crates/freshkube-ui/assets/glyphs/`, compiled in and painted as an alpha mask in the tone's colour, so a halo keeps its transparency and a cut-out shows what lies behind it.
