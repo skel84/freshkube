@@ -8,6 +8,8 @@ mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
 #[cfg(test)]
+mod link_tests;
+#[cfg(test)]
 mod menu_tests;
 pub(crate) mod nodes;
 mod object_links;
@@ -329,6 +331,8 @@ pub(crate) struct Pilot {
     active_definition: session::Definition,
     /// The Talos entry waiting for its talosconfig's contexts.
     entry_open: Option<switch::EntryOpen>,
+    /// A link into another entry, waiting for it to open.
+    pending_link: Option<switch::PendingLink>,
     /// The read that finds the default kubeconfig file an entry's context is in.
     entry_locate: Option<(OwnedJob, Task<()>)>,
     entry_generation: u64,
@@ -1145,6 +1149,7 @@ impl Pilot {
             kubernetes_only: None,
             active_definition: Default::default(),
             entry_open: None,
+            pending_link: None,
             entry_locate: None,
             entry_generation: 0,
             switcher_revision: 0,
@@ -1324,6 +1329,7 @@ impl Pilot {
                             } else if view.contexts.contains(&catalog.current) {
                                 view.applied.context = Some(catalog.current);
                             } else {
+                                view.pending_link = None;
                                 view.config_error = Some(format!(
                                     "Talos context '{}' was not found",
                                     catalog.current
@@ -1337,8 +1343,10 @@ impl Pilot {
                         view.refresh(window, cx);
                     }
                     Err(error) => {
+                        view.pending_link = None;
                         view.config_error = Some(error);
                         view.rebuild_joined_nodes(cx);
+                        view.prepare_context_display(window, cx);
                     }
                 }
                 cx.notify();
