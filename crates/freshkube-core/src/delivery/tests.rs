@@ -138,11 +138,7 @@ async fn a_healthy_change_joins_from_the_commit_to_the_pods() {
 
 #[tokio::test]
 async fn a_rollout_that_pins_the_digest_is_confirmed() {
-    let mut world = healthy();
-    world.environment = world
-        .environment
-        .with("rollouts", vec![rollout(&format!("{REPO}@{NEW}"))]);
-    let trail = run(&world, &ENV).await;
+    let trail = run(&pinned(), &ENV).await;
     assert_eq!(
         one(&trail, Hop::Application, Hop::Rollout).confidence,
         Confidence::Confirmed

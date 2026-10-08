@@ -102,15 +102,10 @@ fn rollout_stands_on_its_pods(link: &Link, key: &str) -> bool {
 }
 
 /// The sides of confirmed links that no read object stands on: `(from, to,
-/// side)`. Each is a confirmed link, on main, whose evidence on that side is
-/// declared only, or absent. Provenance shows them as they are; whether they
-/// stay confirmed is for the confidence slice (#387).
-const KNOWN_GAPS: &[(&str, &str, &str)] = &[
-    // #387: the Rollout's spec pin is declared, and Argo CD's resource list names
-    // the Rollout, not the digest.
-    ("Application", "Rollout", "Application"),
-    ("Application", "Rollout", "Rollout"),
-];
+/// side)`, each a confirmed link whose evidence on that side is declared
+/// only, or absent. #387 closed the last of them; a side that stands on
+/// nothing reported is Claimed instead, so a new entry needs a reason.
+const KNOWN_GAPS: &[(&str, &str, &str)] = &[];
 
 fn github() -> FixtureGitHub {
     FixtureGitHub::with(vec![pull_request(7, OTHER_SHA, Some(SHA))])
@@ -118,12 +113,18 @@ fn github() -> FixtureGitHub {
 
 /// Every kind of link confirmed at once: a squash-merged pull request whose
 /// head build shipped, signed by Chains, promoted to a Stage whose
-/// Application synced the pushed commit, pinned by its Rollout, running.
+/// Application synced the pushed commit and whose image summary lists the
+/// digest, pinned by its Rollout, running.
 async fn confirmed() -> Trail {
     let mut world = promoted(NEW, "Succeeded", PUSHED).with_meta();
+    let image = format!("{REPO}@{NEW}");
+    let mut app = summarised(application(Some("https://env-a.example:6443")), &[&image]);
+    app["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    world.argocd = world.argocd.with("applications", vec![app]);
     world.environment = world
         .environment
-        .with("rollouts", vec![rollout(&format!("{REPO}@{NEW}"))]);
+        .with("rollouts", vec![rollout(&image)])
+        .with("replicasets", vec![replica_set("5d9c", &image, 1, 1)]);
     world.tekton = world.tekton.with(
         "pipelineruns",
         vec![
@@ -809,6 +810,10 @@ const COUNTS: [[usize; 3]; 4] = [[2, 6, 0], [5, 3, 0], [11, 1, 0], [3, 9, 0]];
 // squash: Commit -> PipelineRun, both PullRequest -> PipelineRun links, PipelineRun ->
 // supply chain, and PullRequest -> Freight (the head build is tied to the head commit by
 // declared fields only; `storefront-pr-y` has no clone TaskRun there).
+// #387 moved none: Rollout -> pods stays Confirmed in every fixture on its current pods'
+// owner chain to the Rollout, which the fixtures serve as a cluster does; Application ->
+// Rollout stays Confirmed in `confirmed`, whose Application's image summary lists the
+// digest its pods run.
 
 #[test]
 fn the_rule_fails_on_a_side_with_nothing_read() {
@@ -1089,4 +1094,139 @@ async fn without_a_ready_current_pod_reporting_the_digest_the_link_only_claims()
         "{}",
         pods.reason
     );
+}
+
+/// [`pinned`] with Argo CD's image summary listing `images`.
+fn pinned_listing(images: &[&str]) -> World {
+    let mut world = pinned();
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![summarised(
+            application(Some("https://env-a.example:6443")),
+            images,
+        )],
+    );
+    world
+}
+
+#[tokio::test]
+async fn argo_cds_summary_and_the_current_pods_confirm_a_pinned_rollout() {
+    let trail = run(&pinned(), &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(
+        rollout.confidence,
+        Confidence::Confirmed,
+        "{}",
+        rollout.reason
+    );
+    for hop in [Hop::Application, Hop::Rollout] {
+        assert!(stands_on(rollout, hop), "{hop:?}: {rollout:#?}");
+    }
+    let summary = rollout
+        .evidence
+        .iter()
+        .find(|seen| seen.field == "/status/summary/images")
+        .expect("Argo CD's summary");
+    assert_eq!(summary.fact, Fact::Reported);
+    assert_eq!(summary.value.as_deref(), Some(NEW));
+    // The pin is still shown, as what it is.
+    assert!(rollout.evidence.iter().any(|seen| {
+        seen.object.kind == "Rollout"
+            && seen.fact == Fact::Declared
+            && seen.value.as_deref() == Some(NEW)
+    }));
+}
+
+#[tokio::test]
+async fn a_spec_pin_without_argo_cds_summary_only_claims() {
+    let mut world = pinned();
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![application(Some("https://env-a.example:6443"))],
+    );
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Claimed);
+    for words in [
+        "the Rollout's spec pins the Freight's digest, declared only",
+        "Argo CD reports no image summary for the Application",
+    ] {
+        assert!(
+            rollout.reason.contains(words),
+            "{words}: {}",
+            rollout.reason
+        );
+    }
+    assert!(!stands_on(rollout, Hop::Application));
+    // The pods still confirm their own link.
+    assert_eq!(
+        one(&trail, Hop::Rollout, Hop::Pod).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_summary_that_lists_another_image_keeps_it_claimed_and_names_it() {
+    let old = format!("{REPO}@{OLD}");
+    let tagged = format!("{REPO}:v1.4.0");
+    let other = format!("registry.example/acme/proxy@{NEW}");
+    let short = super::Digest::parse(OLD).unwrap().short();
+    for (images, words) in [
+        (
+            vec![old.as_str()],
+            format!("Argo CD's image summary lists {short} instead"),
+        ),
+        (
+            vec![tagged.as_str()],
+            "Argo CD's image summary lists tag v1.4.0 instead".to_owned(),
+        ),
+        (
+            vec![other.as_str()],
+            "Argo CD's image summary does not list its image".to_owned(),
+        ),
+    ] {
+        let trail = run(&pinned_listing(&images), &ENV).await;
+        let rollout = one(&trail, Hop::Application, Hop::Rollout);
+        assert_eq!(rollout.confidence, Confidence::Claimed, "{images:?}");
+        assert!(
+            rollout.reason.contains(&words),
+            "{words}: {}",
+            rollout.reason
+        );
+        assert!(!stands_on(rollout, Hop::Application), "{images:?}");
+    }
+    // What the summary lists of the image is kept, as reported.
+    let trail = run(&pinned_listing(&[&old]), &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert!(rollout.evidence.iter().any(|seen| {
+        seen.field == "/status/summary/images"
+            && seen.fact == Fact::Reported
+            && seen.value.as_deref() == Some(old.as_str())
+    }));
+}
+
+#[tokio::test]
+async fn current_pods_on_another_digest_keep_a_pinned_rollout_claimed() {
+    let mut world = pinned();
+    world.environment = world.environment.with(
+        "pods",
+        vec![pod(
+            "storefront-5d9c-x",
+            &format!("{REPO}@{NEW}"),
+            &format!("docker-pullable://{REPO}@{OLD}"),
+        )],
+    );
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Claimed);
+    let short = super::Digest::parse(OLD).unwrap().short();
+    assert!(
+        rollout
+            .reason
+            .contains(&format!("its current pods: the Stage claims this Freight but the current revision's pods run another digest ({short})")),
+        "{}",
+        rollout.reason
+    );
+    assert!(stands_on(rollout, Hop::Application));
+    assert!(!stands_on(rollout, Hop::Rollout));
 }

@@ -1,7 +1,7 @@
 use crate::delivery::argocd::Application;
-use crate::delivery::digest::{Digest, repository};
+use crate::delivery::digest::{Digest, repository, tag};
 use crate::delivery::kargo::Freight;
-use crate::delivery::observation::Observation;
+use crate::delivery::observation::{Fact, Observation};
 use crate::delivery::pods::RunningImage;
 use crate::delivery::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use crate::delivery::source::{Truncation, cap_note};
@@ -9,7 +9,7 @@ use crate::delivery::source::{Truncation, cap_note};
 use super::argo::{not_the_environment, rollout_namespace};
 use super::observe::{
     freight_side, manages, pods_running, pods_running_other, revision_tie, rollout_hash,
-    rollout_state as rollout_seen, summary_images,
+    rollout_state as rollout_seen, summary_entries, summary_images,
 };
 use super::*;
 
@@ -91,16 +91,17 @@ pub(super) fn rollout_links(
         if let Some(digest) = &pinned {
             seen.extend(freight_side(freight, &Key::Digest(digest.clone())));
         }
+        let pods = pod_link(evidence, freight, rollout, &rollout_id);
         links.push(match pinned {
-            Some(digest) => Link::new(
-                Hop::Application,
-                Hop::Rollout,
+            Some(digest) => pinned_link(
+                app,
+                rollout,
                 rollout_id.clone(),
-                Key::Digest(digest),
-                Confidence::Confirmed,
-                format!("the Rollout's spec pins the Freight's digest; {state}"),
-            )
-            .observed(seen),
+                digest,
+                &pods,
+                seen,
+                &state,
+            ),
             None => Link::new(
                 Hop::Application,
                 Hop::Rollout,
@@ -111,9 +112,99 @@ pub(super) fn rollout_links(
             )
             .observed(seen),
         });
-        links.push(pod_link(evidence, freight, rollout, &rollout_id));
+        links.push(pods);
     }
     links
+}
+
+/// The link to a Rollout whose spec pins the Freight's digest. The pin is
+/// declared; the link is Confirmed only when Argo CD's image summary, which
+/// it compiles from the live pods, lists the digest for the Application, and
+/// the Rollout's own current pods report it (`pods`, its link to them).
+fn pinned_link(
+    app: &Application,
+    rollout: &Rollout,
+    subject: String,
+    digest: Digest,
+    pods: &Link,
+    mut seen: Vec<Observation>,
+    state: &str,
+) -> Link {
+    // Argo CD lists the pods' images as their spec names them, so the entry
+    // names the pin's repository too; the digest under another is not it.
+    let repo = rollout
+        .images
+        .iter()
+        .find(|image| Digest::from_reference(image).as_ref() == Some(&digest))
+        .map(|image| repository(image));
+    let same: Vec<&str> = app
+        .images
+        .iter()
+        .filter(|image| repo.as_deref() == Some(repository(image).as_str()))
+        .map(String::as_str)
+        .collect();
+    let listed = same
+        .iter()
+        .any(|image| Digest::from_reference(image).as_ref() == Some(&digest));
+    let running = pods.confidence == Confidence::Confirmed
+        && pods.evidence.iter().any(|seen| {
+            seen.object.kind == "Pod"
+                && seen.fact == Fact::Reported
+                && seen.value.as_deref() == Some(digest.as_str())
+        });
+    let mut missing = Vec::new();
+    if listed {
+        seen.extend(summary_images(app, std::slice::from_ref(&digest)));
+    } else {
+        seen.extend(summary_entries(app, &same));
+        missing.push(if app.images.is_empty() {
+            "Argo CD reports no image summary for the Application".to_owned()
+        } else if same.is_empty() {
+            "Argo CD's image summary does not list its image".to_owned()
+        } else {
+            let named: Vec<String> = same.iter().map(|image| summary_name(image)).collect();
+            format!("Argo CD's image summary lists {} instead", named.join(", "))
+        });
+    }
+    if !running {
+        missing.push(format!("its current pods: {}", pods.reason));
+    }
+    seen.extend(pods.evidence.iter().cloned());
+    if missing.is_empty() {
+        Link::new(
+            Hop::Application,
+            Hop::Rollout,
+            subject,
+            Key::Digest(digest),
+            Confidence::Confirmed,
+            format!(
+                "the Rollout's spec pins the Freight's digest, Argo CD's image summary lists it, and the Rollout's current pods run it; {state}"
+            ),
+        )
+        .observed(seen)
+    } else {
+        Link::new(
+            Hop::Application,
+            Hop::Rollout,
+            subject,
+            Key::Digest(digest),
+            Confidence::Claimed,
+            format!(
+                "the Rollout's spec pins the Freight's digest, declared only; {}; {state}",
+                missing.join("; ")
+            ),
+        )
+        .observed(seen)
+    }
+}
+
+/// An image as Argo CD's summary lists it, for a reason: its short digest,
+/// else its tag.
+fn summary_name(image: &str) -> String {
+    match Digest::from_reference(image) {
+        Some(digest) => digest.short(),
+        None => tag(image).map_or_else(|| image.to_owned(), |tag| format!("tag {tag}")),
+    }
 }
 
 fn rollout_state(rollout: &Rollout, analysis: Option<&Vec<AnalysisRun>>) -> String {

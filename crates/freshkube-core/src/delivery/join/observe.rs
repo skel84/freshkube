@@ -433,6 +433,21 @@ pub(super) fn summary_images(app: &Application, digests: &[Digest]) -> Vec<Obser
         .collect()
 }
 
+/// Entries of Argo CD's image summary, as it lists them.
+pub(super) fn summary_entries(app: &Application, images: &[&str]) -> Vec<Observation> {
+    images
+        .iter()
+        .map(|image| {
+            Observation::reported(
+                role::ARGOCD,
+                app.object_ref(),
+                "/status/summary/images",
+                Some(image),
+            )
+        })
+        .collect()
+}
+
 /// The pods' side of a link: the containers that run a digest, as the pods
 /// report it, the first few of them.
 pub(super) fn pods_running(pods: &[(&RunningImage, &Digest)]) -> Vec<Observation> {

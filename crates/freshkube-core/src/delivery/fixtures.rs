@@ -289,6 +289,31 @@ pub fn application(server: Option<&str>) -> Value {
     })
 }
 
+/// `app` with Argo CD's image summary, which it compiles from the live pods.
+pub fn summarised(mut app: Value, images: &[&str]) -> Value {
+    app["status"]["summary"] = json!({"images": images});
+    app
+}
+
+/// [`healthy`] with its Rollout and ReplicaSet pinning the Freight's digest,
+/// and Argo CD's image summary listing it, as once the pods run it.
+pub fn pinned() -> World {
+    let image = format!("{REPO}@{NEW}");
+    let mut world = healthy();
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![summarised(
+            application(Some("https://env-a.example:6443")),
+            &[&image],
+        )],
+    );
+    world.environment = world
+        .environment
+        .with("rollouts", vec![rollout(&image)])
+        .with("replicasets", vec![replica_set("5d9c", &image, 1, 1)]);
+    world
+}
+
 pub fn rollout(image: &str) -> Value {
     json!({
         "metadata": {"name": "storefront", "namespace": "shop", "uid": ROLLOUT_UID},
