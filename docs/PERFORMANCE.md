@@ -273,6 +273,37 @@ Process CPU rose by about 1 point on `pod-logs` and 1.5 on `burst` while frame t
 
 The uncached build runs the log view at main's speed, so the slowdown follows how busy the main thread is, not the code: lower clocks or an efficiency core under a lighter thread. Process CPU is time, not cycles, so the same work at a lower clock reads as more of it. Frames stay cheaper cached, and the caching stays. Log batches don't redraw the chrome either: the dock notifies the shell only when the selected tab's least height changes, and the Talos log doesn't notify while it is hidden, so there is no shell notify to skip.
 
+### Health and etcd load with the shared motion (#456)
+
+#456 gave every screen table one loading state: Health and etcd dropped Kit's skeleton, which moved inside the page, for the shared `LoadingMotion` beside it. Both builds draw about 60 frames a second while loading, so the measure is a frame's cost. `loading health` and `loading etcd`, release stress runs of 30 s, three of each build in turn, on a MacBook Air; medians of `frame.cpu`, median / 99th percentile, in ms, then process CPU:
+
+| Workload | main before #456 | main after #456 |
+| --- | --- | --- |
+| `loading health` | 1.43 / 1.74, 18.6% | 1.11 / 1.29, 17.7% |
+| `loading etcd` | 1.42 / 1.76, 18.9% | 1.08 / 1.34, 18.2% |
+
+### Changed rows flash (#254)
+
+The Resources store derives which rows a watch changed as it applies them (`ResourceStore::apply`): a pod whose state, reason or restarts changed, or another kind's status cells. A list, a relist, a Reset, an arrival and a delete are no change. The screen keeps one part per watch batch, so the flash's cap of eight changes in its 1.5 s window counts what the watch sent, not the ten-a-second coalescing; a part past the cap returns only its count and clones no identity. The flash layer is mounted by the shell beside the cached page, as the loading motion is, so its frames redraw neither the page nor the chrome; reduced motion and the node pane's embedded Pods list don't flash.
+
+`burst 20000 <rate>`, release stress runs of 30 s, three of each build in turn, on a MacBook Air: `main` is main after #456, the branch is #254 with the count-only parts. Medians of the runs' p50s, in ms, with their range; process CPU is the runs' median:
+
+| Rate | Measure | main | Branch |
+| --- | --- | --- | --- |
+| 2,000/s | `table.apply` | 7.09 (6.92–7.58) | 7.36 (7.19–7.60) |
+| 2,000/s | `table.store` | 2.13 (2.12–2.25) | 2.29 (2.23–2.33) |
+| 2,000/s | `frame.cpu` | 10.71 (10.48–11.35) | 10.99 (9.64–11.36) |
+| 2,000/s | Process CPU | 50.8% | 52.4% |
+| 1,000/s | `table.apply` | 7.67 (7.63–7.76) | 7.93 (7.77–8.01) |
+| 1,000/s | `table.store` | 1.91 (1.87–1.92) | 2.01 (1.96–2.13) |
+| 1,000/s | `frame.cpu` | 12.06 (12.02–12.19) | 12.41 (12.12–12.65) |
+| 1,000/s | Process CPU | 44.6% | 45.5% |
+| 5/s | Frames | 174 | 1,509 |
+| 5/s | `frame.cpu` | 13.30 | 2.75 |
+| 5/s | Process CPU | 24.5% | 40.9% |
+
+Under a burst the flash asks no frames: the frame counts match, and the page renders as often (233 at 1,000/s, 235–237 at 2,000/s). `table.apply` still rises about 0.27 ms, 3.5%. Of that, 0.10–0.16 ms is in the store (5–8%), from recording changed slots and comparing each replaced pod's state. The rest is in `table.rebuild` (5.75 → 5.91 ms at 1,000/s), which the change touches only to bump a counter. The first version cloned every changed identity and deduplicated them in a set, and cost 0.4 ms at 1,000/s (`table.store` 1.94 → 2.31). At 5 changes a second nearly every batch flashes, so the window draws at 60 frames a second while a fade runs: frames are cheap, since only the layer draws (the page rendered 133 times in both builds, the header 41–42), but process CPU rises by 16 points. `table.apply` at 5/s fell from 11.7 to 6.2 ms in the branch, with no code change behind it: the busier main thread runs at higher clocks, so per-operation times at that rate don't compare between builds.
+
 ### A first list no longer stops the window
 
 A reset now arrives ready to swap in. Where the list is read, on Tokio, core's rows are converted, their search keys built, duplicates merged, identities indexed and the widest printed text of each column counted. The main thread replaces the store's contents and sizes the columns from those counts instead of reading every row.
