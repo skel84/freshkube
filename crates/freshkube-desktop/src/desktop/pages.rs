@@ -279,6 +279,7 @@ impl Pilot {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
+            this.leave_entry(cx);
             if this.kubernetes_only.is_some() {
                 this.use_kube_context(Some(context), window, cx);
                 return;
@@ -400,7 +401,7 @@ impl Pilot {
                 .update(cx, |services, cx| services.focus(window, cx));
         } else if self.page == Page::Applications {
             self.applications
-                .update(cx, |page, cx| page.focus(window, cx));
+                .update(cx, |page, cx| page.focus_shown(window, cx));
         } else if self.page == Page::Settings {
             self.settings_page
                 .update(cx, |settings, cx| settings.focus(window, cx));

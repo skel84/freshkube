@@ -212,20 +212,41 @@ impl TableSource for ApplicationsPage {
     }
 
     /// A click selects the row, which opens the Inspector, and puts the
-    /// keyboard on the list.
+    /// keyboard on the list; a double-click opens the application's page.
     fn click(
         &mut self,
         key: &SharedString,
-        _: &ClickEvent,
+        event: &ClickEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.select(key.clone(), cx);
         self.focus(window, cx);
+        if event.click_count() >= 2 {
+            self.open_application(key, window, cx);
+        }
     }
 
     fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
         Some(self.focus.clone())
+    }
+
+    /// A right-click selects the row as an arrow does, but an Inspector
+    /// that was closed stays closed, so the table keeps its place under
+    /// the pointer and the menu opens where it was asked for. Open shows
+    /// the application's page, as Enter does.
+    fn row_menu(
+        &mut self,
+        key: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<freshkube_ui::menu::MenuAction> {
+        if self.selected.as_ref() != Some(key) {
+            self.selected = Some(key.clone());
+            cx.notify();
+        }
+        self.focus(window, cx);
+        vec![freshkube_ui::menu::MenuAction::new("Open", OpenApplication)]
     }
 
     fn loading(&self) -> Option<&kit::LoadingRows> {

@@ -59,6 +59,7 @@ impl SettingsPage {
         role: workspace::Role,
         context: &str,
         talosconfig: &str,
+        talos_context: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), SharedString> {
         if !self.editable() {
@@ -66,6 +67,10 @@ impl SettingsPage {
         }
         let context = context.trim();
         let talosconfig = talosconfig.trim();
+        let talos_context = Some(talos_context.trim().to_owned()).filter(|name| !name.is_empty());
+        if talos_context.is_some() && talosconfig.is_empty() {
+            return Err("A Talos context needs a talosconfig".into());
+        }
         if context.is_empty() {
             return Err("Enter the kubeconfig context this cluster opens".into());
         }
@@ -84,12 +89,14 @@ impl SettingsPage {
                 entry.role = role;
                 entry.context = context.to_owned();
                 entry.talosconfig = talosconfig;
+                entry.talos_context = talos_context;
                 format!("Changed {id}.")
             }
             None => {
                 let id = next.fresh_id(context);
                 let mut entry = Entry::new(id.clone(), role, context);
                 entry.talosconfig = talosconfig;
+                entry.talos_context = talos_context;
                 next.clusters.push(entry);
                 // The new row is the selected one once it is saved.
                 self.select_on_save = Some(id.clone().into());

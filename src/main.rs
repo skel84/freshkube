@@ -100,13 +100,13 @@ fn main() -> Result<()> {
         insecure,
         endpoint,
         kubeconfig,
-        kubernetes_only,
+        kubernetes_only: asked_kubernetes_only,
         kube_context,
         fixture,
     } = Cli::parse();
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
-    let config = if fixture || kubernetes_only || kube_context.is_some() || insecure {
+    let config = if fixture || asked_kubernetes_only || kube_context.is_some() || insecure {
         config
     } else {
         config.or_else(|| {
@@ -117,7 +117,7 @@ fn main() -> Result<()> {
     };
     let kubernetes_only = !fixture
         && wants_kubernetes_only(
-            kubernetes_only,
+            asked_kubernetes_only,
             kube_context.is_some(),
             config.is_some() || context.is_some() || insecure,
             freshkube_desktop::default_talosconfig_exists,
@@ -185,6 +185,7 @@ fn main() -> Result<()> {
         GpuiOptions::fixture()
     } else if kubernetes_only {
         GpuiOptions::kubernetes_only(kubeconfig.map(PathBuf::from), kube_context, tail)
+            .naming_source(asked_kubernetes_only)
             .with_preferences(freshkube_desktop::preferences_path())
             .with_keyring()
     } else {

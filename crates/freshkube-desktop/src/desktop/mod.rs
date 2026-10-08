@@ -19,6 +19,9 @@ mod settings;
 mod shell;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
+mod switch;
+#[cfg(test)]
+mod switch_tests;
 mod system_services;
 mod target;
 #[cfg(test)]
@@ -325,6 +328,21 @@ pub(crate) struct Pilot {
     overview: Snapshot<ClusterOverview>,
     /// The cluster sessions: a workspace of one.
     registry: session::Registry,
+    /// How the active workspace entry was defined when it was opened.
+    active_definition: session::Definition,
+    /// The Talos entry waiting for its talosconfig's contexts.
+    entry_open: Option<switch::EntryOpen>,
+    /// The read that finds the default kubeconfig file an entry's context is in.
+    entry_locate: Option<(OwnedJob, Task<()>)>,
+    entry_generation: u64,
+    /// The workspace revision the header's list was built from.
+    switcher_revision: u64,
+    /// When the restored summary on show was read; none once a read replaces it.
+    restored_taken: Option<std::time::SystemTime>,
+    /// "Last known · 3 min ago", beside the Overview's connection state.
+    age_label: Entity<switch::AgeLabel>,
+    /// The header's list of the workspace file's clusters.
+    switcher: Vec<switch::ClusterItem>,
     object_open_job: Option<OwnedJob>,
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
@@ -793,6 +811,15 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let names_source =
+            options.fixture || options.named_source || options.maintenance_endpoint.is_some();
+        let launched = switch::Launched {
+            kubernetes_only: options.kubernetes_only,
+            kubeconfig: options.kubeconfig_path.clone(),
+            kube_context: options.kube_context.clone(),
+            talosconfig: options.config_path.clone(),
+            talos_context: options.context.clone(),
+        };
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
         // Opened before the pages, which read their splits' sizes from it.
@@ -1050,6 +1077,14 @@ impl Pilot {
             obs_column_reveal_pass: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubernetes_only: None,
+            active_definition: Default::default(),
+            entry_open: None,
+            entry_locate: None,
+            entry_generation: 0,
+            switcher_revision: 0,
+            restored_taken: None,
+            age_label: cx.new(|_| switch::AgeLabel::new()),
+            switcher: Vec::new(),
             settings_open: false,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
@@ -1078,14 +1113,29 @@ impl Pilot {
             _tick: tick,
         };
         view.load_workspace(cx);
-        view.open_initial_source(
-            options.kubernetes_only,
-            options.kubeconfig_path,
-            options.kube_context,
-            options.remembered_kubernetes,
-            window,
-            cx,
-        );
+        view.rebuild_switcher(cx);
+        let workspace_entry = view.launch_entry(names_source, cx);
+        let started_entry = workspace_entry.is_some();
+        if let Some((id, note)) = workspace_entry {
+            view.activate_entry(&id, window, cx);
+            if let Some(note) = note {
+                gpui_kit::component::WindowExt::push_notification(window, note, cx);
+            }
+        } else {
+            view.open_initial_source(
+                options.kubernetes_only,
+                options.kubeconfig_path,
+                options.kube_context,
+                options.remembered_kubernetes,
+                window,
+                cx,
+            );
+        }
+        if !started_entry {
+            view.adopt_launched_entry(&launched, cx);
+        }
+        view._subscriptions
+            .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
         view._subscriptions.push(cx.subscribe_in(
             &view.system_services,
             window,
@@ -1158,6 +1208,7 @@ impl Pilot {
         self.logs
             .update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
         self.push_source(window, cx);
+        self.restore_parked_summary(window, cx);
     }
 
     fn load_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1190,7 +1241,27 @@ impl Pilot {
                         view.loaded_config_path = Some(catalog.path);
                         view.contexts = catalog.names;
                         if view.applied.context.is_none() {
-                            view.applied.context = Some(catalog.current);
+                            if view.entry_open.is_some() {
+                                // An entry names its Talos context or has the
+                                // one its `context` names; the file's current
+                                // context never stands in.
+                                let names = view.contexts.clone();
+                                let file = view.loaded_config_path.clone().unwrap_or_default();
+                                if !view.talos_context_for_entry(&names, &file, window, cx) {
+                                    cx.notify();
+                                    return;
+                                }
+                            } else if view.contexts.contains(&catalog.current) {
+                                view.applied.context = Some(catalog.current);
+                            } else {
+                                view.config_error = Some(format!(
+                                    "Talos context '{}' was not found",
+                                    catalog.current
+                                ));
+                                view.rebuild_joined_nodes(cx);
+                                cx.notify();
+                                return;
+                            }
                         }
                         view.remember_connection(window, cx);
                         view.refresh(window, cx);
@@ -1216,6 +1287,7 @@ impl Pilot {
     }
 
     fn use_config_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave_entry(cx);
         let draft = self.path.read(cx).value().to_string();
         if self.kubernetes_only.is_some() {
             // The default talosconfig is what's missing.

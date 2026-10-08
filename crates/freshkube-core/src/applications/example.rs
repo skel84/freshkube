@@ -10,7 +10,8 @@
 //!   Argo CD Applications name them, and deploy to the environment clusters.
 //! - `catalog` is an ApplicationSet, so it is found by the second rule.
 //! - `status-page` is a plain Application that deploys to its own cluster and
-//!   manages a workload labelled `part-of=public-status`.
+//!   manages a workload labelled `part-of=public-status`, whose instance
+//!   label names it back.
 //! - `loyalty` is found only by its label.
 //! - `checkout-worker`, labelled `part-of=checkout` in `prod-fra`, joins the
 //!   Kargo application by its name.
@@ -108,12 +109,23 @@ fn core() -> SessionInputs {
             applications.iter().filter_map(parse_application).collect(),
         ),
         argo_application_sets: Source::Read(parse_application_set(&set).into_iter().collect()),
-        workloads: Source::Read(
-            labelled(&[("status", "status-page", "public-status")])
-                .into_iter()
-                .collect(),
-        ),
+        workloads: Source::Read(status_page().into_iter().collect()),
     }
+}
+
+/// Labelled `public-status`, and with the instance label Argo CD's label
+/// tracking writes, so it names the Application that manages it.
+fn status_page() -> Option<super::LabelledWorkload> {
+    parse_labelled_workload(
+        &json!({"metadata": {
+            "namespace": "status", "name": "status-page",
+            "labels": {
+                "app.kubernetes.io/part-of": "public-status",
+                "app.kubernetes.io/instance": "status-page",
+            },
+        }}),
+        WorkloadKind::Deployment,
+    )
 }
 
 fn labelled(items: &[(&str, &str, &str)]) -> Vec<super::LabelledWorkload> {
@@ -234,7 +246,7 @@ mod tests {
             .iter()
             .find(|m| matches!(m.at.kind, MemberKind::Workload(_)))
             .unwrap();
-        assert_eq!(deployment.basis, Basis::ManagedBy);
+        assert_eq!(deployment.basis, Basis::Tracked);
         assert!(
             found
                 .applications

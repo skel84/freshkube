@@ -37,6 +37,7 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                 ("pod-overview", Page::Resources, "resource-detail"),
                 ("workload-logs", Page::Resources, "workload-logs-status"),
                 ("search", Page::Resources, "command"),
+                ("application", Page::Applications, "application-page"),
             ] {
                 cx.update_window(handle, |_, window, cx| {
                     crate::text_size::set(text_size, cx);
