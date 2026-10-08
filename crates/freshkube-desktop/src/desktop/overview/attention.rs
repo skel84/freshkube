@@ -142,8 +142,8 @@ impl Pilot {
         );
         let stale = if self.overview.is_stale() {
             self.overview.error()
-        } else if self.kubernetes_summary.is_stale() {
-            self.kubernetes_summary.error()
+        } else if self.registry.active().kubernetes_summary.is_stale() {
+            self.registry.active().kubernetes_summary.error()
         } else {
             None
         };

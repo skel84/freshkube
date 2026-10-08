@@ -12,6 +12,7 @@ mod overview;
 mod pages;
 mod search;
 mod services;
+mod session;
 mod shell;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
@@ -313,12 +314,8 @@ pub(crate) struct Pilot {
         Option<freshkube_core::AccessIdentity>,
     )>,
     overview: Snapshot<ClusterOverview>,
-    kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
-    summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
-    summary_session: Option<kubernetes_summary::SummarySession>,
-    summary_epoch: u64,
-    summary_job: Option<OwnedJob>,
-    summary_task: Option<Task<()>>,
+    /// The cluster sessions: a workspace of one.
+    registry: session::Registry,
     object_open_job: Option<OwnedJob>,
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
@@ -924,12 +921,7 @@ impl Pilot {
             access_configuration: None,
             prompted_access: None,
             overview: Snapshot::default(),
-            kubernetes_summary: Snapshot::default(),
-            summary_health: None,
-            summary_session: None,
-            summary_epoch: 0,
-            summary_job: None,
-            summary_task: None,
+            registry: session::Registry::new(),
             object_open_job: None,
             object_open_task: None,
             object_open_sequence: 0,
@@ -1069,7 +1061,7 @@ impl Pilot {
         self.service_display = services::ServiceDisplay::default();
         self.load_history.clear();
         self.overview = Snapshot::default();
-        self.kubernetes_summary = Snapshot::default();
+        self.registry.active_mut().kubernetes_summary = Snapshot::default();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
@@ -1079,7 +1071,7 @@ impl Pilot {
             .document
             .update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
-        self.summary_health = None;
+        self.registry.active_mut().summary_health = None;
         self.stop_summary();
         self.attention_expanded = false;
         self.object_open_job = None;
@@ -1246,7 +1238,8 @@ impl Pilot {
             // With nothing reading yet, Health's Retry reads the kubeconfig
             // and connects again too.
             ScreenEvent::RefreshSummary
-                if self.kubernetes_only.is_some() && self.summary_session.is_none() =>
+                if self.kubernetes_only.is_some()
+                    && self.registry.active().summary_session.is_none() =>
             {
                 self.refresh(window, cx)
             }
@@ -1391,7 +1384,7 @@ impl Pilot {
         for (_, screen) in &self.screens {
             screen.set_source(source.clone(), window, cx);
         }
-        if let Some(data) = self.summary_health.clone() {
+        if let Some(data) = self.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);
         }
         self.sync_unread_health(cx);

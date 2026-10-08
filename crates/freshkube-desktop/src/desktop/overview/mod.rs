@@ -161,7 +161,8 @@ impl Pilot {
         let p = palette(cx);
         let display = &self.overview_display;
         let context = self.applied.context.clone().unwrap_or_default();
-        let stale = self.overview.is_stale() || self.kubernetes_summary.is_stale();
+        let stale =
+            self.overview.is_stale() || self.registry.active().kubernetes_summary.is_stale();
         let separator = || div().flex_none().px(dp(5.)).child("·");
         let drift = display.drift.clone().map(|drift| {
             let tip = display.drift_tip.clone();

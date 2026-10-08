@@ -29,6 +29,8 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
             view.access = Some(old_access);
             view.access_configuration = Some(before);
             let observation = view
+                .registry
+                .active()
                 .summary_session
                 .as_ref()
                 .unwrap()
@@ -80,7 +82,13 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
             );
             assert!(view.access == Some(new_access));
             assert_ne!(
-                view.summary_session.as_ref().unwrap().core.identity(),
+                view.registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .identity(),
                 &observation
             );
             assert_eq!(view.access_configuration, Some(after));
@@ -105,6 +113,8 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
             assert!(view.overview.error().is_none());
 
             let observation = view
+                .registry
+                .active()
                 .summary_session
                 .as_ref()
                 .unwrap()
@@ -113,7 +123,13 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 .clone();
             view.select_node(None, window, cx);
             assert_eq!(
-                view.summary_session.as_ref().unwrap().core.identity(),
+                view.registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .identity(),
                 &observation
             );
             let id = forward.read(cx).id;
@@ -135,7 +151,13 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
             assert!(view.overview.data().is_some());
             assert!(view.access == Some(new_access));
             assert_eq!(
-                view.summary_session.as_ref().unwrap().core.identity(),
+                view.registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .identity(),
                 &observation
             );
         });

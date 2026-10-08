@@ -348,9 +348,16 @@ impl Pilot {
 
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
         self.publish_reading(cx);
-        self.column_state
-            .prepare(self.kubernetes_summary.data().map(|s| s.as_ref()));
+        self.column_state.prepare(
+            self.registry
+                .active()
+                .kubernetes_summary
+                .data()
+                .map(|s| s.as_ref()),
+        );
         let kubernetes = self
+            .registry
+            .active()
             .kubernetes_summary
             .data()
             .and_then(|summary| summary.nodes.loaded());
@@ -358,7 +365,9 @@ impl Pilot {
             &self.nodes,
             kubernetes.map(Vec::as_slice).unwrap_or_default(),
             self.overview.data().is_some(),
-            self.kubernetes_summary
+            self.registry
+                .active()
+                .kubernetes_summary
                 .data()
                 .is_some_and(|summary| summary.nodes.is_current()),
         );
@@ -377,10 +386,12 @@ impl Pilot {
         }
         self.node_workspace.empty = if self.node_workspace.rows.is_empty() {
             let error = self
+                .registry
+                .active()
                 .kubernetes_summary
                 .data()
                 .and_then(|summary| summary.nodes.error())
-                .or_else(|| self.kubernetes_summary.error())
+                .or_else(|| self.registry.active().kubernetes_summary.error())
                 .or(self.config_error.as_deref())
                 .or_else(|| self.overview.error());
             Some(if let Some(error) = error {
@@ -401,7 +412,9 @@ impl Pilot {
         self.overview_display = crate::presentation::overview::Overview::build(
             &self.node_workspace.rows,
             &self.nodes,
-            self.kubernetes_summary
+            self.registry
+                .active()
+                .kubernetes_summary
                 .data()
                 .map(|summary| summary.as_ref()),
             self.overview.data(),
@@ -419,7 +432,9 @@ impl Pilot {
         );
         self.attention = crate::presentation::attention::build(
             &self.node_workspace.rows,
-            self.kubernetes_summary
+            self.registry
+                .active()
+                .kubernetes_summary
                 .data()
                 .map(|summary| summary.as_ref()),
             self.overview.data(),
