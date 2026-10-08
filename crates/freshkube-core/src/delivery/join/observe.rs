@@ -357,36 +357,9 @@ pub(super) fn rollout_state(rollout: &Rollout, pinned: Option<&Digest>) -> Vec<O
     seen
 }
 
-/// The join's comparison of the pod-template hash the Rollout reports as
-/// current with the hash label of a pod read for it, both reported.
-pub(super) fn hashes_agree(rollout: &Rollout, pods: &[RunningImage]) -> Vec<Observation> {
-    let Some(hash) = rollout.current_pod_hash.as_deref() else {
-        return Vec::new();
-    };
-    let Some(pod) = pods
-        .iter()
-        .find(|pod| pod.pod_hash.as_deref() == Some(hash))
-    else {
-        return Vec::new();
-    };
-    vec![
-        Observation::reported(
-            role::ENVIRONMENT,
-            pod.object_ref(),
-            &format!("/metadata/labels/{}", pointer_segment(POD_HASH_LABEL)),
-            Some(hash),
-        ),
-        concluded("currentPodHash == pod-template-hash", hash),
-    ]
-}
-
-/// What ties a Rollout to the pods read for it: the pod-template hash it
-/// reports as current, and the ReplicaSets whose template pins the digest.
-pub(super) fn rollout_pods(
-    rollout: &Rollout,
-    pinned: &[(&ReplicaSet, Digest)],
-) -> Vec<Observation> {
-    let mut seen: Vec<Observation> = rollout
+/// The pod-template hash the Rollout reports as current.
+pub(super) fn rollout_hash(rollout: &Rollout) -> Vec<Observation> {
+    rollout
         .current_pod_hash
         .as_deref()
         .map(|hash| {
@@ -398,15 +371,50 @@ pub(super) fn rollout_pods(
             )
         })
         .into_iter()
-        .collect();
-    seen.extend(pinned.iter().map(|(set, digest)| {
-        Observation::declared(
+        .collect()
+}
+
+/// What ties a Rollout to the pods of its current revision, every step
+/// reported by a controller: the ReplicaSet whose owner reference names the
+/// Rollout's UID and whose hash label is the current one, and each pod whose
+/// owner reference names that ReplicaSet's UID and whose label carries the
+/// hash too. The first few pods of `pods`, as [`pods_running`] names them.
+pub(super) fn revision_tie(
+    rollout: &Rollout,
+    set: &ReplicaSet,
+    pods: &[(&RunningImage, &Digest)],
+) -> Vec<Observation> {
+    let label = format!("/metadata/labels/{}", pointer_segment(POD_HASH_LABEL));
+    let Some(hash) = rollout.current_pod_hash.as_deref() else {
+        return Vec::new();
+    };
+    let mut seen = vec![
+        Observation::reported(
             role::ENVIRONMENT,
             set.object_ref(),
-            "/spec/template/spec/containers",
-            Some(digest.as_str()),
-        )
-    }));
+            "/metadata/ownerReferences",
+            set.owner_uid.as_deref(),
+        ),
+        Observation::reported(role::ENVIRONMENT, set.object_ref(), &label, Some(hash)),
+    ];
+    for (pod, _) in pods.iter().take(MOST_PODS) {
+        seen.push(Observation::reported(
+            role::ENVIRONMENT,
+            pod.object_ref(),
+            "/metadata/ownerReferences",
+            pod.owner_uid.as_deref(),
+        ));
+        seen.push(Observation::reported(
+            role::ENVIRONMENT,
+            pod.object_ref(),
+            &label,
+            pod.pod_hash.as_deref(),
+        ));
+    }
+    seen.push(concluded(
+        "pod -> ReplicaSet -> Rollout by owner UID; pod-template-hash == currentPodHash",
+        hash,
+    ));
     seen
 }
 

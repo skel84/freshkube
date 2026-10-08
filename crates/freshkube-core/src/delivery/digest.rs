@@ -28,6 +28,16 @@ impl Digest {
         Self::parse(digest)
     }
 
+    /// The digest a pod's `imageID` reports, in any of the forms runtimes
+    /// write: `docker-pullable://…@sha256:…`, `…@sha256:…`, or a bare
+    /// `sha256:…`. Only the `sha256:` part is kept, so the forms compare
+    /// equal.
+    pub fn from_image_id(image_id: &str) -> Option<Self> {
+        let id = image_id.trim();
+        let id = id.split_once("://").map_or(id, |(_, rest)| rest);
+        Self::parse(id.rsplit_once('@').map_or(id, |(_, digest)| digest))
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -114,6 +124,27 @@ mod tests {
         assert_eq!(Digest::from_reference("registry.example/app-a:v1"), None);
         assert_eq!(Digest::parse("sha256:abc"), None);
         assert_eq!(expected.short(), "sha256:111111111111");
+    }
+
+    #[test]
+    fn an_image_id_compares_by_its_sha256_part_in_every_form() {
+        let expected = Some(Digest::parse(D).unwrap());
+        for id in [
+            format!("docker-pullable://registry.example/app-a@{D}"),
+            format!("registry.example/app-a@{D}"),
+            D.to_owned(),
+            format!(" {} ", D.to_uppercase()),
+        ] {
+            assert_eq!(Digest::from_image_id(&id), expected, "{id}");
+        }
+        for id in [
+            "registry.example/app-a:v1",
+            "docker://registry.example/app-a:v1",
+            "registry.example/app-a@md5:abc",
+            "",
+        ] {
+            assert_eq!(Digest::from_image_id(id), None, "{id}");
+        }
     }
 
     #[test]

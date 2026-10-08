@@ -1481,72 +1481,112 @@ async fn a_mapped_cluster_name_reaches_the_pods() {
 }
 
 #[tokio::test]
-async fn only_the_replica_set_at_the_promoted_digest_is_judged() {
-    // The Rollout's status reports the running ReplicaSet as current, or
-    // still the stale one (a status that lags its spec): the ReplicaSet whose
-    // template pins the Freight's digest is judged either way.
-    for current in ["5d9c", "7f3b"] {
-        let world = beside_a_stale_replica_set(current);
-        let trail = run(&world, &ENV).await;
-        let pods = one(&trail, Hop::Rollout, Hop::Pod);
-        assert_eq!(pods.confidence, Confidence::Confirmed, "{current}");
-        assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
-        assert!(
-            pods.reason.contains(
-                "2 container(s) run the Freight's digest, 2 ready of 2 pod container(s) read"
-            ),
-            "{current}: {}",
-            pods.reason
-        );
-        assert!(!pods.reason.contains("other container"), "{}", pods.reason);
-        assert!(
-            pods.reason.contains(
-                "the pods of ReplicaSet storefront-5d9c, whose template pins the Freight's digest"
-            ),
-            "{}",
-            pods.reason
-        );
-        assert!(
-            pods.reason.contains(
-                "not judged: the pods of ReplicaSet storefront-7f3b, whose template does not pin it"
-            ),
-            "{}",
-            pods.reason
-        );
-        let environment = world.environment.requests.borrow().join("\n");
-        assert!(environment.contains("rollouts-pod-template-hash=5d9c"));
-        assert!(!environment.contains("rollouts-pod-template-hash=7f3b"));
-        assert!(environment.contains(
-            "LIST apps/v1/replicasets ns=Some(\"shop\") selector=Some(\"rollouts-pod-template-hash\")"
-        ));
+async fn only_the_current_revisions_pods_are_judged() {
+    // The Rollout's status reports the ReplicaSet at the Freight's digest as
+    // current: its pods are judged, and the older one beside it is not.
+    let world = beside_a_stale_replica_set("5d9c");
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed);
+    assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
+    for words in [
+        "2 container(s) run the Freight's digest, 2 ready of 2 pod container(s) read",
+        "the pods of the Rollout's current pod hash 5d9c, ReplicaSet storefront-5d9c",
+        "not judged: the pods of ReplicaSet storefront-7f3b",
+    ] {
+        assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
     }
+    assert!(!pods.reason.contains("other container"), "{}", pods.reason);
+    let environment = world.environment.requests.borrow().join("\n");
+    assert!(environment.contains("rollouts-pod-template-hash=5d9c"));
+    assert!(!environment.contains("rollouts-pod-template-hash=7f3b"));
+    assert!(environment.contains(
+        "LIST apps/v1/replicasets ns=Some(\"shop\") selector=Some(\"rollouts-pod-template-hash\")"
+    ));
+
+    // It reports the older one as current, as during a canary's first step
+    // or with a status that lags its spec: the current revision runs another
+    // digest, and the pods at the Freight's digest are not judged.
+    let world = beside_a_stale_replica_set("7f3b");
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed);
+    for words in [
+        "the current revision's pods run another digest (sha256:",
+        "the pods of the Rollout's current pod hash 7f3b, ReplicaSet storefront-7f3b",
+        "not judged: the pods of ReplicaSet storefront-5d9c",
+    ] {
+        assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
+    }
+    let environment = world.environment.requests.borrow().join("\n");
+    assert!(environment.contains("rollouts-pod-template-hash=7f3b"));
+    assert!(!environment.contains("rollouts-pod-template-hash=5d9c"));
 }
 
 #[tokio::test]
-async fn without_a_replica_set_at_the_digest_the_current_pod_hash_is_read() {
-    // The healthy Rollout uses a tag, so no template pins the digest.
+async fn pods_without_an_owner_chain_to_the_rollout_only_claim() {
     let trail = run(&healthy(), &ENV).await;
     let pods = one(&trail, Hop::Rollout, Hop::Pod);
     assert_eq!(pods.confidence, Confidence::Confirmed);
     assert!(
         pods.reason.contains(
-            "the pods of the Rollout's current pod hash 5d9c; no ReplicaSet of it pins the Freight's digest"
+            "the pods of the Rollout's current pod hash 5d9c, ReplicaSet storefront-5d9c"
         ),
         "{}",
         pods.reason
     );
 
-    // ReplicaSets that can't be read leave the pods readable, and say so.
-    let mut world = beside_a_stale_replica_set("5d9c");
+    // ReplicaSets that can't be read leave the pods readable, but nothing
+    // ties them to the Rollout but a label.
+    let mut world = healthy();
     world.environment = world.environment.refusing("replicasets");
     let trail = run(&world, &ENV).await;
     let pods = one(&trail, Hop::Rollout, Hop::Pod);
-    assert_eq!(pods.confidence, Confidence::Confirmed);
+    assert_eq!(pods.confidence, Confidence::Claimed);
+    for words in [
+        "its ReplicaSets were not read",
+        "so no owner reference ties the pods to the Rollout",
+        "1 container(s) run the Freight's digest",
+    ] {
+        assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
+    }
+
+    // The Rollout owns no ReplicaSet with its current pod hash.
+    let mut world = healthy();
+    world.environment = world.environment.with(
+        "replicasets",
+        vec![replica_set("7f3b", &format!("{REPO}:v1.4.0"), 1, 1)],
+    );
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed);
     assert!(
-        pods.reason.contains("its ReplicaSets were not read"),
+        pods.reason
+            .contains("no ReplicaSet the Rollout owns has its current pod hash 5d9c"),
         "{}",
         pods.reason
     );
+
+    // A pod with the hash label that another ReplicaSet owns, as another
+    // Rollout's could, is not this Rollout's.
+    let mut world = healthy();
+    let mut stray = pod(
+        "storefront-5d9c-x",
+        &format!("{REPO}:v1.4.0"),
+        &format!("docker-pullable://{REPO}@{NEW}"),
+    );
+    stray["metadata"]["ownerReferences"][0]["uid"] =
+        serde_json::json!("0f0e0d0c-0000-4000-8000-0000000000ff");
+    world.environment = world.environment.with("pods", vec![stray]);
+    let trail = run(&world, &ENV).await;
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed);
+    for words in [
+        "no pod of the current revision reports a digest yet",
+        "1 pod container(s) with that hash label belong to another owner",
+    ] {
+        assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
+    }
 }
 
 fn promotion_by(actor: Option<&str>) -> World {
@@ -1732,14 +1772,21 @@ async fn a_replica_set_of_another_rollout_with_the_same_name_is_not_its_own() {
 }
 
 #[tokio::test]
-async fn a_capped_replica_set_listing_says_so_when_one_pins_the_digest() {
+async fn a_capped_replica_set_listing_says_so_when_the_current_one_is_missing() {
     let mut world = beside_a_stale_replica_set("5d9c");
-    world.environment = world.environment.capped("replicasets");
+    world.environment = world
+        .environment
+        .with(
+            "replicasets",
+            vec![replica_set("7f3b", &format!("{REPO}@{OLD}"), 1, 0)],
+        )
+        .capped("replicasets");
     let trail = run(&world, &ENV).await;
     let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Claimed);
     assert!(
         pods.reason.contains(
-            "whose template pins the Freight's digest; the listing stopped at the page cap"
+            "no ReplicaSet the Rollout owns has its current pod hash 5d9c; the listing stopped at the page cap"
         ),
         "{}",
         pods.reason

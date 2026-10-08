@@ -306,28 +306,33 @@ pub fn analysis_run() -> Value {
 }
 
 pub fn pod(name: &str, image: &str, image_id: &str) -> Value {
-    json!({
-        "metadata": {"name": name, "namespace": "shop",
-                      "labels": {"rollouts-pod-template-hash": "5d9c"}},
-        "status": {"containerStatuses": [
-            {"name": "app", "image": image, "imageID": image_id, "ready": true}]}
-    })
+    pod_of(name, "5d9c", image, image_id, true)
 }
 
-/// A pod of one ReplicaSet of the Rollout, by its pod-template hash.
+/// A pod of one ReplicaSet of the Rollout, by its pod-template hash, owned by
+/// that ReplicaSet.
 pub fn pod_of(name: &str, hash: &str, image: &str, image_id: &str, ready: bool) -> Value {
     json!({
         "metadata": {"name": name, "namespace": "shop",
-                      "labels": {"rollouts-pod-template-hash": hash}},
+                      "labels": {"rollouts-pod-template-hash": hash},
+                      "ownerReferences": [{"apiVersion": "apps/v1", "kind": "ReplicaSet",
+                                           "name": format!("storefront-{hash}"),
+                                           "uid": replica_set_uid(hash), "controller": true}]},
         "status": {"containerStatuses": [
             {"name": "app", "image": image, "imageID": image_id, "ready": ready}]}
     })
+}
+
+/// The UID of the storefront Rollout's ReplicaSet with this pod-template hash.
+pub fn replica_set_uid(hash: &str) -> String {
+    format!("0f0e0d0c-0000-4000-8000-00000000{hash}")
 }
 
 /// A ReplicaSet the storefront Rollout owns.
 pub fn replica_set(hash: &str, image: &str, replicas: u64, ready: u64) -> Value {
     json!({
         "metadata": {"name": format!("storefront-{hash}"), "namespace": "shop",
+                      "uid": replica_set_uid(hash),
                       "labels": {"rollouts-pod-template-hash": hash},
                       "ownerReferences": [{"apiVersion": "argoproj.io/v1alpha1", "kind": "Rollout",
                                            "name": "storefront", "uid": ROLLOUT_UID,
@@ -506,6 +511,10 @@ pub fn healthy() -> World {
             .serves("argoproj.io", "v1alpha1", &["rollouts", "analysisruns"])
             .with("rollouts", vec![rollout(&format!("{REPO}:v1.4.0"))])
             .with("analysisruns", vec![analysis_run()])
+            .with(
+                "replicasets",
+                vec![replica_set("5d9c", &format!("{REPO}:v1.4.0"), 1, 1)],
+            )
             .with(
                 "pods",
                 vec![pod(

@@ -27,8 +27,17 @@ pub struct Rollout {
     pub stable_hash: Option<String>,
     /// `spec.template.spec.containers[].image`, as written.
     pub images: Vec<String>,
+    /// `spec.template.spec.containers[]`, by name, with the image each pins.
+    pub containers: Vec<Container>,
     pub aborted: bool,
     pub paused: bool,
+}
+
+/// A container of a pod template: its name and its image, as written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Container {
+    pub name: String,
+    pub image: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -115,6 +124,21 @@ fn containers(value: &Value) -> Vec<String> {
         .collect()
 }
 
+fn named_containers(value: &Value) -> Vec<Container> {
+    value
+        .pointer("/spec/template/spec/containers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|container| {
+            Some(Container {
+                name: text(container, "/name")?,
+                image: text(container, "/image")?,
+            })
+        })
+        .collect()
+}
+
 fn count(value: &Value, pointer: &str) -> u64 {
     value.pointer(pointer).and_then(Value::as_u64).unwrap_or(0)
 }
@@ -161,6 +185,7 @@ pub fn parse_rollout(value: &Value) -> Option<Rollout> {
         current_pod_hash: text(value, "/status/currentPodHash"),
         stable_hash: text(value, "/status/stableRS"),
         images: containers(value),
+        containers: named_containers(value),
         aborted: value
             .pointer("/status/abort")
             .and_then(Value::as_bool)

@@ -23,6 +23,8 @@ pub struct RunningImage {
     pub ready: bool,
     /// The pod's `rollouts-pod-template-hash` label.
     pub pod_hash: Option<String>,
+    /// The UID of the ReplicaSet its controller owner reference names.
+    pub owner_uid: Option<String>,
 }
 
 impl RunningImage {
@@ -51,6 +53,17 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
         .and_then(Value::as_str)
         .filter(|hash| !hash.is_empty())
         .map(str::to_owned);
+    let owner_uid = value
+        .pointer("/metadata/ownerReferences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|owner| {
+            text(owner, "/kind").as_deref() == Some("ReplicaSet")
+                && text(owner, "/apiVersion").as_deref() == Some("apps/v1")
+                && owner.get("controller").and_then(Value::as_bool) == Some(true)
+        })
+        .and_then(|owner| text(owner, "/uid"));
     // Init containers don't keep running; only the app containers count.
     value
         .pointer("/status/containerStatuses")
@@ -63,9 +76,10 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
                 namespace: namespace.clone(),
                 meta: meta.clone(),
                 pod_hash: pod_hash.clone(),
+                owner_uid: owner_uid.clone(),
                 container: text(status, "/name")?,
                 image: text(status, "/image"),
-                digest: text(status, "/imageID").and_then(|id| Digest::from_reference(&id)),
+                digest: text(status, "/imageID").and_then(|id| Digest::from_image_id(&id)),
                 ready: status
                     .pointer("/ready")
                     .and_then(Value::as_bool)

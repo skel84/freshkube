@@ -8,7 +8,7 @@ use crate::delivery::source::{Truncation, cap_note};
 
 use super::argo::{not_the_environment, rollout_namespace};
 use super::observe::{
-    freight_side, hashes_agree, manages, pods_running, pods_running_other, rollout_pods,
+    freight_side, manages, pods_running, pods_running_other, revision_tie, rollout_hash,
     rollout_state as rollout_seen, summary_images,
 };
 use super::*;
@@ -142,137 +142,260 @@ fn rollout_state(rollout: &Rollout, analysis: Option<&Vec<AnalysisRun>>) -> Stri
 
 fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_id: &str) -> Link {
     let subject = rollout_id.to_owned();
-    let read = evidence.pods.get(rollout_id);
-    let (pods, which) = match read {
-        Some(read) if read.pods.read().is_some() => (
-            read.pods.read().unwrap(),
-            which_pods(evidence, rollout, &read.set),
-        ),
-        Some(other) => {
-            return Link::new(
-                Hop::Rollout,
-                Hop::Pod,
-                subject,
-                Key::None,
-                Confidence::Unknown,
-                other.pods.why_not_read().unwrap_or_default(),
-            );
-        }
-        None => {
-            return Link::new(
-                Hop::Rollout,
-                Hop::Pod,
-                subject,
-                Key::None,
-                Confidence::Unknown,
-                if rollout.current_pod_hash.is_none() {
-                    "the Rollout reports no current pod hash"
-                } else {
-                    "pods were not read"
-                },
-            );
-        }
+    let unknown = |why: String| {
+        Link::new(
+            Hop::Rollout,
+            Hop::Pod,
+            subject.clone(),
+            Key::None,
+            Confidence::Unknown,
+            why,
+        )
     };
-    let from = rollout_pods(rollout, &pinned_sets(evidence, rollout, freight, read));
-    let mut link = judge_pods(
-        Hop::Rollout,
-        subject,
-        pods,
-        read.and_then(|read| read.pods.capped()),
-        freight,
-        from,
-    );
-    link.reason = format!("{}; {which}", link.reason);
-    if link.confidence == Confidence::Confirmed
-        && matches!(read.map(|read| &read.set), Some(PodSet::Current(_)))
-    {
-        link.evidence.extend(hashes_agree(rollout, pods));
+    let Some(read) = evidence.pods.get(rollout_id) else {
+        return unknown(if rollout.current_pod_hash.is_none() {
+            "the Rollout reports no current pod hash".into()
+        } else {
+            "pods were not read".into()
+        });
+    };
+    let Some(pods) = read.pods.read() else {
+        return unknown(read.pods.why_not_read().unwrap_or_default());
+    };
+    let tie = current_set(evidence, rollout, &read.hash);
+    // Tied by owner UIDs, only the current ReplicaSet's own pods count; a pod
+    // that carries the hash label but another owner is not the Rollout's.
+    let tied: Vec<&RunningImage> = pods
+        .iter()
+        .filter(|pod| match &tie {
+            Ok(set) => set.meta.uid.is_some() && pod.owner_uid == set.meta.uid,
+            Err(_) => true,
+        })
+        .collect();
+    let containers = pinned_containers(rollout, freight, &tied);
+    let mut link = judge_revision(subject, &tied, &containers, read.pods.capped(), freight);
+    let which = which_pods(evidence, rollout, &read.hash, &tie, pods.len() - tied.len());
+    match &tie {
+        Ok(set) if link.confidence == Confidence::Confirmed => {
+            let mut seen = revision_tie(rollout, set, &running(&containers, freight));
+            seen.append(&mut link.evidence);
+            link.evidence = seen;
+            link.reason = format!("{}; {which}", link.reason);
+        }
+        Ok(_) => link.reason = format!("{}; {which}", link.reason),
+        Err(why) => {
+            if link.confidence == Confidence::Confirmed {
+                link.confidence = Confidence::Claimed;
+                link.key = Key::None;
+            }
+            link.reason = format!("{why}; {}; {which}", link.reason);
+        }
     }
+    let mut seen = rollout_hash(rollout);
+    seen.append(&mut link.evidence);
+    link.evidence = seen;
     link
 }
 
-/// The ReplicaSets of the pods read whose template pins one of the Freight's
-/// digests, with the digest.
-fn pinned_sets<'a>(
+/// The ReplicaSet the Rollout owns, by UID, with its current pod hash: the
+/// tie from the Rollout to its current pods. Why there is none otherwise.
+fn current_set<'a>(
     evidence: &'a Evidence,
+    rollout: &'a Rollout,
+    hash: &str,
+) -> Result<&'a ReplicaSet, String> {
+    let untied = "so no owner reference ties the pods to the Rollout";
+    let Some(sets) = evidence.replica_sets.read() else {
+        let why = evidence.replica_sets.why_not_read().unwrap_or_default();
+        return Err(format!("its ReplicaSets were not read ({why}), {untied}"));
+    };
+    if rollout.meta.uid.is_none() {
+        return Err(format!("the Rollout reports no UID, {untied}"));
+    }
+    owned_replica_sets(rollout, Some(sets))
+        .find(|set| set.pod_hash.as_deref() == Some(hash) && set.meta.uid.is_some())
+        .ok_or_else(|| {
+            format!(
+                "no ReplicaSet the Rollout owns has its current pod hash {hash}{}, {untied}",
+                cap_note(evidence.replica_sets.capped())
+            )
+        })
+}
+
+/// The containers of `pods` that run the pin's image: those of the Freight's
+/// repository, or named as the Rollout's container of that repository is.
+/// A sidecar is neither, so what it runs doesn't count.
+fn pinned_containers<'a>(
     rollout: &Rollout,
     freight: &Freight,
-    read: Option<&RolloutPods>,
-) -> Vec<(&'a ReplicaSet, Digest)> {
-    let (
-        Some(RolloutPods {
-            set: PodSet::Pinned(sets),
-            ..
-        }),
-        Some(all),
-    ) = (read, evidence.replica_sets.read())
-    else {
-        return Vec::new();
-    };
-    sets.iter()
-        .filter_map(|(name, _)| {
-            let set = all
-                .iter()
-                .find(|set| set.namespace == rollout.namespace && &set.name == name)?;
-            let digest = set
-                .images
-                .iter()
-                .filter_map(|image| Digest::from_reference(image))
-                .find(|digest| {
-                    freight
-                        .images
-                        .iter()
-                        .any(|image| image.digest.as_ref() == Some(digest))
-                })?;
-            Some((set, digest))
+    pods: &[&'a RunningImage],
+) -> Vec<&'a RunningImage> {
+    let repos: Vec<String> = freight
+        .images
+        .iter()
+        .map(|image| repository(&image.repo_url))
+        .collect();
+    let names: Vec<&str> = rollout
+        .containers
+        .iter()
+        .filter(|container| repos.contains(&repository(&container.image)))
+        .map(|container| container.name.as_str())
+        .collect();
+    pods.iter()
+        .copied()
+        .filter(|pod| {
+            names.contains(&pod.container.as_str())
+                || pod
+                    .image
+                    .as_deref()
+                    .is_some_and(|image| repos.contains(&repository(image)))
         })
         .collect()
 }
 
+/// The containers that report one of the Freight's digests, ready ones first.
+fn running<'a>(
+    containers: &[&'a RunningImage],
+    freight: &Freight,
+) -> Vec<(&'a RunningImage, &'a Digest)> {
+    let mut found: Vec<(&RunningImage, &Digest)> = containers
+        .iter()
+        .filter_map(|pod| {
+            let digest = pod.digest.as_ref()?;
+            freight
+                .images
+                .iter()
+                .any(|image| image.digest.as_ref() == Some(digest))
+                .then_some((*pod, digest))
+        })
+        .collect();
+    found.sort_by_key(|(pod, _)| !pod.ready);
+    found
+}
+
+/// What the current revision's pods run of the pin's image. Confirmed needs
+/// a ready container that reports the Freight's digest and none that
+/// reports another.
+fn judge_revision(
+    subject: String,
+    pods: &[&RunningImage],
+    containers: &[&RunningImage],
+    capped: Option<Truncation>,
+    freight: &Freight,
+) -> Link {
+    let link = |confidence, key, reason: String| {
+        Link::new(
+            Hop::Rollout,
+            Hop::Pod,
+            subject.clone(),
+            key,
+            confidence,
+            reason,
+        )
+    };
+    let matching = running(containers, freight);
+    let other: Vec<(&RunningImage, Option<Digest>)> = containers
+        .iter()
+        .filter(|pod| {
+            pod.digest
+                .as_ref()
+                .is_some_and(|digest| !matching.iter().any(|(_, d)| *d == digest))
+        })
+        .map(|pod| (*pod, pod.digest.clone()))
+        .collect();
+    if !other.is_empty() {
+        let digests: Vec<String> = other
+            .iter()
+            .map(|(_, digest)| digest.as_ref().map_or("no digest".into(), Digest::short))
+            .collect();
+        return link(
+            Confidence::Claimed,
+            Key::None,
+            format!(
+                "the Stage claims this Freight but the current revision's pods run another digest ({}); a moved tag is not a match{}",
+                digests.join(", "),
+                cap_note(capped)
+            ),
+        )
+        .observed(pods_running_other(&other));
+    }
+    let ready = matching.iter().filter(|(pod, _)| pod.ready).count();
+    if ready > 0 {
+        let (_, digest) = matching[0];
+        return link(
+            Confidence::Confirmed,
+            Key::Digest(digest.clone()),
+            format!(
+                "{} container(s) run the Freight's digest, {ready} ready of {} pod container(s) read",
+                matching.len(),
+                containers.len()
+            ),
+        )
+        .observed(pods_running(&matching));
+    }
+    if !matching.is_empty() {
+        return link(
+            Confidence::Claimed,
+            Key::None,
+            format!(
+                "{} container(s) of the current revision report the Freight's digest, none ready yet",
+                matching.len()
+            ),
+        )
+        .observed(pods_running(&matching));
+    }
+    if containers.is_empty() && !pods.is_empty() {
+        return link(
+            Confidence::Unknown,
+            Key::None,
+            format!(
+                "read {} pod container(s); none runs the Freight's image{}",
+                pods.len(),
+                cap_note(capped)
+            ),
+        );
+    }
+    link(
+        Confidence::Claimed,
+        Key::None,
+        format!(
+            "no pod of the current revision reports a digest yet{}",
+            cap_note(capped)
+        ),
+    )
+}
+
 /// Which pods were judged, and which of the Rollout's other ReplicaSets with
 /// pods were not.
-fn which_pods(evidence: &Evidence, rollout: &Rollout, set: &PodSet) -> String {
-    let read = evidence.replica_sets.read().map(Vec::as_slice);
-    let which = match set {
-        PodSet::Pinned(sets) => format!(
-            "the pods of ReplicaSet {}, whose template pins the Freight's digest{}",
-            sets.iter()
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-            cap_note(evidence.replica_sets.capped())
+fn which_pods(
+    evidence: &Evidence,
+    rollout: &Rollout,
+    hash: &str,
+    tie: &Result<&ReplicaSet, String>,
+    foreign: usize,
+) -> String {
+    let mut which = match tie {
+        Ok(set) => format!(
+            "the pods of the Rollout's current pod hash {hash}, ReplicaSet {}",
+            set.name
         ),
-        PodSet::Current(hash) => {
-            let why = match evidence.replica_sets.why_not_read() {
-                Some(why) => format!("its ReplicaSets were not read ({why})"),
-                None => format!(
-                    "no ReplicaSet of it pins the Freight's digest{}",
-                    cap_note(evidence.replica_sets.capped())
-                ),
-            };
-            format!("the pods of the Rollout's current pod hash {hash}; {why}")
-        }
+        Err(_) => format!("the pods of the Rollout's current pod hash {hash}"),
     };
-    let judged = set.hashes();
-    let unlike = match set {
-        PodSet::Pinned(_) => ", whose template does not pin it",
-        PodSet::Current(_) => "",
-    };
-    let others: Vec<&str> = owned_replica_sets(rollout, read)
-        .filter(|other| {
-            other.replicas > 0
-                && other
-                    .pod_hash
-                    .as_deref()
-                    .is_none_or(|hash| !judged.contains(&hash))
-        })
-        .map(|other| other.name.as_str())
-        .collect();
+    if foreign > 0 {
+        which.push_str(&format!(
+            "; {foreign} pod container(s) with that hash label belong to another owner and were not judged"
+        ));
+    }
+    let others: Vec<&str> =
+        owned_replica_sets(rollout, evidence.replica_sets.read().map(Vec::as_slice))
+            .filter(|other| other.replicas > 0 && other.pod_hash.as_deref() != Some(hash))
+            .map(|other| other.name.as_str())
+            .collect();
     if others.is_empty() {
         which
     } else {
         format!(
-            "{which}; not judged: the pods of ReplicaSet {}{unlike}",
+            "{which}; not judged: the pods of ReplicaSet {}",
             others.join(", ")
         )
     }

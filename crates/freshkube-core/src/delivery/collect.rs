@@ -11,7 +11,7 @@ use super::argocd::{
     DestinationMatch, Destinations, StageNaming, match_destination, read_applications,
 };
 use super::github::GitHub;
-use super::join::{Evidence, RolloutPods, candidate_applications, candidate_rollouts, pod_set};
+use super::join::{Evidence, RolloutPods, candidate_applications, candidate_rollouts};
 use super::kargo::read_project;
 use super::pods::{read_namespace_pods, read_rollout_pods};
 use super::read::Reader;
@@ -156,33 +156,21 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         evidence.replica_sets = merge(replica_sets);
     }
     if let Some(found) = evidence.rollouts.read() {
-        // A Rollout's pods are those of the ReplicaSet at the Freight's
-        // digest; an older one beside it, healthy or not, is not read.
+        // A Rollout's pods are those of its current revision; the stable
+        // ReplicaSet's, during a canary, run the previous one and are not read.
         let mut pods = BTreeMap::new();
         for wanted in &wanted {
-            let Some(set) = found
+            let Some(hash) = found
                 .iter()
                 .find(|r| r.namespace == wanted.namespace && r.name == wanted.name)
-                .and_then(|rollout| {
-                    pod_set(
-                        rollout,
-                        evidence.replica_sets.read().map(Vec::as_slice),
-                        &wanted.digests,
-                    )
-                })
+                .and_then(|rollout| rollout.current_pod_hash.clone())
             else {
                 continue;
             };
-            let mut read = Vec::new();
-            for hash in set.hashes() {
-                read.push(read_rollout_pods(clusters.environment, &wanted.namespace, hash).await);
-            }
+            let read = read_rollout_pods(clusters.environment, &wanted.namespace, &hash).await;
             pods.insert(
                 format!("{}/{}", wanted.namespace, wanted.name),
-                RolloutPods {
-                    set,
-                    pods: merge(read),
-                },
+                RolloutPods { hash, pods: read },
             );
         }
         evidence.pods = pods;
