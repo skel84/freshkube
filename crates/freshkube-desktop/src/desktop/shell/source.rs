@@ -63,7 +63,7 @@ fn failure_label(failure: &Failure) -> &'static str {
 
 /// A page's shortcut as the platform labels it.
 fn shortcut(key: &str) -> SharedString {
-    format!("{}{key}", ui::modifier()).into()
+    format!("{}{key}", freshkube_ui::platform::primary_modifier()).into()
 }
 
 impl Pilot {

@@ -222,7 +222,10 @@ impl Pilot {
                     text.push_str(&format!(": {hint}"));
                 }
                 if let Some(key) = area.shortcut() {
-                    text.push_str(&format!("  {}{key}", ui::modifier()));
+                    text.push_str(&format!(
+                        "  {}{key}",
+                        freshkube_ui::platform::primary_modifier()
+                    ));
                 }
                 if let Some(why) = &why {
                     text.push('\n');

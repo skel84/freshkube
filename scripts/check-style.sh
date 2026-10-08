@@ -22,6 +22,15 @@
 #   motion  animate with with_animation(s) or with_spring: animations take their
 #           timing from ui::motion's tokens and draw through its helpers.
 #
+# Outside the domain crates (core, talos-rs) and tests, the shared components
+# included, nothing but freshkube-ui's platform module may
+#   platform  test the platform with cfg(target_os …) or cfg(windows): ask
+#             freshkube_ui::platform. Two files read the OS themselves and are
+#             exempt: motion/system.rs (reduced motion) and desktop's stress.rs
+#             (process counters). Tests spell out each platform's keys, as an
+#             independent check of the module. cfg(unix) file modes and paths
+#             are the OS's, not the app's look, and stay where they are.
+#
 # scripts/style-allowlist.txt names, per rule, the files that broke it when the
 # check arrived. It may only shrink: the check fails when an unlisted file
 # breaks a rule, and when a listed file no longer does, so the entry goes.
@@ -33,7 +42,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --root) root="$(cd "$2" && pwd)"; shift 2 ;;
     --list) list=1; shift ;;
-    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "check-style: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -136,7 +145,29 @@ motion_offences() {
   '
 }
 
-found="$(offences; motion_offences)"
+# Every Rust file the platform rule reads.
+platform_files() {
+  find crates -path '*/src/*' -name '*.rs' \
+    -not -path 'crates/freshkube-core/*' \
+    -not -path 'crates/talos-rs/*' \
+    -not -path 'crates/freshkube-ui/src/platform.rs' \
+    -not -path 'crates/freshkube-ui/src/motion/system.rs' \
+    -not -path 'crates/freshkube-desktop/src/stress.rs' \
+    -not -name 'tests.rs' \
+    -not -name '*_tests.rs' \
+    -not -path '*/tests/*' |
+    LC_ALL=C sort
+}
+
+platform_offences() {
+  platform_files | xargs perl -CSD -ne '
+    print "platform $ARGV:$.: ", s/^\s+//r
+      if /\bcfg!?\s*\([^)]*\b(?:target_os|windows)\b/;
+    close ARGV if eof;
+  '
+}
+
+found="$(offences; motion_offences; platform_offences)"
 if [ "$list" = 1 ]; then
   printf '%s\n' "$found" | sed '/^$/d'
   exit 0
@@ -161,7 +192,7 @@ if [ -n "$new" ]; then
   done <<<"$new"
   echo "Use the shared components (PageHeader, ui::status_glyph, the table) instead,"
   echo "give an icon-only button a tooltip, restrict a vertical scroll to its axis and"
-  echo "animate through ui::motion;"
+  echo "animate through ui::motion, ask freshkube_ui::platform what differs by platform;"
   echo "the allowlist only shrinks, so don't add to it."
 fi
 if [ -n "$clean" ]; then

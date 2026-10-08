@@ -146,8 +146,9 @@ pub fn actions(
 /// that ran on `focus` leaves it: Kit would leave it on `focus`, the
 /// entries' list, or on the menu that's gone, where no page key works. An
 /// item that moved it on, as one that opens a dialog does, keeps it there.
-/// While it's open, no row tooltip draws over it. A menu is watched once,
-/// however many of its parts call this, and each call adds its `focus`.
+/// While it's open, no row tooltip draws over it. A menu is watched once
+/// while it's open, however many of its parts call this, and each call adds
+/// its `focus`.
 pub fn return_focus(focus: Option<&FocusHandle>, window: &mut Window, cx: &mut Context<PopupMenu>) {
     let id = cx.entity_id();
     if let Some(lists) = WATCHED.with_borrow(|watched| watched.get(&id).cloned()) {
@@ -161,18 +162,18 @@ pub fn return_focus(focus: Option<&FocusHandle>, window: &mut Window, cx: &mut C
     })
     .detach();
     crate::tooltip::hide_while_open(cx);
-    let Some(prior) = window.focused(cx) else {
-        return;
-    };
     // Weak, so a view the menu closed, such as a tab's log, isn't kept or
     // focused again.
-    let prior = prior.downgrade();
+    let prior = window.focused(cx).map(|prior| prior.downgrade());
     let menu = cx.entity();
     cx.subscribe_in(
         &menu,
         window,
         move |menu, _, _: &DismissEvent, window, cx| {
-            let Some(prior) = prior.upgrade() else {
+            // Closed, the menu is watched no more: a part added after this
+            // watches it again.
+            WATCHED.with_borrow_mut(|watched| watched.remove(&id));
+            let Some(prior) = prior.as_ref().and_then(|prior| prior.upgrade()) else {
                 return;
             };
             let left = match window.focused(cx) {
@@ -189,4 +190,51 @@ pub fn return_focus(focus: Option<&FocusHandle>, window: &mut Window, cx: &mut C
         },
     )
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext as _, IntoElement, Render, TestAppContext, div, px, size};
+
+    struct Empty;
+
+    impl Render for Empty {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    fn watched(id: EntityId) -> bool {
+        WATCHED.with_borrow(|watched| watched.contains_key(&id))
+    }
+
+    /// A menu is watched while it's open, and no longer once it closes,
+    /// though something still holds it.
+    #[gpui_kit::test]
+    fn a_closed_menu_is_watched_no_more(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            cx.set_reduce_motion(true);
+        });
+        let handle = cx.open_window(size(px(400.), px(300.)), |window, cx| {
+            let view = cx.new(|_| Empty);
+            Root::new(view, window, cx)
+        });
+        let menu = cx
+            .update_window(handle.into(), |_, window, cx| {
+                PopupMenu::build(window, cx, |menu, window, cx| {
+                    return_focus(None, window, cx);
+                    menu
+                })
+            })
+            .unwrap();
+        let id = menu.entity_id();
+        assert!(watched(id));
+        cx.update(|cx| menu.update(cx, |_, cx| cx.emit(DismissEvent)));
+        cx.run_until_parked();
+        assert!(!watched(id));
+    }
 }

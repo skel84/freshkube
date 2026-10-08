@@ -238,7 +238,7 @@ impl DetailPane {
             inspector::tab(id, label, self.tab == tab, cx)
                 .track_focus(&self.tab_focus[tab.index()])
                 .tooltip(move |window, cx| {
-                    let m = ui::modifier();
+                    let m = freshkube_ui::platform::primary_modifier();
                     let keys = format!("{m}⇧[ and {m}⇧] switch tabs; ← and → move between them");
                     Tooltip::new(match &tip {
                         Some(tip) => format!("{tip}\n{keys}"),

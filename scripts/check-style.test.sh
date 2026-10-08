@@ -188,6 +188,50 @@ fn steps() -> impl IntoElement {
 EOF
 expect 1 "a chain of animations outside ui::motion fails" "motion crates/freshkube-desktop/src/steps.rs:2:"
 
+tree
+mkdir -p "$work/tree/crates/freshkube-ui/src/motion" "$work/tree/crates/freshkube-core/src"
+cat >"$work/tree/crates/freshkube-ui/src/platform.rs" <<'EOF'
+pub const fn current() -> Platform { if cfg!(target_os = "macos") { MacOs } else { Linux } }
+EOF
+cat >"$work/tree/crates/freshkube-ui/src/motion/system.rs" <<'EOF'
+#[cfg(target_os = "macos")]
+mod platform {}
+EOF
+cat >"$work/tree/crates/freshkube-core/src/secrets.rs" <<'EOF'
+#[cfg(target_os = "macos")]
+fn keychain() {}
+EOF
+page tests.rs <<'EOF'
+const COPY: &str = if cfg!(target_os = "macos") { "cmd-c" } else { "ctrl-shift-c" };
+EOF
+page files.rs <<'EOF'
+#[cfg(unix)]
+fn private(options: &mut OpenOptions) { options.mode(0o600); }
+EOF
+expect 0 "the platform module, the OS readers, the domain crates, tests and cfg(unix) may test the platform"
+
+tree
+page header.rs <<'EOF'
+fn header() -> TitleBar {
+    TitleBar::new().when(cfg!(target_os = "macos"), |bar| bar.pl(px(80.)))
+}
+EOF
+expect 1 "a page testing the platform fails" "platform crates/freshkube-desktop/src/header.rs:2:"
+
+tree
+cat >"$work/tree/crates/freshkube-ui/src/ui.rs" <<'EOF'
+#[cfg(not(windows))]
+pub fn modifier() -> &'static str { "⌘" }
+EOF
+expect 1 "a shared component testing the platform fails too" "platform crates/freshkube-ui/src/ui.rs:1:"
+
+tree
+cat >"$work/tree/crates/freshkube-terminal/src/input.rs" <<'EOF'
+#[cfg(any(target_os = "linux", windows))]
+fn bind() {}
+EOF
+expect 1 "the terminal testing the platform fails" "platform crates/freshkube-terminal/src/input.rs:1:"
+
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"
   exit 1

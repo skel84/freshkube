@@ -274,15 +274,23 @@ pub(crate) struct Dock {
 
 impl Dock {
     pub(crate) fn new(runtime: Handle, cx: &mut Context<Self>) -> Self {
-        let keys_close = if cfg!(target_os = "macos") {
-            "cmd-w"
-        } else {
-            "ctrl-shift-w"
-        };
+        let keys_close = freshkube_ui::platform::Platform::current().close_tab_key();
         cx.bind_keys([
-            KeyBinding::new("ctrl-.", NextDockTab, Some("Freshkube")),
-            KeyBinding::new("ctrl-,", PreviousDockTab, Some("Freshkube")),
-            KeyBinding::new("shift-escape", MinimizeDock, Some("Freshkube")),
+            KeyBinding::new(
+                "ctrl-.",
+                NextDockTab,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "ctrl-,",
+                PreviousDockTab,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "shift-escape",
+                MinimizeDock,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
             KeyBinding::new(keys_close, CloseDockTab, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveDock, Some(CONTEXT)),
         ]);

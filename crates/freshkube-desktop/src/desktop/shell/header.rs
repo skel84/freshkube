@@ -4,12 +4,10 @@ use super::refresh_tip::{RefreshTip, TooltipView as _};
 use super::*;
 use freshkube_ui::page::{APP_HEADER_CONTROL, APP_HEADER_HEIGHT};
 
-/// Command-K's hint on the search field.
-const SEARCH_KEY: &str = if cfg!(target_os = "macos") {
-    "⌘K"
-} else {
-    "Ctrl K"
-};
+/// Command-K's hint on the search field, as the platform labels it.
+fn search_key() -> String {
+    format!("{}K", freshkube_ui::platform::primary_modifier())
+}
 
 /// Below this window width, in dp, Search everything shrinks to its icon.
 /// Every page uses the same width: none adds controls to the header.
@@ -22,13 +20,13 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let minimal = window.viewport_size().width / ui::dp_px(1., window) < 680.;
+        // Clear of the window's controls: macOS's traffic lights keep their
+        // size in points.
+        let insets = freshkube_ui::platform::header_insets();
         TitleBar::new()
             .h(dp(APP_HEADER_HEIGHT))
             .bg(cx.theme().title_bar)
-            // Clear of the traffic lights, which keep their size in points.
-            .when(cfg!(target_os = "macos"), |bar| {
-                bar.pl(px(freshkube_ui::page::TRAFFIC_LIGHT_INSET))
-            })
+            .pl(insets.leading)
             .child(
                 h_flex()
                     .gap(dp(if minimal { 6. } else { 14. }))
@@ -48,7 +46,7 @@ impl Pilot {
                 h_flex()
                     .gap(dp(6.))
                     .pl(dp(12.))
-                    .pr(dp(freshkube_ui::page::PANE_PADDING))
+                    .pr(insets.trailing)
                     .flex_shrink_0()
                     .child(self.render_search_field(window, cx))
                     .when(!minimal, |this| {
@@ -366,7 +364,7 @@ impl Pilot {
             .hover(|style| style.bg(p.hover).text_color(p.ink_2))
             .when(narrow, |this| {
                 this.tooltip(|window, cx| {
-                    Tooltip::new(format!("Search everything  {SEARCH_KEY}")).build(window, cx)
+                    Tooltip::new(format!("Search everything  {}", search_key())).build(window, cx)
                 })
             })
             .child(Icon::new(IconName::Search).size(dp(14.)).flex_none())
@@ -383,7 +381,7 @@ impl Pilot {
                         .flex_none()
                         .text_size(dp(11.))
                         .text_color(p.muted)
-                        .child(SEARCH_KEY),
+                        .child(search_key()),
                 )
             })
             .on_click(cx.listener(|view, _, window, cx| view.open_search(window, cx)))
