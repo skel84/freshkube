@@ -153,10 +153,33 @@ fn standing(since: Option<DateTime<Utc>>, now: DateTime<Utc>) -> String {
         .unwrap_or_default()
 }
 
+/// Names the cluster the rows were derived in on every object they open, so
+/// a row left on screen after the cluster changed cannot open a same-named
+/// object in the next one. `None` leaves them naming the open cluster.
+fn name_cluster(rows: &mut [AttentionRow], connection: Option<&str>) {
+    let Some(connection) = connection else {
+        return;
+    };
+    for row in rows {
+        let destinations = [
+            Some(&mut row.open),
+            row.logs.as_mut(),
+            row.open_node.as_mut(),
+        ];
+        for destination in destinations.into_iter().flatten() {
+            if let Destination::Object(_, object, _) = destination {
+                object.connection = Some(connection.to_owned());
+            }
+        }
+    }
+}
+
+/// `connection` is the open cluster's `kube_identity()`, when it has one.
 pub(crate) fn build(
     nodes: &[NodeRow],
     kubernetes: Option<&KubernetesSummary>,
     talos: Option<&ClusterOverview>,
+    connection: Option<&str>,
     now: DateTime<Utc>,
 ) -> Attention {
     let mut rows = Vec::new();
@@ -190,6 +213,7 @@ pub(crate) fn build(
     if let Some(cluster) = talos {
         append_etcd(cluster, &mut rows);
     }
+    name_cluster(&mut rows, connection);
     let mut result = finish(rows);
     result.complete = kubernetes.is_some_and(|summary| {
         summary.nodes.is_current()

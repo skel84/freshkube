@@ -49,7 +49,7 @@ fn node() -> NodeRow {
 
 #[test]
 fn no_observations_produce_no_attention() {
-    let attention = build(&[], None, None, now());
+    let attention = build(&[], None, None, None, now());
     assert!(attention.rows.is_empty());
     assert!(attention.by_node.is_empty());
     assert_eq!(attention.total, 0);
@@ -59,7 +59,7 @@ fn no_observations_produce_no_attention() {
 #[test]
 fn failed_parts_leave_independent_categories_unchanged() {
     let summary = example::summary("prod-fra", now().timestamp());
-    let expected = build(&[], Some(&summary), None, now()).rows;
+    let expected = build(&[], Some(&summary), None, None, now()).rows;
     assert!(expected.iter().any(|row| row.kind == "Pod"));
     assert!(expected.iter().any(|row| row.kind == "Deployment"));
     assert!(expected.iter().any(|row| row.kind == "Claim"));
@@ -90,7 +90,7 @@ fn failed_parts_leave_independent_categories_unchanged() {
             .filter(|row| !removed.contains(&row.kind))
             .collect();
         assert_eq!(
-            format!("{:?}", build(&[], Some(summary), None, now()).rows),
+            format!("{:?}", build(&[], Some(summary), None, None, now()).rows),
             format!("{kept:?}"),
         );
     }
@@ -99,7 +99,7 @@ fn failed_parts_leave_independent_categories_unchanged() {
 #[test]
 fn object_destinations_preserve_uids_and_pod_log_actions() {
     let summary = example::summary("prod-fra", now().timestamp());
-    let attention = build(&[], Some(&summary), None, now());
+    let attention = build(&[], Some(&summary), None, None, now());
     for row in &attention.rows {
         let Destination::Object(kind, object, Tab::Overview) = &row.open else {
             panic!("Unexpected destination: {:?}", row.open);
@@ -169,7 +169,7 @@ fn node_problems_merge_and_unknown_service_health_stays_unknown() {
     ready.status = "False".into();
     ready.since = Some(now() - chrono::Duration::minutes(10));
     let since = ready.since;
-    let attention = build(&[row.clone()], None, None, now());
+    let attention = build(&[row.clone()], None, None, None, now());
     assert_eq!(attention.total, 2);
     let node = &attention.rows[0];
     assert_eq!(node.id, "attention-node-node-a-node-a");
@@ -206,7 +206,7 @@ fn a_long_not_ready_reads_as_pods_gives_it() {
         .unwrap();
     ready.status = "False".into();
     ready.since = Some(now() - chrono::Duration::hours(4775));
-    let attention = build(&[row], None, None, now());
+    let attention = build(&[row], None, None, None, now());
     let reason = &attention.rows[0].reason;
     assert!(reason.contains("Kubernetes NotReady for 198d"), "{reason}");
     assert!(reason.contains(&format!(
@@ -230,7 +230,7 @@ fn a_responding_nodes_memory_follows_the_memory_level() {
     ] {
         node.talos.as_mut().unwrap().memory =
             Some(crate::presentation::Memory { used, total: 1000 });
-        let attention = build(&[node.clone()], None, None, now());
+        let attention = build(&[node.clone()], None, None, None, now());
         assert_eq!(
             attention.rows.first().map(|row| row.tone),
             tone,
@@ -249,7 +249,7 @@ fn a_responding_nodes_memory_follows_the_memory_level() {
 fn unresolved_object_uids_keep_the_same_overview_and_log_destinations() {
     let mut summary = example::summary("prod-fra", now().timestamp());
     summary.references.clear();
-    let attention = build(&[], Some(&summary), None, now());
+    let attention = build(&[], Some(&summary), None, None, now());
     let pod = attention.rows.iter().find(|row| row.kind == "Pod").unwrap();
     assert!(
         matches!(&pod.open, Destination::Object("pods", object, Tab::Overview) if object.uid.is_empty())
@@ -283,7 +283,7 @@ fn etcd_quorum_and_deduplicated_alarms_form_one_cluster_destination() {
         ]),
         ..Default::default()
     };
-    let attention = build(&[], None, Some(&talos), now());
+    let attention = build(&[], None, Some(&talos), None, now());
     assert_eq!(attention.total, 1);
     let row = &attention.rows[0];
     assert_eq!(row.id, "attention-etcd-cluster-etcd");
@@ -434,7 +434,7 @@ fn pod_tones_agree_with_the_pods_page() {
 #[test]
 fn a_crash_looping_pod_draws_the_skull_among_the_failing() {
     let summary = example::summary("prod-fra", now().timestamp());
-    let attention = build(&[], Some(&summary), None, now());
+    let attention = build(&[], Some(&summary), None, None, now());
     let crashing: Vec<_> = attention
         .rows
         .iter()
@@ -477,5 +477,45 @@ fn group_counts_include_rows_past_the_cap() {
     assert_eq!(
         attention.details,
         ["60 problems", "0 problems", "1 problem"]
+    );
+}
+
+/// Every object an attention row opens, as the row would link to it.
+fn objects(rows: &[AttentionRow]) -> Vec<&ObjectRef> {
+    rows.iter()
+        .flat_map(|row| [Some(&row.open), row.logs.as_ref(), row.open_node.as_ref()])
+        .flatten()
+        .filter_map(|destination| match destination {
+            Destination::Object(_, object, _) => Some(object),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn rows_name_the_cluster_they_were_derived_in() {
+    let summary = example::summary("prod-fra", now().timestamp());
+    let named = build(&[], Some(&summary), None, Some("conn-a"), now());
+    let linked = objects(&named.rows);
+    assert!(!linked.is_empty(), "the example summary has object rows");
+    assert!(
+        linked
+            .iter()
+            .all(|object| object.connection.as_deref() == Some("conn-a"))
+    );
+    // The rows a node's pane shows are the same rows, named the same way.
+    assert!(
+        named
+            .by_node
+            .values()
+            .flat_map(|rows| objects(rows))
+            .all(|object| object.connection.as_deref() == Some("conn-a"))
+    );
+    // With no cluster open they name none: "the open cluster".
+    let unnamed = build(&[], Some(&summary), None, None, now());
+    assert!(
+        objects(&unnamed.rows)
+            .iter()
+            .all(|object| object.connection.is_none())
     );
 }

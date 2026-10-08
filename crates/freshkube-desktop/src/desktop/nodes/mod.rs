@@ -438,6 +438,7 @@ impl Pilot {
                 .data()
                 .map(|summary| summary.as_ref()),
             self.overview.data(),
+            self.kube_identity().as_deref(),
             chrono::Utc::now(),
         );
     }

@@ -170,11 +170,43 @@ pub(super) fn name(
     .into_any_element()
 }
 
+/// Where an owner in a row links to: the owner object in the row's own
+/// cluster, when its kind is one the list can open.
+fn owner_link(
+    owner: &RowOwner,
+    namespace: &str,
+    connection: &str,
+) -> Option<super::super::ResourceLink> {
+    let key = match owner.kind.as_str() {
+        "Deployment" => "deployments.apps",
+        "ReplicaSet" => "replicasets.apps",
+        "StatefulSet" => "statefulsets.apps",
+        "DaemonSet" => "daemonsets.apps",
+        "ReplicationController" => "replicationcontrollers",
+        "CronJob" => "cronjobs.batch",
+        "Job" => "jobs.batch",
+        _ => "",
+    };
+    freshkube_core::resources::builtin(key).map(|kind| {
+        super::super::ResourceLink::Object(
+            kind,
+            super::super::model::ObjectRef {
+                connection: Some(connection.into()),
+                namespace: namespace.into(),
+                name: owner.name.clone(),
+                uid: String::new(),
+            },
+            super::super::Tab::Overview,
+        )
+    })
+}
+
 /// `deploy/` muted and the owner's name.
 pub(super) fn owner(
     column: &DisplayColumn,
     owner: Option<&RowOwner>,
     namespace: &str,
+    connection: &str,
     selected: bool,
     cx: &Context<ResourcesScreen>,
 ) -> AnyElement {
@@ -190,28 +222,7 @@ pub(super) fn owner(
             .into_any_element();
     };
     let label = format!("{} {}", owner.kind, owner.name);
-    let key = match owner.kind.as_str() {
-        "Deployment" => "deployments.apps",
-        "ReplicaSet" => "replicasets.apps",
-        "StatefulSet" => "statefulsets.apps",
-        "DaemonSet" => "daemonsets.apps",
-        "ReplicationController" => "replicationcontrollers",
-        "CronJob" => "cronjobs.batch",
-        "Job" => "jobs.batch",
-        _ => "",
-    };
-    let destination = freshkube_core::resources::builtin(key).map(|kind| {
-        super::super::ResourceLink::Object(
-            kind,
-            super::super::model::ObjectRef {
-                connection: None,
-                namespace: namespace.into(),
-                name: owner.name.clone(),
-                uid: String::new(),
-            },
-            super::super::Tab::Overview,
-        )
-    });
+    let destination = owner_link(owner, namespace, connection);
     tooltip(
         cell(column)
             .id("owner")
@@ -501,4 +512,36 @@ pub(super) fn node(
         move || full.clone(),
     )
     .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
+    use super::{RowOwner, owner_link};
+    use crate::resources::ResourceLink;
+
+    fn owner(kind: &str, name: &str) -> RowOwner {
+        RowOwner {
+            short: "rs".into(),
+            kind: kind.into(),
+            name: name.into(),
+        }
+    }
+
+    #[test]
+    fn an_owner_links_to_the_object_in_the_rows_cluster() {
+        let link = owner_link(&owner("ReplicaSet", "api-6c4f"), "payments", "conn-a");
+        let Some(ResourceLink::Object(kind, object, _)) = link else {
+            panic!("a ReplicaSet owner opens");
+        };
+        assert_eq!(kind.key(), "replicasets.apps");
+        assert_eq!(object.name, "api-6c4f");
+        assert_eq!(object.namespace, "payments");
+        assert_eq!(object.connection.as_deref(), Some("conn-a"));
+    }
+
+    #[test]
+    fn an_owner_kind_the_list_cannot_open_does_not_link() {
+        assert!(owner_link(&owner("Node", "talos-1"), "", "conn-a").is_none());
+    }
 }
