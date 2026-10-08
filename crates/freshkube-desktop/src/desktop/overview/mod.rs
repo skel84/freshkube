@@ -193,7 +193,11 @@ impl Pilot {
             Connection::Failed => ("Couldn't connect", Some(p.crit_ink)),
             Connection::Connecting => ("Connecting…", None),
         };
-        let mut meta = vec![
+        let last_known = self.last_known_since().is_some();
+        let connection_part = if last_known {
+            // The restored summary says how old it is, on its own timer.
+            self.age_label.clone().into_any_element()
+        } else {
             div()
                 .id("overview-connection")
                 .test_support()
@@ -201,8 +205,9 @@ impl Pilot {
                 .when_some(ink, |this, ink| this.text_color(ink))
                 .aria_label(connection)
                 .child(connection)
-                .into_any_element(),
-        ];
+                .into_any_element()
+        };
+        let mut meta = vec![connection_part];
         for part in [drift, roster].into_iter().flatten() {
             meta.push(separator().into_any_element());
             meta.push(part.into_any_element());

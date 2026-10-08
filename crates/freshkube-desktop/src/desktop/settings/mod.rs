@@ -65,8 +65,11 @@ pub(crate) struct ClusterRow {
     role: SharedString,
     context: SharedString,
     talosconfig: SharedString,
-    /// The row's tooltip: the cluster, and the talosconfig path in full.
+    /// The row's tooltip: the cluster, the talosconfig path in full and the
+    /// note about how it opened, if there is one.
     tooltip: SharedString,
+    /// The tooltip without the note.
+    plain_tooltip: SharedString,
 }
 
 /// What the last save did, under the table's banners.
@@ -111,6 +114,11 @@ pub(crate) struct SettingsPage {
     notice: Option<Notice>,
     /// The save in flight; changes wait for it.
     saving: Option<Task<()>>,
+    /// How an entry opened when it did not open as defined, by entry id.
+    notes: std::collections::BTreeMap<String, SharedString>,
+    /// Advances each time the workspace is replaced, so a reader of the page
+    /// can tell a new workspace from a redraw.
+    revision: u64,
     /// The cluster to select once the save in flight has landed.
     select_on_save: Option<SharedString>,
     selected: Option<SharedString>,
@@ -121,6 +129,51 @@ pub(crate) struct SettingsPage {
 }
 
 impl SettingsPage {
+    /// Records, or clears, how the entry `id` opened when it did not open as
+    /// defined; the row's tooltip carries it. Nothing redraws unless it changed.
+    pub(in crate::desktop) fn set_note(
+        &mut self,
+        id: &str,
+        note: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = match &note {
+            Some(note) => {
+                self.notes
+                    .insert(id.to_owned(), note.clone().into())
+                    .as_deref()
+                    != Some(note.as_str())
+            }
+            None => self.notes.remove(id).is_some(),
+        };
+        if !changed {
+            return;
+        }
+        if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
+            row.tooltip = match &note {
+                Some(note) => format!("{}\nNote: {note}", row.plain_tooltip).into(),
+                None => row.plain_tooltip.clone(),
+            };
+        }
+        cx.notify();
+    }
+
+    /// The note about how the entry opened, if any.
+    #[cfg(test)]
+    pub(in crate::desktop) fn note(&self, id: &str) -> Option<&str> {
+        self.notes.get(id).map(|note| note.as_ref())
+    }
+
+    /// The workspace as the file holds it; empty for no file or one that
+    /// can't be used.
+    pub(in crate::desktop) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(in crate::desktop) fn workspace(&self) -> &Workspace {
+        &self.workspace
+    }
+
     pub(super) fn new(cx: &mut Context<Self>) -> Self {
         let (columns, width) = source::columns(&[]);
         Self {
@@ -136,6 +189,8 @@ impl SettingsPage {
             warning: None,
             notice: None,
             saving: None,
+            notes: Default::default(),
+            revision: 0,
             select_on_save: None,
             selected: None,
             page_scroll: ScrollHandle::new(),
@@ -157,6 +212,7 @@ impl SettingsPage {
             ),
         };
         self.workspace = workspace.clone();
+        self.revision = self.revision.wrapping_add(1);
         self.warning = match workspace.unknown_keys().as_slice() {
             [] => None,
             keys => {
@@ -196,7 +252,15 @@ impl SettingsPage {
                 if !talosconfig.is_empty() {
                     tooltip.push_str(&format!("\nTalosconfig: {talosconfig}"));
                 }
+                if let Some(talos_context) = &entry.talos_context {
+                    tooltip.push_str(&format!("\nTalos context: {talos_context}"));
+                }
+                let plain_tooltip = SharedString::from(tooltip.clone());
+                if let Some(note) = self.notes.get(entry.id.as_str()) {
+                    tooltip.push_str(&format!("\nNote: {note}"));
+                }
                 ClusterRow {
+                    plain_tooltip,
                     id: entry.id.clone().into(),
                     role: entry.role.label().into(),
                     context: entry.context.clone().into(),

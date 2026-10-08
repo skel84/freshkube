@@ -93,6 +93,16 @@ fn a_file_the_app_cannot_use_is_refused_with_a_reason() {
             Invalid::RelativePath("a".into()),
         ),
         (
+            serde_json::json!({"version":1,"clusters":[
+                {"id":"a","role":"core","context":"x","talosconfig":"/t","talos_context":" "}]}),
+            Invalid::EmptyTalosContext("a".into()),
+        ),
+        (
+            serde_json::json!({"version":1,"clusters":[
+                {"id":"a","role":"core","context":"x","talos_context":"t"}]}),
+            Invalid::TalosContextWithoutConfig("a".into()),
+        ),
+        (
             serde_json::json!({"version":1,"kubeconfig":"relative"}),
             Invalid::RelativePath("the workspace".into()),
         ),
@@ -441,4 +451,77 @@ fn a_file_that_cannot_be_set_aside_stops_the_commit_before_any_write() {
     ));
     assert!(file.is_dir());
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn a_talos_context_is_kept_and_an_absent_one_writes_nothing() {
+    let mut entry = Entry::new("mgmt", Role::Core, "acme-mgmt");
+    let mut workspace = Workspace {
+        clusters: vec![entry.clone()],
+        ..Default::default()
+    };
+    assert_eq!(to_text(&workspace).matches("talos_context").count(), 0);
+    entry.talos_context = Some("acme-talos".into());
+    entry.talosconfig = Some(absolute("talosconfig"));
+    workspace.clusters = vec![entry];
+    let written = to_text(&workspace);
+    assert_eq!(parse(written.as_bytes()), Ok(workspace));
+    assert_eq!(
+        written.matches("\"talos_context\": \"acme-talos\"").count(),
+        1
+    );
+}
+
+fn three() -> Workspace {
+    Workspace::new(vec![
+        Entry::new("dev", Role::Environment, "acme-dev"),
+        Entry::new("mgmt", Role::Core, "acme-mgmt"),
+        Entry::new("ci", Role::Cicd, "acme-ci"),
+    ])
+}
+
+#[test]
+fn a_launch_starts_the_remembered_entry_first() {
+    let workspace = three();
+    let start = choose_start(&workspace, Some("ci")).unwrap();
+    assert_eq!((start.entry.id.as_str(), start.note), ("ci", None));
+}
+
+#[test]
+fn without_a_memory_it_starts_the_first_core_entry_and_says_nothing() {
+    let workspace = three();
+    let start = choose_start(&workspace, None).unwrap();
+    assert_eq!((start.entry.id.as_str(), start.note), ("mgmt", None));
+}
+
+#[test]
+fn without_a_core_entry_it_starts_the_first_listed() {
+    let mut workspace = three();
+    workspace.clusters.remove(1);
+    let start = choose_start(&workspace, None).unwrap();
+    assert_eq!((start.entry.id.as_str(), start.note), ("dev", None));
+}
+
+#[test]
+fn a_remembered_entry_that_is_gone_is_named_once_beside_the_one_opened() {
+    let workspace = three();
+    let start = choose_start(&workspace, Some("retired")).unwrap();
+    assert_eq!(start.entry.id, "mgmt");
+    assert_eq!(
+        start.note.as_deref(),
+        Some("retired is no longer in the workspace; opened mgmt")
+    );
+    let mut without_core = three();
+    without_core.clusters.remove(1);
+    let start = choose_start(&without_core, Some("retired")).unwrap();
+    assert_eq!(
+        start.note.as_deref(),
+        Some("retired is no longer in the workspace; opened dev")
+    );
+}
+
+#[test]
+fn an_empty_workspace_has_no_start_so_the_launch_is_today_s() {
+    assert!(choose_start(&Workspace::default(), None).is_none());
+    assert!(choose_start(&Workspace::default(), Some("retired")).is_none());
 }
