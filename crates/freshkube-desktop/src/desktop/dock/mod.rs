@@ -45,7 +45,8 @@ pub(crate) const MAX_LOG_TABS: usize = 8;
 /// shell runs. Log tabs don't count.
 pub(crate) const MAX_SHELL_TABS: usize = 8;
 /// The header and the status bar, in dp, which the dock never covers.
-const FRAME_CHROME: f32 = 52. + 28.;
+const FRAME_CHROME: f32 =
+    freshkube_ui::page::APP_HEADER_HEIGHT + freshkube_ui::page::STATUS_BAR_HEIGHT;
 /// The page's least height under an open dock, in dp, unless the dock is
 /// fitted to the window.
 const PAGE_LEAST: f32 = 100.;

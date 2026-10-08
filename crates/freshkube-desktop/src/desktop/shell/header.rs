@@ -2,6 +2,7 @@
 //! everything, Refresh, appearance and Settings.
 use super::refresh_tip::{RefreshTip, TooltipView as _};
 use super::*;
+use freshkube_ui::page::{APP_HEADER_CONTROL, APP_HEADER_HEIGHT};
 
 /// Command-K's hint on the search field.
 const SEARCH_KEY: &str = if cfg!(target_os = "macos") {
@@ -22,10 +23,12 @@ impl Pilot {
     ) -> AnyElement {
         let minimal = window.viewport_size().width / ui::dp_px(1., window) < 680.;
         TitleBar::new()
-            .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
+            .h(dp(APP_HEADER_HEIGHT))
             .bg(cx.theme().title_bar)
-            // Clear of the traffic lights.
-            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
+            // Clear of the traffic lights, which keep their size in points.
+            .when(cfg!(target_os = "macos"), |bar| {
+                bar.pl(px(freshkube_ui::page::TRAFFIC_LIGHT_INSET))
+            })
             .child(
                 h_flex()
                     .gap(dp(if minimal { 6. } else { 14. }))
@@ -45,7 +48,7 @@ impl Pilot {
                 h_flex()
                     .gap(dp(6.))
                     .pl(dp(12.))
-                    .pr(dp(14.))
+                    .pr(dp(freshkube_ui::page::PANE_PADDING))
                     .flex_shrink_0()
                     .child(self.render_search_field(window, cx))
                     .when(!minimal, |this| {
@@ -95,7 +98,8 @@ impl Pilot {
                         .ghost()
                         .small()
                         .toggled(selected)
-                        .h(dp(48.))
+                        // The header less its hairline: the underline sits on it.
+                        .h(ui::dp_px(APP_HEADER_HEIGHT, window) - px(1.))
                         .rounded(px(0.))
                         .border_b_2()
                         .border_color(if selected {
@@ -225,21 +229,22 @@ impl Pilot {
                 Button::new("context-switcher")
                     .ghost()
                     .when(compact, |button| button.max_w(dp(180.)))
-                    .h(dp(36.))
-                    .pl(dp(6.))
-                    .pr(dp(10.))
-                    .rounded(px(10.))
+                    .h(dp(APP_HEADER_CONTROL))
+                    .pl(dp(4.))
+                    .pr(dp(8.))
+                    .rounded(px(8.))
                     .bg(p.surface_2)
                     .accessibility_label(full.clone())
-                    .tooltip(full)
+                    // The connection's detail doesn't fit the one line.
+                    .tooltip(format!("{full}\n{detail}"))
                     .dropdown_caret(true)
                     .child(
                         h_flex()
-                            .gap(dp(10.))
+                            .gap(dp(8.))
                             .min_w_0()
                             .child(
                                 div()
-                                    .size(dp(26.))
+                                    .size(dp(20.))
                                     .flex_none()
                                     .rounded(px(8.))
                                     .bg(cx.theme().primary)
@@ -251,33 +256,21 @@ impl Pilot {
                                     .child("F"),
                             )
                             .child(
-                                v_flex()
+                                h_flex()
                                     .min_w_0()
-                                    .items_start()
-                                    .child(
-                                        h_flex()
-                                            .min_w_0()
-                                            .gap(dp(6.))
-                                            .children(ui::status_glyph(tone, cx))
-                                            .child(
-                                                div()
-                                                    .id("context-short-name")
-                                                    .test_support()
-                                                    .aria_label(label.clone())
-                                                    .text_size(dp(13.))
-                                                    .line_height(dp(15.))
-                                                    .font_weight(ui::HEADING_WEIGHT)
-                                                    .truncate()
-                                                    .child(label),
-                                            ),
-                                    )
+                                    .gap(dp(6.))
+                                    .children(ui::status_glyph(tone, cx))
                                     .child(
                                         div()
-                                            .text_size(dp(11.))
-                                            .line_height(dp(13.))
-                                            .text_color(p.muted)
+                                            .id("context-short-name")
+                                            .test_support()
+                                            .aria_label(label.clone())
+                                            .text_size(dp(13.))
+                                            .line_height(dp(18.))
+                                            .font_weight(ui::LABEL_WEIGHT)
+                                            .text_color(p.ink)
                                             .truncate()
-                                            .child(detail),
+                                            .child(label),
                                     ),
                             ),
                     ),
@@ -342,8 +335,10 @@ impl Pilot {
             .role(Role::Button)
             .aria_label("Search everything")
             .tab_index(0)
-            .h(dp(32.))
-            .when(narrow, |this| this.w(dp(32.)).justify_center())
+            .h(dp(APP_HEADER_CONTROL))
+            .when(narrow, |this| {
+                this.w(dp(APP_HEADER_CONTROL)).justify_center()
+            })
             .when(!narrow, |this| this.w(dp(240.)).px(dp(10.)))
             .gap(dp(8.))
             .rounded(px(8.))
@@ -392,21 +387,22 @@ impl Pilot {
         let pilot = cx.entity().downgrade();
         div()
             .relative()
-            .size(dp(32.))
+            .size(dp(APP_HEADER_CONTROL))
             .flex()
             .items_center()
             .justify_center()
             .child(
                 div()
                     .absolute()
-                    .top(dp(2.))
-                    .left(dp(2.))
+                    .top_0()
+                    .left_0()
                     .child(self.countdown.clone()),
             )
             .child(
                 Button::new("refresh")
                     .ghost()
                     .small()
+                    .size(dp(ui::CONTROL_HEIGHT))
                     .rounded(px(12.))
                     .icon(ui::refresh_icon(loading, cx))
                     .accessibility_label("Refresh now")
@@ -424,6 +420,7 @@ impl Pilot {
         Button::new("theme-toggle")
             .ghost()
             .small()
+            .size(dp(ui::CONTROL_HEIGHT))
             .icon(if dark { IconName::Sun } else { IconName::Moon })
             .accessibility_label(if dark { "Light mode" } else { "Dark mode" })
             .tooltip(if dark {
@@ -477,6 +474,7 @@ impl Pilot {
                 Button::new("settings")
                     .ghost()
                     .small()
+                    .size(dp(ui::CONTROL_HEIGHT))
                     .icon(IconName::Settings)
                     .accessibility_label("Settings")
                     .tooltip(path_label),
