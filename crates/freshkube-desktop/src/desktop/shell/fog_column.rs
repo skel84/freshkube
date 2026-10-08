@@ -38,7 +38,7 @@ impl Pilot {
                         Button::new("nav-health")
                             .ghost()
                             .size(dp(36.))
-                            .icon(IconName::HeartPulse)
+                            .icon(super::column::page_icon(Page::Health))
                             .toggled(self.page == Page::Health)
                             .selected(self.page == Page::Health)
                             .tooltip("Health · ⌘5")
@@ -99,13 +99,7 @@ impl Pilot {
                         Button::new(SharedString::from(format!("nav-{}", page.slug())))
                             .ghost()
                             .size(dp(36.))
-                            .icon(match page {
-                                Page::Etcd => IconName::Database,
-                                Page::Security => IconName::ShieldCheck,
-                                Page::Lifecycle => IconName::PackageCheck,
-                                Page::Operations => IconName::Wrench,
-                                _ => IconName::ServerCog,
-                            })
+                            .icon(super::column::page_icon(page))
                             .selected(self.page == page)
                             .toggled(self.page == page)
                             .tooltip(page.title())
