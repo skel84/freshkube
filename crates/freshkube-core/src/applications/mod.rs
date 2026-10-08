@@ -63,15 +63,27 @@ impl Rule {
     }
 }
 
-/// An application's stable id: the rule and the name that rule found it by,
-/// such as `kargo:checkout`. It does not follow the display name, so a rename
-/// keeps it, and the same name found in two clusters is one application.
+/// An application's stable id: the rule and what that rule found it by, such
+/// as `kargo:checkout`, `argocd:applicationset/argocd/checkout`,
+/// `argocd:application/argocd/checkout` or `part-of:checkout`. An Argo CD
+/// object is named with its namespace, and an ApplicationSet apart from an
+/// Application, so same-named ones never become one application. The id does
+/// not follow the display name, so a rename keeps it. The same id found in
+/// two clusters is one application, joined by name ([`Basis::Inferred`]).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ApplicationId(String);
 
 impl ApplicationId {
     pub fn new(rule: Rule, name: &str) -> Self {
         Self(format!("{}:{name}", rule.slug()))
+    }
+
+    pub fn argo_application_set(namespace: &str, name: &str) -> Self {
+        Self(format!("argocd:applicationset/{namespace}/{name}"))
+    }
+
+    pub fn argo_application(namespace: &str, name: &str) -> Self {
+        Self(format!("argocd:application/{namespace}/{name}"))
     }
 
     pub fn as_str(&self) -> &str {
@@ -159,6 +171,11 @@ pub enum Basis {
     /// Its `part-of` value is this application's name. A guess from the
     /// name alone, so shown as such.
     SameName,
+    /// Joined to the application by a name found in more than one cluster.
+    /// Within one cluster joining by a name is [`Basis::Direct`]; across
+    /// clusters it is an inference, and a [`Note::JoinedAcrossSessions`]
+    /// says which.
+    Inferred,
     /// Placed by the user's override.
     Override,
 }
@@ -215,9 +232,18 @@ pub enum Note {
     UnmappedDestination { member: MemberRef },
     /// Applications were merged into this one by the override.
     Merged { from: Vec<ApplicationId> },
-    /// Kargo Stage and Warehouse reads for this Project did not answer, so
-    /// its members may be missing.
+    /// Kargo Stage and Warehouse reads for this Project did not answer or
+    /// stopped at the page cap, so its members may be missing.
     MembersUnknown { why: String },
+    /// The same name was found in several clusters and joined into this one
+    /// application, which is an inference.
+    JoinedAcrossSessions {
+        name: String,
+        sessions: Vec<SessionKey>,
+    },
+    /// An Argo CD Application may manage this workload, but that cluster's
+    /// Applications were not fully read, so it went by its label.
+    ManagerUnknown { member: MemberRef },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -89,6 +89,14 @@ fn id(rule: Rule, name: &str) -> ApplicationId {
     ApplicationId::new(rule, name)
 }
 
+fn set_id(name: &str) -> ApplicationId {
+    ApplicationId::argo_application_set("argocd", name)
+}
+
+fn app_id(name: &str) -> ApplicationId {
+    ApplicationId::argo_application("argocd", name)
+}
+
 fn names(application: &Application) -> Vec<&str> {
     application
         .members
@@ -123,13 +131,13 @@ fn an_application_set_groups_the_applications_it_generated() {
             .unwrap(),
     ]);
     let found = derived(vec![core]);
-    let cart = found.find(&id(Rule::ArgoCd, "cart")).expect("cart");
+    let cart = found.find(&set_id("cart")).expect("cart");
     assert_eq!(names(cart), ["cart-dev", "cart-prod"]);
     assert!(matches!(
         cart.evidence[0],
         Evidence::ArgoApplicationSet { read: true, .. }
     ));
-    let catalog = found.find(&id(Rule::ArgoCd, "catalog")).expect("catalog");
+    let catalog = found.find(&app_id("catalog")).expect("catalog");
     assert!(matches!(
         catalog.evidence[0],
         Evidence::ArgoApplication { .. }
@@ -144,13 +152,7 @@ fn an_application_set_that_generated_nothing_is_still_an_application() {
             .unwrap(),
     ]);
     let found = derived(vec![core]);
-    assert!(
-        found
-            .find(&id(Rule::ArgoCd, "empty"))
-            .unwrap()
-            .members
-            .is_empty()
-    );
+    assert!(found.find(&set_id("empty")).unwrap().members.is_empty());
 }
 
 #[test]
@@ -159,7 +161,7 @@ fn an_owner_reference_names_the_set_even_when_the_sets_were_not_read() {
     core.argo_applications = Source::Read(vec![argo("cart-dev", owned_by("cart"))]);
     core.argo_application_sets = Source::Refused("forbidden".into());
     let found = derived(vec![core]);
-    let cart = found.find(&id(Rule::ArgoCd, "cart")).expect("cart");
+    let cart = found.find(&set_id("cart")).expect("cart");
     assert!(matches!(
         cart.evidence[0],
         Evidence::ArgoApplicationSet { read: false, .. }
@@ -168,7 +170,7 @@ fn an_owner_reference_names_the_set_even_when_the_sets_were_not_read() {
 }
 
 #[test]
-fn the_part_of_label_groups_workloads_across_clusters() {
+fn the_part_of_label_groups_workloads_across_clusters_as_an_inference() {
     let mut dev = session("dev-fra");
     dev.workloads = Source::Read(vec![workload("shop", "web", "storefront")]);
     let mut prod = session("prod-fra");
@@ -187,6 +189,12 @@ fn the_part_of_label_groups_workloads_across_clusters() {
         1,
         "a blank label is no application"
     );
+    assert!(app.members.iter().all(|m| m.basis == Basis::Inferred));
+    assert!(app.notes.iter().any(|n| matches!(
+        n,
+        Note::JoinedAcrossSessions { name, sessions }
+            if name == "storefront" && sessions == &[key("dev-fra"), key("prod-fra")]
+    )));
     let sessions: Vec<_> = app
         .members
         .iter()
@@ -229,7 +237,7 @@ fn an_application_naming_a_project_nobody_read_stays_with_argo_cd() {
         json!({"metadata": {"annotations": {"kargo.akuity.io/authorized-stage": "checkout:dev"}}}),
     )]);
     let found = derived(vec![core]);
-    assert!(found.find(&id(Rule::ArgoCd, "checkout-dev")).is_some());
+    assert!(found.find(&app_id("checkout-dev")).is_some());
     assert!(found.unknown().contains_key(&Rule::Kargo));
 }
 
@@ -241,7 +249,7 @@ fn a_workload_argo_cd_manages_goes_to_that_application_with_the_label_noted() {
     core.workloads = Source::Read(vec![workload("shop", "web", "storefront")]);
     let found = derived(vec![core]);
     assert!(found.find(&id(Rule::PartOf, "storefront")).is_none());
-    let cart = found.find(&id(Rule::ArgoCd, "cart")).unwrap();
+    let cart = found.find(&app_id("cart")).unwrap();
     let web = cart.members.iter().find(|m| m.at.name == "web").unwrap();
     assert_eq!(web.basis, Basis::ManagedBy);
     assert_eq!(web.also_claimed_by, [Rule::PartOf]);
@@ -283,7 +291,7 @@ fn an_application_deploying_to_another_cluster_stays_a_member_unmapped() {
     ]);
     let found = derived(vec![core]);
     let destination = |name: &str| {
-        let app = found.find(&id(Rule::ArgoCd, name)).unwrap();
+        let app = found.find(&app_id(name)).unwrap();
         assert_eq!(app.members[0].at.session, key("core-fra"));
         (app.members[0].destination.clone().unwrap(), app.notes.len())
     };
@@ -410,7 +418,7 @@ fn a_rename_changes_the_name_and_keeps_the_id() {
 fn a_merge_moves_members_and_notes_where_they_came_from() {
     let over = Override {
         merges: vec![Merge {
-            from: vec![id(Rule::ArgoCd, "catalog"), id(Rule::PartOf, "storefront")],
+            from: vec![app_id("catalog"), id(Rule::PartOf, "storefront")],
             into: id(Rule::Kargo, "checkout"),
         }],
         ..Override::default()
@@ -453,12 +461,12 @@ fn a_split_takes_one_member_into_an_application_of_its_own() {
 #[test]
 fn a_hidden_application_is_kept_aside_to_show_again() {
     let over = Override {
-        hidden: [id(Rule::ArgoCd, "catalog")].into(),
+        hidden: [app_id("catalog")].into(),
         ..Override::default()
     };
     let found = with_override(over);
-    assert!(found.find(&id(Rule::ArgoCd, "catalog")).is_none());
-    assert_eq!(found.hidden[0].id, id(Rule::ArgoCd, "catalog"));
+    assert!(found.find(&app_id("catalog")).is_none());
+    assert_eq!(found.hidden[0].id, app_id("catalog"));
 }
 
 #[test]
@@ -478,7 +486,7 @@ fn an_override_that_matches_nothing_is_reported_not_dropped() {
                 into: id(Rule::Kargo, "checkout"),
             },
             Merge {
-                from: vec![id(Rule::ArgoCd, "catalog")],
+                from: vec![app_id("catalog")],
                 into: gone.clone(),
             },
         ],
@@ -500,7 +508,7 @@ fn an_override_that_matches_nothing_is_reported_not_dropped() {
         ]
     );
     assert!(
-        found.find(&id(Rule::ArgoCd, "catalog")).is_some(),
+        found.find(&app_id("catalog")).is_some(),
         "an unmatched merge moves nothing"
     );
 }
@@ -522,8 +530,254 @@ fn an_override_round_trips_through_json() {
             },
             name: "db".into(),
         }],
-        hidden: [id(Rule::ArgoCd, "catalog")].into(),
+        hidden: [app_id("catalog")].into(),
     };
     let text = serde_json::to_string(&over).unwrap();
     assert_eq!(serde_json::from_str::<Override>(&text).unwrap(), over);
+}
+
+#[test]
+fn within_one_cluster_a_shared_label_is_direct_and_needs_no_note() {
+    let mut prod = session("prod-fra");
+    prod.workloads = Source::Read(vec![
+        workload("shop", "web", "storefront"),
+        workload("shop", "worker", "storefront"),
+    ]);
+    let found = derived(vec![prod]);
+    let app = found.find(&id(Rule::PartOf, "storefront")).unwrap();
+    assert!(app.members.iter().all(|m| m.basis == Basis::Direct));
+    assert!(app.notes.is_empty());
+}
+
+#[test]
+fn an_argo_application_joins_a_project_read_in_another_cluster_as_an_inference() {
+    let mut kargo = session("core-fra");
+    kargo.kargo = Source::Read(vec![project("checkout", &["dev"])]);
+    let mut argo_cluster = session("ops-fra");
+    argo_cluster.argo_applications = Source::Read(vec![argo(
+        "checkout-dev",
+        json!({"metadata": {"annotations": {"kargo.akuity.io/authorized-stage": "checkout:dev"}}}),
+    )]);
+    let found = derived(vec![kargo, argo_cluster]);
+    let app = found.find(&id(Rule::Kargo, "checkout")).unwrap();
+    let basis = |name: &str| {
+        app.members
+            .iter()
+            .find(|m| m.at.name == name)
+            .unwrap()
+            .basis
+    };
+    assert_eq!(basis("dev"), Basis::Direct, "the Project's own Stage");
+    assert_eq!(basis("checkout-dev"), Basis::Inferred);
+    assert!(app.notes.iter().any(|n| matches!(
+        n,
+        Note::JoinedAcrossSessions { sessions, .. }
+            if sessions == &[key("core-fra"), key("ops-fra")]
+    )));
+}
+
+#[test]
+fn argo_cd_applications_of_one_name_in_two_namespaces_stay_two_applications() {
+    let mut core = session("core-fra");
+    let in_namespace =
+        |namespace: &str| argo("checkout", json!({"metadata": {"namespace": namespace}}));
+    core.argo_applications = Source::Read(vec![in_namespace("team-a"), in_namespace("team-b")]);
+    let found = derived(vec![core]);
+    assert_eq!(found.applications.len(), 2);
+    assert!(
+        found
+            .find(&ApplicationId::argo_application("team-a", "checkout"))
+            .is_some()
+    );
+    assert!(
+        found
+            .find(&ApplicationId::argo_application("team-b", "checkout"))
+            .is_some()
+    );
+}
+
+#[test]
+fn an_application_set_and_an_application_of_one_name_stay_apart() {
+    let mut core = session("core-fra");
+    core.argo_applications = Source::Read(vec![
+        argo("checkout", json!({})),
+        argo("checkout-dev", owned_by("checkout")),
+    ]);
+    let found = derived(vec![core]);
+    assert!(found.find(&app_id("checkout")).is_some());
+    assert!(found.find(&set_id("checkout")).is_some());
+    assert_eq!(found.applications.len(), 2);
+}
+
+#[test]
+fn an_owner_reference_matches_a_set_of_its_own_namespace_only() {
+    let mut core = session("core-fra");
+    let set = |namespace: &str| {
+        parse_application_set(&json!({"metadata": {"namespace": namespace, "name": "cart"}}))
+            .unwrap()
+    };
+    core.argo_applications = Source::Read(vec![argo("cart-dev", owned_by("cart"))]);
+    // The Application is in `argocd`; only the other namespace's set was read.
+    core.argo_application_sets = Source::Read(vec![set("team-b")]);
+    let found = derived(vec![core]);
+    let owned = found.find(&set_id("cart")).unwrap();
+    assert!(matches!(
+        owned.evidence[0],
+        Evidence::ArgoApplicationSet { read: false, .. }
+    ));
+    let other = found
+        .find(&ApplicationId::argo_application_set("team-b", "cart"))
+        .expect("a set that generated nothing here is still an application");
+    assert!(other.members.is_empty());
+}
+
+#[test]
+fn refused_kargo_projects_are_unknown_and_not_no_projects() {
+    let mut core = session("core-fra");
+    core.kargo = Source::Refused("forbidden".into());
+    let found = derived(vec![core]);
+    assert!(found.applications.is_empty());
+    assert_eq!(found.unknown()[&Rule::Kargo], [key("core-fra")]);
+}
+
+#[test]
+fn unread_warehouses_leave_the_stages_and_a_note() {
+    let mut core = session("core-fra");
+    let mut shop = project("checkout", &["dev"]);
+    shop.warehouses = Source::Unreadable("timed out".into());
+    core.kargo = Source::Read(vec![shop]);
+    let found = derived(vec![core]);
+    let app = found.find(&id(Rule::Kargo, "checkout")).unwrap();
+    assert_eq!(names(app), ["dev"]);
+    assert!(app.notes.iter().any(|n| matches!(
+        n,
+        Note::MembersUnknown { why } if why.starts_with("Warehouses")
+    )));
+    assert!(found.coverage.iter().any(|c| {
+        c.source == SourceKind::KargoWarehouses && matches!(c.state, CoverageState::Unreadable(_))
+    }));
+}
+
+#[test]
+fn capped_stages_keep_what_was_read_and_say_members_may_be_missing() {
+    let mut core = session("core-fra");
+    let mut shop = project("checkout", &[]);
+    shop.stages = Source::Capped(vec![stage("checkout", "dev")], Truncation { read: 1 });
+    core.kargo = Source::Read(vec![shop]);
+    let found = derived(vec![core]);
+    let app = found.find(&id(Rule::Kargo, "checkout")).unwrap();
+    assert_eq!(names(app), ["dev", "images"]);
+    assert!(app.notes.iter().any(|n| matches!(
+        n,
+        Note::MembersUnknown { why } if why.starts_with("Stages") && why.contains("page cap")
+    )));
+    assert!(found.unknown().contains_key(&Rule::Kargo));
+}
+
+#[test]
+fn workloads_fall_to_their_label_with_a_note_when_argo_applications_were_not_read() {
+    let mut core = session("core-fra");
+    core.argo_applications = Source::Refused("forbidden".into());
+    core.workloads = Source::Read(vec![workload("shop", "web", "storefront")]);
+    let found = derived(vec![core]);
+    let app = found.find(&id(Rule::PartOf, "storefront")).unwrap();
+    assert_eq!(app.members[0].basis, Basis::Direct);
+    assert!(app.notes.iter().any(|n| matches!(
+        n,
+        Note::ManagerUnknown { member } if member.name == "web"
+    )));
+    assert!(found.unknown().contains_key(&Rule::ArgoCd));
+    // Read, and not served, there is no manager to be unsure of.
+    let mut plain = session("core-fra");
+    plain.workloads = Source::Read(vec![workload("shop", "web", "storefront")]);
+    let found = derived(vec![plain]);
+    assert!(
+        found
+            .find(&id(Rule::PartOf, "storefront"))
+            .unwrap()
+            .notes
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_split_member_takes_its_notes_along_and_members_stay_in_order() {
+    let mut core = session("core-fra");
+    core.argo_applications = Source::Read(vec![
+        argo(
+            "cart-prod",
+            json!({"spec": {"destination": {"server": "https://prod.example.test:6443"}}}),
+        ),
+        argo("cart-dev", json!({})),
+    ]);
+    let found = derived(vec![core.clone()]);
+    let member = MemberRef {
+        session: key("core-fra"),
+        kind: MemberKind::ArgoApplication,
+        namespace: Some("argocd".into()),
+        name: "cart-prod".into(),
+    };
+    assert_eq!(found.find(&app_id("cart-prod")).unwrap().notes.len(), 1);
+    let over = Override {
+        splits: vec![Split {
+            member: member.clone(),
+            name: "prod only".into(),
+        }],
+        ..Override::default()
+    };
+    let found = derive(
+        &Inputs {
+            sessions: vec![core],
+            stage_naming: None,
+        },
+        &over,
+    );
+    let prod = found.find(&id(Rule::Manual, "prod only")).unwrap();
+    assert!(
+        prod.notes
+            .iter()
+            .any(|n| matches!(n, Note::UnmappedDestination { member: m } if *m == member))
+    );
+    let left = found.find(&app_id("cart-prod")).unwrap();
+    assert!(
+        left.members.is_empty() && left.notes.is_empty(),
+        "the note moved with it"
+    );
+    assert!(found.unmatched.is_empty());
+}
+
+#[test]
+fn a_merge_naming_a_missing_application_twice_reports_it_once() {
+    let gone = id(Rule::Kargo, "retired");
+    let over = Override {
+        merges: vec![Merge {
+            from: vec![gone.clone(), gone.clone()],
+            into: id(Rule::Kargo, "checkout"),
+        }],
+        ..Override::default()
+    };
+    assert_eq!(with_override(over).unmatched, [Unmatched::MergeFrom(gone)]);
+}
+
+#[test]
+fn members_stay_in_order_after_a_merge_and_a_split() {
+    let over = Override {
+        merges: vec![Merge {
+            from: vec![id(Rule::PartOf, "storefront")],
+            into: id(Rule::Kargo, "checkout"),
+        }],
+        splits: vec![Split {
+            member: MemberRef {
+                session: key("core-fra"),
+                kind: MemberKind::KargoStage,
+                namespace: Some("checkout".into()),
+                name: "dev".into(),
+            },
+            name: "dev".into(),
+        }],
+        ..Override::default()
+    };
+    let found = with_override(over);
+    let checkout = found.find(&id(Rule::Kargo, "checkout")).unwrap();
+    assert_eq!(names(checkout), ["images", "web"]);
 }
