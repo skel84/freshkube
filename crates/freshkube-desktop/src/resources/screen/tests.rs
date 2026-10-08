@@ -915,6 +915,31 @@ fn the_drawer_width_follows_its_edge_and_survives_reopening(cx: &mut TestAppCont
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// A window too narrow for the width the user gave shows the drawer
+/// narrower and writes nothing: a wider window gets the width back.
+#[gpui_kit::test]
+fn a_narrow_window_bounds_the_drawer_without_saving(cx: &mut TestAppContext) {
+    use freshkube_ui::split_size::{MemorySizes, SizeStore as _, set_store};
+    let sizes = std::rc::Rc::new(MemorySizes::with(
+        crate::navigation_file::DRAWER_WIDTH,
+        900.,
+    ));
+    cx.update(|cx| set_store(sizes.clone(), cx));
+    let (_runtime, screen, handle) = mount_window(cx, Some("homelab"), 900., 700.);
+    cx.update_window(handle, |_, window, cx| {
+        open_first(&screen, window, cx);
+        let width = window.find("resource-drawer").bounds().size.width;
+        assert!(width < crate::ui::dp_px(900., window), "{width:?}");
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(freshkube_ui::split_size::SAVE_DELAY * 2);
+    cx.run_until_parked();
+    assert_eq!(sizes.saves(), 0);
+    assert_eq!(sizes.size(crate::navigation_file::DRAWER_WIDTH), Some(900.));
+    cx.update(|cx| assert_eq!(screen.read(cx).drawer.size(), 900.));
+}
+
 #[gpui_kit::test]
 fn arrow_keys_show_the_next_row_once_the_keyboard_pauses(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));

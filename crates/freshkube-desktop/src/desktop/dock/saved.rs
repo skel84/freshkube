@@ -12,6 +12,11 @@ use super::*;
 use crate::navigation_file::NavigationFile;
 use crate::resources::example;
 
+/// The dock's object in the file, less its height. The height is the
+/// split size `dock.height`, written by `freshkube_ui::split_size` as the
+/// user drags; `NavigationFile::set_dock` writes these fields into the
+/// object beside it rather than replacing the object, so saving the tabs
+/// never drops it, and an earlier build still finds it there.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SavedDock {
     #[serde(default = "yes")]

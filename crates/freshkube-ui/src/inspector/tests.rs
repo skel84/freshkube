@@ -292,6 +292,31 @@ fn a_kept_table_caps_a_remembered_width(cx: &mut TestAppContext) {
     assert_eq!(sizes.size(width_key(PAGE)), Some(1000.));
 }
 
+/// A press on the hairline that moves no width, as a click that jitters
+/// past the drag threshold does, saves nothing: Kit reports it as a resize,
+/// and the width it shows is the clamp's, not the user's.
+#[gpui_kit::test]
+fn a_drag_that_moves_nothing_keeps_a_clamped_width(cx: &mut TestAppContext) {
+    let (handle, page, sizes) = open(cx, Some(1000.), true, true);
+    cx.update(|cx| page.update(cx, |page, _| page.keep = Some((800., 1200.))));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let inspector = window.find("inspector").bounds();
+        let y = inspector.center().y;
+        // Into the kept table, which can't give the inspector more room.
+        window.drag(
+            point(inspector.left(), y),
+            point(inspector.left() - px(3.), y),
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(sizes.saves(), 0, "nothing moved, nothing saved");
+    assert_eq!(sizes.size(width_key(PAGE)), Some(1000.));
+    cx.update(|cx| assert_eq!(page.read(cx).split.width(), 1000.));
+}
+
 /// A drag stops where the kept table starts, so the width saved fits the
 /// room beside it.
 #[gpui_kit::test]

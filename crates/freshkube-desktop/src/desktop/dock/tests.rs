@@ -403,11 +403,16 @@ fn the_dock_height_is_written_once_and_survives_a_restart(cx: &mut TestAppContex
     })
     .unwrap();
     cx.run_until_parked();
+    let sizes_saved = |cx: &mut TestAppContext| {
+        cx.update(|cx| crate::navigation_file::NavigationFile::global(cx).sizes_saved())
+    };
     assert_eq!(saved(), None, "nothing is written while it moves");
+    assert_eq!(sizes_saved(cx), 0);
     cx.executor()
         .advance_clock(freshkube_ui::split_size::SAVE_DELAY * 2);
     cx.run_until_parked();
     assert_eq!(saved(), Some(420.));
+    assert_eq!(sizes_saved(cx), 1, "the drag writes once");
 
     // The next run opens at it, in a window too short to show it all.
     let (_runtime, handle, pilot) = crate::desktop::tests::mount(cx, options(), 1280., 480.);
@@ -426,6 +431,7 @@ fn the_dock_height_is_written_once_and_survives_a_restart(cx: &mut TestAppContex
     cx.run_until_parked();
     assert_eq!(cx.update(|cx| dock.read(cx).height()), 420.);
     assert_eq!(saved(), Some(420.));
+    assert_eq!(sizes_saved(cx), 0, "showing it shorter writes nothing");
     let _ = std::fs::remove_dir_all(&directory);
 }
 

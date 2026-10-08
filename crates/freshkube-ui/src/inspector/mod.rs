@@ -19,8 +19,8 @@ use gpui_kit::component::resizable::{
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AppContext, Div, Entity, Pixels, SharedString, Stateful, Subscription,
-    TestSupportExt, Window, div,
+    AnyElement, App, AppContext, DispatchPhase, Div, Entity, MouseDownEvent, Pixels, SharedString,
+    Stateful, Subscription, TestSupportExt, Window, canvas, div,
 };
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
@@ -284,6 +284,9 @@ pub struct InspectorSplit {
     /// Whether the user has dragged the stacked split, after which its
     /// sizes are theirs.
     dragged: Rc<Cell<bool>>,
+    /// The inspector's width beside the table as Kit showed it when the
+    /// pointer last went down in the split, in dp: where a drag starts.
+    pressed: Rc<Cell<Option<f32>>>,
     _resized: Subscription,
     _dragged: Subscription,
 }
@@ -300,14 +303,21 @@ impl InspectorSplit {
     pub fn with_width(width: SplitSize, cx: &mut App) -> Self {
         let beside = cx.new(|_| ResizableState::default());
         let stacked = cx.new(|_| ResizableState::default());
-        // Kit tells the state once a drag ends, not while it moves.
+        let pressed = Rc::new(Cell::new(None));
+        // Kit tells the state once a drag ends, not while it moves, and on
+        // any mouse-up after a drag starts, even one that moved nothing. A
+        // drag that ends where it started leaves the width the user gave,
+        // which a clamp may show narrower, unsaved.
         let _resized = cx.subscribe(&beside, {
-            let width = width.clone();
+            let (width, pressed) = (width.clone(), pressed.clone());
             move |state, _: &ResizablePanelEvent, cx| {
-                let Some(&size) = state.read(cx).sizes().get(1) else {
+                let Some(dp) = shown_width(&state, cx) else {
                     return;
                 };
-                let dp = f32::from(size) * BASE_TEXT / crate::text_size::current(cx);
+                let start: Option<f32> = pressed.take();
+                if start.is_some_and(|start| (start - dp).abs() < 0.5) {
+                    return;
+                }
                 width.release(dp, cx);
             }
         });
@@ -324,6 +334,7 @@ impl InspectorSplit {
             lead: Cell::new(None),
             keep: Cell::new(None),
             dragged,
+            pressed,
             _resized,
             _dragged,
         }
@@ -379,10 +390,7 @@ impl InspectorSplit {
     /// inspector's width reads this. [`Self::width`] until the split
     /// first lays out.
     pub fn live_width(&self, cx: &App) -> f32 {
-        match self.beside.read(cx).sizes().as_slice() {
-            [_, size] => f32::from(*size) * BASE_TEXT / crate::text_size::current(cx),
-            _ => self.width(),
-        }
+        shown_width(&self.beside, cx).unwrap_or_else(|| self.width())
     }
 
     /// Kit's state for the split beside the table, for tests that resize it.
@@ -396,6 +404,36 @@ impl InspectorSplit {
     pub fn stacked_state(&self) -> &Entity<ResizableState> {
         &self.stacked
     }
+}
+
+/// The inspector's width beside the table as Kit last laid it out, in dp,
+/// once it has.
+fn shown_width(beside: &Entity<ResizableState>, cx: &App) -> Option<f32> {
+    match beside.read(cx).sizes().as_slice() {
+        [_, size] => Some(f32::from(*size) * BASE_TEXT / crate::text_size::current(cx)),
+        _ => None,
+    }
+}
+
+/// Notes the inspector's width as drawn whenever the pointer goes down, so
+/// the press that starts a drag on Kit's handle leaves the width it starts
+/// from. Kit's sizes can't tell: until a drag moves, they keep the width
+/// asked for, not the one a clamp drew. It listens on the window, since the
+/// handle occludes the elements under it.
+fn press_width(pressed: Rc<Cell<Option<f32>>>) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let shown = f32::from(bounds.size.width);
+            window.on_mouse_event(move |_: &MouseDownEvent, phase, _, cx| {
+                if phase == DispatchPhase::Capture {
+                    pressed.set(Some(shown * BASE_TEXT / crate::text_size::current(cx)));
+                }
+            });
+        },
+    )
+    .absolute()
+    .size_full()
 }
 
 /// How tall a split with the default heights is on a page that scrolls
@@ -453,7 +491,8 @@ pub fn split(
                     .size(dp(split.width()))
                     .size_range(dp(MIN_WIDTH)..most)
                     .flex_none()
-                    .child(inspector),
+                    .child(inspector)
+                    .child(press_width(split.pressed.clone())),
             )
     } else {
         let Stacked { lead, trail } = split.heights;
