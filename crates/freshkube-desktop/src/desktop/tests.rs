@@ -3427,6 +3427,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
                     | Page::Nodes
                     | Page::Monitoring
                     | Page::Observability
+                    | Page::Applications
                     | Page::Settings
             )
         }) {

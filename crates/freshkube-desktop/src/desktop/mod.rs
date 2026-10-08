@@ -344,6 +344,7 @@ pub(crate) struct Pilot {
     last_kind: ResourceKind,
     system_services: Entity<system_services::SystemServices>,
     settings_page: Entity<settings::SettingsPage>,
+    applications: Entity<crate::applications::ApplicationsPage>,
     /// `workspace.json` beside the preferences; none without preferences.
     workspace_file: Option<PathBuf>,
     /// The sidebar's Custom Resources, discovered when opened.
@@ -434,6 +435,23 @@ impl Pilot {
         self.health.clone()
     }
 
+    /// The Applications page and the page shown, for its tests.
+    #[cfg(test)]
+    pub(crate) fn applications(&self) -> (Entity<crate::applications::ApplicationsPage>, Page) {
+        (self.applications.clone(), self.page)
+    }
+
+    /// Chooses another context, as the header's switcher does.
+    #[cfg(test)]
+    pub(crate) fn choose_context(
+        &mut self,
+        context: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_context(context.to_owned(), window, cx);
+    }
+
     /// The shell's global key bindings, by key context.
     fn bind_shell_keys(cx: &mut App) {
         cx.bind_keys([
@@ -498,6 +516,9 @@ impl Pilot {
             KeyBinding::new("down", settings::NextCluster, Some(settings::CONTEXT)),
             KeyBinding::new("up", settings::PreviousCluster, Some(settings::CONTEXT)),
             KeyBinding::new("escape", settings::ClearCluster, Some(settings::CONTEXT)),
+        ]);
+        cx.bind_keys(crate::applications::key_bindings());
+        cx.bind_keys([
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
             KeyBinding::new(
                 "secondary-shift-enter",
@@ -950,6 +971,8 @@ impl Pilot {
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             settings_page: cx.new(settings::SettingsPage::new),
+            applications: cx
+                .new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx)),
             workspace_file: options
                 .preferences
                 .as_deref()
@@ -1407,6 +1430,8 @@ impl Pilot {
         let id = source.as_ref().map(|source| source.id.clone());
         self.observability
             .update(cx, |page, cx| page.set_source(id, cx));
+        self.applications
+            .update(cx, |page, cx| page.set_source(source.clone(), cx));
         let identity = self.kube_identity();
         self.dock.update(cx, |dock, cx| {
             dock.set_source(source.clone(), identity.as_deref(), window, cx)
@@ -1442,6 +1467,9 @@ impl Pilot {
         if self.page == Page::Observability {
             self.observability
                 .update(cx, |page, cx| page.refresh_current(cx));
+        }
+        if self.page == Page::Applications {
+            self.applications.update(cx, |page, cx| page.refresh(cx));
         }
         if self.page == Page::Nodes {
             self.node_history

@@ -1,0 +1,820 @@
+//! What the page shows of one derivation, worked out when it arrives so
+//! `render` only reads it: a row per application, the body's state, the
+//! banners for sources that may have left applications out, and the
+//! legend's lines for sources that aren't served.
+//!
+//! An unread source is never "no applications". With none found, a refused
+//! read is the refused state and a failed one the failed state; only when
+//! every source answered (or isn't served) is it the empty state.
+use std::collections::{BTreeMap, BTreeSet};
+
+use freshkube_core::applications::{
+    Application, Coverage, CoverageState, Derived, Evidence, Member, MemberKind, MemberRef, Note,
+    Rule, SessionKey, SourceKind,
+};
+use freshkube_core::workloads::WorkloadKind;
+use gpui_kit::SharedString;
+
+/// Where Argo CD's Applications are read, until the workspace file can say.
+pub(crate) const ARGOCD_NAMESPACE: &str = "argocd";
+
+/// The rules in precedence order, as the table groups them.
+pub(super) const RULES: [Rule; 4] = [Rule::Kargo, Rule::ArgoCd, Rule::PartOf, Rule::Manual];
+
+pub(super) fn rule_index(rule: Rule) -> usize {
+    match rule {
+        Rule::Kargo => 0,
+        Rule::ArgoCd => 1,
+        Rule::PartOf => 2,
+        Rule::Manual => 3,
+    }
+}
+
+/// A group row's label: what found the applications under it.
+pub(super) fn rule_label(rule: Rule) -> &'static str {
+    match rule {
+        Rule::Kargo => "Kargo Projects",
+        Rule::ArgoCd => "Argo CD",
+        Rule::PartOf => "part-of label",
+        Rule::Manual => "Your overrides",
+    }
+}
+
+/// How completely an application is known, which its glyph and the
+/// header's chips show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Mark {
+    /// A source it depends on wasn't read in full: parts may be missing.
+    Incomplete,
+    /// Read in full, with something to know: a lower claim, a destination
+    /// in another cluster, a join by name.
+    Notes,
+    /// Read in full, nothing to add.
+    Read,
+}
+
+pub(super) const MARKS: [Mark; 3] = [Mark::Incomplete, Mark::Notes, Mark::Read];
+
+impl Mark {
+    pub(super) fn index(self) -> usize {
+        match self {
+            Self::Incomplete => 0,
+            Self::Notes => 1,
+            Self::Read => 2,
+        }
+    }
+
+    /// What its chip counts.
+    pub(super) fn what(self) -> &'static str {
+        match self {
+            Self::Incomplete => "may be incomplete",
+            Self::Notes => "with notes",
+            Self::Read => "read in full",
+        }
+    }
+
+    pub(super) fn slug(self) -> &'static str {
+        match self {
+            Self::Incomplete => "incomplete",
+            Self::Notes => "notes",
+            Self::Read => "read",
+        }
+    }
+
+    pub(super) fn tooltip(self) -> &'static str {
+        match self {
+            Self::Incomplete => "May be incomplete: a source it depends on wasn't read in full",
+            Self::Notes => "Read in full, with notes",
+            Self::Read => "Read in full",
+        }
+    }
+}
+
+/// What the clusters are called on the page: their context, or in example
+/// data the acme workspace's names.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Labels(BTreeMap<SessionKey, String>);
+
+impl Labels {
+    pub(crate) fn new(labels: impl IntoIterator<Item = (SessionKey, String)>) -> Self {
+        Self(labels.into_iter().collect())
+    }
+
+    pub(super) fn of(&self, session: &SessionKey) -> String {
+        self.0
+            .get(session)
+            .cloned()
+            .unwrap_or_else(|| session.0.clone())
+    }
+
+    /// Several clusters, as one short list: two named, then a count.
+    fn list<'a>(&self, sessions: impl IntoIterator<Item = &'a SessionKey>) -> String {
+        let names: BTreeSet<String> = sessions.into_iter().map(|s| self.of(s)).collect();
+        let names: Vec<String> = names.into_iter().collect();
+        match names.len() {
+            0..=2 => names.join(", "),
+            n => format!("{}, {} +{}", names[0], names[1], n - 2),
+        }
+    }
+
+    fn all<'a>(&self, sessions: impl IntoIterator<Item = &'a SessionKey>) -> String {
+        let names: BTreeSet<String> = sessions.into_iter().map(|s| self.of(s)).collect();
+        names.into_iter().collect::<Vec<_>>().join(", ")
+    }
+}
+
+/// One application as the table and the Inspector show it.
+#[derive(Clone, Debug)]
+pub(crate) struct AppRow {
+    pub(super) key: SharedString,
+    pub(super) name: SharedString,
+    pub(super) rule: Rule,
+    pub(super) mark: Mark,
+    pub(super) found_by: SharedString,
+    pub(super) parts: SharedString,
+    pub(super) clusters: SharedString,
+    /// The first note, and how many more.
+    pub(super) note: SharedString,
+    pub(super) tooltip: SharedString,
+    /// Lowercased name, id, evidence and clusters, for the filter.
+    pub(super) query: String,
+    /// The Inspector's fields and notes.
+    pub(super) fields: Vec<(&'static str, SharedString)>,
+    pub(super) notes: Vec<SharedString>,
+}
+
+/// What the page's body is: the table, or a state in its place.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Body {
+    Table,
+    /// Every source answered or isn't served, and none found anything.
+    Empty {
+        title: SharedString,
+        description: SharedString,
+    },
+    /// No applications, and a source refused: nothing is known missing.
+    Refused {
+        title: SharedString,
+        description: SharedString,
+        reason: SharedString,
+    },
+    /// No applications, and a source failed: nothing is known missing.
+    Failed {
+        title: SharedString,
+        description: SharedString,
+        reason: SharedString,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct Display {
+    pub(super) rows: Vec<AppRow>,
+    pub(super) body: Body,
+    /// Sources that may have left applications out, one line each.
+    pub(super) missing: Vec<SharedString>,
+    /// Sources that aren't served, or read in one namespace: facts, not
+    /// warnings.
+    pub(super) legend: Vec<SharedString>,
+    /// Applications per mark, before any filter.
+    pub(super) marks: [usize; 3],
+}
+
+impl Default for Display {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            body: Body::Table,
+            missing: Vec::new(),
+            legend: Vec::new(),
+            marks: [0; 3],
+        }
+    }
+}
+
+fn plural(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+fn source_words(source: SourceKind) -> &'static str {
+    match source {
+        SourceKind::KargoProjects => "Kargo Projects",
+        SourceKind::KargoStages => "Kargo Stages",
+        SourceKind::KargoWarehouses => "Kargo Warehouses",
+        SourceKind::ArgoApplications => "Argo CD Applications",
+        SourceKind::ArgoApplicationSets => "Argo CD ApplicationSets",
+        SourceKind::Workloads => "labelled workloads",
+    }
+}
+
+/// What an application is made of, as a caption: `Stage`, `Deployment`.
+pub(super) fn kind_label(kind: MemberKind) -> &'static str {
+    match kind {
+        MemberKind::KargoStage => "Stage",
+        MemberKind::KargoWarehouse => "Warehouse",
+        MemberKind::ArgoApplication => "Argo CD Application",
+        MemberKind::Workload(WorkloadKind::Deployment) => "Deployment",
+        MemberKind::Workload(WorkloadKind::StatefulSet) => "StatefulSet",
+        MemberKind::Workload(WorkloadKind::DaemonSet) => "DaemonSet",
+    }
+}
+
+fn kind_plural(kind: MemberKind, count: usize) -> String {
+    let (one, many) = match kind {
+        MemberKind::KargoStage => ("stage", "stages"),
+        MemberKind::KargoWarehouse => ("warehouse", "warehouses"),
+        MemberKind::ArgoApplication => ("Argo CD app", "Argo CD apps"),
+        MemberKind::Workload(WorkloadKind::Deployment) => ("deployment", "deployments"),
+        MemberKind::Workload(WorkloadKind::StatefulSet) => ("statefulset", "statefulsets"),
+        MemberKind::Workload(WorkloadKind::DaemonSet) => ("daemonset", "daemonsets"),
+    };
+    plural(count, one, many)
+}
+
+fn member_words(member: &MemberRef, labels: &Labels) -> String {
+    let name = match &member.namespace {
+        Some(namespace) => format!("{namespace}/{}", member.name),
+        None => member.name.clone(),
+    };
+    format!(
+        "{} {name} on {}",
+        kind_label(member.kind),
+        labels.of(&member.session)
+    )
+}
+
+fn rule_words(rule: Rule) -> &'static str {
+    match rule {
+        Rule::Kargo => "Kargo",
+        Rule::ArgoCd => "Argo CD",
+        Rule::PartOf => "part-of",
+        Rule::Manual => "override",
+    }
+}
+
+/// A note in words, for the Inspector and the Notes column.
+pub(super) fn note_words(note: &Note, labels: &Labels) -> String {
+    match note {
+        Note::LowerClaim { member, rule, name } => format!(
+            "{} is also claimed by the {} rule, as “{name}”",
+            member_words(member, labels),
+            rule_words(*rule)
+        ),
+        Note::UnmappedDestination { member } => format!(
+            "{} deploys to another cluster, not mapped yet",
+            member_words(member, labels)
+        ),
+        Note::Merged { from } => format!(
+            "Merged from {}",
+            from.iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Note::MembersUnknown { session, why } => {
+            format!("Parts on {} may be missing: {why}", labels.of(session))
+        }
+        Note::ProjectNotRead {
+            member,
+            project,
+            why,
+        } => format!(
+            "{} names Kargo Project {project}, which wasn't read: {why}",
+            member_words(member, labels)
+        ),
+        Note::JoinedAcrossSessions { name, sessions } => format!(
+            "Joined by the name “{name}” across {}: an inference",
+            labels.all(sessions)
+        ),
+        Note::ManagerUnknown { member } => format!(
+            "{} may be managed by an Argo CD Application, but that cluster's Applications weren't read in full",
+            member_words(member, labels)
+        ),
+    }
+}
+
+/// Whether a note says something may be missing, not only something to know.
+fn note_is_unknown(note: &Note) -> bool {
+    matches!(
+        note,
+        Note::MembersUnknown { .. } | Note::ProjectNotRead { .. } | Note::ManagerUnknown { .. }
+    )
+}
+
+fn evidence_words(evidence: &Evidence, labels: &Labels) -> Option<String> {
+    Some(match evidence {
+        Evidence::KargoProject { session, project } => {
+            format!("Kargo Project {project} on {}", labels.of(session))
+        }
+        Evidence::ArgoApplicationSet {
+            session,
+            namespace,
+            name,
+            read,
+        } => {
+            let how = if *read {
+                ""
+            } else {
+                ", named by an Application's owner"
+            };
+            format!(
+                "Argo CD ApplicationSet {namespace}/{name} on {}{how}",
+                labels.of(session)
+            )
+        }
+        Evidence::ArgoApplication {
+            session,
+            namespace,
+            name,
+        } => format!(
+            "Argo CD Application {namespace}/{name} on {}",
+            labels.of(session)
+        ),
+        Evidence::PartOfLabel { value } => format!("app.kubernetes.io/part-of={value}"),
+        Evidence::Override(what) => format!("Your override: {what}"),
+    })
+}
+
+fn sessions_of(app: &Application) -> BTreeSet<SessionKey> {
+    let mut sessions: BTreeSet<SessionKey> =
+        app.members.iter().map(|m| m.at.session.clone()).collect();
+    for evidence in &app.evidence {
+        match evidence {
+            Evidence::KargoProject { session, .. }
+            | Evidence::ArgoApplicationSet { session, .. }
+            | Evidence::ArgoApplication { session, .. } => {
+                sessions.insert(session.clone());
+            }
+            Evidence::PartOfLabel { .. } | Evidence::Override(_) => {}
+        }
+    }
+    sessions
+}
+
+fn parts_words(members: &[Member]) -> String {
+    let mut counts: Vec<(MemberKind, usize)> = Vec::new();
+    for member in members {
+        match counts.iter_mut().find(|(kind, _)| *kind == member.at.kind) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((member.at.kind, 1)),
+        }
+    }
+    if counts.is_empty() {
+        return "none read".to_owned();
+    }
+    counts
+        .iter()
+        .map(|(kind, count)| kind_plural(*kind, *count))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// Where each rule's sources may have been left short, and where Argo CD
+/// was read in one namespace only, which is a fact to note rather than a
+/// gap: the fixed `argocd` namespace is where Argo CD keeps them by default.
+#[derive(Default)]
+struct Short {
+    unread: BTreeMap<Rule, BTreeSet<SessionKey>>,
+    namespace_only: BTreeMap<SessionKey, String>,
+}
+
+impl Short {
+    fn new(coverage: &[Coverage]) -> Self {
+        let mut short = Self::default();
+        for c in coverage {
+            match &c.state {
+                CoverageState::NamespaceOnly(namespace) => {
+                    short
+                        .namespace_only
+                        .insert(c.session.clone(), namespace.clone());
+                }
+                state if state.is_unknown() => {
+                    short
+                        .unread
+                        .entry(c.source.rule())
+                        .or_default()
+                        .insert(c.session.clone());
+                }
+                _ => {}
+            }
+        }
+        short
+    }
+}
+
+fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
+    let sessions = sessions_of(app);
+    let found: Vec<String> = app
+        .evidence
+        .iter()
+        .filter_map(|evidence| evidence_words(evidence, labels))
+        .collect();
+    let mut notes: Vec<String> = app.notes.iter().map(|n| note_words(n, labels)).collect();
+    if app.rule == Rule::ArgoCd {
+        for (session, namespace) in &short.namespace_only {
+            if sessions.contains(session) {
+                notes.push(format!(
+                    "Argo CD was read in {namespace} only on {}; Applications it generates in other namespaces aren't listed",
+                    labels.of(session)
+                ));
+            }
+        }
+    }
+    // A source of the application's own rule that may be short in a cluster
+    // it spans leaves its parts unknown, as do the notes that say so.
+    let short_here = short
+        .unread
+        .get(&app.rule)
+        .is_some_and(|short| short.iter().any(|s| sessions.contains(s)));
+    let mark = if short_here || app.notes.iter().any(note_is_unknown) {
+        Mark::Incomplete
+    } else if notes.is_empty() {
+        Mark::Read
+    } else {
+        Mark::Notes
+    };
+    let found_by = found.first().cloned().unwrap_or_default();
+    let found_by = match found.len() {
+        0 | 1 => found_by,
+        n => format!("{found_by} +{}", n - 1),
+    };
+    let parts = parts_words(&app.members);
+    let clusters = labels.list(&sessions);
+    let note = match notes.len() {
+        0 => String::new(),
+        1 => notes[0].clone(),
+        n => format!("{} (+{} more)", notes[0], n - 1),
+    };
+    let mut fields: Vec<(&'static str, SharedString)> = vec![
+        ("Found by", found.join("\n").into()),
+        ("Id", app.id.as_str().to_owned().into()),
+        ("Parts", parts.clone().into()),
+        ("Clusters", labels.all(&sessions).into()),
+    ];
+    if mark == Mark::Incomplete {
+        fields.push((
+            "Read",
+            "Not in full: parts may be missing, which says nothing about whether they exist".into(),
+        ));
+    }
+    AppRow {
+        key: app.id.as_str().to_owned().into(),
+        name: app.name.clone().into(),
+        rule: app.rule,
+        mark,
+        tooltip: format!("{} · {}", app.name, mark.tooltip()).into(),
+        query: format!(
+            "{} {} {} {}",
+            app.name,
+            app.id.as_str(),
+            found.join(" "),
+            clusters
+        )
+        .to_lowercase(),
+        found_by: found_by.into(),
+        parts: parts.into(),
+        clusters: clusters.into(),
+        note: note.into(),
+        fields,
+        notes: notes.into_iter().map(Into::into).collect(),
+    }
+}
+
+/// One line per cluster and source that may have left applications out.
+fn missing_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
+    let mut lines = Vec::new();
+    for c in coverage {
+        let source = source_words(c.source);
+        let cluster = labels.of(&c.session);
+        let project = c
+            .project
+            .as_ref()
+            .map(|p| format!(" of Project {p}"))
+            .unwrap_or_default();
+        let rule = rule_words(c.source.rule());
+        let line = match &c.state {
+            CoverageState::Refused(why) => {
+                format!(
+                    "{source}{project} were refused on {cluster} ({why}); {rule} applications may be missing"
+                )
+            }
+            CoverageState::Unreadable(why) => {
+                format!(
+                    "{source}{project} couldn't be read on {cluster} ({why}); {rule} applications may be missing"
+                )
+            }
+            CoverageState::Capped(read) => format!(
+                "{source}{project} on {cluster} stopped after {read}; {rule} applications may be missing"
+            ),
+            CoverageState::Read
+            | CoverageState::NamespaceOnly(_)
+            | CoverageState::NotInstalled(_) => continue,
+        };
+        lines.push(line.into());
+    }
+    lines
+}
+
+/// Facts about what was read: what isn't served, and where Argo CD was
+/// read only in one namespace.
+fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
+    let mut kargo = BTreeSet::new();
+    let mut argo = BTreeSet::new();
+    let mut namespace_only: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for c in coverage {
+        match (&c.state, c.source.rule()) {
+            (CoverageState::NotInstalled(_), Rule::Kargo) => {
+                kargo.insert(labels.of(&c.session));
+            }
+            (CoverageState::NotInstalled(_), Rule::ArgoCd) => {
+                argo.insert(labels.of(&c.session));
+            }
+            (CoverageState::NamespaceOnly(namespace), _) => {
+                namespace_only
+                    .entry(namespace.clone())
+                    .or_default()
+                    .insert(labels.of(&c.session));
+            }
+            _ => {}
+        }
+    }
+    let on = |clusters: &BTreeSet<String>| match clusters.len() {
+        1 => clusters.iter().next().cloned().unwrap_or_default(),
+        n => plural(n, "cluster", "clusters"),
+    };
+    let mut lines: Vec<SharedString> = Vec::new();
+    if !kargo.is_empty() {
+        lines.push(format!("Kargo isn't served on {}", on(&kargo)).into());
+    }
+    if !argo.is_empty() {
+        lines.push(format!("Argo CD isn't served on {}", on(&argo)).into());
+    }
+    for (namespace, clusters) in namespace_only {
+        lines.push(
+            format!(
+                "Argo CD read in {namespace} only on {}; Applications elsewhere aren't known to be absent",
+                on(&clusters)
+            )
+            .into(),
+        );
+    }
+    lines
+}
+
+/// The body when nothing was found: refused or failed before empty, since
+/// an unread source may hold applications.
+fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
+    let refused: Vec<&Coverage> = coverage
+        .iter()
+        .filter(|c| matches!(c.state, CoverageState::Refused(_)))
+        .collect();
+    let failed: Vec<&Coverage> = coverage
+        .iter()
+        .filter(|c| matches!(c.state, CoverageState::Unreadable(_)))
+        .collect();
+    let sources = |list: &[&Coverage]| {
+        let words: BTreeSet<&str> = list.iter().map(|c| source_words(c.source)).collect();
+        words.into_iter().collect::<Vec<_>>().join(", ")
+    };
+    let clusters = |list: &[&Coverage]| labels.all(list.iter().map(|c| &c.session));
+    let reason = |list: &[&Coverage]| -> SharedString {
+        match &list[0].state {
+            CoverageState::Refused(why) | CoverageState::Unreadable(why) => why.clone().into(),
+            _ => SharedString::default(),
+        }
+    };
+    if !refused.is_empty() {
+        return Body::Refused {
+            title: format!("Not permitted to list {}", sources(&refused)).into(),
+            description: format!(
+                "The identity of {} may not list {}. That says nothing about whether any applications exist.",
+                clusters(&refused),
+                sources(&refused)
+            )
+            .into(),
+            reason: reason(&refused),
+        };
+    }
+    if !failed.is_empty() {
+        return Body::Failed {
+            title: format!("Couldn't read {}", sources(&failed)).into(),
+            description: format!(
+                "Nothing is known yet on {}, so no application is shown as missing. Refresh starts over.",
+                clusters(&failed)
+            )
+            .into(),
+            reason: reason(&failed),
+        };
+    }
+    let sessions: BTreeSet<&SessionKey> = coverage.iter().map(|c| &c.session).collect();
+    let mut description = format!(
+        "Looked for Kargo Projects, Argo CD ApplicationSets and Applications in {ARGOCD_NAMESPACE}, and Deployments, StatefulSets and DaemonSets labelled app.kubernetes.io/part-of."
+    );
+    for line in legend_lines(coverage, labels) {
+        description.push(' ');
+        description.push_str(&line);
+        description.push('.');
+    }
+    Body::Empty {
+        title: format!("No applications on {}", labels.all(sessions)).into(),
+        description: description.into(),
+    }
+}
+
+impl Display {
+    pub(super) fn new(derived: &Derived, labels: &Labels) -> Self {
+        let short = Short::new(&derived.coverage);
+        let mut rows: Vec<AppRow> = derived
+            .applications
+            .iter()
+            .map(|app| row(app, &short, labels))
+            .collect();
+        // Grouped by rule, in precedence order; by name within, as derived.
+        rows.sort_by_key(|row| rule_index(row.rule));
+        let mut marks = [0; 3];
+        for row in &rows {
+            marks[row.mark.index()] += 1;
+        }
+        let body = if rows.is_empty() {
+            body_without_applications(&derived.coverage, labels)
+        } else {
+            Body::Table
+        };
+        // A refused or failed state already says what wasn't read.
+        let missing = if matches!(body, Body::Refused { .. } | Body::Failed { .. }) {
+            Vec::new()
+        } else {
+            missing_lines(&derived.coverage, labels)
+        };
+        Self {
+            rows,
+            body,
+            missing,
+            legend: legend_lines(&derived.coverage, labels),
+            marks,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freshkube_core::applications::{Inputs, Override, SessionInputs, derive, example};
+    use freshkube_core::delivery::source::{Source, Truncation};
+
+    fn labels() -> Labels {
+        Labels::default()
+    }
+
+    fn shown(inputs: &Inputs) -> Display {
+        Display::new(&derive(inputs, &Override::default()), &labels())
+    }
+
+    fn one(session: SessionInputs) -> Inputs {
+        Inputs {
+            sessions: vec![session],
+            stage_naming: None,
+        }
+    }
+
+    fn empty_session() -> SessionInputs {
+        SessionInputs {
+            key: SessionKey::new("acme-solo"),
+            kargo: Source::NotInstalled("kargo.akuity.io is not served".into()),
+            argo_scope: freshkube_core::applications::ArgoScope::AllNamespaces,
+            argo_applications: Source::NotInstalled("argoproj.io is not served".into()),
+            argo_application_sets: Source::NotInstalled("argoproj.io is not served".into()),
+            workloads: Source::Read(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn acme_groups_by_rule_in_precedence_order() {
+        let display = shown(&example::acme());
+        let order: Vec<(&str, Rule)> = display
+            .rows
+            .iter()
+            .map(|row| (row.name.as_ref(), row.rule))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                ("cart", Rule::Kargo),
+                ("checkout", Rule::Kargo),
+                ("catalog", Rule::ArgoCd),
+                ("status-page", Rule::ArgoCd),
+                ("loyalty", Rule::PartOf),
+            ]
+        );
+        assert_eq!(display.body, Body::Table);
+        assert!(display.missing.is_empty());
+        assert_eq!(
+            display.legend,
+            [
+                SharedString::from("Kargo isn't served on 5 clusters"),
+                SharedString::from("Argo CD isn't served on 5 clusters"),
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_found_where_everything_answered_is_empty() {
+        let display = shown(&one(empty_session()));
+        let Body::Empty { title, description } = &display.body else {
+            panic!("{:?}", display.body);
+        };
+        assert_eq!(title.as_ref(), "No applications on acme-solo");
+        assert!(description.contains("Kargo isn't served on acme-solo"));
+    }
+
+    #[test]
+    fn a_refused_read_with_nothing_found_is_never_empty() {
+        let mut session = empty_session();
+        session.workloads = Source::Refused("deployments.apps is forbidden".into());
+        let display = shown(&one(session));
+        let Body::Refused { title, reason, .. } = &display.body else {
+            panic!("{:?}", display.body);
+        };
+        assert_eq!(title.as_ref(), "Not permitted to list labelled workloads");
+        assert_eq!(reason.as_ref(), "deployments.apps is forbidden");
+        assert!(display.missing.is_empty(), "the state says it already");
+    }
+
+    #[test]
+    fn a_failed_read_with_nothing_found_is_the_failed_state() {
+        let mut session = empty_session();
+        session.workloads = Source::Unreadable("connection reset".into());
+        let display = shown(&one(session));
+        assert!(
+            matches!(display.body, Body::Failed { .. }),
+            "{:?}",
+            display.body
+        );
+    }
+
+    #[test]
+    fn a_refused_source_beside_found_applications_is_a_missing_line() {
+        let mut inputs = example::acme();
+        inputs.sessions[0].kargo = Source::Refused("projects is forbidden".into());
+        let display = shown(&inputs);
+        assert_eq!(display.body, Body::Table);
+        assert_eq!(display.missing.len(), 1);
+        assert!(
+            display.missing[0].contains("Kargo Projects were refused on core-fra"),
+            "{}",
+            display.missing[0]
+        );
+        assert!(display.rows.iter().all(|row| row.rule != Rule::Kargo));
+    }
+
+    #[test]
+    fn a_capped_source_marks_its_applications_incomplete() {
+        let mut inputs = example::acme();
+        if let Source::Read(apps) = inputs.sessions[0].argo_applications.clone() {
+            inputs.sessions[0].argo_applications = Source::Capped(apps, Truncation { read: 500 });
+        }
+        let display = shown(&inputs);
+        assert!(display.missing[0].contains("stopped after 500"));
+        let catalog = display.rows.iter().find(|r| r.name == "catalog").unwrap();
+        assert_eq!(catalog.mark, Mark::Incomplete);
+        let loyalty = display.rows.iter().find(|r| r.name == "loyalty").unwrap();
+        assert_eq!(
+            loyalty.mark,
+            Mark::Read,
+            "dev-fra's labels were read in full"
+        );
+    }
+
+    #[test]
+    fn notes_mark_an_application_without_making_it_unknown() {
+        let display = shown(&example::acme());
+        let checkout = display.rows.iter().find(|r| r.name == "checkout").unwrap();
+        assert_eq!(checkout.mark, Mark::Notes);
+        assert!(!checkout.note.is_empty());
+        assert_eq!(display.marks.iter().sum::<usize>(), display.rows.len());
+    }
+
+    #[test]
+    fn namespace_only_argo_is_a_legend_fact() {
+        let mut inputs = example::acme();
+        inputs.sessions[0].argo_scope =
+            freshkube_core::applications::ArgoScope::Namespace(ARGOCD_NAMESPACE.into());
+        let display = shown(&inputs);
+        assert!(display.missing.is_empty());
+        assert!(
+            display
+                .legend
+                .iter()
+                .any(|line| line.starts_with("Argo CD read in argocd only on core-fra")),
+            "{:?}",
+            display.legend
+        );
+        let catalog = display.rows.iter().find(|r| r.name == "catalog").unwrap();
+        assert_eq!(catalog.mark, Mark::Notes, "a fact to note, not a gap");
+        assert!(
+            catalog
+                .notes
+                .iter()
+                .any(|n| n.contains("read in argocd only"))
+        );
+    }
+}
