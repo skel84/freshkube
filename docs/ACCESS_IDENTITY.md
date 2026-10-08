@@ -45,6 +45,31 @@ access; automatic refresh does not repeat the same prompt, and manual Refresh
 allows another confirmation. A delayed confirmation cannot apply a superseded
 overview request or direct source.
 
-This is the local configuration/session boundary from #2. A shared session
-registry and independent revisions for remotely rotated credentials, auth-plugin
-state and Prometheus/provider identity remain future F07/F10 integration work.
+## The session registry
+
+`Pilot.registry` (`desktop/session.rs`) holds one active `ClusterSession`: the
+access identity, its configuration revision and the replacement a running shell
+last held up, together with the Kubernetes summary session (its job, task,
+health and last summary). Selecting a Talos node changes the target inside the
+session and never replaces it. A context, kubeconfig or talosconfig change
+replaces the whole session (`Registry::reset_active`), so nothing a session holds
+can carry over to the next. The summary epoch lives on the `Registry` and only
+rises, so a replaced session never repeats a summary `SessionIdentity`.
+
+Object links name their cluster: `ObjectRef::connection` is a
+`ResourceIdentity::connection` (the opaque `KubeSource.id`), and `None` means
+the cluster that is open. `open_object` and the owner-kind read refuse a link
+that names another cluster, also while none is open, and say so; they never open
+a same-named object here. The Kubernetes source (`Pilot::kube_source`) and the
+Talos target are still derived from `Pilot`'s selection, overview and kubeconfig
+rather than held by the session.
+
+This is a workspace of one. Parking a session, a map keyed by connection and a
+link that switches to the cluster it names arrive with the workspace file:
+parking on today's context switch would show a stale summary on switching back
+where a fresh read is shown now. The design is on
+[#44](https://github.com/skel84/freshkube/issues/44).
+
+This is the local configuration/session boundary from #2. Independent revisions
+for remotely rotated credentials, auth-plugin state and Prometheus/provider
+identity remain future F07/F10 integration work.
