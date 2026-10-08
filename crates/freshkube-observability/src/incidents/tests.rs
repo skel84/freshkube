@@ -271,13 +271,14 @@ mod ui_tests {
         .unwrap();
     }
 
-    /// A width dragged to is saved in the app's store of widths, and the
+    /// A width dragged to is saved in the app's store of sizes, and the
     /// next page opens its inspector at it.
     #[gpui_kit::test]
     fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
-        use freshkube_ui::inspector::{MemoryWidths, SavedWidths, set_saved_widths};
-        let widths = std::rc::Rc::new(MemoryWidths::default());
-        cx.update(|cx| set_saved_widths(widths.clone(), cx));
+        use freshkube_ui::inspector::width_key;
+        use freshkube_ui::split_size::{MemorySizes, SizeStore, set_store};
+        let widths = std::rc::Rc::new(MemorySizes::default());
+        cx.update(|cx| set_store(widths.clone(), cx));
         let (_runtime, handle, page) = open_example(cx, 1260.);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -288,8 +289,8 @@ mod ui_tests {
         })
         .unwrap();
         cx.run_until_parked();
-        assert_eq!(widths.width("incidents"), Some(560.));
-        assert_eq!(widths.width("traces"), None);
+        assert_eq!(widths.size(width_key("incidents")), Some(560.));
+        assert_eq!(widths.size(width_key("traces")), None);
 
         let (_runtime, handle, _page) = open_example(cx, 1260.);
         cx.update_window(handle, |_, window, cx| {

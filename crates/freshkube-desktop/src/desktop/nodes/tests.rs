@@ -2752,6 +2752,7 @@ fn the_node_chips_wrap_inside_a_narrow_inspector(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_node_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
+    use freshkube_ui::split_size::SizeStore as _;
     use gpui_kit::px;
     let directory = std::env::temp_dir().join(format!(
         "freshkube-nodes-width-{}-{}",
@@ -2774,8 +2775,14 @@ fn the_node_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     let reopened = NavigationFile::open(Some(&preferences));
-    assert_eq!(reopened.inspector_width("nodes"), Some(560.));
-    assert_eq!(reopened.inspector_width("resources"), None);
+    assert_eq!(
+        reopened.size(freshkube_ui::inspector::width_key("nodes")),
+        Some(560.)
+    );
+    assert_eq!(
+        reopened.size(freshkube_ui::inspector::width_key("resources")),
+        None
+    );
 
     let (_runtime, handle, _pilot) = crate::desktop::tests::mount(cx, options(), 1280., 880.);
     cx.update_window(handle, |_, window, cx| {

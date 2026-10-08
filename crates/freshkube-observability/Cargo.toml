@@ -38,7 +38,7 @@ freshkube-probe = { workspace = true, features = ["counting"] }
 # The connection tests remember keys in `secrets::MemoryStore`.
 freshkube-core = { workspace = true, features = ["testing"] }
 # The page tests settle the header and measure the frame (`layout_check`),
-# and keep inspector widths in `inspector::MemoryWidths`.
+# and keep inspector widths in `split_size::MemorySizes`.
 freshkube-ui = { workspace = true, features = ["testing"] }
 # The Logs report's tests read the view's lines (`retained`, `visible_rows`).
 freshkube-logs = { workspace = true, features = ["testing"] }

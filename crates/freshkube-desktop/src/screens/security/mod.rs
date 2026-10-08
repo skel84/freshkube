@@ -97,14 +97,7 @@ impl ScreenPanel for SecurityScreen {
             focus: cx.focus_handle(),
             table: TableState::new(PREFIX),
             columns: table::columns(&[]),
-            split: {
-                let file = crate::navigation_file::NavigationFile::global(cx);
-                InspectorSplit::new(
-                    file.inspector_width(PREFIX),
-                    move |width, cx| file.set_inspector_width(PREFIX, width, cx),
-                    cx,
-                )
-            },
+            split: InspectorSplit::new(PREFIX, cx),
             status: None,
             display: (u64::MAX, Display::default()),
             loading: TableLoading::new(PREFIX, cx),

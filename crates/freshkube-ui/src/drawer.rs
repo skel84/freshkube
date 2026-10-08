@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn a_bad_width_starts_at_the_default() {
-        let start = |width| crate::ui::start_width(width, WIDTH, MIN_WIDTH);
+        let start = |width| crate::split_size::start(width, WIDTH, MIN_WIDTH);
         assert_eq!(start(None), WIDTH);
         assert_eq!(start(Some(f32::NAN)), WIDTH);
         assert_eq!(start(Some(120.)), MIN_WIDTH);

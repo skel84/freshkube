@@ -768,11 +768,10 @@ impl Pilot {
     ) -> Self {
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
-        // Opened before the pages, which read their inspectors' widths from it.
+        // Opened before the pages, which read their splits' sizes from it.
         let navigation =
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
-        cx.set_global(navigation.clone());
-        freshkube_ui::inspector::set_saved_widths(std::rc::Rc::new(navigation.clone()), cx);
+        navigation.clone().install(cx);
         Self::bind_shell_keys(cx);
         let path = cx.new(|cx| InputState::new(window, cx).placeholder("Default talosconfig"));
         path.update(cx, |input, cx| {

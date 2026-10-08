@@ -231,14 +231,7 @@ impl Nodes {
             page_scroll: ScrollHandle::new(),
             logs_scroll: ScrollHandle::new(),
             logs_height: None,
-            split: {
-                let file = crate::navigation_file::NavigationFile::global(cx);
-                freshkube_ui::inspector::InspectorSplit::new(
-                    file.inspector_width("nodes"),
-                    move |width, cx| file.set_inspector_width("nodes", width, cx),
-                    cx,
-                )
-            },
+            split: freshkube_ui::inspector::InspectorSplit::new("nodes", cx),
             document,
         }
     }

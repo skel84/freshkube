@@ -18,6 +18,7 @@ use gpui_kit::{
 };
 
 use crate::inspector::{self, InspectorSplit, Pane, Stacked};
+use crate::split_size::SplitSize;
 use crate::ui::Tone;
 
 mod view;
@@ -35,16 +36,14 @@ pub const STACKED: Stacked = Stacked {
     trail: Pane::new(inspector::STACKED_HEIGHT).least(inspector::MIN_HEIGHT),
 };
 
-/// The split a graph's source keeps: its inspector starts `width` dp wide,
-/// the width the user left it at, or the least an inspector keeps, so a
-/// graph of three columns still fits beside it at 1280. `remember` hears a
-/// dragged width once, to save it.
-pub fn inspector_split(
-    width: Option<f32>,
-    remember: impl Fn(f32, &mut App) + 'static,
-    cx: &mut App,
-) -> InspectorSplit {
-    InspectorSplit::new(width.or(Some(inspector::MIN_WIDTH)), remember, cx).stacked(STACKED)
+/// The split a graph's source keeps on `page`: its inspector starts at the
+/// width the user left it at, saved under [`inspector::width_key`], or the
+/// least an inspector keeps, so a graph of three columns still fits beside
+/// it at 1280.
+pub fn inspector_split(page: &'static str, cx: &mut App) -> InspectorSplit {
+    let key = inspector::width_key(page);
+    let least = inspector::MIN_WIDTH;
+    InspectorSplit::with_width(SplitSize::new(key, least, least, cx), cx).stacked(STACKED)
 }
 
 /// A box: what it is, its id and how it reads.
