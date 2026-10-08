@@ -42,6 +42,8 @@ pub struct PipelineRun {
     /// `Succeeded` condition status and reason.
     pub succeeded: Option<String>,
     pub reason: Option<String>,
+    /// `status.completionTime`, as written: shown, never compared.
+    pub completed: Option<String>,
     pub results: BTreeMap<String, String>,
     pub task_runs: Vec<String>,
     /// `chains.tekton.dev/signed`: `true`, `failed`, …
@@ -159,6 +161,7 @@ pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
         params,
         succeeded: condition.and_then(|condition| text(condition, "/status")),
         reason: condition.and_then(|condition| text(condition, "/reason")),
+        completed: text(value, "/status/completionTime"),
         results: results_of(value),
         task_runs: value
             .pointer("/status/childReferences")

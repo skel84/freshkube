@@ -39,7 +39,7 @@ The whole design rests on joining records from different tools without guessing.
 
 - **Two keys join everything: the commit SHA and the image digest.** GitHub and the PipelineRun share the SHA; the build, Harbor and Kargo's Freight share the digest; Freight names both. A pod's `imageID` closes the chain with what is actually running.
 - **Tags are shown, never used to join.** A tag can move; a digest can't.
-- **Each link has a confidence.** *Confirmed* when the digest or SHA matches on both sides. *Claimed* when only a label or annotation says so, such as a PipelineRun label without a matching digest downstream. *Unknown* when a side can't be read. The UI shows the difference, as F04 asks for ownership.
+- **Each link has a confidence.** *Confirmed* when the digest or SHA matches on both sides. *Claimed* when only a label or annotation says so, such as a PipelineRun label without a matching digest downstream. *Unknown* when a side can't be read. A Freight joined on the SHA, whose builds of that commit report another digest for its image and none its own, stays *Claimed* with the digests as a conflict, never a failure: two builds of one commit rarely give one digest, and the build that made it may be pruned. The UI shows the difference, as F04 asks for ownership.
 - **What runs is read from the pods, not from the plan.** A Stage that says it deployed freight X is a claim until the Rollout's pods report X's digest. This is "state over logs" applied to delivery.
 - **A missing hop is not a failure.** A team without Harbor, or a robot account that can't see a project, shows that hop as "not connected" or "not readable", with the reason, never as broken and never as absent. An unreadable list is not an empty one.
 
