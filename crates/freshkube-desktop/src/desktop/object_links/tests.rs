@@ -2,7 +2,10 @@ use crate::{
     desktop::{Page, nodes::NodeTab, tests::fixture},
     resources::{Tab, example, model::ResourceIdentity},
 };
-use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
+use gpui_kit::{
+    AppContext, TestAppContext,
+    test::{TestAppContextExt, TestWindowExt},
+};
 
 /// Draws until the drawer settles, then asserts that Details landed on
 /// `section`: its top at the scroller's top, or, when what follows is too
@@ -560,4 +563,110 @@ fn group_labels_stay_clear_of_the_drawer(cx: &mut TestAppContext) {
         }
     })
     .unwrap();
+}
+
+/// Starts a read that waits for the returned sender, counting the answers
+/// the shell applies; `superseded` is the caller's own check.
+fn gated_open(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    view: &gpui_kit::Entity<crate::desktop::Pilot>,
+    applied: &std::rc::Rc<std::cell::Cell<u32>>,
+    superseded: bool,
+) -> tokio::sync::oneshot::Sender<()> {
+    let (open, gate) = tokio::sync::oneshot::channel::<()>();
+    let applied = applied.clone();
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.cancel_object_open();
+            pilot.start_object_open(
+                "late",
+                async move { gate.await.map(|_| 1u32).map_err(|error| error.to_string()) },
+                move |_, _| superseded,
+                move |_, result, _, _| {
+                    assert_eq!(result, Ok(1));
+                    applied.set(applied.get() + 1);
+                },
+                window,
+                cx,
+            )
+        })
+    })
+    .unwrap();
+    open
+}
+
+/// Gives a stale answer every chance to arrive.
+fn settle(cx: &mut TestAppContext) {
+    for _ in 0..30 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cx.run_until_parked();
+    }
+}
+
+#[gpui_kit::test]
+async fn an_object_open_answer_is_applied_once_and_frees_its_job(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let applied = std::rc::Rc::new(std::cell::Cell::new(0));
+    let open = gated_open(cx, handle, &view, &applied, false);
+    assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_some()));
+    open.send(()).unwrap();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), |_, _| {
+        applied.get() == 1
+    })
+    .await;
+    assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_none()));
+}
+
+#[gpui_kit::test]
+async fn an_object_open_answer_for_an_older_sequence_is_dropped(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let applied = std::rc::Rc::new(std::cell::Cell::new(0));
+    let open = gated_open(cx, handle, &view, &applied, false);
+    // A newer request took the sequence without dropping this delivery.
+    view.update(cx, |pilot, _| pilot.object_open_sequence += 1);
+    open.send(()).unwrap();
+    settle(cx);
+    assert_eq!(applied.get(), 0);
+}
+
+#[gpui_kit::test]
+async fn an_object_open_answer_after_the_epoch_moved_is_dropped(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let applied = std::rc::Rc::new(std::cell::Cell::new(0));
+    let open = gated_open(cx, handle, &view, &applied, false);
+    view.update(cx, |pilot, _| pilot.epoch += 1);
+    open.send(()).unwrap();
+    settle(cx);
+    assert_eq!(applied.get(), 0);
+}
+
+#[gpui_kit::test]
+async fn an_object_open_answer_the_caller_calls_superseded_is_dropped(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let applied = std::rc::Rc::new(std::cell::Cell::new(0));
+    let open = gated_open(cx, handle, &view, &applied, true);
+    open.send(()).unwrap();
+    settle(cx);
+    assert_eq!(applied.get(), 0);
+    // The job stays until something replaces or cancels it.
+    assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_some()));
+}
+
+#[gpui_kit::test]
+async fn cancelling_an_object_open_drops_its_answer(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let applied = std::rc::Rc::new(std::cell::Cell::new(0));
+    let open = gated_open(cx, handle, &view, &applied, false);
+    view.update(cx, |pilot, _| pilot.cancel_object_open());
+    // The read is gone with its receiver, so the gate has nobody to answer.
+    _ = open.send(());
+    settle(cx);
+    assert_eq!(applied.get(), 0);
+    assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_none()));
 }
