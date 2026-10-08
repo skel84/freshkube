@@ -8,15 +8,13 @@
 //! every source answered (or isn't served) is it the empty state.
 use std::collections::{BTreeMap, BTreeSet};
 
+use freshkube_core::applications::read::{ARGOCD, MAX_ARGO_NAMESPACES, PART_OF};
 use freshkube_core::applications::{
-    Application, Coverage, CoverageState, Derived, Evidence, Member, MemberKind, MemberRef, Note,
-    Rule, SessionKey, SourceKind,
+    Application, ArgoFound, Coverage, CoverageState, Derived, Evidence, Member, MemberKind,
+    MemberRef, Note, Rule, SessionKey, SourceKind,
 };
 use freshkube_core::workloads::WorkloadKind;
 use gpui_kit::SharedString;
-
-/// Where Argo CD's Applications are read, until the workspace file can say.
-pub(crate) const ARGOCD_NAMESPACE: &str = "argocd";
 
 /// The rules in precedence order, as the table groups them.
 pub(super) const RULES: [Rule; 4] = [Rule::Kargo, Rule::ArgoCd, Rule::PartOf, Rule::Manual];
@@ -46,9 +44,10 @@ pub(super) fn rule_label(rule: Rule) -> &'static str {
 pub(super) enum Mark {
     /// A source it depends on wasn't read in full: parts may be missing.
     Incomplete,
-    /// Found by Argo CD where it was read in [`ARGOCD_NAMESPACE`] only: the
-    /// fixed namespace is where Argo CD keeps them by default, so a fact to
-    /// note rather than a gap.
+    /// Argo CD was read only in the namespaces it runs in, where it keeps
+    /// Applications by default: a fact to note rather than a gap. Found by
+    /// Argo CD there, or by Kargo in a cluster whose Argo CD Applications,
+    /// which its Stages promote to, weren't all read.
     Scoped,
     /// Read in full, with something to know: a lower claim, a destination
     /// in another cluster, a join by name.
@@ -69,11 +68,12 @@ impl Mark {
         }
     }
 
-    /// What its chip counts.
-    pub(super) fn what(self) -> &'static str {
+    /// What its chip counts, short enough to show beside the count; the
+    /// display has the whole words for the tooltip.
+    pub(super) fn short(self) -> &'static str {
         match self {
             Self::Incomplete => "may be incomplete",
-            Self::Scoped => "read in argocd only, with notes",
+            Self::Scoped => "Argo CD in part",
             Self::Notes => "with notes",
             Self::Read => "read in full",
         }
@@ -88,12 +88,15 @@ impl Mark {
         }
     }
 
-    pub(super) fn tooltip(self) -> &'static str {
+    /// The mark in words, for a chip's tooltip and accessibility label.
+    /// Scoped's names no namespace, since it counts every cluster's; a
+    /// row's own words do.
+    pub(super) fn what(self) -> &'static str {
         match self {
-            Self::Incomplete => "May be incomplete: a source it depends on wasn't read in full",
-            Self::Scoped => "Read in argocd only, with notes",
-            Self::Notes => "Read in full, with notes",
-            Self::Read => "Read in full",
+            Self::Incomplete => "may be incomplete: a source it depends on wasn't read in full",
+            Self::Scoped => "Argo CD read only where it runs, with notes",
+            Self::Notes => "read in full, with notes",
+            Self::Read => "read in full",
         }
     }
 }
@@ -138,6 +141,8 @@ pub(crate) struct AppRow {
     pub(super) name: SharedString,
     pub(super) rule: Rule,
     pub(super) mark: Mark,
+    /// The mark in this row's words: Scoped names its namespaces.
+    pub(super) mark_words: SharedString,
     pub(super) found_by: SharedString,
     pub(super) parts: SharedString,
     pub(super) clusters: SharedString,
@@ -197,6 +202,15 @@ impl Default for Display {
             legend_text: None,
             marks: [0; 4],
         }
+    }
+}
+
+/// The words with their first letter a capital, as a label starts.
+pub(super) fn capital(words: &str) -> String {
+    let mut chars = words.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
@@ -263,6 +277,11 @@ fn rule_words(rule: Rule) -> &'static str {
 /// A note in words, for the Inspector and the Notes column.
 pub(super) fn note_words(note: &Note, labels: &Labels) -> String {
     match note {
+        Note::LowerClaim { member, rule, name } if *name == member.name => format!(
+            "{} is also claimed by the {} rule, under its own name",
+            member_words(member, labels),
+            rule_words(*rule)
+        ),
         Note::LowerClaim { member, rule, name } => format!(
             "{} is also claimed by the {} rule, as “{name}”",
             member_words(member, labels),
@@ -377,24 +396,62 @@ fn parts_words(members: &[Member]) -> String {
         .join(" · ")
 }
 
-/// Where each rule's sources may have been left short, and where Argo CD
-/// was read in one namespace only, which is a fact to note rather than a
-/// gap: the fixed `argocd` namespace is where Argo CD keeps them by default.
+/// Where Argo CD was read and how its namespaces were found, as one
+/// phrase: "read in gitops only, where Argo CD's workloads run".
+pub(super) fn scope_words(namespaces: &[String], found: &ArgoFound) -> String {
+    let read = namespaces.join(", ");
+    match found {
+        ArgoFound::Labelled { skipped } if skipped.is_empty() => {
+            format!("read in {read} only, where Argo CD's workloads run")
+        }
+        ArgoFound::Labelled { skipped } => format!(
+            "read in {read} only, where Argo CD's workloads run; {} past the cap of {MAX_ARGO_NAMESPACES} not read",
+            skipped.join(", ")
+        ),
+        ArgoFound::Default => {
+            format!("read in {read} only, its default: no workload is labelled {PART_OF}={ARGOCD}")
+        }
+    }
+}
+
+/// Why a cluster's Argo CD Applications aren't all known, as a phrase.
+fn argo_short_words(state: &CoverageState) -> Option<String> {
+    Some(match state {
+        CoverageState::NamespaceOnly { namespaces, found } => scope_words(namespaces, found),
+        CoverageState::NamespaceNotFound(_) => "Argo CD's namespace wasn't found".to_owned(),
+        CoverageState::Capped(read) => format!("stopped after {read}"),
+        CoverageState::Refused(why) => format!("refused ({why})"),
+        CoverageState::Unreadable(why) => format!("couldn't be read ({why})"),
+        CoverageState::Read | CoverageState::NotInstalled(_) => return None,
+    })
+}
+
+/// Where each rule's sources may have been left short, where Argo CD was
+/// read only in the namespaces it runs in, which is a fact to note rather
+/// than a gap, and where its Applications aren't all known for any reason.
 #[derive(Default)]
 struct Short {
     unread: BTreeMap<Rule, BTreeSet<SessionKey>>,
+    /// Argo CD read in its namespaces only, in these words.
     namespace_only: BTreeMap<SessionKey, String>,
+    /// Argo CD Applications not all known, and why, in words.
+    argo_partial: BTreeMap<SessionKey, String>,
 }
 
 impl Short {
     fn new(coverage: &[Coverage]) -> Self {
         let mut short = Self::default();
         for c in coverage {
+            if c.source == SourceKind::ArgoApplications
+                && let Some(words) = argo_short_words(&c.state)
+            {
+                short.argo_partial.insert(c.session.clone(), words);
+            }
             match &c.state {
-                CoverageState::NamespaceOnly(namespace) => {
+                CoverageState::NamespaceOnly { namespaces, found } => {
                     short
                         .namespace_only
-                        .insert(c.session.clone(), namespace.clone());
+                        .insert(c.session.clone(), scope_words(namespaces, found));
                 }
                 state if state.is_unknown() => {
                     short
@@ -410,6 +467,77 @@ impl Short {
     }
 }
 
+/// Notes that differ only in the part they name, said once: "3 parts on
+/// core-fra may be managed …: shop/web, shop/worker, shop/db". The order
+/// of first appearance is kept.
+fn grouped_notes(notes: &[Note], labels: &Labels) -> Vec<String> {
+    let mut groups: Vec<(Option<String>, String, Vec<String>)> = Vec::new();
+    for note in notes {
+        let Some((member, rest)) = note_about(note, labels) else {
+            groups.push((None, note_words(note, labels), Vec::new()));
+            continue;
+        };
+        let key = format!("{} {rest}", labels.of(&member.session));
+        let name = match &member.namespace {
+            Some(namespace) => format!("{namespace}/{}", member.name),
+            None => member.name.clone(),
+        };
+        match groups.iter_mut().find(|(k, ..)| k.as_ref() == Some(&key)) {
+            Some((_, _, names)) => names.push(name),
+            None => groups.push((Some(key), note_words(note, labels), vec![name])),
+        }
+    }
+    const NAMED: usize = 6;
+    groups
+        .into_iter()
+        .map(|(key, one, names)| match (key, names.len()) {
+            (Some(key), n) if n > 1 => {
+                let shown = names
+                    .iter()
+                    .take(NAMED)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let more = match n.saturating_sub(NAMED) {
+                    0 => String::new(),
+                    more => format!(" +{more}"),
+                };
+                format!("{n} parts on {}: {shown}{more}", plural_verb(&key))
+            }
+            _ => one,
+        })
+        .collect()
+}
+
+/// "core-fra is also claimed …" as several parts say it.
+fn plural_verb(key: &str) -> String {
+    let (cluster, rest) = key.split_once(' ').unwrap_or((key, ""));
+    let rest = [
+        ("is ", "are "),
+        ("deploys ", "deploy "),
+        ("names ", "name "),
+    ]
+    .into_iter()
+    .find_map(|(one, many)| rest.strip_prefix(one).map(|tail| format!("{many}{tail}")))
+    .unwrap_or_else(|| rest.to_owned())
+    .replace("its own name", "their own names");
+    format!("{cluster} {rest}")
+}
+
+/// A note about one part, as the part and the words after it.
+fn note_about<'a>(note: &'a Note, labels: &Labels) -> Option<(&'a MemberRef, String)> {
+    let words = note_words(note, labels);
+    let member = match note {
+        Note::LowerClaim { member, .. }
+        | Note::UnmappedDestination { member }
+        | Note::ProjectNotRead { member, .. }
+        | Note::ManagerUnknown { member } => member,
+        _ => return None,
+    };
+    let lead = member_words(member, labels);
+    Some((member, words.strip_prefix(&lead)?.trim_start().to_owned()))
+}
+
 fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
     let sessions = sessions_of(app);
     let found: Vec<String> = app
@@ -417,14 +545,29 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         .iter()
         .filter_map(|evidence| evidence_words(evidence, labels))
         .collect();
-    let mut notes: Vec<String> = app.notes.iter().map(|n| note_words(n, labels)).collect();
+    let mut notes = grouped_notes(&app.notes, labels);
+    let mut scope: Vec<String> = Vec::new();
     if app.rule == Rule::ArgoCd {
-        for (session, namespace) in &short.namespace_only {
+        for (session, words) in &short.namespace_only {
             if sessions.contains(session) {
+                let words = format!("Argo CD on {} was {words}", labels.of(session));
                 notes.push(format!(
-                    "Argo CD was read in {namespace} only on {}; Applications it generates in other namespaces aren't listed",
-                    labels.of(session)
+                    "{words}; Applications in other namespaces aren't listed"
                 ));
+                scope.push(words);
+            }
+        }
+    }
+    // Kargo's Stages promote to Argo CD Applications, so a Project in a
+    // cluster whose Applications aren't all known is never read in full.
+    if app.rule == Rule::Kargo {
+        for (session, words) in &short.argo_partial {
+            if sessions.contains(session) {
+                let words = format!("Argo CD on {} was {words}", labels.of(session));
+                notes.push(format!(
+                    "{words}; Applications its Stages promote to may not all be listed"
+                ));
+                scope.push(words);
             }
         }
     }
@@ -434,8 +577,7 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         .unread
         .get(&app.rule)
         .is_some_and(|short| short.iter().any(|s| sessions.contains(s)));
-    let scoped =
-        app.rule == Rule::ArgoCd && short.namespace_only.keys().any(|s| sessions.contains(s));
+    let scoped = !scope.is_empty();
     let mark = if short_here || app.notes.iter().any(note_is_unknown) {
         Mark::Incomplete
     } else if scoped {
@@ -469,12 +611,17 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
             "Not in full: parts may be missing, which says nothing about whether they exist".into(),
         ));
     }
+    let mark_words = match mark {
+        Mark::Scoped => scope.join("; "),
+        mark => mark.what().to_owned(),
+    };
     AppRow {
         key: app.id.as_str().to_owned().into(),
         name: app.name.clone().into(),
         rule: app.rule,
         mark,
-        tooltip: format!("{} · {}", app.name, mark.tooltip()).into(),
+        tooltip: format!("{} · {}", app.name, capital(&mark_words)).into(),
+        mark_words: capital(&mark_words).into(),
         query: format!(
             "{} {} {} {}",
             app.name,
@@ -518,8 +665,15 @@ fn missing_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
             CoverageState::Capped(read) => format!(
                 "{source}{project} on {cluster} stopped after {read}; {rule} applications may be missing"
             ),
+            // Said once, for the Applications.
+            CoverageState::NamespaceNotFound(_) if c.source == SourceKind::ArgoApplications => {
+                format!(
+                    "Argo CD's namespace wasn't found on {cluster}; Applications elsewhere aren't listed"
+                )
+            }
             CoverageState::Read
-            | CoverageState::NamespaceOnly(_)
+            | CoverageState::NamespaceOnly { .. }
+            | CoverageState::NamespaceNotFound(_)
             | CoverageState::NotInstalled(_) => continue,
         };
         lines.push(line.into());
@@ -541,9 +695,9 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
             (CoverageState::NotInstalled(_), Rule::ArgoCd) => {
                 argo.insert(labels.of(&c.session));
             }
-            (CoverageState::NamespaceOnly(namespace), _) => {
+            (CoverageState::NamespaceOnly { namespaces, found }, _) => {
                 namespace_only
-                    .entry(namespace.clone())
+                    .entry(scope_words(namespaces, found))
                     .or_default()
                     .insert(labels.of(&c.session));
             }
@@ -561,10 +715,10 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     if !argo.is_empty() {
         lines.push(format!("Argo CD isn't served on {}", on(&argo)).into());
     }
-    for (namespace, clusters) in namespace_only {
+    for (words, clusters) in namespace_only {
         lines.push(
             format!(
-                "Read in {namespace} only, with notes: Argo CD on {}; Applications in other namespaces aren't listed",
+                "Argo CD on {} was {words}; Applications in other namespaces aren't listed",
                 on(&clusters)
             )
             .into(),
@@ -620,8 +774,18 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
     }
     let sessions: BTreeSet<&SessionKey> = coverage.iter().map(|c| &c.session).collect();
     let mut description = format!(
-        "Looked for Kargo Projects, Argo CD ApplicationSets and Applications in {ARGOCD_NAMESPACE}, and Deployments, StatefulSets and DaemonSets labelled app.kubernetes.io/part-of."
+        "Looked for Kargo Projects, Argo CD ApplicationSets and Applications where Argo CD runs, and Deployments, StatefulSets and DaemonSets labelled {PART_OF}."
     );
+    let not_found = coverage.iter().filter(|c| {
+        c.source == SourceKind::ArgoApplications
+            && matches!(c.state, CoverageState::NamespaceNotFound(_))
+    });
+    let not_found = labels.all(not_found.map(|c| &c.session));
+    if !not_found.is_empty() {
+        description.push_str(&format!(
+            " Argo CD's namespace wasn't found on {not_found}; Applications elsewhere aren't listed."
+        ));
+    }
     for line in legend_lines(coverage, labels) {
         description.push(' ');
         description.push_str(&line);
@@ -829,30 +993,161 @@ mod tests {
         assert_eq!(display.marks.iter().sum::<usize>(), display.rows.len());
     }
 
+    fn scoped(inputs: &mut Inputs, namespaces: &[&str], found: ArgoFound) {
+        inputs.sessions[0].argo_scope = freshkube_core::applications::ArgoScope::Namespace {
+            namespaces: namespaces.iter().map(|n| n.to_string()).collect(),
+            found,
+        };
+    }
+
     #[test]
-    fn namespace_only_argo_is_a_legend_fact() {
+    fn argo_read_where_it_runs_is_a_legend_fact_that_says_where_and_how() {
         let mut inputs = example::acme();
-        inputs.sessions[0].argo_scope =
-            freshkube_core::applications::ArgoScope::Namespace(ARGOCD_NAMESPACE.into());
+        scoped(
+            &mut inputs,
+            &["gitops"],
+            ArgoFound::Labelled { skipped: vec![] },
+        );
         let display = shown(&inputs);
         assert!(display.missing_text.is_none());
         let legend = display.legend_text.clone().unwrap();
         assert!(
-            legend.contains("Read in argocd only, with notes: Argo CD on core-fra"),
+            legend.contains(
+                "Argo CD on core-fra was read in gitops only, where Argo CD's workloads run; Applications in other namespaces aren't listed"
+            ),
             "{legend}"
         );
         let catalog = display.rows.iter().find(|r| r.name == "catalog").unwrap();
         assert_eq!(catalog.mark, Mark::Scoped, "a fact to note, not a gap");
-        assert_eq!(catalog.mark.tooltip(), "Read in argocd only, with notes");
-        assert!(
-            catalog.mark.what().contains(ARGOCD_NAMESPACE),
-            "the chip names the namespace read"
+        assert_eq!(
+            catalog.mark_words.as_ref(),
+            "Argo CD on core-fra was read in gitops only, where Argo CD's workloads run"
         );
+        assert!(catalog.tooltip.contains("read in gitops only"));
         assert!(
             catalog
                 .notes
                 .iter()
-                .any(|n| n.contains("read in argocd only"))
+                .any(|n| n.contains("read in gitops only"))
         );
+    }
+
+    #[test]
+    fn the_default_namespace_says_nothing_marked_argo_cd() {
+        let mut inputs = example::acme();
+        scoped(&mut inputs, &["argocd"], ArgoFound::Default);
+        let display = shown(&inputs);
+        let legend = display.legend_text.clone().unwrap();
+        assert!(
+            legend.contains(
+                "read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
+            ),
+            "{legend}"
+        );
+    }
+
+    #[test]
+    fn namespaces_past_the_cap_are_named() {
+        let mut inputs = example::acme();
+        scoped(
+            &mut inputs,
+            &["a-ops", "b-ops", "c-ops"],
+            ArgoFound::Labelled {
+                skipped: vec!["d-ops".into()],
+            },
+        );
+        let legend = shown(&inputs).legend_text.unwrap();
+        assert!(
+            legend.contains("read in a-ops, b-ops, c-ops only, where Argo CD's workloads run; d-ops past the cap of 3 not read"),
+            "{legend}"
+        );
+    }
+
+    #[test]
+    fn a_kargo_project_beside_argo_cd_read_in_part_is_never_read_in_full() {
+        let mut inputs = example::acme();
+        scoped(
+            &mut inputs,
+            &["gitops"],
+            ArgoFound::Labelled { skipped: vec![] },
+        );
+        let display = shown(&inputs);
+        let checkout = display.rows.iter().find(|r| r.name == "checkout").unwrap();
+        assert_eq!(checkout.rule, Rule::Kargo);
+        assert_eq!(checkout.mark, Mark::Scoped);
+        assert!(
+            checkout
+                .notes
+                .iter()
+                .any(|n| n.contains("Applications its Stages promote to may not all be listed")),
+            "{:?}",
+            checkout.notes
+        );
+        // Refused is worse, and says so the same way.
+        let mut inputs = example::acme();
+        inputs.sessions[0].argo_applications = Source::Refused("forbidden".into());
+        let display = shown(&inputs);
+        let checkout = display.rows.iter().find(|r| r.name == "checkout").unwrap();
+        assert_ne!(checkout.mark, Mark::Read);
+        assert_ne!(checkout.mark, Mark::Notes);
+    }
+
+    #[test]
+    fn argo_cd_not_found_is_never_none() {
+        let mut inputs = example::acme();
+        scoped(&mut inputs, &["argocd"], ArgoFound::Default);
+        inputs.sessions[0].argo_applications = Source::Read(Vec::new());
+        inputs.sessions[0].argo_application_sets = Source::Read(Vec::new());
+        let display = shown(&inputs);
+        let (missing, _) = display.missing_text.clone().unwrap();
+        assert!(
+            missing.contains(
+                "Argo CD's namespace wasn't found on core-fra; Applications elsewhere aren't listed"
+            ),
+            "{missing}"
+        );
+        assert_eq!(missing.matches("wasn't found").count(), 1, "said once");
+
+        // With nothing found anywhere, the empty state says it too.
+        let mut only = inputs.clone();
+        only.sessions.truncate(1);
+        only.sessions[0].kargo = Source::NotInstalled("not served".into());
+        only.sessions[0].workloads = Source::Read(Vec::new());
+        let Body::Empty { description, .. } = shown(&only).body else {
+            panic!("expected the empty state");
+        };
+        assert!(
+            description.contains("Argo CD's namespace wasn't found on core-fra"),
+            "{description}"
+        );
+    }
+
+    #[test]
+    fn notes_about_several_parts_are_said_once() {
+        let display = shown(&example::acme());
+        let cart = display.rows.iter().find(|r| r.name == "cart").unwrap();
+        assert!(
+            cart.notes.contains(&SharedString::from(
+                "4 parts on core-fra deploy to another cluster, not mapped yet: argocd/cart-dev, argocd/cart-stage, argocd/cart-prod-ams, argocd/cart-prod-fra"
+            )),
+            "{:?}",
+            cart.notes
+        );
+        assert!(
+            cart.notes.iter().any(|n| n.starts_with(
+                "4 parts on core-fra are also claimed by the Argo CD rule, under their own names: "
+            )),
+            "{:?}",
+            cart.notes
+        );
+        assert_eq!(cart.notes.len(), 4, "{:?}", cart.notes);
+    }
+
+    #[test]
+    fn chips_have_short_words_and_whole_ones() {
+        for mark in MARKS {
+            assert!(!mark.short().is_empty());
+            assert!(mark.what().len() >= mark.short().len());
+        }
     }
 }

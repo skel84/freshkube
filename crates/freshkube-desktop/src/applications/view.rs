@@ -10,12 +10,17 @@ use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::h_flex;
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
     button::{Button, ButtonVariants},
     input::Input,
 };
+
+/// The page width, in dp, from which the chips say their words beside
+/// their counts.
+const CHIP_WORDS_WIDTH: f32 = 1100.;
 
 impl ApplicationsPage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -29,18 +34,30 @@ impl ApplicationsPage {
                 .aria_label("Filter applications by name, what found them or cluster")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
         );
+        let wide = crate::screens::page_width(window) >= CHIP_WORDS_WIDTH;
         let chips = (!self.display.rows.is_empty()).then(|| {
             kit::status_chips(
                 header.id("tally"),
                 marks().map(|mark| {
+                    let id = header.id(&format!("tally-{}", mark.slug()));
+                    // The words beside the count when there is room; the
+                    // tooltip and the label always have them.
+                    let words = wide.then(|| {
+                        div()
+                            .id(SharedString::from(format!("{id}-words")))
+                            .test_support()
+                            .font_family(cx.theme().font_family.clone())
+                            .child(mark.short())
+                    });
                     kit::status_chip(
-                        header.id(&format!("tally-{}", mark.slug())),
+                        id,
                         table::tone(mark),
                         self.counts[mark.index()],
                         mark.what(),
                         self.mark == Some(mark),
                         cx,
                     )
+                    .children(words)
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_mark(mark, cx)))
                 }),
                 cx,
@@ -196,7 +213,7 @@ impl ApplicationsPage {
         let heading = h_flex().gap_2().min_w_0().child(title).child(ui::tag(
             table::tone(row.mark),
             None,
-            row.mark.what(),
+            row.mark_words.clone(),
             cx,
         ));
         let notes = row.notes.iter().enumerate().map(|(ix, note)| {

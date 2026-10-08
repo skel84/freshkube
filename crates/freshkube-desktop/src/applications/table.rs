@@ -138,10 +138,7 @@ impl TableSource for ApplicationsPage {
             id: SharedString::from(format!("application-{}", row.key)).into(),
             label: format!(
                 "{} · {} · {} · {}",
-                row.name,
-                row.mark.tooltip(),
-                row.found_by,
-                row.parts
+                row.name, row.mark_words, row.found_by, row.parts
             )
             .into(),
             tooltip: Some(row.tooltip.clone()),
@@ -165,7 +162,7 @@ impl TableSource for ApplicationsPage {
                 .child(ui::status_mark(
                     SharedString::from(format!("application-{}-mark", row.key)),
                     tone(row.mark),
-                    row.mark.tooltip(),
+                    row.mark_words.clone(),
                     cx,
                 ))
                 .into_any_element(),

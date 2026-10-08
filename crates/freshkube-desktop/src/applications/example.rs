@@ -1,10 +1,12 @@
 //! The page's example data: core's acme workspace, six clusters with Argo
-//! CD and Kargo in `core-fra`, read in `argocd` only as a live read is.
+//! CD and Kargo in `core-fra`, its Argo CD read where a live read would
+//! look: nothing is labelled as Argo CD's, so in `argocd`.
 //! Debug builds reshape it for captures with `FRESHKUBE_APPLICATIONS`.
-use freshkube_core::applications::{ArgoScope, Inputs, SessionInputs, example as acme};
+use freshkube_core::applications::read::argo_namespaces;
+use freshkube_core::applications::{ArgoFound, ArgoScope, Inputs, SessionInputs, example as acme};
 use freshkube_core::delivery::source::{Source, Truncation};
 
-use super::display::{ARGOCD_NAMESPACE, Labels};
+use super::display::Labels;
 
 /// A shape of the example, for captures and tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -24,11 +26,18 @@ pub(crate) enum Variant {
     Failed,
     /// Argo CD's Applications stopped at the page cap in `core-fra`.
     Capped,
+    /// Argo CD found by its workloads in five namespaces of `core-fra`, the
+    /// last two past the cap.
+    Spread,
+    /// Nothing marks Argo CD in `core-fra`, and `argocd` holds no
+    /// Applications.
+    NotFound,
 }
 
 impl Variant {
-    /// `single`, `partial`, `refused`, `unserved`, `failed` or `capped`
-    /// from `FRESHKUBE_APPLICATIONS`; debug and stress builds only.
+    /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
+    /// `spread` or `not-found` from `FRESHKUBE_APPLICATIONS`; debug and
+    /// stress builds only.
     pub(crate) fn from_env() -> Self {
         if !cfg!(any(debug_assertions, feature = "stress")) {
             return Self::default();
@@ -40,6 +49,8 @@ impl Variant {
             Ok("unserved") => Self::Unserved,
             Ok("failed") => Self::Failed,
             Ok("capped") => Self::Capped,
+            Ok("spread") => Self::Spread,
+            Ok("not-found") => Self::NotFound,
             _ => Self::Acme,
         }
     }
@@ -61,7 +72,8 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
     let mut inputs = acme::acme();
     for session in &mut inputs.sessions {
         if session.key.0 == acme::CORE {
-            session.argo_scope = ArgoScope::Namespace(ARGOCD_NAMESPACE.into());
+            let (namespaces, found) = argo_namespaces(&session.workloads);
+            session.argo_scope = ArgoScope::Namespace { namespaces, found };
         }
     }
     match variant {
@@ -97,6 +109,19 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
             if let Source::Read(apps) = &core.argo_applications {
                 core.argo_applications = Source::Capped(apps.clone(), Truncation { read: 500 });
             }
+        }
+        Variant::Spread => {
+            core(&mut inputs).argo_scope = ArgoScope::Namespace {
+                namespaces: ["delivery", "gitops", "platform"].map(Into::into).to_vec(),
+                found: ArgoFound::Labelled {
+                    skipped: vec!["sandbox".into(), "tenants".into()],
+                },
+            };
+        }
+        Variant::NotFound => {
+            let core = core(&mut inputs);
+            core.argo_applications = Source::Read(Vec::new());
+            core.argo_application_sets = Source::Read(Vec::new());
         }
     }
     inputs

@@ -88,15 +88,24 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
             "{legend}"
         );
         assert!(
-            legend.contains("Read in argocd only, with notes: Argo CD on core-fra"),
+            legend.contains(
+                "Argo CD on core-fra was read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
+            ),
             "{legend}"
         );
         // Argo CD's applications carry the namespace in their mark.
         assert!(window.find("applications-tally-scoped").visible());
+        // A wide page shows each chip's words beside its count.
+        for slug in ["incomplete", "scoped", "notes", "read"] {
+            let words = format!("applications-tally-{slug}-words");
+            assert!(window.find(gpui_kit::SharedString::from(words)).visible());
+        }
         let mark = gpui_kit::SharedString::from(format!("{CATALOG}-mark"));
         assert_eq!(
             window.find(mark).label(),
-            Some("Read in argocd only, with notes")
+            Some(
+                "Argo CD on core-fra was read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
+            )
         );
         assert!(window.try_find("applications-missing").is_none());
         let status = page.read(cx).status.clone();
@@ -486,6 +495,16 @@ fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAp
                 "applications-table",
                 "applications-detail",
                 "applications-detail-title",
+            );
+            // A narrow page keeps each chip's count and glyph; its words
+            // stay in the tooltip and the label.
+            let words = window.try_find("applications-tally-read-words");
+            assert_eq!(words.is_some(), width > 1000., "at {width}");
+            assert!(
+                window
+                    .find("applications-tally-read")
+                    .label()
+                    .is_some_and(|label| label.ends_with(" read in full")),
             );
         })
         .unwrap();

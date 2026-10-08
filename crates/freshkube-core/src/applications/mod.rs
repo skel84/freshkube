@@ -272,9 +272,17 @@ pub enum CoverageState {
     Read,
     /// The listing stopped at the page cap after this many items.
     Capped(usize),
-    /// Read in this one namespace only. Argo CD may allow Applications in
-    /// others, which were not listed, so what is missing may exist.
-    NamespaceOnly(String),
+    /// Read in these namespaces only, found as `found` says. Argo CD may
+    /// allow Applications in others, which were not listed, so what is
+    /// missing may exist.
+    NamespaceOnly {
+        namespaces: Vec<String>,
+        found: ArgoFound,
+    },
+    /// Nothing marked where Argo CD runs, and its default namespace held no
+    /// Applications: Applications elsewhere aren't listed, so none is known
+    /// to be absent.
+    NamespaceNotFound(String),
     /// The API isn't served there: a fact, not an error.
     NotInstalled(String),
     Refused(String),
@@ -296,7 +304,11 @@ impl CoverageState {
     pub fn is_unknown(&self) -> bool {
         matches!(
             self,
-            Self::Capped(_) | Self::NamespaceOnly(_) | Self::Refused(_) | Self::Unreadable(_)
+            Self::Capped(_)
+                | Self::NamespaceOnly { .. }
+                | Self::NamespaceNotFound(_)
+                | Self::Refused(_)
+                | Self::Unreadable(_)
         )
     }
 }
@@ -346,9 +358,25 @@ pub struct LabelledWorkload {
 pub enum ArgoScope {
     /// Every namespace Applications may be in.
     AllNamespaces,
-    /// The one namespace Argo CD's own Applications live in. Applications in
-    /// any namespace are not listed, so this read is not known to be whole.
-    Namespace(String),
+    /// The namespaces Argo CD runs in, found as `found` says. Applications
+    /// in any namespace are not listed, so this read is not known to be
+    /// whole.
+    Namespace {
+        namespaces: Vec<String>,
+        found: ArgoFound,
+    },
+}
+
+/// How the namespaces an Argo CD read looked in were found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ArgoFound {
+    /// Where the workloads labelled `app.kubernetes.io/part-of=argocd` run,
+    /// as Argo CD's controller, server and repo-server are. `skipped` are
+    /// the namespaces past the cap, which were not read.
+    Labelled { skipped: Vec<String> },
+    /// Nothing was labelled so, or the workloads couldn't be read: Argo CD's
+    /// default namespace.
+    Default,
 }
 
 /// One Kargo Project as read: its Stages and Warehouses, each its own read.

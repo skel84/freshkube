@@ -30,7 +30,7 @@ use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource};
-use display::{ARGOCD_NAMESPACE, Body, Display, Labels, MARKS, Mark};
+use display::{Body, Display, Labels, MARKS, Mark};
 pub(crate) use example::Variant;
 
 /// The page's id prefix: `applications-title`, `-list`, `-tally-…`.
@@ -302,7 +302,7 @@ impl ApplicationsPage {
                     async move {
                         let client = access.client().await?;
                         let reader = ReadOnlyClient::new(client);
-                        let session = read_session(&reader, key, ARGOCD_NAMESPACE).await;
+                        let session = read_session(&reader, key).await;
                         let inputs = Inputs {
                             sessions: vec![session],
                             stage_naming: None,
