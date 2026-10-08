@@ -130,14 +130,19 @@ impl Pilot {
         if self.kubernetes_only.is_none() {
             parts.push(source_status("Talos", &self.overview));
         }
-        let nodes = self.kubernetes_summary.data().map(|summary| &summary.nodes);
+        let nodes = self
+            .registry
+            .active()
+            .kubernetes_summary
+            .data()
+            .map(|summary| &summary.nodes);
         parts.push(match nodes {
             Some(nodes) if !nodes.is_current() => Part::new(format!(
                 "Kubernetes · last known · {}",
                 nodes.error().unwrap_or("awaiting current nodes")
             ))
             .tone(Tone::Warn),
-            _ => source_status("Kubernetes", &self.kubernetes_summary),
+            _ => source_status("Kubernetes", &self.registry.active().kubernetes_summary),
         });
         self.node_workspace.status = Segment::new(context, parts);
     }

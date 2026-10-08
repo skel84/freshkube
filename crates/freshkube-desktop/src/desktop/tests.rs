@@ -3507,7 +3507,7 @@ fn kubernetes_only_health_failure(
         window.render_frame(cx);
         assert!(window.try_find("screen-no-node").is_none());
         assert!(window.try_find("workloads-loading").is_none());
-        match &view.read(cx).summary_health {
+        match &view.read(cx).registry.active().summary_health {
             Some(Err(reason)) => reason.clone(),
             _ => panic!("{what}: Health has no failure"),
         }
@@ -3913,13 +3913,19 @@ fn refused_summary_events_leave_health_and_other_parts_loaded(cx: &mut TestAppCo
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            let mut summary = (**view.kubernetes_summary.data().unwrap()).clone();
+            let mut summary = (**view.registry.active().kubernetes_summary.data().unwrap()).clone();
             summary.events = Part::Refused("Can't list events: forbidden".into());
             let health = crate::screens::WorkloadData::from_outcome(&summary.workloads);
-            let request = view.kubernetes_summary.begin(view.applied.clone());
-            view.kubernetes_summary
+            let request = view
+                .registry
+                .active_mut()
+                .kubernetes_summary
+                .begin(view.applied.clone());
+            view.registry
+                .active_mut()
+                .kubernetes_summary
                 .apply(&request, Ok(std::sync::Arc::new(summary)));
-            view.summary_health = Some(health.clone());
+            view.registry.active_mut().summary_health = Some(health.clone());
             view.deliver_workloads(health, cx);
             cx.notify();
         });
@@ -3927,7 +3933,13 @@ fn refused_summary_events_leave_health_and_other_parts_loaded(cx: &mut TestAppCo
         area(window, cx, "nav-k8s-group-workloads");
         window.click("nav-health", cx);
         window.find("workload-list");
-        let summary = view.read(cx).kubernetes_summary.data().unwrap();
+        let summary = view
+            .read(cx)
+            .registry
+            .active()
+            .kubernetes_summary
+            .data()
+            .unwrap();
         assert!(summary.pods.loaded().is_some());
         assert!(summary.nodes.loaded().is_some());
         assert_eq!(summary.events.error(), Some("Can't list events: forbidden"));
@@ -3940,7 +3952,15 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
     cx: &mut TestAppContext,
 ) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
-    let previous = cx.update(|cx| view.read(cx).kubernetes_summary.data().unwrap().clone());
+    let previous = cx.update(|cx| {
+        view.read(cx)
+            .registry
+            .active()
+            .kubernetes_summary
+            .data()
+            .unwrap()
+            .clone()
+    });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         area(window, cx, "nav-k8s-group-workloads");
@@ -3952,13 +3972,24 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
     cx.update_window(handle, |_, window, cx| {
         assert!(!std::sync::Arc::ptr_eq(
             &previous,
-            view.read(cx).kubernetes_summary.data().unwrap()
+            view.read(cx)
+                .registry
+                .active()
+                .kubernetes_summary
+                .data()
+                .unwrap()
         ));
         view.update(cx, |view, cx| {
-            let request = view.kubernetes_summary.begin(view.applied.clone());
+            let request = view
+                .registry
+                .active_mut()
+                .kubernetes_summary
+                .begin(view.applied.clone());
             view.select_context("staging-eu".into(), window, cx);
             assert!(
                 !view
+                    .registry
+                    .active_mut()
                     .kubernetes_summary
                     .apply(&request, Ok(previous.clone()))
             );

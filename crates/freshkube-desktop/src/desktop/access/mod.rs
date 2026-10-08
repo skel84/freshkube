@@ -7,10 +7,12 @@ use crate::{
 
 impl Pilot {
     pub(super) fn observed_nodes(&self) -> Option<ObservedNodes> {
-        self.summary_session.as_ref()?;
+        self.registry.active().summary_session.as_ref()?;
         Some(ObservedNodes {
             access: self.access?,
             nodes: self
+                .registry
+                .active()
                 .kubernetes_summary
                 .data()
                 .map(|summary| summary.nodes.clone())
