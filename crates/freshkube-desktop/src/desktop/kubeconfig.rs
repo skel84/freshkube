@@ -67,6 +67,26 @@ impl Pilot {
         });
     }
 
+    /// The entry's own kubeconfig can't be read or lacks its context: the
+    /// source a held link waits for will never be the entry's, so say so.
+    fn drop_link_for_unusable_kubeconfig(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_link.take() else {
+            return;
+        };
+        let why = match &self.kubeconfig_draft.inspection {
+            Some(Err(error)) => error.clone(),
+            _ => "it names no usable context".into(),
+        };
+        gpui_kit::component::WindowExt::push_notification(
+            window,
+            format!(
+                "Can’t open {}: {}’s kubeconfig can’t be used ({why})",
+                pending.object.name, pending.entry
+            ),
+            cx,
+        );
+    }
+
     /// The entry's own kubeconfig, applied as the entry opens: it stays the
     /// active entry, and no shell question is asked (the switch asked).
     fn apply_entry_kubeconfig(
@@ -221,12 +241,14 @@ impl Pilot {
                 .await
                 .unwrap_or_else(|_| Err("Reading the kubeconfig stopped unexpectedly".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                if for_entry && generation != view.entry_generation {
-                    return;
-                }
+                // Finished either way, so a draft the entry left behind
+                // doesn't read as still inspecting.
                 let draft = &mut view.kubeconfig_draft;
                 draft.job = None;
                 draft.inspecting = false;
+                if for_entry && generation != view.entry_generation {
+                    return;
+                }
                 draft.inspection = Some(result);
                 if let Some(wanted) = &context
                     && let Some(Ok(info)) = &draft.inspection
@@ -242,6 +264,8 @@ impl Pilot {
                     } else {
                         view.apply_kubeconfig(selection, window, cx);
                     }
+                } else if for_entry {
+                    view.drop_link_for_unusable_kubeconfig(window, cx);
                 }
                 cx.notify();
             });

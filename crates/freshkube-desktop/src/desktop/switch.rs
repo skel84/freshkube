@@ -44,9 +44,9 @@ pub(super) enum LinkWork {
 /// user agrees to the switch until that entry has a Kubernetes source, and
 /// forgotten as soon as anything else changes the entry.
 pub(super) struct PendingLink {
-    entry: String,
+    pub(super) entry: String,
     generation: u64,
-    object: resources::model::ObjectRef,
+    pub(super) object: resources::model::ObjectRef,
     work: LinkWork,
 }
 

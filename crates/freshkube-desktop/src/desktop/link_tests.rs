@@ -207,6 +207,7 @@ fn the_ended_connections_are_bounded_and_the_oldest_go_first(cx: &mut TestAppCon
     cx.update(|cx| {
         view.update(cx, |pilot, _| {
             let definition = Definition::default();
+            pilot.registry.adopt(key("dev-fra"));
             for n in 0..100 {
                 pilot
                     .registry
@@ -295,6 +296,12 @@ async fn the_header_names_a_picked_entry_whose_kubeconfig_cannot_be_read(cx: &mu
     let options = GpuiOptions::new(None, None, 100)
         .with_preferences(Some(guard.path().join("preferences.json")));
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+    // A switch while the startup read is out is refused ("Still reading the
+    // configuration"), which left the first entry's name on a slow runner.
+    cx.wait_for(handle, std::time::Duration::from_secs(30), |_, cx| {
+        !view.read(cx).config_loading
+    })
+    .await;
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.switch_cluster("lab".into(), window, cx)
@@ -302,13 +309,13 @@ async fn the_header_names_a_picked_entry_whose_kubeconfig_cannot_be_read(cx: &mu
     })
     .unwrap();
     cx.run_until_parked();
-    // Named at once; once the read has failed it reads as a failed connection.
-    // Waits rather than asserting at once: a loaded runner finishes the
-    // switch's reads later (the first Windows CI run saw the old name).
+    // Named at once, whatever the read does; then it reads as failed.
+    cx.read(|cx| assert_eq!(view.read(cx).context_display.name.as_ref(), "acme-lab"));
     cx.wait_for(handle, std::time::Duration::from_secs(30), |_, cx| {
-        let display = &view.read(cx).context_display;
-        display.name.as_ref() == "acme-lab"
-            && matches!(display.state, super::shell::Connection::Failed)
+        matches!(
+            view.read(cx).context_display.state,
+            super::shell::Connection::Failed
+        )
     })
     .await;
     cx.read(|cx| {
@@ -429,5 +436,19 @@ fn a_manual_pick_retires_the_entry_it_left_and_a_fresh_entry_retires_nothing(
             pilot.route_link(&pod_link("core-fra"), cx),
             LinkRoute::Activate(id) if id == "core-fra"
         ));
+    });
+}
+
+#[gpui_kit::test]
+fn a_window_that_is_no_entrys_retires_nothing(cx: &mut TestAppContext) {
+    let (_runtime, _handle, view) = fixture(cx, 1280., 820.);
+    cx.update(|cx| {
+        view.update(cx, |pilot, _| {
+            assert_eq!(pilot.registry.active_key(), &SessionKey::Implicit);
+            pilot
+                .registry
+                .retire_connection(Some("c".into()), &Definition::default());
+            assert!(pilot.registry.retired("c").is_none());
+        })
     });
 }

@@ -151,6 +151,10 @@ impl Registry {
         let Some(connection) = connection else {
             return;
         };
+        // A window that is no entry's has nothing for a link to find.
+        if self.active_key == SessionKey::Implicit {
+            return;
+        }
         self.retired
             .retain(|retired| retired.connection != connection);
         self.retired.push(Retired {

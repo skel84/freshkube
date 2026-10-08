@@ -752,14 +752,11 @@ fn a_launch_naming_the_source_an_entry_describes_belongs_to_that_entry(cx: &mut 
     );
 }
 
-#[gpui_kit::test]
-async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_link(
-    cx: &mut TestAppContext,
-) {
-    // The workspace's own kubeconfig, which every entry reads.
+/// A Talos folder whose workspace names `kubeconfig` (written from `body`).
+fn talos_folder_with_workspace_kubeconfig(body: &str) -> (tempfile::TempDir, std::path::PathBuf) {
     let guard = talos_folder(TALOSCONFIG_OTHER_CURRENT);
-    let wanted = guard.path().join("kubeconfig");
-    std::fs::write(&wanted, KUBECONFIG.replace("alpha", "acme-mgmt")).unwrap();
+    let file = guard.path().join("kubeconfig");
+    std::fs::write(&file, body).unwrap();
     std::fs::write(
         guard.path().join("workspace.json"),
         std::fs::read_to_string(guard.path().join("workspace.json"))
@@ -768,12 +765,76 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
                 "\"version\":1,",
                 &format!(
                     "\"version\":1,\"kubeconfig\":{},",
-                    serde_json::to_string(&wanted).unwrap()
+                    serde_json::to_string(&file).unwrap()
                 ),
             ),
     )
     .unwrap();
+    (guard, file)
+}
+
+/// Starts the window on a Kubernetes-only entry listed before `mgmt`.
+fn start_on_dev_first(guard: &tempfile::TempDir) {
+    let file = guard.path().join("workspace.json");
+    let text = std::fs::read_to_string(&file).unwrap().replace(
+        "\"clusters\":[",
+        "\"clusters\":[{\"id\":\"dev\",\"role\":\"core\",\"context\":\"acme-dev\"},",
+    );
+    std::fs::write(file, text).unwrap();
+}
+
+/// Opens `entry` and holds a link for it at once, before its kubeconfig
+/// read has answered.
+fn open_and_hold_link(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    view: &Entity<Pilot>,
+    entry: &str,
+) {
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.activate_entry(entry, window, cx))
+    })
+    .unwrap();
+    cx.update(|cx| {
+        view.update(cx, |pilot, _| {
+            assert!(
+                pilot.kubeconfig_draft.inspecting,
+                "the entry's kubeconfig read is still out"
+            );
+            let link = crate::resources::model::ObjectRef {
+                namespace: "ns".into(),
+                name: "p".into(),
+                uid: String::new(),
+                connection: Some("c".into()),
+            };
+            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+                entry,
+                pilot.entry_generation,
+                link,
+                super::switch::LinkWork::Open {
+                    kind: freshkube_core::resources::builtin("pods").unwrap(),
+                    tab: crate::resources::Tab::Overview,
+                },
+            ));
+        })
+    });
+}
+
+#[gpui_kit::test]
+async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_link(
+    cx: &mut TestAppContext,
+) {
+    let (guard, wanted) =
+        talos_folder_with_workspace_kubeconfig(&KUBECONFIG.replace("alpha", "acme-mgmt"));
+    start_on_dev_first(&guard);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
+    assert_eq!(active(cx, &view), key("dev"));
+    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+        !view.read(cx).config_loading
+    })
+    .await;
+    open_and_hold_link(cx, handle, &view, "mgmt");
+    let generation = cx.read(|cx| view.read(cx).entry_generation);
     cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
         matches!(
             &view.read(cx).kubeconfig,
@@ -784,41 +845,53 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
     cx.run_until_parked();
     cx.read(|cx| {
         let pilot = view.read(cx);
-        // Its own kubeconfig applied; the window never left the entry.
+        // Its own kubeconfig applied; the window never left the entry, and
+        // the link held before the apply is the one still held.
         assert_eq!(pilot.registry.active_key(), &key("mgmt"));
         assert_eq!(
             NavigationFile::global(cx).active_cluster().as_deref(),
             Some("mgmt")
         );
         assert!(pilot.kubernetes_only.is_none());
+        assert_eq!(pilot.entry_generation, generation);
+        let held = pilot.pending_link.as_ref().unwrap();
+        assert_eq!(
+            (held.entry.as_str(), held.object.name.as_str()),
+            ("mgmt", "p")
+        );
+        assert_eq!(held.object.connection.as_deref(), Some("c"));
     });
-    // A link held for the entry survives its own kubeconfig applying.
-    let generation = cx.read(|cx| view.read(cx).entry_generation);
-    cx.update(|cx| {
-        view.update(cx, |pilot, _| {
-            let link = crate::resources::model::ObjectRef {
-                namespace: "ns".into(),
-                name: "p".into(),
-                uid: String::new(),
-                connection: Some("c".into()),
-            };
-            pilot.pending_link = Some(super::switch::PendingLink::for_test(
-                "mgmt",
-                generation,
-                link,
-                super::switch::LinkWork::Open {
-                    kind: freshkube_core::resources::builtin("pods").unwrap(),
-                    tab: crate::resources::Tab::Overview,
-                },
-            ));
-        })
-    });
+}
+
+#[gpui_kit::test]
+async fn a_held_link_is_dropped_when_the_entrys_kubeconfig_lacks_its_context(
+    cx: &mut TestAppContext,
+) {
+    // alpha and beta; the entry's context is acme-mgmt.
+    let (guard, _) = talos_folder_with_workspace_kubeconfig(KUBECONFIG);
+    start_on_dev_first(&guard);
+    let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
+    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+        !view.read(cx).config_loading
+    })
+    .await;
+    open_and_hold_link(cx, handle, &view, "mgmt");
+    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+        !view.read(cx).kubeconfig_draft.inspecting
+    })
+    .await;
     cx.run_until_parked();
     cx.read(|cx| {
         let pilot = view.read(cx);
+        assert!(
+            pilot.pending_link.is_none(),
+            "never left to be refused later"
+        );
         assert_eq!(pilot.registry.active_key(), &key("mgmt"));
-        assert_eq!(pilot.entry_generation, generation);
-        assert!(pilot.pending_link.is_some());
+        assert_eq!(
+            pilot.kubeconfig,
+            freshkube_core::KubeconfigSelection::TalosControlPlane
+        );
     });
 }
 
