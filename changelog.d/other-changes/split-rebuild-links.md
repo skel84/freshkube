@@ -1,0 +1,1 @@
+- Split the pod pane's relationship derivation into node, owner and Service links, with no change in behaviour.

@@ -595,6 +595,10 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Before anything moves: not the page, not the list.
+        if self.refuse_foreign_link(&object, window, cx) {
+            return;
+        }
         let object = resources::model::ObjectRef {
             namespace: if kind.namespaced {
                 object.namespace.clone()
@@ -621,7 +625,53 @@ impl Pilot {
         }
         self.open_kind(kind.clone(), window, cx);
         self.cancel_object_open();
-        let mut identity = identity;
+        let identity = self.resolve_local_identity(&source, &kind, &object, identity, cx);
+        if !identity.uid.is_empty() {
+            self.resources.update(cx, |resources, cx| {
+                resources.open_identity_on(identity, tab, window, cx)
+            });
+            return;
+        }
+        self.resolve_identity_remote(source, kind, object, identity, tab, window, cx);
+    }
+
+    /// A link made in another cluster than the one that is open is never
+    /// opened against this one: the same name here is a different object.
+    /// While no cluster is open, a link that names one is refused too.
+    /// Says so and returns true.
+    pub(super) fn refuse_foreign_link(
+        &self,
+        object: &resources::model::ObjectRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(connection) = &object.connection else {
+            return false;
+        };
+        if self.kube_identity().is_some_and(|open| open == *connection) {
+            return false;
+        }
+        window.push_notification(
+            format!(
+                "Can’t open {}: it belongs to a cluster that isn’t open",
+                object.name
+            ),
+            cx,
+        );
+        true
+    }
+
+    /// Finds the object's UID without a read: in the open list, or, with
+    /// example data, in the example rows. Returns `identity` unchanged when
+    /// neither has it.
+    fn resolve_local_identity(
+        &self,
+        source: &resources::KubeSource,
+        kind: &ResourceKind,
+        object: &resources::model::ObjectRef,
+        mut identity: resources::model::ResourceIdentity,
+        cx: &App,
+    ) -> resources::model::ResourceIdentity {
         if identity.uid.is_empty() {
             if let Some(found) = self
                 .resources
@@ -643,18 +693,25 @@ impl Pilot {
                 identity = row.identity;
             }
         }
-        if !identity.uid.is_empty() {
-            self.resources.update(cx, |resources, cx| {
-                resources.open_identity_on(identity, tab, window, cx)
-            });
-            return;
-        }
-        let sequence = self.object_open_sequence;
-        let epoch = self.epoch;
-        let (job, receiver) = crate::backend::spawn_job(
-            &self.runtime,
-            std::time::Duration::from_secs(15),
-            "Resolving the object's identity timed out".into(),
+        identity
+    }
+
+    /// Reads the object's metadata for its UID, then opens it, unless the
+    /// request was replaced or something else opened meanwhile.
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_identity_remote(
+        &mut self,
+        source: resources::KubeSource,
+        kind: ResourceKind,
+        object: resources::model::ObjectRef,
+        mut identity: resources::model::ResourceIdentity,
+        tab: resources::Tab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let connection = identity.connection.clone();
+        self.start_object_open(
+            "Resolving the object's identity timed out",
             async move {
                 let client = source.access.client().await?;
                 freshkube_core::resources::get_metadata(
@@ -666,23 +723,12 @@ impl Pilot {
                 .await
                 .map_err(|error| error.to_string())
             },
-        );
-        self.object_open_job = Some(job);
-        self.object_open_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let result = receiver
-                .await
-                .unwrap_or_else(|_| Err("The identity worker stopped".into()));
-            _ = this.update_in(cx, |this, window, cx| {
-                if this.epoch != epoch
-                    || this.object_open_sequence != sequence
-                    || this
-                        .kube_source()
-                        .is_none_or(|source| source.id != identity.connection)
+            move |this, cx| {
+                this.kube_source()
+                    .is_none_or(|source| source.id != connection)
                     || this.resources.read(cx).detail_identity(cx).is_some()
-                {
-                    return;
-                }
-                this.object_open_job = None;
+            },
+            move |this, result, window, cx| {
                 if let Ok(metadata) = &result
                     && let Some(uid) = metadata.uid.clone()
                 {
@@ -702,7 +748,9 @@ impl Pilot {
                         cx,
                     );
                 }
-            });
-        }));
+            },
+            window,
+            cx,
+        );
     }
 }

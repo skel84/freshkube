@@ -1,0 +1,1 @@
+- A link from another cluster is refused instead of opening a same-named object in the cluster that's open.

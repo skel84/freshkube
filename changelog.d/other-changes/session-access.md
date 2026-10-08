@@ -1,0 +1,1 @@
+- Moved the shell's access identity, configuration revision and shell-prompt memory into the cluster session, and replace the session as a whole when the context changes, with no change in behaviour.

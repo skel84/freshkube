@@ -73,9 +73,16 @@ impl Resource {
     }
 }
 
-/// What a listing is limited to. There is no unscoped variant.
+/// What a listing is limited to. There is no unscoped variant for a kind
+/// that has many objects: [`Scope::Cluster`] is for the small cluster-scoped
+/// kinds only.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scope {
+    /// Every object of a small cluster-scoped kind, such as Kargo's
+    /// Projects. Still read a page at a time and cut off at [`MAX_PAGES`], so
+    /// it is bounded like every other listing. A namespaced kind is refused,
+    /// since its cluster-wide list is exactly what the other scopes avoid.
+    Cluster,
     /// Everything of the kind in one namespace.
     Namespace(String),
     /// Objects matching a label selector, in one namespace or across all.
@@ -322,6 +329,13 @@ fn refuse_secret(resource: &Resource) -> Result<(), Failure> {
 
 fn page_path(request: &ListRequest, continue_token: Option<&str>) -> Result<String, Failure> {
     let (namespace, selector) = match &request.scope {
+        Scope::Cluster if request.resource.namespaced => {
+            return Err(Failure::new(
+                FailureKind::Other,
+                "a cluster scope is for cluster-scoped kinds only",
+            ));
+        }
+        Scope::Cluster => (None, None),
         Scope::Namespace(namespace) => (Some(namespace.as_str()), None),
         Scope::Labels {
             namespace,
@@ -631,6 +645,23 @@ mod tests {
             page_path(&namespaced, None).unwrap(),
             "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications?limit=200"
         );
+    }
+
+    #[test]
+    fn a_cluster_scope_lists_a_cluster_scoped_kind_a_page_at_a_time() {
+        let projects = ListRequest {
+            resource: Resource::new("kargo.akuity.io", "v1alpha1", "projects", false),
+            scope: Scope::Cluster,
+        };
+        assert_eq!(
+            page_path(&projects, Some("next")).unwrap(),
+            "/apis/kargo.akuity.io/v1alpha1/projects?limit=200&continue=next"
+        );
+        let namespaced = ListRequest {
+            resource: pods(),
+            scope: Scope::Cluster,
+        };
+        assert!(page_path(&namespaced, None).is_err());
     }
 
     #[test]

@@ -79,6 +79,11 @@ pub struct Stage {
     /// Why the Stage is not healthy, as Kargo's health checks say.
     pub health_issues: Vec<String>,
     pub phase: Option<String>,
+    /// Verifications recorded in `status.freightHistory[].verificationHistory`,
+    /// newest first; empty from a Kargo that sends none.
+    pub verifications: Vec<Verification>,
+    /// The Freight each `freightHistory` entry holds, newest first.
+    pub history: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,6 +174,40 @@ pub struct Warehouse {
     /// `metadata.uid` and `metadata.resourceVersion`.
     pub meta: Meta,
     pub image_repos: Vec<String>,
+    /// The images its status lists as recently discovered, a bounded and
+    /// rolling window; `None` when it reports no discovered artifacts (an
+    /// older Kargo, or a Warehouse that has not discovered yet).
+    pub discovered: Option<Vec<DiscoveredImage>>,
+}
+
+/// An image repository the Warehouse discovered, with the digests and tags
+/// of its recent references.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredImage {
+    pub repo_url: String,
+    pub digests: Vec<Digest>,
+    pub tags: Vec<String>,
+}
+
+/// One verification of a Freight in a Stage, as the Stage's status records
+/// it: the Freight it ran for, and Kargo's own word for how it ended
+/// (`Successful`, `Failed`, `Error`, `Aborted`, `Inconclusive`, or still
+/// running).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Verification {
+    pub freight: Vec<String>,
+    /// Which `freightHistory` entry (0 is the newest) it was recorded in.
+    pub collection: usize,
+    pub phase: Option<String>,
+    /// `startTime` and `finishTime`, as Kargo wrote them.
+    pub started: Option<String>,
+    pub finished: Option<String>,
+    /// The kind of actor that started it, when Kargo names one.
+    pub actor: Option<Creator>,
+    /// The AnalysisRun it ran, when Kargo names one.
+    pub analysis_run: Option<String>,
+    /// The pointer the phase is read at.
+    pub at: String,
 }
 
 fn names(value: &Value, pointer: &str) -> Vec<String> {
@@ -294,7 +333,46 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
             .map(str::to_owned)
             .collect(),
         phase: text(value, "/status/phase"),
+        verifications: verifications(value),
+        history: history(value),
     })
+}
+
+/// The Freight each `freightHistory` entry holds, newest first.
+fn history(stage: &Value) -> Vec<Vec<String>> {
+    array(stage, "/status/freightHistory")
+        .map(|entry| {
+            entry
+                .get("items")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flat_map(|items| items.values())
+                .filter_map(|item| text(item, "/name"))
+                .collect()
+        })
+        .collect()
+}
+
+/// The verifications of each `freightHistory` entry, for the Freight that
+/// entry holds.
+fn verifications(stage: &Value) -> Vec<Verification> {
+    let mut found = Vec::new();
+    let held = history(stage);
+    for (index, entry) in array(stage, "/status/freightHistory").enumerate() {
+        for (at, run) in array(entry, "/verificationHistory").enumerate() {
+            found.push(Verification {
+                freight: held[index].clone(),
+                collection: index,
+                phase: text(run, "/phase"),
+                started: text(run, "/startTime"),
+                finished: text(run, "/finishTime"),
+                actor: text(run, "/actor").map(|actor| Creator::of(Some(&actor))),
+                analysis_run: text(run, "/analysisRun/name"),
+                at: format!("/status/freightHistory/{index}/verificationHistory/{at}/phase"),
+            });
+        }
+    }
+    found
 }
 
 fn image_digests(freight: &Value) -> Vec<Digest> {
@@ -385,6 +463,26 @@ pub fn parse_warehouse(value: &Value) -> Option<Warehouse> {
         image_repos: array(value, "/spec/subscriptions")
             .filter_map(|subscription| text(subscription, "/image/repoURL"))
             .collect(),
+        discovered: value
+            .pointer("/status/discoveredArtifacts/images")
+            .and_then(Value::as_array)
+            .map(|images| {
+                images
+                    .iter()
+                    .filter_map(|image| {
+                        Some(DiscoveredImage {
+                            repo_url: text(image, "/repoURL")?,
+                            digests: array(image, "/references")
+                                .filter_map(|reference| text(reference, "/digest"))
+                                .filter_map(|digest| Digest::parse(&digest))
+                                .collect(),
+                            tags: array(image, "/references")
+                                .filter_map(|reference| text(reference, "/tag"))
+                                .collect(),
+                        })
+                    })
+                    .collect()
+            }),
     })
 }
 
@@ -392,6 +490,11 @@ impl Freight {
     /// The pointer `field` (`images` or `commits`) is read at.
     pub fn pointer(&self, field: &str) -> String {
         format!("{}/{field}", self.contents_at)
+    }
+
+    /// Where the Freight names its origin Warehouse.
+    pub fn origin_pointer(&self) -> String {
+        self.pointer("origin/name")
     }
 
     /// The object these facts were read from.
@@ -407,6 +510,34 @@ impl Freight {
 }
 
 impl Stage {
+    /// The latest verification of `freight` in this Stage: of the newest
+    /// `freightHistory` entry that holds it, never an older entry's, the one
+    /// finished (else started) last, by time. `None` when that entry records
+    /// none: the Freight is not verified yet.
+    pub fn latest_verification(&self, freight: &str) -> Option<&Verification> {
+        let newest = self
+            .history
+            .iter()
+            .position(|held| held.iter().any(|name| name == freight))?;
+        let when = |v: &Verification| {
+            v.finished
+                .as_deref()
+                .or(v.started.as_deref())
+                .and_then(|time| time.parse::<chrono::DateTime<chrono::Utc>>().ok())
+        };
+        let mut latest: Option<&Verification> = None;
+        for v in self.verifications.iter().filter(|v| v.collection == newest) {
+            // The first of equals, or of those with no readable time, is the
+            // newest as Kargo lists them.
+            if latest
+                .is_none_or(|best| matches!((when(v), when(best)), (Some(a), Some(b)) if a > b))
+            {
+                latest = Some(v);
+            }
+        }
+        latest
+    }
+
     /// Where the Stage's status names `freight` as current.
     pub fn freight_pointer(&self, freight: &str) -> &'static str {
         let at = self.current_freight.iter().position(|name| name == freight);
@@ -469,7 +600,7 @@ pub struct KargoProject {
     pub promotions: Vec<Promotion>,
 }
 
-async fn read_kind<R: Reader, T>(
+pub(crate) async fn read_kind<R: Reader, T>(
     reader: &R,
     plural: &str,
     project: &str,
@@ -504,5 +635,87 @@ pub async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
         promotions: Source::from_listing(
             read_kind(reader, "promotions", project, parse_promotion).await,
         ),
+    }
+}
+
+/// The names of the cluster's Kargo Projects, from the cluster-scoped
+/// `projects` kind itself. A cluster that doesn't serve it is `NotInstalled`,
+/// not empty. (A namespace carrying Kargo's `kargo.akuity.io/project` label
+/// is not a Project: the label can sit on a namespace Kargo adopted, and
+/// reading namespaces would need a permission a Project reader may lack.)
+pub async fn read_project_names<R: Reader>(reader: &R) -> Source<Vec<String>> {
+    async fn run<R: Reader>(reader: &R) -> Result<(Vec<String>, Option<Truncation>), Failure> {
+        let resource = resolve(reader, GROUP, "projects", VERSIONS, false).await?;
+        let listing = reader
+            .list(&ListRequest {
+                resource,
+                scope: Scope::Cluster,
+            })
+            .await?;
+        let mut names: Vec<String> = listing
+            .items
+            .iter()
+            .filter_map(|item| text(item, "/metadata/name"))
+            .collect();
+        names.sort();
+        names.dedup();
+        Ok((names, listing.truncated))
+    }
+    Source::from_listing(run(reader).await)
+}
+
+#[cfg(test)]
+mod project_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::delivery::fixtures::FixtureReader;
+
+    fn named(name: &str) -> Value {
+        json!({"metadata": {"name": name}})
+    }
+
+    #[tokio::test]
+    async fn projects_are_the_projects_listed() {
+        let reader = FixtureReader::default()
+            .serves(GROUP, "v1alpha1", &["projects"])
+            .with("projects", vec![named("shop"), named("cart")]);
+        let read = read_project_names(&reader).await;
+        assert_eq!(
+            read,
+            Source::Read(vec!["cart".to_owned(), "shop".to_owned()])
+        );
+        let requests = reader.requests.borrow();
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.starts_with("LIST kargo.akuity.io/v1alpha1/projects ns=None"))
+        );
+        assert!(!requests.iter().any(|r| r.contains("namespaces")));
+    }
+
+    #[tokio::test]
+    async fn a_labelled_namespace_without_a_project_does_not_count() {
+        let adopted =
+            json!({"metadata": {"name": "adopted", "labels": {"kargo.akuity.io/project": "true"}}});
+        let reader = FixtureReader::default()
+            .serves(GROUP, "v1alpha1", &["projects"])
+            .with("projects", vec![named("shop")])
+            .with("namespaces", vec![adopted]);
+        let read = read_project_names(&reader).await;
+        assert_eq!(read, Source::Read(vec!["shop".to_owned()]));
+    }
+
+    #[tokio::test]
+    async fn unserved_kargo_is_not_installed_and_a_refusal_is_not_empty() {
+        let none = read_project_names(&FixtureReader::default()).await;
+        assert!(matches!(none, Source::NotInstalled(_)));
+        let refused = FixtureReader::default()
+            .serves(GROUP, "v1alpha1", &["projects"])
+            .refusing("projects");
+        assert!(matches!(
+            read_project_names(&refused).await,
+            Source::Refused(_)
+        ));
     }
 }

@@ -26,9 +26,11 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
     let new_access = AccessIdentity::new(AccessSessionId::new(), after);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.access = Some(old_access);
-            view.access_configuration = Some(before);
+            view.registry.active_mut().access = Some(old_access);
+            view.registry.active_mut().access_configuration = Some(before);
             let observation = view
+                .registry
+                .active()
                 .summary_session
                 .as_ref()
                 .unwrap()
@@ -78,12 +80,18 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 window,
                 cx,
             );
-            assert!(view.access == Some(new_access));
+            assert!(view.registry.active().access == Some(new_access));
             assert_ne!(
-                view.summary_session.as_ref().unwrap().core.identity(),
+                view.registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .identity(),
                 &observation
             );
-            assert_eq!(view.access_configuration, Some(after));
+            assert_eq!(view.registry.active().access_configuration, Some(after));
             assert!(forward.read(cx).running());
             assert_eq!(forward.read(cx).local_port, port);
             assert_eq!(forward.read(cx).port_of(&pod), Some(8080));
@@ -101,10 +109,12 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 window,
                 cx,
             );
-            assert!(view.access == Some(new_access));
+            assert!(view.registry.active().access == Some(new_access));
             assert!(view.overview.error().is_none());
 
             let observation = view
+                .registry
+                .active()
                 .summary_session
                 .as_ref()
                 .unwrap()
@@ -113,7 +123,13 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 .clone();
             view.select_node(None, window, cx);
             assert_eq!(
-                view.summary_session.as_ref().unwrap().core.identity(),
+                view.registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .identity(),
                 &observation
             );
             let id = forward.read(cx).id;
@@ -133,9 +149,15 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
             );
             assert!(view.overview.is_stale());
             assert!(view.overview.data().is_some());
-            assert!(view.access == Some(new_access));
+            assert!(view.registry.active().access == Some(new_access));
             assert_eq!(
-                view.summary_session.as_ref().unwrap().core.identity(),
+                view.registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap()
+                    .core
+                    .identity(),
                 &observation
             );
         });
@@ -178,8 +200,8 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     view.update(cx, |view, _| {
         // The replacement fails before connecting: no real cluster is read.
         view.fixture = false;
-        view.access = Some(access);
-        view.access_configuration = Some(before);
+        view.registry.active_mut().access = Some(access);
+        view.registry.active_mut().access_configuration = Some(before);
     });
     let deliver = |window: &mut Window, cx: &mut App| {
         view.update(cx, |view, cx| {
@@ -203,7 +225,7 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     cx.run_until_parked();
     assert!(!cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
-        cx.read(|cx| view.read(cx).access_configuration),
+        cx.read(|cx| view.read(cx).registry.active().access_configuration),
         Some(before)
     );
     step(cx, &deliver);
@@ -211,14 +233,53 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
         !cx.has_pending_prompt(),
         "an automatic refresh must not repeat a cancelled prompt"
     );
-    view.update(cx, |view, _| view.prompted_access = None);
+    view.update(cx, |view, _| {
+        view.registry.active_mut().prompted_access = None
+    });
     step(cx, &deliver);
     cx.simulate_prompt_answer("End the shell");
     cx.run_until_parked();
     assert!(cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
-        cx.read(|cx| view.read(cx).access_configuration),
+        cx.read(|cx| view.read(cx).registry.active().access_configuration),
         Some(after)
     );
     assert!(cx.read(|cx| view.read(cx).overview.data().is_none()));
+}
+
+/// A new context replaces the whole session: nothing that the old one held,
+/// from its access to its tasks, is there for the next.
+#[gpui_kit::test]
+fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 820.);
+    let (before, after) = revisions();
+    let access = AccessIdentity::new(AccessSessionId::new(), before);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            // Nothing is published for the new context, so what is left in
+            // the session after the change is only what was carried over.
+            view.fixture_hold = true;
+            let runtime = view.runtime.clone();
+            let session = view.registry.active_mut();
+            session.access = Some(access);
+            session.access_configuration = Some(before);
+            session.prompted_access = Some((after, Some(access)));
+            session.summary_health = Some(Err("old".into()));
+            session.summary_job = Some(crate::backend::OwnedJob::new(runtime.spawn(async {})));
+            session.summary_task = Some(cx.spawn(async move |_, _| {}));
+            let epoch = view.registry.summary_epoch();
+            let other = crate::fixture::CONTEXTS[1].to_string();
+            assert_ne!(view.applied.context.as_deref(), Some(other.as_str()));
+            view.select_context(other, window, cx);
+            let session = view.registry.active();
+            assert!(session.access.is_none());
+            assert!(session.access_configuration.is_none());
+            assert!(session.prompted_access.is_none());
+            assert!(session.summary_health.is_none());
+            assert!(session.summary_job.is_none());
+            assert!(session.summary_task.is_none());
+            assert!(view.registry.summary_epoch() != epoch);
+        })
+    })
+    .unwrap();
 }

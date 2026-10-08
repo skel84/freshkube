@@ -321,6 +321,10 @@ pub(crate) struct ObjectRef {
     pub(crate) namespace: String,
     pub(crate) name: String,
     pub(crate) uid: String,
+    /// The cluster the link was made in: a `ResourceIdentity::connection`.
+    /// `None` means the one that is open. A link naming another cluster is
+    /// never opened against this one.
+    pub(crate) connection: Option<String>,
 }
 impl From<ResourceIdentity> for ObjectRef {
     fn from(identity: ResourceIdentity) -> Self {
@@ -328,6 +332,7 @@ impl From<ResourceIdentity> for ObjectRef {
             namespace: identity.namespace,
             name: identity.name,
             uid: identity.uid,
+            connection: Some(identity.connection),
         }
     }
 }

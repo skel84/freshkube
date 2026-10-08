@@ -127,6 +127,7 @@ fn object(
     Destination::Object(
         kind,
         ObjectRef {
+            connection: None,
             namespace: namespace.into(),
             name: name.into(),
             uid: summary

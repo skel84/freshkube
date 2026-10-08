@@ -7,6 +7,7 @@ use super::fixtures::*;
 use super::join::{BuiltDigest, Confidence, DigestConflict, Hop, Key, Link, Trail, render};
 use super::observation::{Fact, Observation, role};
 use super::source::Source;
+use super::tests::naming;
 use super::tests::{
     ENV, link, observed_at, one, promoted, run, run_configured, run_with, squash_world,
 };
@@ -25,12 +26,17 @@ fn kinds(hop: Hop) -> &'static [&'static str] {
         // declared; no read object reports the signature.
         Hop::SupplyChain => &[],
         Hop::Freight => &["Freight"],
+        // The Freight's origin is Kargo's own record; the Warehouse reports
+        // the digests it discovered.
+        Hop::Warehouse => &["Warehouse"],
         Hop::Promotion => &["Promotion"],
         // Kargo records the push on the Promotion, not on the Stage.
         Hop::Stage => &["Stage", "Promotion"],
         Hop::Application => &["Application"],
         // A Rollout reports no image; see `rollout_stands_on_its_pods`.
         Hop::Rollout => &["Rollout", "ReplicaSet"],
+        // Nor does a Deployment; see `deployment_stands_on_its_pods`.
+        Hop::Deployment => &["Deployment", "ReplicaSet"],
         Hop::Pod => &["Pod"],
     }
 }
@@ -49,6 +55,9 @@ fn key_text(key: &Key) -> String {
 fn stands_on(link: &Link, hop: Hop) -> bool {
     let key = key_text(&link.key);
     if hop == Hop::Rollout && rollout_stands_on_its_pods(link, &key) {
+        return true;
+    }
+    if hop == Hop::Deployment && deployment_stands_on_its_pods(link, &key) {
         return true;
     }
     link.evidence.iter().any(|seen| {
@@ -96,6 +105,50 @@ fn rollout_stands_on_its_pods(link: &Link, key: &str) -> bool {
                                         .value
                                         .as_deref()
                                         .is_some_and(|value| value.eq_ignore_ascii_case(key))
+                            })
+                    })
+            })
+    })
+}
+
+/// A Deployment reports no image either, so its side stands on its own pods
+/// through a chain of reported values: the revision the Deployment
+/// controller wrote on the Deployment; a ReplicaSet whose owner reference
+/// names the Deployment's UID and that carries the same revision; a pod
+/// whose owner reference names that ReplicaSet's UID, whose
+/// `pod-template-hash` label is the ReplicaSet's, and that reports the key.
+fn deployment_stands_on_its_pods(link: &Link, key: &str) -> bool {
+    let label = "/metadata/labels/pod-template-hash";
+    let revision_field = "/metadata/annotations/deployment.kubernetes.io~1revision";
+    let reported = |kind: &'static str, field: &'static str| {
+        link.evidence.iter().filter(move |seen| {
+            seen.fact == Fact::Reported && seen.object.kind == kind && seen.field == field
+        })
+    };
+    reported("Deployment", revision_field).any(|deployment| {
+        reported("ReplicaSet", "/metadata/ownerReferences")
+            .filter(|set| set.value.is_some() && set.value == deployment.object.uid)
+            .filter(|set| {
+                reported("ReplicaSet", revision_field).any(|revision| {
+                    revision.object == set.object && revision.value == deployment.value
+                })
+            })
+            .any(|set| {
+                reported("ReplicaSet", label)
+                    .filter(|hash| hash.object == set.object && hash.value.is_some())
+                    .any(|hash| {
+                        reported("Pod", "/metadata/ownerReferences")
+                            .filter(|pod| pod.value.is_some() && pod.value == set.object.uid)
+                            .any(|pod| {
+                                reported("Pod", label).any(|label| {
+                                    label.object == pod.object && label.value == hash.value
+                                }) && reported("Pod", "/status/containerStatuses").any(|running| {
+                                    running.object == pod.object
+                                        && running
+                                            .value
+                                            .as_deref()
+                                            .is_some_and(|value| value.eq_ignore_ascii_case(key))
+                                })
                             })
                     })
             })
@@ -159,7 +212,14 @@ async fn every_trail() -> Vec<Trail> {
         run(&healthy(), &ENV).await,
         run(&promoted(NEW, "Succeeded", PUSHED), &ENV).await,
         run_with(&squash_world(), &ENV, &github(), Some(GH_REPO)).await,
-        run(&without_rollouts(), &ENV).await,
+        run_configured(
+            &without_rollouts(),
+            &ENV,
+            &FixtureGitHub::default(),
+            None,
+            |plan| plan.stage_naming = Some(naming()),
+        )
+        .await,
         run(&alone, &ENV).await,
         run(&no_digest, &ENV).await,
     ]
@@ -191,11 +251,14 @@ async fn a_confirmed_link_stands_on_what_was_read_on_each_side() {
         (Hop::Commit, Hop::PipelineRun),
         (Hop::PipelineRun, Hop::Freight),
         (Hop::Commit, Hop::Freight),
+        (Hop::Freight, Hop::Warehouse),
         (Hop::Freight, Hop::Promotion),
         (Hop::Freight, Hop::Stage),
         (Hop::Stage, Hop::Application),
         (Hop::Application, Hop::Rollout),
         (Hop::Rollout, Hop::Pod),
+        (Hop::Application, Hop::Deployment),
+        (Hop::Deployment, Hop::Pod),
     ] {
         assert!(
             checked.contains(&(pair.0.word(), pair.1.word())),
@@ -988,7 +1051,10 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
 }
 
 /// `[confirmed, claimed, unknown]` of each fixture.
-const COUNTS: [[usize; 3]; 4] = [[2, 6, 0], [5, 3, 0], [11, 1, 0], [3, 9, 0]];
+// Each fixture's one Freight gained a Freight -> Warehouse link, Confirmed: the
+// fixture Warehouse lists the Freight's digest among its discoveries. That is
+// the one more Confirmed in each.
+const COUNTS: [[usize; 3]; 4] = [[3, 6, 0], [6, 3, 0], [12, 1, 0], [4, 9, 0]];
 // healthy: Commit -> PipelineRun (declared label and parameter) and PipelineRun -> supply chain.
 // promoted: the same two links.
 // confirmed: only PipelineRun -> supply chain; the clone TaskRun's `commit` result keeps

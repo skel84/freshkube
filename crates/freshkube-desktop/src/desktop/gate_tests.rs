@@ -340,7 +340,7 @@ fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
             // summary.
             pilot.fixture = false;
             pilot.stop_summary();
-            pilot.summary_health = None;
+            pilot.registry.active_mut().summary_health = None;
             pilot.selected_node = None;
             pilot.nodes.clear();
             pilot.push_source(window, cx);

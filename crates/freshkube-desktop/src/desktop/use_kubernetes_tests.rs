@@ -108,7 +108,7 @@ async fn the_error_state_chooses_a_kubeconfig_and_connects_nothing_until_a_conte
         assert!(kube.access().is_none());
         assert_eq!(kube.connection, kubernetes_only::KubeConnection::Idle);
         assert_eq!(pilot.applied.context, None);
-        assert!(pilot.config_error.is_none() && pilot.access.is_none());
+        assert!(pilot.config_error.is_none() && pilot.registry.active().access.is_none());
         assert_eq!(
             window.find("kubernetes-status").label(),
             Some("Choose a context from the kubeconfig to connect")

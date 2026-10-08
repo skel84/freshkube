@@ -33,6 +33,8 @@ fn every_overview_card_opens_its_target_and_filter(cx: &mut TestAppContext) {
             let expected_filter = if id == "tile-pods" {
                 pilot
                     .read(cx)
+                    .registry
+                    .active()
                     .kubernetes_summary
                     .data()
                     .unwrap()
@@ -157,7 +159,14 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
             .find(|row| row.name == "talos-wk-fra1-02")
             .unwrap();
         bad.talos.as_mut().unwrap().responding = false;
-        let kube = pilot.read(cx).kubernetes_summary.data().unwrap().clone();
+        let kube = pilot
+            .read(cx)
+            .registry
+            .active()
+            .kubernetes_summary
+            .data()
+            .unwrap()
+            .clone();
         let mut talos = pilot.read(cx).overview.data().unwrap().clone();
         talos.etcd_summary.as_mut().unwrap().has_quorum = false;
         talos.etcd_alarms = Some(vec![talos_rs::EtcdAlarm {
@@ -288,7 +297,7 @@ fn waiting_cards_show_a_skeleton(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.kubernetes_summary = Default::default();
+            pilot.registry.active_mut().kubernetes_summary = Default::default();
             pilot.rebuild_joined_nodes(cx);
             cx.notify();
         });
@@ -472,6 +481,7 @@ fn object_frontdoor_navigates_at_once_while_a_shell_runs(cx: &mut TestAppContext
             pilot.open_object(
                 freshkube_core::resources::builtin("persistentvolumeclaims").unwrap(),
                 ObjectRef {
+                    connection: None,
                     namespace: "batch".into(),
                     name: "report-data".into(),
                     uid: String::new(),

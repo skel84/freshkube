@@ -12,6 +12,7 @@ mod overview;
 mod pages;
 mod search;
 mod services;
+mod session;
 mod shell;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
@@ -306,19 +307,9 @@ pub(crate) struct Pilot {
     config_loading: bool,
     config_generation: u64,
     epoch: u64,
-    access: Option<freshkube_core::AccessIdentity>,
-    access_configuration: Option<freshkube_core::ConfigurationRevision>,
-    prompted_access: Option<(
-        freshkube_core::ConfigurationRevision,
-        Option<freshkube_core::AccessIdentity>,
-    )>,
     overview: Snapshot<ClusterOverview>,
-    kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
-    summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
-    summary_session: Option<kubernetes_summary::SummarySession>,
-    summary_epoch: u64,
-    summary_job: Option<OwnedJob>,
-    summary_task: Option<Task<()>>,
+    /// The cluster sessions: a workspace of one.
+    registry: session::Registry,
     object_open_job: Option<OwnedJob>,
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
@@ -586,6 +577,7 @@ impl Pilot {
                     } if this.fixture => this.open_object(
                         builtin("pods").unwrap(),
                         resources::model::ObjectRef {
+                            connection: None,
                             namespace: namespace.clone(),
                             name: name.clone(),
                             uid: String::new(),
@@ -615,6 +607,7 @@ impl Pilot {
                             this.open_object(
                                 subject.kind().clone(),
                                 resources::model::ObjectRef {
+                                    connection: Some(subject.access().into()),
                                     namespace: subject.namespace().into(),
                                     name: subject.name().into(),
                                     uid: String::new(),
@@ -920,16 +913,8 @@ impl Pilot {
             config_loading: false,
             config_generation: 0,
             epoch: 0,
-            access: None,
-            access_configuration: None,
-            prompted_access: None,
             overview: Snapshot::default(),
-            kubernetes_summary: Snapshot::default(),
-            summary_health: None,
-            summary_session: None,
-            summary_epoch: 0,
-            summary_job: None,
-            summary_task: None,
+            registry: session::Registry::new(),
             object_open_job: None,
             object_open_task: None,
             object_open_sequence: 0,
@@ -1053,9 +1038,9 @@ impl Pilot {
 
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.epoch = self.epoch.wrapping_add(1);
-        self.access = None;
-        self.access_configuration = None;
-        self.prompted_access = None;
+        // The whole session goes, with its summary tasks, before anything
+        // below rebuilds from it.
+        self.registry.reset_active();
         self.search.update(cx, |search, cx| search.invalidate(cx));
         self.overview_task = None;
         self.overview_job = None;
@@ -1069,7 +1054,6 @@ impl Pilot {
         self.service_display = services::ServiceDisplay::default();
         self.load_history.clear();
         self.overview = Snapshot::default();
-        self.kubernetes_summary = Snapshot::default();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
@@ -1079,8 +1063,6 @@ impl Pilot {
             .document
             .update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
-        self.summary_health = None;
-        self.stop_summary();
         self.attention_expanded = false;
         self.object_open_job = None;
         self.object_open_task = None;
@@ -1246,7 +1228,8 @@ impl Pilot {
             // With nothing reading yet, Health's Retry reads the kubeconfig
             // and connects again too.
             ScreenEvent::RefreshSummary
-                if self.kubernetes_only.is_some() && self.summary_session.is_none() =>
+                if self.kubernetes_only.is_some()
+                    && self.registry.active().summary_session.is_none() =>
             {
                 self.refresh(window, cx)
             }
@@ -1288,6 +1271,7 @@ impl Pilot {
                 cluster: Arc::new(cluster.clone()),
                 collector,
                 config_path: self.applied.path.clone(),
+                applied: self.applied_access(),
             })
         };
         Some(ScreenSource {
@@ -1299,6 +1283,17 @@ impl Pilot {
             },
             nodes: Arc::new(self.nodes.clone()),
             live,
+        })
+    }
+
+    /// The local access the last overview was collected with, which a live
+    /// source carries for Operations to pin its clients to.
+    fn applied_access(&self) -> Option<resources::talos::AppliedAccess> {
+        Some(resources::talos::AppliedAccess {
+            config_path: self.applied.path.clone(),
+            selection: self.kubeconfig.clone(),
+            configuration: self.registry.active().access_configuration?,
+            identity: self.registry.active().access?,
         })
     }
 
@@ -1314,7 +1309,7 @@ impl Pilot {
         if let Some(kube) = &self.kubernetes_only {
             return kube.access().map(|access| access.id());
         }
-        self.access.map(|access| access.key())
+        self.registry.active().access.map(|access| access.key())
     }
 
     /// Where the Resources page reads: example objects, or the Kubernetes
@@ -1343,16 +1338,17 @@ impl Pilot {
             ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));
         collector.set_kubeconfig_selection(self.kubeconfig.clone());
         Some(KubeSource {
-            id: self.access?.key(),
+            id: self.registry.active().access?.key(),
             context: cluster.name.clone(),
             access: KubeAccess::Talos(Box::new(resources::talos::TalosAccess {
-                configuration: self.access_configuration?,
+                configuration: self.registry.active().access_configuration?,
                 selection: self.kubeconfig.clone(),
                 live: LiveSource {
                     client: cluster.client.clone()?,
                     cluster: Arc::new(cluster.clone()),
                     collector,
                     config_path: self.applied.path.clone(),
+                    applied: self.applied_access(),
                 },
             })),
         })
@@ -1378,7 +1374,7 @@ impl Pilot {
         for (_, screen) in &self.screens {
             screen.set_source(source.clone(), window, cx);
         }
-        if let Some(data) = self.summary_health.clone() {
+        if let Some(data) = self.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);
         }
         self.sync_unread_health(cx);
@@ -1419,7 +1415,7 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.prompted_access = None;
+        self.registry.active_mut().prompted_access = None;
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
         if self.page == Page::Resources {
