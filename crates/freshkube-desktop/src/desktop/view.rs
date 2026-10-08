@@ -190,7 +190,15 @@ impl Pilot {
                 let table = workspace.view == NodeView::Table
                     && !(workspace.open && workspace.expanded)
                     && freshkube_ui::table::TableSource::loading(self).is_some();
-                table.then(|| workspace.loading_motion().clone())
+                if table {
+                    return Some(workspace.loading_motion().clone());
+                }
+                // The open node's tab: a node screen's table loading.
+                self.node_workspace
+                    .open
+                    .then(|| self.active_screen())
+                    .flatten()
+                    .and_then(|screen| screen.loading_motion(cx))
             }
             Page::SystemServices => {
                 let services = self.system_services.read(cx);
@@ -198,13 +206,10 @@ impl Pilot {
                     .is_some()
                     .then(|| services.loading_motion().clone())
             }
-            Page::Lifecycle => {
-                let lifecycle = self.lifecycle.read(cx);
-                freshkube_ui::table::TableSource::loading(lifecycle)
-                    .is_some()
-                    .then(|| lifecycle.loading_motion().clone())
-            }
-            _ => None,
+            // Any other screen's table: etcd, Security, Health, Lifecycle.
+            _ => self
+                .active_screen()
+                .and_then(|screen| screen.loading_motion(cx)),
         }
     }
 

@@ -819,6 +819,11 @@ fn every_state_sits_under_the_header(cx: &mut TestAppContext) {
         assert!(screen.update(cx, |screen, _| screen.status().is_some()));
         screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
         window.render_frame(cx);
+        // While the overview is read, the table shows its loading rows.
+        window.find("lifecycle-loading");
+        // Once it answered with no node to target, the state says so.
+        crate::screens::set_reading(crate::screens::Reading::Answered, cx);
+        window.render_frame(cx);
         under_the_header(window);
     })
     .unwrap();

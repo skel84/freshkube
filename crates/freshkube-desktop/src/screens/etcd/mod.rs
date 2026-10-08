@@ -23,7 +23,7 @@ use gpui_kit::*;
 use talos_rs::{EtcdAlarm, EtcdMemberInfo, EtcdMemberStatus};
 use tokio::runtime::Handle;
 
-use super::{Loader, ScreenEvent, ScreenPanel, ScreenSource};
+use super::{Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, first_read};
 use crate::presentation;
 use crate::ui::{self, Tone};
 
@@ -55,6 +55,8 @@ pub(crate) struct EtcdScreen {
     /// The state whose chip filters the table.
     state: Option<MemberState>,
     derived: Derived,
+    /// The table's rows until the first answer.
+    loading: TableLoading,
 }
 
 /// One member as the table shows it.
@@ -211,6 +213,7 @@ impl ScreenPanel for EtcdScreen {
             table: TableState::new(PREFIX),
             state: None,
             derived: Derived::default(),
+            loading: TableLoading::new(PREFIX, cx),
         }
     }
 
@@ -240,6 +243,10 @@ impl ScreenPanel for EtcdScreen {
     fn status(&mut self) -> Option<&Segment> {
         self.derive_if_changed();
         self.derived.status.as_ref()
+    }
+
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
     }
 
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -538,6 +545,12 @@ fn missing(snapshot: &EtcdHealthSnapshot) -> Vec<String> {
 }
 
 impl EtcdScreen {
+    /// Whether the first answer is still to come: the table shows its
+    /// loading rows.
+    fn first_read(&self, cx: &App) -> bool {
+        first_read(self.source.as_ref(), &self.loader, Scope::Cluster, cx)
+    }
+
     fn members(&self) -> &[EtcdMemberSnapshot] {
         self.loader
             .data()

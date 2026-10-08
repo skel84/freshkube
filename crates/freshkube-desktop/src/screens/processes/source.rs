@@ -401,6 +401,10 @@ impl TableSource for ProcessesScreen {
     }
 
     /// Whether the node reported none or the filters hide them all.
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if !self.rows().is_empty() {
             return None;

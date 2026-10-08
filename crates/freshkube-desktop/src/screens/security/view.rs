@@ -90,6 +90,8 @@ impl Render for SecurityScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync();
         self.sync_status();
+        let first_read = self.first_read(cx);
+        self.loading.show(first_read);
         let header = self.render_header(window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -106,6 +108,7 @@ impl Render for SecurityScreen {
                     .child(state)
                     .into_any_element(),
             ],
+            None if first_read => vec![self.render_table(window, cx)],
             None if self.loader.data().is_some() => self.render_body(window, cx),
             None => Vec::new(),
         };
@@ -160,16 +163,7 @@ impl SecurityScreen {
             .children(failure_banner(&self.loader, cx))
             .children(partial_notice(missing.clone(), cx))
             .child(Self::summary(stats, cx));
-        let table = div()
-            .id("security-table")
-            .test_support()
-            .flex()
-            .flex_col()
-            .size_full()
-            .min_w_0()
-            .min_h_0()
-            .child(DataTable::new().render(self, window, cx).flex_1().min_h_0())
-            .into_any_element();
+        let table = self.render_table(window, cx);
         let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
         let split = inspector::split(
@@ -181,5 +175,20 @@ impl SecurityScreen {
             window,
         );
         vec![inset.into_any_element(), split]
+    }
+
+    /// The table alone: its rows, or its loading rows until the first
+    /// answer.
+    fn render_table(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("security-table")
+            .test_support()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .child(DataTable::new().render(self, window, cx).flex_1().min_h_0())
+            .into_any_element()
     }
 }

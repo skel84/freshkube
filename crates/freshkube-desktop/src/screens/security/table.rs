@@ -188,6 +188,10 @@ impl TableSource for SecurityScreen {
         window.focus(&self.focus, cx);
     }
 
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         self.display
             .1

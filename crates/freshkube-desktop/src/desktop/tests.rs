@@ -1930,6 +1930,75 @@ fn the_lifecycle_loading_motion_stops_on_its_answer_or_a_failure(cx: &mut TestAp
     }
 }
 
+/// Every screen table shows the shared loading rows under its header, edge
+/// to edge as its rows will be, while the overview is read; the shell
+/// pulses them, and the first answer stops the motion.
+#[gpui_kit::test]
+fn screen_tables_show_the_shared_loading_rows_until_the_first_answer(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    let pages = [
+        ("secondary-5", "workloads", "Workloads"),
+        ("secondary-6", "etcd", "etcd"),
+        ("secondary-8", "security", "Security"),
+        ("secondary-9", "lifecycle", "Lifecycle"),
+    ];
+    for (key, prefix, title) in pages {
+        cx.update_window(handle, |_, window, cx| window.press(key, cx))
+            .unwrap();
+        cx.run_until_parked();
+        motion_frame(cx, handle);
+        assert!(motion_frame(cx, handle) > 0, "{prefix}'s rows move");
+        cx.update_window(handle, |_, window, cx| {
+            let loading: &'static str = format!("{prefix}-loading").leak();
+            assert!(window.find(loading).visible());
+            assert!(window.try_find("screen-waiting").is_none());
+            super::layout_check::assert_edge_frame(
+                window,
+                cx,
+                &super::layout_check::PageFrame {
+                    page: format!("{prefix}-page").leak(),
+                    title: format!("{prefix}-title").leak(),
+                    title_text: title,
+                    content: loading,
+                },
+            );
+            assert!(view.read(cx).page_loading_motion(cx).is_some());
+        })
+        .unwrap();
+    }
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.fixture_hold = false;
+            // The held read still counts as in flight; let the refresh start one.
+            view.overview = crate::state::Snapshot::default();
+            view.refresh_now(window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // The example answers through Tokio; draw until Lifecycle's rows are in.
+    for _ in 0..50 {
+        let waiting = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find("lifecycle-loading").is_some()
+            })
+            .unwrap();
+        if !waiting {
+            break;
+        }
+        motion_frame(cx, handle);
+    }
+    assert_motion_stopped(cx, handle, "the answer");
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.try_find("lifecycle-loading").is_none());
+        window.find("lifecycle-list");
+        assert!(view.read(cx).page_loading_motion(cx).is_none());
+    })
+    .unwrap();
+}
+
 /// A page that hides takes its motion with it: the shell no longer mounts
 /// it, so nothing asks frames, and a shell redraw doesn't draw it.
 #[gpui_kit::test]
@@ -3386,6 +3455,7 @@ fn kubernetes_only_health_failure(
         window.render_frame(cx);
         assert!(window.try_find("screen-no-node").is_none());
         assert!(window.try_find("screen-waiting").is_none());
+        assert!(window.try_find("workloads-loading").is_none());
         match &view.read(cx).summary_health {
             Some(Err(reason)) => reason.clone(),
             _ => panic!("{what}: Health has no failure"),
@@ -3445,14 +3515,15 @@ fn kubernetes_only_health_says_the_kubeconfig_is_missing_and_retries(cx: &mut Te
     let reason = kubernetes_only_health_failure(cx, handle, &view, "the kubeconfig to fail");
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(view.read(cx).config_error.as_deref(), Some(reason.as_str()));
-        // Retry reads the kubeconfig again: Health waits while it does.
+        // Retry reads the kubeconfig again: Health's table shows its
+        // loading rows while it does.
         window.click("screen-retry", cx);
     })
     .unwrap();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(view.read(cx).config_loading);
-        assert!(window.try_find("screen-waiting").is_some());
+        assert!(window.try_find("workloads-loading").is_some());
         assert!(window.try_find("k8s-unavailable").is_none());
     })
     .unwrap();

@@ -78,9 +78,9 @@ impl WorkloadsScreen {
                     .into_any_element(),
                 );
             }
-            // Health reads the Kubernetes summary, never a node: it waits
-            // for the first answer while something reads it.
-            (None, Summary::Reading) => return Some(waiting(cx)),
+            // Health reads the Kubernetes summary, never a node: its table
+            // shows loading rows while something reads it.
+            _ if self.loading.rows().is_some() => return None,
             _ => {}
         }
         // No data and the load failed: the Kubernetes API isn't reachable.
@@ -159,6 +159,7 @@ impl Render for WorkloadsScreen {
             0.
         };
         self.fit_name_column(crate::screens::page_width(window) - inspector);
+        self.loading.show(self.first_read(cx));
         let header = self.render_header(window, cx);
         // The table runs edge to edge under the toolbar; the banners and a
         // state in the table's place sit in an inset between them. A short
@@ -190,6 +191,9 @@ impl Render for WorkloadsScreen {
                     )
                 })
                 .child(self.render_split(beside, window, cx))
+            }
+            (None, None) if self.loading.rows().is_some() => {
+                page.child(self.render_split(beside, window, cx))
             }
             (None, None) => page,
         };
