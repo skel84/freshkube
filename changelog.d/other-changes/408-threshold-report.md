@@ -1,0 +1,1 @@
+- **Observability:** an application's example threshold dialog reads the report tab on screen, with its title and default (CPU threshold, 85), and saves under that report, instead of always using the report the application opened on.

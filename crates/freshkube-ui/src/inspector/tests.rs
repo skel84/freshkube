@@ -191,6 +191,7 @@ fn without_an_inspector_the_table_fills_the_split(cx: &mut TestAppContext) {
 
 #[test]
 fn a_remembered_width_is_kept_above_the_least() {
+    let start_width = |width| crate::ui::start_width(width, WIDTH, MIN_WIDTH);
     assert_eq!(start_width(None), WIDTH);
     assert_eq!(start_width(Some(600.)), 600.);
     assert_eq!(start_width(Some(100.)), MIN_WIDTH);

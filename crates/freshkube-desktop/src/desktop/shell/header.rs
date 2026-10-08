@@ -1,5 +1,6 @@
 //! The header: the context switcher, where the window is, Search
 //! everything, Refresh, appearance and Settings.
+use super::refresh_tip::{RefreshTip, TooltipView as _};
 use super::*;
 
 /// Command-K's hint on the search field.
@@ -388,7 +389,7 @@ impl Pilot {
         self.countdown.update(cx, |countdown, _| {
             countdown.set(remaining, ring_visible);
         });
-        let next_in = AUTO_REFRESH.saturating_sub(self.elapsed).as_secs();
+        let pilot = cx.entity().downgrade();
         div()
             .relative()
             .size(dp(32.))
@@ -409,15 +410,11 @@ impl Pilot {
                     .rounded(px(12.))
                     .icon(ui::refresh_icon(loading, cx))
                     .accessibility_label("Refresh now")
-                    .tooltip(if loading {
-                        "Refreshing…".into()
-                    } else if ring_visible {
-                        format!("Refresh now · next Talos refresh in {next_in} s")
-                    } else {
-                        "Refresh now".into()
-                    })
                     .disabled(loading)
-                    .on_click(cx.listener(|view, _, window, cx| view.refresh_now(window, cx))),
+                    .on_click(cx.listener(|view, _, window, cx| view.refresh_now(window, cx)))
+                    .tooltip_view("refresh-tip", move |window, cx| {
+                        RefreshTip::build(pilot.clone(), window, cx)
+                    }),
             )
             .into_any_element()
     }
@@ -466,12 +463,15 @@ impl Pilot {
         Popover::new("settings-popover")
             .anchor(Anchor::TopRight)
             .open(self.settings_open)
-            .on_open_change(move |open, _, cx| {
+            .on_open_change(move |open, window, cx| {
                 let open = *open;
                 _ = open_pilot.update(cx, |view, cx| {
                     view.settings_open = open;
                     cx.notify();
                 });
+                if !open {
+                    retrack_hover(window);
+                }
             })
             .trigger(
                 Button::new("settings")
@@ -486,4 +486,25 @@ impl Pilot {
             })
             .into_any_element()
     }
+}
+
+/// Lets a popover's trigger find out where the pointer went while it was
+/// open (#409). Kit's button drops its hover style while its popover is
+/// open (`selected || open`), and GPUI then tracks no hover for it, so the
+/// gear kept the hover it had when clicked: closed, it laid out its icon in
+/// the hover colour until the pointer next moved. A move where the pointer
+/// already is, once the closed trigger is drawn, settles that.
+fn retrack_hover(window: &Window) {
+    // Next-frame callbacks run before that frame draws: the first runs
+    // before the closed trigger is drawn, the second after.
+    window.on_next_frame(|window, _| {
+        window.on_next_frame(|window, cx| {
+            let event = MouseMoveEvent {
+                position: window.mouse_position(),
+                pressed_button: None,
+                modifiers: window.modifiers(),
+            };
+            window.dispatch_event(event.to_platform_input(), cx);
+        });
+    });
 }

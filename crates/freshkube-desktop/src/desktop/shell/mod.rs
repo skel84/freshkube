@@ -513,6 +513,7 @@ use frame::settings_content;
 pub(super) use frame::status_text;
 mod header;
 mod rail;
+mod refresh_tip;
 pub(super) use rail::RailMarks;
 
 mod column_state;

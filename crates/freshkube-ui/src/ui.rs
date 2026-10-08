@@ -92,6 +92,16 @@ pub fn dp(n: f32) -> Rems {
     rems(n / BASE_TEXT)
 }
 
+/// A remembered pane width in `dp`, or `default` when there is none or it
+/// isn't a number; never narrower than `min`. The drawer and the inspector
+/// start from it with their own sizes.
+pub fn start_width(width: Option<f32>, default: f32, min: f32) -> f32 {
+    match width {
+        Some(width) if width.is_finite() => width.max(min),
+        _ => default,
+    }
+}
+
 /// `dp(n)` in pixels, for APIs and arithmetic that take `Pixels`.
 pub fn dp_px(n: f32, window: &Window) -> Pixels {
     window.rem_size() * (n / BASE_TEXT)

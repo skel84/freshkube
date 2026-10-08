@@ -293,7 +293,7 @@ impl InspectorSplit {
     ) -> Self {
         let beside = cx.new(|_| ResizableState::default());
         let stacked = cx.new(|_| ResizableState::default());
-        let width = Rc::new(Cell::new(start_width(width)));
+        let width = Rc::new(Cell::new(crate::ui::start_width(width, WIDTH, MIN_WIDTH)));
         // Kit tells the state once a drag ends, not while it moves.
         let _resized = cx.subscribe(&beside, {
             let width = width.clone();
@@ -390,14 +390,6 @@ impl InspectorSplit {
     #[cfg(any(test, feature = "testing"))]
     pub fn stacked_state(&self) -> &Entity<ResizableState> {
         &self.stacked
-    }
-}
-
-/// A remembered width, or [`WIDTH`]; never narrower than [`MIN_WIDTH`].
-fn start_width(width: Option<f32>) -> f32 {
-    match width {
-        Some(width) if width.is_finite() => width.max(MIN_WIDTH),
-        _ => WIDTH,
     }
 }
 

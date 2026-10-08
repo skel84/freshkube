@@ -454,6 +454,41 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     .unwrap();
 }
 
+/// The arrows step through the services the filter shows, not the node's
+/// whole list: with the selection filtered out, both land on the one row
+/// left.
+#[gpui_kit::test]
+fn service_arrows_step_through_the_filtered_rows(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        open_node_tab(window, cx, super::nodes::NodeTab::Services);
+        window.render_frame(cx);
+        window.click("service-filter", cx);
+        window.input("apid", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for key in ["down", "up"] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // A click puts the keyboard on the list; the selection is then
+            // a service the filter hides.
+            window.within("services-region").click("apid", cx);
+            view.update(cx, |pilot, _| {
+                pilot.selected_service = Some("auditd".into())
+            });
+            window.press(key, cx);
+            assert_eq!(
+                view.read(cx).selected_service.as_deref(),
+                Some("apid"),
+                "{key}"
+            );
+        })
+        .unwrap();
+    }
+}
+
 /// Stacked under the list, a newly selected service's details scroll into
 /// view, by pointer and by keyboard; beside the list, nothing scrolls, and
 /// a refresh never reveals again (#238).
@@ -5002,4 +5037,95 @@ fn a_long_segment_truncates_and_leaves_the_right_side_whole(cx: &mut TestAppCont
         .unwrap();
     }
     assert_eq!(widths[0], widths[1], "the right side keeps its width");
+}
+
+/// Rests the pointer on the header's Refresh button until its tooltip shows.
+fn hover_refresh(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+    use gpui_kit::{InputEvent, MouseMoveEvent};
+    cx.update_window(handle, |_, window, cx| {
+        draw(window, cx);
+        let position = window.find("refresh-tip").bounds().center();
+        window.dispatch_event(
+            MouseMoveEvent {
+                position,
+                ..Default::default()
+            }
+            .to_platform_input(),
+            cx,
+        );
+    })
+    .unwrap();
+    settle_tip(cx, handle);
+}
+
+/// Lets an open Refresh tooltip read the shell again, and draws.
+fn settle_tip(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(600));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| draw(window, cx))
+        .unwrap();
+}
+
+fn refresh_tip(view: &Entity<Pilot>, cx: &mut TestAppContext) -> String {
+    cx.update(|cx| view.read(cx).refresh_tip().to_string())
+}
+
+/// Steps the clock by `steps` quarter seconds, drawing after each, and
+/// returns how many times the header drew and how many seconds the shell
+/// counted.
+fn quarter_seconds(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    view: &Entity<Pilot>,
+    steps: usize,
+) -> (usize, u64) {
+    let (header, elapsed) = (
+        count("chrome.header"),
+        cx.update(|cx| view.read(cx).elapsed),
+    );
+    for _ in 0..steps {
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(250));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+    }
+    let elapsed = cx.update(|cx| view.read(cx).elapsed) - elapsed;
+    (count("chrome.header") - header, elapsed.as_secs())
+}
+
+/// An open Refresh tooltip counts down with the ring (#409). Its reads
+/// redraw the tooltip alone: the cached header still draws once a second,
+/// for the ring inside it, exactly as with the tooltip closed.
+#[gpui_kit::test]
+fn the_open_refresh_tooltip_counts_down_without_redrawing_the_header(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| draw(window, cx))
+        .unwrap();
+    let (closed, seconds) = quarter_seconds(cx, handle, &view, 12);
+    assert_eq!(closed, seconds as usize, "closed: the ring's tick alone");
+    hover_refresh(cx, handle);
+    let first = refresh_tip(&view, cx);
+    assert!(
+        first.starts_with("Refresh now · next Talos refresh in "),
+        "{first}"
+    );
+    assert!(freshkube_ui::tooltip::drawn(&first) > 0, "{first} shows");
+    let (open, seconds) = quarter_seconds(cx, handle, &view, 12);
+    assert_eq!(open, seconds as usize, "open: still the ring's tick alone");
+    let later = refresh_tip(&view, cx);
+    assert_ne!(later, first, "the countdown moved");
+    assert!(freshkube_ui::tooltip::drawn(&later) > 0, "{later} shows");
+}
+
+/// While a read is in flight, the open tooltip says so.
+#[gpui_kit::test]
+fn the_open_refresh_tooltip_reads_refreshing_during_a_read(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    hover_refresh(cx, handle);
+    let before = freshkube_ui::tooltip::drawn("Refreshing…");
+    cx.update(|cx| view.update(cx, |pilot, _| pilot.config_loading = true));
+    settle_tip(cx, handle);
+    assert!(freshkube_ui::tooltip::drawn("Refreshing…") > before);
 }
