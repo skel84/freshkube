@@ -510,3 +510,35 @@ fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAp
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn a_scoped_application_keeps_its_name_in_the_inspector(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open(cx, 1280., 880., |page| page.set_variant(Variant::Spread));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(CATALOG, cx);
+        window.render_frame(cx);
+        let pane = window.find("applications-detail").bounds();
+        let title = window.find("applications-detail-title");
+        let mark = window.find("applications-detail-mark");
+        // The tag's short words leave the name its room, and both stay
+        // inside the Inspector.
+        assert!(title.visible());
+        assert!(
+            title.bounds().size.width > gpui_kit::px(40.),
+            "{:?}",
+            title.bounds()
+        );
+        assert!(
+            mark.bounds().right() <= pane.right(),
+            "{:?} in {pane:?}",
+            mark.bounds()
+        );
+        let words = mark.label().unwrap().to_owned();
+        assert!(
+            words.starts_with("Argo CD on core-fra was read in delivery, gitops, platform only"),
+            "{words}"
+        );
+    })
+    .unwrap();
+}

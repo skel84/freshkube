@@ -143,6 +143,8 @@ pub(crate) struct AppRow {
     pub(super) mark: Mark,
     /// The mark in this row's words: Scoped names its namespaces.
     pub(super) mark_words: SharedString,
+    /// The Inspector tag's words: the mark's short words.
+    pub(super) mark_short: SharedString,
     pub(super) found_by: SharedString,
     pub(super) parts: SharedString,
     pub(super) clusters: SharedString,
@@ -545,16 +547,13 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         .iter()
         .filter_map(|evidence| evidence_words(evidence, labels))
         .collect();
-    let mut notes = grouped_notes(&app.notes, labels);
+    let notes = grouped_notes(&app.notes, labels);
     let mut scope: Vec<String> = Vec::new();
     if app.rule == Rule::ArgoCd {
         for (session, words) in &short.namespace_only {
             if sessions.contains(session) {
-                let words = format!("Argo CD on {} was {words}", labels.of(session));
-                notes.push(format!(
-                    "{words}; Applications in other namespaces aren't listed"
-                ));
-                scope.push(words);
+                // The banner and the mark say this; the row's notes don't.
+                scope.push(format!("Argo CD on {} was {words}", labels.of(session)));
             }
         }
     }
@@ -563,11 +562,11 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
     if app.rule == Rule::Kargo {
         for (session, words) in &short.argo_partial {
             if sessions.contains(session) {
-                let words = format!("Argo CD on {} was {words}", labels.of(session));
-                notes.push(format!(
-                    "{words}; Applications its Stages promote to may not all be listed"
+                scope.push(format!(
+                    "Argo CD on {} was {words}; Applications its Stages promote to may not all \
+                     be listed",
+                    labels.of(session)
                 ));
-                scope.push(words);
             }
         }
     }
@@ -605,6 +604,16 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         ("Parts", parts.clone().into()),
         ("Clusters", labels.all(&sessions).into()),
     ];
+    if scoped {
+        let read = match app.rule {
+            Rule::ArgoCd => scope
+                .iter()
+                .map(|words| format!("{words}; Applications in other namespaces aren't listed"))
+                .collect::<Vec<_>>(),
+            _ => scope.clone(),
+        };
+        fields.push(("Argo CD", capital(&read.join("\n")).into()));
+    }
     if mark == Mark::Incomplete {
         fields.push((
             "Read",
@@ -622,6 +631,7 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         mark,
         tooltip: format!("{} · {}", app.name, capital(&mark_words)).into(),
         mark_words: capital(&mark_words).into(),
+        mark_short: capital(mark.short()).into(),
         query: format!(
             "{} {} {} {}",
             app.name,
@@ -1024,12 +1034,25 @@ mod tests {
             "Argo CD on core-fra was read in gitops only, where Argo CD's workloads run"
         );
         assert!(catalog.tooltip.contains("read in gitops only"));
-        assert!(
-            catalog
-                .notes
+        assert_eq!(catalog.mark_short.as_ref(), "Argo CD in part");
+        // The scope is the banner's and the mark's: the Inspector says it
+        // once as a field, and the Notes column doesn't repeat it.
+        let field = |row: &AppRow| {
+            row.fields
                 .iter()
-                .any(|n| n.contains("read in gitops only"))
+                .find(|(label, _)| *label == "Argo CD")
+                .map(|(_, value)| value.to_string())
+        };
+        assert_eq!(
+            field(catalog).as_deref(),
+            Some(
+                "Argo CD on core-fra was read in gitops only, where Argo CD's workloads run; Applications in other namespaces aren't listed"
+            )
         );
+        for row in display.rows.iter().filter(|r| r.rule == Rule::ArgoCd) {
+            assert!(!row.note.contains("gitops"), "{}", row.note);
+            assert!(row.notes.iter().all(|n| !n.contains("gitops")));
+        }
     }
 
     #[test]
@@ -1075,13 +1098,15 @@ mod tests {
         let checkout = display.rows.iter().find(|r| r.name == "checkout").unwrap();
         assert_eq!(checkout.rule, Rule::Kargo);
         assert_eq!(checkout.mark, Mark::Scoped);
+        let read = checkout
+            .fields
+            .iter()
+            .find(|(label, _)| *label == "Argo CD")
+            .map(|(_, value)| value.to_string())
+            .unwrap_or_default();
         assert!(
-            checkout
-                .notes
-                .iter()
-                .any(|n| n.contains("Applications its Stages promote to may not all be listed")),
-            "{:?}",
-            checkout.notes
+            read.contains("Applications its Stages promote to may not all be listed"),
+            "{read}"
         );
         // Refused is worse, and says so the same way.
         let mut inputs = example::acme();

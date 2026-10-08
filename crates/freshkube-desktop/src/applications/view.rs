@@ -210,12 +210,21 @@ impl ApplicationsPage {
             .truncate()
             .follow_tooltip(row.name.clone())
             .child(row.name.clone());
-        let heading = h_flex().gap_2().min_w_0().child(title).child(ui::tag(
-            table::tone(row.mark),
-            None,
-            row.mark_words.clone(),
-            cx,
-        ));
+        // The tag keeps to its short words, so the name keeps its room;
+        // the whole sentence is its tooltip and label.
+        let mark = div()
+            .id("applications-detail-mark")
+            .test_support()
+            .aria_label(row.mark_words.clone())
+            .flex_none()
+            .follow_tooltip(row.mark_words.clone())
+            .child(ui::tag(
+                table::tone(row.mark),
+                None,
+                row.mark_short.clone(),
+                cx,
+            ));
+        let heading = h_flex().gap_2().min_w_0().child(title).child(mark);
         let notes = row.notes.iter().enumerate().map(|(ix, note)| {
             div()
                 .id(SharedString::from(format!("applications-detail-note-{ix}")))
