@@ -9,8 +9,8 @@ use crate::monitoring::panel::PanelView;
 use freshkube_core::coroot::{self as api, ChartPanel};
 use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use patterns::{PatternRow, PatternTable};
-pub use source::{CorootLogView, CorootLogs};
 pub(crate) use source::CorootPanel;
+pub use source::{CorootLogView, CorootLogs};
 
 mod example;
 mod patterns;
