@@ -62,7 +62,7 @@ That screen owns `Loader<EtcdHealthSnapshot>`, compares old/new `source.target` 
 
 ## Read-job and delivery ownership
 
-[backend::OwnedJob](../crates/freshkube-desktop/src/backend.rs) wraps a Tokio `JoinHandle<()>`; its `Drop` calls `abort()`. Dropping a Tokio join handle alone would detach it, which is why ordinary reads keep this guard. `spawn_job` also selects on `sender.closed()`, so dropping its receiver cancels pending work. It applies a deadline to reads. Already-running `spawn_blocking` work cannot be aborted by this guard; local file reads are bounded and off GPUI.
+[OwnedJob](../crates/freshkube-core/src/job.rs) (core's `job`, which desktop's `backend` re-exports) wraps a Tokio `JoinHandle<()>`; its `Drop` calls `abort()`. Dropping a Tokio join handle alone would detach it, which is why ordinary reads keep this guard. `spawn_job` also selects on `sender.closed()`, so dropping its receiver cancels pending work. It applies a deadline to reads. Already-running `spawn_blocking` work cannot be aborted by this guard; local file reads are bounded and off GPUI.
 
 Keep the GPUI delivery `Task` as well as the `OwnedJob` on the owner. Replacing the pair drops old work and delivery. Use `cx.spawn`/`spawn_in` with weak entities, check the captured identity/generation in `update`/`update_in`, and handle the entity/window disappearing. Cancellation saves work; completion guards establish publication correctness even if an answer raced cancellation. Ordinary read delivery is not detached.
 

@@ -34,6 +34,7 @@ pub mod errors;
 pub mod formatting;
 pub mod indicators;
 pub mod inspection;
+pub mod job;
 mod kube_client;
 mod kubeconfig_selection;
 pub use kubeconfig_selection::{BoundedReadError, read_bounded_regular_file};
