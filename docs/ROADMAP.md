@@ -16,6 +16,7 @@ These hold for every step until a later one deliberately changes them.
 
 | Step | What landed | Commit |
 | --- | --- | --- |
+| All containers in one pod log ([#482](https://github.com/skel84/freshkube/issues/482), step 7) | A pod with two or more app containers offers All containers at the top of its log's picker: every app container's stream in one `LogView<PodLogs>`, at most `MAX_STREAMS` (20) in the pod's order with the rest counted in its note, through the `StreamSet` it shares with a workload's tab (`logs/streams.rs`, split out first in [PR #483](https://github.com/skel84/freshkube/pull/483)). Lines interleave by time and are tagged by container in the Source column, Copy and Download; a container that ends leaves a marker while the others read on; Previous reads each one that ran before. Init and ephemeral containers are never part of All. A saved tab keeps the pick | `a8b35c3` ([PR #486](https://github.com/skel84/freshkube/pull/486)) |
 | Observability crate ([#53](https://github.com/skel84/freshkube/issues/53), B4) | `crates/freshkube-observability` holds the Coroot pages and the Coroot log source, moved unchanged from desktop's `observability/` and `logs/coroot.rs`; desktop reaches the page by its old path. A measurement on Monitoring's crate decided it: a crate's own test loop took 23% of desktop's to build and 32% end to end. Four seams came first: `TableLoading` into `freshkube_ui::table`, `Snapshot` into `freshkube_core::snapshot`, inspector widths through `freshkube_ui::inspector::saved_widths`, and the Coroot fixture hold as `hold_examples`. Only what the shell calls is public; `fixture_link` sits behind its `testing` feature. Desktop depends on it; it depends on nothing of desktop. | the commit that adds this row |
 | Monitoring crate ([#53](https://github.com/skel84/freshkube/issues/53), B3) | `crates/freshkube-monitoring` holds Monitoring: the page, the panels and the history charts, moved unchanged from desktop's `monitoring/`, which desktop reaches by its old path. Four seams came first: the request guard (`freshkube_core::job`), the secret store (`freshkube_core::secrets`), the page widths (`freshkube_ui::page`) and the layout checks (`freshkube_ui::layout_check`). Only what desktop calls is public; the tests' read-outs sit behind its `testing` feature, and the stress binary's instant example answers behind `stress`. Desktop's Resources and Observability depend on it; it depends on neither. | the commit that adds this row |
 | Small test and package cleanup | Every workspace crate sets `publish = false`: Freshkube ships as an app, and none goes to crates.io. `freshkube-core`, `talos-rs` and the `freshkube` binary gain it; the rest had it. The Operations tests' clock cleanup landed earlier. | the commit that adds this row |
@@ -366,7 +367,7 @@ The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histor
 ### 7. Small daily wins
 
 Taken as they come up, between larger steps:
-- logs of a pod's several containers in one `LogView` (a whole workload's landed, Done);
+- logs of a pod's several containers in one `LogView` (a whole workload's and a pod's All containers landed, Done);
 - current CPU and memory in tables from the metrics API (Pods, Nodes and a node's Pods list landed, Done; workload sums not planned).
 
 ### 8. Later
