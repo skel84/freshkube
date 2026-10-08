@@ -244,10 +244,9 @@ pub(super) fn build_kubernetes_checks(
     vec![access, pod_health]
 }
 
-pub(super) async fn build_cni_checks(
+pub(super) fn build_cni_checks(
     context: &DiagnosticContext,
     cni: &CniSnapshot,
-    k8s_client: Option<&Client>,
 ) -> Vec<DiagnosticCheck> {
     match &cni.cni_type {
         SourceState::Unavailable(unavailable) => vec![DiagnosticCheck::unknown(
@@ -257,9 +256,7 @@ pub(super) async fn build_cni_checks(
             unavailable,
         )],
         SourceState::Available(CniType::Flannel) => build_flannel_checks(context, cni),
-        SourceState::Available(CniType::Cilium) => {
-            build_cilium_checks(context, cni, k8s_client).await
-        }
+        SourceState::Available(CniType::Cilium) => build_cilium_checks(cni),
         SourceState::Available(CniType::Calico) => build_calico_checks(cni),
         SourceState::Available(CniType::None) => vec![DiagnosticCheck::fail(
             "cni",
@@ -419,14 +416,23 @@ fn flannel_not_initialized_check(context: &DiagnosticContext, evidence: &str) ->
     check
 }
 
-async fn build_cilium_checks(
-    context: &DiagnosticContext,
-    cni: &CniSnapshot,
-    client: Option<&Client>,
-) -> Vec<DiagnosticCheck> {
+fn build_cilium_checks(cni: &CniSnapshot) -> Vec<DiagnosticCheck> {
+    let not_collected = |source: &str| {
+        DeploymentEvidence::Unavailable(SourceUnavailable {
+            source: source.to_string(),
+            reason: "Cilium component state was not collected".to_string(),
+        })
+    };
+    let (operator, hubble_relay) = match &cni.cilium {
+        Some(cilium) => (cilium.operator.clone(), cilium.hubble_relay.clone()),
+        None => (
+            not_collected("Kubernetes Cilium operator API"),
+            not_collected("Kubernetes Hubble Relay API"),
+        ),
+    };
     let mut checks = vec![cilium_agents_check(&cni.pods)];
-    checks.push(cilium_operator_check(client, &context.kubernetes_access).await);
-    if let Some(hubble) = hubble_relay_check(client, &context.kubernetes_access).await {
+    checks.push(cilium_operator_check(&operator));
+    if let Some(hubble) = hubble_relay_check(&hubble_relay) {
         checks.push(hubble);
     }
 
@@ -564,117 +570,79 @@ fn cilium_agents_check(pods: &SourceState<CniInfo>) -> DiagnosticCheck {
     }
 }
 
-async fn cilium_operator_check(
-    client: Option<&Client>,
-    access: &SourceState<KubernetesAccess>,
-) -> DiagnosticCheck {
-    let Some(client) = client else {
-        return DiagnosticCheck::unknown(
-            "cilium_operator",
-            CheckCategory::Cni,
-            "Cilium Operator",
-            &unavailable_info_from_access(access, "Kubernetes Cilium operator API"),
-        );
-    };
-    let deployments: Api<Deployment> = Api::namespaced(client.clone(), "kube-system");
-
-    let mut last_error = None;
-    for name in ["cilium-operator", "cilium-operator-generic"] {
-        match deployments.get(name).await {
-            Ok(deployment) => {
-                let status = deployment.status.as_ref();
-                let replicas = status.and_then(|status| status.replicas).unwrap_or(0);
-                let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
-                let available = status
-                    .and_then(|status| status.available_replicas)
-                    .unwrap_or(0);
-                let unavailable = status
-                    .and_then(|status| status.unavailable_replicas)
-                    .unwrap_or(0);
-
-                if ready > 0 && ready == replicas {
-                    return DiagnosticCheck::pass(
-                        "cilium_operator",
-                        CheckCategory::Cni,
-                        "Cilium Operator",
-                        format!("{ready}/{replicas} ready"),
-                    );
-                }
-                if available >= 1 && unavailable > 0 {
-                    return DiagnosticCheck::pass(
-                        "cilium_operator",
-                        CheckCategory::Cni,
-                        "Cilium Operator",
-                        format!("{ready}/{replicas} ready (HA limited)"),
-                    )
-                    .with_details(format!(
-                        "{unavailable} replica(s) pending, likely due to pod anti-affinity; {available} replica(s) are available."
-                    ));
-                }
-                if available > 0 {
-                    return DiagnosticCheck::warn(
-                        "cilium_operator",
-                        CheckCategory::Cni,
-                        "Cilium Operator",
-                        format!("{ready}/{replicas} ready ({available} available)"),
-                    );
-                }
-                return DiagnosticCheck::fail(
-                    "cilium_operator",
-                    CheckCategory::Cni,
-                    "Cilium Operator",
-                    format!("{ready}/{replicas} ready"),
-                )
-                .with_details("Cilium Operator is not ready; IP allocation and CiliumNetworkPolicy may be affected.");
-            }
-            Err(error) if is_kube_not_found(&error) => continue,
-            Err(error) => {
-                last_error = Some(error.to_string());
-                break;
-            }
+fn cilium_operator_check(operator: &DeploymentEvidence) -> DiagnosticCheck {
+    let (replicas, ready, available, unavailable) = match operator {
+        DeploymentEvidence::Found {
+            replicas,
+            ready,
+            available,
+            unavailable,
+        } => (*replicas, *ready, *available, *unavailable),
+        DeploymentEvidence::Unavailable(unavailable) => {
+            return DiagnosticCheck::unknown(
+                "cilium_operator",
+                CheckCategory::Cni,
+                "Cilium Operator",
+                unavailable,
+            );
         }
-    }
+        DeploymentEvidence::NotFound => {
+            return DiagnosticCheck::unknown(
+                "cilium_operator",
+                CheckCategory::Cni,
+                "Cilium Operator",
+                &SourceUnavailable {
+                    source: "Kubernetes Cilium operator deployment".to_string(),
+                    reason: "No supported Cilium operator deployment was found".to_string(),
+                },
+            );
+        }
+    };
 
-    match last_error {
-        Some(error) => DiagnosticCheck::unknown(
+    if ready > 0 && ready == replicas {
+        return DiagnosticCheck::pass(
             "cilium_operator",
             CheckCategory::Cni,
             "Cilium Operator",
-            &SourceUnavailable {
-                source: "Kubernetes Cilium operator API".to_string(),
-                reason: error,
-            },
-        ),
-        None => DiagnosticCheck::unknown(
-            "cilium_operator",
-            CheckCategory::Cni,
-            "Cilium Operator",
-            &SourceUnavailable {
-                source: "Kubernetes Cilium operator deployment".to_string(),
-                reason: "No supported Cilium operator deployment was found".to_string(),
-            },
-        ),
+            format!("{ready}/{replicas} ready"),
+        );
     }
+    if available >= 1 && unavailable > 0 {
+        return DiagnosticCheck::pass(
+            "cilium_operator",
+            CheckCategory::Cni,
+            "Cilium Operator",
+            format!("{ready}/{replicas} ready (HA limited)"),
+        )
+        .with_details(format!(
+            "{unavailable} replica(s) pending, likely due to pod anti-affinity; {available} replica(s) are available."
+        ));
+    }
+    if available > 0 {
+        return DiagnosticCheck::warn(
+            "cilium_operator",
+            CheckCategory::Cni,
+            "Cilium Operator",
+            format!("{ready}/{replicas} ready ({available} available)"),
+        );
+    }
+    DiagnosticCheck::fail(
+        "cilium_operator",
+        CheckCategory::Cni,
+        "Cilium Operator",
+        format!("{ready}/{replicas} ready"),
+    )
+    .with_details(
+        "Cilium Operator is not ready; IP allocation and CiliumNetworkPolicy may be affected.",
+    )
 }
 
-async fn hubble_relay_check(
-    client: Option<&Client>,
-    access: &SourceState<KubernetesAccess>,
-) -> Option<DiagnosticCheck> {
-    let Some(client) = client else {
-        return Some(DiagnosticCheck::unknown(
-            "hubble_relay",
-            CheckCategory::Cni,
-            "Hubble Relay",
-            &unavailable_info_from_access(access, "Kubernetes Hubble Relay API"),
-        ));
-    };
-    let deployments: Api<Deployment> = Api::namespaced(client.clone(), "kube-system");
-    match deployments.get("hubble-relay").await {
-        Ok(deployment) => {
-            let status = deployment.status.as_ref();
-            let replicas = status.and_then(|status| status.replicas).unwrap_or(0);
-            let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
+fn hubble_relay_check(relay: &DeploymentEvidence) -> Option<DiagnosticCheck> {
+    match relay {
+        DeploymentEvidence::Found {
+            replicas, ready, ..
+        } => {
+            let (replicas, ready) = (*replicas, *ready);
             if ready > 0 && ready == replicas {
                 Some(DiagnosticCheck::pass(
                     "hubble_relay",
@@ -696,21 +664,14 @@ async fn hubble_relay_check(
                 )
             }
         }
-        Err(error) if is_kube_not_found(&error) => None,
-        Err(error) => Some(DiagnosticCheck::unknown(
+        DeploymentEvidence::NotFound => None,
+        DeploymentEvidence::Unavailable(unavailable) => Some(DiagnosticCheck::unknown(
             "hubble_relay",
             CheckCategory::Cni,
             "Hubble Relay",
-            &SourceUnavailable {
-                source: "Kubernetes Hubble Relay API".to_string(),
-                reason: error.to_string(),
-            },
+            unavailable,
         )),
     }
-}
-
-fn is_kube_not_found(error: &kube::Error) -> bool {
-    matches!(error, kube::Error::Api(response) if response.code == 404)
 }
 
 fn build_calico_checks(cni: &CniSnapshot) -> Vec<DiagnosticCheck> {
@@ -744,10 +705,7 @@ fn build_calico_checks(cni: &CniSnapshot) -> Vec<DiagnosticCheck> {
     vec![pod_check, overall]
 }
 
-pub(super) async fn build_addon_checks(
-    addons: &AddonSnapshot,
-    client: Option<&Client>,
-) -> Vec<DiagnosticCheck> {
+pub(super) fn build_addon_checks(addons: &AddonSnapshot) -> Vec<DiagnosticCheck> {
     let mut checks = Vec::new();
     if addons.has_unknown_sources() {
         checks.push(DiagnosticCheck::unknown(
@@ -774,9 +732,9 @@ pub(super) async fn build_addon_checks(
         ));
     }
 
-    match (addons.presence("cert-manager"), client) {
-        (Some(AddonPresence::Detected), Some(client)) => {
-            checks.extend(cert_manager_checks(client).await);
+    match (addons.presence("cert-manager"), &addons.cert_manager) {
+        (Some(AddonPresence::Detected), Some(pods)) => {
+            checks.extend(cert_manager_checks(pods));
         }
         (Some(AddonPresence::Detected), None) => checks.push(DiagnosticCheck::unknown(
             "cert_manager",
@@ -802,38 +760,33 @@ pub(super) async fn build_addon_checks(
     checks
 }
 
-async fn cert_manager_checks(client: &Client) -> Vec<DiagnosticCheck> {
-    let pods: Api<Pod> = Api::namespaced(client.clone(), "cert-manager");
-    match pods.list(&ListParams::default()).await {
-        Ok(list) => {
-            let pod_check = cert_manager_pod_check(&list.items);
-            let webhook_check = cert_manager_webhook_check(&list.items);
+fn cert_manager_checks(pods: &SourceState<Vec<AddonPod>>) -> Vec<DiagnosticCheck> {
+    match pods {
+        SourceState::Available(pods) => {
+            let pod_check = cert_manager_pod_check(pods);
+            let webhook_check = cert_manager_webhook_check(pods);
             vec![pod_check, webhook_check]
         }
-        Err(error) => {
-            let unavailable = SourceUnavailable {
-                source: "Kubernetes cert-manager pod API".to_string(),
-                reason: error.to_string(),
-            };
+        SourceState::Unavailable(unavailable) => {
             vec![
                 DiagnosticCheck::unknown(
                     "cert_manager_pods",
                     CheckCategory::Addons,
                     "cert-manager Pods",
-                    &unavailable,
+                    unavailable,
                 ),
                 DiagnosticCheck::unknown(
                     "cert_manager_webhook",
                     CheckCategory::Addons,
                     "cert-manager Webhook",
-                    &unavailable,
+                    unavailable,
                 ),
             ]
         }
     }
 }
 
-fn cert_manager_pod_check(pods: &[Pod]) -> DiagnosticCheck {
+fn cert_manager_pod_check(pods: &[AddonPod]) -> DiagnosticCheck {
     if pods.is_empty() {
         return DiagnosticCheck::fail(
             "cert_manager_pods",
@@ -844,7 +797,7 @@ fn cert_manager_pod_check(pods: &[Pod]) -> DiagnosticCheck {
         .with_details("cert-manager was detected by CRDs but no pods are running.");
     }
 
-    let healthy = pods.iter().filter(|pod| is_pod_ready(pod)).count();
+    let healthy = pods.iter().filter(|pod| pod.ready).count();
     if healthy == pods.len() {
         DiagnosticCheck::pass(
             "cert_manager_pods",
@@ -855,17 +808,10 @@ fn cert_manager_pod_check(pods: &[Pod]) -> DiagnosticCheck {
     } else {
         let details = pods
             .iter()
-            .filter(|pod| !is_pod_ready(pod))
+            .filter(|pod| !pod.ready)
             .map(|pod| {
-                let phase = pod
-                    .status
-                    .as_ref()
-                    .and_then(|status| status.phase.as_deref())
-                    .unwrap_or("Unknown");
-                format!(
-                    "{}: {phase}",
-                    pod.metadata.name.as_deref().unwrap_or("unknown")
-                )
+                let phase = pod.phase.as_deref().unwrap_or("Unknown");
+                format!("{}: {phase}", pod.name.as_deref().unwrap_or("unknown"))
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -879,12 +825,11 @@ fn cert_manager_pod_check(pods: &[Pod]) -> DiagnosticCheck {
     }
 }
 
-fn cert_manager_webhook_check(pods: &[Pod]) -> DiagnosticCheck {
+fn cert_manager_webhook_check(pods: &[AddonPod]) -> DiagnosticCheck {
     let webhook_pods = pods
         .iter()
         .filter(|pod| {
-            pod.metadata
-                .name
+            pod.name
                 .as_deref()
                 .is_some_and(|name| name.contains("webhook"))
         })
@@ -898,7 +843,7 @@ fn cert_manager_webhook_check(pods: &[Pod]) -> DiagnosticCheck {
         )
         .with_details("Webhook pod not found. Certificate validation may not work.");
     }
-    if webhook_pods.iter().any(|pod| is_pod_ready(pod)) {
+    if webhook_pods.iter().any(|pod| pod.ready) {
         DiagnosticCheck::pass(
             "cert_manager_webhook",
             CheckCategory::Addons,
@@ -916,15 +861,4 @@ fn cert_manager_webhook_check(pods: &[Pod]) -> DiagnosticCheck {
             "Webhook pod exists but is not ready. New certificates may fail to be issued.",
         )
     }
-}
-
-fn is_pod_ready(pod: &Pod) -> bool {
-    pod.status
-        .as_ref()
-        .and_then(|status| status.conditions.as_ref())
-        .is_some_and(|conditions| {
-            conditions
-                .iter()
-                .any(|condition| condition.type_ == "Ready" && condition.status == "True")
-        })
 }

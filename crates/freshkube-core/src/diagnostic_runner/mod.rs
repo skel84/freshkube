@@ -645,6 +645,56 @@ pub struct CniSnapshot {
     pub pods: SourceState<CniInfo>,
     /// Node-local CNI file evidence.
     pub files: CniFileEvidence,
+    /// Cilium's operator and Hubble Relay, read only when the provider is
+    /// Cilium. A Cilium snapshot without it shows both as unknown.
+    pub cilium: Option<CiliumEvidence>,
+}
+
+/// What one Deployment read answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeploymentEvidence {
+    /// The Deployment's replica counts, 0 where its status leaves one out.
+    Found {
+        /// Desired replicas.
+        replicas: i32,
+        /// Ready replicas.
+        ready: i32,
+        /// Available replicas.
+        available: i32,
+        /// Unavailable replicas.
+        unavailable: i32,
+    },
+    /// The API answered 404.
+    NotFound,
+    /// No client, or the read failed or was refused.
+    Unavailable(SourceUnavailable),
+}
+
+impl DeploymentEvidence {
+    fn from_deployment(deployment: &Deployment) -> Self {
+        let status = deployment.status.as_ref();
+        Self::Found {
+            replicas: status.and_then(|status| status.replicas).unwrap_or(0),
+            ready: status.and_then(|status| status.ready_replicas).unwrap_or(0),
+            available: status
+                .and_then(|status| status.available_replicas)
+                .unwrap_or(0),
+            unavailable: status
+                .and_then(|status| status.unavailable_replicas)
+                .unwrap_or(0),
+        }
+    }
+}
+
+/// Cilium component state read from `kube-system`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiliumEvidence {
+    /// The first operator Deployment (`cilium-operator`, then
+    /// `cilium-operator-generic`) that answered other than 404, or
+    /// `NotFound` when both did.
+    pub operator: DeploymentEvidence,
+    /// The `hubble-relay` Deployment.
+    pub hubble_relay: DeploymentEvidence,
 }
 
 /// Presence state for a supported Kubernetes addon.
@@ -687,6 +737,30 @@ pub struct AddonSnapshot {
     pub pod_sources: Vec<AddonPodSource>,
     /// Supported addon presence states.
     pub addons: Vec<AddonStatus>,
+    /// The pods in `cert-manager`, read only when cert-manager is detected
+    /// and Kubernetes access is available; `None` otherwise.
+    pub cert_manager: Option<SourceState<Vec<AddonPod>>>,
+}
+
+/// The parts of an addon pod its checks read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddonPod {
+    /// Pod name.
+    pub name: Option<String>,
+    /// Pod phase.
+    pub phase: Option<String>,
+    /// Whether its Ready condition is True.
+    pub ready: bool,
+}
+
+impl AddonPod {
+    fn from_pod(pod: &Pod) -> Self {
+        Self {
+            name: pod.metadata.name.clone(),
+            phase: pod.status.as_ref().and_then(|status| status.phase.clone()),
+            ready: is_pod_ready(pod),
+        }
+    }
 }
 
 impl AddonSnapshot {
@@ -735,6 +809,20 @@ pub struct DiagnosticSnapshot {
     pub addons: AddonSnapshot,
     /// UI-ready checks derived exclusively from the snapshots above.
     pub checks: Vec<DiagnosticCheck>,
+}
+
+impl DiagnosticSnapshot {
+    /// Every check, derived only from this snapshot's evidence: no reads
+    /// and no clock, so a live and an example snapshot are judged alike.
+    pub fn evaluate(&self) -> Vec<DiagnosticCheck> {
+        let mut checks = build_system_checks(&self.context, &self.system);
+        checks.extend(build_service_checks(&self.services));
+        checks.extend(build_etcd_checks(&self.etcd));
+        checks.extend(build_kubernetes_checks(&self.context, &self.kubernetes));
+        checks.extend(build_cni_checks(&self.context, &self.cni));
+        checks.extend(build_addon_checks(&self.addons));
+        checks
+    }
 }
 
 /// Collector for a selected node's framework-neutral diagnostic snapshot.
@@ -819,14 +907,7 @@ impl DiagnosticCollector {
             kubernetes_access,
         };
 
-        let mut checks = build_system_checks(&context, &system);
-        checks.extend(build_service_checks(&services));
-        checks.extend(build_etcd_checks(&etcd));
-        checks.extend(build_kubernetes_checks(&context, &kubernetes));
-        checks.extend(build_cni_checks(&context, &cni, k8s_client.as_ref()).await);
-        checks.extend(build_addon_checks(&addons, k8s_client.as_ref()).await);
-
-        DiagnosticSnapshot {
+        let mut snapshot = DiagnosticSnapshot {
             context,
             system,
             services,
@@ -834,8 +915,10 @@ impl DiagnosticCollector {
             kubernetes,
             cni,
             addons,
-            checks,
-        }
+            checks: Vec::new(),
+        };
+        snapshot.checks = snapshot.evaluate();
+        snapshot
     }
 
     async fn create_pinned_k8s_client(
@@ -1138,11 +1221,79 @@ async fn collect_cni(
         CniType::None | CniType::Unknown => detect_cni_from_files(node_client, &mut files).await,
     };
 
+    let cilium = match cni_type {
+        SourceState::Available(CniType::Cilium) => {
+            Some(collect_cilium_evidence(k8s_client, access).await)
+        }
+        _ => None,
+    };
+
     CniSnapshot {
         cni_type,
         pods,
         files,
+        cilium,
     }
+}
+
+async fn collect_cilium_evidence(
+    client: Option<&Client>,
+    access: &SourceState<KubernetesAccess>,
+) -> CiliumEvidence {
+    let Some(client) = client else {
+        return CiliumEvidence {
+            operator: DeploymentEvidence::Unavailable(unavailable_info_from_access(
+                access,
+                "Kubernetes Cilium operator API",
+            )),
+            hubble_relay: DeploymentEvidence::Unavailable(unavailable_info_from_access(
+                access,
+                "Kubernetes Hubble Relay API",
+            )),
+        };
+    };
+    let deployments: Api<Deployment> = Api::namespaced(client.clone(), "kube-system");
+
+    let mut operator = DeploymentEvidence::NotFound;
+    for name in ["cilium-operator", "cilium-operator-generic"] {
+        operator = deployment_evidence(
+            deployments.get(name).await,
+            "Kubernetes Cilium operator API",
+        );
+        if operator != DeploymentEvidence::NotFound {
+            break;
+        }
+    }
+
+    let hubble_relay = deployment_evidence(
+        deployments.get("hubble-relay").await,
+        "Kubernetes Hubble Relay API",
+    );
+
+    CiliumEvidence {
+        operator,
+        hubble_relay,
+    }
+}
+
+/// One Deployment read's answer: 404 is `NotFound`; any other error,
+/// refused or failed alike, is `Unavailable` with its text.
+fn deployment_evidence(
+    answer: Result<Deployment, kube::Error>,
+    source: &str,
+) -> DeploymentEvidence {
+    match answer {
+        Ok(deployment) => DeploymentEvidence::from_deployment(&deployment),
+        Err(error) if is_kube_not_found(&error) => DeploymentEvidence::NotFound,
+        Err(error) => DeploymentEvidence::Unavailable(SourceUnavailable {
+            source: source.to_string(),
+            reason: error.to_string(),
+        }),
+    }
+}
+
+fn is_kube_not_found(error: &kube::Error) -> bool {
+    matches!(error, kube::Error::Api(response) if response.code == 404)
 }
 
 async fn collect_cni_info(client: &Client) -> Result<CniInfo, String> {
@@ -1307,11 +1458,43 @@ async fn collect_addons(
         None => unavailable_addon_pod_sources(access),
     };
     let addons = derive_addon_statuses(&crd_names, &pod_sources);
+    let cert_manager = match client {
+        Some(client)
+            if addons.iter().any(|addon| {
+                addon.id == "cert-manager" && addon.presence == AddonPresence::Detected
+            }) =>
+        {
+            Some(collect_cert_manager_pods(client).await)
+        }
+        _ => None,
+    };
 
     AddonSnapshot {
         crd_names,
         pod_sources,
         addons,
+        cert_manager,
+    }
+}
+
+async fn collect_cert_manager_pods(client: &Client) -> SourceState<Vec<AddonPod>> {
+    let pods: Api<Pod> = Api::namespaced(client.clone(), "cert-manager");
+    cert_manager_pods(
+        pods.list(&ListParams::default())
+            .await
+            .map(|list| list.items),
+    )
+}
+
+/// The cert-manager pod list's answer: any error, refused or failed alike,
+/// is `Unavailable` with its text.
+fn cert_manager_pods(answer: Result<Vec<Pod>, kube::Error>) -> SourceState<Vec<AddonPod>> {
+    match answer {
+        Ok(pods) => SourceState::Available(pods.iter().map(AddonPod::from_pod).collect()),
+        Err(error) => SourceState::Unavailable(SourceUnavailable {
+            source: "Kubernetes cert-manager pod API".to_string(),
+            reason: error.to_string(),
+        }),
     }
 }
 
@@ -1481,6 +1664,17 @@ fn pod_addon_status(
             AddonPresence::Unknown
         },
     }
+}
+
+fn is_pod_ready(pod: &Pod) -> bool {
+    pod.status
+        .as_ref()
+        .and_then(|status| status.conditions.as_ref())
+        .is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|condition| condition.type_ == "Ready" && condition.status == "True")
+        })
 }
 
 fn unavailable_from_access<T>(
