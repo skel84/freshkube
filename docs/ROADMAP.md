@@ -366,8 +366,7 @@ The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histor
 
 Taken as they come up, between larger steps:
 - logs of a pod's several containers in one `LogView` (a whole workload's landed, Done);
-- current CPU and memory in tables from the metrics API;
-- YAML schema validation.
+- current CPU and memory in tables from the metrics API (Pods, Nodes and a node's Pods list landed, Done; workload sums not planned).
 
 ### 8. Later
 
@@ -375,12 +374,9 @@ Taken as they come up, between larger steps:
 - Developer ID signing and notarization.
 - ARM builds for Linux and Windows (`aarch64-unknown-linux-gnu`, `aarch64-pc-windows-msvc`), after signing.
 - Kubeconfig auth plugins (exec and OIDC) beyond what works today.
+- Edit YAML, with schema validation. The YAML tab only shows what the API server already admitted, so validation means something only in an editor. Hints (inline errors, field descriptions) would come from the server's OpenAPI v3, one document per group-version, which includes CRDs' structural schemas; the check that counts is a server-side dry run (`dryRun=All`) before Apply. Applying is a write that the read-only rule excludes today, so the user decides first.
 - CLI and MCP explanations ([F11](FUTURE_IDEAS.md#f11-expose-shared-explanations-through-cli-and-mcp)).
 - The rest of [FUTURE_IDEAS.md](FUTURE_IDEAS.md): shared store and workload health (F02, F03), traffic paths (F05), planned changes (F06), integration contracts (F07) and change history (F09).
-
-### Checks to add
-
-- **Monitoring discovery** finds Prometheus-compatible backends, not just a Prometheus Service. For example, VictoriaMetrics' `vmsingle`, or `vmselect` with its `/select/<tenant>/prometheus` prefix. Tested with an invented fixture.
 
 ### Known risks, documented, not fixed now
 

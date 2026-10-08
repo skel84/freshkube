@@ -293,6 +293,72 @@ async fn discovery_moves_past_candidates_that_are_not_prometheus() {
 }
 
 #[tokio::test]
+async fn discovery_moves_past_a_silent_vmsingle_to_vmselect_under_its_prefix() {
+    let (client, seen) = fake(|_, path, _| match path {
+        "/api/v1/services" => (
+            200,
+            list(vec![
+                service(
+                    "storefront",
+                    "storefront-web",
+                    json!({"app.kubernetes.io/name": "storefront"}),
+                    json!([{"name": "http", "port": 8080}]),
+                ),
+                service(
+                    "vm",
+                    "vmselect-acme",
+                    json!({"app.kubernetes.io/name": "vmselect"}),
+                    json!([{"name": "http", "port": 8481}]),
+                ),
+                service(
+                    "metrics",
+                    "vmsingle-acme",
+                    json!({"app.kubernetes.io/name": "vmsingle"}),
+                    json!([{"name": "http", "port": 8429}]),
+                ),
+            ]),
+        ),
+        // The single-node server ranks first and has no endpoints.
+        p if p.contains("vmsingle-acme") => (
+            503,
+            status(503, "no endpoints available for service \"vmsingle-acme\""),
+        ),
+        // vmselect answers only under its tenant's prefix, and has no
+        // buildinfo there.
+        "/api/v1/namespaces/vm/services/vmselect-acme:8481/proxy/select/0/prometheus/api/v1/query" => {
+            (200, query_one())
+        }
+        _ => (404, "404 page not found".into()),
+    });
+    let Discovery::Found {
+        prometheus,
+        version,
+        tried,
+    } = discover(&client, None).await.unwrap()
+    else {
+        panic!("vmselect should be found");
+    };
+    let found = prometheus.service().unwrap();
+    assert_eq!(found.label(), "vm/vmselect-acme:8481/select/0/prometheus");
+    assert_eq!(prometheus.endpoint().backend(), Backend::VictoriaMetrics);
+    assert_eq!(version, None);
+    assert_eq!(tried.len(), 1);
+    assert_eq!(tried[0].service.name, "vmsingle-acme");
+    assert_eq!(tried[0].error.kind, ErrorKind::Unavailable);
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.iter().all(|request| request.starts_with("GET ")),
+        "{seen:?}"
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|request| request.contains("storefront-web")),
+        "{seen:?}"
+    );
+}
+
+#[tokio::test]
 async fn discovery_without_prometheus_lists_what_it_tried() {
     let (client, _) = fake(|_, path, _| match path {
         "/api/v1/services" => (
