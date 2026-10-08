@@ -16,6 +16,7 @@ These hold for every step until a later one deliberately changes them.
 
 | Step | What landed | Commit |
 | --- | --- | --- |
+| The delivery chain, step 1: ownership and evidence ([#387](https://github.com/skel84/freshkube/issues/387), [#446](https://github.com/skel84/freshkube/pull/446), [#469](https://github.com/skel84/freshkube/pull/469)) | Argo CD ownership and the evidence model landed from the #158 spike, with invented names only. Every link is Confirmed, Claimed or Unknown and lists what was read on each side, each observation reported, declared or derived. #446 closed the last of the provenance rule's `KNOWN_GAPS`: Rollout to pods stands on the Rollout's current pod hash, the ReplicaSet it owns by UID, the pods that ReplicaSet owns by UID and their `imageID` digest, and Application to Rollout is Confirmed only when Argo CD's image summary lists the digest and those pods confirm it. #469 made a Freight whose build reported another digest for its image a Claimed link carrying the conflict, never a failure. The list is empty and the test keeps it so. The Deployment controller chain ([#481](https://github.com/skel84/freshkube/issues/481)) joins an Application that manages a Deployment through the ReplicaSet its controller reports as current, by revision and owner UID, to that ReplicaSet's pods, the same reported-state chain a Rollout has. The single-cluster hops of step 5 ([#481](https://github.com/skel84/freshkube/issues/481)) add Freight → Warehouse, Confirmed when the Warehouse's discovered artifacts list the Freight's digest and otherwise a claim, never a fault (the list is a rolling window), and, on Freight → Stage, notes of the Freight's verification (the latest run of the newest collection that holds it, in Kargo's words, "not verified yet" when it has none) and of a manual approval, which makes it eligible without verification. Signature verification, the one route to a Confirmed supply-chain link, moves to step 5 | the commit that adds this row |
 | Observability crate ([#53](https://github.com/skel84/freshkube/issues/53), B4) | `crates/freshkube-observability` holds the Coroot pages and the Coroot log source, moved unchanged from desktop's `observability/` and `logs/coroot.rs`; desktop reaches the page by its old path. A measurement on Monitoring's crate decided it: a crate's own test loop took 23% of desktop's to build and 32% end to end. Four seams came first: `TableLoading` into `freshkube_ui::table`, `Snapshot` into `freshkube_core::snapshot`, inspector widths through `freshkube_ui::inspector::saved_widths`, and the Coroot fixture hold as `hold_examples`. Only what the shell calls is public; `fixture_link` sits behind its `testing` feature. Desktop depends on it; it depends on nothing of desktop. | the commit that adds this row |
 | Monitoring crate ([#53](https://github.com/skel84/freshkube/issues/53), B3) | `crates/freshkube-monitoring` holds Monitoring: the page, the panels and the history charts, moved unchanged from desktop's `monitoring/`, which desktop reaches by its old path. Four seams came first: the request guard (`freshkube_core::job`), the secret store (`freshkube_core::secrets`), the page widths (`freshkube_ui::page`) and the layout checks (`freshkube_ui::layout_check`). Only what desktop calls is public; the tests' read-outs sit behind its `testing` feature, and the stress binary's instant example answers behind `stress`. Desktop's Resources and Observability depend on it; it depends on neither. | the commit that adds this row |
 | Small test and package cleanup | Every workspace crate sets `publish = false`: Freshkube ships as an app, and none goes to crates.io. `freshkube-core`, `talos-rs` and the `freshkube` binary gain it; the rest had it. The Operations tests' clock cleanup landed earlier. | the commit that adds this row |
@@ -337,13 +338,7 @@ Landed (Done, "Linux and Windows releases" 1–3): `packages.yml` builds a Linux
 
 ### 3. The delivery chain, step 1: ownership and evidence
 
-The base the chain stands on.
-- **Argo CD ownership** ([F04](FUTURE_IDEAS.md#f04-explain-ownership-and-reconciliation)): an Application, the objects it owns, its sync and health, and the image digests actually running.
-- **A minimal evidence model** ([F01](FUTURE_IDEAS.md#f01-model-observations-and-evidence)): each link in a chain is confirmed, claimed or unknown, with where that came from.
-- The [#158](https://github.com/skel84/freshkube/issues/158) spike becomes a public PR:
-  - Generalized, with invented names and fixtures only.
-  - No convention from a real setup is hard-coded; each becomes a setting or a general rule.
-  - Reviewed against the public-content rule before it goes up.
+Done; see the Done table. The number stays, since issues cite the steps by it.
 
 ### 4. Several clusters, as far as the chain needs
 
@@ -352,9 +347,9 @@ The base the chain stands on.
 ### 5. The delivery chain, step 2: the hops
 
 Following one change from commit to running pods ([#42](https://github.com/skel84/freshkube/issues/42)):
-- Kargo's Warehouse, Freight, Stage and Promotion;
+- Kargo's Warehouse, Freight, Stage and Promotion (Warehouse, verification and approval landed, Done);
 - Tekton runs started by Pipelines as Code, found by commit SHA;
-- Tekton Chains' attestations;
+- Tekton Chains' attestations, including signature verification: reading a key or a transparency log is the only route to a Confirmed supply-chain link;
 - Tekton Results for history.
 
 Joins use only the commit SHA and the image digest. A pull request joins through its merge commit. The first screen is one change, from commit to running pods.

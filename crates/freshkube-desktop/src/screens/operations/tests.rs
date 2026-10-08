@@ -1,7 +1,10 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use freshkube_core::cluster_overview::KubeconfigSelection;
 use freshkube_core::operations::{NodeTarget, OperationKind, OperationStatus};
+use freshkube_core::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext, ElementId, Entity, TestAppContext, WindowHandle, px, size};
@@ -10,11 +13,12 @@ use tokio::runtime::{Builder, Runtime};
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{
     Operations, OperationsScreen, PreviewKey, PreviewState, ScreenPanel, ScreenSource,
-    blocked_reason, example_preview, verdict,
+    blocked_reason, example_preview, run_client, verdict,
 };
 use crate::backend::Target;
 use crate::desktop::layout_check;
 use crate::desktop::tests::fixture as app;
+use crate::resources::talos::AppliedAccess;
 use crate::{fixture, presentation};
 
 fn source(context: &str, node_ix: usize) -> ScreenSource {
@@ -779,4 +783,288 @@ fn the_etcd_verdict_wraps_inside_the_plan(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+}
+
+/// What the screen has read: the nodes its preview is for, if it has one,
+/// and its audit log's revision and whether the log is in.
+#[derive(Debug, PartialEq)]
+struct Reads {
+    preview: Option<Vec<String>>,
+    audit: (u64, bool),
+}
+
+fn reads(screen: &Entity<OperationsScreen>, cx: &gpui_kit::App) -> Reads {
+    let screen = screen.read(cx);
+    Reads {
+        preview: screen
+            .preview
+            .key()
+            .map(|key| key.targets.iter().map(|t| t.name.clone()).collect()),
+        audit: (screen.audit.revision(), screen.audit.data().is_some()),
+    }
+}
+
+/// Lifecycle, then the next page in Control plane's column.
+fn open_operations(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    window.press("secondary-9", cx);
+    window.render_frame(cx);
+    window.press("ctrl-tab", cx);
+    window.render_frame(cx);
+}
+
+/// The shell hands every retained screen a new target, shown or not. Once
+/// left, Operations reads nothing for it until it is shown again.
+#[gpui_kit::test]
+fn hidden_operations_reads_nothing_for_a_new_target_until_shown(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = app(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| open_operations(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    let screen = cx.read(|cx| crate::desktop::tests::screen::<OperationsScreen>(&pilot, cx));
+    let shown = cx.read(|cx| reads(&screen, cx));
+    assert!(shown.preview.is_some() && shown.audit.1, "{shown:?}");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-2", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::pick_target(window, cx, 4);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let node = cx.read(|cx| screen.read(cx).source.as_ref().unwrap().target.node.clone());
+    assert_ne!(Some(&vec![node.clone()]), shown.preview.as_ref());
+    // The new target cleared the old preview and audit and asked for neither.
+    let hidden = cx.read(|cx| reads(&screen, cx));
+    assert_eq!(hidden.preview, None);
+    assert!(!hidden.audit.1, "{hidden:?}");
+    assert_eq!(names(&screen, cx), std::slice::from_ref(&node));
+
+    cx.update_window(handle, |_, window, cx| open_operations(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    let again = cx.read(|cx| reads(&screen, cx));
+    assert_eq!(again.preview, Some(vec![node]));
+    assert!(again.audit.1, "{again:?}");
+}
+
+/// The overview publishes the same target again while Operations is hidden:
+/// its preview and audit log stay as they are, read once.
+#[gpui_kit::test]
+fn a_same_target_update_while_hidden_reads_nothing(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    let before = cx.read(|cx| reads(&screen, cx));
+    assert!(before.preview.is_some() && before.audit.1, "{before:?}");
+    cx.update_window(handle.into(), |_, window, cx| {
+        for _ in 0..3 {
+            let same = source("prod-fra", 0);
+            screen.update(cx, |screen, cx| screen.set_source(Some(same), window, cx));
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| reads(&screen, cx)), before);
+}
+
+/// A submitted run outlives the screen being left and its target changing:
+/// it finishes on the cluster it started on, and the hidden screen starts no
+/// preview for the new target meanwhile.
+#[gpui_kit::test]
+fn a_submitted_run_carries_on_through_hidden_source_updates(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 40);
+    review(cx, handle);
+    confirm(cx, handle);
+    step(cx, &runtime, &screen);
+    cx.update_window(handle.into(), |_, window, cx| {
+        for other in [source("staging-eu", 0), source("staging-eu", 0)] {
+            screen.update(cx, |screen, cx| screen.set_source(Some(other), window, cx));
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| reads(&screen, cx)).preview, None);
+    // A drain of one node takes 7 steps.
+    wait_until_finished(cx, &runtime, &screen, 10, "the run");
+    assert_eq!(
+        results(&screen, cx),
+        [("talos-cp-fra1-01".to_owned(), OperationStatus::Succeeded)]
+    );
+    assert_eq!(cx.read(|cx| reads(&screen, cx)).preview, None);
+}
+
+/// A talosconfig, a kubeconfig and the token file it names, in a fresh
+/// temporary directory, and the access a preview took on them.
+struct AccessFiles {
+    _directory: tempfile::TempDir,
+    talosconfig: std::path::PathBuf,
+    kubeconfig: std::path::PathBuf,
+    token: std::path::PathBuf,
+    access: AppliedAccess,
+}
+
+fn access_files() -> AccessFiles {
+    let directory = tempfile::tempdir().unwrap();
+    let talosconfig = directory.path().join("talosconfig");
+    let kubeconfig = directory.path().join("kubeconfig");
+    let token = directory.path().join("token");
+    std::fs::write(&talosconfig, "context: example\n").unwrap();
+    std::fs::write(&token, "first-token\n").unwrap();
+    std::fs::write(
+        &kubeconfig,
+        format!(
+            "apiVersion: v1\nkind: Config\ncurrent-context: example\n\
+             clusters:\n- name: example\n  cluster:\n    server: https://192.0.2.1:6443\n\
+             users:\n- name: example\n  user:\n    tokenFile: {}\n\
+             contexts:\n- name: example\n  context:\n    cluster: example\n    user: example\n",
+            token.display()
+        ),
+    )
+    .unwrap();
+    let selection = KubeconfigSelection::File {
+        path: kubeconfig.clone(),
+        context: None,
+    };
+    let configuration = ConfigurationRevision::for_talos_sources(Some(&talosconfig), &selection);
+    let access = AppliedAccess {
+        config_path: Some(talosconfig.clone()),
+        selection,
+        configuration,
+        identity: AccessIdentity::new(AccessSessionId::new(), configuration),
+    };
+    AccessFiles {
+        _directory: directory,
+        talosconfig,
+        kubeconfig,
+        token,
+        access,
+    }
+}
+
+/// Stands in for the Kubernetes API: counts the clients built for it and
+/// the mutations that reach it.
+#[derive(Clone, Default)]
+struct FakeApi {
+    built: Arc<AtomicUsize>,
+    mutations: Arc<AtomicUsize>,
+}
+
+impl FakeApi {
+    /// A fake connector: builds a client for this API, doing `meanwhile`
+    /// while it does.
+    async fn connect(self, meanwhile: impl FnOnce()) -> Result<FakeApi, String> {
+        self.built.fetch_add(1, Ordering::SeqCst);
+        meanwhile();
+        Ok(self)
+    }
+
+    fn counts(&self) -> (usize, usize) {
+        (
+            self.built.load(Ordering::SeqCst),
+            self.mutations.load(Ordering::SeqCst),
+        )
+    }
+}
+
+/// As core's runner: nothing is submitted until the connection answers, then
+/// the confirmed mutation once.
+async fn submit(
+    connect: impl std::future::Future<Output = Result<FakeApi, String>>,
+) -> Result<(), String> {
+    let api = connect.await?;
+    api.mutations.fetch_add(1, Ordering::SeqCst);
+    Ok(())
+}
+
+fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(future)
+}
+
+/// Unchanged access still submits, exactly once.
+#[test]
+fn a_run_on_unchanged_access_submits_once() {
+    let files = access_files();
+    let api = FakeApi::default();
+    let access = files.access.clone();
+    let connect = api.clone().connect(|| {});
+    block_on(submit(run_client(
+        Some(access.clone()),
+        Some(access),
+        connect,
+    )))
+    .unwrap();
+    assert_eq!(api.counts(), (1, 1));
+}
+
+/// Replacing the kubeconfig, the credential it names or the talosconfig
+/// between the preview and the confirmation refuses the run before a client
+/// is built, so nothing is submitted.
+#[test]
+fn access_replaced_after_the_preview_submits_nothing() {
+    for replace in ["kubeconfig", "token", "talosconfig"] {
+        let files = access_files();
+        let path = match replace {
+            "kubeconfig" => &files.kubeconfig,
+            "token" => &files.token,
+            _ => &files.talosconfig,
+        };
+        let mut contents = std::fs::read(path).unwrap();
+        contents.extend_from_slice(b"# replaced\n");
+        std::fs::write(path, contents).unwrap();
+        let api = FakeApi::default();
+        let access = files.access.clone();
+        let connect = api.clone().connect(|| {});
+        let error = block_on(submit(run_client(
+            Some(access.clone()),
+            Some(access),
+            connect,
+        )))
+        .expect_err(replace);
+        assert!(error.contains("changed"), "{replace}: {error}");
+        assert_eq!(api.counts(), (0, 0), "{replace}");
+    }
+}
+
+/// A credential replaced while the client is being built is caught by the
+/// check after it: the client is dropped and nothing is submitted.
+#[test]
+fn access_replaced_while_the_client_is_built_submits_nothing() {
+    let files = access_files();
+    let api = FakeApi::default();
+    let token = files.token.clone();
+    let connect = api.clone().connect(move || {
+        std::fs::write(&token, "second-token\n").unwrap();
+    });
+    let access = files.access.clone();
+    let error = block_on(submit(run_client(
+        Some(access.clone()),
+        Some(access),
+        connect,
+    )))
+    .unwrap_err();
+    assert!(error.contains("changed"), "{error}");
+    assert_eq!(api.counts(), (1, 0));
+}
+
+/// A confirmed source whose access isn't the preview's, or a preview that
+/// recorded none, refuses the run before a client is built.
+#[test]
+fn a_run_without_the_previews_access_submits_nothing() {
+    let files = access_files();
+    let other = AppliedAccess {
+        identity: AccessIdentity::new(AccessSessionId::new(), files.access.configuration),
+        ..files.access.clone()
+    };
+    for (previewed, confirmed) in [
+        (Some(files.access.clone()), Some(other)),
+        (Some(files.access.clone()), None),
+        (None, Some(files.access.clone())),
+    ] {
+        let api = FakeApi::default();
+        let connect = api.clone().connect(|| {});
+        assert!(block_on(submit(run_client(previewed, confirmed, connect))).is_err());
+        assert_eq!(api.counts(), (0, 0));
+    }
 }

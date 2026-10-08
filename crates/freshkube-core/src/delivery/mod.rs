@@ -8,6 +8,7 @@
 
 pub mod argocd;
 pub mod collect;
+pub mod deployments;
 pub mod digest;
 pub mod github;
 pub mod join;
@@ -21,11 +22,15 @@ pub mod tekton;
 mod versions;
 
 #[cfg(test)]
+mod deployment_tests;
+#[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod provenance;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod warehouse_tests;
 
 pub use argocd::StageNaming;
 pub use collect::{Clusters, Plan, collect, commit_of_pull_request};

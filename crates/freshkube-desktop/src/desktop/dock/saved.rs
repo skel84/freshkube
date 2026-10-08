@@ -37,6 +37,9 @@ pub(crate) struct SavedTab {
     pub(super) container: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) previous: bool,
+    /// A pod tab on All containers; `container` is its last single pick.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) all_containers: bool,
     /// A shell tab, in `container`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) shell: bool,
@@ -93,19 +96,20 @@ impl Dock {
                 .map(|tab| {
                     // A container still waiting for the pod's containers
                     // is the one the tab was asked for.
-                    let (container, previous) = match (&tab.at, &tab.kind) {
+                    let (container, previous, all_containers) = match (&tab.at, &tab.kind) {
                         (_, TabKind::Shell(view)) => {
-                            (view.read(cx).container().map(str::to_owned), false)
+                            (view.read(cx).container().map(str::to_owned), false, false)
                         }
-                        (Some(at), _) => (Some(at.container.clone()), at.previous),
+                        (Some(at), _) => (Some(at.container.clone()), at.previous, at.all),
                         (None, TabKind::Pod(view)) => {
                             let view = view.read(cx);
                             (
                                 view.selected_container().map(str::to_owned),
                                 view.reads_previous(),
+                                view.shows_all(),
                             )
                         }
-                        (None, TabKind::Workload(_)) => (None, false),
+                        (None, TabKind::Workload(_)) => (None, false, false),
                     };
                     let shell = !tab.is_log();
                     SavedTab {
@@ -115,6 +119,7 @@ impl Dock {
                         name: tab.target.identity.name.clone(),
                         container,
                         previous,
+                        all_containers,
                         shell,
                     }
                 })
@@ -185,6 +190,7 @@ impl Dock {
                 let at = saved.container.map(|container| LogsAt {
                     container,
                     previous: saved.previous,
+                    all: saved.all_containers,
                 });
                 self.add_tab(target, at, window, cx)
             };

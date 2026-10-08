@@ -12,7 +12,7 @@ use freshkube_core::resources::{
 
 use super::{
     EXAMPLE_INTERVAL, Fed, Jitter, MAX_STREAMS, PodsState, RETRY_FIRST, RETRY_JITTER, RETRY_MAX,
-    StreamKey, StreamState, Streams, WorkloadLogPanel, WorkloadLogView,
+    StreamKey, StreamReads, StreamState, Streams, WorkloadLogPanel, WorkloadLogView,
 };
 use crate::desktop::probe;
 use crate::resources::model::ResourceIdentity;
@@ -269,7 +269,7 @@ fn a_failing_stream_says_why_while_the_others_read_on(cx: &mut TestAppContext) {
         feed(&view, both, cx);
         window.render_frame(cx);
         let refused_tag = format!("{}/metrics-server", refused[0].name);
-        let errors = view.read(cx).source().errors.clone();
+        let errors = view.read(cx).source().reads.errors.clone();
         let error = errors.get(&ServiceId::new(refused_tag.clone())).unwrap();
         assert!(error.contains("forbidden"), "{error}");
         // Its chip says so, in the row or behind "+N".
@@ -339,7 +339,14 @@ fn pods_joining_and_leaving_start_and_stop_their_streams(cx: &mut TestAppContext
             markers(&view, cx)
         );
         // Its stream stops; what it wrote stays.
-        assert!(!view.read(cx).source().streams.contains_key(&key(&leaving)));
+        assert!(
+            !view
+                .read(cx)
+                .source()
+                .reads
+                .streams
+                .contains_key(&key(&leaving))
+        );
         assert!(
             window
                 .try_find(format!("workload-logs-stream-{left_tag}"))
@@ -419,7 +426,7 @@ fn a_lagging_streams_lines_take_their_place_without_moving_the_review(cx: &mut T
     let api = deployment("api");
     let all = pods(&api, "app=api");
     let lagging = all[0].clone();
-    let now = cx.update(|cx| view.read(cx).source().clock.now(cx));
+    let now = cx.update(|cx| view.read(cx).source().reads.clock.now(cx));
     let line = |minutes_ago: i64, text: &str| {
         let at = now - chrono::TimeDelta::minutes(minutes_ago);
         PodLogUpdate::Line(format!(
@@ -434,7 +441,7 @@ fn a_lagging_streams_lines_take_their_place_without_moving_the_review(cx: &mut T
 
         // Following: a late line lands among the old ones, and the newest
         // row stays in view.
-        let generation = view.read(cx).source().streams[&key(&lagging)].generation;
+        let generation = view.read(cx).source().reads.streams[&key(&lagging)].generation;
         let newest = view.read(cx).retained().last().unwrap().raw.clone();
         view.update(cx, |view, cx| {
             assert!(view.apply_updates(
@@ -468,7 +475,7 @@ fn a_lagging_streams_lines_take_their_place_without_moving_the_review(cx: &mut T
         assert_eq!(window.find(row.clone()).selected(), Some(true));
         let top_before = window.find(row.clone()).bounds().origin.y;
 
-        let generation = view.read(cx).source().streams[&key(&lagging)].generation;
+        let generation = view.read(cx).source().reads.streams[&key(&lagging)].generation;
         view.update(cx, |view, cx| {
             assert!(
                 view.apply_updates(
@@ -519,7 +526,7 @@ fn hiding_stops_everything_and_showing_reads_on_without_repeats(cx: &mut TestApp
             view.update(cx, |view, cx| view.set_active(false, cx));
             window.render_frame(cx);
             assert!(!view.read(cx).reading());
-            assert!(view.read(cx).source().streams.is_empty());
+            assert!(view.read(cx).source().reads.streams.is_empty());
             assert_eq!(status(window), "Idle");
             lines(&view, cx)
         })
@@ -556,10 +563,10 @@ fn showing_again_reads_on_from_each_streams_saved_position(cx: &mut TestAppConte
             window.render_frame(cx);
             let source = view.read(cx).source();
             // The first read asks for the tail.
-            assert!(source.streams.values().all(|stream| {
+            assert!(source.reads.streams.values().all(|stream| {
                 stream.request.resume.is_none() && stream.request.tail.is_some()
             }));
-            let saved = source.positions.clone();
+            let saved = source.reads.positions.clone();
             view.update(cx, |view, cx| view.set_active(false, cx));
             saved
         })
@@ -570,9 +577,9 @@ fn showing_again_reads_on_from_each_streams_saved_position(cx: &mut TestAppConte
         view.update(cx, |view, cx| view.set_active(true, cx));
         window.render_frame(cx);
         let source = view.read(cx).source();
-        assert!(!source.streams.is_empty());
+        assert!(!source.reads.streams.is_empty());
         let mut resumed = 0;
-        for (key, stream) in &source.streams {
+        for (key, stream) in &source.reads.streams {
             assert!(!stream.request.previous);
             assert_eq!(stream.request.pod, key.pod);
             assert_eq!(stream.request.container, key.container);
@@ -604,7 +611,7 @@ fn busy_streams_are_applied_once_a_delivery(cx: &mut TestAppContext) {
         sidecar.state = ContainerState::Running(None);
         pod.containers.containers.push(sidecar);
     }
-    let now = cx.update(|cx| view.read(cx).source().clock.now(cx));
+    let now = cx.update(|cx| view.read(cx).source().reads.clock.now(cx));
     for busy in [13, MAX_STREAMS] {
         cx.update_window(handle, |_, window, cx| {
             show_fed(&view, &api, cx);
@@ -616,6 +623,7 @@ fn busy_streams_are_applied_once_a_delivery(cx: &mut TestAppContext) {
         let streams: Vec<(StreamKey, u64)> = cx.update(|cx| {
             view.read(cx)
                 .source()
+                .reads
                 .streams
                 .iter()
                 .map(|(key, stream)| (key.clone(), stream.generation))
@@ -663,11 +671,11 @@ fn a_refused_stream_waits_for_the_pods_to_change_or_retry(cx: &mut TestAppContex
     let refused = vec![pods(&metrics, "app=metrics-server").remove(0)];
     let refused_key = key(&refused[0]);
     let generation = |cx: &mut TestAppContext| {
-        cx.update(|cx| view.read(cx).source().streams[&refused_key].generation)
+        cx.update(|cx| view.read(cx).source().reads.streams[&refused_key].generation)
     };
     let still_refused = |cx: &mut TestAppContext| {
         cx.update(|cx| {
-            let stream = &view.read(cx).source().streams[&refused_key];
+            let stream = &view.read(cx).source().reads.streams[&refused_key];
             stream.state.refused() && stream.retry.is_none()
         })
     };
@@ -741,14 +749,17 @@ fn a_pod_replaced_under_its_name_wakes_a_refused_stream(cx: &mut TestAppContext)
     })
     .unwrap();
     let first = cx.update(|cx| {
-        let stream = &view.read(cx).source().streams[&refused_key];
+        let stream = &view.read(cx).source().reads.streams[&refused_key];
         assert!(stream.state.refused());
         stream.generation
     });
     // As if it had failed for a while before it was refused.
     cx.update(|cx| {
         view.update(cx, |view, _| {
-            view.source_mut().failures.insert(refused_key.clone(), 3);
+            view.source_mut()
+                .reads
+                .failures
+                .insert(refused_key.clone(), 3);
         })
     });
 
@@ -758,11 +769,11 @@ fn a_pod_replaced_under_its_name_wakes_a_refused_stream(cx: &mut TestAppContext)
     cx.update(|cx| feed(&view, replaced.clone(), cx));
     cx.update(|cx| {
         let source = view.read(cx).source();
-        assert!(source.streams[&refused_key].generation > first);
-        assert!(!source.failures.contains_key(&refused_key));
+        assert!(source.reads.streams[&refused_key].generation > first);
+        assert!(!source.reads.failures.contains_key(&refused_key));
         // The old incarnation's stream is gone; the new one's is read.
-        assert!(!source.streams.contains_key(&key(&both[1])));
-        assert!(source.streams.contains_key(&key(&replaced[1])));
+        assert!(!source.reads.streams.contains_key(&key(&both[1])));
+        assert!(source.reads.streams.contains_key(&key(&replaced[1])));
     });
 }
 
@@ -784,6 +795,7 @@ fn retry_reads_refused_streams_and_starts_their_backoff_over(cx: &mut TestAppCon
         cx.update(|cx| {
             view.read(cx)
                 .source()
+                .reads
                 .streams
                 .iter()
                 .find(|(_, stream)| {
@@ -802,10 +814,10 @@ fn retry_reads_refused_streams_and_starts_their_backoff_over(cx: &mut TestAppCon
     let waiting = find(cx, true);
     let streaming = find(cx, false);
     let generation = |key: &StreamKey, cx: &mut TestAppContext| {
-        cx.update(|cx| view.read(cx).source().streams[key].generation)
+        cx.update(|cx| view.read(cx).source().reads.streams[key].generation)
     };
     let failures = |key: &StreamKey, cx: &mut TestAppContext| {
-        cx.update(|cx| view.read(cx).source().failures.get(key).copied())
+        cx.update(|cx| view.read(cx).source().reads.failures.get(key).copied())
     };
     let fail = |key: &StreamKey, kind: FailureKind, cx: &mut TestAppContext| {
         let generation = generation(key, cx);
@@ -821,7 +833,7 @@ fn retry_reads_refused_streams_and_starts_their_backoff_over(cx: &mut TestAppCon
             })
         });
     };
-    let mut jitter = cx.update(|cx| view.read(cx).source().jitter.clone());
+    let mut jitter = cx.update(|cx| view.read(cx).source().reads.jitter.clone());
     let tick = Duration::from_millis(1);
 
     // A transient failure first: the creating container backs off once.
@@ -843,9 +855,12 @@ fn retry_reads_refused_streams_and_starts_their_backoff_over(cx: &mut TestAppCon
         window.click("workload-logs-retry-refused", cx);
         window.render_frame(cx);
         let source = view.read(cx).source();
-        assert_eq!(source.streams[&streaming].state, StreamState::Streaming);
+        assert_eq!(
+            source.reads.streams[&streaming].state,
+            StreamState::Streaming
+        );
         assert!(matches!(
-            source.streams[&waiting].state,
+            source.reads.streams[&waiting].state,
             StreamState::Waiting(_)
         ));
         assert!(source.refused_note.is_none());
@@ -885,6 +900,7 @@ fn a_failed_stream_reads_again_with_a_jittered_backoff(cx: &mut TestAppContext) 
     let waiting = cx.update(|cx| {
         view.read(cx)
             .source()
+            .reads
             .streams
             .iter()
             .find(|(_, stream)| matches!(stream.state, StreamState::Waiting(_)))
@@ -892,7 +908,7 @@ fn a_failed_stream_reads_again_with_a_jittered_backoff(cx: &mut TestAppContext) 
             .unwrap()
     });
     let generation = |cx: &mut TestAppContext| {
-        cx.update(|cx| view.read(cx).source().streams[&waiting].generation)
+        cx.update(|cx| view.read(cx).source().reads.streams[&waiting].generation)
     };
     let fail = |cx: &mut TestAppContext| {
         let generation = generation(cx);
@@ -909,7 +925,7 @@ fn a_failed_stream_reads_again_with_a_jittered_backoff(cx: &mut TestAppContext) 
         });
     };
     // The waits the view will draw, from the same sequence.
-    let mut jitter = cx.update(|cx| view.read(cx).source().jitter.clone());
+    let mut jitter = cx.update(|cx| view.read(cx).source().reads.jitter.clone());
     let tick = Duration::from_millis(1);
     for wait in [RETRY_FIRST, RETRY_FIRST * 2] {
         let delay = jitter.spread(wait);
@@ -934,7 +950,7 @@ fn a_failed_stream_reads_again_with_a_jittered_backoff(cx: &mut TestAppContext) 
     cx.update(|cx| feed(&view, rest, cx));
     cx.executor().advance_clock(RETRY_MAX * 4);
     cx.run_until_parked();
-    assert!(cx.update(|cx| !view.read(cx).source().streams.contains_key(&waiting)));
+    assert!(cx.update(|cx| !view.read(cx).source().reads.streams.contains_key(&waiting)));
 }
 
 #[test]
@@ -965,7 +981,7 @@ fn another_workload_or_none_drops_every_stream(cx: &mut TestAppContext) {
         });
         window.render_frame(cx);
         assert!(!view.read(cx).reading());
-        assert!(view.read(cx).source().streams.is_empty());
+        assert!(view.read(cx).source().reads.streams.is_empty());
         assert_eq!(lines(&view, cx), 0);
         assert!(window.try_find("workload-logs-streams").is_none());
 
@@ -974,7 +990,7 @@ fn another_workload_or_none_drops_every_stream(cx: &mut TestAppContext) {
         assert!(tags(&view, cx).iter().all(|tag| tag.starts_with("ledger-")));
         view.update(cx, |view, cx| view.show_workload(None, None, cx));
         assert!(!view.read(cx).reading());
-        assert!(view.read(cx).source().streams.is_empty());
+        assert!(view.read(cx).source().reads.streams.is_empty());
     })
     .unwrap();
     // Nothing writes on once dropped.
@@ -1023,7 +1039,7 @@ fn past_the_cap_the_newest_pods_are_read_and_the_rest_counted(cx: &mut TestAppCo
         show_fed(&view, &api, cx);
         feed(&view, all, cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).source().streams.len(), MAX_STREAMS);
+        assert_eq!(view.read(cx).source().reads.streams.len(), MAX_STREAMS);
         assert_eq!(
             window.find("workload-logs-capped").label(),
             Some(
@@ -1031,7 +1047,7 @@ fn past_the_cap_the_newest_pods_are_read_and_the_rest_counted(cx: &mut TestAppCo
                     .as_str()
             )
         );
-        let streams = &view.read(cx).source().streams;
+        let streams = &view.read(cx).source().reads.streams;
         assert!(streams.keys().any(|key| key.pod == newest));
         assert!(streams.keys().all(|key| key.pod != oldest));
     })
@@ -1083,6 +1099,7 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
         assert!(
             view.read(cx)
                 .source()
+                .reads
                 .streams
                 .values()
                 .any(|stream| stream.state == StreamState::Streaming)
@@ -1312,7 +1329,7 @@ fn the_pod_select_narrows_the_lines_and_chips_to_one_pod(cx: &mut TestAppContext
         }));
         assert_eq!(source.chips.len(), 1);
         // Every stream reads on.
-        assert_eq!(source.streams.len(), all.len());
+        assert_eq!(source.reads.streams.len(), all.len());
     })
     .unwrap();
     pick_pod(handle, 0, cx);
@@ -1408,7 +1425,7 @@ fn a_pod_past_the_cap_says_it_is_not_read(cx: &mut TestAppContext) {
                 .pod_choices
                 .iter()
                 .filter(|choice| choice.label.ends_with(" · not read"))
-                .all(|choice| !source.streams.keys().any(|key| key.pod == choice.name))
+                .all(|choice| !source.reads.streams.keys().any(|key| key.pod == choice.name))
         );
         view.update(cx, |view, cx| view.pick_pod(Some(oldest.clone()), cx));
         window.render_frame(cx);
@@ -1499,7 +1516,7 @@ fn a_gone_pod_that_comes_back_under_its_name_is_read_again(cx: &mut TestAppConte
             "{}",
             source.pod_label
         );
-        assert!(source.streams.keys().any(|key| key.pod == member));
+        assert!(source.reads.streams.keys().any(|key| key.pod == member));
         assert!(
             source
                 .chips
