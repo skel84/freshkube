@@ -3,8 +3,6 @@
 //! Service on Linux. The trait and the in-memory store for tests are core's
 //! (`freshkube_core::secrets`); the platform's store stays here, with the
 //! `keyring` dependency.
-#[cfg(test)]
-pub(crate) use freshkube_core::secrets::MemoryStore;
 pub(crate) use freshkube_core::secrets::{STORE_NAME, SecretStore, Secrets};
 
 const SERVICE: &str = "Freshkube";
