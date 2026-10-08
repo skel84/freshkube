@@ -82,6 +82,8 @@ pub struct Stage {
     /// Verifications recorded in `status.freightHistory[].verificationHistory`,
     /// newest first; empty from a Kargo that sends none.
     pub verifications: Vec<Verification>,
+    /// The Freight each `freightHistory` entry holds, newest first.
+    pub history: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,7 +196,16 @@ pub struct DiscoveredImage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Verification {
     pub freight: Vec<String>,
+    /// Which `freightHistory` entry (0 is the newest) it was recorded in.
+    pub collection: usize,
     pub phase: Option<String>,
+    /// `startTime` and `finishTime`, as Kargo wrote them.
+    pub started: Option<String>,
+    pub finished: Option<String>,
+    /// The kind of actor that started it, when Kargo names one.
+    pub actor: Option<Creator>,
+    /// The AnalysisRun it ran, when Kargo names one.
+    pub analysis_run: Option<String>,
     /// The pointer the phase is read at.
     pub at: String,
 }
@@ -323,26 +334,40 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
             .collect(),
         phase: text(value, "/status/phase"),
         verifications: verifications(value),
+        history: history(value),
     })
+}
+
+/// The Freight each `freightHistory` entry holds, newest first.
+fn history(stage: &Value) -> Vec<Vec<String>> {
+    array(stage, "/status/freightHistory")
+        .map(|entry| {
+            entry
+                .get("items")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flat_map(|items| items.values())
+                .filter_map(|item| text(item, "/name"))
+                .collect()
+        })
+        .collect()
 }
 
 /// The verifications of each `freightHistory` entry, for the Freight that
 /// entry holds.
 fn verifications(stage: &Value) -> Vec<Verification> {
     let mut found = Vec::new();
-    let entries = array(stage, "/status/freightHistory");
-    for (index, entry) in entries.enumerate() {
-        let freight: Vec<String> = entry
-            .get("items")
-            .and_then(Value::as_object)
-            .into_iter()
-            .flat_map(|items| items.values())
-            .filter_map(|item| text(item, "/name"))
-            .collect();
+    let held = history(stage);
+    for (index, entry) in array(stage, "/status/freightHistory").enumerate() {
         for (at, run) in array(entry, "/verificationHistory").enumerate() {
             found.push(Verification {
-                freight: freight.clone(),
+                freight: held[index].clone(),
+                collection: index,
                 phase: text(run, "/phase"),
+                started: text(run, "/startTime"),
+                finished: text(run, "/finishTime"),
+                actor: text(run, "/actor").map(|actor| Creator::of(Some(&actor))),
+                analysis_run: text(run, "/analysisRun/name"),
                 at: format!("/status/freightHistory/{index}/verificationHistory/{at}/phase"),
             });
         }
@@ -485,6 +510,34 @@ impl Freight {
 }
 
 impl Stage {
+    /// The latest verification of `freight` in this Stage: of the newest
+    /// `freightHistory` entry that holds it, never an older entry's, the one
+    /// finished (else started) last, by time. `None` when that entry records
+    /// none: the Freight is not verified yet.
+    pub fn latest_verification(&self, freight: &str) -> Option<&Verification> {
+        let newest = self
+            .history
+            .iter()
+            .position(|held| held.iter().any(|name| name == freight))?;
+        let when = |v: &Verification| {
+            v.finished
+                .as_deref()
+                .or(v.started.as_deref())
+                .and_then(|time| time.parse::<chrono::DateTime<chrono::Utc>>().ok())
+        };
+        let mut latest: Option<&Verification> = None;
+        for v in self.verifications.iter().filter(|v| v.collection == newest) {
+            // The first of equals, or of those with no readable time, is the
+            // newest as Kargo lists them.
+            if latest
+                .is_none_or(|best| matches!((when(v), when(best)), (Some(a), Some(b)) if a > b))
+            {
+                latest = Some(v);
+            }
+        }
+        latest
+    }
+
     /// Where the Stage's status names `freight` as current.
     pub fn freight_pointer(&self, freight: &str) -> &'static str {
         let at = self.current_freight.iter().position(|name| name == freight);

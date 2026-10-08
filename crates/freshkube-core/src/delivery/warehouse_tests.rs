@@ -216,11 +216,7 @@ async fn a_stage_verification_the_freight_does_not_list_is_a_note() {
 #[tokio::test]
 async fn no_verification_on_either_side_says_so() {
     let link = stage_link(verified_stage(None), false).await;
-    assert!(
-        link.reason.contains("no verification reported"),
-        "{}",
-        link.reason
-    );
+    assert!(link.reason.contains("not verified yet"), "{}", link.reason);
 }
 
 #[test]
@@ -249,11 +245,7 @@ async fn a_manual_approval_makes_a_stage_eligible_not_unverified() {
         "{}",
         link.reason
     );
-    assert!(
-        !link.reason.contains("no verification reported"),
-        "{}",
-        link.reason
-    );
+    assert!(!link.reason.contains("not verified yet"), "{}", link.reason);
     assert!(
         link.evidence
             .iter()
@@ -284,4 +276,62 @@ async fn an_approval_beside_a_verification_is_said_too() {
         "{}",
         link.reason
     );
+}
+
+/// A Stage whose newest collection holds `f-new` with no verification yet,
+/// beside an older collection that held it too and verified it.
+fn re_promoted(older: Value) -> Value {
+    let mut stage = stage_holding("f-new", NEW);
+    let newest = stage["status"]["freightHistory"][0].clone();
+    let mut older_entry = newest.clone();
+    older_entry["id"] = json!("older");
+    older_entry["verificationHistory"] = older;
+    stage["status"]["freightHistory"] = json!([newest, older_entry]);
+    stage
+}
+
+#[tokio::test]
+async fn an_older_collections_success_is_not_the_latest_verification() {
+    let stage = re_promoted(json!([{"id": "v0", "phase": "Successful",
+        "startTime": "2026-10-01T08:00:00Z", "finishTime": "2026-10-01T08:05:00Z"}]));
+    let link = stage_link(stage, false).await;
+    assert!(link.reason.contains("not verified yet"), "{}", link.reason);
+    assert!(!link.reason.contains("Successful"), "{}", link.reason);
+    assert!(
+        !link
+            .evidence
+            .iter()
+            .any(|seen| seen.field.contains("verificationHistory")),
+        "{:#?}",
+        link.evidence
+    );
+}
+
+#[tokio::test]
+async fn the_latest_verification_is_the_last_one_finished_with_who_and_what_ran() {
+    let mut stage = stage_holding("f-new", NEW);
+    stage["status"]["freightHistory"][0]["verificationHistory"] = json!([
+        {"id": "v1", "phase": "Failed", "startTime": "2026-10-02T08:00:00Z",
+         "finishTime": "2026-10-02T08:05:00Z"},
+        {"id": "v2", "phase": "Successful", "startTime": "2026-10-03T08:00:00Z",
+         "finishTime": "2026-10-03T08:05:00Z", "actor": "email:dev@example.test",
+         "analysisRun": {"name": "dev-check-1"}}]);
+    let link = stage_link(stage, true).await;
+    assert!(
+        link.reason.contains(
+            "is Successful (at 2026-10-03T08:05:00Z, started by hand, AnalysisRun dev-check-1)"
+        ),
+        "{}",
+        link.reason
+    );
+    assert!(!link.reason.contains("dev@example.test"), "{}", link.reason);
+}
+
+#[test]
+fn verifications_without_times_or_actors_still_parse() {
+    let stage = parse_stage(&verified_stage(Some("Successful"))).unwrap();
+    let latest = stage.latest_verification("f-new").unwrap();
+    assert_eq!(latest.phase.as_deref(), Some("Successful"));
+    assert!(latest.finished.is_none() && latest.actor.is_none());
+    assert!(stage.latest_verification("f-other").is_none());
 }

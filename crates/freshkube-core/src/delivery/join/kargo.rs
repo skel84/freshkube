@@ -325,9 +325,8 @@ pub(super) fn warehouse_link(evidence: &Evidence, freight: &Freight) -> Link {
 fn verification(freight: &Freight, stage: &Stage) -> (String, Vec<Observation>) {
     let listed = freight.verified_in.iter().any(|name| name == &stage.name);
     let recorded: Vec<_> = stage
-        .verifications
-        .iter()
-        .filter(|v| v.freight.contains(&freight.name))
+        .latest_verification(&freight.name)
+        .into_iter()
         .collect();
     let approved = freight.approved_for.iter().any(|name| name == &stage.name);
     let mut seen = Vec::new();
@@ -344,24 +343,45 @@ fn verification(freight: &Freight, stage: &Stage) -> (String, Vec<Observation>) 
             .map(|v| stage_verification(stage, v)),
     );
     let phase = |v: &&crate::delivery::kargo::Verification| {
-        v.phase.clone().unwrap_or_else(|| "no phase".to_owned())
+        let mut words = v.phase.clone().unwrap_or_else(|| "no phase".to_owned());
+        let mut more = Vec::new();
+        if let Some(time) = v.finished.as_deref().or(v.started.as_deref()) {
+            more.push(format!("at {time}"));
+        }
+        match v.actor {
+            Some(crate::delivery::kargo::Creator::User) => more.push("started by hand".to_owned()),
+            Some(crate::delivery::kargo::Creator::Controller) => {
+                more.push("started by a Kargo controller".to_owned())
+            }
+            _ => {}
+        }
+        if let Some(run) = &v.analysis_run {
+            more.push(format!("AnalysisRun {run}"));
+        }
+        if !more.is_empty() {
+            words.push_str(&format!(" ({})", more.join(", ")));
+        }
+        words
     };
     let mut note = match (listed, recorded.first()) {
         (true, Some(v)) if v.phase.as_deref() == Some("Successful") => {
-            "verified here: the Freight lists this Stage and the Stage's latest verification is Successful".to_owned()
+            format!(
+                "verified here: the Freight lists this Stage and the Stage's latest verification is {}",
+                phase(v)
+            )
         }
         (true, Some(v)) => format!(
             "the Freight lists this Stage as verified, the Stage's latest verification of it is {}",
             phase(v)
         ),
         (true, None) => {
-            "the Freight lists this Stage as verified, the Stage records no verification of it".to_owned()
+            "the Freight lists this Stage as verified, but the Stage records no verification of it yet: not verified yet".to_owned()
         }
         (false, Some(v)) => format!(
             "the Stage's latest verification of it is {}, the Freight does not list this Stage as verified",
             phase(v)
         ),
-        (false, None) => "no verification reported".to_owned(),
+        (false, None) => "not verified yet: neither the Freight nor the Stage reports a verification".to_owned(),
     };
     if approved {
         // A manual approval makes the Freight eligible in the Stage without
