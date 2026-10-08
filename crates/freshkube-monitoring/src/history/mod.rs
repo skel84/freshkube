@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::monitoring::{
-    Endpoint, ErrorKind, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError,
-    Source,
+    Endpoint, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError, Source,
+    cluster_client,
     history::{self, Subject},
     model::{data::QueryContext, time::TimeWindow},
     prometheus::Variables,
@@ -82,10 +82,7 @@ impl HistorySource {
             HistoryKind::Example => Ok(Source::Example(ExampleSource::new(&subject.seed()))),
             HistoryKind::Ready(prometheus) => Ok(Source::Prometheus(prometheus)),
             HistoryKind::Remembered { access, service } => {
-                let client = access
-                    .client()
-                    .await
-                    .map_err(|message| QueryError::new(ErrorKind::Unavailable, message))?;
+                let client = cluster_client(&access).await?;
                 Ok(Source::Prometheus(Prometheus::new(client, service)))
             }
         }

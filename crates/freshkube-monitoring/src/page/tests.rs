@@ -1131,6 +1131,70 @@ impl KubeClientSource for NoClient {
     }
 }
 
+/// A live cluster whose client never builds, counting the asks and what it
+/// was told to forget.
+#[derive(Default)]
+struct Forgetting {
+    asked: std::sync::atomic::AtomicUsize,
+    forgot: std::sync::atomic::AtomicUsize,
+}
+
+impl KubeClientSource for Forgetting {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { Err("No kubeconfig".into()) })
+    }
+
+    fn forget(&self) {
+        self.forgot
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl Forgetting {
+    /// The asks and the forgets.
+    fn counts(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering::SeqCst;
+        (self.asked.load(SeqCst), self.forgot.load(SeqCst))
+    }
+}
+
+#[gpui_kit::test]
+async fn a_failed_client_is_forgotten_so_try_again_builds_it_again(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let counting = std::sync::Arc::new(Forgetting::default());
+    let source = ClusterSource {
+        id: "live".into(),
+        context: "prod-ams".into(),
+        access: ClusterAccess::Live(counting.clone()),
+    };
+    let (_runtime, handle, page) = mount(cx, Some(source));
+    show(cx, handle, &page);
+    settled(cx, handle, &page).await;
+    assert_eq!(cx.read(|cx| page.read(cx).connection_name()), "failed");
+    assert_eq!(counting.counts(), (1, 1));
+
+    cx.update_window(handle, |_, window, cx| window.click("monitoring-retry", cx))
+        .unwrap();
+    settled(cx, handle, &page).await;
+    assert_eq!(cx.read(|cx| page.read(cx).connection_name()), "failed");
+    assert_eq!(counting.counts(), (2, 2));
+}
+
+#[gpui_kit::test]
+fn credentials_refused_show_as_refused(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    show(cx, handle, &page);
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.discovered(Err(QueryError::unauthorized()), cx)
+        })
+    });
+    assert_eq!(cx.read(|cx| page.read(cx).connection_name()), "refused");
+    assert!(shown(cx, handle, "monitoring-retry"));
+    assert!(!shown(cx, handle, "monitoring-grid"));
+}
+
 fn live_source() -> ClusterSource {
     ClusterSource {
         id: "live".into(),

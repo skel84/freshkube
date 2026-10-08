@@ -6,7 +6,7 @@
 use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::monitoring::{
     Backend, BuildInfo, Candidate, Discovery, ErrorKind, Prometheus, PrometheusService, QueryError,
-    Tried, confirm, confirm_url, discover,
+    Tried, cluster_client, confirm, confirm_url, discover, forget_after,
 };
 use gpui_kit::{Context, SharedString};
 
@@ -144,44 +144,43 @@ impl MonitoringPage {
             self.resume(cx);
             return;
         }
-        let request =
-            match self.saved.choices.get(&source.context).cloned() {
-                Some(Choice::Service(service)) => {
-                    let access = source.access.clone();
-                    self.run(
-                        async move {
-                            let client = access.client().await.map_err(|message| {
-                                QueryError::new(ErrorKind::Unavailable, message)
-                            })?;
-                            confirm(&client, service).await
-                        },
-                        cx,
-                        |this, result, cx| this.confirmed(result, cx),
-                    )
-                }
-                Some(Choice::Url { url, token }) => {
-                    let token = self.token_reader(&url, token);
-                    self.run(
-                        async move { confirm_url(url, token.await?).await },
-                        cx,
-                        |this, result, cx| this.confirmed(result, cx),
-                    )
-                }
-                None => {
-                    let remembered = self.saved.services.get(&source.context).cloned();
-                    let access = source.access.clone();
-                    self.run(
-                        async move {
-                            let client = access.client().await.map_err(|message| {
-                                QueryError::new(ErrorKind::Unavailable, message)
-                            })?;
-                            discover(&client, remembered).await
-                        },
-                        cx,
-                        |this, result, cx| this.discovered(result, cx),
-                    )
-                }
-            };
+        let request = match self.saved.choices.get(&source.context).cloned() {
+            Some(Choice::Service(service)) => {
+                let access = source.access.clone();
+                self.run(
+                    async move {
+                        let client = cluster_client(&access).await?;
+                        confirm(&client, service)
+                            .await
+                            .inspect_err(|error| forget_after(&access, error))
+                    },
+                    cx,
+                    |this, result, cx| this.confirmed(result, cx),
+                )
+            }
+            Some(Choice::Url { url, token }) => {
+                let token = self.token_reader(&url, token);
+                self.run(
+                    async move { confirm_url(url, token.await?).await },
+                    cx,
+                    |this, result, cx| this.confirmed(result, cx),
+                )
+            }
+            None => {
+                let remembered = self.saved.services.get(&source.context).cloned();
+                let access = source.access.clone();
+                self.run(
+                    async move {
+                        let client = cluster_client(&access).await?;
+                        discover(&client, remembered)
+                            .await
+                            .inspect_err(|error| forget_after(&access, error))
+                    },
+                    cx,
+                    |this, result, cx| this.discovered(result, cx),
+                )
+            }
+        };
         self.connection = Connection::Looking { _request: request };
     }
 
@@ -238,7 +237,7 @@ impl MonitoringPage {
             Ok(Discovery::Missing { candidates, tried }) => {
                 self.connection = Connection::missing(candidates, tried);
             }
-            Err(error) if error.kind == ErrorKind::Refused => {
+            Err(error) if error.is_refused() => {
                 self.connection = Connection::Refused(error.message.into());
             }
             Err(error) => self.connection = Connection::Failed(error.message.into()),
@@ -258,16 +257,15 @@ impl MonitoringPage {
         let confirming = service.clone();
         let request = self.run(
             async move {
-                let client = access
-                    .client()
+                let client = cluster_client(&access).await?;
+                confirm(&client, confirming)
                     .await
-                    .map_err(|message| QueryError::new(ErrorKind::Unavailable, message))?;
-                confirm(&client, confirming).await
+                    .inspect_err(|error| forget_after(&access, error))
             },
             cx,
             |this, result, cx| match result {
                 Ok((prometheus, build)) => this.use_prometheus(prometheus, build, cx),
-                Err(error) if error.kind == ErrorKind::Refused => this.discovered(Err(error), cx),
+                Err(error) if error.is_refused() => this.discovered(Err(error), cx),
                 Err(error) => this.confirm_failed(error, cx),
             },
         );

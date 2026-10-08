@@ -175,7 +175,7 @@ impl Prometheus {
                 })??;
         let direct = matches!(self.transport, Transport::Direct { .. });
         classify(status, &bytes).map_err(|error| {
-            if direct && error.kind == ErrorKind::Refused {
+            if direct && error.is_refused() {
                 QueryError::token_refused()
             } else {
                 error
@@ -238,7 +238,7 @@ impl Prometheus {
             let message = match error {
                 kube::Error::Auth(_) => {
                     return QueryError::new(
-                        ErrorKind::Refused,
+                        ErrorKind::Unauthorized,
                         "The context's credentials were refused",
                     );
                 }
@@ -493,7 +493,8 @@ fn classify(status: u16, bytes: &[u8]) -> Result<Value, QueryError> {
                 .to_owned()
         });
     Err(match status {
-        401 | 403 => QueryError::refused(),
+        401 => QueryError::unauthorized(),
+        403 => QueryError::refused(),
         404 => QueryError::new(
             ErrorKind::NotFound,
             if detail.is_empty() {

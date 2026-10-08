@@ -263,7 +263,8 @@ pub async fn list_candidates(client: &kube::Client) -> Result<Vec<Candidate>, Qu
 
 fn listing_error(failure: Failure) -> QueryError {
     let kind = match failure.kind {
-        FailureKind::Unauthorized | FailureKind::Forbidden => ErrorKind::Refused,
+        FailureKind::Unauthorized => ErrorKind::Unauthorized,
+        FailureKind::Forbidden => ErrorKind::Refused,
         FailureKind::NotFound => ErrorKind::NotFound,
         FailureKind::Timeout => ErrorKind::TimedOut,
         FailureKind::Config | FailureKind::Unreachable | FailureKind::Other => {
@@ -331,7 +332,7 @@ pub async fn discover(
                 });
             }
             // RBAC applies to every Service alike; don't look further.
-            Err(error) if error.kind == ErrorKind::Refused => return Err(error),
+            Err(error) if error.is_refused() => return Err(error),
             Err(error) => tried.push(Tried { service, error }),
         }
     }
@@ -351,7 +352,7 @@ pub async fn discover(
                     tried,
                 });
             }
-            Err(error) if error.kind == ErrorKind::Refused => return Err(error),
+            Err(error) if error.is_refused() => return Err(error),
             Err(error) => tried.push(Tried {
                 service: candidate.service.clone(),
                 error,

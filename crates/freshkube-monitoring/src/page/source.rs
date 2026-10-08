@@ -7,8 +7,8 @@ use std::future::Future;
 use std::pin::Pin;
 
 use freshkube_core::monitoring::{
-    Discovery, ErrorKind, LOOKED_FOR, PrometheusService, QueryError, confirm, confirm_url,
-    discover, normalise_path, normalise_url,
+    Discovery, ErrorKind, LOOKED_FOR, PrometheusService, QueryError, cluster_client, confirm,
+    confirm_url, discover, forget_after, normalise_path, normalise_url,
 };
 use futures::channel::oneshot;
 use gpui_kit::component::{
@@ -203,15 +203,13 @@ impl MonitoringPage {
             Err(why) => return self.form_note(why, cx),
         };
         let access = source.access.clone();
-        let client = async move {
-            access
-                .client()
-                .await
-                .map_err(|message| QueryError::new(ErrorKind::Unavailable, message))
-        };
         let work: Work = match draft {
             Draft::Automatic => Box::pin(async move {
-                match discover(&client.await?, None).await? {
+                let client = cluster_client(&access).await?;
+                let discovery = discover(&client, None)
+                    .await
+                    .inspect_err(|error| forget_after(&access, error))?;
+                match discovery {
                     Discovery::Found {
                         prometheus, build, ..
                     } => Ok(answered(&prometheus, &build)),
@@ -222,7 +220,10 @@ impl MonitoringPage {
                 }
             }),
             Draft::Service(service) => Box::pin(async move {
-                let (prometheus, build) = confirm(&client.await?, service).await?;
+                let client = cluster_client(&access).await?;
+                let (prometheus, build) = confirm(&client, service)
+                    .await
+                    .inspect_err(|error| forget_after(&access, error))?;
                 Ok(answered(&prometheus, &build))
             }),
             Draft::Url { url, typed } => {
