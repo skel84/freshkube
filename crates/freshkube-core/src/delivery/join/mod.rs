@@ -22,7 +22,7 @@ use argo::rollout_namespace;
 use build::{commit_link, pull_request_links, supply_chain_links};
 pub use conflict::{BuiltDigest, DigestConflict};
 use conflict::{conflict_reason, digest_conflicts};
-use kargo::{freight_summary, stage_links};
+use kargo::{freight_summary, stage_links, warehouse_link};
 pub use render::render;
 
 use std::collections::BTreeMap;
@@ -68,6 +68,7 @@ pub enum Hop {
     PipelineRun,
     SupplyChain,
     Freight,
+    Warehouse,
     Promotion,
     Stage,
     Application,
@@ -84,6 +85,7 @@ impl Hop {
             Self::PipelineRun => "PipelineRun",
             Self::SupplyChain => "supply chain",
             Self::Freight => "Freight",
+            Self::Warehouse => "Warehouse",
             Self::Promotion => "Promotion",
             Self::Stage => "Stage",
             Self::Application => "Application",
@@ -303,7 +305,7 @@ impl Trail {
                 let stop = self.links.iter().find(|link| {
                     link.confidence == Confidence::Unknown
                         && link.from != Hop::PullRequest
-                        && !matches!(link.to, Hop::Promotion | Hop::SupplyChain)
+                        && !matches!(link.to, Hop::Promotion | Hop::SupplyChain | Hop::Warehouse)
                 });
                 match stop {
                     Some(link) => format!(
@@ -662,6 +664,7 @@ pub fn join(evidence: &Evidence) -> Trail {
         .observed(seen);
         link.conflicts = conflicts;
         links.push(link);
+        links.push(warehouse_link(evidence, freight));
         links.extend(stage_links(evidence, freight));
     }
     Trail {

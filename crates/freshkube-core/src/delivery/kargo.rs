@@ -79,6 +79,9 @@ pub struct Stage {
     /// Why the Stage is not healthy, as Kargo's health checks say.
     pub health_issues: Vec<String>,
     pub phase: Option<String>,
+    /// Verifications recorded in `status.freightHistory[].verificationHistory`,
+    /// newest first; empty from a Kargo that sends none.
+    pub verifications: Vec<Verification>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,6 +172,31 @@ pub struct Warehouse {
     /// `metadata.uid` and `metadata.resourceVersion`.
     pub meta: Meta,
     pub image_repos: Vec<String>,
+    /// The images its status lists as recently discovered, a bounded and
+    /// rolling window; `None` when it reports no discovered artifacts (an
+    /// older Kargo, or a Warehouse that has not discovered yet).
+    pub discovered: Option<Vec<DiscoveredImage>>,
+}
+
+/// An image repository the Warehouse discovered, with the digests and tags
+/// of its recent references.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredImage {
+    pub repo_url: String,
+    pub digests: Vec<Digest>,
+    pub tags: Vec<String>,
+}
+
+/// One verification of a Freight in a Stage, as the Stage's status records
+/// it: the Freight it ran for, and Kargo's own word for how it ended
+/// (`Successful`, `Failed`, `Error`, `Aborted`, `Inconclusive`, or still
+/// running).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Verification {
+    pub freight: Vec<String>,
+    pub phase: Option<String>,
+    /// The pointer the phase is read at.
+    pub at: String,
 }
 
 fn names(value: &Value, pointer: &str) -> Vec<String> {
@@ -294,7 +322,32 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
             .map(str::to_owned)
             .collect(),
         phase: text(value, "/status/phase"),
+        verifications: verifications(value),
     })
+}
+
+/// The verifications of each `freightHistory` entry, for the Freight that
+/// entry holds.
+fn verifications(stage: &Value) -> Vec<Verification> {
+    let mut found = Vec::new();
+    let entries = array(stage, "/status/freightHistory");
+    for (index, entry) in entries.enumerate() {
+        let freight: Vec<String> = entry
+            .get("items")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flat_map(|items| items.values())
+            .filter_map(|item| text(item, "/name"))
+            .collect();
+        for (at, run) in array(entry, "/verificationHistory").enumerate() {
+            found.push(Verification {
+                freight: freight.clone(),
+                phase: text(run, "/phase"),
+                at: format!("/status/freightHistory/{index}/verificationHistory/{at}/phase"),
+            });
+        }
+    }
+    found
 }
 
 fn image_digests(freight: &Value) -> Vec<Digest> {
@@ -385,6 +438,26 @@ pub fn parse_warehouse(value: &Value) -> Option<Warehouse> {
         image_repos: array(value, "/spec/subscriptions")
             .filter_map(|subscription| text(subscription, "/image/repoURL"))
             .collect(),
+        discovered: value
+            .pointer("/status/discoveredArtifacts/images")
+            .and_then(Value::as_array)
+            .map(|images| {
+                images
+                    .iter()
+                    .filter_map(|image| {
+                        Some(DiscoveredImage {
+                            repo_url: text(image, "/repoURL")?,
+                            digests: array(image, "/references")
+                                .filter_map(|reference| text(reference, "/digest"))
+                                .filter_map(|digest| Digest::parse(&digest))
+                                .collect(),
+                            tags: array(image, "/references")
+                                .filter_map(|reference| text(reference, "/tag"))
+                                .collect(),
+                        })
+                    })
+                    .collect()
+            }),
     })
 }
 
@@ -392,6 +465,11 @@ impl Freight {
     /// The pointer `field` (`images` or `commits`) is read at.
     pub fn pointer(&self, field: &str) -> String {
         format!("{}/{field}", self.contents_at)
+    }
+
+    /// Where the Freight names its origin Warehouse.
+    pub fn origin_pointer(&self) -> String {
+        self.pointer("origin/name")
     }
 
     /// The object these facts were read from.

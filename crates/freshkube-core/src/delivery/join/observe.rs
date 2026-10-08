@@ -11,7 +11,7 @@ use crate::delivery::argocd::{AUTHORIZED_STAGE, Application};
 use crate::delivery::deployments::{Deployment, DeploymentSet, REVISION, TEMPLATE_HASH_LABEL};
 use crate::delivery::digest::Digest;
 use crate::delivery::github::PullRequest;
-use crate::delivery::kargo::{Freight, Promotion, Stage};
+use crate::delivery::kargo::{Freight, Promotion, Stage, Verification, Warehouse};
 use crate::delivery::observation::{Meta, ObjectRef, Observation, pointer_segment, role};
 use crate::delivery::pods::RunningImage;
 use crate::delivery::rollouts::{POD_HASH_LABEL, ReplicaSet, Rollout};
@@ -223,6 +223,56 @@ pub(super) fn freight_side(freight: &Freight, key: &Key) -> Vec<Observation> {
         &field,
         Some(&value),
     )]
+}
+
+/// The origin Warehouse the Freight names, as Kargo wrote it.
+pub(super) fn freight_origin(freight: &Freight) -> Observation {
+    Observation::reported(
+        role::KARGO,
+        freight.object_ref(),
+        &freight.origin_pointer(),
+        freight.warehouse.as_deref(),
+    )
+}
+
+/// A digest the Warehouse's status lists among its recent discoveries.
+pub(super) fn warehouse_discovered(warehouse: &Warehouse, digest: &Digest) -> Observation {
+    Observation::reported(
+        role::KARGO,
+        warehouse.object_ref(),
+        "/status/discoveredArtifacts/images",
+        Some(digest.as_str()),
+    )
+}
+
+/// An image repository the Warehouse's spec subscribes to: declared.
+pub(super) fn warehouse_subscription(warehouse: &Warehouse, repo: &str) -> Observation {
+    Observation::declared(
+        role::KARGO,
+        warehouse.object_ref(),
+        "/spec/subscriptions",
+        Some(repo),
+    )
+}
+
+/// The Stage the Freight's status lists as one it was verified in.
+pub(super) fn freight_verified(freight: &Freight, stage: &str) -> Observation {
+    Observation::reported(
+        role::KARGO,
+        freight.object_ref(),
+        &format!("/status/verifiedIn/{}", pointer_segment(stage)),
+        Some(stage),
+    )
+}
+
+/// How a verification in the Stage's status ended, in Kargo's word.
+pub(super) fn stage_verification(stage: &Stage, verification: &Verification) -> Observation {
+    Observation::reported(
+        role::KARGO,
+        stage.object_ref(),
+        &verification.at,
+        verification.phase.as_deref(),
+    )
 }
 
 /// What a Promotion's status records of the Freight's image.
