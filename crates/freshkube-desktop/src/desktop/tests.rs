@@ -1,5 +1,6 @@
 use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot, probe};
 use crate::logs::TalosPanel;
+pub(crate) use freshkube_ui::layout_check::settle_header;
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,
@@ -4542,18 +4543,6 @@ fn search_everything_keeps_one_width_on_every_page(cx: &mut TestAppContext) {
             "{page:?} shows Search everything as a {width} dp field, not the full one"
         );
     }
-}
-
-/// Draws until the page's header stops asking for frames: it folds its
-/// controls from what its parts measured on the frame before.
-pub(crate) fn settle_header(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
-    for _ in 0..4 {
-        window.render_frame(cx);
-        if window.simulate_next_frame(cx) == 0 {
-            return;
-        }
-    }
-    panic!("the header keeps moving");
 }
 
 #[gpui_kit::test]
