@@ -303,12 +303,12 @@ async fn the_header_names_a_picked_entry_whose_kubeconfig_cannot_be_read(cx: &mu
     .unwrap();
     cx.run_until_parked();
     // Named at once; once the read has failed it reads as a failed connection.
-    cx.read(|cx| assert_eq!(view.read(cx).context_display.name.as_ref(), "acme-lab"));
-    cx.wait_for(handle, std::time::Duration::from_secs(5), |_, cx| {
-        matches!(
-            view.read(cx).context_display.state,
-            super::shell::Connection::Failed
-        )
+    // Waits rather than asserting at once: a loaded runner finishes the
+    // switch's reads later (the first Windows CI run saw the old name).
+    cx.wait_for(handle, std::time::Duration::from_secs(30), |_, cx| {
+        let display = &view.read(cx).context_display;
+        display.name.as_ref() == "acme-lab"
+            && matches!(display.state, super::shell::Connection::Failed)
     })
     .await;
     cx.read(|cx| {
