@@ -131,6 +131,30 @@ Rejected: *two lines in a 36 dp switcher*, since it would set the row's height a
 
 Rejected: *keycaps on rows*, since a source list's right edge belongs to counts and marks, and the rail and the menus already show keys; *a bold selected row*, since the fill already says it and bold labels change width; *a disclosure triangle on every section*, since no section is long enough to need folding apart from the API groups.
 
+### Split sizes remembered
+
+[#244](https://github.com/skel84/freshkube/issues/244) item 5, settled on 8 October 2026. Every split the user can resize keeps the size they gave it, per page, across restarts, through one helper, `freshkube_ui::split_size`, rather than code on each page. Where each split starts and how far it goes are unchanged.
+
+What resizes, and what each kept before this change:
+
+| Split | Where | Resizes | Before | Key in `navigation.json` | Scope |
+| --- | --- | --- | --- | --- | --- |
+| Inspector beside the table | Nodes, Health, Lifecycle, Security, Incidents, Traces (with the Application report's Tracing block, which shares Traces' split) and the service map | Width, from Kit's handle | Saved on release since #230, each page with its own `remember` closure | `inspector.nodes`, `.health`, `.lifecycle`, `.security`, `.incidents`, `.traces`, `.map` | Per page |
+| Details drawer | Resources | Width, from its left edge | Saved 300 ms after the drag pauses, by Resources' own timer | `drawer.resources` | The page: one width for every kind (#290) |
+| Dock | Under every page | Height, from its top edge | Saved 300 ms after the drag pauses, in the dock's object with its tabs | `dock.height` | The app: one dock spans every page, and its tabs outlive the page |
+| Inspector stacked under the table | Those pages below 900 dp | Heights, from Kit's handle | Not saved | None | The session; it stays so |
+
+Nothing else resizes. The log views have no handle of their own: a log fills a dock tab or the node pane's Logs tab and takes that split's size. The rail, the column, the header and the status bar are fixed; the dock's Minimize and Fit to window are states saved with its tabs, not sizes.
+
+- **The helper.** A page keeps a `SplitSize`, made from its key (a group and a name, `SizeKey::new("inspector", "nodes")`), its default and its least, in dp. It reads the saved size once, when made: one under the least starts at the least, and none, or one that isn't a finite positive number, starts at the default. `size()` is the size the user left it at, which the split lays out from. `fit(most)` bounds it to the room the window has now, so a smaller window shows the split clamped while the size, and the file, keep what the user gave.
+- **Saving.** A drag that reports every move calls `drag(size, cx)`: it keeps the size at once and saves it 300 ms after the last move (`SAVE_DELAY`), so a drag writes once however many frames it spans (the drawer, the dock). A split told only when a drag ends, as Kit's resizable panels tell the inspector, calls `release(size, cx)`, which saves at once. Only a drag saves: opening a page, a window resize, a text size change or a clamp never writes.
+- **Where sizes live.** In `navigation.json` beside the preferences, through the store the shell sets once (`split_size::set_store`), which is the file's `NavigationFile`. It writes the whole file in the background as before, so saving a size never drops another key. Without a store, as in the workbench and tests that set none, sizes last the session; a test that reopens a page sets a `MemorySizes` (behind `testing`), which also counts the writes.
+- **The keys stay where they are.** Each split saves under the key it already used, `group.name`, in whole dp, so a file from an earlier build gives every split its size and an earlier build still reads what this one writes. The dock's height stays inside the dock's object: the dock now writes its other fields into that object and leaves the height the helper wrote, where an earlier build still reads it.
+- **Bounds that follow the window stay with the split:** the inspector's `keep_lead` and Kit's least for each side, the drawer's `drawer::fit` (the least of 90% of the list and the list less 280, the whole list under 600), and the dock's least (its tab's toolbar and three lines), the page's 100 dp and, until dragged, half the page cell in a short window. Each bounds `size()` while drawing and never writes back.
+- **Stacked inspectors stay unsaved.** Under 900 dp the table and the inspector stack, and a table whose height follows its data (the service map, Lifecycle's table) gives its height each frame until the user drags. Those heights follow the window more than a choice the user made, and a saved inspector height could push a shorter window's table under its least, so a drag keeps them for the session only.
+
+Rejected: *one `splits` key holding every size*, since an earlier build would lose every width on a downgrade and this one would need a migration; *a drawer width per kind*, since #290 settled one width for the page; *saving the size Kit rescales to when the window changes*, since a smaller window would then shrink the saved width for good.
+
 ## Status and links
 
 Every glyph is the G6 Round set, chosen on 5 October 2026: one round silhouette for every state, drawn 10 dp, whose inside carries the meaning. `ui::status_glyph` draws it ([change 13](#from-todays-app-to-desktop-grade)): each drawing is a single-colour SVG on a 16 grid in `crates/freshkube-ui/assets/glyphs/`, compiled in and painted as an alpha mask in the tone's colour, so a halo keeps its transparency and a cut-out shows what lies behind it.
