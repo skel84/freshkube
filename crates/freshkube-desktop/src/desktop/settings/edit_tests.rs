@@ -571,3 +571,51 @@ async fn the_r_key_reloads_the_file_behind_the_page(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn a_talos_context_is_saved_with_its_talosconfig_and_refused_without_one(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let talosconfig = guard.path().join("acme.talosconfig");
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-add", cx);
+        window.render_frame(cx);
+        window.click("settings-form-context", cx);
+        window.input("acme-ci", cx);
+        window.click("settings-form-talos-context", cx);
+        window.input("acme-talos", cx);
+        window.click("settings-form-save", cx);
+        window.render_frame(cx);
+        let text = window
+            .find("settings-form-error")
+            .label()
+            .unwrap_or_default()
+            .to_owned();
+        assert_eq!(text, "A Talos context needs a talosconfig");
+        window.click("settings-form-talosconfig", cx);
+        window.input(&talosconfig.display().to_string(), cx);
+        window.click("settings-form-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    let Loaded::Workspace(file) = workspace::load(&guard.path().join("workspace.json")) else {
+        panic!("not saved");
+    };
+    assert_eq!(
+        file.clusters[0].talos_context.as_deref(),
+        Some("acme-talos")
+    );
+    assert_eq!(
+        file.clusters[0].talosconfig.as_deref(),
+        Some(talosconfig.as_path())
+    );
+    // The header offers the new cluster at once.
+    cx.update_window(handle, |_, _, cx| {
+        assert_eq!(view.read(cx).switcher.len(), 1);
+    })
+    .unwrap();
+}

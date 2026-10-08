@@ -17,6 +17,9 @@ mod settings;
 mod shell;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
+mod switch;
+#[cfg(test)]
+mod switch_tests;
 mod system_services;
 mod target;
 #[cfg(test)]
@@ -311,6 +314,10 @@ pub(crate) struct Pilot {
     overview: Snapshot<ClusterOverview>,
     /// The cluster sessions: a workspace of one.
     registry: session::Registry,
+    /// How the active workspace entry was defined when it was opened.
+    active_definition: String,
+    /// The header's list of the workspace file's clusters.
+    switcher: Vec<switch::ClusterItem>,
     object_open_job: Option<OwnedJob>,
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
@@ -752,6 +759,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let names_source =
+            options.fixture || options.named_source || options.maintenance_endpoint.is_some();
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
         // Opened before the pages, which read their inspectors' widths from it.
@@ -1007,6 +1016,8 @@ impl Pilot {
             obs_column_reveal_pass: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubernetes_only: None,
+            active_definition: String::new(),
+            switcher: Vec::new(),
             settings_open: false,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
@@ -1035,14 +1046,22 @@ impl Pilot {
             _tick: tick,
         };
         view.load_workspace(cx);
-        view.open_initial_source(
-            options.kubernetes_only,
-            options.kubeconfig_path,
-            options.kube_context,
-            options.remembered_kubernetes,
-            window,
-            cx,
-        );
+        view.rebuild_switcher(cx);
+        let workspace_entry = view.launch_entry(names_source, cx);
+        if let Some(id) = workspace_entry {
+            view.activate_entry(&id, window, cx);
+        } else {
+            view.open_initial_source(
+                options.kubernetes_only,
+                options.kubeconfig_path,
+                options.kube_context,
+                options.remembered_kubernetes,
+                window,
+                cx,
+            );
+        }
+        view._subscriptions
+            .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
         view._subscriptions.push(cx.subscribe_in(
             &view.system_services,
             window,
@@ -1115,6 +1134,7 @@ impl Pilot {
         self.logs
             .update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
         self.push_source(window, cx);
+        self.restore_parked_summary(window, cx);
     }
 
     fn load_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1150,6 +1170,7 @@ impl Pilot {
                             view.applied.context = Some(catalog.current);
                         }
                         view.remember_connection(window, cx);
+                        view.restore_parked_summary(window, cx);
                         view.refresh(window, cx);
                     }
                     Err(error) => {

@@ -286,18 +286,33 @@ impl Pilot {
                 let popover = cx.entity().downgrade();
                 pilot
                     .update(cx, |view, cx| {
+                        // The list scrolls; the way to Kubernetes only stays
+                        // in view under it.
                         v_flex()
-                            .id("context-options")
                             .w(dp(360.))
-                            .max_h(dp(400.))
-                            .overflow_y_scroll()
-                            .restrict_scroll_to_axis()
                             .gap_1()
-                            .child(ui::caption("Change context · ⌥↑ ⌥↓", cx))
-                            .children(view.contexts.iter().enumerate().map(|(ix, name)| {
-                                view.context_item(ix, name, popover.clone(), cx)
-                                    .into_any_element()
-                            }))
+                            .child(
+                                v_flex()
+                                    .id("context-options")
+                                    .max_h(dp(400.))
+                                    .overflow_y_scroll()
+                                    .restrict_scroll_to_axis()
+                                    .gap_1()
+                                    .when(!view.switcher.is_empty(), |this| {
+                                        this.child(ui::caption("Clusters", cx)).children(
+                                            view.switcher.iter().enumerate().map(|(ix, item)| {
+                                                view.cluster_item(ix, item, popover.clone(), cx)
+                                            }),
+                                        )
+                                    })
+                                    .child(ui::caption("Change context · ⌥↑ ⌥↓", cx))
+                                    .children(view.contexts.iter().enumerate().map(
+                                        |(ix, name)| {
+                                            view.context_item(ix, name, popover.clone(), cx)
+                                                .into_any_element()
+                                        },
+                                    )),
+                            )
                             .when(view.kubernetes_only.is_none(), |this| {
                                 let popover = popover.clone();
                                 this.child(

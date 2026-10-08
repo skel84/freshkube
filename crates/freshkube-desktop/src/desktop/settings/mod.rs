@@ -121,6 +121,12 @@ pub(crate) struct SettingsPage {
 }
 
 impl SettingsPage {
+    /// The workspace as the file holds it; empty for no file or one that
+    /// can't be used.
+    pub(in crate::desktop) fn workspace(&self) -> &Workspace {
+        &self.workspace
+    }
+
     pub(super) fn new(cx: &mut Context<Self>) -> Self {
         let (columns, width) = source::columns(&[]);
         Self {

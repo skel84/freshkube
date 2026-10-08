@@ -16,6 +16,9 @@ pub struct GpuiOptions {
     /// The kubeconfig and context came from the remembered choice, not from
     /// the command line; later context changes are remembered too.
     remembered_kubernetes: bool,
+    /// The command line named a talosconfig, a Talos context, a kubeconfig or
+    /// a kubeconfig context; set before a remembered choice fills any in.
+    named_source: bool,
     preferences: Option<PathBuf>,
     keyring: bool,
     /// Example data holds the Talos overview and the summary
@@ -35,6 +38,7 @@ impl GpuiOptions {
             kubernetes_only: false,
             kube_context: None,
             remembered_kubernetes: false,
+            named_source: false,
             preferences: None,
             keyring: false,
             hold_talos: false,
@@ -113,6 +117,10 @@ impl GpuiOptions {
     }
 
     fn with_preferences_in(mut self, path: Option<PathBuf>, kubeconfig_environment: bool) -> Self {
+        self.named_source = self.config_path.is_some()
+            || self.context.is_some()
+            || self.kubeconfig_path.is_some()
+            || self.kube_context.is_some();
         if !self.fixture && self.maintenance_endpoint.is_none() {
             match path
                 .as_deref()

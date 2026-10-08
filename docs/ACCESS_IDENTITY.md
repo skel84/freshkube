@@ -64,10 +64,38 @@ a same-named object here. The Kubernetes source (`Pilot::kube_source`) and the
 Talos target are still derived from `Pilot`'s selection, overview and kubeconfig
 rather than held by the session.
 
-This is a workspace of one. Parking a session, a map keyed by connection and a
-link that switches to the cluster it names arrive with the workspace file:
-parking on today's context switch would show a stale summary on switching back
-where a fresh read is shown now. The design is on
+Switching to another entry of the workspace file (the header's Clusters list,
+`desktop/switch.rs`) parks the active session (`Registry::activate`) and opens
+the entry as a new, empty one through the path a launch with that source takes:
+its talosconfig and Talos context, or its kubeconfig context without Talos.
+Only one session reads at a time. The session is keyed by the entry's id
+(`SessionKey`), never by `AccessIdentity::key()`. What a switch does to each
+thing the shell holds:
+
+| Thing | On a switch |
+| --- | --- |
+| Summary session, its job and task | Dropped with the parked session; nothing reads for a parked cluster. |
+| Summary epoch | Advances, so a late answer from the old session is recognised and dropped. |
+| Last Kubernetes summary | Kept, with the time it was read, for that entry only. |
+| Overview, nodes, services, selected node and service | Cleared, as for a context change. |
+| Resources and Observability pages | Hand over to the new source; their reads are cancelled by the source change. |
+| Dock log tabs | Dropped with the access, as for a context change; saved tabs return for their context only. |
+| Running shells | Ask first ("End the shell in …?"); a parked cluster has none. |
+| Port forwards | Keep running on the connection they started with, as for a context change. |
+| Active entry | Saved as `workspace.active` in `navigation.json` (an entry id), read at the next launch. |
+
+Coming back to an entry puts its last summary back as last known: stale, with
+the time it was read, until the first read answers. It is put back only when
+the entry is defined as it was and the applied configuration is the one it was
+read under; an edited entry, another talosconfig or another context starts
+empty. A parked summary of an entry the file no longer lists is dropped.
+A launch that names a source on the command line (a talosconfig, a Talos
+context, a kubeconfig or a kubeconfig context) ignores the file's start rule;
+without one, the launch starts the remembered entry, else the first `core`
+entry, else the first listed (example data and maintenance never do). Links
+that switch to the cluster they name, and a second cluster read at once,
+arrive later; today `refuse_foreign_link` still refuses a link to a cluster
+that is not open. The design is on
 [#44](https://github.com/skel84/freshkube/issues/44).
 
 The workspace file (`freshkube_core::workspace`, `workspace.json` beside the
@@ -75,8 +103,8 @@ preferences) names each cluster by a stable entry id and never by a session
 key, since `AccessIdentity::key()` is process-local. Every entry has a role
 (`core`, `cicd` or `environment`); having none is reserved for the implicit
 workspace of one, which is never written. The shell reads the file once at
-launch and Settings › Workspace lists and edits it; nothing yet opens a session
-from it. No file is a workspace of one. A file the app can't use (bad JSON,
+launch and Settings › Workspace lists and edits it; the header's Clusters list
+opens a session from it. No file is a workspace of one. A file the app can't use (bad JSON,
 another version, a duplicate id, an entry without a role) is named with its
 reason and left exactly where it is until the first save, which links it to
 `workspace.json.bak` (or `workspace.<UTC time>.bak`; a backup is never
@@ -90,7 +118,7 @@ workspace whose written form would exceed what a launch reads (256 KiB) is not
 written. A `workspace.json` that is a symlink becomes a regular file on the
 first save. Keys this version doesn't know are kept on save and named on the
 page. Example data and a window without a preferences folder never
-write. Starting on a remembered entry arrives with the switcher that opens one.
+write.
 
 This is the local configuration/session boundary from #2. Independent revisions
 for remotely rotated credentials, auth-plugin state and Prometheus/provider

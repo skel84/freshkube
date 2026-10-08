@@ -312,4 +312,26 @@ mod tests {
         assert_eq!(file.collapsed(), None);
         assert_eq!(file.inspector_width("incidents"), None);
     }
+
+    #[gpui_kit::test]
+    fn the_active_cluster_is_an_entry_id_that_keeps_the_other_keys(cx: &mut TestAppContext) {
+        let directory = directory("navigation-active");
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        std::fs::write(
+            directory.join("navigation.json"),
+            "{\"collapsed\":true,\"workspace\":\"not an object\",\"future\":1}\n",
+        )
+        .unwrap();
+        let file = NavigationFile::open(Some(&preferences));
+        assert_eq!(file.active_cluster(), None);
+        cx.update(|cx| file.set_active_cluster("acme-core", cx));
+        cx.run_until_parked();
+        let reopened = NavigationFile::open(Some(&preferences));
+        assert_eq!(reopened.active_cluster().as_deref(), Some("acme-core"));
+        assert_eq!(reopened.collapsed(), Some(true));
+        let text = std::fs::read_to_string(directory.join("navigation.json")).unwrap();
+        assert!(text.contains("\"future\":1"), "{text}");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 }

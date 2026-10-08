@@ -82,6 +82,11 @@ impl KubernetesOnly {
             .filter(|path| self.remember && path.is_absolute())
     }
 
+    #[cfg(test)]
+    pub(super) fn explicit_file(&self) -> Option<&std::path::Path> {
+        self.explicit.as_deref()
+    }
+
     pub(super) fn access(&self) -> Option<&DirectAccess> {
         self.access.as_ref()
     }
