@@ -43,9 +43,10 @@ pub fn install(preferences: Option<PathBuf>, cx: &mut App) {
         .unwrap_or(size);
     cx.set_global(TextSize { size, preferences });
     cx.bind_keys([
-        KeyBinding::new("secondary-=", LargerText, None),
-        // Command-Shift-= arrives as `+`.
+        // Command-Shift-= arrives as `+`. macOS's View menu shows the first
+        // binding, so `⌘+` comes before `⌘=`.
         KeyBinding::new("secondary-+", LargerText, None),
+        KeyBinding::new("secondary-=", LargerText, None),
         KeyBinding::new("secondary--", SmallerText, None),
         KeyBinding::new("secondary-0", DefaultText, None),
     ]);

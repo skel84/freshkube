@@ -1,18 +1,44 @@
 //! What differs by platform, in one place
 //! ([docs/DESIGN.md](../../docs/DESIGN.md#the-platform-module-and-the-app-menu)):
 //! where the window controls sit and the room the header leaves them, the
-//! title bar, the keys only one platform has, the terminal's own shortcuts
-//! and where the preferences live. Nothing else tests the platform, so a
+//! title bar, the app menu and the keys only one platform has, the
+//! terminal's own shortcuts and where the preferences live. Nothing else tests the platform, so a
 //! page asks this module, and tests ask it about every [`Platform`], not
 //! only the one they run on.
 
+use gpui_kit::Styled as _;
+use gpui_kit::assets::IconName;
 use gpui_kit::component::TitleBar;
+use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::{
-    DefiniteLength, Modifiers, Pixels, Point, SharedString, TitlebarOptions, Window, point, px,
+    App, DefiniteLength, KeyBinding, MenuItem, Modifiers, Pixels, Point, SharedString,
+    SystemMenuType, TitlebarOptions, Window, point, px,
 };
 
 use crate::page::{APP_HEADER_HEIGHT, PANE_PADDING};
 use crate::ui::{BASE_TEXT, dp};
+
+gpui_kit::actions!(
+    app,
+    [
+        /// Shows what the app is, its version and where it comes from.
+        About,
+        /// Opens the header's Settings.
+        OpenSettings,
+        /// Hides the app (macOS).
+        Hide,
+        /// Hides every other app (macOS).
+        HideOthers,
+        /// Shows every app again (macOS).
+        ShowAll,
+        /// Minimizes the window.
+        Minimize,
+        /// Zooms the window, or puts it back (macOS).
+        Zoom,
+        /// Opens the menu button's menu, where there is no menu bar.
+        OpenAppMenu,
+    ]
+);
 
 /// The platforms the app adapts to. Every Unix but macOS is Linux.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +75,55 @@ impl Platform {
         HeaderInsets {
             leading,
             trailing: dp(PANE_PADDING).into(),
+        }
+    }
+
+    /// Where the app's menus go: macOS's menu bar, or elsewhere a button
+    /// in the header that opens them.
+    pub const fn app_menu(self) -> AppMenu {
+        match self {
+            Platform::MacOs => AppMenu::Bar,
+            Platform::Windows | Platform::Linux => AppMenu::Button,
+        }
+    }
+
+    /// The entries macOS's menus have and the app supplies nothing for:
+    /// Services and the hiding entries in the app's menu, Minimize and Zoom
+    /// in Window. Elsewhere the desktop's own controls do the same, so there
+    /// are none.
+    pub fn system_items(self, menu: SystemMenu) -> Vec<MenuItem> {
+        if self != Platform::MacOs {
+            return Vec::new();
+        }
+        match menu {
+            SystemMenu::App => vec![
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Hide Freshkube", Hide),
+                MenuItem::action("Hide others", HideOthers),
+                MenuItem::action("Show all", ShowAll),
+            ],
+            SystemMenu::Window => vec![
+                MenuItem::action("Minimize", Minimize),
+                MenuItem::action("Zoom", Zoom),
+            ],
+        }
+    }
+
+    /// The keys only this platform has: macOS's Settings, Hide, Hide
+    /// others and Minimize, and elsewhere F10 for the menu button.
+    /// Settings has no key elsewhere, since Control-, is the dock's.
+    pub fn key_bindings(self) -> Vec<KeyBinding> {
+        match self {
+            Platform::MacOs => vec![
+                KeyBinding::new("cmd-,", OpenSettings, None),
+                KeyBinding::new("cmd-h", Hide, None),
+                KeyBinding::new("alt-cmd-h", HideOthers, None),
+                KeyBinding::new("cmd-m", Minimize, None),
+            ],
+            Platform::Windows | Platform::Linux => {
+                vec![KeyBinding::new("f10", OpenAppMenu, None)]
+            }
         }
     }
 
@@ -101,6 +176,24 @@ impl Platform {
     }
 }
 
+/// Where the app's menus go ([`Platform::app_menu`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppMenu {
+    /// The global menu bar: macOS's.
+    Bar,
+    /// A button first in the header that opens the menus.
+    Button,
+}
+
+/// A menu that has entries of the system's ([`Platform::system_items`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemMenu {
+    /// The app's own menu, named after it.
+    App,
+    /// Window.
+    Window,
+}
+
 /// The room the header leaves at its edges for the window's controls, with
 /// its own padding: lengths for `pl` and `pr`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -143,6 +236,43 @@ pub const fn primary_modifier() -> &'static str {
 /// The terminal's shortcuts on this platform ([`Platform::terminal_keys`]).
 pub const fn terminal_keys() -> TerminalKeys {
     Platform::current().terminal_keys()
+}
+
+/// Where the app's menus go on this platform ([`Platform::app_menu`]).
+pub const fn app_menu() -> AppMenu {
+    Platform::current().app_menu()
+}
+
+/// Binds this platform's own keys ([`Platform::key_bindings`]) and answers
+/// the window and app actions anywhere, so they work in every window and
+/// with nothing focused. The window ones act on the active window once the
+/// action that asked has finished with it.
+pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys(Platform::current().key_bindings());
+    cx.on_action(|_: &Hide, cx| cx.hide());
+    cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+    cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &Minimize, cx| on_active_window(cx, Window::minimize_window));
+    cx.on_action(|_: &Zoom, cx| on_active_window(cx, Window::zoom_window));
+}
+
+fn on_active_window(cx: &mut App, act: fn(&Window)) {
+    cx.defer(move |cx| {
+        if let Some(window) = cx.active_window() {
+            _ = window.update(cx, |_, window, _| act(window));
+        }
+    });
+}
+
+/// The menu button, where there is no menu bar ([`AppMenu::Button`]): a
+/// ghost icon button, its tooltip "Menu" with its key.
+pub fn menu_button(id: impl Into<gpui_kit::ElementId>) -> Button {
+    Button::new(id)
+        .ghost()
+        .size(dp(24.))
+        .icon(IconName::Menu)
+        .accessibility_label("Menu")
+        .tooltip_with_action("Menu", &OpenAppMenu, None)
 }
 
 /// The window's title bar: Kit's, with the traffic lights centred on the
@@ -252,6 +382,33 @@ mod tests {
         assert_eq!(Platform::MacOs.terminal_keys().leave_label, "⌘Esc");
         assert_eq!(Platform::Linux.terminal_keys().leave_label, "Ctrl+Shift+Q");
         assert_eq!(Platform::Windows.close_tab_key(), "ctrl-shift-w");
+    }
+
+    /// macOS has its menu bar and the keys its menus show; elsewhere the
+    /// header's button holds the menus and F10 opens it, and the system's
+    /// entries are the desktop's.
+    #[test]
+    fn macos_has_the_bar_and_the_others_the_button() {
+        let keys = |platform: Platform| -> Vec<String> {
+            platform
+                .key_bindings()
+                .iter()
+                .flat_map(|binding| binding.keystrokes().iter().map(|key| key.unparse()))
+                .collect()
+        };
+        assert_eq!(Platform::MacOs.app_menu(), AppMenu::Bar);
+        assert_eq!(
+            keys(Platform::MacOs),
+            ["cmd-,", "cmd-h", "alt-cmd-h", "cmd-m"]
+        );
+        assert_eq!(Platform::MacOs.system_items(SystemMenu::App).len(), 5);
+        assert_eq!(Platform::MacOs.system_items(SystemMenu::Window).len(), 2);
+        for platform in [Platform::Windows, Platform::Linux] {
+            assert_eq!(platform.app_menu(), AppMenu::Button);
+            assert_eq!(keys(platform), ["f10"]);
+            assert!(platform.system_items(SystemMenu::App).is_empty());
+            assert!(platform.system_items(SystemMenu::Window).is_empty());
+        }
     }
 
     /// Off macOS, Control with Shift is the app's, and plain Control stays

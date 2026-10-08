@@ -1,4 +1,5 @@
 mod access;
+mod app_menu;
 mod connection;
 pub(crate) mod dock;
 #[cfg(test)]
@@ -152,6 +153,13 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             // Tests never run this, so they keep the reduced motion they set.
             freshkube_ui::motion::follow_system(cx);
             cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
+            freshkube_ui::platform::bind_keys(cx);
+            // Maintenance mode has the same menus; the shell sets them again
+            // as what they state changes.
+            cx.set_menus(app_menu::menus(
+                freshkube_ui::platform::Platform::current(),
+                &app_menu::MenuState::default(),
+            ));
             cx.on_action(|_: &Quit, cx| {
                 // Quitting mid-operation would abandon a half-done change,
                 // and quitting ends a shell, so it asks first.
@@ -424,6 +432,15 @@ pub(crate) struct Pilot {
     kubernetes_only: Option<kubernetes_only::KubernetesOnly>,
     /// Whether the settings popover is open; a page can open it too.
     settings_open: bool,
+    /// The platform whose menu the window has: the one it runs on, but a
+    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`,
+    /// and tests choose.
+    menu_platform: freshkube_ui::platform::Platform,
+    /// The menu button's menu while it's open, and its dismissal's
+    /// subscription.
+    app_menu_popup: Option<(Entity<gpui_kit::component::menu::PopupMenu>, Subscription)>,
+    /// What the installed menus state, to set them again only on a change.
+    menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     page: Page,
     overview_display: crate::presentation::overview::Overview,
@@ -1135,6 +1152,9 @@ impl Pilot {
             age_label: cx.new(|_| switch::AgeLabel::new()),
             switcher: Vec::new(),
             settings_open: false,
+            menu_platform: app_menu::menu_platform(),
+            app_menu_popup: None,
+            menu_state: None,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
             overview_display: Default::default(),
@@ -1185,6 +1205,7 @@ impl Pilot {
         }
         view._subscriptions
             .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
+        view.watch_menus(window, cx);
         view._subscriptions.push(cx.subscribe_in(
             &view.system_services,
             window,
