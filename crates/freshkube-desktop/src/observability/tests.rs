@@ -789,9 +789,14 @@ fn applications_loading_failure_refusal_and_stale_keep_distinct_surfaces(cx: &mu
     });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(window.find("obs-loading").visible());
+        // The table's loading rows, under its header, not a card skeleton.
+        let rows = window.find("obs-table-loading").bounds();
+        let table = window.find("obs-applications-table").bounds();
+        assert!(table.contains(&rows.origin), "{rows:?} {table:?}");
+        assert!(window.try_find("obs-loading").is_none());
         assert!(window.find("obs-title").visible());
         assert!(window.try_find("obs-failed").is_none());
+        assert!(page.read(cx).loading_motion().is_some());
     })
     .unwrap();
     for (error, surface) in [
@@ -814,6 +819,8 @@ fn applications_loading_failure_refusal_and_stale_keep_distinct_surfaces(cx: &mu
             assert!(window.find(surface).visible());
             assert!(window.find("obs-retry").visible());
             assert!(window.try_find("obs-loading").is_none());
+            assert!(window.try_find("obs-table-loading").is_none());
+            assert!(page.read(cx).loading_motion().is_none());
         })
         .unwrap();
     }
@@ -1697,4 +1704,40 @@ fn a_hovered_flame_frame_keeps_its_colour_in_light(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+}
+
+/// Held example data leaves each table on its loading rows, under its
+/// header and moved by the shell, and the answer replaces them.
+#[gpui_kit::test]
+fn held_tables_show_the_shared_loading_rows(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    for (destination, table) in [
+        (Destination::Applications, "obs-applications-table"),
+        (Destination::Incidents, "obs-incidents-table"),
+        (Destination::Traces, "obs-traces-table"),
+    ] {
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.hold = true;
+                page.open(destination, cx);
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let rows = window.find("obs-table-loading").bounds();
+            let table = window.find(table).bounds();
+            assert!(table.contains(&rows.origin), "{rows:?} {table:?}");
+            assert!(window.try_find("obs-loading").is_none());
+            assert!(page.read(cx).loading_motion().is_some());
+        })
+        .unwrap();
+        cx.update(|cx| page.update(cx, |page, _| page.hold = false));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("obs-table-loading").is_none());
+            assert!(window.find(table).visible());
+            assert!(page.read(cx).loading_motion().is_none());
+        })
+        .unwrap();
+    }
 }
