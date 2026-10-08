@@ -6,6 +6,8 @@ mod gate_tests;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
+#[cfg(test)]
+mod menu_tests;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -520,8 +522,9 @@ impl Pilot {
             KeyBinding::new("up", settings::PreviousCluster, Some(settings::CONTEXT)),
             KeyBinding::new("escape", settings::ClearCluster, Some(settings::CONTEXT)),
             KeyBinding::new("a", settings::AddCluster, Some(settings::CONTEXT)),
-            KeyBinding::new("e", settings::EditCluster, Some(settings::CONTEXT)),
+            // A key shows its last binding: E, as Enter on a list opens.
             KeyBinding::new("enter", settings::EditCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("e", settings::EditCluster, Some(settings::CONTEXT)),
             KeyBinding::new(
                 "backspace",
                 settings::RemoveCluster,
