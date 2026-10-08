@@ -7,7 +7,7 @@ use std::time::Duration;
 use k8s_openapi::api::core::v1::{Service, ServicePort};
 use kube::api::{Api, ListParams};
 
-use super::{BuildInfo, ErrorKind, Prometheus, PrometheusService, QueryError};
+use super::{ErrorKind, Prometheus, PrometheusService, QueryError};
 use crate::resources::{Failure, FailureKind};
 
 /// What discovery looks for, for the page's "no Prometheus" state.
@@ -67,7 +67,8 @@ pub struct Tried {
 pub enum Discovery {
     Found {
         prometheus: Prometheus,
-        build: BuildInfo,
+        /// The version the server reports, if it does.
+        version: Option<String>,
         /// Better-ranked candidates that failed first.
         tried: Vec<Tried>,
     },
@@ -278,7 +279,7 @@ fn listing_error(failure: Failure) -> QueryError {
 pub async fn confirm(
     client: &kube::Client,
     service: PrometheusService,
-) -> Result<(Prometheus, BuildInfo), QueryError> {
+) -> Result<(Prometheus, Option<String>), QueryError> {
     confirm_within(client, service, super::REQUEST_TIMEOUT).await
 }
 
@@ -286,7 +287,7 @@ async fn confirm_within(
     client: &kube::Client,
     service: PrometheusService,
     timeout: Duration,
-) -> Result<(Prometheus, BuildInfo), QueryError> {
+) -> Result<(Prometheus, Option<String>), QueryError> {
     finish(Prometheus::new(client.clone(), service).with_timeout(timeout)).await
 }
 
@@ -294,23 +295,20 @@ async fn confirm_within(
 pub async fn confirm_url(
     url: String,
     token: Option<String>,
-) -> Result<(Prometheus, BuildInfo), QueryError> {
+) -> Result<(Prometheus, Option<String>), QueryError> {
     finish(Prometheus::direct(url, token)?).await
 }
 
-async fn finish(prometheus: Prometheus) -> Result<(Prometheus, BuildInfo), QueryError> {
+async fn finish(prometheus: Prometheus) -> Result<(Prometheus, Option<String>), QueryError> {
     prometheus.probe().await?;
-    let build = prometheus
-        .build_info()
-        .await
-        .unwrap_or(BuildInfo { version: None });
+    let version = prometheus.read_version().await.ok();
     let interval = prometheus.read_scrape_interval().await.ok().flatten();
     let prometheus = match interval {
         Some(seconds) => prometheus.with_scrape_interval(seconds),
         None => prometheus,
     }
     .with_timeout(super::REQUEST_TIMEOUT);
-    Ok((prometheus, build))
+    Ok((prometheus, version))
 }
 
 /// Finds Prometheus: the remembered Service first, then the ranked
@@ -323,10 +321,10 @@ pub async fn discover(
     let mut tried = Vec::new();
     if let Some(service) = remembered {
         match confirm(client, service.clone()).await {
-            Ok((prometheus, build)) => {
+            Ok((prometheus, version)) => {
                 return Ok(Discovery::Found {
                     prometheus,
-                    build,
+                    version,
                     tried,
                 });
             }
@@ -344,10 +342,10 @@ pub async fn discover(
             continue;
         }
         match confirm_within(client, candidate.service.clone(), CONFIRM_TIMEOUT).await {
-            Ok((prometheus, build)) => {
+            Ok((prometheus, version)) => {
                 return Ok(Discovery::Found {
                     prometheus,
-                    build,
+                    version,
                     tried,
                 });
             }
