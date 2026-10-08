@@ -1,1 +1,0 @@
-- The Needs attention rows and a pod list's owner links name the cluster they were derived in, so a link left on screen after a context change is refused, not opened in the next cluster.

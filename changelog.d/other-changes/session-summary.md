@@ -1,1 +1,0 @@
-- Moved the Kubernetes summary session and its derived state out of the shell into a cluster session that a registry owns, a workspace of one, with no change in behaviour.

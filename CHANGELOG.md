@@ -4,6 +4,129 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.10.0 (2026-10-08)
+
+### Other changes
+
+- **Loading rows on more tables:** Operations' node roster, Coroot's
+  Applications, Incidents and Traces, and a log's patterns now show their
+  table's header over the shared pulsing loading rows while their first
+  answer is to come, instead of a grey card or a line of text.
+- **Monitoring tables load like the others:** a dashboard's table panel shows
+  its header over the shared pulsing loading rows until its first answer,
+  instead of a grey block. Other panels keep their skeleton.
+- **Prometheus version:** the version a server reports is now carried as
+  plain text, without a wrapper type of its own. Nothing changes on screen.
+- **Delivery trails note a Freight whose digest no build reports:** a
+  Freight joined to a commit by its SHA, whose read builds of that commit
+  report another digest for its image and none its own, is now claimed
+  rather than confirmed. Its reason names the Freight's digest and each
+  build's, with when it finished. It is not counted as a failure, since
+  rebuilds of one commit rarely give the same digest.
+- **Operations reads only while shown:** once left, Operations no longer
+  checks the nodes or reads its audit log when another node is selected or
+  the overview refreshes. It reads them for the current target when it is
+  shown again; a submitted run still runs to its end.
+- **Monitoring recovers a lost cluster connection while showing a
+  dashboard:** when its panels fail because the cluster's connection was
+  lost, timed out or refused its credentials, the page connects afresh
+  once and reads them again, instead of failing until it is reopened.
+- **Delivery trails follow a Deployment:** an Application that manages a
+  Deployment is now joined through the Deployment's current ReplicaSet, which
+  the controller reports by revision and owner UID, to that ReplicaSet's pods,
+  instead of judging every pod in the namespace. A pod list or ReplicaSet list
+  that stopped at its cap, a Deployment that has not seen its latest spec, or a
+  pod not yet ready only claims; an unread side is unknown, with the reason.
+- **Delivery trails name a Freight's Warehouse and verification:** a Freight
+  is now linked to the Warehouse it names as its origin, confirmed when the
+  Warehouse's discovered artifacts list its digest and claimed, never faulted,
+  when the digest is no longer in those recent discoveries. A Stage's link to
+  a Freight also says what the Freight and the Stage each report of its
+  verification, in Kargo's own words, and when the Freight was manually approved
+  for the Stage, so it is eligible without upstream verification.
+- **All of a pod's containers in one log.** A pod's log tab offers All containers in its container picker when the pod has more than one app container: their lines interleave by time, each tagged by its container, and Copy and Download keep the tags. A container that ends says so while the others read on, Previous reads each container's last run, and a saved tab comes back on All.
+- **Shared log streams.** A workload's log tab reads its containers through a
+  shared stream set (`logs/streams.rs`), which a pod's tab will use to show
+  all its containers at once; nothing changes on screen.
+- **Applications are decided once, in core:** an application is a Kargo
+  Project, else an Argo CD ApplicationSet or Application, else the
+  `app.kubernetes.io/part-of` label, with a rename, merge, split and hide
+  override on top. A lower claim is noted, never dropped, and an unread or
+  refused source reports as unknown rather than as no applications. Nothing
+  shows it yet.
+- **Delivery reads name an Application's ApplicationSet and Kargo's
+  Projects:** an Argo CD Application now carries the ApplicationSet that
+  generated it, ApplicationSets can be listed, and Kargo's Projects can be
+  listed (a page-capped cluster scope for small cluster-scoped kinds), with
+  "Kargo is not served" kept apart from "no Projects". Nothing shows them
+  yet; the application model that groups them follows.
+- **Applications are read from a cluster:** Kargo's Projects with their
+  Stages and Warehouses (at most 50 Projects), Argo CD's Applications and
+  ApplicationSets, and the Deployments, StatefulSets and DaemonSets labelled
+  `app.kubernetes.io/part-of`, all through the read-only, bounded delivery
+  reader. The acme workspace of the platform mocks is available as example
+  data. Nothing shows them yet.
+- **Change page design:** [DESIGN.md](docs/DESIGN.md#the-change-page) adds the trail page, one change
+  from commit to running pods, with each Kargo Stage's eligibility, promotion and verification kept
+  apart, and the workbench draws it on invented data (`change-trail`).
+- **Operations refuses access that changed after its preview:** a run now
+  connects only with the access its preview was taken with. If the selected
+  kubeconfig, the talosconfig or a credential file they name is replaced
+  after the preview, or while the run connects, nothing is changed and
+  Operations asks for a refresh and a new review.
+- **One spelling for Docker Hub images:** the delivery trail now treats
+  `acme/api`, `docker.io/acme/api` and `index.docker.io/acme/api` as one
+  repository, and adds `library/` to a single-name image, as a container
+  runtime does. A Freight now joins its Warehouse, Deployment, Rollout and pods
+  across these spellings. A registry's host ignores case. Its port still
+  counts, so `registry.example:5000` stays a different registry. A name that
+  isn't a valid reference is compared as written.
+- **Monitoring tries again with a new connection:** after the cluster's
+  connection fails, times out or refuses its credentials while Monitoring
+  looks for Prometheus, Try again connects afresh instead of meeting the
+  same failure.
+- **Agent guide: freeing disk taken by dev-build objects on macOS.** The
+  guide explains why a worktree's `target/` grows by gigabytes a day, and
+  gives a command that removes the stale objects without forcing a rebuild.
+- **Observability in its own crate.** The Coroot pages and their log source
+  move unchanged from the desktop crate into `freshkube-observability`, so
+  their tests build and run without building the rest of the app.
+- **Inspector widths through a shared store.** Observability's Incidents,
+  Traces and service map read and save their inspector widths through
+  `freshkube-ui`'s store of widths, which the shell backs with
+  `navigation.json` as before. The saved widths and their keys don't change.
+  This is the third step toward moving Observability into its own crate.
+- **Request snapshots in core.** `Snapshot` and `Request`, which keep a read's
+  last answer for one identity and drop superseded completions, now live in
+  `freshkube-core`. Desktop keeps them as `state::Snapshot`, still defaulting to
+  the applied configuration. This is the second step toward moving
+  Observability into its own crate.
+- **Shared table loading rows.** `TableLoading`, which holds a table's loading
+  rows and their motion until the first answer, now lives in `freshkube-ui`'s
+  table module. The screens reach it by its old path. This is the first step
+  toward moving Observability into its own crate.
+- **The session registry, documented:** ACCESS_IDENTITY.md describes it as it
+  is, one active cluster session and links that name their cluster, and what
+  waits for the workspace file.
+- **Links from another cluster are refused:** a link made in another cluster
+  no longer opens a same-named object in the cluster that's open; it is
+  refused, with a notification. The Needs attention rows and a pod list's
+  owner links name their cluster too, so one left on screen after a context
+  change is refused rather than opened in the next cluster.
+- **One guard for object links:** their identity and owner-kind reads share
+  one stale-answer check (epoch, sequence and the caller's own test), with a
+  test for each way an answer is dropped.
+- **A cluster session holds access:** the shell's access identity,
+  configuration revision and shell-prompt memory move into the cluster
+  session, which a context change replaces as a whole. Nothing changes on
+  screen.
+- **A registry owns the summary session:** the Kubernetes summary session and
+  its derived state move out of the shell into a cluster session, a workspace
+  of one. Nothing changes on screen.
+- **Shell splits:** the shell's constructor, the summary session's start and
+  the pod pane's relationship links are split into smaller functions, with no
+  change in behaviour.
+
 ## 0.9.0 (2026-10-08)
 
 ### Other changes
