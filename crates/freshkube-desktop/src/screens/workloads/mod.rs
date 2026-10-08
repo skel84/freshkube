@@ -25,8 +25,8 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    partial_notice, refresh_control, retry_button, segment, waiting,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, failure_banner, field,
+    first_read, gate, mono, partial_notice, refresh_control, retry_button, segment,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -34,7 +34,7 @@ use freshkube_ui::inspector::{self, InspectorSplit};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::status::Segment;
 use freshkube_ui::table::{self, DataTable, TableState};
-use source::Derived;
+use source::{Column, Derived};
 
 const CONTEXT: &str = "TalosWorkloads";
 const PAGE_ROWS: isize = 20;
@@ -238,6 +238,10 @@ pub(crate) struct WorkloadsScreen {
     /// Caret and selection changes redraw the filter; this view is cached, so
     /// it has to hear about them.
     _query_observer: Subscription,
+    /// The table's rows until the first answer, under the columns the
+    /// table has before any row sizes them.
+    loading: TableLoading,
+    loading_columns: (Vec<Column>, f32),
 }
 
 impl EventEmitter<ScreenEvent> for WorkloadsScreen {}
@@ -307,6 +311,8 @@ impl ScreenPanel for WorkloadsScreen {
             query,
             focus: cx.focus_handle(),
             table: TableState::new("workload"),
+            loading: TableLoading::new(PREFIX, cx),
+            loading_columns: source::loading_columns(),
             derived: None,
             detail: None,
             split: {
@@ -356,6 +362,10 @@ impl ScreenPanel for WorkloadsScreen {
         self.status.as_ref().map(|(_, line)| line)
     }
 
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         if self.summary_managed {
             cx.emit(ScreenEvent::RefreshSummary);
@@ -380,6 +390,17 @@ impl ScreenPanel for WorkloadsScreen {
 }
 
 impl WorkloadsScreen {
+    /// Whether the first answer is still to come: the shell's summary is
+    /// read, or the overview or Health's own first read is. The table shows
+    /// its loading rows meanwhile.
+    fn first_read(&self, cx: &App) -> bool {
+        match (&self.source, self.summary) {
+            (None, Summary::NoContext) => false,
+            (None, Summary::Reading) => true,
+            _ => first_read(self.source.as_ref(), &self.loader, Scope::Cluster, cx),
+        }
+    }
+
     /// Apply Health data prepared by the shell's shared observation session.
     pub(crate) fn apply_summary(
         &mut self,

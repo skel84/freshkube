@@ -24,8 +24,8 @@ use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::TableState;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    partial_notice, refresh_control, segment, stat,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, failure_banner, field,
+    first_read, gate, mono, partial_notice, refresh_control, segment, stat,
 };
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
@@ -74,6 +74,8 @@ pub(crate) struct SecurityScreen {
     status: Option<(u64, Segment)>,
     /// The audit's rows and counts at a loader revision.
     display: (u64, Display),
+    /// The table's rows until the first answer.
+    loading: TableLoading,
 }
 
 impl EventEmitter<ScreenEvent> for SecurityScreen {}
@@ -105,6 +107,7 @@ impl ScreenPanel for SecurityScreen {
             },
             status: None,
             display: (u64::MAX, Display::default()),
+            loading: TableLoading::new(PREFIX, cx),
         }
     }
 
@@ -132,6 +135,10 @@ impl ScreenPanel for SecurityScreen {
     fn status(&mut self) -> Option<&Segment> {
         self.sync_status();
         self.status.as_ref().map(|(_, line)| line)
+    }
+
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
     }
 
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -180,6 +187,12 @@ impl ScreenPanel for SecurityScreen {
 }
 
 impl SecurityScreen {
+    /// Whether the first answer is still to come: the table shows its
+    /// loading rows.
+    fn first_read(&self, cx: &App) -> bool {
+        first_read(self.source.as_ref(), &self.loader, Scope::Cluster, cx)
+    }
+
     /// The rows as last derived; [`Self::sync`] brings them up to date.
     fn items(&self) -> &[Item] {
         &self.display.1.items

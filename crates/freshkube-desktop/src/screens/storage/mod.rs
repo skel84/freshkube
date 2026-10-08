@@ -23,8 +23,8 @@ use talos_rs::{
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
-    panel, partial_notice, refresh_control,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, failure_banner, field,
+    first_read, gate, meta, mono, panel, partial_notice, refresh_control,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -130,6 +130,8 @@ fn summary(
 }
 
 pub(crate) struct StorageScreen {
+    /// The table's rows until the first answer.
+    loading: TableLoading,
     embedded: bool,
     runtime: Handle,
     source: Option<ScreenSource>,
@@ -147,6 +149,10 @@ pub(crate) struct StorageScreen {
 impl EventEmitter<ScreenEvent> for StorageScreen {}
 
 impl ScreenPanel for StorageScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
     fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
         self.embedded = embedded;
         cx.notify();
@@ -170,6 +176,7 @@ impl ScreenPanel for StorageScreen {
             selected_disk: None,
             selected_volume: None,
             focus: cx.focus_handle(),
+            loading: TableLoading::new(PREFIX, cx),
             disk_table: table::TableState::new("storage-disks"),
             volume_table: table::TableState::new("storage-volumes"),
         }
@@ -343,6 +350,12 @@ fn flags(disk: &DiskInfo) -> String {
 }
 
 impl StorageScreen {
+    /// Whether the first answer is still to come: the table shows its
+    /// loading rows.
+    fn first_read(&self, cx: &App) -> bool {
+        first_read(self.source.as_ref(), &self.loader, Scope::Node, cx)
+    }
+
     fn disks(&self) -> &[DiskRow] {
         match self.loader.data().map(|data| &data.disks) {
             Some(Ok(disks)) => &disks.rows,

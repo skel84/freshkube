@@ -40,8 +40,8 @@ use talos_rs::{
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
-    panel, partial_notice, refresh_control,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, failure_banner, field,
+    first_read, gate, meta, mono, panel, partial_notice, refresh_control,
 };
 use crate::palette::{Palette, palette};
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -270,6 +270,8 @@ struct RowsKey {
 }
 
 pub(crate) struct NetworkScreen {
+    /// The showing view's rows until the first answer.
+    loading: TableLoading,
     embedded: bool,
     runtime: Handle,
     source: Option<ScreenSource>,
@@ -304,6 +306,10 @@ pub(crate) struct NetworkScreen {
 impl EventEmitter<ScreenEvent> for NetworkScreen {}
 
 impl ScreenPanel for NetworkScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
     fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
         self.embedded = embedded;
         cx.notify();
@@ -356,6 +362,7 @@ impl ScreenPanel for NetworkScreen {
             _query_observer: cx.observe(&query, |_, _, cx| cx.notify()),
             query,
             focus: cx.focus_handle(),
+            loading: TableLoading::new(PREFIX, cx),
             tables: View::ALL.map(|view| TableState::new(view.prefix())),
             derived: Derived::default(),
             _subscription: subscription,
@@ -432,6 +439,12 @@ impl ScreenPanel for NetworkScreen {
 }
 
 impl NetworkScreen {
+    /// Whether the first answer is still to come: the showing view's table
+    /// shows its loading rows.
+    fn first_read(&self, cx: &App) -> bool {
+        first_read(self.source.as_ref(), &self.loader, Scope::Node, cx)
+    }
+
     /// Queries KubeSpan for the target node. Only the KubeSpan tab asks.
     fn refresh_kubespan(&mut self, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {

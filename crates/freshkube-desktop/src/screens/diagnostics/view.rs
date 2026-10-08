@@ -199,6 +199,7 @@ impl DiagnosticsScreen {
 impl Render for DiagnosticsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync();
+        self.loading.show(self.first_read(cx));
         let header = self.render_header(window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -234,6 +235,9 @@ impl Render for DiagnosticsScreen {
                     )
                 })
                 .child(self.render_split(window, cx))
+            }
+            (None, None) if self.loading.rows().is_some() => {
+                page.child(self.render_split(window, cx))
             }
             (None, None) => page,
         };
@@ -318,7 +322,12 @@ impl DiagnosticsScreen {
             .w_full()
             .child(
                 DataTable::new()
-                    .fit(table::TableSource::line_count(self).max(1))
+                    // A first read shows 8 loading rows, about a node's checks.
+                    .fit(if self.loading.rows().is_some() {
+                        8
+                    } else {
+                        table::TableSource::line_count(self).max(1)
+                    })
                     .render(self, window, cx)
                     .w_full()
                     .flex_none(),

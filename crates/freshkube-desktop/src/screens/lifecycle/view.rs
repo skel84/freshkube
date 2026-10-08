@@ -20,9 +20,11 @@ impl LifecycleScreen {
     /// columns, with the node's name kept at the left edge. Until the first
     /// answer it shows the loading rows under its header.
     fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        // While it loads, a row for each node the target knows of.
+        // While it loads, a row for each node the target knows of, or
+        // three, a usual control plane, before the overview answers.
         let lines = match &self.source {
             Some(source) if self.waiting() => source.nodes.len(),
+            None if self.waiting() => 3,
             _ => self.line_count(),
         };
         DataTable::new()
@@ -261,6 +263,7 @@ impl LifecycleScreen {
 impl Render for LifecycleScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_detail();
+        self.loading.show(self.first_read(cx));
         let header = self.render_header(window, cx);
         // Until the first answer the table shows its loading rows; the other
         // states take its place.
