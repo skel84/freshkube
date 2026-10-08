@@ -233,24 +233,9 @@ impl ObservabilityPage {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
                 .searchable(true)
         });
-        let widths = freshkube_ui::inspector::saved_widths(cx);
-        let mut split = |page: &'static str| {
-            let saved = widths.clone();
-            InspectorSplit::new(
-                widths.width(page),
-                move |width, cx| saved.save(page, width, cx),
-                cx,
-            )
-        };
-        let (incident_split, trace_split) = (split("incidents"), split("traces"));
-        let map_split = freshkube_ui::graph::inspector_split(
-            widths.width("map"),
-            {
-                let saved = widths.clone();
-                move |width, cx| saved.save("map", width, cx)
-            },
-            cx,
-        );
+        let incident_split = InspectorSplit::new("incidents", cx);
+        let trace_split = InspectorSplit::new("traces", cx);
+        let map_split = freshkube_ui::graph::inspector_split("map", cx);
         let subscriptions = vec![
             cx.observe_global_in::<gpui_kit::component::Theme>(window, |this, _, cx| {
                 if this.application_metrics.sync(cx) {

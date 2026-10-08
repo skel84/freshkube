@@ -23,11 +23,13 @@ use std::time::Duration;
 use freshkube_core::resources::{ResourceKind, builtin, runs_pods};
 use freshkube_ui::dock::{BAR_HEIGHT, DEFAULT_HEIGHT, MIN_HEIGHT};
 use freshkube_ui::inspector::TabStrip;
+use freshkube_ui::split_size::SplitSize;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use crate::logs::{PodLogPanel, PodLogView, WorkloadLogPanel, WorkloadLogView};
+use crate::navigation_file::DOCK_HEIGHT;
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::shell::{self, ShellEvent, ShellView};
@@ -242,8 +244,9 @@ pub(crate) struct Dock {
     pub(crate) tabs: Vec<DockTab>,
     selected: Option<u64>,
     next_id: u64,
-    /// The open dock's height in dp, as last dragged.
-    height: f32,
+    /// The open dock's height in dp, as last dragged; saved under
+    /// `dock.height`, apart from the dock's state and tabs.
+    height: SplitSize,
     /// False when minimized to its tabs.
     open: bool,
     /// Fills the page cell; Restore returns to `height`.
@@ -290,7 +293,7 @@ impl Dock {
             tabs: Vec::new(),
             selected: None,
             next_id: 0,
-            height: DEFAULT_HEIGHT,
+            height: SplitSize::new(DOCK_HEIGHT, DEFAULT_HEIGHT, MIN_HEIGHT, cx),
             open: true,
             maximized: false,
             strip: TabStrip::default(),
@@ -305,7 +308,6 @@ impl Dock {
             count_label: SharedString::default(),
         };
         if let Some(restore) = restore {
-            dock.height = restore.height.max(MIN_HEIGHT);
             dock.open = restore.open;
             dock.maximized = restore.maximized;
             dock.restore = Some(restore);
@@ -342,9 +344,9 @@ impl Dock {
         let short =
             window.viewport_size().height / dp_px(1., window) < freshkube_ui::page::SHORT_HEIGHT;
         let height = if short && !self.dragged {
-            self.height.min(available_height(window) / 2.)
+            self.height.size().min(available_height(window) / 2.)
         } else {
-            self.height
+            self.height.size()
         };
         height.max(least).min(room)
     }
@@ -945,15 +947,18 @@ impl Dock {
             return;
         }
         let height = height.min(open_room(window));
+        let state = (self.open, self.maximized);
         self.maximized = false;
         self.dragged = true;
         if !self.open {
             self.open = true;
             self.sync_shown(cx);
         }
-        if (self.height - height).abs() >= 0.5 {
-            self.height = height;
+        let changed = (self.open, self.maximized) != state;
+        if changed {
             self.schedule_save(cx);
+        }
+        if self.height.drag(height, cx) || changed {
             cx.notify();
         }
     }
@@ -1046,7 +1051,7 @@ impl Dock {
 
     #[cfg(test)]
     pub(crate) fn height(&self) -> f32 {
-        self.height
+        self.height.size()
     }
 }
 

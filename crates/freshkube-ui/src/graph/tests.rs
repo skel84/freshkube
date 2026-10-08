@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use freshkube_graph::layout::{NODE_H, NODE_W, point_at};
 use gpui_kit::component::Root;
 use gpui_kit::component::button::Button;
@@ -11,7 +9,11 @@ use gpui_kit::{
 };
 
 use super::*;
+use crate::split_size::{MemorySizes, SizeStore as _, set_store};
 use crate::ui::{Tone, dp};
+
+/// The page the tests' split saves under.
+const MAP: &str = "map";
 
 /// Invented services and the calls between them: `nodes` boxes, `edges`
 /// calls spread over them by a fixed sequence, every seventh a warning
@@ -188,8 +190,8 @@ struct Map {
     graph: GraphState<usize>,
     split: InspectorSplit,
     opened: Vec<usize>,
-    /// Widths the split was dragged to, as a page would save them.
-    remembered: Rc<RefCell<Vec<f32>>>,
+    /// Where the split saves its width, as the app's file would.
+    sizes: Rc<MemorySizes>,
 }
 
 impl GraphSource for Map {
@@ -287,22 +289,19 @@ fn open_saved(
             crate::text_size::set(text, cx);
         }
     });
+    let sizes = Rc::new(match saved {
+        Some(width) => MemorySizes::with(inspector::width_key(MAP), width),
+        None => MemorySizes::default(),
+    });
+    cx.update(|cx| set_store(sizes.clone(), cx));
     let mut view = None;
     // Tall enough to show the inspector stacked under the graph.
     let handle = cx.open_window(size(px(width), px(2000.)), |window, cx| {
-        let remembered = Rc::new(RefCell::new(vec![]));
         let map = cx.new(|cx| Map {
             graph,
-            split: inspector_split(
-                saved,
-                {
-                    let remembered = remembered.clone();
-                    move |width, _| remembered.borrow_mut().push(width)
-                },
-                cx,
-            ),
+            split: inspector_split(MAP, cx),
             opened: vec![],
-            remembered,
+            sizes,
         });
         view = Some(map.clone());
         Root::new(map, window, cx)
@@ -774,7 +773,11 @@ fn a_dragged_inspector_width_is_reported_once(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert_eq!(*map.read(cx).remembered.borrow(), vec![400.]));
+    cx.update(|cx| {
+        let sizes = &map.read(cx).sizes;
+        assert_eq!(sizes.saves(), 1);
+        assert_eq!(sizes.size(inspector::width_key(MAP)), Some(400.));
+    });
 }
 
 /// A saved width wider than the room beside the graph used to stack the
@@ -799,6 +802,9 @@ fn an_oversized_saved_width_opens_beside_the_graph_capped(cx: &mut TestAppContex
             "the whole graph shows: {lead:?} for {graph} dp"
         );
         assert!(inspector.left() >= lead.right() - px(1.));
+        // Capped to the room, the width the user gave stays saved.
+        assert_eq!(map.read(cx).split.width(), 1200.);
+        assert_eq!(map.read(cx).sizes.saves(), 0);
     })
     .unwrap();
 }
@@ -818,14 +824,14 @@ fn a_drag_stops_at_the_graph(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let graph = map.read(cx).graph.display.width;
-        let remembered = map.read(cx).remembered.borrow().clone();
-        assert_eq!(remembered.len(), 1, "{remembered:?}");
+        let sizes = &map.read(cx).sizes;
+        assert_eq!(sizes.saves(), 1);
+        let saved = sizes.size(inspector::width_key(MAP)).unwrap();
         // The room inside the page's padding, less the graph and its card.
         let rest = 1968. - graph - 2.;
         assert!(
-            (remembered[0] - rest).abs() <= 1.,
-            "saved {}, the room beside the graph is {rest}",
-            remembered[0]
+            (saved - rest).abs() <= 1.,
+            "saved {saved}, the room beside the graph is {rest}"
         );
         let lead = window.find("map-lead").bounds();
         let inspector = window.find("map-inspector").bounds();

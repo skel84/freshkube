@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
@@ -7,6 +5,10 @@ use gpui_kit::{
 };
 
 use super::*;
+use crate::split_size::{MemorySizes, SizeStore as _, set_store};
+
+/// The page the tests' split saves under.
+const PAGE: &str = "incidents";
 
 /// A table, and an inspector with a heading and a body taller than the
 /// window, in a split `beside` or stacked.
@@ -68,13 +70,13 @@ fn install(cx: &mut TestAppContext) {
 }
 
 /// The page in a window 1200 by 600, at the default text size, with the
-/// inspector `width` dp wide; and the widths `remember` heard.
+/// inspector `width` dp wide as saved before; and where it saves.
 fn open(
     cx: &mut TestAppContext,
     width: Option<f32>,
     beside: bool,
     open: bool,
-) -> (AnyWindowHandle, Entity<Page>, Rc<RefCell<Vec<f32>>>) {
+) -> (AnyWindowHandle, Entity<Page>, Rc<MemorySizes>) {
     open_with(cx, width, beside, open, Stacked::default(), 600.)
 }
 
@@ -86,17 +88,17 @@ fn open_with(
     open: bool,
     heights: Stacked,
     tall: f32,
-) -> (AnyWindowHandle, Entity<Page>, Rc<RefCell<Vec<f32>>>) {
+) -> (AnyWindowHandle, Entity<Page>, Rc<MemorySizes>) {
     install(cx);
-    let heard = Rc::new(RefCell::new(vec![]));
+    let sizes = Rc::new(match width {
+        Some(width) => MemorySizes::with(width_key(PAGE), width),
+        None => MemorySizes::default(),
+    });
+    cx.update(|cx| set_store(sizes.clone(), cx));
     let mut page = None;
     let handle = cx.open_window(size(px(1200.), px(tall)), |window, cx| {
-        let remember = {
-            let heard = heard.clone();
-            move |width, _: &mut App| heard.borrow_mut().push(width)
-        };
         let view = cx.new(|cx| Page {
-            split: InspectorSplit::new(width, remember, cx).stacked(heights),
+            split: InspectorSplit::new(PAGE, cx).stacked(heights),
             beside,
             open,
             lead: None,
@@ -106,7 +108,7 @@ fn open_with(
         Root::new(view, window, cx)
     });
     cx.run_until_parked();
-    (handle.into(), page.unwrap(), heard)
+    (handle.into(), page.unwrap(), sizes)
 }
 
 fn close(what: &str, actual: Pixels, expected: Pixels) {
@@ -189,14 +191,22 @@ fn without_an_inspector_the_table_fills_the_split(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-#[test]
-fn a_remembered_width_is_kept_above_the_least() {
-    let start_width = |width| crate::ui::start_width(width, WIDTH, MIN_WIDTH);
-    assert_eq!(start_width(None), WIDTH);
-    assert_eq!(start_width(Some(600.)), 600.);
-    assert_eq!(start_width(Some(100.)), MIN_WIDTH);
-    assert_eq!(start_width(Some(f32::NAN)), WIDTH);
-    assert_eq!(start_width(Some(f32::INFINITY)), WIDTH);
+#[gpui_kit::test]
+fn a_remembered_width_is_kept_above_the_least(cx: &mut TestAppContext) {
+    let start = |width: f32, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            set_store(Rc::new(MemorySizes::with(width_key(PAGE), width)), cx);
+            InspectorSplit::new(PAGE, cx).width()
+        })
+    };
+    assert_eq!(start(600., cx), 600.);
+    assert_eq!(start(100., cx), MIN_WIDTH);
+    assert_eq!(start(f32::NAN, cx), WIDTH);
+    assert_eq!(start(f32::INFINITY, cx), WIDTH);
+    cx.update(|cx| {
+        set_store(Rc::new(MemorySizes::default()), cx);
+        assert_eq!(InspectorSplit::new(PAGE, cx).width(), WIDTH);
+    });
 }
 
 #[gpui_kit::test]
@@ -210,11 +220,11 @@ fn the_inspector_opens_at_the_remembered_width(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-/// `resize_panel` takes the path a drag's end takes; the width is heard
+/// `resize_panel` takes the path a drag's end takes; the width is saved
 /// once, in dp, so it scales with the text size.
 #[gpui_kit::test]
 fn a_resize_reports_the_width_once_in_dp(cx: &mut TestAppContext) {
-    let (handle, page, heard) = open(cx, None, true, true);
+    let (handle, page, sizes) = open(cx, None, true, true);
     cx.update_window(handle, |_, _, cx| crate::text_size::set(20., cx))
         .unwrap();
     cx.run_until_parked();
@@ -225,10 +235,10 @@ fn a_resize_reports_the_width_once_in_dp(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    let heard = heard.borrow().clone();
-    assert_eq!(heard.len(), 1, "{heard:?}");
-    near("heard", heard[0], 650. * BASE_TEXT / 20.);
-    cx.update(|cx| near("kept", page.read(cx).split.width(), heard[0]));
+    assert_eq!(sizes.saves(), 1);
+    let saved = sizes.size(width_key(PAGE)).unwrap();
+    near("saved", saved, 650. * BASE_TEXT / 20.);
+    cx.update(|cx| near("kept", page.read(cx).split.width(), saved));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         close(
@@ -242,7 +252,7 @@ fn a_resize_reports_the_width_once_in_dp(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn dragging_the_hairline_widens_the_inspector(cx: &mut TestAppContext) {
-    let (handle, page, heard) = open(cx, None, true, true);
+    let (handle, page, sizes) = open(cx, None, true, true);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let inspector = window.find("inspector").bounds();
@@ -255,9 +265,8 @@ fn dragging_the_hairline_widens_the_inspector(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    let heard = heard.borrow().clone();
-    assert_eq!(heard.len(), 1, "{heard:?}");
-    near("heard", heard[0], WIDTH + 100.);
+    assert_eq!(sizes.saves(), 1, "a drag writes once");
+    near("saved", sizes.size(width_key(PAGE)).unwrap(), WIDTH + 100.);
     cx.update(|cx| near("kept", page.read(cx).split.width(), WIDTH + 100.));
 }
 
@@ -265,7 +274,7 @@ fn dragging_the_hairline_widens_the_inspector(cx: &mut TestAppContext) {
 /// wide the user left it before, so it never pushes the table aside.
 #[gpui_kit::test]
 fn a_kept_table_caps_a_remembered_width(cx: &mut TestAppContext) {
-    let (handle, page, _) = open(cx, Some(1000.), true, true);
+    let (handle, page, sizes) = open(cx, Some(1000.), true, true);
     cx.update(|cx| page.update(cx, |page, _| page.keep = Some((800., 1200.))));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -276,13 +285,18 @@ fn a_kept_table_caps_a_remembered_width(cx: &mut TestAppContext) {
         close("meeting", inspector.left(), table.right());
     })
     .unwrap();
+    cx.run_until_parked();
+    // Capped to the room, the width the user gave stays saved.
+    cx.update(|cx| assert_eq!(page.read(cx).split.width(), 1000.));
+    assert_eq!(sizes.saves(), 0);
+    assert_eq!(sizes.size(width_key(PAGE)), Some(1000.));
 }
 
 /// A drag stops where the kept table starts, so the width saved fits the
 /// room beside it.
 #[gpui_kit::test]
 fn a_drag_stops_at_the_kept_table(cx: &mut TestAppContext) {
-    let (handle, page, heard) = open(cx, None, true, true);
+    let (handle, page, sizes) = open(cx, None, true, true);
     cx.update(|cx| page.update(cx, |page, _| page.keep = Some((700., 1200.))));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -296,9 +310,8 @@ fn a_drag_stops_at_the_kept_table(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    let heard = heard.borrow().clone();
-    assert_eq!(heard.len(), 1, "{heard:?}");
-    near("heard", heard[0], 500.);
+    assert_eq!(sizes.saves(), 1);
+    near("saved", sizes.size(width_key(PAGE)).unwrap(), 500.);
 }
 
 #[gpui_kit::test]

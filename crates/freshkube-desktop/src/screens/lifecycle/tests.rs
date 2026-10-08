@@ -948,6 +948,7 @@ fn a_selected_node_that_leaves_the_roster_keeps_its_name(cx: &mut TestAppContext
 #[gpui_kit::test]
 fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
+    use freshkube_ui::split_size::SizeStore as _;
     let directory = std::env::temp_dir().join(format!(
         "freshkube-lifecycle-inspector-{}-{}",
         std::process::id(),
@@ -957,7 +958,7 @@ fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
             .as_nanos()
     ));
     let preferences = directory.join("preferences.json");
-    cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+    cx.update(|cx| NavigationFile::open(Some(&preferences)).install(cx));
     let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1700.);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
@@ -971,8 +972,11 @@ fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     let reopened = NavigationFile::open(Some(&preferences));
-    assert_eq!(reopened.inspector_width("lifecycle"), Some(400.));
-    cx.update(|cx| cx.set_global(reopened));
+    assert_eq!(
+        reopened.size(freshkube_ui::inspector::width_key("lifecycle")),
+        Some(400.)
+    );
+    cx.update(|cx| reopened.install(cx));
     let (_runtime, screen, _handle) = mount_sized(cx, "talos-cp-fra1-01", 1700.);
     cx.read(|cx| assert_eq!(screen.read(cx).split.width(), 400.));
     let _ = std::fs::remove_dir_all(&directory);
@@ -984,6 +988,7 @@ fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn an_oversized_saved_width_stays_beside_the_roster(cx: &mut TestAppContext) {
     use crate::navigation_file::NavigationFile;
+    use freshkube_ui::split_size::SizeStore as _;
     let directory = std::env::temp_dir().join(format!(
         "freshkube-lifecycle-oversized-{}-{}",
         std::process::id(),
@@ -995,8 +1000,8 @@ fn an_oversized_saved_width_stays_beside_the_roster(cx: &mut TestAppContext) {
     let preferences = directory.join("preferences.json");
     cx.update(|cx| {
         let file = NavigationFile::open(Some(&preferences));
-        file.set_inspector_width("lifecycle", 2000., cx);
-        cx.set_global(file);
+        file.save(freshkube_ui::inspector::width_key("lifecycle"), 2000., cx);
+        file.install(cx);
     });
     let (_runtime, screen, handle) = mount_sized(cx, "talos-cp-fra1-01", 1700.);
     cx.update_window(handle.into(), |_, window, cx| {

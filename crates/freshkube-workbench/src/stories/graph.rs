@@ -136,7 +136,7 @@ impl GraphStory {
                     caption: "Callers on the left · dashed lines have a problem".into(),
                 },
             ),
-            split: inspector_split(None, |_, _| {}, cx),
+            split: inspector_split("workbench-graph", cx),
             crossings: 0,
             meta: SharedString::default(),
         };

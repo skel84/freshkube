@@ -3,13 +3,9 @@
 //! from the table by the resize handle's hairline: beside the table on a
 //! wide page, under it on a narrow one. The page keeps an
 //! [`InspectorSplit`], which remembers how wide the user made it.
-mod saved;
 mod tabs;
 pub(crate) use tabs::bare_strip;
 
-#[cfg(any(test, feature = "testing"))]
-pub use saved::MemoryWidths;
-pub use saved::{SavedWidths, saved_widths, set_saved_widths};
 pub use tabs::{Edges, TAB_HEIGHT, TabStrip, tab};
 
 use std::cell::Cell;
@@ -29,6 +25,7 @@ use gpui_kit::{
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
 use crate::palette::palette;
+use crate::split_size::{SizeKey, SplitSize};
 use crate::ui::{BASE_TEXT, dp, dp_px};
 
 /// The least page width, in dp, at which the inspector sits beside the
@@ -265,13 +262,18 @@ impl Stacked {
     }
 }
 
+/// Where `page`'s inspector width is saved: `inspector.<page>`.
+pub const fn width_key(page: &'static str) -> SizeKey {
+    SizeKey::new("inspector", page)
+}
+
 /// What a page keeps for its split: Kit's panel states for either
 /// arrangement, and the inspector's width beside the table in dp, so it
 /// scales with the text size.
 pub struct InspectorSplit {
     beside: Entity<ResizableState>,
     stacked: Entity<ResizableState>,
-    width: Rc<Cell<f32>>,
+    width: SplitSize,
     heights: Stacked,
     /// The stacked table's height from [`Self::lead_start`], if the page
     /// gives one.
@@ -287,17 +289,17 @@ pub struct InspectorSplit {
 }
 
 impl InspectorSplit {
-    /// A split whose inspector starts `width` dp wide, the width the user
-    /// left it at; [`WIDTH`] without one. `remember` hears the new width
-    /// once each drag ends, to save it.
-    pub fn new(
-        width: Option<f32>,
-        remember: impl Fn(f32, &mut App) + 'static,
-        cx: &mut App,
-    ) -> Self {
+    /// `page`'s split, whose inspector starts at the width the user left
+    /// it at, saved under [`width_key`]; [`WIDTH`] until they drag it.
+    pub fn new(page: &'static str, cx: &mut App) -> Self {
+        Self::with_width(SplitSize::new(width_key(page), WIDTH, MIN_WIDTH, cx), cx)
+    }
+
+    /// A split whose inspector's width beside the table is `width`, which
+    /// hears each drag once it ends and saves it.
+    pub fn with_width(width: SplitSize, cx: &mut App) -> Self {
         let beside = cx.new(|_| ResizableState::default());
         let stacked = cx.new(|_| ResizableState::default());
-        let width = Rc::new(Cell::new(crate::ui::start_width(width, WIDTH, MIN_WIDTH)));
         // Kit tells the state once a drag ends, not while it moves.
         let _resized = cx.subscribe(&beside, {
             let width = width.clone();
@@ -306,8 +308,7 @@ impl InspectorSplit {
                     return;
                 };
                 let dp = f32::from(size) * BASE_TEXT / crate::text_size::current(cx);
-                width.set(dp);
-                remember(dp, cx);
+                width.release(dp, cx);
             }
         });
         let dragged = Rc::new(Cell::new(false));
@@ -368,7 +369,7 @@ impl InspectorSplit {
     /// The inspector's width beside the table, in dp, as the user last
     /// left it: what it starts at and what is saved.
     pub fn width(&self) -> f32 {
-        self.width.get()
+        self.width.size()
     }
 
     /// The inspector's width beside the table as Kit last laid it out, in

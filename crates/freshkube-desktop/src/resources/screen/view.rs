@@ -548,7 +548,7 @@ impl ResourcesScreen {
     fn room_beside_drawer(&self, cx: &App) -> Option<f32> {
         self.detail.read(cx).target_identity()?;
         let body = self.body_width.get()?;
-        let fit = drawer::fit(self.drawer_width, body);
+        let fit = drawer::fit(self.drawer.size(), body);
         (!fit.full).then_some(body - fit.width)
     }
 
@@ -583,7 +583,7 @@ impl ResourcesScreen {
         let frame = drawer::Frame {
             id: "resource-drawer".into(),
             label: "Details".into(),
-            fit: drawer::fit(self.drawer_width, self.drawer_room(window)),
+            fit: drawer::fit(self.drawer.size(), self.drawer_room(window)),
             // Cached: list updates and age ticks don't redraw the pane.
             body: AnyView::from(self.detail.clone())
                 .cached(StyleRefinement::default().size_full())

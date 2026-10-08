@@ -208,7 +208,7 @@ impl ChangeStory {
             folded,
             filter: None,
             selected: Some(FIRST),
-            split: InspectorSplit::new(None, |_, _| {}, cx).stacked(STACKED),
+            split: InspectorSplit::new("workbench-change", cx).stacked(STACKED),
             opened: None,
         };
         story.derive();

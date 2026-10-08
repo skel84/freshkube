@@ -370,6 +370,65 @@ fn escape_in_the_dock_clears_the_search_leaves_it_then_returns_to_the_list(
     assert!(cx.update(|cx| pilot.read(cx).dock.read(cx).has_tabs()));
 }
 
+/// A drag of the dock's edge writes its height once, under `dock.height`;
+/// the next run opens at it, and a window too short for it shows less
+/// without writing.
+#[gpui_kit::test]
+fn the_dock_height_is_written_once_and_survives_a_restart(cx: &mut TestAppContext) {
+    let directory = std::env::temp_dir().join(format!(
+        "freshkube-dock-height-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let preferences = directory.join("preferences.json");
+    let options = || crate::GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
+    let saved = || {
+        std::fs::read_to_string(directory.join("navigation.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|value| value["dock"]["height"].as_f64())
+    };
+    let (_runtime, handle, pilot) = crate::desktop::tests::mount(cx, options(), 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    cx.update_window(handle, |_, window, cx| {
+        // A drag across many frames.
+        for height in (300..=420).step_by(4) {
+            dock.update(cx, |dock, cx| dock.resize(height as f32, window, cx));
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(saved(), None, "nothing is written while it moves");
+    cx.executor()
+        .advance_clock(freshkube_ui::split_size::SAVE_DELAY * 2);
+    cx.run_until_parked();
+    assert_eq!(saved(), Some(420.));
+
+    // The next run opens at it, in a window too short to show it all.
+    let (_runtime, handle, pilot) = crate::desktop::tests::mount(cx, options(), 1280., 480.);
+    let dock = self::dock(&pilot, cx);
+    assert_eq!(cx.update(|cx| dock.read(cx).height()), 420.);
+    let pods = running_pods(&pilot, cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        let shown = dock.read(cx).shown_height(window, cx).unwrap();
+        assert!(shown < crate::ui::dp_px(420., window), "{shown:?}");
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(freshkube_ui::split_size::SAVE_DELAY * 2);
+    cx.run_until_parked();
+    assert_eq!(cx.update(|cx| dock.read(cx).height()), 420.);
+    assert_eq!(saved(), Some(420.));
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 #[gpui_kit::test]
 fn the_dock_resizes_minimizes_below_its_least_and_fits_the_window(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
@@ -698,7 +757,6 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
         shell: false,
     };
     let saved = SavedDock {
-        height: 260.,
         open: false,
         maximized: false,
         // The second of this context's tabs, counted among all of them.
@@ -714,7 +772,7 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
         let source = pilot.read(cx).kube_source();
         dock.update(cx, |dock, cx| {
             dock.source = None;
-            dock.height = saved.height;
+            dock.height.release(260., cx);
             dock.open = saved.open;
             dock.restore = Some(saved);
             dock.set_source(source, None, window, cx);
@@ -999,7 +1057,6 @@ fn leaving_the_dock_after_another_page_puts_the_keyboard_on_that_page(cx: &mut T
 #[test]
 fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
     let saved = SavedDock {
-        height: 260.,
         open: false,
         maximized: true,
         selected: Some(1),
@@ -1016,14 +1073,13 @@ fn the_saved_dock_reads_back_what_it_wrote_and_fills_in_what_is_missing() {
     };
     let json = serde_json::to_string(&saved).unwrap();
     assert_eq!(serde_json::from_str::<SavedDock>(&json).unwrap(), saved);
-    // An empty dock, or one from a build that saved more, still reads.
+    // An empty dock, or one from a build that saved more, still reads; the
+    // height beside it is a split's size, read apart (`dock.height`).
     let empty: SavedDock = serde_json::from_str("{}").unwrap();
-    assert_eq!(
-        (empty.height, empty.open, empty.tabs.len()),
-        (DEFAULT_HEIGHT, true, 0)
-    );
-    let older: SavedDock = serde_json::from_str(r#"{"hidden":true,"height":120}"#).unwrap();
-    assert_eq!(older.height, 120.);
+    assert_eq!((empty.open, empty.tabs.len()), (true, 0));
+    let older: SavedDock =
+        serde_json::from_str(r#"{"hidden":true,"height":120,"open":false}"#).unwrap();
+    assert!(!older.open);
 }
 
 /// The log lines drawn whole inside the dock's viewport.
@@ -1769,7 +1825,6 @@ fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
     };
     let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
     let saved = SavedDock {
-        height: 260.,
         open: true,
         maximized: false,
         selected: Some(0),
@@ -1916,8 +1971,10 @@ fn the_drawer_closes_and_swaps_around_a_running_shell(cx: &mut TestAppContext) {
 /// key while the pick is one container.
 #[test]
 fn a_tab_saved_before_all_containers_loads_on_its_container() {
-    let json = r#"{"height":260.0,"open":true,"maximized":false,"selected":0,"tabs":[{"kind":"pods","context":"lab","namespace":"web","name":"gateway-0","container":"gateway","previous":true}]}"#;
-    let saved: SavedDock = serde_json::from_str(json).unwrap();
+    let json = r#"{"open":true,"maximized":false,"selected":0,"tabs":[{"kind":"pods","context":"lab","namespace":"web","name":"gateway-0","container":"gateway","previous":true}]}"#;
+    // That build kept the height in the same object; it reads apart now.
+    let earlier = json.replacen('{', r#"{"height":260.0,"#, 1);
+    let saved: SavedDock = serde_json::from_str(&earlier).unwrap();
     let tab = &saved.tabs[0];
     assert_eq!(tab.container.as_deref(), Some("gateway"));
     assert!(tab.previous);
@@ -1947,7 +2004,6 @@ fn a_tab_saved_on_all_containers_comes_back_on_all_of_them(cx: &mut TestAppConte
     .remove(0);
     let context = cx.update(|cx| pilot.read(cx).applied.context.clone().unwrap());
     let saved = SavedDock {
-        height: 260.,
         open: true,
         maximized: false,
         selected: Some(0),

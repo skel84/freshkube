@@ -1,5 +1,7 @@
-//! The dock in `navigation.json`: its height and state, and its tabs by
-//! name, never their lines, a shell's screen or any credential. Saved tabs
+//! The dock in `navigation.json`: its state and its tabs by name, never
+//! their lines, a shell's screen or any credential. Its height is saved
+//! beside them in the same object, as a split's size (`dock.height`,
+//! `freshkube_ui::split_size`), and saving them keeps it. Saved tabs
 //! come back only for the context they were opened in, and read nothing
 //! until one shows; a shell tab comes back idle, and runs nothing until
 //! Start.
@@ -12,8 +14,6 @@ use crate::resources::example;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SavedDock {
-    #[serde(default = "default_height")]
-    pub(super) height: f32,
     #[serde(default = "yes")]
     pub(super) open: bool,
     #[serde(default)]
@@ -45,10 +45,6 @@ pub(crate) struct SavedTab {
     pub(super) shell: bool,
 }
 
-fn default_height() -> f32 {
-    DEFAULT_HEIGHT
-}
-
 fn yes() -> bool {
     true
 }
@@ -78,7 +74,7 @@ impl Dock {
         NavigationFile::global(cx).set_dock(&saved, cx);
     }
 
-    /// The dock as it saves: its height, state and tabs by name.
+    /// The dock as it saves: its state and tabs by name.
     pub(super) fn saved(&self, cx: &App) -> SavedDock {
         let context = self
             .source
@@ -86,7 +82,6 @@ impl Dock {
             .map(|source| source.context.clone())
             .unwrap_or_default();
         SavedDock {
-            height: self.height.round(),
             open: self.open,
             maximized: self.maximized,
             selected: self.selected.and_then(|id| self.position(id)),
