@@ -131,7 +131,7 @@ fn panel(id: &str, chart: &api::AppChart, title: &str, cx: &mut App) -> Option<E
     })?;
     let id = SharedString::from(id.to_owned());
     Some(cx.new(|cx| {
-        let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
+        let mut view = PanelView::new(id, Rc::new(panel.spec.clone()), cx);
         view.set_named_colors(panel.colors.clone().into());
         view.set_result(panel.result.clone(), panel.window, cx);
         view.set_markers(panel.markers.clone().into(), cx);
@@ -305,7 +305,7 @@ impl ObservabilityPage {
             let panel = row.chart.clone()?;
             let id = SharedString::from("obs-logs-pattern-chart");
             Some(cx.new(|cx| {
-                let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
+                let mut view = PanelView::new(id, Rc::new(panel.spec.clone()), cx);
                 view.set_named_colors(panel.colors.clone().into());
                 view.set_result(panel.result.clone(), panel.window, cx);
                 view

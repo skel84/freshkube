@@ -884,3 +884,51 @@ fn time_ticks_land_on_the_local_clock_and_fit_the_width() {
     );
     assert!(time_ticks(10., 10.).is_empty());
 }
+
+#[test]
+fn a_table_awaits_the_columns_its_organize_names_else_labels_and_a_value() {
+    let names = |spec: &PanelSpec| -> Vec<String> {
+        awaited_table(spec)
+            .unwrap()
+            .columns
+            .iter()
+            .map(|column| column.name.to_string())
+            .collect()
+    };
+    let organized = panel(json!({
+        "type": "table",
+        "title": "Alerts",
+        "targets": [{"refId": "A", "expr": "ALERTS"}],
+        "transformations": [{"id": "organize", "options": {
+            "excludeByName": {"Time": true, "job": true},
+            "indexByName": {"namespace": 2, "severity": 0, "alertname": 1, "job": 3},
+            "renameByName": {"alertname": "Alert", "severity": "Severity"},
+        }}],
+    }));
+    assert_eq!(names(&organized), ["Severity", "Alert", "namespace"]);
+    assert!(awaited_table(&organized).unwrap().severity);
+
+    let plain = panel(json!({
+        "type": "table",
+        "title": "Pods",
+        "targets": [{"refId": "A", "expr": "up"}],
+    }));
+    let table = awaited_table(&plain).unwrap();
+    assert_eq!(names(&plain), ["", ""]);
+    assert_eq!(
+        table
+            .columns
+            .iter()
+            .map(|column| column.numeric)
+            .collect::<Vec<_>>(),
+        [false, true]
+    );
+    assert!(table.rows.is_empty() && !table.severity);
+
+    let chart = panel(json!({
+        "type": "timeseries",
+        "title": "CPU",
+        "targets": [{"refId": "A", "expr": "up"}],
+    }));
+    assert!(awaited_table(&chart).is_none());
+}

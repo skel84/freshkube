@@ -225,7 +225,7 @@ impl HistoryView {
             .map(|(spec, name)| {
                 let id = format!("{}-{name}", self.prefix);
                 let spec = Rc::new(spec.clone());
-                cx.new(|_| PanelView::new(id, spec))
+                cx.new(|cx| PanelView::new(id, spec, cx))
             })
             .collect();
         // One chart's cursor shows on the other, drawn here so that the

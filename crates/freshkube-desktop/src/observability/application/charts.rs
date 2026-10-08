@@ -187,7 +187,7 @@ impl ObservabilityPage {
             };
             let id = charts.id.clone();
             let view = cx.new(|cx| {
-                let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
+                let mut view = PanelView::new(id, Rc::new(panel.spec.clone()), cx);
                 view.set_result(panel.result.clone(), panel.window, cx);
                 view.set_markers(panel.markers.clone().into(), cx);
                 view

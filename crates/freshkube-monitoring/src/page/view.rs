@@ -575,6 +575,8 @@ impl MonitoringPage {
                     .cached(StyleRefinement::default().size_full()),
             )
             .children(slot.view.read(cx).cursor_overlay())
+            // After the panel, so it has drawn its loading rows.
+            .children(slot.view.read(cx).loading_motion(cx))
             .children(board.linked.element(place.slot))
         });
         let (viewport, scroll, page) = (

@@ -11,11 +11,13 @@ use talos_rs::{
 /// their loading rows, for captures and the stress binary:
 /// `FRESHKUBE_FIXTURE_HOLD=talos` holds the Talos overview and the
 /// Kubernetes summary (Nodes, System services), `lists` the Resources lists,
-/// `all` both. Debug and stress builds only; a release build ignores it.
+/// `monitoring` the dashboard's panels, `all` every one. Debug and stress
+/// builds only; a release build ignores it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Hold {
     pub(crate) talos: bool,
     pub(crate) lists: bool,
+    pub(crate) monitoring: bool,
 }
 
 pub(crate) fn hold() -> Hold {
@@ -26,6 +28,7 @@ pub(crate) fn hold() -> Hold {
     Hold {
         talos: matches!(value.as_str(), "talos" | "all"),
         lists: matches!(value.as_str(), "lists" | "all"),
+        monitoring: matches!(value.as_str(), "monitoring" | "all"),
     }
 }
 

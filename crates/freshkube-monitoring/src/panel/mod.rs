@@ -27,11 +27,12 @@ use freshkube_core::monitoring::{
     model::{PanelSpec, data::Frame, time::TimeWindow},
 };
 use freshkube_ui::card::{CardHeader, ChartCard, StatCard};
+use freshkube_ui::table::LoadingMotion;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Context, Entity, EventEmitter, IntoElement, Render, SharedString, StyleRefinement,
-    TestSupportExt, Window, div,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, IntoElement, Render, SharedString,
+    StyleRefinement, TestSupportExt, Window, div,
 };
 
 use super::derive::{self, Body, PanelData, SeriesCap};
@@ -98,11 +99,17 @@ impl EventEmitter<PanelEvent> for PanelView {}
 impl PanelView {
     /// A panel for `spec`, waiting for its first answer. `id` tells it apart
     /// from the page's other panels, as `monitoring-panel-<id>`.
-    pub fn new(id: impl Into<SharedString>, spec: Rc<PanelSpec>) -> Self {
+    /// A table panel waits under its header and loading rows.
+    pub fn new(id: impl Into<SharedString>, spec: Rc<PanelSpec>, cx: &mut Context<Self>) -> Self {
         let about = about(&spec, &[], &[]);
         let promql = promql(&spec, &[]);
+        let id: SharedString = format!("monitoring-panel-{}", id.into()).into();
+        let table = derive::awaited_table(&spec).map(|data| {
+            let title = spec.title.clone().into();
+            cx.new(|cx| TableView::waiting(&id, title, data, cx))
+        });
         Self {
-            id: format!("monitoring-panel-{}", id.into()).into(),
+            id,
             spec,
             state: State::Loading,
             data: None,
@@ -110,7 +117,7 @@ impl PanelView {
             about,
             promql,
             plot: None,
-            table: None,
+            table,
             geometry: Rc::default(),
             hovered: None,
             picked: None,
@@ -259,6 +266,8 @@ impl PanelView {
             self.stale = Some(message);
         } else {
             self.state = State::Failed(message);
+            // The failure replaces the loading rows.
+            self.table = None;
         }
         cx.notify();
     }
@@ -273,6 +282,15 @@ impl PanelView {
     #[cfg(test)]
     pub(crate) fn is_ready(&self) -> bool {
         self.state == State::Ready
+    }
+
+    /// The motion over a table's loading rows while its first answer is to
+    /// come: the page mounts it beside the panel, as the cursor's overlay.
+    pub(crate) fn loading_motion(&self, cx: &App) -> Option<Entity<LoadingMotion>> {
+        if self.state != State::Loading {
+            return None;
+        }
+        self.table.as_ref()?.read(cx).loading_motion()
     }
 
     /// The table's view, for the page's tests.
@@ -409,7 +427,10 @@ impl PanelView {
                 error.clone(),
                 cx,
             ),
-            (State::Loading, _) | (_, None) => summary::loading(cx),
+            (State::Loading, _) | (_, None) => match self.table.clone() {
+                Some(table) => table.into_any_element(),
+                None => summary::loading(cx),
+            },
             (State::Ready, Some(data)) => match data.body.clone() {
                 Body::Chart(chart) => self.render_chart(&chart, cx),
                 Body::Stats(stats) => summary::stats(&stats, cx),
