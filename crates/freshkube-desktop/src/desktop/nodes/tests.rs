@@ -2438,10 +2438,10 @@ fn node_logs_in_a_tall_window_keep_the_frame_still(cx: &mut TestAppContext) {
 }
 
 /// The arrows walk the cards in order; one in a row out of view scrolls the
-/// grid to that row. At 400 high the list is shorter than a row of cards.
+/// grid to that row. At 392 high the list is shorter than a row of cards.
 #[gpui_kit::test]
 fn arrows_scroll_the_card_grid_to_the_selected_cards_row(cx: &mut TestAppContext) {
-    let (_runtime, handle, pilot) = fixture(cx, 1500., 400.);
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 392.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("nav-nodes", cx);

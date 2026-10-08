@@ -195,8 +195,11 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                         }
                         .into(),
                     ),
-                    // Centred in the 52 px header.
-                    traffic_light_position: Some(point(px(18.), px(20.))),
+                    // Centred in the header at the saved text size; the
+                    // shell moves them when it changes.
+                    traffic_light_position: Some(freshkube_ui::page::traffic_light_position(
+                        crate::text_size::current(cx),
+                    )),
                     ..TitleBar::title_bar_options()
                 }),
                 ..TitleBar::window_options()
@@ -275,6 +278,17 @@ impl Render for PageHost {
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
+}
+
+/// Centres macOS's traffic lights on the header at the current text size:
+/// the header is in dp and grows with it, the lights don't.
+pub(crate) fn place_traffic_lights(window: &mut Window, cx: &App) {
+    #[cfg(target_os = "macos")]
+    window.set_traffic_light_position(freshkube_ui::page::traffic_light_position(
+        crate::text_size::current(cx),
+    ));
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, cx);
 }
 
 /// What a cached page view is laid out as: the whole space it is given.
@@ -895,6 +909,7 @@ impl Pilot {
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
         subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
+            place_traffic_lights(window, cx);
             view.prepare_context_display(window, cx);
             view.notify_cached(cx);
             cx.notify();
