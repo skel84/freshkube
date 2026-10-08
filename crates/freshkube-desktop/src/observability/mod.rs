@@ -79,7 +79,7 @@ impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 pub(crate) struct ObservabilityPage {
     fixture: bool,
     /// Example data holds its applications, incidents and traces
-    /// (`fixture::hold`), so their tables stay on their loading rows.
+    /// ([`Self::hold_examples`]), so their tables stay on their loading rows.
     hold: bool,
     /// The shown table's loading rows until its first answer.
     loading: crate::screens::TableLoading,
@@ -324,7 +324,7 @@ impl ObservabilityPage {
         };
         let mut this = Self {
             fixture,
-            hold: fixture && crate::fixture::hold().coroot,
+            hold: false,
             loading: crate::screens::TableLoading::new("obs-table", cx),
             live: connection::Live::new(runtime, cx.background_executor().now()),
             url,

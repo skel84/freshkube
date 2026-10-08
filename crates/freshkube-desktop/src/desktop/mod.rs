@@ -674,14 +674,18 @@ impl Pilot {
             page
         });
         let observability = cx.new(|cx| {
-            crate::observability::ObservabilityPage::new(
+            let mut page = crate::observability::ObservabilityPage::new(
                 options.fixture,
                 runtime.clone(),
                 options.preferences.as_deref(),
                 secrets,
                 window,
                 cx,
-            )
+            );
+            if crate::fixture::hold().coroot {
+                page.hold_examples();
+            }
+            page
         });
         subscriptions.push(cx.subscribe_in(
             &observability,

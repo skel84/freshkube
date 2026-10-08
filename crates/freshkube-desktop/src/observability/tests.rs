@@ -1748,3 +1748,42 @@ fn held_tables_show_the_shared_loading_rows(cx: &mut TestAppContext) {
         .unwrap();
     }
 }
+
+/// Held examples (`FRESHKUBE_FIXTURE_HOLD=coroot`) forget what the page
+/// answered when it was made, so every table waits on its loading rows and
+/// the rail counts no incidents; without example data it changes nothing.
+#[gpui_kit::test]
+fn held_examples_forget_what_the_page_answered(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert!(!page.applications.is_empty());
+        assert!(page.incident_count().is_some());
+    });
+    cx.update(|cx| page.update(cx, |page, _| page.hold_examples()));
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert!(page.applications.is_empty());
+        assert!(page.matrix.is_empty());
+        assert!(page.app_choices.is_empty());
+        assert!(page.categories.is_empty());
+        assert_eq!(page.app_count, "0 apps");
+        assert!(page.incident_count().is_none());
+    });
+    for (destination, table) in [
+        (Destination::Applications, "obs-applications-table"),
+        (Destination::Incidents, "obs-incidents-table"),
+    ] {
+        cx.update(|cx| page.update(cx, |page, cx| page.open(destination, cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let rows = window.find("obs-table-loading").bounds();
+            assert!(window.find(table).bounds().contains(&rows.origin));
+        })
+        .unwrap();
+    }
+
+    let (_runtime, _handle, live) = mount(cx, false);
+    cx.update(|cx| live.update(cx, |page, _| page.hold_examples()));
+    assert!(cx.read(|cx| !live.read(cx).hold));
+}

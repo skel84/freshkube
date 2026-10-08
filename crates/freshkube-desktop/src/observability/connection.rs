@@ -209,25 +209,44 @@ impl ObservabilityPage {
         self.live_profiles = Default::default();
         self.live_logs.forget();
         if !self.fixture {
-            self.applications.clear();
             self.nodes = Default::default();
             self.connections = Default::default();
             self.map_display = super::map::display();
-            self.matrix.clear();
-            self.selected_app = None;
-            self.report_snapshot = None;
-            self.categories = Default::default();
-            self.namespaces = Default::default();
-            self.cluster_ids.clear();
-            self.counts = [0; 7];
-            self.active_categories = Rc::new(["application".into()].into());
-            self.all_categories = false;
-            self.category_defaults_pending = true;
-            self.shown_apps = 0;
-            self.app_count = "0 apps".into();
-            self.prepare_application_columns();
-            self.namespace = None;
+            self.forget_applications();
         }
+    }
+    /// Forgets the applications answered and what was derived from them,
+    /// back to the page's first state; the map stays.
+    fn forget_applications(&mut self) {
+        self.applications.clear();
+        self.matrix.clear();
+        self.selected_app = None;
+        self.report_snapshot = None;
+        self.categories = Default::default();
+        self.namespaces = Default::default();
+        self.cluster_ids.clear();
+        self.counts = [0; 7];
+        self.active_categories = Rc::new(["application".into()].into());
+        self.all_categories = false;
+        self.category_defaults_pending = true;
+        self.shown_apps = 0;
+        self.app_count = "0 apps".into();
+        self.prepare_application_columns();
+        self.namespace = None;
+    }
+    /// Example data never answers, so the applications, incidents and
+    /// traces tables stay on their loading rows, for captures
+    /// (`FRESHKUBE_FIXTURE_HOLD=coroot`). What the examples answered when
+    /// the page was made is forgotten. Without example data it does nothing.
+    pub(crate) fn hold_examples(&mut self) {
+        if !self.fixture {
+            return;
+        }
+        self.hold = true;
+        self.incident_observations = self.incident_observations.cleared();
+        self.prepare_incident_columns();
+        self.forget_applications();
+        self.app_choices = Rc::new([]);
     }
     pub(super) fn range_changed(&mut self, cx: &mut Context<Self>) {
         let elapsed = cx
