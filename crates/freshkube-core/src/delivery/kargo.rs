@@ -507,23 +507,18 @@ pub async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
     }
 }
 
-/// The label Kargo puts on the namespace it makes for each Project.
-pub const PROJECT_LABEL: &str = "kargo.akuity.io/project";
-
-/// The names of the cluster's Kargo Projects. A Project is cluster-scoped and
-/// owns the namespace of its own name, which Kargo labels; the list is of
-/// those namespaces, since a listing here must carry a selector. A cluster
-/// that doesn't serve Kargo's `projects` is `NotInstalled`, not empty.
+/// The names of the cluster's Kargo Projects, from the cluster-scoped
+/// `projects` kind itself. A cluster that doesn't serve it is `NotInstalled`,
+/// not empty. (A namespace carrying Kargo's `kargo.akuity.io/project` label
+/// is not a Project: the label can sit on a namespace Kargo adopted, and
+/// reading namespaces would need a permission a Project reader may lack.)
 pub async fn read_project_names<R: Reader>(reader: &R) -> Source<Vec<String>> {
     async fn run<R: Reader>(reader: &R) -> Result<(Vec<String>, Option<Truncation>), Failure> {
-        resolve(reader, GROUP, "projects", VERSIONS, false).await?;
+        let resource = resolve(reader, GROUP, "projects", VERSIONS, false).await?;
         let listing = reader
             .list(&ListRequest {
-                resource: Resource::new("", "v1", "namespaces", false),
-                scope: Scope::Labels {
-                    namespace: None,
-                    selector: super::read::label_equals(PROJECT_LABEL, "true")?,
-                },
+                resource,
+                scope: Scope::Cluster,
             })
             .await?;
         let mut names: Vec<String> = listing
@@ -545,23 +540,37 @@ mod project_tests {
     use super::*;
     use crate::delivery::fixtures::FixtureReader;
 
-    fn namespace(name: &str, project: bool) -> Value {
-        let labels = if project {
-            json!({PROJECT_LABEL: "true"})
-        } else {
-            json!({})
-        };
-        json!({"metadata": {"name": name, "labels": labels}})
+    fn named(name: &str) -> Value {
+        json!({"metadata": {"name": name}})
     }
 
     #[tokio::test]
-    async fn projects_are_the_labelled_namespaces() {
+    async fn projects_are_the_projects_listed() {
         let reader = FixtureReader::default()
             .serves(GROUP, "v1alpha1", &["projects"])
-            .with(
-                "namespaces",
-                vec![namespace("shop", true), namespace("kube-system", false)],
-            );
+            .with("projects", vec![named("shop"), named("cart")]);
+        let read = read_project_names(&reader).await;
+        assert_eq!(
+            read,
+            Source::Read(vec!["cart".to_owned(), "shop".to_owned()])
+        );
+        let requests = reader.requests.borrow();
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.starts_with("LIST kargo.akuity.io/v1alpha1/projects ns=None"))
+        );
+        assert!(!requests.iter().any(|r| r.contains("namespaces")));
+    }
+
+    #[tokio::test]
+    async fn a_labelled_namespace_without_a_project_does_not_count() {
+        let adopted =
+            json!({"metadata": {"name": "adopted", "labels": {"kargo.akuity.io/project": "true"}}});
+        let reader = FixtureReader::default()
+            .serves(GROUP, "v1alpha1", &["projects"])
+            .with("projects", vec![named("shop")])
+            .with("namespaces", vec![adopted]);
         let read = read_project_names(&reader).await;
         assert_eq!(read, Source::Read(vec!["shop".to_owned()]));
     }
@@ -572,7 +581,7 @@ mod project_tests {
         assert!(matches!(none, Source::NotInstalled(_)));
         let refused = FixtureReader::default()
             .serves(GROUP, "v1alpha1", &["projects"])
-            .refusing("namespaces");
+            .refusing("projects");
         assert!(matches!(
             read_project_names(&refused).await,
             Source::Refused(_)
