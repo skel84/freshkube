@@ -836,7 +836,7 @@ impl Provider {
 /// Coroot's application page within core's bounds: every chart's history
 /// and the revisions come from the one answer the layout came from, so the
 /// three can't disagree.
-const CHART_LIMITS: ChartLimits = ChartLimits {
+pub(super) const CHART_LIMITS: ChartLimits = ChartLimits {
     max_reports: 32,
     max_charts: 512,
     max_series: 128,
@@ -846,10 +846,11 @@ const CHART_LIMITS: ChartLimits = ChartLimits {
 };
 
 pub(super) fn decode_all(envelope: Envelope, app: &AppId) -> Result<AppView, ReadError> {
-    let histories = AppCharts::from_envelope(&envelope, app, &CHART_LIMITS);
+    let histories = AppCharts::from_envelope(&envelope, app, &CHART_LIMITS)
+        .map_err(|error| refused("chart histories", app, error));
     let revisions =
         DeploymentRevision::list_from_envelope(&envelope, app, coroot_rs::DEFAULT_MAX_REVISIONS)
-            .map_err(ReadError::from)
+            .map_err(|error| refused("deployment revisions", app, error))
             .and_then(|revisions| limits::revisions(&revisions).map(|()| revisions));
     let mut view = decode(envelope.data)?;
     if view.map.app.id != *app {
@@ -858,10 +859,23 @@ pub(super) fn decode_all(envelope: Envelope, app: &AppId) -> Result<AppView, Rea
     limits::app_view(&view)?;
     match histories {
         Ok(histories) => view.history_error = attach(&mut view.reports, histories).err(),
-        Err(error) => view.history_error = Some(error.into()),
+        Err(error) => view.history_error = Some(error),
     }
     view.revisions = Some(revisions);
     Ok(view)
+}
+
+/// What coroot-rs refused in the answer, logged with its own words, which
+/// name the field or the bound. coroot-rs gives a bound it passed no kind of
+/// its own, only a decode error that says so; that reads as a limit here.
+fn refused(what: &str, app: &AppId, error: coroot_rs::Error) -> ReadError {
+    ::tracing::warn!(app = app.as_str(), "Coroot's {what}: {}", error.message());
+    let message = error.message();
+    let over = message.contains("exceeds ChartLimits::") || message.contains("over the limit of");
+    match error.kind() {
+        coroot_rs::ErrorKind::Decode if over => ReadError::Limit,
+        _ => ReadError::from(error),
+    }
 }
 
 /// Gives each chart its history. coroot-rs lists a report's charts in
@@ -887,6 +901,20 @@ fn attach(reports: &mut [AppReport], histories: AppCharts) -> Result<(), ReadErr
             continue;
         }
         for (chart, history) in charts.iter_mut().zip(decoded.charts) {
+            // coroot-rs bounds each series' data, not the window `ctx`
+            // implies, which sets how many points a panel lays out.
+            let points = history.expected_points();
+            if points > CHART_LIMITS.max_points {
+                ::tracing::warn!(
+                    report = report.name.as_str(),
+                    chart = chart.title.as_str(),
+                    "Coroot's chart window has {points} points, over the limit of {}",
+                    CHART_LIMITS.max_points
+                );
+                chart.history = None;
+                result = result.and(Err(ReadError::Limit));
+                continue;
+            }
             chart.history = Some(Box::new(history));
         }
     }

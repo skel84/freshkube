@@ -1221,6 +1221,51 @@ fn a_history_coroot_rs_refuses_leaves_the_page_and_says_why() {
 }
 
 #[test]
+fn a_window_over_the_point_bound_keeps_no_history() {
+    let mut wire = app_view_wire();
+    // One sample, but a `ctx` from the epoch to now by the second: about
+    // 1.8e9 points, which a panel would lay out in full.
+    wire["data"]["reports"][1]["widgets"][1]["chart"]["ctx"] =
+        serde_json::json!({"from":1,"to":1790000000000_i64,"step":1000});
+    wire["data"]["reports"][1]["widgets"][1]["chart"]["series"][0]["data"] = serde_json::json!([1]);
+    let view = decode_wire(wire).unwrap();
+    assert_eq!(view.history_error, Some(ReadError::Limit));
+    let WidgetKind::Chart(node) = &view.reports[1].widgets[1].kind else {
+        panic!("the node chart");
+    };
+    assert!(node.history.is_none());
+    assert!(ChartPanel::from_history(node).is_none());
+    // The group beside it keeps its histories.
+    let WidgetKind::ChartGroup { charts, .. } = &view.reports[1].widgets[0].kind else {
+        panic!("the CPU group");
+    };
+    assert!(charts.iter().all(|c| c.history.is_some()));
+}
+
+#[test]
+fn a_bound_coroot_rs_holds_reads_as_a_limit() {
+    // The layout's bounds match coroot-rs's chart bounds, so it is the
+    // revisions' count, which only coroot-rs holds, that shows it.
+    let rows: Vec<_> = (0..=coroot_rs::DEFAULT_MAX_REVISIONS as i64)
+        .map(|i| {
+            deployment_row(
+                &format!("9c41e7:{}", 1_789_990_000 + i),
+                "9c41e7",
+                serde_json::json!([{"report":"SLO","ok":true,"message":"ok","time":null}]),
+            )
+        })
+        .collect();
+    let mut wire = app_view_wire();
+    wire["data"]["reports"]
+        .as_array_mut()
+        .unwrap()
+        .push(deployments_report(rows.into()));
+    let view = decode_wire(wire).unwrap();
+    assert_eq!(view.revisions, Some(Err(ReadError::Limit)));
+    assert_eq!(view.history_error, None);
+}
+
+#[test]
 fn revisions_come_newest_first_with_coroot_s_own_words() {
     let mut wire = app_view_wire();
     let rows = serde_json::json!([

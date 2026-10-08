@@ -1,7 +1,7 @@
 //! A chart from Coroot's application view as a Monitoring panel: a
 //! one-panel Grafana timeseries, the answer it shows and its window, so the
 //! desktop draws it with the same chart as Monitoring.
-use super::app_view::{Chart, Series};
+use super::app_view::{CHART_LIMITS, Chart, Series};
 use crate::monitoring::PanelResult;
 use crate::monitoring::markers::{Marker, MarkerKind};
 use coroot_rs::{DeploymentRevision, SeriesCoverage, SeriesHistory};
@@ -247,13 +247,15 @@ impl ChartPanel {
     /// [`Self::coverage`]. The layout gives the legend names, colours and
     /// fill. Deploy markers come from the revisions
     /// ([`Self::with_revisions`]), not annotations, which can't tell a
-    /// deploy from an incident. None without a history or with fewer than
-    /// two points in its window.
+    /// deploy from an incident. None without a history, with fewer than
+    /// two points in its window, or with more than core's bound
+    /// ([`CHART_LIMITS`]): Coroot's `ctx` sets the window, not the data, so a
+    /// tiny answer can ask for billions of points.
     pub fn from_history(chart: &Chart) -> Option<Self> {
         let history = chart.history.as_ref()?;
         let points = history.expected_points();
         let step = i64::try_from(history.step.as_secs()).ok()?.max(1);
-        if points < 2 {
+        if !(2..=CHART_LIMITS.max_points).contains(&points) {
             return None;
         }
         let start = history.anchor().timestamp();
@@ -333,10 +335,12 @@ impl ChartPanel {
         revisions: &[DeploymentRevision],
         namespace: Option<&str>,
     ) -> Self {
-        let times = self.window.times();
-        let (Some(first), Some(last)) = (times.first().copied(), times.last().copied()) else {
-            return self;
-        };
+        let last = self.window.end;
+        let first = last.saturating_sub(
+            self.window
+                .step()
+                .saturating_mul(self.window.points as i64 - 1),
+        );
         self.markers.extend(
             revisions
                 .iter()
@@ -717,6 +721,19 @@ mod tests {
         assert!(ChartPanel::from_history(&chart()).is_none());
         // The layout's own points don't stand in for a missing history.
         assert!(ChartPanel::new(&chart()).is_some());
+    }
+
+    #[test]
+    fn a_window_over_the_point_bound_draws_nothing() {
+        let mut wide = history();
+        wide.from = chrono::DateTime::from_timestamp(1, 0).unwrap();
+        wide.step = std::time::Duration::from_secs(1);
+        wide.series.truncate(1);
+        wide.series[0].samples = vec![Some(1.)];
+        wide.series[0].coverage = SeriesCoverage::Partial;
+        wide.threshold = None;
+        assert!(wide.expected_points() > CHART_LIMITS.max_points);
+        assert!(ChartPanel::from_history(&charted(wide)).is_none());
     }
 
     #[test]
