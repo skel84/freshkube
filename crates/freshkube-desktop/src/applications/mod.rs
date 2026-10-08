@@ -146,14 +146,7 @@ impl ApplicationsPage {
         let (columns, width) = table::columns(&[]);
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
-        let split = {
-            let file = crate::navigation_file::NavigationFile::global(cx);
-            InspectorSplit::new(
-                file.inspector_width(PREFIX),
-                move |width, cx| file.set_inspector_width(PREFIX, width, cx),
-                cx,
-            )
-        };
+        let split = InspectorSplit::new(PREFIX, cx);
         Self {
             runtime,
             source: None,
