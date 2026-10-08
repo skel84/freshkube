@@ -780,3 +780,90 @@ fn the_etcd_verdict_wraps_inside_the_plan(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// What the screen has asked for so far: whether a preview was started for
+/// the selection, and the audit log's revision and whether it holds an answer.
+fn reads(screen: &Entity<OperationsScreen>, cx: &TestAppContext) -> (bool, u64, bool) {
+    cx.read(|cx| {
+        let screen = screen.read(cx);
+        (
+            !matches!(screen.preview, PreviewState::Idle),
+            screen.audit.revision(),
+            screen.audit.data().is_some(),
+        )
+    })
+}
+
+fn set_source_hidden(
+    cx: &mut TestAppContext,
+    handle: WindowHandle<Root>,
+    screen: &Entity<OperationsScreen>,
+    source: ScreenSource,
+) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.set_source(Some(source), window, cx));
+    })
+    .unwrap();
+}
+
+fn activate(
+    cx: &mut TestAppContext,
+    handle: WindowHandle<Root>,
+    screen: &Entity<OperationsScreen>,
+) {
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.activate(window, cx));
+    })
+    .unwrap();
+}
+
+/// The shell sends every screen its source but activates only the visible
+/// one: a screen shown once and left starts no read for a new target.
+#[gpui_kit::test]
+fn a_hidden_screen_starts_no_read_when_the_target_changes(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 50);
+    let shown = reads(&screen, cx);
+    assert!(
+        shown.0 && shown.2,
+        "shown, it previewed and read the audit log"
+    );
+
+    set_source_hidden(cx, handle, &screen, source("prod-fra", 1));
+    let hidden = reads(&screen, cx);
+    assert!(!hidden.0, "no preview started while hidden");
+    assert!(
+        !hidden.2,
+        "the old target's audit log is gone and not read again"
+    );
+
+    activate(cx, handle, &screen);
+    let again = reads(&screen, cx);
+    assert!(again.0, "showing it previews the new target");
+    assert!(again.2, "showing it reads the audit log for the new target");
+}
+
+/// A publication for the target it already has changes nothing while
+/// hidden: no preview, no audit reload.
+#[gpui_kit::test]
+fn a_hidden_screen_ignores_an_update_for_the_same_target(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 50);
+    let shown = reads(&screen, cx);
+    set_source_hidden(cx, handle, &screen, source("prod-fra", 0));
+    assert_eq!(reads(&screen, cx), shown);
+}
+
+/// A submitted run belongs to the app-wide slot, not the page: source
+/// updates while it runs, shown or hidden, leave it to finish.
+#[gpui_kit::test]
+fn a_submitted_run_finishes_through_source_updates(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 40);
+    review(cx, handle);
+    confirm(cx, handle);
+    set_source_hidden(cx, handle, &screen, source("prod-fra", 0));
+    set_source_hidden(cx, handle, &screen, source("prod-fra", 1));
+    wait_until_finished(cx, &runtime, &screen, 10, "the run");
+    assert_eq!(
+        results(&screen, cx),
+        [("talos-cp-fra1-01".to_owned(), OperationStatus::Succeeded)]
+    );
+}

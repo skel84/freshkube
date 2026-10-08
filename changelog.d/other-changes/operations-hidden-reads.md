@@ -1,0 +1,1 @@
+- Operations no longer starts a preview or reads its audit log for a new Talos node while another page shows; it reads when it is shown.
