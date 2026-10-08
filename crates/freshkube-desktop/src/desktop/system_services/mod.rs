@@ -145,15 +145,7 @@ pub(super) struct SystemServices {
     _subscription: Subscription,
 }
 
-/// Where the Talos overview the services come from stands.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Reading {
-    /// Neither answered nor failed: the table shows its loading rows.
-    Waiting,
-    /// Nothing answered, for this reason: no service is shown as missing.
-    Failed(SharedString),
-    Answered,
-}
+pub(super) use crate::screens::Reading;
 
 impl EventEmitter<ServiceEvent> for SystemServices {}
 impl SystemServices {

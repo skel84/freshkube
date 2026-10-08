@@ -145,6 +145,8 @@ pub(crate) enum ScreenEvent {
     OpenLogs(String),
     /// Make this node the target.
     SelectNode(String),
+    /// Ask the shell to read the Talos overview again, after it failed.
+    RetryCluster,
     /// Make `node` the target, then show `service`'s logs there. Ignored when
     /// the node isn't in the roster.
     OpenLogsOn {
@@ -651,6 +653,84 @@ fn capitalized(text: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Where the Talos overview, which every screen's source comes from, stands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Reading {
+    /// Neither answered nor failed: pages show their loading state.
+    Waiting,
+    /// Nothing answered, for this reason: nothing is shown as missing.
+    Failed(SharedString),
+    /// Answered. Without a source the cluster has no node to target.
+    Answered,
+}
+
+/// The shell's latest [`Reading`], derived when the overview changes.
+struct ClusterReading(Reading);
+
+impl Global for ClusterReading {}
+
+/// The overview's state; `Waiting` until a shell has published one.
+pub(crate) fn reading(cx: &App) -> Reading {
+    cx.try_global::<ClusterReading>()
+        .map_or(Reading::Waiting, |global| global.0.clone())
+}
+
+/// Publishes the overview's state. Returns whether it changed, so the
+/// caller redraws the screens that show it.
+pub(crate) fn set_reading(reading: Reading, cx: &mut App) -> bool {
+    if cx.try_global::<ClusterReading>().map(|global| &global.0) == Some(&reading) {
+        return false;
+    }
+    cx.set_global(ClusterReading(reading));
+    true
+}
+
+/// What a page shows while it has no source: the loading state while the
+/// overview is read, its failure with a retry, or, once it answered with no
+/// node to target, that there is none.
+pub(crate) fn unsourced<V: ScreenPanel>(what: &str, cx: &mut Context<V>) -> AnyElement {
+    let (id, state) = match reading(cx) {
+        Reading::Waiting => ("screen-waiting", skeleton(cx)),
+        Reading::Failed(reason) => (
+            "screen-unreachable",
+            ui::empty_state(
+                IconName::CircleDashed,
+                format!("Couldn't load {what}"),
+                "The cluster hasn't answered, so nothing is shown as failed. Retry, or check the Talos API connection.",
+                Some(reason.to_string()),
+                vec![
+                    Button::new("screen-retry")
+                        .primary()
+                        .icon(IconName::RefreshCw)
+                        .label("Retry")
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(ScreenEvent::RetryCluster)))
+                        .into_any_element(),
+                ],
+                cx,
+            )
+            .into_any_element(),
+        ),
+        Reading::Answered => (
+            "screen-no-node",
+            ui::empty_state(
+                IconName::Server,
+                "No node selected",
+                "Open a node in Nodes to inspect it.",
+                None,
+                Vec::new(),
+                cx,
+            )
+            .into_any_element(),
+        ),
+    };
+    div()
+        .id(id)
+        .test_support()
+        .size_full()
+        .child(state)
+        .into_any_element()
+}
+
 /// What to show instead of data: no target yet, a silent node, the first
 /// load, or a first load that failed. `None` means render the data.
 pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
@@ -664,17 +744,7 @@ pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
         return None;
     }
     let Some(source) = source else {
-        return Some(
-            ui::empty_state(
-                IconName::Server,
-                "No node selected",
-                "Pick a target node in the title bar.",
-                None,
-                Vec::new(),
-                cx,
-            )
-            .into_any_element(),
-        );
+        return Some(unsourced(what, cx));
     };
     if loader.is_loading() {
         return Some(skeleton(cx));
@@ -686,7 +756,7 @@ pub(crate) fn gate<V: ScreenPanel, T: Send + 'static>(
                 IconName::Unplug,
                 format!("{} isn't responding", target.node),
                 format!(
-                    "{} needs the Talos API at {}:50000. Pick another target node in the title bar, or retry.",
+                    "{} needs the Talos API at {}:50000. Open another node in Nodes, or retry.",
                     capitalized(what),
                     target.address
                 ),

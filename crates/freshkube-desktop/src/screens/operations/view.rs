@@ -1,4 +1,5 @@
 use super::*;
+use crate::screens::unsourced;
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::table::DataTable;
 
@@ -891,14 +892,12 @@ impl Render for OperationsScreen {
         let page = match self.source.clone() {
             Some(source) => page.child(self.render_body(&source, window, cx)),
             None => page.child(
-                page::inset().child(div().id("ops-state").test_support().child(ui::empty_state(
-                    IconName::Server,
-                    "No node selected",
-                    "Pick a target node in the title bar.",
-                    None,
-                    Vec::new(),
-                    cx,
-                ))),
+                page::inset().child(
+                    div()
+                        .id("ops-state")
+                        .test_support()
+                        .child(unsourced("Operations", cx)),
+                ),
             ),
         };
         div()
