@@ -69,6 +69,7 @@ fn session(name: &str) -> SessionInputs {
     SessionInputs {
         key: key(name),
         kargo: Source::NotInstalled("API group kargo.akuity.io is not served".into()),
+        argo_scope: ArgoScope::AllNamespaces,
         argo_applications: Source::Read(Vec::new()),
         argo_application_sets: Source::Read(Vec::new()),
         workloads: Source::Read(Vec::new()),
@@ -356,7 +357,7 @@ fn a_projects_unread_stages_leave_it_standing_with_a_note() {
     assert!(
         app.notes
             .iter()
-            .any(|n| matches!(n, Note::MembersUnknown { why } if why.starts_with("Stages")))
+            .any(|n| matches!(n, Note::MembersUnknown { why, .. } if why.starts_with("Stages")))
     );
     assert!(found.coverage.iter().any(|c| {
         c.source == SourceKind::KargoStages
@@ -610,7 +611,11 @@ mod reading {
             ["storefront", "web", "db"],
             "the label matches the name, kinds in order"
         );
-        assert!(found.unknown().is_empty());
+        assert_eq!(
+            found.unknown().keys().copied().collect::<Vec<_>>(),
+            [Rule::ArgoCd],
+            "only the Argo CD namespace was listed"
+        );
     }
 
     #[tokio::test]
@@ -810,7 +815,7 @@ fn unread_warehouses_leave_the_stages_and_a_note() {
     assert_eq!(names(app), ["dev"]);
     assert!(app.notes.iter().any(|n| matches!(
         n,
-        Note::MembersUnknown { why } if why.starts_with("Warehouses")
+        Note::MembersUnknown { why, .. } if why.starts_with("Warehouses")
     )));
     assert!(found.coverage.iter().any(|c| {
         c.source == SourceKind::KargoWarehouses && matches!(c.state, CoverageState::Unreadable(_))
@@ -828,7 +833,7 @@ fn capped_stages_keep_what_was_read_and_say_members_may_be_missing() {
     assert_eq!(names(app), ["dev", "images"]);
     assert!(app.notes.iter().any(|n| matches!(
         n,
-        Note::MembersUnknown { why } if why.starts_with("Stages") && why.contains("page cap")
+        Note::MembersUnknown { why, .. } if why.starts_with("Stages") && why.contains("page cap")
     )));
     assert!(found.unknown().contains_key(&Rule::Kargo));
 }
@@ -1027,4 +1032,105 @@ fn an_override_splits_a_stage_out_of_a_kargo_application() {
     );
     let split = found.find(&id(Rule::Manual, "checkout prod")).unwrap();
     assert_eq!(split.members[0].at, stage);
+}
+
+#[test]
+fn applications_listed_in_one_namespace_leave_argo_cd_unknown_for_workloads() {
+    let mut core = session("core-fra");
+    core.argo_scope = ArgoScope::Namespace("argocd".into());
+    core.workloads = Source::Read(vec![workload("shop", "web", "storefront")]);
+    let found = derived(vec![core]);
+    let app = found.find(&id(Rule::PartOf, "storefront")).unwrap();
+    assert!(
+        app.notes
+            .iter()
+            .any(|n| matches!(n, Note::ManagerUnknown { member } if member.name == "web"))
+    );
+    assert_eq!(found.unknown()[&Rule::ArgoCd], [key("core-fra")]);
+    assert!(found.coverage.iter().any(|c| {
+        c.source == SourceKind::ArgoApplications
+            && c.state == CoverageState::NamespaceOnly("argocd".into())
+    }));
+}
+
+#[test]
+fn a_project_beyond_the_cap_is_noted_on_the_application_that_names_it() {
+    let naming_p2 = argo(
+        "p2-dev",
+        json!({"metadata": {"annotations": {"kargo.akuity.io/authorized-stage": "p2:dev"}}}),
+    );
+    let capped = |sessions: Source<Vec<KargoProjectRead>>| {
+        let mut core = session("core-fra");
+        core.kargo = sessions;
+        core.argo_applications = Source::Read(vec![naming_p2.clone()]);
+        derived(vec![core])
+    };
+    let found = capped(Source::Capped(
+        vec![project("p1", &["dev"])],
+        Truncation { read: 1 },
+    ));
+    let app = found.find(&app_id("p2-dev")).unwrap();
+    assert!(app.notes.iter().any(|n| matches!(
+        n,
+        Note::ProjectNotRead { project, why, .. } if project == "p2" && why.contains("cap") && why.contains("core-fra")
+    )));
+    let refused = capped(Source::Refused("forbidden".into()));
+    assert!(
+        refused
+            .find(&app_id("p2-dev"))
+            .unwrap()
+            .notes
+            .iter()
+            .any(|n| matches!(n, Note::ProjectNotRead { .. }))
+    );
+    // Kargo read in full, or not served: the Project is simply not there.
+    let whole = capped(Source::Read(vec![project("p1", &["dev"])]));
+    assert!(whole.find(&app_id("p2-dev")).unwrap().notes.is_empty());
+    let absent = capped(Source::NotInstalled("not served".into()));
+    assert!(absent.find(&app_id("p2-dev")).unwrap().notes.is_empty());
+}
+
+#[test]
+fn unknown_members_name_the_cluster() {
+    let mut core = session("core-fra");
+    let mut shop = project("checkout", &["dev"]);
+    shop.stages = Source::Refused("forbidden".into());
+    core.kargo = Source::Read(vec![shop]);
+    let found = derived(vec![core]);
+    let app = found.find(&id(Rule::Kargo, "checkout")).unwrap();
+    assert!(app.notes.iter().any(|n| matches!(
+        n,
+        Note::MembersUnknown { session, .. } if *session == key("core-fra")
+    )));
+}
+
+#[test]
+fn splitting_off_the_member_that_crossed_clusters_drops_the_join_note() {
+    let mut dev = session("dev-fra");
+    dev.workloads = Source::Read(vec![workload("shop", "web", "storefront")]);
+    let mut prod = session("prod-fra");
+    prod.workloads = Source::Read(vec![workload("shop", "web", "storefront")]);
+    let split = |member_session: &str| Override {
+        splits: vec![Split {
+            member: MemberRef {
+                session: key(member_session),
+                kind: MemberKind::Workload(WorkloadKind::Deployment),
+                namespace: Some("shop".into()),
+                name: "web".into(),
+            },
+            name: "prod web".into(),
+        }],
+        ..Override::default()
+    };
+    let inputs = Inputs {
+        sessions: vec![dev, prod],
+        stage_naming: None,
+    };
+    let found = derive(&inputs, &split("prod-fra"));
+    let left = found.find(&id(Rule::PartOf, "storefront")).unwrap();
+    assert!(left.notes.is_empty(), "{:?}", left.notes);
+    assert_eq!(left.members.len(), 1);
+    assert_eq!(left.members[0].basis, Basis::Direct, "no longer a guess");
+    let moved = found.find(&id(Rule::Manual, "prod web")).unwrap();
+    assert_eq!(moved.members[0].basis, Basis::Override);
 }

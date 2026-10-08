@@ -7,7 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{Application, ApplicationId, Basis, Evidence, MemberRef, Note, Rule, Unmatched};
+use super::{
+    Application, ApplicationId, Basis, Evidence, MemberRef, Note, Rule, SessionKey, Unmatched,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Merge {
@@ -95,6 +97,7 @@ fn split_off(apps: &mut Apps, split: &Split) -> bool {
         .into_iter()
         .partition::<Vec<_>, _>(|note| note.is_about(&split.member));
     source.notes = kept;
+    refresh_joined(source);
     member.basis = Basis::Override;
     let id = ApplicationId::new(Rule::Manual, name);
     let target = apps.entry(id.clone()).or_insert_with(|| Application {
@@ -153,8 +156,37 @@ impl Note {
         match self {
             Self::LowerClaim { member, .. }
             | Self::UnmappedDestination { member }
+            | Self::ProjectNotRead { member, .. }
             | Self::ManagerUnknown { member } => member == at,
             _ => false,
+        }
+    }
+}
+
+/// Redoes the cross-cluster note after members left: it names the clusters
+/// the application still spans, and goes when it spans one. Members that were
+/// inferred only for the join become direct again.
+fn refresh_joined(app: &mut Application) {
+    app.notes
+        .retain(|note| !matches!(note, Note::JoinedAcrossSessions { .. }));
+    let mut sessions: BTreeSet<SessionKey> =
+        app.members.iter().map(|m| m.at.session.clone()).collect();
+    sessions.extend(app.evidence.iter().filter_map(|evidence| match evidence {
+        Evidence::KargoProject { session, .. }
+        | Evidence::ArgoApplicationSet { session, .. }
+        | Evidence::ArgoApplication { session, .. } => Some(session.clone()),
+        _ => None,
+    }));
+    if sessions.len() > 1 {
+        app.notes.push(Note::JoinedAcrossSessions {
+            name: app.name.clone(),
+            sessions: sessions.into_iter().collect(),
+        });
+    } else {
+        for member in &mut app.members {
+            if member.basis == Basis::Inferred {
+                member.basis = Basis::Direct;
+            }
         }
     }
 }

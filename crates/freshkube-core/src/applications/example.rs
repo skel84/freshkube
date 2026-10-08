@@ -18,7 +18,7 @@
 use serde_json::{Value, json};
 
 use super::read::parse_labelled_workload;
-use super::{Inputs, KargoProjectRead, SessionInputs, SessionKey};
+use super::{ArgoScope, Inputs, KargoProjectRead, SessionInputs, SessionKey};
 use crate::delivery::argocd::{parse_application, parse_application_set};
 use crate::delivery::kargo::{parse_stage, parse_warehouse};
 use crate::delivery::source::Source;
@@ -103,6 +103,7 @@ fn core() -> SessionInputs {
     SessionInputs {
         key: SessionKey::new(CORE),
         kargo: Source::Read(vec![kargo_project("checkout"), kargo_project("cart")]),
+        argo_scope: ArgoScope::AllNamespaces,
         argo_applications: Source::Read(
             applications.iter().filter_map(parse_application).collect(),
         ),
@@ -147,6 +148,7 @@ fn environment(cluster: &str) -> SessionInputs {
     SessionInputs {
         key: SessionKey::new(cluster),
         kargo: Source::NotInstalled("API group kargo.akuity.io is not served".into()),
+        argo_scope: ArgoScope::AllNamespaces,
         argo_applications: Source::NotInstalled("API group argoproj.io is not served".into()),
         argo_application_sets: Source::NotInstalled("API group argoproj.io is not served".into()),
         workloads: Source::Read(labelled(items)),

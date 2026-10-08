@@ -7,7 +7,7 @@
 
 use serde_json::Value;
 
-use super::{KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey};
+use super::{ArgoScope, KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey};
 use crate::delivery::argocd::{read_application_sets, read_applications};
 use crate::delivery::kargo::{parse_stage, parse_warehouse, read_kind, read_project_names};
 use crate::delivery::read::{ListRequest, Reader, Resource, Scope};
@@ -22,7 +22,10 @@ pub const PART_OF: &str = "app.kubernetes.io/part-of";
 pub const MAX_PROJECTS: usize = 50;
 
 /// Reads one cluster. `argocd_namespace` is where its Argo CD keeps
-/// Applications and ApplicationSets.
+/// Applications and ApplicationSets. Only that namespace is listed (a
+/// cluster-wide list needs a selector the kind does not have), so the read
+/// is marked [`ArgoScope::Namespace`] and never counts as whole: Applications
+/// elsewhere, where Argo CD allows them, are not known to be absent.
 pub async fn read_session<R: Reader>(
     reader: &R,
     key: SessionKey,
@@ -31,6 +34,7 @@ pub async fn read_session<R: Reader>(
     SessionInputs {
         key,
         kargo: read_kargo(reader).await,
+        argo_scope: ArgoScope::Namespace(argocd_namespace.to_owned()),
         argo_applications: read_applications(reader, argocd_namespace).await,
         argo_application_sets: read_application_sets(reader, argocd_namespace).await,
         workloads: read_workloads(reader).await,
