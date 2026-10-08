@@ -15,7 +15,7 @@ use super::{
 };
 use crate::resources::example;
 use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};
-use crate::resources::store::{ResourceBatch, ResourceEvent};
+use crate::resources::store::ResourceEvent;
 
 /// A built-in or example custom kind by its kubectl key.
 fn kind(key: &str) -> ResourceKind {
@@ -103,7 +103,7 @@ fn shown(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> Option<Resourc
 fn deliver(screen: &Entity<ResourcesScreen>, events: Vec<ResourceEvent>, cx: &mut gpui_kit::App) {
     screen.update(cx, |screen, cx| {
         let epoch = screen.store.epoch();
-        screen.apply(ResourceBatch { epoch, events }, cx);
+        screen.apply(epoch, vec![events], cx);
     });
 }
 
@@ -363,10 +363,8 @@ fn reads_show_refusals_failures_and_stale_rows(cx: &mut TestAppContext) {
         screen.update(cx, |screen, cx| {
             let epoch = screen.store.epoch() - 1;
             screen.apply(
-                ResourceBatch {
-                    epoch,
-                    events: vec![ResourceEvent::Read(ReadState::Loaded)],
-                },
+                epoch,
+                vec![vec![ResourceEvent::Read(ReadState::Loaded)]],
                 cx,
             );
         });
@@ -1052,10 +1050,8 @@ fn access_replacement_rejects_old_batches_with_the_same_object_name_and_uid(
             let old_identity = rows[0].identity.clone();
             let old_epoch = screen.store.epoch();
             screen.apply(
-                ResourceBatch {
-                    epoch: old_epoch,
-                    events: vec![ResourceEvent::reset(columns.clone(), rows.clone())],
-                },
+                old_epoch,
+                vec![vec![ResourceEvent::reset(columns.clone(), rows.clone())]],
                 cx,
             );
             screen
@@ -1069,10 +1065,8 @@ fn access_replacement_rejects_old_batches_with_the_same_object_name_and_uid(
             assert_ne!(epoch, old_epoch);
             assert!(screen.store.is_empty());
             screen.apply(
-                ResourceBatch {
-                    epoch: old_epoch,
-                    events: vec![ResourceEvent::reset(columns.clone(), rows.clone())],
-                },
+                old_epoch,
+                vec![vec![ResourceEvent::reset(columns.clone(), rows.clone())]],
                 cx,
             );
             assert!(
@@ -1085,13 +1079,7 @@ fn access_replacement_rejects_old_batches_with_the_same_object_name_and_uid(
             assert_eq!(old_identity.name, new_identity.name);
             assert_eq!(old_identity.uid, new_identity.uid);
             assert_ne!(old_identity, new_identity);
-            screen.apply(
-                ResourceBatch {
-                    epoch,
-                    events: vec![ResourceEvent::reset(columns, rows)],
-                },
-                cx,
-            );
+            screen.apply(epoch, vec![vec![ResourceEvent::reset(columns, rows)]], cx);
             assert_eq!(screen.store.len(), 1);
             assert!(screen.store.get(&old_identity).is_none());
             assert!(screen.store.get(&new_identity).is_some());
@@ -1372,13 +1360,11 @@ fn node_pods_are_filtered_across_namespaces_and_do_not_open_a_nested_pane(cx: &m
         screen.update(cx, |screen, cx| {
             screen.set_node(Some("talos-wk-fra1-01"), window, cx);
             screen.apply(
-                ResourceBatch {
-                    epoch: old_epoch,
-                    events: vec![ResourceEvent::reset(
-                        screen.store.columns().to_vec(),
-                        old_rows,
-                    )],
-                },
+                old_epoch,
+                vec![vec![ResourceEvent::reset(
+                    screen.store.columns().to_vec(),
+                    old_rows,
+                )]],
                 cx,
             );
         });
@@ -2672,4 +2658,78 @@ fn a_menu_acts_only_on_the_row_it_was_opened_for(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     cx.read(|cx| assert!(screen.read(cx).marked.contains(&first)));
+}
+
+/// A watch's change to a pod's state flashes its row; a relist forgets
+/// every flash and flashes nothing of its own.
+#[gpui_kit::test]
+fn a_changed_pod_flashes_and_a_relist_forgets_it(cx: &mut TestAppContext) {
+    let (_runtime, screen, _window) = mount(cx, Some("demo"));
+    cx.update(|cx| cx.set_reduce_motion(false));
+    let (changed, columns, rows) = cx.update(|cx| {
+        let screen = screen.read(cx);
+        let rows: Vec<_> = screen
+            .store
+            .entries()
+            .iter()
+            .map(|e| e.row().clone())
+            .collect();
+        (screen.restarted(0), screen.store.columns().to_vec(), rows)
+    });
+    let id = changed.identity.clone();
+    cx.update(|cx| deliver(&screen, vec![ResourceEvent::Upsert(changed)], cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(screen.read(cx).flashing(cx), vec![id.clone()]));
+    // Fades over FADE, then the layer forgets it.
+    cx.background_executor
+        .advance_clock(freshkube_ui::motion::FADE);
+    cx.run_until_parked();
+    cx.update(|cx| assert!(screen.read(cx).flashing(cx).is_empty()));
+    // Another change flashes; a relist forgets it and flashes nothing.
+    let again = cx.update(|cx| screen.read(cx).restarted(1));
+    cx.update(|cx| deliver(&screen, vec![ResourceEvent::Upsert(again)], cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(screen.read(cx).flashing(cx).len(), 1));
+    cx.update(|cx| deliver(&screen, vec![ResourceEvent::reset(columns, rows)], cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert!(screen.read(cx).flashing(cx).is_empty()));
+}
+
+/// A sort moves a fading row's tint with it before the next frame draws.
+#[gpui_kit::test]
+fn a_sort_moves_the_flash_with_its_row(cx: &mut TestAppContext) {
+    use crate::resources::model::SortKey;
+    use freshkube_ui::table::TableSource;
+    let (_runtime, screen, _window) = mount(cx, Some("demo"));
+    cx.update(|cx| cx.set_reduce_motion(false));
+    let changed = cx.update(|cx| screen.read(cx).restarted(0));
+    let id = changed.identity.clone();
+    cx.update(|cx| deliver(&screen, vec![ResourceEvent::Upsert(changed)], cx));
+    cx.run_until_parked();
+    let line = |cx: &mut TestAppContext| {
+        cx.read(|cx| {
+            let screen = screen.read(cx);
+            let drawn = screen.flash.read(cx).line(&id);
+            (drawn, TableSource::line_of(screen, &id))
+        })
+    };
+    let (before, _) = line(cx);
+    assert!(before.is_some());
+    for key in [SortKey::Restarts, SortKey::Ready] {
+        // No frame between the sort and the check.
+        cx.update(|cx| screen.update(cx, |screen, cx| screen.sort_by(key, cx)));
+        let (drawn, now) = line(cx);
+        assert_eq!(drawn, now, "{key:?}");
+    }
+    assert_ne!(line(cx).0, before, "the sorts moved the row");
+}
+
+/// With reduced motion, nothing flashes.
+#[gpui_kit::test]
+fn reduced_motion_flashes_nothing(cx: &mut TestAppContext) {
+    let (_runtime, screen, _window) = mount(cx, Some("demo"));
+    let changed = cx.update(|cx| screen.read(cx).restarted(0));
+    cx.update(|cx| deliver(&screen, vec![ResourceEvent::Upsert(changed)], cx));
+    cx.run_until_parked();
+    cx.update(|cx| assert!(screen.read(cx).flashing(cx).is_empty()));
 }

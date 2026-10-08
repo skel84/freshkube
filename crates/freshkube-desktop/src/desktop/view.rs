@@ -162,12 +162,27 @@ impl Render for Pilot {
             )
             // Drawn by the shell, so it keeps up with the pages it reads.
             .child(self.render_status_bar(window, cx))
-            // After the page, so it has drawn its rows when this renders.
+            // After the page, so it has drawn its rows when these render.
             .children(self.page_loading_motion(cx))
+            .children(self.page_flash(cx))
     }
 }
 
 impl Pilot {
+    /// The flash over the shown page's changed rows, mounted beside the
+    /// page and the cached chrome as the loading motion is. Only
+    /// Resources lists flash.
+    pub(super) fn page_flash(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::FlashLayer<crate::resources::model::ResourceIdentity>>>
+    {
+        match self.page {
+            Page::Resources => self.resources.read(cx).flash_layer(),
+            _ => None,
+        }
+    }
+
     /// The motion over the shown page's loading rows. The page owns it and
     /// its rows decide when it moves; the shell mounts it beside the
     /// page and the cached chrome, so its frames redraw neither. It is

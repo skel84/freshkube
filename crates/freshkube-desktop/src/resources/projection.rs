@@ -129,6 +129,8 @@ impl Tally {
 #[derive(Clone, Debug)]
 pub(crate) struct ResourceProjection {
     revision: Option<u64>,
+    /// New on every rebuild: a sort, filter, fold or new rows.
+    generation: u64,
     visible: Vec<usize>,
     selected: Option<ResourceIdentity>,
     selected_ix: Option<usize>,
@@ -146,6 +148,7 @@ impl ResourceProjection {
     pub(crate) fn new() -> Self {
         Self {
             revision: None,
+            generation: 0,
             visible: Vec::new(),
             selected: None,
             selected_ix: None,
@@ -397,6 +400,12 @@ impl ResourceProjection {
             self.selected = None;
         }
         self.revision = Some(store.revision());
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// Changes whenever the rows' lines may have: every rebuild.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 }
 
@@ -568,7 +577,7 @@ mod tests {
         deployment_columns, deployment_rows, inserted_pod, pod_columns, pod_rows, recreated,
     };
     use crate::resources::model::{ReadState, ResourceColumn};
-    use crate::resources::store::{ResourceBatch, ResourceEvent};
+    use crate::resources::store::ResourceEvent;
 
     const NAME: SortKey = SortKey::Column(0);
     const STATUS: SortKey = SortKey::Column(2);
@@ -581,13 +590,14 @@ mod tests {
     ) -> (ResourceStore, ResourceProjection) {
         let mut store = ResourceStore::new();
         let epoch = store.start_session();
-        store.apply(ResourceBatch {
+        store.apply(
             epoch,
-            events: vec![
+            vec![vec![
                 ResourceEvent::reset(columns, rows),
                 ResourceEvent::Read(ReadState::Loaded),
-            ],
-        });
+            ]],
+            usize::MAX,
+        );
         let mut view = ResourceProjection::new();
         view.rebuild(&store);
         (store, view)
@@ -599,7 +609,7 @@ mod tests {
 
     fn apply(store: &mut ResourceStore, view: &mut ResourceProjection, events: Vec<ResourceEvent>) {
         let epoch = store.epoch();
-        assert!(store.apply(ResourceBatch { epoch, events }));
+        assert!(store.apply(epoch, vec![events], usize::MAX).is_some());
         view.rebuild(store);
     }
 
@@ -794,10 +804,11 @@ mod tests {
         view.select(&store, Some(3));
         let selected = view.selected().unwrap().clone();
         let epoch = store.epoch();
-        store.apply(ResourceBatch {
+        store.apply(
             epoch,
-            events: vec![ResourceEvent::Delete(rows[0].identity.clone())],
-        });
+            vec![vec![ResourceEvent::Delete(rows[0].identity.clone())]],
+            usize::MAX,
+        );
         assert!(!view.is_current(&store));
         assert!(view.row(&store, 0).is_none());
         view.select(&store, None);

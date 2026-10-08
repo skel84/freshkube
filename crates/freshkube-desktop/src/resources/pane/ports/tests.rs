@@ -9,11 +9,14 @@ use gpui_kit::{AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext
 use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use crate::forwards::{self, ForwardList};
+use crate::forwards::{self, ForwardList, Phase};
 use crate::resources::detail::DetailTarget;
 use crate::resources::pane::DetailPane;
 use crate::resources::screen::KubeAccess;
 use crate::resources::{example, live};
+
+/// How long, in test time, a forward may take to bind.
+const PATIENCE: Duration = Duration::from_secs(5);
 
 struct Mounted {
     _runtime: Runtime,
@@ -78,6 +81,20 @@ impl Mounted {
             window.try_find(id).is_some()
         })
         .unwrap()
+    }
+
+    /// Waits until every listed forward has its port, or has failed to
+    /// get one: the example binds on the blocking pool.
+    async fn settle(&self, cx: &mut TestAppContext) {
+        let list = self.list.clone();
+        cx.wait_for(self.window, PATIENCE, move |_, cx| {
+            list.read(cx)
+                .items
+                .iter()
+                .all(|item| item.read(cx).phase != Phase::Starting)
+        })
+        .await;
+        cx.run_until_parked();
     }
 
     /// The local ports of the listed forwards, with whether each runs.
@@ -150,7 +167,7 @@ fn fetch(port: u16) -> std::io::Result<String> {
 }
 
 #[gpui_kit::test]
-fn a_pod_lists_its_declared_port_and_forward_starts_it(cx: &mut TestAppContext) {
+async fn a_pod_lists_its_declared_port_and_forward_starts_it(cx: &mut TestAppContext) {
     let pane = mount(cx);
     let pod = running_pod("grafana");
     pane.open(cx, &pod);
@@ -164,6 +181,7 @@ fn a_pod_lists_its_declared_port_and_forward_starts_it(cx: &mut TestAppContext) 
         "the field arrives with the row"
     );
     pane.click(cx, "ports-forward-8080");
+    pane.settle(cx).await;
     let listed = pane.forwards(cx);
     assert_eq!(listed.len(), 1);
     let (id, port, running) = listed[0];
@@ -183,7 +201,7 @@ fn a_pod_lists_its_declared_port_and_forward_starts_it(cx: &mut TestAppContext) 
 }
 
 #[gpui_kit::test]
-fn a_typed_local_port_is_used_exactly(cx: &mut TestAppContext) {
+async fn a_typed_local_port_is_used_exactly(cx: &mut TestAppContext) {
     let pane = mount(cx);
     let free = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = free.local_addr().unwrap().port();
@@ -192,6 +210,7 @@ fn a_typed_local_port_is_used_exactly(cx: &mut TestAppContext) {
     pane.click(cx, "detail-jump-ports");
     pane.type_into(cx, "ports-local-8080", &port.to_string());
     pane.click(cx, "ports-forward-8080");
+    pane.settle(cx).await;
     assert_eq!(pane.forwards(cx)[0].1, Some(port));
     assert!(fetch(port).unwrap().contains("Example forward"));
     pane.type_into(cx, "ports-local-8080", "x");
@@ -219,6 +238,7 @@ async fn other_port_forwards_any_number_and_refuses_text(cx: &mut TestAppContext
         window.input("9090", cx);
         window.press("enter", cx);
     });
+    pane.settle(cx).await;
     let listed = pane.forwards(cx);
     assert_eq!(listed.len(), 1, "Enter in the field starts it");
     assert!(!pane.present(cx, "ports-feedback"));
@@ -239,12 +259,13 @@ async fn other_port_forwards_any_number_and_refuses_text(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
-fn a_forward_outlives_the_pane_and_shows_again_with_its_object(cx: &mut TestAppContext) {
+async fn a_forward_outlives_the_pane_and_shows_again_with_its_object(cx: &mut TestAppContext) {
     let pane = mount(cx);
     let pod = running_pod("grafana");
     pane.open(cx, &pod);
     pane.click(cx, "detail-jump-ports");
     pane.click(cx, "ports-forward-8080");
+    pane.settle(cx).await;
     let (id, port, _) = pane.forwards(cx)[0];
     pane.step(cx, |_, cx| pane.pane.update(cx, |pane, cx| pane.close(cx)));
     pane.open(cx, &running_pod("prometheus"));

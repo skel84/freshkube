@@ -33,7 +33,7 @@ scripts/stress.sh terminal-50k terminal 50000
 | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
 | `workload-logs <lines/s>` | an example Deployment's log tab in the dock: its pods' containers, through the shared channel live streams use, writing that many lines a second between them |
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
-| `loading [resources\|nodes\|system-services]` | opens that page in example mode with `FRESHKUBE_FIXTURE_HOLD` set, so it stays on its loading rows and their motion asks a frame every 16 ms |
+| `loading [resources\|nodes\|system-services\|health\|etcd]` | opens that page in example mode with `FRESHKUBE_FIXTURE_HOLD` set, so it stays on its loading rows and their motion asks a frame every 16 ms |
 | `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
 | `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again. The run keeps its own home, so Monitoring reads the folder and the remembered Service from there, and `scripts/stress.sh` fails it when it records no `monitoring.*` span after the warm-up, unless its keys only wait and it drew during the warm-up |
@@ -272,6 +272,40 @@ Process CPU rose by about 1 point on `pod-logs` and 1.5 on `burst` while frame t
 | Process CPU | 41.0% | 40.2% | 50.3% | 48.1% |
 
 The uncached build runs the log view at main's speed, so the slowdown follows how busy the main thread is, not the code: lower clocks or an efficiency core under a lighter thread. Process CPU is time, not cycles, so the same work at a lower clock reads as more of it. Frames stay cheaper cached, and the caching stays. Log batches don't redraw the chrome either: the dock notifies the shell only when the selected tab's least height changes, and the Talos log doesn't notify while it is hidden, so there is no shell notify to skip.
+
+### Health and etcd load with the shared motion (#456)
+
+#456 gave every screen table one loading state: Health and etcd dropped Kit's skeleton, which moved inside the page, for the shared `LoadingMotion` beside it. Both builds draw about 60 frames a second while loading, so the measure is a frame's cost. `loading health` and `loading etcd`, release stress runs of 30 s, three of each build in turn, on a MacBook Air; medians of `frame.cpu`, median / 99th percentile, in ms, then process CPU:
+
+| Workload | main before #456 | main after #456 |
+| --- | --- | --- |
+| `loading health` | 1.43 / 1.74, 18.6% | 1.11 / 1.29, 17.7% |
+| `loading etcd` | 1.42 / 1.76, 18.9% | 1.08 / 1.34, 18.2% |
+
+### Changed rows flash (#254)
+
+The Resources store derives which rows a watch changed as it applies them (`ResourceStore::apply`): a pod whose state, reason or restarts changed, or another kind's status cells. A list, a relist, a Reset, an arrival and a delete are no change. The screen keeps one part per watch batch, so the flash's cap of eight changes in its 1.5 s window counts what the watch sent, not the ten-a-second coalescing; a part past the cap returns only its count and clones no identity. The flash layer is mounted by the shell beside the cached page, as the loading motion is, so its redraws touch neither the page nor the chrome; reduced motion and the node pane's embedded Pods list don't flash.
+
+A fade first ran on animation frames, 60 a second while any row faded. At a steady 5 changes a second, a busy cluster's normal state, that meant a fade always ran: 1,509 frames in 30 s against main's 174, and process CPU from 24.5% to 40.9%. Now the fade takes six steps of 250 ms (`motion::fade_step`), and one timer on the layer redraws it each step for every fade at once, stopping when the last ends.
+
+`burst 20000 <rate>`, release stress runs of 30 s, three of each build in turn, on a MacBook Air; `main` is main after #456. Medians of the runs' p50s, in ms, with their range; process CPU and frames are the runs' medians:
+
+| Rate | Measure | main | Every frame | Steps |
+| --- | --- | --- | --- | --- |
+| 5/s | Frames | 172 | 1,509 | 377 |
+| 5/s | `frame.cpu` | 13.12 | 2.75 | 3.50 |
+| 5/s | Process CPU | 23.1% | 40.9% | 25.7% |
+| 1,000/s | `table.apply` | 7.81 (7.79–7.82) | 7.93 (7.77–8.01) | 7.89 (7.84–7.99) |
+| 1,000/s | `table.store` | 1.93 (1.93–1.97) | 2.01 (1.96–2.13) | 1.99 (1.96–2.02) |
+| 1,000/s | `frame.cpu` | 12.58 (12.21–12.61) | 12.41 (12.12–12.65) | 12.17 (11.13–12.69) |
+| 1,000/s | Process CPU | 44.2% | 45.5% | 44.0% |
+| 2,000/s | `table.apply` | 7.09 (6.92–7.58) | 7.36 (7.19–7.60) | — |
+| 2,000/s | `table.store` | 2.13 (2.12–2.25) | 2.29 (2.23–2.33) | — |
+| 2,000/s | `frame.cpu` | 10.71 (10.48–11.35) | 10.99 (9.64–11.36) | — |
+
+The "every frame" runs and the steps ran in different sessions, each against main in the same session, so compare each with its own main: the 1,000/s main of the every-frame session read 7.67 / 1.91 / 12.06 ms and 44.6%. At 2,000/s only the every-frame build ran, and the steps change nothing a burst runs: under a burst nothing flashes. At 5/s the page renders as often in every build (130–133 times) and the header 41–42 times, so the extra frames draw only the layer and the shell's frame. Per-operation times at 5/s don't compare between builds: a busier main thread runs at higher clocks, and `table.apply` read 6.2 ms with every-frame fades against main's 11.7.
+
+Under a burst the flash asks no frames: the frame counts match, and the page renders as often. `table.apply` costs about 0.1–0.27 ms more, 1–3.5%, of which 0.06–0.16 ms is in the store, from recording changed slots and comparing each replaced pod's state; the rest is in `table.rebuild`, which the change touches only to bump a counter. The first version cloned every changed identity and deduplicated them in a set, and cost 0.4 ms at 1,000/s (`table.store` 1.94 → 2.31).
 
 ### A first list no longer stops the window
 

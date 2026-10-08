@@ -7,7 +7,7 @@ use super::rows::{PodRow, RowOwner};
 /// kubectl resource key (`pods`, `deployments.apps`), the address and the UID
 /// the API server assigned at creation. A session epoch is deliberately not
 /// part of identity, so a relist keeps the selection while the object still
-/// exists; epochs tag batches instead (see `ResourceBatch`).
+/// exists; epochs tag batches instead (see `ResourceStore::apply`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct ResourceIdentity {
     pub(crate) connection: String,
