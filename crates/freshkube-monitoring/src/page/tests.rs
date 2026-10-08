@@ -1646,6 +1646,45 @@ fn a_short_window_scrolls_the_page_alone_header_and_all(cx: &mut TestAppContext)
     .unwrap();
 }
 
+#[gpui_kit::test]
+fn held_example_data_leaves_the_table_on_its_loading_rows_with_their_motion(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, page) = mount(cx, Some(example_source()));
+    cx.update(|cx| page.update(cx, |page, _| page.hold_examples()));
+    show(cx, handle, &page);
+    assert!(ready(cx, &page).is_empty());
+    let key = cx.read(|cx| {
+        let board = page.read(cx).board.as_ref().unwrap();
+        board
+            .slots
+            .iter()
+            .find(|slot| slot.spec.title == "Firing alerts")
+            .map(|slot| slot.spec.key)
+            .unwrap()
+    });
+    let loading = format!("monitoring-panel-{key}-table-loading");
+    let motions = |cx: &mut TestAppContext| {
+        let before = probe::count("table.loading-motion");
+        frame(cx, handle);
+        probe::count("table.loading-motion") - before
+    };
+    assert!(shown(cx, handle, &loading));
+    // The page mounts the motion beside the panel, as the cursor's overlay.
+    assert_eq!(motions(cx), 1);
+
+    // Once the table answers, the motion goes with its rows.
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.hold = false;
+            page.answer_example_now(cx)
+        })
+    });
+    cx.run_until_parked();
+    assert!(!shown(cx, handle, &loading));
+    assert_eq!(motions(cx), 0);
+}
+
 /// A fake API server on loopback, through which every client of
 /// `FakeCluster` reaches it. Lists are empty, a variable's values are
 /// `a`, and every other read through the proxy answers `panels`.
@@ -1745,7 +1784,7 @@ async fn ready_on(
     let service = PrometheusService::new("monitoring", "prometheus-operated", 9090);
     let found = Discovery::Found {
         prometheus: freshkube_core::monitoring::Prometheus::new(client, service),
-        build: freshkube_core::monitoring::BuildInfo { version: None },
+        version: None,
         tried: Vec::new(),
     };
     let generation = cx.update(|cx| {

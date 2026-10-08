@@ -73,6 +73,46 @@ enum Shown {
 }
 
 impl ObservabilityPage {
+    /// Whether the shown destination's table waits for its first answer:
+    /// its read is in flight with nothing answered yet, or example data
+    /// holds it. Its loading rows show meanwhile, under its header.
+    pub(super) fn first_read(&self) -> bool {
+        let waits = |data: bool, loading: bool| {
+            if self.fixture {
+                self.hold
+            } else {
+                !data && loading
+            }
+        };
+        let live = &self.live;
+        match self.destination {
+            Destination::Applications => waits(live.apps.data().is_some(), live.apps.is_loading()),
+            Destination::Incidents => {
+                waits(live.incidents.data().is_some(), live.incidents.is_loading())
+            }
+            Destination::Traces => {
+                self.selected_app.is_some()
+                    && waits(live.tracing.data().is_some(), live.tracing.is_loading())
+            }
+            _ => false,
+        }
+    }
+
+    /// The motion over the loading rows, for the shell to draw beside the
+    /// page while the shown table waits for its first answer.
+    pub(crate) fn loading_motion(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        // Only while the Logs report is drawn: its read runs on behind
+        // another report, whose frames mustn't pulse its rows.
+        let shown = self.destination == Destination::Application
+            && self.selected_app.is_some()
+            && self.embeds_logs();
+        let patterns = shown.then(|| self.live_logs.loading_motion(cx)).flatten();
+        self.loading.motion(self.first_read()).or(patterns)
+    }
+
     fn shown_table(&self) -> Shown {
         match self.destination {
             Destination::Incidents => Shown::Incidents,
@@ -182,6 +222,10 @@ impl TableSource for ObservabilityPage {
             Shown::Incidents | Shown::Traces => None,
         }
     }
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
+    }
+
     fn empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_empty(cx),

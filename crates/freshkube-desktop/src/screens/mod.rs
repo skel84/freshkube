@@ -671,12 +671,13 @@ pub(crate) fn set_reading(reading: Reading, cx: &mut App) -> bool {
     true
 }
 
-/// What a page shows while it has no source: the loading state while the
-/// overview is read, its failure with a retry, or, once it answered with no
-/// node to target, that there is none.
+/// What a page shows while it has no source: its failure with a retry, or,
+/// once the overview answered with no node to target, that there is none.
+/// While the overview is read, its table shows its loading rows instead
+/// ([`first_read`]), so this draws nothing.
 pub(crate) fn unsourced<V: ScreenPanel>(what: &str, cx: &mut Context<V>) -> AnyElement {
     let (id, state) = match reading(cx) {
-        Reading::Waiting => return waiting(cx),
+        Reading::Waiting => return div().into_any_element(),
         Reading::Failed(reason) => (
             "screen-unreachable",
             ui::empty_state(
@@ -714,16 +715,6 @@ pub(crate) fn unsourced<V: ScreenPanel>(what: &str, cx: &mut Context<V>) -> AnyE
         .test_support()
         .size_full()
         .child(state)
-        .into_any_element()
-}
-
-/// The loading state of a page whose first read is in flight.
-pub(crate) fn waiting(cx: &App) -> AnyElement {
-    div()
-        .id("screen-waiting")
-        .test_support()
-        .size_full()
-        .child(skeleton(cx))
         .into_any_element()
 }
 
@@ -962,14 +953,6 @@ pub(crate) fn stat(label: &str, value: impl Into<SharedString>, cx: &App) -> Div
                 .text_size(dp(18.))
                 .child(value.into()),
         )
-}
-
-fn skeleton(cx: &App) -> AnyElement {
-    panel(cx)
-        .p_3()
-        .gap_3()
-        .children((0..9).map(|_| ui::skeleton(relative(0.7), dp(12.))))
-        .into_any_element()
 }
 
 #[cfg(test)]

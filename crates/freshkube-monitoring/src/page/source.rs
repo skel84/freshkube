@@ -211,8 +211,10 @@ impl MonitoringPage {
                     .inspect_err(|error| forget_after(&access, error))?;
                 match discovery {
                     Discovery::Found {
-                        prometheus, build, ..
-                    } => Ok(answered(&prometheus, &build)),
+                        prometheus,
+                        version,
+                        ..
+                    } => Ok(answered(&prometheus, version.as_deref())),
                     Discovery::Missing { .. } => Err(QueryError::new(
                         ErrorKind::NotFound,
                         format!("Nothing answered. Discovery looks for {LOOKED_FOR}."),
@@ -221,10 +223,10 @@ impl MonitoringPage {
             }),
             Draft::Service(service) => Box::pin(async move {
                 let client = cluster_client(&access).await?;
-                let (prometheus, build) = confirm(&client, service)
+                let (prometheus, version) = confirm(&client, service)
                     .await
                     .inspect_err(|error| forget_after(&access, error))?;
-                Ok(answered(&prometheus, &build))
+                Ok(answered(&prometheus, version.as_deref()))
             }),
             Draft::Url { url, typed } => {
                 // An empty token field tests with the saved token, if the
@@ -239,8 +241,8 @@ impl MonitoringPage {
                         Some(typed) => Some(typed),
                         None => token.await?,
                     };
-                    let (prometheus, build) = confirm_url(url, token).await?;
-                    Ok(answered(&prometheus, &build))
+                    let (prometheus, version) = confirm_url(url, token).await?;
+                    Ok(answered(&prometheus, version.as_deref()))
                 })
             }
         };
@@ -404,13 +406,10 @@ impl MonitoringPage {
     }
 }
 
-fn answered(
-    prometheus: &freshkube_core::monitoring::Prometheus,
-    build: &freshkube_core::monitoring::BuildInfo,
-) -> String {
+fn answered(prometheus: &freshkube_core::monitoring::Prometheus, version: Option<&str>) -> String {
     format!(
         "{} answered at {}",
-        describe(prometheus.endpoint().backend(), build),
+        describe(prometheus.endpoint().backend(), version),
         prometheus.endpoint().label()
     )
 }

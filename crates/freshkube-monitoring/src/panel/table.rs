@@ -5,15 +5,17 @@
 use std::rc::Rc;
 
 use freshkube_ui::table::{
-    self, DataTable, GLYPH_WIDTH, Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource,
-    TableState, WIDEST, WIDEST_FLEXIBLE,
+    self, DataTable, GLYPH_WIDTH, Line, LoadingMotion, LoadingRows, Look, RowStyle, SortOrder,
+    TableColumn, TableRow, TableSource, TableState, WIDEST, WIDEST_FLEXIBLE,
 };
 use gpui_kit::component::{
     Sizable,
     button::{Button, ButtonVariants},
 };
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, App, Context, IntoElement, Render, SharedString, Window, div};
+use gpui_kit::{
+    AnyElement, App, AppContext, Context, Entity, IntoElement, Render, SharedString, Window, div,
+};
 
 use super::summary::tone;
 use crate::derive::{FOLDED_ROWS, RowKey, TableData, TableRow as Row};
@@ -31,6 +33,8 @@ pub(crate) struct TableView {
     /// Show all was pressed: every kept row shows, not just the first
     /// [`FOLDED_ROWS`].
     all: bool,
+    /// The loading rows and their motion, until the first answer.
+    loading: Option<(LoadingRows, Entity<LoadingMotion>)>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -78,9 +82,32 @@ impl TableView {
             ids: Vec::new(),
             state,
             all: false,
+            loading: None,
         };
         view.set_data(data);
         view
+    }
+
+    /// A table waiting for its panel's first answer: `data`'s header over
+    /// loading rows, with the id `<prefix>-table-loading`, until
+    /// [`set_data`](Self::set_data).
+    pub(crate) fn waiting(
+        prefix: &str,
+        title: SharedString,
+        data: Rc<TableData>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut view = Self::new(prefix, title, data);
+        let rows = LoadingRows::new(&format!("{prefix}-table"));
+        let motion = cx.new(|_| rows.motion(Look::Pulse));
+        view.loading = Some((rows, motion));
+        view
+    }
+
+    /// The motion over the loading rows while they show, for the page to
+    /// mount beside the panel, so its frames redraw neither.
+    pub(crate) fn loading_motion(&self) -> Option<Entity<LoadingMotion>> {
+        self.loading.as_ref().map(|(_, motion)| motion.clone())
     }
 
     /// A new answer: its columns' widths and its rows' ids, derived once.
@@ -94,6 +121,7 @@ impl TableView {
             .map(|row| self.state.id(&row_id(&row.key)))
             .collect();
         self.data = data;
+        self.loading = None;
     }
 
     /// Whether Show all was pressed, for the page's tests.
@@ -241,6 +269,10 @@ impl TableSource for TableView {
 
     fn group(&self, _: usize, _: &mut Context<Self>) -> Option<AnyElement> {
         None
+    }
+
+    fn loading(&self) -> Option<&LoadingRows> {
+        self.loading.as_ref().map(|(rows, _)| rows)
     }
 
     fn clickable(&self) -> bool {

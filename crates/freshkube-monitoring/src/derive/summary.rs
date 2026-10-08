@@ -284,6 +284,67 @@ pub(super) fn split_prefix(name: &str) -> (Option<&str>, &str) {
     }
 }
 
+/// The table a table panel is to show, before its first answer: the
+/// columns its `organize` transform names, in its order and renamed, with
+/// no rows, for the header over its loading rows. A panel that names none
+/// waits under two unlabelled columns, labels then a value, as an instant
+/// query's table has. `None` for any other kind of panel.
+pub(crate) fn awaited_table(spec: &PanelSpec) -> Option<Rc<TableData>> {
+    if !matches!(spec.viz, Viz::Table) {
+        return None;
+    }
+    let mut named: Vec<(i64, String)> = Vec::new();
+    for step in &spec.transforms {
+        if let transform::Transform::Organize {
+            exclude,
+            rename,
+            order,
+        } = step
+        {
+            named = order
+                .iter()
+                .filter(|(name, _)| !exclude.contains(name))
+                .map(|(name, at)| {
+                    let shown = rename
+                        .iter()
+                        .find(|(from, _)| from == name)
+                        .map_or(name, |(_, to)| to);
+                    (*at, shown.clone())
+                })
+                .collect();
+        }
+    }
+    named.sort_by_key(|(at, _)| *at);
+    let columns: Vec<Column> = if named.is_empty() {
+        [false, true]
+            .into_iter()
+            .map(|numeric| Column {
+                name: SharedString::default(),
+                numeric,
+                chars: if numeric { 8 } else { 24 },
+            })
+            .collect()
+    } else {
+        named
+            .into_iter()
+            .map(|(_, name)| Column {
+                chars: name.chars().count(),
+                name: name.into(),
+                numeric: false,
+            })
+            .collect()
+    };
+    let severity = columns
+        .iter()
+        .any(|column| column.name.eq_ignore_ascii_case("severity"));
+    Some(Rc::new(TableData {
+        columns,
+        rows: Vec::new(),
+        total: 0,
+        severity,
+    }))
+}
+
 pub(super) fn table(spec: &PanelSpec, frame: &Frame) -> Body {
     let queries: Vec<&str> = spec.queries.iter().map(|q| q.ref_id.as_str()).collect();
     let table = transform::table(&spec.transforms, &frame.series, &queries);

@@ -259,8 +259,8 @@ impl MonitoringPage {
             let mut panels = Vec::new();
             for placed in &section.panels {
                 let spec = Arc::new(dashboard.panels[placed.key].clone());
-                let view = cx.new(|_| {
-                    PanelView::new(placed.key.to_string(), Rc::new(spec.as_ref().clone()))
+                let view = cx.new(|cx| {
+                    PanelView::new(placed.key.to_string(), Rc::new(spec.as_ref().clone()), cx)
                 });
                 board
                     ._subscriptions
@@ -313,9 +313,10 @@ impl MonitoringPage {
     }
 
     /// Where the page's data comes from now, seeded per dashboard for
-    /// example data.
+    /// example data; none while example data is held.
     fn query_source(&self) -> Option<Source> {
         match &self.connection {
+            Connection::Example if self.hold => None,
             Connection::Example => {
                 let seed = self.board.as_ref().map_or("", |board| &board.seed);
                 Some(Source::Example(ExampleSource::new(seed)))
@@ -514,7 +515,7 @@ impl MonitoringPage {
     /// or with GPUI not drawing, shows them.
     #[cfg(any(debug_assertions, feature = "stress"))]
     pub fn answer_example_now(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.connection, Connection::Example) {
+        if !matches!(self.connection, Connection::Example) || self.hold {
             return;
         }
         let Some(board) = &self.board else {

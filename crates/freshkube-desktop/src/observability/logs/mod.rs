@@ -66,6 +66,19 @@ pub(super) struct Logs {
 }
 
 impl Logs {
+    /// Whether the patterns the query asked for are still to come.
+    fn waits_for_patterns(&self) -> bool {
+        !self.answered && self.failure.is_none() && self.query.mode == api::LogsMode::Patterns
+    }
+
+    /// The patterns table's loading motion, while it waits.
+    pub(super) fn loading_motion(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.patterns.read(cx).loading_motion()
+    }
+
     pub(super) fn new(
         page: WeakEntity<ObservabilityPage>,
         window: &mut Window,
@@ -73,7 +86,7 @@ impl Logs {
     ) -> Self {
         Self {
             view: cx.new(|cx| CorootLogView::for_coroot(window, cx)),
-            patterns: cx.new(|_| PatternTable::new(page)),
+            patterns: cx.new(|cx| PatternTable::new(page, cx)),
             query: api::LogQuery::default(),
             key: None,
             asked: None,
@@ -131,7 +144,7 @@ fn panel(id: &str, chart: &api::AppChart, title: &str, cx: &mut App) -> Option<E
     })?;
     let id = SharedString::from(id.to_owned());
     Some(cx.new(|cx| {
-        let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
+        let mut view = PanelView::new(id, Rc::new(panel.spec.clone()), cx);
         view.set_named_colors(panel.colors.clone().into());
         view.set_result(panel.result.clone(), panel.window, cx);
         view.set_markers(panel.markers.clone().into(), cx);
@@ -232,6 +245,7 @@ impl ObservabilityPage {
             .update(cx, |view, cx| view.start(app, SharedString::default(), cx));
         logs.patterns
             .update(cx, |table, cx| table.set(Rc::default(), cx));
+        self.note_pattern_waiting(cx);
     }
 
     /// Takes an answer: its histogram and patterns replace the last ones,
@@ -249,6 +263,7 @@ impl ObservabilityPage {
             Err(failure) => {
                 logs.asked = None;
                 logs.failure = Some(failure.into());
+                self.note_pattern_waiting(cx);
                 cx.notify();
                 return;
             }
@@ -256,6 +271,8 @@ impl ObservabilityPage {
         let first = !logs.answered;
         logs.answered = true;
         logs.failure = None;
+        self.note_pattern_waiting(cx);
+        let logs = &mut self.live_logs;
         logs.read_to_ms = to_ms;
         logs.status = answer.status;
         logs.note = answer.message.clone().into();
@@ -305,7 +322,7 @@ impl ObservabilityPage {
             let panel = row.chart.clone()?;
             let id = SharedString::from("obs-logs-pattern-chart");
             Some(cx.new(|cx| {
-                let mut view = PanelView::new(id, Rc::new(panel.spec.clone()));
+                let mut view = PanelView::new(id, Rc::new(panel.spec.clone()), cx);
                 view.set_named_colors(panel.colors.clone().into());
                 view.set_result(panel.result.clone(), panel.window, cx);
                 view
@@ -318,10 +335,20 @@ impl ObservabilityPage {
     fn change_logs(&mut self, change: impl FnOnce(&mut api::LogQuery), cx: &mut Context<Self>) {
         let before = self.live_logs.query.clone();
         change(&mut self.live_logs.query);
+        self.note_pattern_waiting(cx);
         if self.live_logs.query != before {
             self.read_logs(cx);
         }
         cx.notify();
+    }
+
+    /// Tells the patterns table whether it waits: when a read starts, its
+    /// query changes, or it answers or fails.
+    pub(super) fn note_pattern_waiting(&mut self, cx: &mut Context<Self>) {
+        let waiting = self.live_logs.waits_for_patterns();
+        self.live_logs
+            .patterns
+            .update(cx, |table, cx| table.set_waiting(waiting, cx));
     }
 
     pub(super) fn render_live_logs(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -343,8 +370,14 @@ impl ObservabilityPage {
             block = block.child(self.logs_banner(failure.clone(), cx));
         }
         if !logs.answered {
+            // Asked for patterns, their table shows its loading rows; whether
+            // messages come as a list or patterns, only the answer says.
             if logs.failure.is_none() {
-                block = block.child(muted("Reading logs from Coroot…", cx));
+                block = block.child(if logs.waits_for_patterns() {
+                    logs.patterns.clone().into_any_element()
+                } else {
+                    muted("Reading logs from Coroot…", cx).into_any_element()
+                });
             }
             return block.into_any_element();
         }

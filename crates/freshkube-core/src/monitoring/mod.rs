@@ -34,8 +34,8 @@ pub use example::ExampleSource;
 pub use grafaui_model as model;
 pub use grafaui_prometheus as prometheus;
 pub use transport::{
-    BuildInfo, DEFAULT_SCRAPE_INTERVAL, MAX_ANSWER, MAX_CONCURRENT, PanelResult, Prometheus,
-    REQUEST_TIMEOUT, Source,
+    DEFAULT_SCRAPE_INTERVAL, MAX_ANSWER, MAX_CONCURRENT, PanelResult, Prometheus, REQUEST_TIMEOUT,
+    Source,
 };
 
 /// One Service port that serves the Prometheus HTTP API, under an

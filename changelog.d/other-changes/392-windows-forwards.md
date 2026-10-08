@@ -1,1 +1,0 @@
-- **Port forwards on Windows:** starting a forward no longer freezes the window while Windows checks the port, which can take a couple of seconds; it shows Starting until the port answers. A typed local port that Windows reserves says so and offers "Use an automatic port", instead of a bare bind error.

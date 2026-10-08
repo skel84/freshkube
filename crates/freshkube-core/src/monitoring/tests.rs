@@ -214,7 +214,7 @@ async fn discovery_confirms_the_operator_service_and_reads_its_scrape_interval()
     });
     let Discovery::Found {
         prometheus,
-        build,
+        version,
         tried,
     } = discover(&client, None).await.unwrap()
     else {
@@ -224,7 +224,7 @@ async fn discovery_confirms_the_operator_service_and_reads_its_scrape_interval()
         prometheus.service().unwrap().label(),
         "monitoring/prometheus-operated:9090"
     );
-    assert_eq!(build.version.as_deref(), Some("2.53.0"));
+    assert_eq!(version.as_deref(), Some("2.53.0"));
     assert_eq!(prometheus.scrape_interval(), 15.);
     assert!(tried.is_empty());
     let seen = seen.lock().unwrap();
@@ -488,7 +488,7 @@ async fn a_silent_prometheus_times_out() {
     let (client, _) = fake(|_, _, _| (0, String::new()));
     let prometheus = Prometheus::new(client, PrometheusService::new("m", "p", 9090))
         .with_timeout(Duration::from_secs(2));
-    let error = prometheus.build_info().await.unwrap_err();
+    let error = prometheus.read_version().await.unwrap_err();
     assert_eq!(error.kind, ErrorKind::TimedOut);
     assert_eq!(error.message, "Prometheus didn't answer within 2 s");
 }
@@ -498,7 +498,7 @@ async fn an_oversized_answer_is_refused_whole() {
     let (client, _) = fake(|_, _, _| (200, success(json!({"version": "x".repeat(4096)}))));
     let prometheus =
         Prometheus::new(client, PrometheusService::new("m", "p", 9090)).with_limit(1024);
-    let error = prometheus.build_info().await.unwrap_err();
+    let error = prometheus.read_version().await.unwrap_err();
     assert_eq!(error.kind, ErrorKind::BadAnswer);
     assert!(
         error.message.contains("larger than 1 MiB"),
@@ -888,12 +888,12 @@ async fn a_url_is_confirmed_with_its_token_and_prefix() {
     })
     .await;
     let url = normalise_url(&format!("{base}/select/0/prometheus")).unwrap();
-    let (prometheus, build) = confirm_url(url.clone(), Some(" s3cret ".into()))
+    let (prometheus, version) = confirm_url(url.clone(), Some(" s3cret ".into()))
         .await
         .unwrap();
     assert_eq!(prometheus.endpoint(), &Endpoint::Url(url));
     assert!(prometheus.service().is_none());
-    assert_eq!(build.version.as_deref(), Some("2.53.0"));
+    assert_eq!(version.as_deref(), Some("2.53.0"));
     // No targets endpoint: the default interval stays.
     assert_eq!(prometheus.scrape_interval(), DEFAULT_SCRAPE_INTERVAL);
     let seen = seen.lock().unwrap();
@@ -912,10 +912,10 @@ async fn a_url_without_buildinfo_is_still_confirmed_and_errors_hide_the_token() 
         _ => (404, "404 page not found".into()),
     })
     .await;
-    let (_, build) = confirm_url(normalise_url(&base).unwrap(), None)
+    let (_, version) = confirm_url(normalise_url(&base).unwrap(), None)
         .await
         .unwrap();
-    assert_eq!(build.version, None);
+    assert_eq!(version, None);
 
     let (base, _) = http_server(|_| (401, "unauthorized".into())).await;
     let error = confirm_url(normalise_url(&base).unwrap(), Some("s3cret".into()))
