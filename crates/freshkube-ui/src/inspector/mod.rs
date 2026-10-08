@@ -3,9 +3,13 @@
 //! from the table by the resize handle's hairline: beside the table on a
 //! wide page, under it on a narrow one. The page keeps an
 //! [`InspectorSplit`], which remembers how wide the user made it.
+mod saved;
 mod tabs;
 pub(crate) use tabs::bare_strip;
 
+#[cfg(any(test, feature = "testing"))]
+pub use saved::MemoryWidths;
+pub use saved::{SavedWidths, saved_widths, set_saved_widths};
 pub use tabs::{Edges, TAB_HEIGHT, TabStrip, tab};
 
 use std::cell::Cell;

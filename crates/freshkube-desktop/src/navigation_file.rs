@@ -164,6 +164,17 @@ impl NavigationFile {
     }
 }
 
+/// The inspectors' widths, under `inspector`, for pages outside desktop.
+impl freshkube_ui::inspector::SavedWidths for NavigationFile {
+    fn width(&self, page: &str) -> Option<f32> {
+        self.inspector_width(page)
+    }
+
+    fn save(&self, page: &str, width: f32, cx: &App) {
+        self.set_inspector_width(page, width, cx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::NavigationFile;
@@ -221,6 +232,29 @@ mod tests {
         assert_eq!(reopened.inspector_width("incidents"), Some(512.));
         assert_eq!(reopened.inspector_width("traces"), Some(400.));
         assert_eq!(reopened.inspector_width("resources"), None);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// Pages outside desktop read and save their widths through the store
+    /// the shell sets, which is this file's `inspector` key.
+    #[gpui_kit::test]
+    fn the_saved_widths_store_is_the_inspector_key(cx: &mut TestAppContext) {
+        use freshkube_ui::inspector::{saved_widths, set_saved_widths};
+        let directory = directory("navigation-store");
+        let preferences = directory.join("preferences.json");
+        let file = NavigationFile::open(Some(&preferences));
+        cx.update(|cx| {
+            set_saved_widths(std::rc::Rc::new(file.clone()), cx);
+            saved_widths(cx).save("map", 400.4, cx);
+        });
+        cx.run_until_parked();
+        let reopened = NavigationFile::open(Some(&preferences));
+        assert_eq!(reopened.inspector_width("map"), Some(400.));
+        cx.update(|cx| {
+            set_saved_widths(std::rc::Rc::new(reopened), cx);
+            assert_eq!(saved_widths(cx).width("map"), Some(400.));
+            assert_eq!(saved_widths(cx).width("incidents"), None);
+        });
         std::fs::remove_dir_all(directory).unwrap();
     }
 

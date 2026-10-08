@@ -441,6 +441,7 @@ impl Pilot {
         let navigation =
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
         cx.set_global(navigation.clone());
+        freshkube_ui::inspector::set_saved_widths(std::rc::Rc::new(navigation.clone()), cx);
         cx.bind_keys([
             KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),

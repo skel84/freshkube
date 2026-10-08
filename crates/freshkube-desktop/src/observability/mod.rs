@@ -225,21 +225,21 @@ impl ObservabilityPage {
             SelectState::new(SearchableVec::new(vec![]), None::<IndexPath>, window, cx)
                 .searchable(true)
         });
-        let navigation = crate::navigation_file::NavigationFile::global(cx);
+        let widths = freshkube_ui::inspector::saved_widths(cx);
         let mut split = |page: &'static str| {
-            let file = navigation.clone();
+            let saved = widths.clone();
             InspectorSplit::new(
-                navigation.inspector_width(page),
-                move |width, cx| file.set_inspector_width(page, width, cx),
+                widths.width(page),
+                move |width, cx| saved.save(page, width, cx),
                 cx,
             )
         };
         let (incident_split, trace_split) = (split("incidents"), split("traces"));
         let map_split = freshkube_ui::graph::inspector_split(
-            navigation.inspector_width("map"),
+            widths.width("map"),
             {
-                let file = navigation.clone();
-                move |width, cx| file.set_inspector_width("map", width, cx)
+                let saved = widths.clone();
+                move |width, cx| saved.save("map", width, cx)
             },
             cx,
         );
