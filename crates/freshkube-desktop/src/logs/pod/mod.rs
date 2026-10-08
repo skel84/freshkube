@@ -1,5 +1,6 @@
 //! A pod's logs in the dock: one container's log, followed live or its
-//! previous instance read to the end. The stream lives while the dock's tab
+//! previous instance read to the end, or every app container's at once,
+//! interleaved by time and tagged by container (`logs/streams.rs`). The stream lives while the dock's tab
 //! stays open (`desktop/dock/`), whatever page shows, and stops when the
 //! tab closes or the connection changes. Read-only: it gets the pod and
 //! reads logs, nothing else.
@@ -25,10 +26,11 @@ use gpui_kit::{AnyElement, Context, SharedString, Task, Window};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
+use super::streams::{self, Clock, StreamKey, StreamSet, StreamSource};
 use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
-use crate::resources::{KubeAccess, example, live};
+use crate::resources::{KubeAccess, LogsAt, example, live};
 use crate::stream_status::Status;
 use crate::ui::Tone;
 use controls::Controls;
@@ -66,6 +68,9 @@ pub(super) enum StreamState {
     /// The user stopped it.
     Stopped,
     Failed(Failure),
+    /// All containers is picked and read: each container's stream stands
+    /// on its own, in `reads`.
+    All,
 }
 
 /// One entry of the container picker.
@@ -96,6 +101,14 @@ pub(crate) struct PodLogs {
     /// The pod was deleted: nothing more is read, and its lines stay.
     gone: bool,
     pub(super) choices: Rc<Vec<Choice>>,
+    /// The picker offers All containers: the pod runs more than one app
+    /// container.
+    pub(super) offers_all: bool,
+    /// All containers is picked: every app container is read, tagged by
+    /// its name. `container` stays the last one picked alone.
+    pub(super) all: bool,
+    /// Each app container's stream while All containers is read.
+    reads: StreamSet,
     pub(super) container: Option<String>,
     pub(super) tail: Option<i64>,
     /// Read the previous instance instead of following the current one.
@@ -127,8 +140,9 @@ pub(crate) struct PodLogs {
 }
 
 impl PodLogs {
-    fn new(runtime: Handle) -> Self {
+    fn new(runtime: Handle, clock: Clock) -> Self {
         let mut source = Self {
+            reads: StreamSet::new(runtime.clone(), clock),
             runtime,
             access: None,
             pod: None,
@@ -136,6 +150,8 @@ impl PodLogs {
             known: false,
             gone: false,
             choices: Rc::default(),
+            offers_all: false,
+            all: false,
             container: None,
             tail: DEFAULT_TAIL,
             previous: false,
@@ -167,33 +183,69 @@ impl PodLogs {
             .unwrap_or_default()
     }
 
-    /// Whether the stream is open or about to be.
+    /// Whether the stream is open or about to be: with All containers,
+    /// any container's that hasn't ended or been refused.
     pub(super) fn running(&self) -> bool {
-        matches!(
-            self.state,
-            StreamState::Connecting
-                | StreamState::Waiting(_)
-                | StreamState::Streaming
-                | StreamState::Reconnecting { .. }
-        )
+        match self.state {
+            StreamState::All => self.reads.streams.values().any(|stream| {
+                !matches!(stream.state, streams::StreamState::Ended) && !stream.state.refused()
+            }),
+            _ => matches!(
+                self.state,
+                StreamState::Connecting
+                    | StreamState::Waiting(_)
+                    | StreamState::Streaming
+                    | StreamState::Reconnecting { .. }
+            ),
+        }
     }
 
     pub(super) fn chosen(&self) -> Option<&freshkube_core::resources::Container> {
         self.containers.get(self.container.as_deref()?)
     }
 
-    /// Whether the chosen container ran before its current instance.
+    /// Whether the chosen container ran before its current instance; with
+    /// All containers, whether any app container did.
     pub(super) fn has_previous(&self) -> bool {
+        if self.all {
+            return self.app_containers().any(Container::has_previous);
+        }
         self.chosen()
             .is_some_and(|container| container.has_previous())
     }
 
-    /// Drops the stream and its delivery; anything still on the way is
-    /// dropped with them.
+    fn app_containers(&self) -> impl Iterator<Item = &Container> {
+        self.containers
+            .containers
+            .iter()
+            .filter(|container| container.role == ContainerRole::App)
+    }
+
+    /// The containers All containers reads: every app container, or those
+    /// that ran before, for their previous instances.
+    fn all_names(&self) -> Vec<String> {
+        self.app_containers()
+            .filter(|container| !self.previous || container.has_previous())
+            .map(|container| container.name.clone())
+            .collect()
+    }
+
+    /// Drops the stream and its delivery, and every container's stream;
+    /// anything still on the way is dropped with them.
     fn drop_stream(&mut self) {
         self.stream += 1;
         self.job = None;
         self.delivery = None;
+        self.reads.drop_streams();
+    }
+
+    /// Starts the review over: nothing was read yet.
+    fn forget_reading(&mut self) {
+        self.position = LogPosition::default();
+        self.lines = 0;
+        self.reads.positions.clear();
+        self.reads.failures.clear();
+        self.reads.errors.clear();
     }
 
     /// Derives the picker's entries and the crash-loop hint from the
@@ -211,7 +263,11 @@ impl PodLogs {
                 })
                 .collect(),
         );
-        self.hint = self.chosen().and_then(|container| {
+        self.offers_all = self.app_containers().count() > 1;
+        // The crash hint is about one container; All containers names
+        // each one's state instead.
+        let chosen = self.chosen().filter(|_| !self.all);
+        self.hint = chosen.and_then(|container| {
             let last = container.last_termination.as_ref()?;
             let backing_off =
                 matches!(&container.state, ContainerState::Waiting(reason) if reason == "CrashLoopBackOff");
@@ -351,10 +407,92 @@ impl PodLogs {
                 failure.to_string(),
                 "Nothing was read.".to_owned(),
             ),
+            StreamState::All => self.describe_all(),
         };
         self.status = Status::new(tone, tag, &text);
         self.empty = empty.into();
         self.derive_note();
+    }
+
+    /// What the controls and the empty list say while every app container
+    /// is read: the tag by the containers together, and the text naming
+    /// each container that doesn't stream, and why.
+    fn describe_all(&self) -> (Tone, &'static str, String, String) {
+        let states: Vec<(&str, &streams::StreamState)> = self
+            .reads
+            .streams
+            .iter()
+            .map(|(key, stream)| (key.container.as_str(), &stream.state))
+            .collect();
+        let any =
+            |test: fn(&streams::StreamState) -> bool| states.iter().any(|(_, state)| test(state));
+        if self.previous {
+            let none: Vec<String> = self
+                .app_containers()
+                .filter(|container| !container.has_previous())
+                .map(|container| container.name.clone())
+                .collect();
+            let none = if none.is_empty() {
+                String::new()
+            } else {
+                format!(" · No previous instance: {}", none.join(", "))
+            };
+            let complete = states
+                .iter()
+                .all(|(_, state)| matches!(state, streams::StreamState::Ended));
+            return if complete {
+                (
+                    Tone::Unknown,
+                    "Previous instances",
+                    format!("Previous instances · complete{none}"),
+                    "The previous instances wrote nothing.".to_owned(),
+                )
+            } else {
+                (
+                    Tone::Unknown,
+                    "Connecting",
+                    format!("Reading the previous instances{none}"),
+                    "Waiting for the first line".to_owned(),
+                )
+            };
+        }
+        let text = states
+            .iter()
+            .filter(|(_, state)| {
+                !matches!(
+                    state,
+                    streams::StreamState::Streaming | streams::StreamState::Connecting
+                )
+            })
+            .map(|(name, state)| format!("{name}: {}", state.label()))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let troubled = any(|state| {
+            matches!(
+                state,
+                streams::StreamState::Waiting(_)
+                    | streams::StreamState::Reconnecting(_)
+                    | streams::StreamState::Failed(_)
+            )
+        });
+        let (tone, tag, empty) = if any(|state| *state == streams::StreamState::Streaming) {
+            (
+                if troubled { Tone::Warn } else { Tone::Good },
+                "Streaming",
+                "The containers have written nothing yet",
+            )
+        } else if any(|state| *state == streams::StreamState::Connecting) {
+            (Tone::Unknown, "Connecting", "Waiting for the first line")
+        } else if any(|state| matches!(state, streams::StreamState::Waiting(_))) {
+            (Tone::Warn, "Waiting", "The containers haven't started yet.")
+        } else if any(|state| matches!(state, streams::StreamState::Reconnecting(_))) {
+            (Tone::Warn, "Reconnecting", "Reconnecting")
+        } else if any(|state| matches!(state, streams::StreamState::Failed(_))) {
+            (Tone::Crit, "Failed", "Nothing was read.")
+        } else {
+            (Tone::Unknown, "Ended", "The containers wrote nothing.")
+        };
+        (tone, tag, text, empty.to_owned())
     }
 
     /// A note between lines, placed after the last line read. It shows on
@@ -426,7 +564,9 @@ impl LogSource for PodLogs {
             Some(pod) => format!("{}-{}", pod.namespace, pod.name),
             None => "pod".into(),
         };
-        if let Some(container) = &source.container {
+        if source.all {
+            name.push_str("-all");
+        } else if let Some(container) = &source.container {
             name = format!("{name}-{container}");
         }
         if source.previous {
@@ -456,7 +596,68 @@ impl LogSource for PodLogs {
     }
 
     fn errors(&self) -> &BTreeMap<ServiceId, String> {
-        &self.errors
+        // One container's failure shows in the controls; with All
+        // containers, each failed container's shows above the lines.
+        if self.all {
+            &self.reads.errors
+        } else {
+            &self.errors
+        }
+    }
+
+    fn tags_lines(&self) -> bool {
+        self.all
+    }
+}
+
+impl StreamSource for PodLogs {
+    const APPLY_PROBE: &'static str = "pod-logs.apply";
+
+    fn reads(&self) -> &StreamSet {
+        &self.reads
+    }
+
+    fn reads_mut(&mut self) -> &mut StreamSet {
+        &mut self.reads
+    }
+
+    fn access(&self) -> Option<KubeAccess> {
+        self.access.clone()
+    }
+
+    /// The container's name, which a single container's lines carry too.
+    fn tag(key: &StreamKey) -> ServiceId {
+        ServiceId::new(key.container.as_str())
+    }
+
+    fn tail(&self) -> Option<i64> {
+        self.tail
+    }
+
+    fn previous(&self) -> bool {
+        self.previous
+    }
+
+    fn listed(&self, key: &StreamKey) -> bool {
+        !self.gone && self.all && self.containers.get(&key.container).is_some()
+    }
+
+    fn streams_changed(&mut self) {
+        self.describe();
+    }
+
+    fn stream_started(_view: &mut PodLogView, _key: &StreamKey) {}
+
+    /// A container that ends while the others go on says so; a previous
+    /// instance always ends, so it doesn't.
+    fn ended_marker(&self, key: &StreamKey, ended: Option<&Termination>) -> Option<String> {
+        if self.previous {
+            return None;
+        }
+        Some(match ended {
+            Some(ended) => format!("{} ended: {}", key.container, exited(ended)),
+            None => format!("{} ended", key.container),
+        })
     }
 }
 
@@ -487,11 +688,15 @@ pub(crate) trait PodLogPanel: Sized + 'static {
     /// last line.
     fn set_active(&mut self, active: bool, cx: &mut Context<Self>);
 
-    /// Opens an explicitly chosen container and instance from its Overview row.
-    fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>);
+    /// Opens an explicitly chosen container, or all of them, and instance:
+    /// from its Overview row, or a saved tab.
+    fn open_container(&mut self, at: LogsAt, cx: &mut Context<Self>);
 
-    /// The container read, which the dock saves with its tab.
+    /// The container read alone last, which the dock saves with its tab.
     fn selected_container(&self) -> Option<&str>;
+
+    /// Whether All containers is picked, which the dock saves too.
+    fn shows_all(&self) -> bool;
 
     /// Whether the pod's containers are known, so one can be chosen.
     fn knows_containers(&self) -> bool;
@@ -510,8 +715,10 @@ pub(crate) trait PodLogPanel: Sized + 'static {
 
 impl PodLogPanel for PodLogView {
     fn for_pods(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // One container at a time: its name would repeat on every row.
-        Self::with_source(PodLogs::new(runtime), window, cx).with_columns(Columns {
+        // One container at a time: its name would repeat on every row. All
+        // containers shows it.
+        let clock = Clock::new(cx);
+        Self::with_source(PodLogs::new(runtime, clock), window, cx).with_columns(Columns {
             time: true,
             source: false,
         })
@@ -541,15 +748,16 @@ impl PodLogPanel for PodLogView {
         source.known = false;
         source.gone = false;
         source.container = None;
+        source.all = false;
         source.previous = false;
         source.wanted = false;
         source.suspended = false;
         source.state = StreamState::Idle;
-        source.position = LogPosition::default();
-        source.lines = 0;
+        source.forget_reading();
         source.lost_at = None;
         source.derive_containers();
         source.describe();
+        self.show_tags(false, cx);
         cx.notify();
     }
 
@@ -568,9 +776,20 @@ impl PodLogPanel for PodLogView {
         }
         source.containers = containers;
         source.derive_containers();
+        if source.all && !source.offers_all {
+            // One app container left: it is the log.
+            source.all = false;
+            source.derive_containers();
+            self.show_tags(false, cx);
+            self.restart(cx);
+        }
+        let source = self.source_mut();
         source.describe();
         if source.wanted && source.state == StreamState::Idle {
             self.start(true, cx);
+        } else if source.state == StreamState::All {
+            // A container added since reads on beside the others.
+            self.read_all(cx);
         }
         cx.notify();
     }
@@ -604,14 +823,22 @@ impl PodLogPanel for PodLogView {
         }
     }
 
-    fn open_container(&mut self, name: String, previous: bool, cx: &mut Context<Self>) {
-        self.choose_container(name, cx);
-        self.set_previous(previous, cx);
+    fn open_container(&mut self, at: LogsAt, cx: &mut Context<Self>) {
+        if at.all && self.source().offers_all {
+            self.choose_all(cx);
+        } else {
+            self.choose_container(at.container, cx);
+        }
+        self.set_previous(at.previous, cx);
         self.want(cx);
     }
 
     fn selected_container(&self) -> Option<&str> {
         self.source().container.as_deref()
+    }
+
+    fn shows_all(&self) -> bool {
+        self.source().all
     }
 
     fn reads_previous(&self) -> bool {
@@ -646,6 +873,15 @@ impl PodLogPanel for PodLogView {
 /// reopen it: used only by the Logs tab's own controls and tests.
 trait Stream: Sized + 'static {
     fn choose_container(&mut self, name: String, cx: &mut Context<Self>);
+
+    /// Reads every app container at once, tagged by container.
+    fn choose_all(&mut self, cx: &mut Context<Self>);
+
+    /// Shows the Source column, which tells containers apart, or hides it.
+    fn show_tags(&mut self, shown: bool, cx: &mut Context<Self>);
+
+    /// Starts each container All containers reads that isn't read yet.
+    fn read_all(&mut self, cx: &mut Context<Self>);
 
     fn set_tail(&mut self, tail: Option<i64>, cx: &mut Context<Self>);
 
@@ -687,16 +923,62 @@ trait Stream: Sized + 'static {
 
 impl Stream for PodLogView {
     fn choose_container(&mut self, name: String, cx: &mut Context<Self>) {
-        if self.source().container.as_ref() == Some(&name)
+        if (!self.source().all && self.source().container.as_ref() == Some(&name))
             || self.source().containers.get(&name).is_none()
         {
             return;
         }
         let source = self.source_mut();
         source.container = Some(name);
+        source.all = false;
         source.previous = false;
         source.derive_containers();
+        self.show_tags(false, cx);
         self.restart(cx);
+    }
+
+    fn choose_all(&mut self, cx: &mut Context<Self>) {
+        if self.source().all || !self.source().offers_all {
+            return;
+        }
+        let source = self.source_mut();
+        source.all = true;
+        source.previous = false;
+        source.derive_containers();
+        self.show_tags(true, cx);
+        self.restart(cx);
+    }
+
+    fn show_tags(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if self.columns().source != shown {
+            self.set_columns(
+                Columns {
+                    source: shown,
+                    ..self.columns()
+                },
+                cx,
+            );
+        }
+    }
+
+    fn read_all(&mut self, cx: &mut Context<Self>) {
+        let Some(pod) = self.source().pod.clone() else {
+            return;
+        };
+        let names = self.source().all_names();
+        for container in names {
+            let key = StreamKey {
+                pod: pod.name.clone(),
+                uid: pod.uid.clone(),
+                container,
+            };
+            if !self.source().reads.streams.contains_key(&key) {
+                // By path: this tab's own stream has methods of the same names.
+                streams::StreamReads::start_stream(self, key, pod.clone(), cx);
+            }
+        }
+        self.source_mut().describe();
+        cx.notify();
     }
 
     fn set_tail(&mut self, tail: Option<i64>, cx: &mut Context<Self>) {
@@ -813,8 +1095,7 @@ impl Stream for PodLogView {
             self.source_mut().drop_stream();
             self.reset_lines(&self.source().address());
             let source = self.source_mut();
-            source.position = LogPosition::default();
-            source.lines = 0;
+            source.forget_reading();
             source.describe();
             cx.notify();
         }
@@ -831,9 +1112,7 @@ impl Stream for PodLogView {
         source.lost_at = None;
         if fresh {
             self.reset_lines(&self.source().address());
-            let source = self.source_mut();
-            source.position = LogPosition::default();
-            source.lines = 0;
+            self.source_mut().forget_reading();
         }
         if !self.source().active {
             // Hidden: read once shown.
@@ -854,6 +1133,12 @@ impl Stream for PodLogView {
             cx.notify();
             return;
         };
+        if self.source().all {
+            // Each container reads on from where it was left, or afresh.
+            self.source_mut().state = StreamState::All;
+            self.read_all(cx);
+            return;
+        }
         let source = self.source_mut();
         source.state = StreamState::Connecting;
         source.describe();

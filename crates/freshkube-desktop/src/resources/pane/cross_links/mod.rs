@@ -386,6 +386,7 @@ impl DetailPane {
             Some(super::super::LogsAt {
                 container: name,
                 previous,
+                all: false,
             }),
             cx,
         );
