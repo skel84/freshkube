@@ -320,10 +320,12 @@ pub(super) fn note_words(note: &Note, labels: &Labels) -> String {
         Note::ProjectNotRead {
             member,
             project,
+            session,
             why,
         } => format!(
-            "{} names Kargo Project {project}, which wasn't read: {why}",
-            member_words(member, labels)
+            "{} names Kargo Project {project}, which wasn't read: {why} on {}",
+            member_words(member, labels),
+            labels.of(session)
         ),
         Note::JoinedAcrossSessions { name, sessions } => format!(
             "Joined by the name “{name}” across {}: an inference",

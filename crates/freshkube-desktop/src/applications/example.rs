@@ -35,11 +35,15 @@ pub(crate) enum Variant {
     /// `checkout`'s Stages didn't answer in `core-fra`: its page shows
     /// what may be missing as a group row.
     Stages,
+    /// Deployments refused in `prod-fra`: labelled parts there may be
+    /// missing, as `checkout`'s page says in a group row.
+    Workloads,
 }
 
 impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
-    /// `spread`, `not-found` or `stages` from `FRESHKUBE_APPLICATIONS`;
+    /// `spread`, `not-found`, `stages` or `workloads` from
+    /// `FRESHKUBE_APPLICATIONS`;
     /// debug and stress builds only.
     pub(crate) fn from_env() -> Self {
         if !cfg!(any(debug_assertions, feature = "stress")) {
@@ -55,6 +59,7 @@ impl Variant {
             Ok("spread") => Self::Spread,
             Ok("not-found") => Self::NotFound,
             Ok("stages") => Self::Stages,
+            Ok("workloads") => Self::Workloads,
             _ => Self::Acme,
         }
     }
@@ -134,6 +139,11 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
                 checkout.stages = Source::Unreadable(
                     "stages.kargo.akuity.io: the read timed out after 10s".into(),
                 );
+            }
+        }
+        Variant::Workloads => {
+            if let Some(prod) = inputs.sessions.iter_mut().find(|s| s.key.0 == "prod-fra") {
+                prod.workloads = refused("deployments.apps");
             }
         }
     }

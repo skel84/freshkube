@@ -148,6 +148,7 @@ fn member(
         },
         basis,
         destination: None,
+        via: None,
         also_claimed_by: Vec::new(),
     }
 }
@@ -262,22 +263,26 @@ fn unread_project(
     inputs: &Inputs,
     application: &ArgoApplication,
     claimed: bool,
-) -> Option<(String, String)> {
+) -> Option<(String, SessionKey, String)> {
     let (project, _) = application.authorized_stage.as_ref().filter(|_| !claimed)?;
-    let why = inputs
+    // The cluster stays a key, for a screen to name as it labels clusters.
+    let (session, why) = inputs
         .sessions
         .iter()
         .find_map(|session| match &session.kargo {
-            Source::Capped(_, truncation) => Some(format!(
-                "the Project list stopped at the cap after {} in {}",
-                truncation.read, session.key.0
+            Source::Capped(_, truncation) => Some((
+                session.key.clone(),
+                format!(
+                    "the Project list stopped at the cap after {}",
+                    truncation.read
+                ),
             )),
             Source::Refused(_) | Source::Unreadable(_) => {
-                Some(format!("Projects were not readable in {}", session.key.0))
+                Some((session.key.clone(), "Projects were not readable".to_owned()))
             }
             _ => None,
         })?;
-    Some((project.clone(), why))
+    Some((project.clone(), session, why))
 }
 
 fn destination(application: &ArgoApplication) -> Destination {
@@ -381,12 +386,13 @@ pub(super) fn argo(
                     },
                 );
             }
-            if let Some((project, why)) = unread_project {
+            if let Some((project, unread, why)) = unread_project {
                 builder.note(
                     &id,
                     Note::ProjectNotRead {
                         member: m.at.clone(),
                         project,
+                        session: unread,
                         why,
                     },
                 );
@@ -453,6 +459,9 @@ fn managing_application<'a>(
         .argo_applications
         .read()?
         .iter()
+        // An Application that deploys to another cluster manages nothing
+        // here, whatever its inventory names.
+        .filter(|application| destination(application) == Destination::Local)
         .filter(|application| {
             application
                 .managed_object(
@@ -469,15 +478,23 @@ fn managing_application<'a>(
 /// Whether the workload names the Application whose inventory lists it:
 /// its tracking annotation's application part, or its instance label, is
 /// the Application's name, or `<namespace>_<name>` as Argo CD writes it for
-/// an Application outside its own namespace.
+/// an Application outside its own namespace. A tracking id names the object
+/// too, `<app>:<group>/<kind>:<namespace>/<name>`, and one copied from
+/// another object doesn't count.
 fn names_back(workload: &super::LabelledWorkload, application: &ArgoApplication) -> bool {
     let qualified = format!("{}_{}", application.namespace, application.name);
     let is_it = |value: &str| value == application.name || value == qualified;
+    let object = format!(
+        "apps/{}:{}/{}",
+        kind_name(workload.kind),
+        workload.namespace,
+        workload.name
+    );
     let tracked = workload
         .tracking_id
         .as_deref()
         .and_then(|id| id.split_once(':'))
-        .is_some_and(|(app, _)| is_it(app));
+        .is_some_and(|(app, rest)| is_it(app) && rest == object);
     tracked || workload.instance.as_deref().is_some_and(is_it)
 }
 
@@ -503,6 +520,12 @@ pub(super) fn part_of(
                 ))
                 .map(|id| (application, id))
             });
+            let via = managed.map(|(application, _)| MemberRef {
+                session: session.key.clone(),
+                kind: MemberKind::ArgoApplication,
+                namespace: Some(application.namespace.clone()),
+                name: application.name.clone(),
+            });
             let same_name = same_name_target(builder, value);
             let (id, basis) = match (managed, same_name) {
                 (Some((application, id)), _) => {
@@ -526,6 +549,9 @@ pub(super) fn part_of(
                 }
             };
             let mut m = member(&session.key, kind, ns, &workload.name, basis);
+            if matches!(basis, Basis::Tracked | Basis::ManagedBy) {
+                m.via = via;
+            }
             if basis != Basis::Direct {
                 m.also_claimed_by.push(Rule::PartOf);
                 builder.note(

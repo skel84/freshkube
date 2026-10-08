@@ -111,6 +111,9 @@ pub(crate) struct ApplicationPage {
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
     selected: Option<SharedString>,
+    /// The list's last read failed over an earlier one: the banner's text
+    /// and label, as the list shows them.
+    stale: Option<(SharedString, SharedString)>,
 }
 
 impl EventEmitter<ApplicationEvent> for ApplicationPage {}
@@ -120,6 +123,7 @@ impl ApplicationPage {
         app: &Application,
         derived: &Derived,
         labels: &Labels,
+        stale: Option<(SharedString, SharedString)>,
         cx: &mut Context<Self>,
     ) -> Self {
         let split = InspectorSplit::new(PREFIX, cx);
@@ -137,6 +141,7 @@ impl ApplicationPage {
             split,
             page_scroll: ScrollHandle::new(),
             selected: None,
+            stale,
         };
         page.show(app, derived, labels);
         page
@@ -153,8 +158,10 @@ impl ApplicationPage {
         app: &Application,
         derived: &Derived,
         labels: &Labels,
+        stale: Option<(SharedString, SharedString)>,
         cx: &mut Context<Self>,
     ) {
+        self.stale = stale;
         self.name = app.name.clone().into();
         self.what = what_it_is(app).into();
         self.show(app, derived, labels);

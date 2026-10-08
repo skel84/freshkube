@@ -220,6 +220,9 @@ pub struct Member {
     pub basis: Basis,
     /// For an Argo CD Application only.
     pub destination: Option<Destination>,
+    /// For a workload Argo CD's inventory lists (`Tracked`, `ManagedBy`):
+    /// the Application that lists it, a member of the same application.
+    pub via: Option<MemberRef>,
     /// Lower rules that also found this object, kept so a conflict is seen
     /// and not lost.
     pub also_claimed_by: Vec<Rule>,
@@ -249,6 +252,8 @@ pub enum Note {
     ProjectNotRead {
         member: MemberRef,
         project: String,
+        /// The cluster whose Projects weren't all read.
+        session: SessionKey,
         why: String,
     },
     /// The same name was found in several clusters and joined into this one

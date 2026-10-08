@@ -72,6 +72,23 @@ impl ApplicationPage {
         )
     }
 
+    /// The list's refresh that failed over an earlier read, as the list
+    /// says it: what shows is the last read.
+    fn render_stale(&self, cx: &App) -> Option<AnyElement> {
+        let (text, label) = self.stale.as_ref()?;
+        Some(
+            page::inset()
+                .child(
+                    ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
+                        .id("application-stale")
+                        .aria_label(label.clone())
+                        .test_support()
+                        .role(Role::Status),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let table = div()
             .id("application-table")
@@ -120,6 +137,7 @@ impl Render for ApplicationPage {
                         this.overflow_y_scroll().restrict_scroll_to_axis()
                     })
                     .child(page::toolbar(cx).child(header))
+                    .children(self.render_stale(cx))
                     .child(
                         div()
                             .flex()

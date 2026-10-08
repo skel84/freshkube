@@ -1269,7 +1269,7 @@ fn a_project_beyond_the_cap_is_noted_on_the_application_that_names_it() {
     let app = found.find(&app_id("p2-dev")).unwrap();
     assert!(app.notes.iter().any(|n| matches!(
         n,
-        Note::ProjectNotRead { project, why, .. } if project == "p2" && why.contains("cap") && why.contains("core-fra")
+        Note::ProjectNotRead { project, session, why, .. } if project == "p2" && why.contains("cap") && session == &SessionKey::new("core-fra")
     )));
     let refused = capped(Source::Refused("forbidden".into()));
     assert!(

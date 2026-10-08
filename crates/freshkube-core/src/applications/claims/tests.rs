@@ -191,7 +191,139 @@ fn a_managed_workload_is_confirmed_only_when_it_names_the_application_back() {
     let cart = of(&inputs(vec![core]), "cart");
     let web = link(&cart, "web");
     assert_eq!(web.confidence, Confidence::Claimed);
-    assert_eq!(web.member_side.fact, Some(Fact::Declared));
+    // An absence found by reading the object: derived, not declared.
+    assert_eq!(web.member_side.fact, Some(Fact::Derived));
+}
+
+/// An Application in `core-fra` that lists Deployment shop/web, with
+/// `metadata` merged in, and that workload naming it back by its instance
+/// label.
+fn listing_web(name: &str, metadata: Value, destination: Value) -> SessionInputs {
+    let mut meta = json!({"namespace": "argocd", "name": name});
+    if let (Some(into), Some(extra)) = (meta.as_object_mut(), metadata.as_object()) {
+        into.extend(extra.clone());
+    }
+    let mut core = session("core-fra");
+    core.argo_applications = Source::Read(vec![
+        parse_application(&json!({
+            "metadata": meta,
+            "spec": {"destination": destination},
+            "status": {"resources": [
+                {"group": "apps", "kind": "Deployment", "namespace": "shop", "name": "web"}
+            ]},
+        }))
+        .unwrap(),
+    ]);
+    core.workloads = Source::Read(vec![
+        parse_labelled_workload(
+            &json!({"metadata": {
+                "namespace": "shop", "name": "web",
+                "labels": {
+                    "app.kubernetes.io/part-of": "storefront",
+                    "app.kubernetes.io/instance": name,
+                },
+            }}),
+            WorkloadKind::Deployment,
+        )
+        .unwrap(),
+    ]);
+    core
+}
+
+fn in_cluster() -> Value {
+    json!({"server": "https://kubernetes.default.svc"})
+}
+
+#[test]
+fn a_tracked_workload_is_no_surer_than_the_application_that_lists_it() {
+    // checkout-dev names Project checkout by annotation alone: Claimed. A
+    // workload naming checkout-dev back can't be Confirmed on checkout.
+    let mut core = listing_web(
+        "checkout-dev",
+        json!({"annotations": {"kargo.akuity.io/authorized-stage": "checkout:dev"}}),
+        in_cluster(),
+    );
+    core.kargo = Source::Read(vec![project("checkout")]);
+    let checkout = of(&inputs(vec![core]), "checkout");
+    assert_eq!(
+        link(&checkout, "checkout-dev").confidence,
+        Confidence::Claimed
+    );
+    let web = link(&checkout, "web");
+    assert_eq!(web.confidence, Confidence::Claimed);
+    assert!(
+        web.why
+            .contains("but that Application's own link is claimed"),
+        "{}",
+        web.why
+    );
+    assert_eq!(
+        web.app_side.text,
+        "Argo CD Application argocd/checkout-dev's inventory lists it"
+    );
+    assert_eq!(web.app_side.session, Some(SessionKey::new("core-fra")));
+
+    // On the Application's own application, it is Confirmed.
+    let core = listing_web("cart", json!({}), in_cluster());
+    let cart = of(&inputs(vec![core]), "cart");
+    assert_eq!(link(&cart, "web").confidence, Confidence::Confirmed);
+}
+
+#[test]
+fn an_application_deploying_elsewhere_confirms_nothing_here() {
+    let core = listing_web(
+        "cart",
+        json!({}),
+        json!({"server": "https://edge.example.test:6443"}),
+    );
+    let derived = derive(&inputs(vec![core]), &Override::default());
+    let storefront = derived
+        .applications
+        .iter()
+        .find(|app| app.name == "storefront")
+        .expect("the workload stays with its label");
+    assert!(
+        storefront
+            .members
+            .iter()
+            .all(|m| m.basis != Basis::Tracked && m.basis != Basis::ManagedBy)
+    );
+}
+
+#[test]
+fn a_tracking_id_copied_from_another_object_does_not_name_back() {
+    let mut core = listing_web("cart", json!({}), in_cluster());
+    core.workloads = Source::Read(vec![
+        parse_labelled_workload(
+            &json!({"metadata": {
+                "namespace": "shop", "name": "web",
+                "labels": {"app.kubernetes.io/part-of": "storefront"},
+                "annotations": {
+                    "argocd.argoproj.io/tracking-id": "cart:apps/Deployment:shop/api",
+                },
+            }}),
+            WorkloadKind::Deployment,
+        )
+        .unwrap(),
+    ]);
+    let cart = of(&inputs(vec![core.clone()]), "cart");
+    assert_eq!(link(&cart, "web").confidence, Confidence::Claimed);
+    // Naming this object, it does.
+    core.workloads = Source::Read(vec![
+        parse_labelled_workload(
+            &json!({"metadata": {
+                "namespace": "shop", "name": "web",
+                "labels": {"app.kubernetes.io/part-of": "storefront"},
+                "annotations": {
+                    "argocd.argoproj.io/tracking-id": "cart:apps/Deployment:shop/web",
+                },
+            }}),
+            WorkloadKind::Deployment,
+        )
+        .unwrap(),
+    ]);
+    let cart = of(&inputs(vec![core]), "cart");
+    assert_eq!(link(&cart, "web").confidence, Confidence::Confirmed);
 }
 
 #[test]
@@ -335,7 +467,7 @@ fn stages_that_did_not_answer_are_a_gap_not_an_empty_group() {
 }
 
 #[test]
-fn an_unread_cluster_gives_only_unknown() {
+fn an_unread_cluster_gives_gaps_and_no_parts() {
     let mut read = acme();
     read.sessions.push(SessionInputs::unread(
         SessionKey::new("edge-fra"),
@@ -348,11 +480,15 @@ fn an_unread_cluster_gives_only_unknown() {
             .iter()
             .all(|c| c.member.session != SessionKey::new("edge-fra"))
     );
-    assert_eq!(checkout.gaps.len(), 1);
-    let gap = &checkout.gaps[0];
-    assert_eq!(gap.session, SessionKey::new("edge-fra"));
-    assert!(matches!(gap.kinds[0], MemberKind::Workload(_)));
-    assert!(gap.why.contains("connection refused"));
+    // Its Applications may name checkout's Project, and its workloads may
+    // carry the label: both may be missing.
+    assert_eq!(checkout.gaps.len(), 2, "{:?}", checkout.gaps);
+    for gap in &checkout.gaps {
+        assert_eq!(gap.session, SessionKey::new("edge-fra"));
+        assert!(gap.why.contains("connection refused"));
+    }
+    assert_eq!(checkout.gaps[0].kinds, [MemberKind::ArgoApplication]);
+    assert!(matches!(checkout.gaps[1].kinds[0], MemberKind::Workload(_)));
 }
 
 #[test]

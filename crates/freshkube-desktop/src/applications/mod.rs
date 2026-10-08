@@ -143,6 +143,9 @@ pub(crate) struct ApplicationsPage {
     inspect: bool,
     /// The application whose page shows in the list's place.
     open: Option<(Entity<ApplicationPage>, Subscription)>,
+    /// The keyboard handle of a page that closed without a window at hand,
+    /// kept until the next frame looks whether it had the keyboard.
+    refocus: Option<FocusHandle>,
     /// `5 applications in 6 clusters`, in the status bar.
     pub(crate) status: Segment,
     _subscription: Subscription,
@@ -194,6 +197,7 @@ impl ApplicationsPage {
             selected: None,
             inspect: false,
             open: None,
+            refocus: None,
             status: Segment::default(),
             _subscription: subscription,
         }
@@ -226,7 +230,8 @@ impl ApplicationsPage {
         self.snapshot = Snapshot::default();
         self.read_at = None;
         self.selected = None;
-        self.open = None;
+        self.inspect = false;
+        self.close_open(cx);
         self.show_read(cx);
         if self.visible {
             self.read(cx);
@@ -395,16 +400,35 @@ impl ApplicationsPage {
             return;
         };
         let id = open.read(cx).id().clone();
-        let found = self
-            .snapshot
-            .data()
-            .and_then(|read| Some((read.derived.find(&id)?.clone(), read)));
-        match found {
+        let read = self.snapshot.data();
+        match read.and_then(|read| Some((read.derived.find(&id)?, read))) {
             Some((app, read)) => {
-                let (derived, labels) = (read.derived.clone(), read.labels.clone());
-                open.update(cx, |page, cx| page.update(&app, &derived, &labels, cx));
+                let stale = self.stale.clone();
+                open.update(cx, |page, cx| {
+                    page.update(app, &read.derived, &read.labels, stale, cx)
+                });
             }
-            None => self.open = None,
+            None => self.close_open(cx),
+        }
+    }
+
+    /// Drops the open page without a window at hand, as a read or another
+    /// connection does: the next frame gives the keyboard back to the list
+    /// if the page had it.
+    fn close_open(&mut self, cx: &App) {
+        if let Some((page, _)) = self.open.take() {
+            self.refocus = Some(page.read(cx).focus_handle());
+        }
+    }
+
+    /// Hands the keyboard to the list when the page closed under it.
+    fn refocus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(closed) = self.refocus.take() else {
+            return;
+        };
+        if closed.is_focused(window) {
+            let list = self.focus.clone();
+            window.defer(cx, move |window, cx| window.focus(&list, cx));
         }
     }
 
@@ -428,7 +452,8 @@ impl ApplicationsPage {
             return;
         };
         let (derived, labels) = (&read.derived, &read.labels);
-        let page = cx.new(|cx| ApplicationPage::new(app, derived, labels, cx));
+        let stale = self.stale.clone();
+        let page = cx.new(|cx| ApplicationPage::new(app, derived, labels, stale, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ApplicationEvent::Back => this.close_application(window, cx),
@@ -617,6 +642,7 @@ impl ApplicationsPage {
                 .any(|entry| matches!(entry, Entry::Row(ix) if &self.display.rows[*ix].key == key))
         }) {
             self.selected = None;
+            self.inspect = false;
         }
         cx.notify();
     }
@@ -640,6 +666,17 @@ impl ApplicationsPage {
 
     pub(crate) fn has_read(&self) -> bool {
         self.snapshot.data().is_some()
+    }
+
+    /// A read again that fails, as a cluster that stops answering does.
+    pub(crate) fn fail_read(&mut self, why: &str, cx: &mut Context<Self>) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        self.stop();
+        let request = self.snapshot.begin(source.id);
+        self.pending = true;
+        self.answer(&request, Err(why.into()), cx);
     }
 }
 

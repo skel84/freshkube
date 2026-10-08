@@ -254,8 +254,9 @@ impl TableSource for ApplicationPage {
     fn legend(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         const WHOLE: &str = "Link: how sure a part's link to the application is. Confirmed: both \
                              sides were read and agree. By label: only its part-of label says \
-                             so. Claimed: only an annotation, a name or your override says so. \
-                             Unknown: a side couldn't be read.";
+                             so. Claimed: only an annotation, a name, Argo CD's inventory without \
+                             a name back, or your override says so; or the Application it came \
+                             through is only claimed. Unknown: a side couldn't be read.";
         if self.table_width(window) < 900. {
             return Some(
                 kit::legend_line(
@@ -286,7 +287,7 @@ impl TableSource for ApplicationPage {
                     item(
                         Confidence::Claimed,
                         "Claimed",
-                        "only an annotation or a name says so",
+                        "only an annotation, a name or Argo CD's inventory says so",
                     ),
                     item(Confidence::Unknown, "Unknown", "a side couldn't be read"),
                 ],

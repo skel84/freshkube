@@ -218,11 +218,37 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
         return claim(Confidence::Unknown, own(app), member_side, why);
     }
     let listed = Side::read(Fact::Reported, format!("{}, listed", object(at))).at(&at.session);
-    let inventory = || {
-        Side::read(
+    // The Application whose inventory lists the part, named with its
+    // cluster, and its own link to this application.
+    let via = member
+        .via
+        .as_ref()
+        .and_then(|via| app.members.iter().find(|m| &m.at == via));
+    let inventory = || match via {
+        Some(via) => Side::read(
+            Fact::Reported,
+            format!("Argo CD {}'s inventory lists it", object(&via.at)),
+        )
+        .at(&via.at.session),
+        None => Side::read(
             Fact::Reported,
             "An Argo CD Application's inventory lists it",
-        )
+        ),
+    };
+    // A part found through an Application is no surer than the
+    // Application's own link.
+    let through = |confidence: Confidence, why: &str| -> (Confidence, String) {
+        match via.map(|via| link(derived, app, via)) {
+            Some(via_link) if via_link.confidence > confidence => (
+                via_link.confidence,
+                format!(
+                    "{why}, but that Application's own link is {}: {}",
+                    via_link.confidence.word(),
+                    via_link.why
+                ),
+            ),
+            _ => (confidence, why.to_owned()),
+        }
     };
     match member.basis {
         Basis::Direct => match (at.kind, app.evidence.first()) {
@@ -280,26 +306,40 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
                 "Only a label says so",
             ),
         },
-        Basis::Tracked => claim(
-            Confidence::Confirmed,
-            inventory(),
-            Side::read(
-                Fact::Reported,
-                "Its tracking annotation or instance label names that Application",
+        Basis::Tracked => {
+            let (confidence, why) = through(
+                Confidence::Confirmed,
+                "Argo CD lists it, and it names the Application back",
+            );
+            claim(
+                confidence,
+                inventory(),
+                Side::read(
+                    Fact::Reported,
+                    "Its tracking annotation or instance label names that Application",
+                )
+                .at(&at.session),
+                &why,
             )
-            .at(&at.session),
-            "Argo CD lists it, and it names the Application back",
-        ),
-        Basis::ManagedBy => claim(
-            Confidence::Claimed,
-            inventory(),
-            Side::read(
-                Fact::Declared,
-                "No tracking annotation or instance label names that Application",
+        }
+        Basis::ManagedBy => {
+            let (confidence, why) = through(
+                Confidence::Claimed,
+                "Only Argo CD's inventory says so: nothing on it names the Application back",
+            );
+            claim(
+                confidence,
+                inventory(),
+                // What was read shows no such name: derived from the read,
+                // not stated by anyone.
+                Side::read(
+                    Fact::Derived,
+                    "No tracking annotation or instance label names that Application",
+                )
+                .at(&at.session),
+                &why,
             )
-            .at(&at.session),
-            "Only Argo CD's inventory says so: nothing on it names the Application back",
-        ),
+        }
         Basis::NamesProject => claim(
             Confidence::Claimed,
             own(app),
@@ -328,14 +368,14 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
                     _ => None,
                 })
                 .unwrap_or_default();
+            let joined = match clusters {
+                0 | 1 => format!("Joined by the name {} in another cluster", app.name),
+                n => format!("Joined by the name {} across {n} clusters", app.name),
+            };
             claim(
                 Confidence::Claimed,
                 own(app),
-                Side::read(
-                    Fact::Derived,
-                    format!("Joined by the name {} across {clusters} clusters", app.name),
-                )
-                .at(&at.session),
+                Side::read(Fact::Derived, joined).at(&at.session),
                 "Only the same name in another cluster says so",
             )
         }
@@ -355,9 +395,10 @@ fn unknown(app: &Application, at: &MemberRef) -> Option<(Side, &'static str)> {
         Note::ProjectNotRead {
             member,
             project,
+            session,
             why,
         } if member == at => Some((
-            Side::unread(format!("Kargo Project {project} wasn't read: {why}")).at(&at.session),
+            Side::unread(format!("Kargo Project {project} wasn't read: {why}")).at(session),
             "It names a Kargo Project that wasn't read, so which application it belongs to is \
              unknown",
         )),
@@ -466,14 +507,20 @@ fn gaps(derived: &Derived, app: &Application) -> Vec<Gap> {
                 (vec![MemberKind::ArgoApplication], "Argo CD Applications"),
                 blind(&coverage.state),
             ),
-            // A Project's Stages promote to Argo CD Applications, so a
-            // read of only some of them may have left those out.
-            SourceKind::ArgoApplications if app.rule == Rule::Kargo && own.contains(&session) => (
+            // A Project's Stages promote to Argo CD Applications, in any
+            // cluster, since an Application names its Project by name. Where
+            // the Project is, a read of only some namespaces may have left
+            // them out; anywhere else, a refused, failed or capped read.
+            SourceKind::ArgoApplications if app.rule == Rule::Kargo => (
                 (
                     vec![MemberKind::ArgoApplication],
                     "Argo CD Applications its Stages promote to",
                 ),
-                partial(&coverage.state),
+                if own.contains(&session) {
+                    partial(&coverage.state)
+                } else {
+                    blind(&coverage.state)
+                },
             ),
             SourceKind::Workloads => (
                 (WORKLOADS.to_vec(), "Labelled workloads"),

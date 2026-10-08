@@ -3,6 +3,8 @@ use super::super::{ApplicationsPage, Variant};
 use super::ApplicationPage;
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 
+use std::time::Duration;
+
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, test::TestWindowExt};
 
 const APPLICATION: layout_check::TablePage = layout_check::TablePage {
@@ -261,17 +263,6 @@ fn the_breadcrumb_and_escape_go_back_to_the_list_with_its_selection(cx: &mut Tes
 }
 
 #[gpui_kit::test]
-fn another_context_closes_the_application(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
-    cx.update_window(handle, |_, _, cx| {
-        assert!(shown(&view, cx).is_some());
-        list(&view, cx).update(cx, |page, cx| page.set_source(None, cx));
-        assert!(shown(&view, cx).is_none());
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
 fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAppContext) {
     for (width, height) in [(1600., 900.), (760., 560.)] {
         for size in [None, Some(20.)] {
@@ -343,4 +334,180 @@ fn what_was_not_checked_names_its_cluster_and_namespaces() {
         words(Unchecked::Capped(500)),
         "Argo CD read in part on core-fra: stopped after 500"
     );
+}
+
+/// Reads the list again with the example reshaped.
+fn read_again(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    view: &Entity<Pilot>,
+    variant: Variant,
+) {
+    cx.update_window(handle, |_, window, cx| {
+        list(view, cx).update(cx, |page, cx| {
+            page.set_variant(variant);
+            page.refresh(cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+fn list_has_keys(view: &Entity<Pilot>, window: &gpui_kit::Window, cx: &gpui_kit::App) -> bool {
+    list(view, cx).read(cx).focus.is_focused(window)
+}
+
+#[gpui_kit::test]
+fn a_read_without_the_application_closes_its_page_and_gives_the_list_the_keys(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        let page = shown(&view, cx).unwrap();
+        assert!(page.read(cx).focus_handle().is_focused(window));
+    })
+    .unwrap();
+    // Nothing served: checkout is gone.
+    read_again(cx, handle, &view, Variant::Unserved);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(shown(&view, cx).is_none());
+        assert!(window.find("applications-none").visible());
+        assert!(list_has_keys(&view, window, cx));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_new_read_updates_the_open_page_and_keeps_its_selection(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
+    let warehouse = "application-part-core-fra/1/checkout/checkout-images";
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(warehouse, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // checkout's Stages don't answer this time.
+    read_again(cx, handle, &view, Variant::Stages);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = shown(&view, cx).expect("checkout is still there");
+        let lines = page.read(cx).lines_text();
+        assert_eq!(lines[0], "# May be missing on core-fra", "{lines:?}");
+        assert_eq!(
+            page.read(cx).selected().map(|key| key.as_ref()),
+            Some(warehouse.trim_start_matches("application-part-"))
+        );
+        assert_eq!(
+            window.find("application-detail-title").label(),
+            Some("checkout-images")
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_failed_read_again_shows_the_last_read_on_the_page_too(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("application-stale").is_none());
+        list(&view, cx).update(cx, |page, cx| {
+            page.fail_read("connection refused by core-fra.example.test:6443", cx)
+        });
+        window.render_frame(cx);
+        assert!(shown(&view, cx).is_some(), "the last read still has it");
+        let stale = window.find("application-stale");
+        assert!(stale.visible());
+        assert!(stale.label().unwrap().contains("connection refused"));
+    })
+    .unwrap();
+    // A read that answers clears it.
+    read_again(cx, handle, &view, Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("application-stale").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn another_context_closes_the_page_and_its_late_read_never_lands(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
+    // The old context's read again is in flight, due in 5 s.
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, cx| {
+            page.set_example_delay(Duration::from_secs(5));
+            page.refresh(cx);
+        });
+        window.render_frame(cx);
+        list(&view, cx).update(cx, |page, _| page.set_hold(true));
+        view.update(cx, |view, cx| view.choose_context("staging-eu", window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(Duration::from_secs(6));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = list(&view, cx);
+        assert!(shown(&view, cx).is_none());
+        assert!(
+            !page.read(cx).has_read(),
+            "the old context's read never lands"
+        );
+        assert!(page.read(cx).is_reading(), "staging-eu's own read waits");
+        assert!(window.try_find(CHECKOUT).is_none());
+        assert!(list_has_keys(&view, window, cx));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn labelled_parts_that_may_be_missing_are_a_group_row(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Workloads);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let lines = shown(&view, cx).unwrap().read(cx).lines_text();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "# May be missing on prod-fra"),
+            "{lines:?}"
+        );
+        // prod-fra's worker wasn't read, so it isn't a part.
+        assert!(!lines.iter().any(|line| line.starts_with("checkout-worker")));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_workload_naming_its_application_back_is_confirmed(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        window.double_click("application-argocd:application/argocd/status-page", cx);
+        window.render_frame(cx);
+        let lines = shown(&view, cx).unwrap().read(cx).lines_text();
+        assert!(
+            lines.iter().any(|line| line == "# Deployments"),
+            "{lines:?}"
+        );
+        let deployment = lines
+            .iter()
+            .skip_while(|line| *line != "# Deployments")
+            .nth(1)
+            .unwrap();
+        assert!(deployment.ends_with(" Confirmed"), "{lines:?}");
+    })
+    .unwrap();
 }

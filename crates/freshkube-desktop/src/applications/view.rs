@@ -291,6 +291,7 @@ impl ApplicationsPage {
 impl Render for ApplicationsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
+        self.refocus(window, cx);
         // An open application's page shows in the list's place.
         if let Some((open, _)) = &self.open {
             return div()
