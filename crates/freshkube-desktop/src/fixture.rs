@@ -12,7 +12,8 @@ use talos_rs::{
 /// `FRESHKUBE_FIXTURE_HOLD=talos` holds the Talos overview and the
 /// Kubernetes summary (Nodes, System services, Operations), `lists` the
 /// Resources lists, `coroot` Observability's applications, incidents and
-/// traces, `monitoring` the dashboard's panels, `all` every one. Debug and
+/// traces, `monitoring` the dashboard's panels, `applications` the
+/// Applications list, `all` every one. Debug and
 /// stress builds only; a release build ignores it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Hold {
@@ -20,6 +21,7 @@ pub(crate) struct Hold {
     pub(crate) lists: bool,
     pub(crate) coroot: bool,
     pub(crate) monitoring: bool,
+    pub(crate) applications: bool,
 }
 
 pub(crate) fn hold() -> Hold {
@@ -32,6 +34,7 @@ pub(crate) fn hold() -> Hold {
         lists: matches!(value.as_str(), "lists" | "all"),
         coroot: matches!(value.as_str(), "coroot" | "all"),
         monitoring: matches!(value.as_str(), "monitoring" | "all"),
+        applications: matches!(value.as_str(), "applications" | "all"),
     }
 }
 

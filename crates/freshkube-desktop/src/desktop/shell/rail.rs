@@ -97,6 +97,7 @@ fn icon(area: Area) -> IconName {
         Area::Events => IconName::Activity,
         Area::Monitoring => IconName::ChartLine,
         Area::Observability => IconName::Radar,
+        Area::Applications => IconName::Layers,
         Area::Settings => IconName::Settings,
         Area::Group("workloads") => IconName::Boxes,
         Area::Group("networking") => IconName::Network,
@@ -217,6 +218,9 @@ impl Pilot {
             // Built on hover, so the rail formats nothing while drawing.
             .tooltip(move |window, cx| {
                 let mut text = area.label().to_owned();
+                if let Some(hint) = area.hint() {
+                    text.push_str(&format!(": {hint}"));
+                }
                 if let Some(key) = area.shortcut() {
                     text.push_str(&format!("  {}{key}", ui::modifier()));
                 }
