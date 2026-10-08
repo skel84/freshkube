@@ -3335,6 +3335,94 @@ fn kubernetes_only_never_swaps_in_another_context(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// Kubernetes-only Health, after `what` failed: the reason, never "No node
+/// selected". Returns the reason.
+fn kubernetes_only_health_failure(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    view: &Entity<Pilot>,
+    what: &str,
+) -> String {
+    wait_until(cx, handle, what, |window, _| {
+        window.try_find("k8s-unavailable").is_some()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("screen-no-node").is_none());
+        assert!(window.try_find("screen-waiting").is_none());
+        match &view.read(cx).summary_health {
+            Some(Err(reason)) => reason.clone(),
+            _ => panic!("{what}: Health has no failure"),
+        }
+    })
+    .unwrap()
+}
+
+fn show_health(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<Pilot>) {
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(Page::Health, window, cx))
+    })
+    .unwrap();
+}
+
+/// Staging, not the kubeconfig's current lab: Health's Retry connects to
+/// the applied context again, never the current one.
+#[gpui_kit::test]
+fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) =
+        kubernetes_only(cx, kubeconfig_file("health-refused"), Some("staging"));
+    show_health(cx, handle, &view);
+    let reason = kubernetes_only_health_failure(cx, handle, &view, "staging to refuse");
+    cx.update_window(handle, |_, window, cx| {
+        let pilot = view.read(cx);
+        let kube = pilot.kubernetes_only.as_ref().unwrap();
+        assert!(
+            matches!(
+                &kube.connection,
+                super::kubernetes_only::KubeConnection::Failed(error) if *error == reason
+            ),
+            "{reason}"
+        );
+        window.click("screen-retry", cx);
+    })
+    .unwrap();
+    // The shell takes Health's event once the click's update ends.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(kubernetes_status(window), "Connecting to staging…");
+    })
+    .unwrap();
+    wait_until(cx, handle, "staging to refuse again", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to staging: ")
+    });
+    kubernetes_only_health_failure(cx, handle, &view, "Health to say so again");
+    cx.update_window(handle, |_, _, cx| {
+        assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_health_says_the_kubeconfig_is_missing_and_retries(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, scratch("no-such-health-kubeconfig"), None);
+    show_health(cx, handle, &view);
+    let reason = kubernetes_only_health_failure(cx, handle, &view, "the kubeconfig to fail");
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(view.read(cx).config_error.as_deref(), Some(reason.as_str()));
+        // Retry reads the kubeconfig again: Health waits while it does.
+        window.click("screen-retry", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(view.read(cx).config_loading);
+        assert!(window.try_find("screen-waiting").is_some());
+        assert!(window.try_find("k8s-unavailable").is_none());
+    })
+    .unwrap();
+    kubernetes_only_health_failure(cx, handle, &view, "the kubeconfig to fail again");
+}
+
 #[gpui_kit::test]
 fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = kubernetes_only(cx, scratch("no-such-kubeconfig"), None);

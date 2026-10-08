@@ -1,0 +1,1 @@
+- **Internal:** `talos-rs` drops unused `talosctl` helpers and the single-variant `RebootMode`, and `rustls` is now a dev-dependency there.

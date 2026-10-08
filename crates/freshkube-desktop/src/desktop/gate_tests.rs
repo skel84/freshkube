@@ -232,3 +232,108 @@ async fn a_new_talosconfig_path_does_not_show_the_old_error(cx: &mut TestAppCont
     })
     .unwrap();
 }
+
+/// The example window in Kubernetes-only mode, on Health.
+fn kubernetes_only_health(
+    cx: &mut TestAppContext,
+    options: GpuiOptions,
+) -> (
+    tokio::runtime::Runtime,
+    AnyWindowHandle,
+    Entity<super::Pilot>,
+) {
+    let (runtime, handle, view) = mount(cx, options, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.startup_selection(Some("kubernetes-only"), None, None, window, cx)
+        })
+    })
+    .unwrap();
+    show_page(cx, handle, &view, Page::Health);
+    (runtime, handle, view)
+}
+
+/// Health needs no node: in Kubernetes-only mode it waits for the summary's
+/// first answer, however long that takes, then shows it.
+#[gpui_kit::test]
+async fn kubernetes_only_health_waits_for_the_summary_then_shows_it(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) =
+        kubernetes_only_health(cx, GpuiOptions::fixture().holding_talos());
+    for _ in 0..3 {
+        assert_eq!(state(cx, handle, "held"), [true, false, false]);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+    }
+
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.fixture_hold = false;
+            view.refresh_now(window, cx);
+        })
+    })
+    .unwrap();
+    cx.wait_for(handle, PATIENCE, |window, _| {
+        settled(window) && window.try_find(data_of(Page::Health)).is_some()
+    })
+    .await;
+}
+
+/// With no context applied nothing reads, so Health says so rather than
+/// waiting; choosing one shows its workloads.
+#[gpui_kit::test]
+async fn kubernetes_only_health_without_a_context_asks_for_one(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only_health(cx, GpuiOptions::fixture());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.use_kube_context(None, window, cx))
+    })
+    .unwrap();
+    assert_eq!(state(cx, handle, "no context"), [false, false, false]);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("health-no-context").visible());
+        view.update(cx, |pilot, cx| {
+            pilot.select_context("staging-eu".into(), window, cx)
+        });
+    })
+    .unwrap();
+    cx.wait_for(handle, PATIENCE, |window, _| {
+        settled(window)
+            && window.try_find("health-no-context").is_none()
+            && window.try_find(data_of(Page::Health)).is_some()
+    })
+    .await;
+}
+
+/// Health waits only while a summary session reads. A Talos overview that
+/// answered without one, as one with no client does, keeps the gate's state
+/// instead of an endless wait.
+#[gpui_kit::test]
+fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture(), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            // The example overview has no client, as an unreachable Talos
+            // endpoint gives: outside example mode nothing can read the
+            // summary.
+            pilot.fixture = false;
+            pilot.stop_summary();
+            pilot.summary_health = None;
+            pilot.selected_node = None;
+            pilot.nodes.clear();
+            pilot.push_source(window, cx);
+        })
+    })
+    .unwrap();
+    show_page(cx, handle, &view, Page::Health);
+    assert_eq!(state(cx, handle, "no session"), [false, false, true]);
+
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.fixture = true;
+            pilot.fixture_hold = true;
+            pilot.ensure_summary(window, cx);
+        })
+    })
+    .unwrap();
+    assert_eq!(state(cx, handle, "a held session"), [true, false, false]);
+}

@@ -207,9 +207,9 @@ impl Pilot {
         let label = self.context_display.name.clone();
         let detail = self.context_display.detail.clone();
         let tone = match self.context_display.state {
-            1 => Tone::Good,
-            2 => Tone::Crit,
-            _ => Tone::Unknown,
+            Connection::Connected => Tone::Good,
+            Connection::Failed => Tone::Crit,
+            Connection::Connecting => Tone::Unknown,
         };
         Popover::new("context-popover")
             .open(self.context_display.open)

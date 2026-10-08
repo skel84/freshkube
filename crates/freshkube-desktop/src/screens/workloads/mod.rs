@@ -26,7 +26,7 @@ use tokio::runtime::Handle;
 
 use super::{
     Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
-    partial_notice, refresh_control, retry_button, segment,
+    partial_notice, refresh_control, retry_button, segment, waiting,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -56,6 +56,20 @@ actions!(
         ClearFilter
     ]
 );
+
+/// Where the shell's Kubernetes summary stands while Health has none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Summary {
+    /// Nothing reads it, as when the Talos overview gave no client: Health
+    /// shows `gate()`'s states.
+    #[default]
+    Unread,
+    /// A session runs, or Kubernetes-only mode reads the kubeconfig or
+    /// connects: Health waits for its first answer.
+    Reading,
+    /// Kubernetes-only mode with no context applied: nothing to read.
+    NoContext,
+}
 
 /// What a refresh loads: the snapshot plus any resource lists that failed.
 #[derive(Clone, Debug)]
@@ -198,6 +212,8 @@ fn age(created: Option<DateTime<Utc>>) -> String {
 pub(crate) struct WorkloadsScreen {
     _runtime: Handle,
     summary_managed: bool,
+    /// Where the shell's summary stands, for while Health has none.
+    summary: Summary,
     source: Option<ScreenSource>,
     loader: Loader<Arc<WorkloadData>>,
     selected: Option<ItemKey>,
@@ -278,6 +294,7 @@ impl ScreenPanel for WorkloadsScreen {
         Self {
             _runtime: runtime,
             summary_managed: false,
+            summary: Summary::default(),
             source: None,
             loader: Loader::default(),
             selected: None,
@@ -387,6 +404,14 @@ impl WorkloadsScreen {
         self.loader.resolve(source.target.clone(), data);
         self.sync(cx);
         cx.notify();
+    }
+
+    /// Where the shell's summary stands.
+    pub(crate) fn set_summary(&mut self, summary: Summary, cx: &mut Context<Self>) {
+        if self.summary != summary {
+            self.summary = summary;
+            cx.notify();
+        }
     }
 
     fn filter_text(&self, cx: &App) -> String {

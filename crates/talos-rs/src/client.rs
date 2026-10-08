@@ -1139,21 +1139,14 @@ impl TalosClient {
         .into()
     }
 
-    /// Reboot the node
-    ///
-    /// # Arguments
-    /// * `mode` - Reboot mode
-    pub async fn reboot(&self, mode: RebootMode) -> Result<RebootResult, TalosError> {
+    /// Reboot the node, in the proto's default mode
+    pub async fn reboot(&self) -> Result<RebootResult, TalosError> {
         use crate::proto::machine::{RebootRequest, reboot_request::Mode};
-
-        let proto_mode = match mode {
-            RebootMode::Default => Mode::Default,
-        };
 
         let mut client = self.machine_client();
         let request = self.with_mutation_targets(
             Request::new(RebootRequest {
-                mode: proto_mode as i32,
+                mode: Mode::Default as i32,
             }),
             "reboot",
         )?;
@@ -1304,14 +1297,6 @@ where
 pub struct ShutdownResult {
     /// Node whose shutdown was requested.
     pub node: String,
-}
-
-/// Reboot mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RebootMode {
-    /// Default reboot
-    #[default]
-    Default,
 }
 
 /// Result of a reboot operation
@@ -2741,7 +2726,7 @@ mod tests {
                 other => panic!("expected a refusal, got {other:?}"),
             };
             assert!(refused(client.shutdown(false).await.map(drop)).contains("shutdown"));
-            assert!(refused(client.reboot(RebootMode::Default).await.map(drop)).contains("reboot"));
+            assert!(refused(client.reboot().await.map(drop)).contains("reboot"));
             assert!(
                 refused(client.service_restart("kubelet").await.map(drop))
                     .contains("restart service kubelet")

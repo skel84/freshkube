@@ -92,7 +92,6 @@ pub use client::{
     ProcessInfo,
     ProcessState,
     // Operation types
-    RebootMode,
     RebootResult,
     ServiceHealth,
     ServiceInfo,
@@ -106,9 +105,8 @@ pub use error::TalosError;
 pub use talosctl::{
     DiscoveryMember, DiskInfo, GenConfigResult, InsecureApplyResult, InsecureVersionInfo,
     KubeSpanPeerStatus, VolumeStatus, apply_config_insecure, gen_config_with_install_disk,
-    get_discovery_members_for_context, get_discovery_members_with_retry, get_disks_for_node,
-    get_disks_insecure, get_kubespan_peers, get_kubespan_peers_for_node, get_version_insecure,
-    get_volume_status_for_node, get_volume_status_insecure, is_kubespan_enabled,
-    is_kubespan_enabled_for_node,
+    get_discovery_members_with_retry, get_disks_for_node, get_disks_insecure,
+    get_kubespan_peers_for_node, get_version_insecure, get_volume_status_for_node,
+    get_volume_status_insecure, is_kubespan_enabled_for_node,
 };
 pub use target::target_host;

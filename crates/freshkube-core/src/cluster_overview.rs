@@ -45,7 +45,8 @@ pub enum ClusterConnectionStatus {
     Disconnected,
     /// At least one Talos endpoint has provided usable cluster data.
     Connected,
-    /// No configured endpoint could be reached and no prior data remains.
+    /// No Talos endpoint answered the last attempt. A roster kept from an
+    /// earlier refresh or read from Kubernetes may remain as stale evidence.
     Unreachable(String),
 }
 
@@ -450,7 +451,11 @@ impl ClusterOverviewCollector {
             return;
         };
 
-        let endpoint_failed = refresh_etcd_members(cluster, &client).await;
+        let etcd = refresh_etcd_members(cluster, &client).await;
+        let endpoint_failed = etcd.transport_failure;
+        // Only an answer from Talos in this refresh makes it Connected; a
+        // roster kept or read from Kubernetes doesn't.
+        let mut talos_answered = etcd.answered;
 
         let mut kubeconfig = None;
         self.refresh_roster(cluster, &client, &mut kubeconfig).await;
@@ -466,7 +471,9 @@ impl ClusterOverviewCollector {
         let mut node_transport_failures = Vec::new();
         let nodes_to_query = nodes_to_query(cluster);
         if !nodes_to_query.is_empty() {
-            node_transport_failures = collect_nodes_into(cluster, &client, nodes_to_query).await;
+            let nodes = collect_nodes_into(cluster, &client, nodes_to_query).await;
+            node_transport_failures = nodes.transport_failures;
+            talos_answered |= nodes.any_version;
             refresh_etcd_health(cluster, &client).await;
         }
 
@@ -477,7 +484,7 @@ impl ClusterOverviewCollector {
             client_cache::forget_talos_client(&key);
         }
 
-        cluster.connection = connection_status(cluster);
+        cluster.connection = connection_status(cluster, talos_answered);
     }
 
     /// The node roster from Talos discovery, falling back to Kubernetes when
@@ -861,14 +868,24 @@ fn root_cause(error: &dyn std::error::Error) -> String {
     deepest.to_string()
 }
 
-/// etcd members and the node IPs they give. A failure clears them; returns
-/// whether it was a transport failure.
-async fn refresh_etcd_members(cluster: &mut ClusterOverview, client: &TalosClient) -> bool {
+/// What one etcd member read heard.
+struct EtcdRead {
+    /// Talos answered with at least one member.
+    answered: bool,
+    transport_failure: bool,
+}
+
+/// etcd members and the node IPs they give. A failure clears them.
+async fn refresh_etcd_members(cluster: &mut ClusterOverview, client: &TalosClient) -> EtcdRead {
     match client.etcd_members().await {
         Ok(members) => {
             replace_node_ips_from_etcd(cluster, &members);
+            let answered = !members.is_empty();
             cluster.etcd_members = members;
-            false
+            EtcdRead {
+                answered,
+                transport_failure: false,
+            }
         }
         Err(error) => {
             tracing::warn!(
@@ -877,18 +894,29 @@ async fn refresh_etcd_members(cluster: &mut ClusterOverview, client: &TalosClien
                 error
             );
             cluster.etcd_members.clear();
-            error.is_transport_failure()
+            EtcdRead {
+                answered: false,
+                transport_failure: error.is_transport_failure(),
+            }
         }
     }
 }
 
+/// What one round of node calls heard.
+struct NodesRead {
+    /// Each node's version transport failure.
+    transport_failures: Vec<bool>,
+    /// At least one node answered its version.
+    any_version: bool,
+}
+
 /// Collects each node's version, services, memory, load and CPU, replacing
-/// the previous answers. Returns each node's version transport failure.
+/// the previous answers.
 async fn collect_nodes_into(
     cluster: &mut ClusterOverview,
     client: &TalosClient,
     nodes_to_query: Vec<(String, String)>,
-) -> Vec<bool> {
+) -> NodesRead {
     let base = client.clone();
     let per_node = collect_bounded(nodes_to_query, NODE_CONCURRENCY, move |name, ip| {
         let node_client = base.with_node(&ip);
@@ -916,7 +944,10 @@ async fn collect_nodes_into(
     cluster.memory = memory;
     cluster.load_avg = load_avg;
     cluster.cpu_info = cpu_info;
-    node_transport_failures
+    NodesRead {
+        transport_failures: node_transport_failures,
+        any_version: !cluster.versions.is_empty(),
+    }
 }
 
 /// etcd's quorum summary and alarms from the control plane nodes. A failed
@@ -939,19 +970,19 @@ async fn refresh_etcd_health(cluster: &mut ClusterOverview, client: &TalosClient
     }
 }
 
-/// Connected when any version, etcd member or roster entry is known.
-fn connection_status(cluster: &ClusterOverview) -> ClusterConnectionStatus {
-    let has_any_data = !cluster.versions.is_empty()
-        || !cluster.etcd_members.is_empty()
-        || !cluster.discovery_members.is_empty();
-    if has_any_data {
-        ClusterConnectionStatus::Connected
-    } else {
-        ClusterConnectionStatus::Unreachable(
-            "Unable to reach any configured Talos endpoint. Check network connectivity and the endpoints in your talosconfig."
-                .to_string(),
-        )
+/// Connected only when Talos answered this refresh. A roster kept from an
+/// earlier refresh or read from Kubernetes stays as stale evidence, but
+/// isn't proof that Talos is reachable.
+fn connection_status(cluster: &ClusterOverview, talos_answered: bool) -> ClusterConnectionStatus {
+    if talos_answered {
+        return ClusterConnectionStatus::Connected;
     }
+    let reason = "Unable to reach any configured Talos endpoint. Check network connectivity and the endpoints in your talosconfig.";
+    ClusterConnectionStatus::Unreachable(if cluster.discovery_members.is_empty() {
+        reason.to_string()
+    } else {
+        format!("{reason} The node list is the last one known.")
+    })
 }
 
 fn replace_node_ips_from_etcd(cluster: &mut ClusterOverview, members: &[EtcdMemberInfo]) {
@@ -1710,5 +1741,34 @@ mod tests {
                 Some(format!("Shared Kubernetes roster: {reason}").as_str())
             );
         }
+    }
+
+    #[test]
+    fn a_kept_roster_without_a_talos_answer_is_not_connected() {
+        let cluster = known_roster();
+        let status = connection_status(&cluster, false);
+        assert!(!status.is_connected());
+        assert!(status.error().unwrap().contains("last one known"));
+    }
+
+    #[test]
+    fn a_kubernetes_roster_without_a_talos_answer_is_not_connected() {
+        let cluster = ClusterOverview {
+            discovery_members: k8s_nodes_to_discovery_members(vec![K8sNodeInfo {
+                name: "cp1".into(),
+                internal_ip: Some("10.0.0.1".into()),
+                is_control_plane: true,
+            }]),
+            ..Default::default()
+        };
+        assert!(!connection_status(&cluster, false).is_connected());
+    }
+
+    #[test]
+    fn a_talos_answer_is_connected_and_nothing_is_unreachable_without_a_roster() {
+        assert!(connection_status(&known_roster(), true).is_connected());
+        assert!(connection_status(&ClusterOverview::default(), true).is_connected());
+        let status = connection_status(&ClusterOverview::default(), false);
+        assert!(!status.error().unwrap().contains("last one known"));
     }
 }

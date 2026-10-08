@@ -57,9 +57,32 @@ impl WorkloadsScreen {
         .changed(on.then(|| "Only unhealthy".into()))
     }
 
-    /// What shows in the table's place: no Kubernetes API, or `gate()`'s
-    /// states.
+    /// What shows in the table's place: no context, the summary's first
+    /// read, no Kubernetes API, or `gate()`'s states.
     fn render_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        match (&self.source, self.summary) {
+            (None, Summary::NoContext) => {
+                return Some(
+                    ui::empty_state(
+                        IconName::Unplug,
+                        "No Kubernetes context",
+                        "Choose a Kubernetes context in the header to read workload health.",
+                        None,
+                        Vec::new(),
+                        cx,
+                    )
+                    .id("health-no-context")
+                    .test_support()
+                    .role(Role::Status)
+                    .aria_label("No Kubernetes context")
+                    .into_any_element(),
+                );
+            }
+            // Health reads the Kubernetes summary, never a node: it waits
+            // for the first answer while something reads it.
+            (None, Summary::Reading) => return Some(waiting(cx)),
+            _ => {}
+        }
         // No data and the load failed: the Kubernetes API isn't reachable.
         // Nothing is known, so nothing is shown as failed.
         if let (Some(_), None, false, Some(error)) = (
