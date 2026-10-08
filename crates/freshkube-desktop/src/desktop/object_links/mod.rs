@@ -55,30 +55,44 @@ impl Pilot {
                 let Some(source) = self.kube_source() else {
                     return;
                 };
-                self.cancel_object_open();
-                let origin = self.resources.read(cx).detail_identity(cx).cloned();
-                self.start_object_open(
-                    "Resolving the owner's kind timed out",
-                    async move {
-                        let client = source.access.client().await?;
-                        freshkube_core::resources::resolve_owner_kind(&client, &api_version, &kind)
-                            .await
-                            .map_err(|error| error.to_string())
-                    },
-                    move |this, cx| this.resources.read(cx).detail_identity(cx) != origin.as_ref(),
-                    move |this, result, window, cx| match result {
-                        Ok(kind) => {
-                            this.open_object(kind, object, resources::Tab::Overview, window, cx)
-                        }
-                        Err(error) => {
-                            window.push_notification(format!("Can't open owner: {error}"), cx)
-                        }
-                    },
-                    window,
-                    cx,
-                );
+                self.resolve_owner_remote(source, api_version, kind, object, window, cx);
             }
         }
+    }
+
+    /// Reads which kind an owner's API version and kind name, then opens the
+    /// owner. A link made in another cluster is refused first: this read
+    /// would otherwise go to the cluster that is open.
+    pub(super) fn resolve_owner_remote(
+        &mut self,
+        source: resources::KubeSource,
+        api_version: String,
+        kind: String,
+        object: resources::model::ObjectRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.refuse_foreign_link(&object, window, cx) {
+            return;
+        }
+        self.cancel_object_open();
+        let origin = self.resources.read(cx).detail_identity(cx).cloned();
+        self.start_object_open(
+            "Resolving the owner's kind timed out",
+            async move {
+                let client = source.access.client().await?;
+                freshkube_core::resources::resolve_owner_kind(&client, &api_version, &kind)
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+            move |this, cx| this.resources.read(cx).detail_identity(cx) != origin.as_ref(),
+            move |this, result, window, cx| match result {
+                Ok(kind) => this.open_object(kind, object, resources::Tab::Overview, window, cx),
+                Err(error) => window.push_notification(format!("Can't open owner: {error}"), cx),
+            },
+            window,
+            cx,
+        );
     }
 
     /// Starts the one read an object link waits on, replacing none: callers

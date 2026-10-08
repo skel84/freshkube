@@ -670,3 +670,138 @@ async fn cancelling_an_object_open_drops_its_answer(cx: &mut TestAppContext) {
     assert_eq!(applied.get(), 0);
     assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_none()));
 }
+
+/// What the link would open in: nothing, or the open object's identity.
+fn opened(
+    pilot: &gpui_kit::Entity<crate::desktop::Pilot>,
+    cx: &gpui_kit::App,
+) -> Option<ResourceIdentity> {
+    pilot
+        .read(cx)
+        .resources
+        .read(cx)
+        .detail_identity(cx)
+        .cloned()
+}
+
+fn link_to(
+    identity: &ResourceIdentity,
+    connection: Option<String>,
+) -> crate::resources::ResourceLink {
+    let mut object: crate::resources::model::ObjectRef = identity.clone().into();
+    object.connection = connection;
+    crate::resources::ResourceLink::Object(example::kind("pods").unwrap(), object, Tab::Overview)
+}
+
+#[gpui_kit::test]
+fn a_link_made_in_the_open_cluster_opens_its_object(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
+    let (identity, _) = pod();
+    cx.update_window(handle, |_, window, cx| {
+        // `From<ResourceIdentity>` names the identity's own connection.
+        let link = link_to(&identity, Some(identity.connection.clone()));
+        pilot.update(cx, |pilot, cx| pilot.resource_link(link, window, cx));
+        window.render_frame(cx);
+        assert_eq!(
+            opened(&pilot, cx).map(|opened| opened.name),
+            Some(identity.name.clone())
+        );
+    })
+    .unwrap();
+}
+
+/// How many notifications the window holds.
+fn notices(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) -> usize {
+    use gpui_kit::component::WindowExt as _;
+    window.notifications(cx).len()
+}
+
+#[gpui_kit::test]
+fn a_link_made_in_another_cluster_opens_nothing_here_and_says_so(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
+    let (identity, _) = pod();
+    cx.update_window(handle, |_, window, cx| {
+        let page = pilot.read(cx).page;
+        let before = notices(window, cx);
+        // The same pod name exists here, in this cluster. The link names
+        // another one, so it is not this pod.
+        let other = crate::resources::example::connection("staging-eu");
+        assert_ne!(other, identity.connection);
+        let link = link_to(&identity, Some(other));
+        pilot.update(cx, |pilot, cx| pilot.resource_link(link, window, cx));
+        window.render_frame(cx);
+        assert_eq!(opened(&pilot, cx), None);
+        assert_eq!(pilot.read(cx).page, page, "no page change either");
+        assert_eq!(notices(window, cx), before + 1, "the refusal says so");
+    })
+    .unwrap();
+}
+
+/// Just after a context change nothing is open yet, so no link can be from
+/// "the open cluster": one that names a cluster is refused, not allowed to
+/// switch the page to a list that then fills from the new cluster.
+#[gpui_kit::test]
+fn a_link_naming_a_cluster_is_refused_while_none_is_open(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
+    let (identity, _) = pod();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, _| {
+            pilot.applied.context = None;
+            assert!(pilot.kube_identity().is_none() && pilot.kube_source().is_none());
+        });
+        let page = pilot.read(cx).page;
+        let before = notices(window, cx);
+        let link = link_to(&identity, Some(identity.connection.clone()));
+        pilot.update(cx, |pilot, cx| pilot.resource_link(link, window, cx));
+        window.render_frame(cx);
+        assert_eq!(opened(&pilot, cx), None);
+        assert_eq!(pilot.read(cx).page, page, "the page did not move");
+        assert_eq!(notices(window, cx), before + 1);
+    })
+    .unwrap();
+}
+
+/// The read that names an owner's kind goes to the open cluster, so a link
+/// from another one must not start it. Called on the example source: the
+/// same call with the open cluster's own connection does start it.
+#[gpui_kit::test]
+fn an_owner_read_for_a_link_from_another_cluster_starts_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
+    let (identity, _) = pod();
+    cx.update_window(handle, |_, window, cx| {
+        let source = pilot.read(cx).kube_source().unwrap();
+        let owner = |connection: String| {
+            let mut object: crate::resources::model::ObjectRef = identity.clone().into();
+            object.connection = Some(connection);
+            object
+        };
+        let before = notices(window, cx);
+        pilot.update(cx, |pilot, cx| {
+            pilot.resolve_owner_remote(
+                source.clone(),
+                "cert-manager.io/v1".into(),
+                "Certificate".into(),
+                owner(crate::resources::example::connection("staging-eu")),
+                window,
+                cx,
+            )
+        });
+        assert!(pilot.read(cx).object_open_job.is_none(), "no read started");
+        assert_eq!(notices(window, cx), before + 1);
+        pilot.update(cx, |pilot, cx| {
+            pilot.resolve_owner_remote(
+                source.clone(),
+                "cert-manager.io/v1".into(),
+                "Certificate".into(),
+                owner(source.id.clone()),
+                window,
+                cx,
+            )
+        });
+        assert!(
+            pilot.read(cx).object_open_job.is_some(),
+            "its own cluster reads"
+        );
+    })
+    .unwrap();
+}

@@ -4610,6 +4610,7 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
             view.open_object(
                 crate::resources::example::kind("pods").unwrap(),
                 crate::resources::model::ObjectRef {
+                    connection: None,
                     namespace: "prod".into(),
                     name: "later".into(),
                     uid: String::new(),

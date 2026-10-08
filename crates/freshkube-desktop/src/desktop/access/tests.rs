@@ -246,3 +246,40 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     );
     assert!(cx.read(|cx| view.read(cx).overview.data().is_none()));
 }
+
+/// A new context replaces the whole session: nothing that the old one held,
+/// from its access to its tasks, is there for the next.
+#[gpui_kit::test]
+fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 820.);
+    let (before, after) = revisions();
+    let access = AccessIdentity::new(AccessSessionId::new(), before);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            // Nothing is published for the new context, so what is left in
+            // the session after the change is only what was carried over.
+            view.fixture_hold = true;
+            let runtime = view.runtime.clone();
+            let session = view.registry.active_mut();
+            session.access = Some(access);
+            session.access_configuration = Some(before);
+            session.prompted_access = Some((after, Some(access)));
+            session.summary_health = Some(Err("old".into()));
+            session.summary_job = Some(crate::backend::OwnedJob::new(runtime.spawn(async {})));
+            session.summary_task = Some(cx.spawn(async move |_, _| {}));
+            let epoch = view.registry.summary_epoch();
+            let other = crate::fixture::CONTEXTS[1].to_string();
+            assert_ne!(view.applied.context.as_deref(), Some(other.as_str()));
+            view.select_context(other, window, cx);
+            let session = view.registry.active();
+            assert!(session.access.is_none());
+            assert!(session.access_configuration.is_none());
+            assert!(session.prompted_access.is_none());
+            assert!(session.summary_health.is_none());
+            assert!(session.summary_job.is_none());
+            assert!(session.summary_task.is_none());
+            assert!(view.registry.summary_epoch() != epoch);
+        })
+    })
+    .unwrap();
+}

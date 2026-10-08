@@ -57,6 +57,7 @@ impl Search {
                     continue;
                 }
                 let access = source.access.clone();
+                let connection = source.id.clone();
                 let sequence = self.sequence;
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
@@ -75,6 +76,7 @@ impl Search {
                                     name: object.name?,
                                     namespace: object.namespace.unwrap_or_default(),
                                     uid: object.uid?,
+                                    connection: Some(connection.clone()),
                                 })
                             })
                             .collect();
