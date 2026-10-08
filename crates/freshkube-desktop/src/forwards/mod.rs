@@ -20,6 +20,8 @@ mod tests;
 mod view;
 
 pub(crate) use indicator::{ForwardsIndicator, render_forward};
+#[cfg(test)]
+pub(crate) use view::Phase;
 pub(crate) use view::{ForwardSpec, ForwardView, Row};
 
 /// How long quitting or closing the window waits for forwards to let their
