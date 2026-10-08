@@ -231,3 +231,57 @@ fn a_stage_without_a_verification_history_is_still_read() {
     assert_eq!(stage.verifications[0].freight, ["f-new"]);
     assert_eq!(stage.verifications[0].phase.as_deref(), Some("Successful"));
 }
+
+#[tokio::test]
+async fn a_manual_approval_makes_a_stage_eligible_not_unverified() {
+    let mut world = healthy();
+    let mut freight = freight("f-new", NEW, SHA);
+    freight["status"] = json!({"approvedFor": {"dev": {}}});
+    world.kargo = world.kargo.with("stages", vec![verified_stage(None)]).with(
+        "freights",
+        vec![freight, self::freight("f-old", OLD, OTHER_SHA)],
+    );
+    let trail = run(&world, &ENV).await;
+    let link = one(&trail, Hop::Freight, Hop::Stage);
+    assert_eq!(link.confidence, Confidence::Confirmed);
+    assert!(
+        link.reason.contains("eligible by approval"),
+        "{}",
+        link.reason
+    );
+    assert!(
+        !link.reason.contains("no verification reported"),
+        "{}",
+        link.reason
+    );
+    assert!(
+        link.evidence
+            .iter()
+            .any(|seen| seen.field == "/status/approvedFor/dev"
+                && seen.fact == super::observation::Fact::Reported),
+        "{:#?}",
+        link.evidence
+    );
+}
+
+#[tokio::test]
+async fn an_approval_beside_a_verification_is_said_too() {
+    let mut world = healthy();
+    let mut freight = freight("f-new", NEW, SHA);
+    freight["status"] = json!({"verifiedIn": {"dev": {}}, "approvedFor": {"dev": {}}});
+    world.kargo = world
+        .kargo
+        .with("stages", vec![verified_stage(Some("Successful"))])
+        .with(
+            "freights",
+            vec![freight, self::freight("f-old", OLD, OTHER_SHA)],
+        );
+    let trail = run(&world, &ENV).await;
+    let link = one(&trail, Hop::Freight, Hop::Stage);
+    assert!(link.reason.contains("verified here"), "{}", link.reason);
+    assert!(
+        link.reason.contains("also approved for this Stage"),
+        "{}",
+        link.reason
+    );
+}

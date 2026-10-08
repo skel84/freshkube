@@ -5,8 +5,9 @@ use crate::delivery::source::{cap_note, redact_message};
 
 use super::argo::{application_links, same_commit, short_commit};
 use super::observe::{
-    freight_origin, freight_side, freight_verified, promotion_digest, promotion_names,
-    stage_digest, stage_names, stage_verification, warehouse_discovered, warehouse_subscription,
+    freight_approved, freight_origin, freight_side, freight_verified, promotion_digest,
+    promotion_names, stage_digest, stage_names, stage_verification, warehouse_discovered,
+    warehouse_subscription,
 };
 use super::*;
 
@@ -328,9 +329,13 @@ fn verification(freight: &Freight, stage: &Stage) -> (String, Vec<Observation>) 
         .iter()
         .filter(|v| v.freight.contains(&freight.name))
         .collect();
+    let approved = freight.approved_for.iter().any(|name| name == &stage.name);
     let mut seen = Vec::new();
     if listed {
         seen.push(freight_verified(freight, &stage.name));
+    }
+    if approved {
+        seen.push(freight_approved(freight, &stage.name));
     }
     seen.extend(
         recorded
@@ -341,7 +346,7 @@ fn verification(freight: &Freight, stage: &Stage) -> (String, Vec<Observation>) 
     let phase = |v: &&crate::delivery::kargo::Verification| {
         v.phase.clone().unwrap_or_else(|| "no phase".to_owned())
     };
-    let note = match (listed, recorded.first()) {
+    let mut note = match (listed, recorded.first()) {
         (true, Some(v)) if v.phase.as_deref() == Some("Successful") => {
             "verified here: the Freight lists this Stage and the Stage's latest verification is Successful".to_owned()
         }
@@ -358,5 +363,14 @@ fn verification(freight: &Freight, stage: &Stage) -> (String, Vec<Observation>) 
         ),
         (false, None) => "no verification reported".to_owned(),
     };
+    if approved {
+        // A manual approval makes the Freight eligible in the Stage without
+        // upstream verification; it is its own record, not a verification.
+        note = if !listed && recorded.is_empty() {
+            "eligible by approval: the Freight's approvedFor lists this Stage, which makes it eligible without upstream verification".to_owned()
+        } else {
+            format!("{note}; also approved for this Stage (eligible without upstream verification)")
+        };
+    }
     (note, seen)
 }

@@ -265,6 +265,16 @@ pub(super) fn freight_verified(freight: &Freight, stage: &str) -> Observation {
     )
 }
 
+/// The Stage the Freight's status lists as one it was manually approved for.
+pub(super) fn freight_approved(freight: &Freight, stage: &str) -> Observation {
+    Observation::reported(
+        role::KARGO,
+        freight.object_ref(),
+        &format!("/status/approvedFor/{}", pointer_segment(stage)),
+        Some(stage),
+    )
+}
+
 /// How a verification in the Stage's status ended, in Kargo's word.
 pub(super) fn stage_verification(stage: &Stage, verification: &Verification) -> Observation {
     Observation::reported(
