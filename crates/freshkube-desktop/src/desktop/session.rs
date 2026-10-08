@@ -87,3 +87,24 @@ impl Registry {
         &mut self.active
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replacing_the_session_drops_all_of_it_and_never_repeats_an_epoch() {
+        let mut registry = Registry::new();
+        let first = registry.summary_epoch();
+        registry.active_mut().summary_health = Some(Err("down".into()));
+        registry.active_mut().prompted_access = None;
+        registry.reset_active();
+        assert!(registry.active().summary_health.is_none());
+        assert!(registry.active().access.is_none());
+        let second = registry.summary_epoch();
+        registry.advance_summary_epoch();
+        registry.reset_active();
+        let third = registry.summary_epoch();
+        assert!(first != second && second != third && first != third);
+    }
+}
