@@ -89,11 +89,19 @@ fn parts_come_in_kind_order_with_their_links(cx: &mut TestAppContext) {
                 "checkout-prod-ams Claimed",
                 "checkout-prod-fra Claimed",
                 "checkout-stage Claimed",
+                // Argo CD on core-fra was read in argocd only, so the
+                // Applications checkout's Stages promote to may be missing.
+                "# May be missing on core-fra",
                 "# Deployments",
-                "checkout-api Claimed",
-                "checkout-api Claimed",
-                "checkout-worker Claimed",
+                "checkout-api By label",
+                "checkout-api By label",
+                "checkout-worker By label",
             ]
+        );
+        assert!(
+            window
+                .find("application-group-missing-2-core-fra")
+                .visible()
         );
         assert!(window.find("application-title").visible());
         let link = |row: &str| {
@@ -103,12 +111,16 @@ fn parts_come_in_kind_order_with_their_links(cx: &mut TestAppContext) {
                 .map(str::to_owned)
         };
         assert_eq!(link(DEV_STAGE).as_deref(), Some("Confirmed"));
-        assert_eq!(link(WORKER).as_deref(), Some("Claimed"));
+        assert_eq!(link(WORKER).as_deref(), Some("By label"));
         let legend = window
             .find("application-legend")
             .label()
             .unwrap()
             .to_owned();
+        assert!(
+            legend.contains("By label: only its part-of label says so"),
+            "{legend}"
+        );
         assert!(
             legend.contains("Unknown: a side couldn't be read"),
             "{legend}"

@@ -64,6 +64,9 @@ pub(crate) struct PartRow {
     pub(super) cluster: SharedString,
     pub(super) namespace: SharedString,
     pub(super) confidence: Confidence,
+    /// The Link column's word: [`link_word`], or "By label" for a part
+    /// only its label claims.
+    pub(super) word: &'static str,
     pub(super) found_by: SharedString,
     pub(super) read_from: SharedString,
     /// The row's accessibility label.
@@ -215,7 +218,7 @@ impl ApplicationPage {
                 Entry::Group(ix) => format!("# {}", self.groups[ix].label),
                 Entry::Row(ix) => {
                     let row = &self.rows[ix];
-                    format!("{} {}", row.name, link_word(row.confidence))
+                    format!("{} {}", row.name, row.word)
                 }
             })
             .collect()
@@ -234,14 +237,29 @@ pub(super) fn link_word(confidence: Confidence) -> &'static str {
     }
 }
 
-/// The link's glyph: none for Confirmed, the usual case, so the other two
-/// stand out; the Info dot for Claimed, and the dashed ring for Unknown.
-pub(super) fn link_tone(confidence: Confidence) -> Option<freshkube_ui::ui::Tone> {
+/// The link's glyph: Good for Confirmed, the Info dot for Claimed, and the
+/// dashed ring for Unknown.
+pub(super) fn link_tone(confidence: Confidence) -> freshkube_ui::ui::Tone {
     use freshkube_ui::ui::Tone;
     match confidence {
-        Confidence::Confirmed => None,
-        Confidence::Claimed => Some(Tone::Info),
-        Confidence::Unknown => Some(Tone::Unknown),
+        Confidence::Confirmed => Tone::Good,
+        Confidence::Claimed => Tone::Info,
+        Confidence::Unknown => Tone::Unknown,
+    }
+}
+
+/// The word for a part's link: "By label" when only its
+/// `app.kubernetes.io/part-of` label claims it.
+fn row_word(app: &Application, claim: &Claim) -> &'static str {
+    let basis = app
+        .members
+        .iter()
+        .find(|m| m.at == claim.member)
+        .map(|m| m.basis);
+    match (claim.confidence, basis, claim.member.kind) {
+        (Confidence::Claimed, Some(Basis::SameName), _)
+        | (Confidence::Claimed, Some(Basis::Direct), MemberKind::Workload(_)) => "By label",
+        (confidence, ..) => link_word(confidence),
     }
 }
 
@@ -300,11 +318,15 @@ fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
     let cluster = labels.of(&member.session);
     let namespace = member.namespace.clone().unwrap_or_default();
     let found = found_by(app, member);
-    let word = link_word(claim.confidence);
-    let read_from = claim
-        .member_side
-        .fact
-        .map_or("not read", |fact| fact.word());
+    let word = row_word(app, claim);
+    // What wasn't checked says more than the label's fact.
+    let read_from = claim.unchecked.clone().unwrap_or_else(|| {
+        claim
+            .member_side
+            .fact
+            .map_or("not read", |fact| fact.word())
+            .to_owned()
+    });
     let lower: Vec<SharedString> = claim
         .lower
         .iter()
@@ -328,6 +350,7 @@ fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
         cluster: cluster.clone().into(),
         namespace: namespace.clone().into(),
         confidence: claim.confidence,
+        word,
         found_by: found.into(),
         read_from: read_from.into(),
         label: format!(
@@ -347,12 +370,19 @@ fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
         .filter(|(_, value)| !value.is_empty())
         .map(|(label, value)| (label, value.into()))
         .collect(),
-        link: vec![
-            ("Link", word.into()),
-            ("Application", side_words(&claim.app_side, labels).into()),
-            ("This part", side_words(&claim.member_side, labels).into()),
-            ("Why", claim.why.clone().into()),
-        ],
+        link: [
+            Some(("Link", word.into())),
+            Some(("Application", side_words(&claim.app_side, labels).into())),
+            Some(("This part", side_words(&claim.member_side, labels).into())),
+            claim
+                .unchecked
+                .clone()
+                .map(|unchecked| ("Not checked", unchecked.into())),
+            Some(("Why", claim.why.clone().into())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         lower,
     }
 }

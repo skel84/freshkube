@@ -94,27 +94,22 @@ pub(super) fn columns(rows: &[PartRow]) -> (Vec<Column>, f32) {
     (columns, width)
 }
 
-/// The row's glyph: good for Confirmed, as its Link draws none.
-pub(super) fn glyph_tone(confidence: Confidence) -> ui::Tone {
-    link_tone(confidence).unwrap_or(ui::Tone::Good)
-}
-
-/// The Link cell and the legend's mark: the glyph, if any, and the word,
-/// muted when Confirmed.
-pub(super) fn link_mark(confidence: Confidence, cx: &App) -> Div {
+/// The Link cell and the legend's mark: the glyph and the word, dim when
+/// Unknown, the link no read settled.
+pub(super) fn link_mark(confidence: Confidence, word: &'static str, cx: &App) -> Div {
     let p = palette(cx);
     h_flex()
         .items_center()
         .gap(ui::dp(5.))
-        .children(link_tone(confidence).and_then(|tone| ui::status_glyph(tone, cx)))
+        .children(ui::status_glyph(link_tone(confidence), cx))
         .child(
             div()
                 .flex_none()
                 .text_color(match confidence {
-                    Confidence::Confirmed => p.muted,
+                    Confidence::Unknown => p.muted,
                     _ => p.ink,
                 })
-                .child(link_word(confidence)),
+                .child(word),
         )
 }
 
@@ -183,8 +178,8 @@ impl TableSource for ApplicationPage {
             Field::Glyph => kit::glyph_cell(column)
                 .child(ui::status_mark(
                     SharedString::from(format!("application-part-{}-mark", row.key)),
-                    glyph_tone(row.confidence),
-                    link_word(row.confidence),
+                    link_tone(row.confidence),
+                    row.word,
                     cx,
                 ))
                 .into_any_element(),
@@ -193,13 +188,13 @@ impl TableSource for ApplicationPage {
             Field::Namespace => cell.child(row.namespace.clone()).into_any_element(),
             Field::Link => cell
                 .child(
-                    link_mark(row.confidence, cx)
+                    link_mark(row.confidence, row.word, cx)
                         .id(SharedString::from(format!(
                             "application-part-{}-link",
                             row.key
                         )))
                         .test_support()
-                        .aria_label(link_word(row.confidence)),
+                        .aria_label(row.word),
                 )
                 .into_any_element(),
             Field::FoundBy => cell.child(row.found_by.clone()).into_any_element(),
@@ -258,31 +253,42 @@ impl TableSource for ApplicationPage {
     /// table is wide, one line with it in a tooltip when narrow.
     fn legend(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         const WHOLE: &str = "Link: how sure a part's link to the application is. Confirmed: both \
-                             sides were read and agree. Claimed: only a label, annotation, name \
-                             or your override says so. Unknown: a side couldn't be read.";
+                             sides were read and agree. By label: only its part-of label says \
+                             so. Claimed: only an annotation, a name or your override says so. \
+                             Unknown: a side couldn't be read.";
         if self.table_width(window) < 900. {
             return Some(
                 kit::legend_line(
                     self.table.id("legend"),
-                    "Confirmed · Claimed · Unknown ⓘ",
+                    "Confirmed · By label · Claimed · Unknown ⓘ",
                     WHOLE,
                     cx,
                 )
                 .into_any_element(),
             );
         }
-        let item = |confidence: Confidence, text: &str| {
-            kit::legend_item(link_mark(confidence, cx), text.to_owned()).into_any_element()
+        let item = |confidence: Confidence, word: &'static str, text: &str| {
+            kit::legend_item(link_mark(confidence, word, cx), text.to_owned()).into_any_element()
         };
         Some(
             kit::legend(
                 [
-                    item(Confidence::Confirmed, "both sides were read and agree"),
+                    item(
+                        Confidence::Confirmed,
+                        "Confirmed",
+                        "both sides were read and agree",
+                    ),
                     item(
                         Confidence::Claimed,
-                        "only a label, annotation or name says so",
+                        "By label",
+                        "only its part-of label says so",
                     ),
-                    item(Confidence::Unknown, "a side couldn't be read"),
+                    item(
+                        Confidence::Claimed,
+                        "Claimed",
+                        "only an annotation or a name says so",
+                    ),
+                    item(Confidence::Unknown, "Unknown", "a side couldn't be read"),
                 ],
                 cx,
             )

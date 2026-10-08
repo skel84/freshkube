@@ -39,7 +39,7 @@ impl ApplicationPage {
             .gap_2()
             .min_w_0()
             .child(title)
-            .child(table::link_mark(row.confidence, cx));
+            .child(table::link_mark(row.confidence, row.word, cx));
         let fields = |rows: &[(&'static str, SharedString)], cx: &App| {
             rows.iter()
                 .map(|(label, value)| field(label, mono(value.clone()).whitespace_normal(), cx))
