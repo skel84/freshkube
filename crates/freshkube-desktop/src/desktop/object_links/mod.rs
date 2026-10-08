@@ -80,6 +80,7 @@ impl Pilot {
             }
         }
     }
+
     /// Starts the one read an object link waits on, replacing none: callers
     /// `cancel_object_open` first. Its answer is applied only if the shell's
     /// epoch and this request's sequence still hold and `superseded` (the
@@ -105,7 +106,7 @@ impl Pilot {
         self.object_open_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
-                .unwrap_or_else(|_| Err("The identity worker stopped".into()));
+                .unwrap_or_else(|_| Err("The read stopped".into()));
             _ = this.update_in(cx, |this, window, cx| {
                 if this.epoch != epoch
                     || this.object_open_sequence != sequence
