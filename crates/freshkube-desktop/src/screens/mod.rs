@@ -43,11 +43,12 @@ use talos_rs::TalosClient;
 use tokio::runtime::Handle;
 
 use crate::backend::{self, OwnedJob, Target};
-use crate::desktop::{COLUMN_WIDTH, PAGE_PADDING, RAIL_WIDTH};
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
 use crate::state::Snapshot;
-use crate::ui::{self, MONO_FONT, clock, dp, dp_px};
+use crate::ui::{self, MONO_FONT, clock, dp};
+// The page widths live in `freshkube_ui::page`; screens reach them here.
+pub(crate) use freshkube_ui::page::{content_width, inset_width, page_width, set_chrome_width};
 
 /// Upper bound for one screen request, including Kubernetes client setup.
 pub(crate) const SCREEN_DEADLINE: Duration = Duration::from_secs(60);
@@ -382,27 +383,6 @@ impl<T: Send + 'static> Loader<T> {
     }
 }
 
-/// The width of a page in `dp` (pixels at the default text size): the
-/// window less the rail and column. A page without margins has all of it,
-/// so its breakpoints compare this; a larger text size leaves less room, as
-/// a narrower window would.
-pub(crate) fn page_width(window: &Window) -> f32 {
-    let viewport = window.viewport_size().width / dp_px(1., window);
-    (viewport - CHROME_WIDTH.get()).max(240.)
-}
-
-/// The width inside a page's [`inset`](freshkube_ui::page::inset), such as
-/// its header's, in `dp`.
-pub(crate) fn inset_width(window: &Window) -> f32 {
-    (page_width(window) - freshkube_ui::page::PANE_PADDING * 2.).max(240.)
-}
-
-/// The width inside a [padded](freshkube_ui::page::padded) page's margins in
-/// `dp`, for choosing between side-by-side and stacked layouts there.
-pub(crate) fn content_width(window: &Window) -> f32 {
-    (page_width(window) - PAGE_PADDING * 2.).max(240.)
-}
-
 const SPLIT_WIDTH: f32 = 900.;
 const PANE_WIDTH: f32 = 460.;
 /// A detail with a few short fields, such as a disk's or a volume's.
@@ -528,18 +508,6 @@ pub(crate) fn split_at(
                 .child(pane)
         }))
         .into_any_element()
-}
-
-thread_local! {
-    /// The width of the navigation beside the page in dp: the rail, and the
-    /// column when it shows. Windows draw on one thread, and the shell sets
-    /// it whenever the column shows or hides.
-    static CHROME_WIDTH: std::cell::Cell<f32> =
-        const { std::cell::Cell::new(RAIL_WIDTH + COLUMN_WIDTH) };
-}
-
-pub(crate) fn set_chrome_width(width: f32) {
-    CHROME_WIDTH.set(width);
 }
 
 thread_local! {
