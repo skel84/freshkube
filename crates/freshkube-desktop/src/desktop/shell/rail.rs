@@ -59,6 +59,7 @@ fn icon(area: Area) -> IconName {
         Area::Events => IconName::Activity,
         Area::Monitoring => IconName::ChartLine,
         Area::Observability => IconName::Radar,
+        Area::Settings => IconName::Settings,
         Area::Group("workloads") => IconName::Boxes,
         Area::Group("networking") => IconName::Network,
         Area::Group("configuration") => IconName::SlidersHorizontal,

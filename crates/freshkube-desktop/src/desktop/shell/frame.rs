@@ -267,6 +267,10 @@ impl Pilot {
                     .update(cx, |page, _| page.status().clone()),
             )),
             Page::Nodes => Some(("nodes-scope".into(), self.node_workspace.status.clone())),
+            Page::Settings => Some((
+                "settings-scope".into(),
+                self.settings_page.read(cx).status.clone(),
+            )),
             Page::SystemServices if self.kubernetes_only.is_none() => Some((
                 "system-services-scope".into(),
                 self.system_services.read(cx).status.clone(),
@@ -340,11 +344,22 @@ pub(super) fn settings_content(
     let browse_popover = popover.clone();
     let switch_pilot = pilot.clone();
     let appearance_pilot = pilot.clone();
+    let workspace_pilot = pilot.clone();
+    let workspace_popover = popover.clone();
     let field_label = |text: &'static str| {
         div()
             .text_size(dp(12.5))
             .font_weight(FontWeight::SEMIBOLD)
             .child(text)
+    };
+    // `flex_none` keeps the 1 px line when the panel scrolls in a short window.
+    let divider = |ix: usize| {
+        div()
+            .id(("settings-divider", ix))
+            .test_support()
+            .h(px(1.))
+            .flex_none()
+            .bg(p.line)
     };
     let hint = |text: &'static str| div().text_size(dp(12.)).text_color(p.muted).child(text);
     v_flex()
@@ -412,13 +427,13 @@ pub(super) fn settings_content(
                     "Browse loads the chosen file right away; a typed path loads when you press Apply. Leave it empty to use TALOSCONFIG or ~/.talos/config."
                 })),
         )
-        .child(div().h(px(1.)).bg(p.line))
+        .child(divider(1))
         .child(if kubernetes_only {
             kubernetes_only::settings_section(&view, popover.clone(), cx)
         } else {
             super::super::kubeconfig::settings_section(&view, popover.clone(), cx).into_any_element()
         })
-        .child(div().h(px(1.)).bg(p.line))
+        .child(divider(2))
         .child(
             h_flex()
                 .justify_between()
@@ -443,7 +458,7 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).bg(p.line))
+        .child(divider(3))
         .child(
             h_flex()
                 .justify_between()
@@ -504,9 +519,32 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).bg(p.line))
+        .child(divider(4))
+        .child(
+            h_flex()
+                .justify_between()
+                .gap_3()
+                .child(
+                    v_flex()
+                        .child(field_label("Workspace"))
+                        .child(hint("The clusters you work with")),
+                )
+                .child(
+                    Button::new("settings-open-workspace")
+                        .outline()
+                        .small()
+                        .label("Open")
+                        .on_click(move |_, window, cx| {
+                            let _ = workspace_pilot.update(cx, |view, cx| {
+                                view.navigate_from_keyboard(Page::Settings, window, cx)
+                            });
+                            workspace_popover.update(cx, |state, cx| state.dismiss(window, cx));
+                        }),
+                ),
+        )
+        .child(divider(5))
         .child(crate::monitoring::page::source_section(&monitoring, cx))
-        .child(div().h(px(1.)).bg(p.line))
+        .child(divider(6))
         .child(crate::monitoring::page::settings_section(
             &monitoring,
             popover.clone(),
