@@ -224,6 +224,10 @@ impl TableSource for OperationsScreen {
         self.toggle(target, window, cx);
     }
 
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         self.roster.is_empty().then(|| {
             "No node roster is available, so there is nothing to select.".into_any_element()

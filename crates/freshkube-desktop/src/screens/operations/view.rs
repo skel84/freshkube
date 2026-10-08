@@ -284,8 +284,14 @@ impl OperationsScreen {
     /// columns, with the run order and the node's name kept at the left
     /// edge.
     fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        // Before the overview, as many loading rows as Lifecycle shows.
+        let rows = if self.roster.is_empty() && self.first_read(cx) {
+            3
+        } else {
+            self.roster.len().max(1)
+        };
         DataTable::new()
-            .fit(self.roster.len().max(1))
+            .fit(rows)
             .render(self, window, cx)
             .w_full()
             .flex_none()
@@ -889,8 +895,12 @@ impl Render for OperationsScreen {
             .h_auto()
             .flex_none()
             .child(page::toolbar(cx).child(header));
+        let first_read = self.first_read(cx);
+        self.loading.show(first_read);
         let page = match self.source.clone() {
             Some(source) => page.child(self.render_body(&source, window, cx)),
+            // The roster comes with the overview: its table waits for it.
+            None if first_read => page.child(self.nodes_panel(window, cx)),
             None => page.child(
                 page::inset().child(
                     div()
