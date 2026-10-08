@@ -24,12 +24,15 @@
 #
 # Outside the domain crates (core, talos-rs) and tests, the shared components
 # included, nothing but freshkube-ui's platform module may
-#   platform  test the platform with cfg(target_os …) or cfg(windows): ask
-#             freshkube_ui::platform. Two files read the OS themselves and are
-#             exempt: motion/system.rs (reduced motion) and desktop's stress.rs
-#             (process counters). Tests spell out each platform's keys, as an
-#             independent check of the module. cfg(unix) file modes and paths
-#             are the OS's, not the app's look, and stay where they are.
+#   platform  name the target (target_os, target_family, target_vendor,
+#             consts::OS) or put windows in a cfg, cfg! or cfg_attr, on any
+#             line: ask freshkube_ui::platform. Three files read the OS
+#             themselves and are exempt: motion/system.rs (reduced motion),
+#             desktop's stress.rs (process counters) and src/main.rs (a
+#             release build's Windows console). Tests spell out each
+#             platform's keys, as an independent check of the module. The
+#             domain crates (core, talos-rs) and cfg(unix) file modes and
+#             paths are the OS's, not the app's look, and stay where they are.
 #
 # scripts/style-allowlist.txt names, per rule, the files that broke it when the
 # check arrived. It may only shrink: the check fails when an unlisted file
@@ -42,7 +45,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --root) root="$(cd "$2" && pwd)"; shift 2 ;;
     --list) list=1; shift ;;
-    -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "check-style: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -147,23 +150,38 @@ motion_offences() {
 
 # Every Rust file the platform rule reads.
 platform_files() {
-  find crates -path '*/src/*' -name '*.rs' \
+  find crates $(test -d src && echo src) \( -path 'src/*' -o -path '*/src/*' -o -name build.rs \) -name '*.rs' \
     -not -path 'crates/freshkube-core/*' \
     -not -path 'crates/talos-rs/*' \
     -not -path 'crates/freshkube-ui/src/platform.rs' \
     -not -path 'crates/freshkube-ui/src/motion/system.rs' \
     -not -path 'crates/freshkube-desktop/src/stress.rs' \
+    -not -path 'src/main.rs' \
     -not -name 'tests.rs' \
     -not -name '*_tests.rs' \
     -not -path '*/tests/*' |
     LC_ALL=C sort
 }
 
+# A line that names the target (target_os, target_family, target_vendor or
+# std::env::consts::OS) anywhere, or `windows` inside a cfg, cfg! or
+# cfg_attr, which rustfmt may spread over several lines. Comments don't count.
 platform_offences() {
   platform_files | xargs perl -CSD -ne '
-    print "platform $ARGV:$.: ", s/^\s+//r
-      if /\bcfg!?\s*\([^)]*\b(?:target_os|windows)\b/;
-    close ARGV if eof;
+    BEGIN { $depth = 0 }
+    unless (m{^\s*//}) {
+      my $hit = /\btarget_(?:os|family|vendor)\b|\bconsts::OS\b/;
+      my $cfg = "";
+      if ($depth > 0) { $cfg = $_ }
+      elsif (/\bcfg(?:_attr)?!?\s*\(/) { $cfg = substr($_, $-[0]) }
+      if ($cfg ne "") {
+        $depth += (() = $cfg =~ /\(/g) - (() = $cfg =~ /\)/g);
+        $depth = 0 if $depth < 0;
+        $hit ||= $cfg =~ /\bwindows\b/;
+      }
+      print "platform $ARGV:$.: ", s/^\s+//r if $hit;
+    }
+    if (eof) { close ARGV; $depth = 0 }
   '
 }
 

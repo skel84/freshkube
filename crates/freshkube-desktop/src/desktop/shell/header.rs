@@ -3,11 +3,13 @@
 use super::refresh_tip::{RefreshTip, TooltipView as _};
 use super::*;
 use freshkube_ui::page::{APP_HEADER_CONTROL, APP_HEADER_HEIGHT};
+use freshkube_ui::platform::Platform;
 
 /// Command-K's hint on the search field, as the platform labels it.
-fn search_key() -> String {
-    format!("{}K", freshkube_ui::platform::primary_modifier())
-}
+const SEARCH_KEY: &str = match Platform::current() {
+    Platform::MacOs => "⌘K",
+    Platform::Windows | Platform::Linux => "Ctrl+K",
+};
 
 /// Below this window width, in dp, Search everything shrinks to its icon.
 /// Every page uses the same width: none adds controls to the header.
@@ -364,7 +366,7 @@ impl Pilot {
             .hover(|style| style.bg(p.hover).text_color(p.ink_2))
             .when(narrow, |this| {
                 this.tooltip(|window, cx| {
-                    Tooltip::new(format!("Search everything  {}", search_key())).build(window, cx)
+                    Tooltip::new(format!("Search everything  {SEARCH_KEY}")).build(window, cx)
                 })
             })
             .child(Icon::new(IconName::Search).size(dp(14.)).flex_none())
@@ -381,7 +383,7 @@ impl Pilot {
                         .flex_none()
                         .text_size(dp(11.))
                         .text_color(p.muted)
-                        .child(search_key()),
+                        .child(SEARCH_KEY),
                 )
             })
             .on_click(cx.listener(|view, _, window, cx| view.open_search(window, cx)))
