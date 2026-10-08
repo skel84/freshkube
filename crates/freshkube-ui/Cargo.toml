@@ -34,8 +34,9 @@ windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "settings"] }
 
 [features]
-# UI tests read which of a segment's lines the bar drew (`status::shown`).
-testing = []
+# UI tests read which of a segment's lines the bar drew (`status::shown`),
+# and measure a page against DESIGN.md (`layout_check`).
+testing = ["gpui-kit/test-support"]
 
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
