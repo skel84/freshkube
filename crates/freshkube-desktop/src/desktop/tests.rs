@@ -1781,6 +1781,55 @@ fn the_loading_motion_redraws_neither_the_chrome_nor_the_page(cx: &mut TestAppCo
     assert!(probe::count("table.loading-motion") >= motion + 60);
 }
 
+/// A watch's change flashes its row from the layer beside the page: its
+/// frames redraw neither the chrome nor the page, and stop once it fades.
+#[gpui_kit::test]
+fn the_change_flash_redraws_neither_the_chrome_nor_the_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, window, cx| open_kind(window, cx, "pods"))
+        .unwrap();
+    cx.run_until_parked();
+    // Whatever the first rows asked for draws first.
+    while motion_frame(cx, handle) > 0 {}
+    let resources = cx.update(|cx| view.read(cx).resources.clone());
+    resources.update(cx, |resources, cx| {
+        let changed = resources.restarted(0);
+        resources.deliver(
+            vec![crate::resources::store::ResourceEvent::Upsert(changed)],
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    // The change itself draws the page once.
+    motion_frame(cx, handle);
+    assert_eq!(motion_frame(cx, handle), 0, "the fade asks for no frames");
+    // A timer steps the fade: each step draws the layer, not the page.
+    let flash = probe::count("table.flash-layer");
+    let page = probe::count("resources");
+    let rail = probe::count("chrome.rail");
+    // The steps, and one past the end that clears the last.
+    for _ in 0..=freshkube_ui::motion::FLASH_STEPS {
+        cx.background_executor
+            .advance_clock(freshkube_ui::motion::FLASH_STEP);
+        cx.run_until_parked();
+    }
+    let steps = probe::count("table.flash-layer") - flash;
+    assert!((6..=8).contains(&steps), "{steps} steps drawn");
+    assert_eq!(probe::count("resources"), page);
+    assert_eq!(probe::count("chrome.rail"), rail);
+    // Once the fade ends, nothing steps.
+    let layer = cx
+        .update(|cx| view.read(cx).page_flash(cx))
+        .expect("the flash");
+    cx.read(|cx| assert!(!layer.read(cx).stepping()));
+    assert_eq!(
+        motion_frame(cx, handle),
+        0,
+        "no frames once the flash fades"
+    );
+}
+
 /// The first answer replaces the loading rows, and the motion asks no
 /// more frames.
 #[gpui_kit::test]

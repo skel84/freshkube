@@ -30,6 +30,11 @@ pub const INSTANT: Duration = Duration::ZERO;
 pub const QUICK: Duration = Duration::from_millis(150);
 /// The change flash: a changed row's tint fades out over this long.
 pub const FADE: Duration = Duration::from_millis(1500);
+/// How many steps the change flash fades in: one tint, then a lighter one
+/// each [`FLASH_STEP`], drawn by a timer rather than every frame.
+pub const FLASH_STEPS: u32 = 6;
+/// One step of the change flash's fade: [`FADE`] over [`FLASH_STEPS`].
+pub const FLASH_STEP: Duration = Duration::from_millis(250);
 /// One loading pulse, dim and back: Kit's skeleton cadence.
 pub const PULSE: Duration = Duration::from_secs(2);
 /// One loading shimmer, a band crossing the rows once.
@@ -102,6 +107,17 @@ pub fn shimmer_at(cx: &mut App) -> f32 {
 pub fn fade_left(since: Duration) -> f32 {
     let delta = (since.as_secs_f32() / FADE.as_secs_f32()).min(1.);
     1. - fade_easing(delta)
+}
+
+/// How much of the change flash is left `since` its change, in
+/// [`FLASH_STEPS`] steps: [`fade_left`] at the start of the step it is in,
+/// and 0 from [`FADE`] on.
+pub fn fade_step(since: Duration) -> f32 {
+    let step = (since.as_nanos() / FLASH_STEP.as_nanos()) as u32;
+    if step >= FLASH_STEPS {
+        return 0.;
+    }
+    fade_left(FLASH_STEP * step)
 }
 
 /// Asks the next frame for the view drawing now, unless motion is reduced.

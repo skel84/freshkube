@@ -111,6 +111,20 @@ fn loops_run_on_the_executor_clock(cx: &mut TestAppContext) {
 }
 
 #[test]
+fn a_flash_fades_in_steps() {
+    assert_eq!(FLASH_STEP * FLASH_STEPS, FADE);
+    assert_eq!(fade_step(Duration::ZERO), 1.);
+    assert_eq!(fade_step(FLASH_STEP - Duration::from_millis(1)), 1.);
+    assert_eq!(fade_step(FLASH_STEP), fade_left(FLASH_STEP));
+    assert_eq!(
+        fade_step(FLASH_STEP * 3 + FLASH_STEP / 2),
+        fade_left(FLASH_STEP * 3)
+    );
+    assert!(fade_step(FADE - Duration::from_millis(1)) > 0.);
+    assert_eq!(fade_step(FADE), 0.);
+}
+
+#[test]
 fn a_flash_fades_from_full_to_clear() {
     assert_eq!(fade_left(Duration::ZERO), 1.);
     assert!((fade_left(FADE / 2) - 0.75).abs() < 1e-6);

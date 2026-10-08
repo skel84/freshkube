@@ -74,6 +74,23 @@ impl<K: Clone + Eq> Flashes<K> {
         true
     }
 
+    /// Records a batch of `count` changes at `now` without their keys,
+    /// as one too big to flash: past [`burst`](Self::burst), it counts
+    /// toward the window just as [`changed`](Self::changed) would count it,
+    /// so a caller needn't build keys it can't show.
+    pub fn held_back(&mut self, count: usize, now: Instant) {
+        if count == 0 {
+            return;
+        }
+        self.prune(now);
+        self.recent.push_back((now, count));
+    }
+
+    /// The most changes one batch can bring and still flash.
+    pub fn burst(&self) -> usize {
+        self.burst
+    }
+
     /// The flashes still fading at `now`.
     pub fn live(&self, now: Instant) -> impl Iterator<Item = &Flash<K>> {
         self.live
@@ -146,6 +163,15 @@ mod tests {
         // Once the window has passed, changes are news again.
         assert!(flashes.changed([100], start + FADE * 2));
         assert_eq!(keys(&flashes, start + FADE * 2), [100]);
+    }
+
+    #[test]
+    fn a_batch_held_back_by_its_count_counts_as_its_keys_would() {
+        let start = Instant::now();
+        let mut flashes = Flashes::<u32>::new();
+        flashes.held_back(flashes.burst() + 1, start);
+        assert!(!flashes.changed([100], start + FADE / 2));
+        assert!(flashes.changed([100], start + FADE * 2));
     }
 
     #[test]
