@@ -12,6 +12,7 @@
 mod argo;
 mod build;
 mod conflict;
+mod deployment;
 mod kargo;
 mod observe;
 mod render;
@@ -28,7 +29,8 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use super::argocd::{Application, DestinationMatch, StageNaming};
+use super::argocd::{Application, DestinationMatch, ManagedObject, StageNaming};
+use super::deployments::{Deployment, DeploymentSet};
 use super::digest::Digest;
 use super::github::PullRequest;
 use super::kargo::{Freight, KargoRead};
@@ -70,6 +72,7 @@ pub enum Hop {
     Stage,
     Application,
     Rollout,
+    Deployment,
     Pod,
 }
 
@@ -85,6 +88,7 @@ impl Hop {
             Self::Stage => "Stage",
             Self::Application => "Application",
             Self::Rollout => "Rollout",
+            Self::Deployment => "Deployment",
             Self::Pod => "pods",
         }
     }
@@ -185,6 +189,13 @@ pub struct Evidence {
     pub replica_sets: Source<Vec<ReplicaSet>>,
     /// Pods read for each Rollout, by `namespace/name`.
     pub pods: BTreeMap<String, RolloutPods>,
+    /// The Deployments of the namespaces the change reaches.
+    pub deployments: Source<Vec<Deployment>>,
+    /// The ReplicaSets those namespaces' Deployments own.
+    pub deployment_sets: Source<Vec<DeploymentSet>>,
+    /// Pods read for each Deployment, by `namespace/name`: those of the
+    /// current ReplicaSet's pod-template hash.
+    pub deployment_pods: BTreeMap<String, RolloutPods>,
     /// Pods read in an Application's destination namespace, by the
     /// Application's `namespace/name`, for workloads that aren't Rollouts.
     pub namespace_pods: BTreeMap<String, Source<Vec<RunningImage>>>,
@@ -445,6 +456,41 @@ fn build_freight(
 /// Application deploys to the environment cluster. Used by the collector so
 /// pods are read only for the change in question.
 pub fn candidate_rollouts(evidence: &Evidence) -> Vec<WantedRollout> {
+    candidate_workloads(evidence, ControllerKind::Rollout)
+}
+
+/// The Deployments whose pods should be read, as [`candidate_rollouts`] finds
+/// Rollouts.
+pub fn candidate_deployments(evidence: &Evidence) -> Vec<WantedRollout> {
+    candidate_workloads(evidence, ControllerKind::Deployment)
+}
+
+/// The workload controllers an Application manages that join pods by owner.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ControllerKind {
+    Rollout,
+    Deployment,
+}
+
+impl ControllerKind {
+    fn is(self, object: &ManagedObject) -> bool {
+        match self {
+            Self::Rollout => object.kind == "Rollout",
+            // A namesake in another group is another object.
+            Self::Deployment => object.group == "apps" && object.kind == "Deployment",
+        }
+    }
+}
+
+/// Whether Argo CD lists a controller of either kind among the
+/// Application's objects.
+fn manages_controller(app: &Application) -> bool {
+    app.managed
+        .iter()
+        .any(|m| ControllerKind::Rollout.is(m) || ControllerKind::Deployment.is(m))
+}
+
+fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<WantedRollout> {
     let (Some(builds), Some(freight), Some(stages), Some(apps)) = (
         evidence.builds.read(),
         evidence.kargo.freight.read(),
@@ -464,7 +510,7 @@ pub fn candidate_rollouts(evidence: &Evidence) -> Vec<WantedRollout> {
                     .is_some()
                     && evidence.deploys_to_environment(&id(&app.namespace, &app.name))
             }) {
-                for managed in app.managed.iter().filter(|m| m.kind == "Rollout") {
+                for managed in app.managed.iter().filter(|m| controller.is(m)) {
                     let Some(namespace) = rollout_namespace(app, managed) else {
                         continue;
                     };
@@ -503,7 +549,7 @@ pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
             for app in apps.iter().filter(|app| {
                 app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
                     .is_some()
-                    && !app.managed.iter().any(|m| m.kind == "Rollout")
+                    && !manages_controller(app)
                     && evidence.deploys_to_environment(&id(&app.namespace, &app.name))
             }) {
                 let Some(namespace) = app.destination_namespace.clone() else {

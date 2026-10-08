@@ -3,10 +3,11 @@ use crate::delivery::digest::{Digest, repository, tag};
 use crate::delivery::kargo::Freight;
 use crate::delivery::observation::{Fact, Observation};
 use crate::delivery::pods::RunningImage;
-use crate::delivery::rollouts::{AnalysisRun, ReplicaSet, Rollout};
+use crate::delivery::rollouts::{AnalysisRun, Container, ReplicaSet, Rollout};
 use crate::delivery::source::{Truncation, cap_note};
 
 use super::argo::{not_the_environment, rollout_namespace};
+use super::deployment::deployment_links;
 use super::observe::{
     freight_side, manages, pods_running, pods_running_other, revision_tie, rollout_hash,
     rollout_state as rollout_seen, summary_entries, summary_images,
@@ -20,6 +21,13 @@ pub(super) fn rollout_links(
 ) -> Vec<Link> {
     let app_id = id(&app.namespace, &app.name);
     let managed: Vec<_> = app.managed.iter().filter(|m| m.kind == "Rollout").collect();
+    let deployments = app
+        .managed
+        .iter()
+        .any(|m| m.group == "apps" && m.kind == "Deployment");
+    if managed.is_empty() && deployments {
+        return deployment_links(evidence, freight, app);
+    }
     if managed.is_empty() {
         return vec![workload_pod_link(evidence, freight, app, &app_id)];
     }
@@ -86,7 +94,7 @@ pub(super) fn rollout_links(
                     .any(|image| image.digest.as_ref() == Some(digest))
             });
         let state = rollout_state(rollout, evidence.analysis_runs.read());
-        let mut seen = vec![manages(app, rollout)];
+        let mut seen = vec![manages(app, "Rollout", &rollout.name)];
         seen.extend(rollout_seen(rollout, pinned.as_ref()));
         if let Some(digest) = &pinned {
             seen.extend(freight_side(freight, &Key::Digest(digest.clone())));
@@ -95,7 +103,7 @@ pub(super) fn rollout_links(
         links.push(match pinned {
             Some(digest) => pinned_link(
                 app,
-                rollout,
+                Controller::of(rollout),
                 rollout_id.clone(),
                 digest,
                 &pods,
@@ -117,13 +125,32 @@ pub(super) fn rollout_links(
     links
 }
 
-/// The link to a Rollout whose spec pins the Freight's digest. The pin is
-/// declared; the link is Confirmed only when Argo CD's image summary, which
-/// it compiles from the live pods, lists the digest for the Application, and
-/// the Rollout's own current pods report it (`pods`, its link to them).
-fn pinned_link(
+/// What a pinned link needs to know of the workload controller it names: its
+/// kind, the hop it is, and the images its pod template names.
+pub(super) struct Controller<'a> {
+    pub kind: &'static str,
+    pub hop: Hop,
+    pub images: &'a [String],
+}
+
+impl<'a> Controller<'a> {
+    fn of(rollout: &'a Rollout) -> Self {
+        Self {
+            kind: "Rollout",
+            hop: Hop::Rollout,
+            images: &rollout.images,
+        }
+    }
+}
+
+/// The link to a workload controller whose spec pins the Freight's digest.
+/// The pin is declared; the link is Confirmed only when Argo CD's image
+/// summary, which it compiles from the live pods, lists the digest for the
+/// Application, and the controller's own current pods report it (`pods`, its
+/// link to them).
+pub(super) fn pinned_link(
     app: &Application,
-    rollout: &Rollout,
+    controller: Controller<'_>,
     subject: String,
     digest: Digest,
     pods: &Link,
@@ -132,7 +159,7 @@ fn pinned_link(
 ) -> Link {
     // Argo CD lists the pods' images as their spec names them, so the entry
     // names the pin's repository too; the digest under another is not it.
-    let repo = rollout
+    let repo = controller
         .images
         .iter()
         .find(|image| Digest::from_reference(image).as_ref() == Some(&digest))
@@ -173,24 +200,26 @@ fn pinned_link(
     if missing.is_empty() {
         Link::new(
             Hop::Application,
-            Hop::Rollout,
+            controller.hop,
             subject,
             Key::Digest(digest),
             Confidence::Confirmed,
             format!(
-                "the Rollout's spec pins the Freight's digest, Argo CD's image summary lists it, and the Rollout's current pods run it; {state}"
+                "the {kind}'s spec pins the Freight's digest, Argo CD's image summary lists it, and the {kind}'s current pods run it; {state}",
+                kind = controller.kind
             ),
         )
         .observed(seen)
     } else {
         Link::new(
             Hop::Application,
-            Hop::Rollout,
+            controller.hop,
             subject,
             Key::Digest(digest),
             Confidence::Claimed,
             format!(
-                "the Rollout's spec pins the Freight's digest, declared only; {}; {state}",
+                "the {}'s spec pins the Freight's digest, declared only; {}; {state}",
+                controller.kind,
                 missing.join("; ")
             ),
         )
@@ -200,7 +229,7 @@ fn pinned_link(
 
 /// An image as Argo CD's summary lists it, for a reason: its short digest,
 /// else its tag.
-fn summary_name(image: &str) -> String {
+pub(super) fn summary_name(image: &str) -> String {
     match Digest::from_reference(image) {
         Some(digest) => digest.short(),
         None => tag(image).map_or_else(|| image.to_owned(), |tag| format!("tag {tag}")),
@@ -263,8 +292,15 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
             Err(_) => true,
         })
         .collect();
-    let containers = pinned_containers(rollout, freight, &tied);
-    let mut link = judge_revision(subject, &tied, &containers, read.pods.capped(), freight);
+    let containers = pinned_containers(&rollout.containers, freight, &tied);
+    let mut link = judge_revision(
+        Hop::Rollout,
+        subject,
+        &tied,
+        &containers,
+        read.pods.capped(),
+        freight,
+    );
     let which = which_pods(evidence, rollout, &read.hash, &tie, pods.len() - tied.len());
     match &tie {
         Ok(set) if link.confidence == Confidence::Confirmed => {
@@ -316,8 +352,8 @@ fn current_set<'a>(
 /// The containers of `pods` that run the pin's image: those of the Freight's
 /// repository, or named as the Rollout's container of that repository is.
 /// A sidecar is neither, so what it runs doesn't count.
-fn pinned_containers<'a>(
-    rollout: &Rollout,
+pub(super) fn pinned_containers<'a>(
+    template: &[Container],
     freight: &Freight,
     pods: &[&'a RunningImage],
 ) -> Vec<&'a RunningImage> {
@@ -326,8 +362,7 @@ fn pinned_containers<'a>(
         .iter()
         .map(|image| repository(&image.repo_url))
         .collect();
-    let names: Vec<&str> = rollout
-        .containers
+    let names: Vec<&str> = template
         .iter()
         .filter(|container| repos.contains(&repository(&container.image)))
         .map(|container| container.name.as_str())
@@ -345,7 +380,7 @@ fn pinned_containers<'a>(
 }
 
 /// The containers that report one of the Freight's digests, ready ones first.
-fn running<'a>(
+pub(super) fn running<'a>(
     containers: &[&'a RunningImage],
     freight: &Freight,
 ) -> Vec<(&'a RunningImage, &'a Digest)> {
@@ -367,7 +402,8 @@ fn running<'a>(
 /// What the current revision's pods run of the pin's image. Confirmed needs
 /// a ready container that reports the Freight's digest and none that
 /// reports another.
-fn judge_revision(
+pub(super) fn judge_revision(
+    from: Hop,
     subject: String,
     pods: &[&RunningImage],
     containers: &[&RunningImage],
@@ -375,14 +411,7 @@ fn judge_revision(
     freight: &Freight,
 ) -> Link {
     let link = |confidence, key, reason: String| {
-        Link::new(
-            Hop::Rollout,
-            Hop::Pod,
-            subject.clone(),
-            key,
-            confidence,
-            reason,
-        )
+        Link::new(from, Hop::Pod, subject.clone(), key, confidence, reason)
     };
     let matching = running(containers, freight);
     let other: Vec<(&RunningImage, Option<Digest>)> = containers
