@@ -26,8 +26,8 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
     let new_access = AccessIdentity::new(AccessSessionId::new(), after);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.access = Some(old_access);
-            view.access_configuration = Some(before);
+            view.registry.active_mut().access = Some(old_access);
+            view.registry.active_mut().access_configuration = Some(before);
             let observation = view
                 .registry
                 .active()
@@ -80,7 +80,7 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 window,
                 cx,
             );
-            assert!(view.access == Some(new_access));
+            assert!(view.registry.active().access == Some(new_access));
             assert_ne!(
                 view.registry
                     .active()
@@ -91,7 +91,7 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                     .identity(),
                 &observation
             );
-            assert_eq!(view.access_configuration, Some(after));
+            assert_eq!(view.registry.active().access_configuration, Some(after));
             assert!(forward.read(cx).running());
             assert_eq!(forward.read(cx).local_port, port);
             assert_eq!(forward.read(cx).port_of(&pod), Some(8080));
@@ -109,7 +109,7 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 window,
                 cx,
             );
-            assert!(view.access == Some(new_access));
+            assert!(view.registry.active().access == Some(new_access));
             assert!(view.overview.error().is_none());
 
             let observation = view
@@ -149,7 +149,7 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
             );
             assert!(view.overview.is_stale());
             assert!(view.overview.data().is_some());
-            assert!(view.access == Some(new_access));
+            assert!(view.registry.active().access == Some(new_access));
             assert_eq!(
                 view.registry
                     .active()
@@ -200,8 +200,8 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     view.update(cx, |view, _| {
         // The replacement fails before connecting: no real cluster is read.
         view.fixture = false;
-        view.access = Some(access);
-        view.access_configuration = Some(before);
+        view.registry.active_mut().access = Some(access);
+        view.registry.active_mut().access_configuration = Some(before);
     });
     let deliver = |window: &mut Window, cx: &mut App| {
         view.update(cx, |view, cx| {
@@ -225,7 +225,7 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     cx.run_until_parked();
     assert!(!cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
-        cx.read(|cx| view.read(cx).access_configuration),
+        cx.read(|cx| view.read(cx).registry.active().access_configuration),
         Some(before)
     );
     step(cx, &deliver);
@@ -233,13 +233,15 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
         !cx.has_pending_prompt(),
         "an automatic refresh must not repeat a cancelled prompt"
     );
-    view.update(cx, |view, _| view.prompted_access = None);
+    view.update(cx, |view, _| {
+        view.registry.active_mut().prompted_access = None
+    });
     step(cx, &deliver);
     cx.simulate_prompt_answer("End the shell");
     cx.run_until_parked();
     assert!(cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
-        cx.read(|cx| view.read(cx).access_configuration),
+        cx.read(|cx| view.read(cx).registry.active().access_configuration),
         Some(after)
     );
     assert!(cx.read(|cx| view.read(cx).overview.data().is_none()));

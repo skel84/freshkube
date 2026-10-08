@@ -451,13 +451,13 @@ impl Pilot {
         }
         let replacement = (report.revision, None);
         if !crate::resources::shell::running_anywhere(cx).is_empty()
-            && self.prompted_access == Some(replacement)
+            && self.registry.active().prompted_access == Some(replacement)
         {
             return;
         }
-        self.prompted_access = Some(replacement);
+        self.registry.active_mut().prompted_access = Some(replacement);
         self.unless_shell(window, cx, move |view, window, cx| {
-            if view.prompted_access != Some(replacement) {
+            if view.registry.active().prompted_access != Some(replacement) {
                 return;
             }
             let Some(kube) = view.kubernetes_only.as_mut() else {

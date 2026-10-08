@@ -73,11 +73,11 @@ impl Pilot {
     }
 
     pub(super) fn stop_summary(&mut self) {
-        self.registry.active_mut().summary_job = None;
-        self.registry.active_mut().summary_task = None;
-        self.registry.active_mut().summary_session = None;
-        self.registry.active_mut().summary_epoch =
-            self.registry.active().summary_epoch.wrapping_add(1);
+        let session = self.registry.active_mut();
+        session.summary_job = None;
+        session.summary_task = None;
+        session.summary_session = None;
+        self.registry.advance_summary_epoch();
     }
 
     /// Manual Refresh relists every source. The automatic Talos cycle calls
@@ -107,11 +107,10 @@ impl Pilot {
             return;
         }
         self.stop_summary();
-        let identity =
-            SessionIdentity::new(source.id.clone(), self.registry.active().summary_epoch);
+        let identity = SessionIdentity::new(source.id.clone(), self.registry.summary_epoch());
         let session = Session::new(identity);
         let target = Target {
-            epoch: self.registry.active().summary_epoch,
+            epoch: self.registry.summary_epoch(),
             context: source.context.clone(),
             node: String::new(),
             address: source.id,
@@ -241,8 +240,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let epoch = self.registry.summary_epoch();
         let current = self.registry.active_mut();
-        let epoch = current.summary_epoch;
         let Some(session) = &mut current.summary_session else {
             return;
         };
