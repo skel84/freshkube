@@ -58,14 +58,6 @@ pub fn fit(width: f32, page: f32) -> Fit {
     }
 }
 
-/// A remembered width, or [`WIDTH`]; never narrower than [`MIN_WIDTH`].
-pub fn start_width(width: Option<f32>) -> f32 {
-    match width {
-        Some(width) if width.is_finite() => width.max(MIN_WIDTH),
-        _ => WIDTH,
-    }
-}
-
 /// What a drag of the drawer's left edge carries.
 #[derive(Clone)]
 pub struct DrawerDrag;
@@ -190,9 +182,10 @@ mod tests {
 
     #[test]
     fn a_bad_width_starts_at_the_default() {
-        assert_eq!(start_width(None), WIDTH);
-        assert_eq!(start_width(Some(f32::NAN)), WIDTH);
-        assert_eq!(start_width(Some(120.)), MIN_WIDTH);
+        let start = |width| crate::ui::start_width(width, WIDTH, MIN_WIDTH);
+        assert_eq!(start(None), WIDTH);
+        assert_eq!(start(Some(f32::NAN)), WIDTH);
+        assert_eq!(start(Some(120.)), MIN_WIDTH);
         assert_eq!(fit(f32::INFINITY, 1008.).width, WIDTH);
     }
 }
