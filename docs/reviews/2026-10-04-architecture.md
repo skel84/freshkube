@@ -2,6 +2,8 @@
 
 > Historical review supplied on 4 October 2026, against main `1836c42`. Its branch status, open questions and test gaps describe that revision, not current main. Operations/quorum and watch have since landed, and the user selected remaining etcd tolerance. Follow the [current roadmap](../ROADMAP.md#architecture-review-follow-up) and [architecture index #7](https://github.com/skel84/freshkube/issues/7) for decisions, verified completion and outstanding work. The review text below is preserved unchanged.
 
+> Every workspace crate now sets `publish = false`, which closes the last small item below.
+
 > #24's compatibility decision (since removed in #371) supersedes this review's suggested `AsyncState` deletion: contributor guidance uses the current desktop types, while core kept its exported legacy API until #371 removed it.
 
 An independent check of the earlier architecture review, made on 2026-10-04 against main at `1836c42` and the active branches. It is a source review: no files were changed, no tests were run locally, nothing was measured and no cluster was touched.
