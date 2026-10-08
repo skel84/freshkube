@@ -380,6 +380,7 @@ impl TableSource for Pilot {
                     vec![menu::MenuAction::new(label, ToggleHealthyNodes)],
                     &focus,
                     |_| true,
+                    window,
                     cx,
                 )
             })

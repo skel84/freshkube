@@ -365,7 +365,7 @@ impl SettingsPage {
             "Add",
             editable,
             "Add a cluster to the workspace",
-            &AddCluster,
+            AddCluster,
             |this, window, cx| this.open_form(None, window, cx),
             cx,
         );
@@ -374,7 +374,7 @@ impl SettingsPage {
             "Edit",
             editable && selected,
             "Change the selected cluster",
-            &EditCluster,
+            EditCluster,
             |this, window, cx| this.edit_selected(window, cx),
             cx,
         );
@@ -383,7 +383,7 @@ impl SettingsPage {
             "Remove",
             editable && selected,
             "Remove the selected cluster from the workspace",
-            &RemoveCluster,
+            RemoveCluster,
             |this, window, cx| this.ask_remove_selected(window, cx),
             cx,
         );
@@ -392,7 +392,7 @@ impl SettingsPage {
             "Move up",
             editable && at.is_some_and(|at| at > 0),
             "Move the selected cluster up",
-            &MoveClusterUp,
+            MoveClusterUp,
             |this, _, cx| this.move_selected(-1, cx),
             cx,
         );
@@ -401,7 +401,7 @@ impl SettingsPage {
             "Move down",
             editable && at.is_some_and(|at| at < last),
             "Move the selected cluster down",
-            &MoveClusterDown,
+            MoveClusterDown,
             |this, _, cx| this.move_selected(1, cx),
             cx,
         );
@@ -412,7 +412,7 @@ impl SettingsPage {
             "Reload",
             reloadable,
             "Read workspace.json again",
-            &ReloadWorkspace,
+            ReloadWorkspace,
             |this, _, cx| this.reload(cx),
             cx,
         );
@@ -435,16 +435,11 @@ impl SettingsPage {
         label: &'static str,
         enabled: bool,
         tooltip: &'static str,
-        action: &dyn Action,
+        action: impl Action,
         run: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
         cx: &Context<Self>,
     ) -> (Button, page::MenuItems) {
         let handler = page::handler(cx, run);
-        let fold = if enabled {
-            page::item(label, handler.clone())
-        } else {
-            page::disabled_item(label)
-        };
         let tooltip = if !self.editable() {
             self.why_not_editable().to_owned()
         } else if enabled {
@@ -458,8 +453,12 @@ impl SettingsPage {
             .h(dp(ui::CONTROL_HEIGHT))
             .label(label)
             .disabled(!enabled)
-            .tooltip_with_action(tooltip, action, Some(CONTEXT))
+            .tooltip_with_action(tooltip, &action, Some(CONTEXT))
             .on_click(move |_, window, cx| handler(window, cx));
+        let fold = page::action_entry(
+            menu::MenuAction::new(label, action).enabled(enabled),
+            &self.focus,
+        );
         (button, fold)
     }
 }

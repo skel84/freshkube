@@ -105,7 +105,10 @@ impl MonitoringPage {
         ))
         .changed(every.map(|_| format!("Auto-refresh {}", refresh_label(every)).into()));
         header
-            .foldable(button, page::item("Refresh", refresh))
+            .foldable(
+                button,
+                page::action_item("Refresh", page::Refresh, &self.focus),
+            )
             .foldable(self.render_auto_refresh(items, cx), auto_refresh)
             .meta(self.render_meta(cx))
             .render(window, cx)

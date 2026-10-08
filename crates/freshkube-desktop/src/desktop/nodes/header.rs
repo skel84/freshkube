@@ -114,7 +114,10 @@ impl Pilot {
                 move |_, window, cx| refresh(window, cx)
             });
         header
-            .foldable(button, page::item("Refresh", refresh))
+            .foldable(
+                button,
+                page::action_item("Refresh", page::Refresh, &self.node_focus),
+            )
             .render(window, cx)
     }
 }

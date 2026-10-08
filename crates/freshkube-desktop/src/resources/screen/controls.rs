@@ -80,9 +80,14 @@ impl ResourcesScreen {
                 let refresh = refresh.clone();
                 move |_, window, cx| refresh(window, cx)
             });
-        header
-            .foldable(button, page::item("Refresh", refresh))
-            .render(window, cx)
+        // ⌘R reads this list again only on the Resources page; the node
+        // pane's pods list is the Nodes page's, which ⌘R refreshes.
+        let fold = if self.embedded {
+            page::item("Refresh", refresh)
+        } else {
+            page::action_item("Refresh", page::Refresh, &self.focus)
+        };
+        header.foldable(button, fold).render(window, cx)
     }
 
     /// The namespace picker's choices as menu items, its folded form: each

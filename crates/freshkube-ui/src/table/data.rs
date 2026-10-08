@@ -730,7 +730,7 @@ fn render_line<S: TableSource>(
                         view.selected_key() == Some(&key) && view.line_of(&key).is_some()
                     })
                 };
-                crate::menu::actions(menu, actions, &focus, live, cx)
+                crate::menu::actions(menu, actions, &focus, live, window, cx)
             })
             .into_any_element(),
         None => element.into_any_element(),

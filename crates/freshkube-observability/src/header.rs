@@ -111,11 +111,10 @@ impl ObservabilityPage {
                 let refresh = refresh.clone();
                 move |_, window, cx| refresh(window, cx)
             });
-        let folded_refresh = if enabled {
-            page::item("Refresh", refresh)
-        } else {
-            page::disabled_item("Refresh")
-        };
+        let folded_refresh = page::action_entry(
+            freshkube_ui::menu::MenuAction::new("Refresh", page::Refresh).enabled(enabled),
+            &self.focus,
+        );
         header
             .foldable(time, range)
             .foldable(button, folded_refresh)

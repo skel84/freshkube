@@ -4,7 +4,7 @@ use gpui_kit::{AnyWindowHandle, AppContext, Bounds, Entity, Pixels, TestAppConte
 use tokio::runtime::Runtime;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use freshkube_core::resources::ResourceKind;
@@ -2308,8 +2308,13 @@ fn the_folded_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
             names.iter().position(|name| name == "payments").unwrap() + 1
         })
         .unwrap();
-    // Refresh lists again, as its button does.
-    let before = screen.read_with(cx, |screen, _| screen.usage_generation);
+    // Refresh runs ⌘R's action, which the shell handles; mounted alone,
+    // the screen has no shell, so the app catches it.
+    let refreshed = Rc::new(Cell::new(0));
+    let count = refreshed.clone();
+    cx.update(|cx| {
+        cx.on_action(move |_: &freshkube_ui::page::Refresh, _| count.set(count.get() + 1));
+    });
     cx.update_window(handle, |_, window, cx| {
         window.click("resource-more", cx);
         window.render_frame(cx);
@@ -2318,10 +2323,8 @@ fn the_folded_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
         window.render_frame(cx);
     })
     .unwrap();
-    assert_ne!(
-        screen.read_with(cx, |screen, _| screen.usage_generation),
-        before
-    );
+    cx.run_until_parked();
+    assert_eq!(refreshed.get(), 1);
     // A namespace from the menu narrows the list as the picker does.
     cx.update_window(handle, |_, window, cx| {
         window.click("resource-more", cx);
