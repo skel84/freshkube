@@ -23,7 +23,7 @@ pub(crate) use operations::OperationsScreen;
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
-pub(crate) use workloads::{WorkloadData, WorkloadsScreen};
+pub(crate) use workloads::{Summary as HealthSummary, WorkloadData, WorkloadsScreen};
 
 use std::{future::Future, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 

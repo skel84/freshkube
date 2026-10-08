@@ -303,3 +303,37 @@ async fn kubernetes_only_health_without_a_context_asks_for_one(cx: &mut TestAppC
     })
     .await;
 }
+
+/// Health waits only while a summary session reads. A Talos overview that
+/// answered without one, as one with no client does, keeps the gate's state
+/// instead of an endless wait.
+#[gpui_kit::test]
+fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture(), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            // The example overview has no client, as an unreachable Talos
+            // endpoint gives: outside example mode nothing can read the
+            // summary.
+            pilot.fixture = false;
+            pilot.stop_summary();
+            pilot.summary_health = None;
+            pilot.selected_node = None;
+            pilot.nodes.clear();
+            pilot.push_source(window, cx);
+        })
+    })
+    .unwrap();
+    show_page(cx, handle, &view, Page::Health);
+    assert_eq!(state(cx, handle, "no session"), [false, false, true]);
+
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.fixture = true;
+            pilot.fixture_hold = true;
+            pilot.ensure_summary(window, cx);
+        })
+    })
+    .unwrap();
+    assert_eq!(state(cx, handle, "a held session"), [true, false, false]);
+}

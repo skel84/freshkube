@@ -119,6 +119,7 @@ impl Pilot {
             fixture_clock: cx.background_executor().now(),
             applied_revision: 0,
         });
+        self.sync_unread_health(cx);
         if matches!(source.access, KubeAccess::Example) {
             if self.fixture_hold {
                 return;

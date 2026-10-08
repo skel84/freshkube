@@ -247,6 +247,7 @@ impl Pilot {
         self.overview = Snapshot::default();
         self.nodes.clear();
         self.selected_node = None;
+        self.sync_unread_health(cx);
         self.rebuild_joined_nodes(cx);
         self.push_node_rows(cx);
         self.prepare_context_display(window, cx);

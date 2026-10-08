@@ -25,8 +25,8 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Reading, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate,
-    mono, partial_notice, reading, refresh_control, retry_button, segment, waiting,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, mono,
+    partial_notice, refresh_control, retry_button, segment, waiting,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -56,6 +56,20 @@ actions!(
         ClearFilter
     ]
 );
+
+/// Where the shell's Kubernetes summary stands while Health has none.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Summary {
+    /// Nothing reads it, as when the Talos overview gave no client: Health
+    /// shows `gate()`'s states.
+    #[default]
+    Unread,
+    /// A session runs, or Kubernetes-only mode reads the kubeconfig or
+    /// connects: Health waits for its first answer.
+    Reading,
+    /// Kubernetes-only mode with no context applied: nothing to read.
+    NoContext,
+}
 
 /// What a refresh loads: the snapshot plus any resource lists that failed.
 #[derive(Clone, Debug)]
@@ -198,9 +212,8 @@ fn age(created: Option<DateTime<Utc>>) -> String {
 pub(crate) struct WorkloadsScreen {
     _runtime: Handle,
     summary_managed: bool,
-    /// Nothing reads the summary: Kubernetes-only mode with no context
-    /// applied. Without it, a page with no source waits for the summary.
-    idle: bool,
+    /// Where the shell's summary stands, for while Health has none.
+    summary: Summary,
     source: Option<ScreenSource>,
     loader: Loader<Arc<WorkloadData>>,
     selected: Option<ItemKey>,
@@ -281,7 +294,7 @@ impl ScreenPanel for WorkloadsScreen {
         Self {
             _runtime: runtime,
             summary_managed: false,
-            idle: false,
+            summary: Summary::default(),
             source: None,
             loader: Loader::default(),
             selected: None,
@@ -393,10 +406,10 @@ impl WorkloadsScreen {
         cx.notify();
     }
 
-    /// Whether anything reads the summary, as the shell knows it.
-    pub(crate) fn set_idle(&mut self, idle: bool, cx: &mut Context<Self>) {
-        if self.idle != idle {
-            self.idle = idle;
+    /// Where the shell's summary stands.
+    pub(crate) fn set_summary(&mut self, summary: Summary, cx: &mut Context<Self>) {
+        if self.summary != summary {
+            self.summary = summary;
             cx.notify();
         }
     }
