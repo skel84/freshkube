@@ -44,7 +44,7 @@ What desktop apps share, and new screens follow:
 - **Space belongs to panes.** Splits are resizable and remembered; empty space sits inside a pane, not between cards.
 - **Every action has a key,** and ⌘K reaches everything.
 
-What differs, handled by one platform module and never by a screen:
+What differs, handled by [one platform module](#the-platform-module-and-the-app-menu) and never by a screen:
 
 | Concern | macOS | Windows | Linux |
 | --- | --- | --- | --- |
@@ -109,7 +109,7 @@ The user settled the open questions on these changes on 5 October 2026:
 - **Location tabs.** The header's full height less its hairline, so the selected tab's 2 px `accent` underline sits on the hairline, as today. Labels at 13, `ink` when selected and `muted` otherwise, 10 dp at the sides, 2 dp apart. Under 1120 dp each tab is its 16 dp icon in a 34 dp tab, with the label in the tooltip; under 680 dp only the shown area's tab stays.
 - **Search everything.** A 28 dp field, 240 dp wide, 8 px radius, `surface` with a `line` border: 10 dp in, the 14 dp search icon, 8 dp, “Search everything” at 12.5 in `muted`, then ⌘K at 11 at its right. Under 1180 dp it is a 28 dp square with the icon alone and “Search everything ⌘K” in the tooltip.
 - **Refresh, appearance and Settings.** Ghost icon buttons at a toolbar's 24 dp (`ui::CONTROL_HEIGHT`), centred in the row. Refresh sits in a 28 dp slot that its 28 dp countdown ring fills, so the ring keeps 2 dp clear of the button. Under 680 dp only Settings and Search stay, as now.
-- **macOS window controls.** The traffic lights don't scale with the text size, so they are placed in points, not dp. Their 12 pt circles are centred on the header's height less its hairline at every text size: the shell moves them whenever the text size changes, since a fixed position centres them at only one size (at 52 dp they sat 2.5 pt low at 13 and 11.5 pt high at 20). The close button starts 15 pt from the window's left edge, which is the 15.5 pt left above and below it at 13 (even padding); the zoom button ends at 67 pt, and the header's content starts 13 pt after it, at 80 pt (`page::TRAFFIC_LIGHT_INSET`, in points). Windows' trailing caption buttons and Linux's decorations are [#244](https://github.com/skel84/freshkube/issues/244) item 3's.
+- **macOS window controls.** The traffic lights don't scale with the text size, so they are placed in points, not dp. Their 12 pt circles are centred on the header's height less its hairline at every text size: the shell moves them whenever the text size changes, since a fixed position centres them at only one size (at 52 dp they sat 2.5 pt low at 13 and 11.5 pt high at 20). The close button starts 15 pt from the window's left edge, which is the 15.5 pt left above and below it at 13 (even padding); the zoom button ends at 67 pt, and the header's content starts 13 pt after it, at 80 pt (`page::TRAFFIC_LIGHT_INSET`, in points). Windows' trailing caption buttons and Linux's decorations are [the platform module's](#the-platform-module-and-the-app-menu).
 - **Text size 20.** Every size above is dp, so the header is 68 px high with 43 px controls and the lights centred in it; only the 80 pt inset stays put. A 1280 window is 832 dp wide at 20: the tabs are icons and Search everything an icon.
 - **760 × 560.** At 13, 760 dp: icon tabs, the Search icon, Refresh, appearance and Settings. At 20, 494 dp: the switcher capped at 180 dp, the shown area's tab, Search's icon and Settings. The page keeps 8 dp more than before in both.
 - **Cost.** The header stays one of the shell's cached parts (`desktop/shell/chrome.rs`); moving the lights is a call on a text size change, not in render.
@@ -157,7 +157,7 @@ Rejected: *one `splits` key holding every size*, since an earlier build would lo
 
 ### Menus show their keys
 
-[#244](https://github.com/skel84/freshkube/issues/244) item 4, settled on 8 October 2026. Every menu entry that runs a command shows the command's key in the platform's label, as the row menu has since change 10 (`⇧X` on macOS, `Shift+X` on Windows and Linux; `⌘R`, `Ctrl+R`). The entry, the toolbar's button and the key run the same action, so the three can't drift: a key bound to the action shows in every menu that offers it, and a menu has no key the keymap doesn't bind. Every menu is a Kit `PopupMenu` drawn by the app; the macOS menu bar is [#244](https://github.com/skel84/freshkube/issues/244) item 3's.
+[#244](https://github.com/skel84/freshkube/issues/244) item 4, settled on 8 October 2026. Every menu entry that runs a command shows the command's key in the platform's label, as the row menu has since change 10 (`⇧X` on macOS, `Shift+X` on Windows and Linux; `⌘R`, `Ctrl+R`). The entry, the toolbar's button and the key run the same action, so the three can't drift: a key bound to the action shows in every menu that offers it, and a menu has no key the keymap doesn't bind. Every menu is a Kit `PopupMenu` drawn by the app; the macOS menu bar, and the menu button that stands for it elsewhere, show the same keys from the keymap ([The platform module and the app menu](#the-platform-module-and-the-app-menu)).
 
 The menus today, and what changes:
 
@@ -186,6 +186,49 @@ The rules:
 - **Cost.** Menus are built when they open, from the actions and the bindings, and kept while open; nothing is derived in a page's render.
 
 Rejected: *keys on the pickers' values*, since a value is a choice and a key per value would need a binding per namespace or column; *a context menu on every card and chart*, since cards act through their links and charts have no command to run; *keys typed into labels* (`Close  ⌘W`), since they'd drift from the keymap and show the wrong platform's form.
+
+### The platform module and the app menu
+
+[#244](https://github.com/skel84/freshkube/issues/244) item 3, settled on 9 October 2026. `freshkube_ui::platform` is the one place that knows which platform the app runs on. The header, maintenance mode's title bar, the window's options and the app's keymap ask it what to draw, where and with which keys; no page, screen or component tests `target_os`. On macOS nothing on screen moves: the module takes over what the header, `desktop/mod.rs` and `ui::modifier` decide today. Windows and Linux gain the menu button.
+
+What the module answers:
+
+| Question | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| `header_insets(window)`: the header's leading and trailing room | 80 pt leading for the traffic lights (`TRAFFIC_LIGHT_INSET`), 12 dp trailing | 12 dp leading; trailing, Kit's three caption buttons, each 34 px wide and as high as the header, which Kit's `TitleBar` draws after the header's content | 12 dp leading, 12 dp trailing; with client-side decorations, Kit's caption buttons as on Windows |
+| `place_window_controls(window, text_size)` | Moves the traffic lights to the header's centre (today's `place_traffic_lights`) | Nothing: Kit's buttons fill the header's height | Nothing |
+| `titlebar_options(title, text_size)` | Transparent title bar, lights placed for the text size | Kit's | Kit's |
+| `app_menu()` | `AppMenu::Bar`: the global menu bar | `AppMenu::Button`: a menu button, first in the header | `AppMenu::Button` |
+| `menu_button(…)` | None | A 24 dp ghost icon button (the menu icon), 8 dp before the context switcher, tooltip "Menu" with its key | The same |
+| `primary_modifier()` | `⌘` | `Ctrl+` | `Ctrl+` |
+| `bind_keys(cx)`: keys only one platform has | ⌘, Settings, ⌘H Hide, ⌥⌘H Hide others, ⌘M Minimize; ⌘W Close tab | F10 opens the menu button's menu; Ctrl+Shift+W Close tab | The same as Windows |
+
+On Linux the desktop draws its own title bar over the window unless it asks for client-side decorations (`window.window_decorations()`), and the header is then a toolbar under it with nothing to clear. Settings has no key off macOS, since Ctrl+, is the dock's previous tab there. Tests ask the module about each platform through `platform::Platform`, so a run on macOS checks the Windows and Linux answers too; only Kit's caption buttons stay untested off their platform.
+
+**The menus.** One list of menus (`desktop/app_menu.rs`), built from the app's actions, installed with `App::set_menus` at start. macOS draws it as the menu bar; elsewhere the menu button opens it as a Kit `PopupMenu` with each menu a submenu, built by [the shared menu builder](#menus-show-their-keys) on the window's focus. Entries macOS supplies itself (Services, Hide, Hide others, Show all, Minimize, Zoom) come from `platform::system_items` and are left out elsewhere, where the desktop's own controls do the same. Maintenance mode installs the same list; what it doesn't handle is greyed.
+
+| Menu | Entries |
+| --- | --- |
+| Freshkube | About Freshkube · Settings… `⌘,` · Services ▸ · Hide Freshkube `⌘H` · Hide others `⌥⌘H` · Show all · Quit Freshkube `⌘Q` |
+| Edit | Undo `⌘Z` · Redo `⇧⌘Z` · Cut `⌘X` · Copy `⌘C` · Paste `⌘V` · Select all `⌘A` · Find `⌘F` · Find next `⌘G` · Find previous `⇧⌘G` |
+| View | Show sidebar or Hide sidebar `⌘B` · Appearance ▸ System, Light, Dark · Bigger text `⌘+` · Smaller text `⌘−` · Default text size `⌘0` · Refresh `⌘R` |
+| Go | Search everything… `⌘K` · Overview `⌘1` … Lifecycle `⌘9` · Next screen `⌃Tab` · Previous screen `⌃⇧Tab` · Next context `⌥↓` · Previous context `⌥↑` |
+| Window | Minimize `⌘M` · Zoom · Next tab `⌃.` · Previous tab `⌃,` · Close tab `⌘W` · Minimize dock or Open dock `⇧⎋` |
+
+Off macOS, the menu button holds Edit, View, Go and Window, then Settings…, About Freshkube and Quit Freshkube `Ctrl+Q` at its end. Separators part each menu's groups: Edit's history, clipboard and find; View's sidebar, appearance, text size and Refresh; Go's search, pages, screens and contexts; Window's window and dock; and the Freshkube menu's as macOS has them. AppKit adds Enter Full Screen (`⌃⌘F`) to a menu named View and the window list to the menu named Window; the app adds neither itself unless AppKit doesn't.
+
+The rules:
+
+- **An entry is an action.** Each runs the action its key runs, dispatched on the focused view, so the bar, the menu button, a toolbar button and the key do one thing. No entry has a handler of its own.
+- **An entry is enabled where its action is handled.** macOS asks GPUI before it opens a menu, and GPUI greys an entry whose action no view on the focus path handles. Copy is live in a log, a YAML document, the terminal and a text field, and grey where nothing copies, as on most tables. Off macOS the menu button's builder greys an entry from the same check (`is_action_available`) when it opens.
+- **Copy, Select all and Find are one action each.** Kit's input actions (`Undo`, `Redo`, `Cut`, `Copy`, `Paste`, `SelectAll`) become the app's: the log view, YAML documents, the node pane's documents, the terminal, Processes and Settings answer them in place of `CopySelected`, `CopyLines`, `CopySelection`, `CopyCommand`, `CopyConnection`, `SelectAll` and `SelectAllLines`, bound to the same keys in the same contexts. Find, Find next and Find previous become `freshkube_ui::menu::{Find, FindNext, FindPrevious}`, in place of `FindInYaml`, `FocusFilter`, `FocusSearch`, `FindNextMatch`, `FindPreviousMatch` and the log's `FindNext` and `FindPrevious`. A view that copies or finds without them can't be reached from Edit, so none keeps its own.
+- **The bar shows an action's first binding.** macOS's menus take the key from the keymap's first binding for the action (GPUI keeps the first on purpose), where Kit's menus take the last in the focused context. An action in the bar binds the key the bar shows first: text size binds `⌘+` before `⌘=`. An action in both the bar and a Kit menu has one key per context, so the two can't disagree. Settings' Edit, with Enter and E, stays out of the bar.
+- **A label that states a state follows it.** Show sidebar and Hide sidebar, Minimize dock and Open dock, and Appearance's check change when the sidebar, the dock or the appearance does: the shell sets the menus again on that change, never in render.
+- **New actions, each with its key from the module:** `About` (a Kit dialog with the mark, the name, the version and the talos-pilot credit), `OpenSettings` (the header's Settings popover), `Hide`, `HideOthers`, `ShowAll`, `Minimize`, `Zoom` and `SetAppearance`. Settings' popover keeps the version, so About repeats it rather than moving it.
+- **Cost.** The menus are built at start and on the state changes above; macOS validates entries when a menu opens, and the menu button builds its popup when it opens. Nothing is built in render.
+- **The check.** `scripts/check-style.sh` gains `platform`: no `cfg!(target_os …)`, `#[cfg(target_os …)]` or `cfg!(windows)` in `freshkube-ui`, `freshkube-desktop`, `freshkube-logs`, `freshkube-monitoring` or `freshkube-observability`, except in `freshkube-ui`'s `platform` module, its `motion/system.rs` (the OS's reduced-motion setting) and desktop's `stress.rs` (the stress binary's process counters). The header's search hint (`⌘K`) and `ui::modifier` take their label from the module or the keymap.
+
+Rejected: *Kit's `AppMenuBar`*, a row of menu titles, since five titles take about 250 dp of a header that already folds its tabs to icons at 1120 dp; *a File menu*, since the app opens no files: Close tab goes with the dock's other commands under Window, and Search everything under Go; *a Help menu* for now, since there is no help to search: it waits for the docs it would open; *Settings on `Ctrl+,`*, which the dock's previous tab holds; *the menus built per page*, since GPUI already greys what the focused view doesn't handle, and a bar that changed its menus with the page would move under the pointer.
 
 ## Status and links
 
