@@ -203,105 +203,16 @@ impl Pilot {
             .track_scroll(&self.obs_column_scroll)
             .gap(dp(if collapsed { 4. } else { 2. }));
         for item in items {
-            let active = active(item);
-            let open = cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.observability
-                    .update(cx, |page, cx| page.open(item, cx));
-                this.navigate_from_keyboard(Page::Observability, window, cx);
-            });
-            let count = incidents.filter(|_| item == Destination::Incidents);
-            if !collapsed {
-                let suffix = count.map(|count| {
-                    div()
-                        .px(dp(5.))
-                        .rounded_full()
-                        .bg(if self.fixture { p.crit } else { p.surface })
-                        .text_color(if self.fixture { p.on_fill } else { p.ink_2 })
-                        .text_size(dp(11.))
-                        .font_weight(FontWeight::NORMAL)
-                        .child(count.to_string())
-                        .into_any_element()
-                });
-                let mut row =
-                    NavRow::new(format!("nav-obs-{}", item.slug()), item.label(), dp(10.))
-                        .suffix(suffix);
-                row.icon = item.icon();
-                rows = rows.child(self.column_item(row, active, open, cx));
-                continue;
-            }
-            let button = Button::new(SharedString::from(format!("nav-obs-{}", item.slug())))
-                .ghost()
-                .small()
-                .selected(active)
-                .toggled(active)
-                .icon(item.icon())
-                .tooltip(item.label())
-                .tooltip_placement(Placement::Right)
-                .size(dp(36.))
-                .on_click(open);
-            rows = rows.child(match count {
-                Some(_) => div()
-                    .relative()
-                    .child(button)
-                    .child(
-                        ui::badge_dot(
-                            if self.fixture {
-                                Tone::Crit
-                            } else {
-                                Tone::Unknown
-                            },
-                            None,
-                            cx,
-                        )
-                        .absolute()
-                        .top(dp(3.))
-                        .right(dp(3.)),
-                    )
-                    .into_any_element(),
-                None => button.into_any_element(),
-            });
+            rows = rows.child(self.render_obs_destination(
+                item,
+                active(item),
+                incidents,
+                collapsed,
+                cx,
+            ));
         }
-        let dashboards = cx.listener(|this, _: &ClickEvent, window, cx| {
-            this.navigate_from_keyboard(Page::Monitoring, window, cx)
-        });
-        rows = rows.child(if collapsed {
-            Button::new("nav-obs-dashboards")
-                .ghost()
-                .small()
-                .icon(IconName::ChartLine)
-                .tooltip("Prometheus dashboards, in Monitoring")
-                .tooltip_placement(Placement::Right)
-                .size(dp(36.))
-                .on_click(dashboards)
-                .into_any_element()
-        } else {
-            let mut row = NavRow::new("nav-obs-dashboards", "Dashboards", dp(10.))
-                .tooltip("Prometheus dashboards, in Monitoring")
-                .suffix(Some(
-                    Icon::new(IconName::ChevronRight)
-                        .size(dp(13.))
-                        .text_color(p.muted)
-                        .into_any_element(),
-                ));
-            row.icon = IconName::ChartLine;
-            self.column_item(row, false, dashboards, cx)
-        });
-        let sources = Button::new("obs-data-sources")
-            .ghost().small().icon(IconName::Database)
-            .tooltip(if self.fixture { "Sanitized example observations" } else { "Coroot connection and project" })
-            .tooltip_placement(Placement::Right)
-            .when_else(collapsed, |button| button.size(dp(36.)), |button| {
-                button.w_full().label(if self.fixture { "Example data" } else { "Coroot connection…" })
-            })
-            .on_click(cx.listener(|this, _, window, cx| {
-                if this.fixture {
-                    window.open_dialog(cx, |dialog, _, _| dialog.title("Example data")
-                        .child("Sanitized Coroot observations use the same presentation as live data. Later destinations and mutation controls are local previews."));
-                } else {
-                    this.observability.update(cx, |page, cx| page.show_connection(cx));
-                    this.navigate_from_keyboard(Page::Observability, window, cx);
-                }
-            }));
+        rows = rows.child(self.render_obs_dashboards(collapsed, cx));
+        let sources = self.obs_sources_button(collapsed, cx);
         v_flex()
             .id("nav-column")
             .test_support()
@@ -343,6 +254,122 @@ impl Pilot {
             )
             .child(sources.when(!collapsed, |sources| sources.mt(dp(12.))))
             .into_any_element()
+    }
+    /// A destination's row, or its icon with the incidents' dot when the
+    /// column is collapsed.
+    fn render_obs_destination(
+        &self,
+        item: Destination,
+        active: bool,
+        incidents: Option<&str>,
+        collapsed: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let p = palette(cx);
+        let open = cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.observability
+                .update(cx, |page, cx| page.open(item, cx));
+            this.navigate_from_keyboard(Page::Observability, window, cx);
+        });
+        let count = incidents.filter(|_| item == Destination::Incidents);
+        if !collapsed {
+            let suffix = count.map(|count| {
+                div()
+                    .px(dp(5.))
+                    .rounded_full()
+                    .bg(if self.fixture { p.crit } else { p.surface })
+                    .text_color(if self.fixture { p.on_fill } else { p.ink_2 })
+                    .text_size(dp(11.))
+                    .font_weight(FontWeight::NORMAL)
+                    .child(count.to_string())
+                    .into_any_element()
+            });
+            let mut row = NavRow::new(format!("nav-obs-{}", item.slug()), item.label(), dp(10.))
+                .suffix(suffix);
+            row.icon = item.icon();
+            return self.column_item(row, active, open, cx);
+        }
+        let button = Button::new(SharedString::from(format!("nav-obs-{}", item.slug())))
+            .ghost()
+            .small()
+            .selected(active)
+            .toggled(active)
+            .icon(item.icon())
+            .tooltip(item.label())
+            .tooltip_placement(Placement::Right)
+            .size(dp(36.))
+            .on_click(open);
+        match count {
+            Some(_) => div()
+                .relative()
+                .child(button)
+                .child(
+                    ui::badge_dot(
+                        if self.fixture {
+                            Tone::Crit
+                        } else {
+                            Tone::Unknown
+                        },
+                        None,
+                        cx,
+                    )
+                    .absolute()
+                    .top(dp(3.))
+                    .right(dp(3.)),
+                )
+                .into_any_element(),
+            None => button.into_any_element(),
+        }
+    }
+
+    /// Dashboards, which opens Monitoring.
+    fn render_obs_dashboards(&self, collapsed: bool, cx: &Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let dashboards = cx.listener(|this, _: &ClickEvent, window, cx| {
+            this.navigate_from_keyboard(Page::Monitoring, window, cx)
+        });
+        if collapsed {
+            Button::new("nav-obs-dashboards")
+                .ghost()
+                .small()
+                .icon(IconName::ChartLine)
+                .tooltip("Prometheus dashboards, in Monitoring")
+                .tooltip_placement(Placement::Right)
+                .size(dp(36.))
+                .on_click(dashboards)
+                .into_any_element()
+        } else {
+            let mut row = NavRow::new("nav-obs-dashboards", "Dashboards", dp(10.))
+                .tooltip("Prometheus dashboards, in Monitoring")
+                .suffix(Some(
+                    Icon::new(IconName::ChevronRight)
+                        .size(dp(13.))
+                        .text_color(p.muted)
+                        .into_any_element(),
+                ));
+            row.icon = IconName::ChartLine;
+            self.column_item(row, false, dashboards, cx)
+        }
+    }
+
+    /// The Coroot connection, or what example data is.
+    fn obs_sources_button(&self, collapsed: bool, cx: &Context<Self>) -> Button {
+        Button::new("obs-data-sources")
+            .ghost().small().icon(IconName::Database)
+            .tooltip(if self.fixture { "Sanitized example observations" } else { "Coroot connection and project" })
+            .tooltip_placement(Placement::Right)
+            .when_else(collapsed, |button| button.size(dp(36.)), |button| {
+                button.w_full().label(if self.fixture { "Example data" } else { "Coroot connection…" })
+            })
+            .on_click(cx.listener(|this, _, window, cx| {
+                if this.fixture {
+                    window.open_dialog(cx, |dialog, _, _| dialog.title("Example data")
+                        .child("Sanitized Coroot observations use the same presentation as live data. Later destinations and mutation controls are local previews."));
+                } else {
+                    this.observability.update(cx, |page, cx| page.show_connection(cx));
+                    this.navigate_from_keyboard(Page::Observability, window, cx);
+                }
+            }))
     }
     fn namespace_menu(&self, compact: bool, cx: &Context<Self>) -> AnyElement {
         let namespaces = self.column_state.namespaces.clone();
