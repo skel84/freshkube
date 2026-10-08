@@ -862,3 +862,464 @@ fn cert_manager_webhook_check(pods: &[AddonPod]) -> DiagnosticCheck {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use k8s_openapi::api::core::v1::{PodCondition, PodStatus};
+    use kube::core::ErrorResponse;
+
+    /// A healthy Cilium node with cert-manager detected, built by hand: the
+    /// evaluator sees only this evidence.
+    fn snapshot(
+        cilium: Option<CiliumEvidence>,
+        cert_manager: Option<SourceState<Vec<AddonPod>>>,
+    ) -> DiagnosticSnapshot {
+        DiagnosticSnapshot {
+            context: DiagnosticContext {
+                target: DiagnosticTarget::new("cp-1", "10.0.0.10", "controlplane", "lab-admin"),
+                platform: SourceState::Available("metal".to_string()),
+                cpu_count: SourceState::Available(4),
+                kubernetes_access: SourceState::Available(KubernetesAccess {
+                    control_plane_address: "10.0.0.10".to_string(),
+                    config_identity: "lab-admin".to_string(),
+                    source: None,
+                    warning: None,
+                }),
+            },
+            system: SystemSnapshot {
+                memory: SourceState::unavailable("Talos Memory API", "not read"),
+                load_average: SourceState::unavailable("Talos LoadAvg API", "not read"),
+            },
+            services: ServicesSnapshot {
+                services: SourceState::Available(Vec::new()),
+            },
+            etcd: EtcdSnapshot::NotApplicable,
+            kubernetes: KubernetesSnapshot {
+                pod_health: SourceState::unavailable("Kubernetes Pod API", "not read"),
+            },
+            cni: CniSnapshot {
+                cni_type: SourceState::Available(CniType::Cilium),
+                pods: SourceState::Available(CniInfo {
+                    cni_type: CniType::Cilium,
+                    pods: vec![CniPodInfo {
+                        name: "cilium-x7k2p".to_string(),
+                        node_name: Some("cp-1".to_string()),
+                        phase: "Running".to_string(),
+                        ready: true,
+                        restart_count: 0,
+                    }],
+                }),
+                files: CniFileEvidence::default(),
+                cilium,
+            },
+            addons: AddonSnapshot {
+                crd_names: SourceState::Available(vec!["certificates.cert-manager.io".to_string()]),
+                pod_sources: Vec::new(),
+                addons: vec![AddonStatus {
+                    id: "cert-manager",
+                    name: "cert-manager",
+                    presence: AddonPresence::Detected,
+                }],
+                cert_manager,
+            },
+            checks: Vec::new(),
+        }
+    }
+
+    fn deployment(
+        replicas: i32,
+        ready: i32,
+        available: i32,
+        unavailable: i32,
+    ) -> DeploymentEvidence {
+        DeploymentEvidence::Found {
+            replicas,
+            ready,
+            available,
+            unavailable,
+        }
+    }
+
+    fn cilium(operator: DeploymentEvidence, hubble_relay: DeploymentEvidence) -> CiliumEvidence {
+        CiliumEvidence {
+            operator,
+            hubble_relay,
+        }
+    }
+
+    fn pod(name: &str, ready: bool) -> AddonPod {
+        AddonPod {
+            name: Some(name.to_string()),
+            phase: Some(if ready { "Running" } else { "Pending" }.to_string()),
+            ready,
+        }
+    }
+
+    fn healthy_cert_manager() -> SourceState<Vec<AddonPod>> {
+        SourceState::Available(vec![
+            pod("cert-manager-5c9d8c7b4-q8m2z", true),
+            pod("cert-manager-webhook-7d6f9b8c5-k4n7p", true),
+        ])
+    }
+
+    fn check<'a>(checks: &'a [DiagnosticCheck], id: &str) -> Option<&'a DiagnosticCheck> {
+        checks.iter().find(|check| check.id == id)
+    }
+
+    /// The status and message of the check with this id, from the evaluator.
+    fn outcome(snapshot: &DiagnosticSnapshot, id: &str) -> (CheckStatus, String) {
+        let checks = snapshot.evaluate();
+        let check = check(&checks, id).unwrap_or_else(|| panic!("no {id} check"));
+        (check.status.clone(), check.message.clone())
+    }
+
+    fn api_error(code: u16, reason: &str) -> kube::Error {
+        kube::Error::Api(ErrorResponse {
+            status: "Failure".to_string(),
+            message: format!("{reason} for this request"),
+            reason: reason.to_string(),
+            code,
+        })
+    }
+
+    fn refused() -> kube::Error {
+        api_error(403, "Forbidden")
+    }
+
+    fn failed() -> kube::Error {
+        kube::Error::Service("connection refused".into())
+    }
+
+    #[test]
+    fn the_cilium_operator_passes_warns_and_fails_on_its_replicas() {
+        let operator = |evidence| {
+            outcome(
+                &snapshot(
+                    Some(cilium(evidence, DeploymentEvidence::NotFound)),
+                    Some(healthy_cert_manager()),
+                ),
+                "cilium_operator",
+            )
+        };
+
+        assert_eq!(
+            operator(deployment(2, 2, 2, 0)),
+            (CheckStatus::Pass, "2/2 ready".to_string())
+        );
+        assert_eq!(
+            operator(deployment(2, 1, 1, 1)),
+            (CheckStatus::Pass, "1/2 ready (HA limited)".to_string())
+        );
+        assert_eq!(
+            operator(deployment(2, 0, 1, 0)),
+            (CheckStatus::Warn, "0/2 ready (1 available)".to_string())
+        );
+        assert_eq!(
+            operator(deployment(2, 0, 0, 2)),
+            (CheckStatus::Fail, "0/2 ready".to_string())
+        );
+        // No replicas at all is not ready, never a pass.
+        assert_eq!(operator(deployment(0, 0, 0, 0)).0, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn cilium_rolls_up_its_components_worst_first() {
+        let overall = |operator, relay| {
+            outcome(
+                &snapshot(Some(cilium(operator, relay)), Some(healthy_cert_manager())),
+                "cni",
+            )
+            .0
+        };
+        let healthy = || deployment(1, 1, 1, 0);
+
+        assert_eq!(overall(healthy(), healthy()), CheckStatus::Pass);
+        assert_eq!(
+            overall(healthy(), deployment(1, 0, 0, 1)),
+            CheckStatus::Fail
+        );
+        assert_eq!(
+            overall(deployment(2, 0, 1, 0), healthy()),
+            CheckStatus::Warn
+        );
+        assert_eq!(
+            overall(DeploymentEvidence::NotFound, healthy()),
+            CheckStatus::Unknown
+        );
+        // A failing component outranks an unknown one.
+        assert_eq!(
+            overall(DeploymentEvidence::NotFound, deployment(1, 0, 0, 1)),
+            CheckStatus::Fail
+        );
+    }
+
+    #[test]
+    fn hubble_relay_passes_or_fails_and_is_left_out_when_not_installed() {
+        let relay = |evidence| {
+            snapshot(
+                Some(cilium(deployment(1, 1, 1, 0), evidence)),
+                Some(healthy_cert_manager()),
+            )
+        };
+
+        assert_eq!(
+            outcome(&relay(deployment(1, 1, 1, 0)), "hubble_relay"),
+            (CheckStatus::Pass, "1/1 ready".to_string())
+        );
+        assert_eq!(
+            outcome(&relay(deployment(1, 0, 0, 1)), "hubble_relay"),
+            (CheckStatus::Fail, "0/1 ready".to_string())
+        );
+        let checks = relay(DeploymentEvidence::NotFound).evaluate();
+        assert!(check(&checks, "hubble_relay").is_none());
+        assert_eq!(check(&checks, "cni").unwrap().status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn cert_manager_pods_and_webhook_pass_warn_and_fail() {
+        let checks =
+            |pods: Vec<AddonPod>| snapshot(None, Some(SourceState::Available(pods))).evaluate();
+        let status = |checks: &[DiagnosticCheck], id| check(checks, id).unwrap().status.clone();
+
+        let healthy = checks(vec![
+            pod("cert-manager-5c9d8c7b4-q8m2z", true),
+            pod("cert-manager-webhook-7d6f9b8c5-k4n7p", true),
+        ]);
+        assert_eq!(status(&healthy, "cert_manager_pods"), CheckStatus::Pass);
+        assert_eq!(
+            check(&healthy, "cert_manager_pods").unwrap().message,
+            "2/2 healthy"
+        );
+        assert_eq!(status(&healthy, "cert_manager_webhook"), CheckStatus::Pass);
+
+        let webhook_down = checks(vec![
+            pod("cert-manager-5c9d8c7b4-q8m2z", true),
+            pod("cert-manager-webhook-7d6f9b8c5-k4n7p", false),
+        ]);
+        let pods = check(&webhook_down, "cert_manager_pods").unwrap();
+        assert_eq!(
+            (pods.status.clone(), pods.message.as_str()),
+            (CheckStatus::Warn, "1/2 healthy")
+        );
+        assert_eq!(
+            pods.details.as_deref(),
+            Some("Unhealthy pods:\ncert-manager-webhook-7d6f9b8c5-k4n7p: Pending")
+        );
+        let webhook = check(&webhook_down, "cert_manager_webhook").unwrap();
+        assert_eq!(
+            (webhook.status.clone(), webhook.message.as_str()),
+            (CheckStatus::Warn, "Not ready")
+        );
+
+        let no_webhook = checks(vec![pod("cert-manager-5c9d8c7b4-q8m2z", true)]);
+        let webhook = check(&no_webhook, "cert_manager_webhook").unwrap();
+        assert_eq!(
+            (webhook.status.clone(), webhook.message.as_str()),
+            (CheckStatus::Warn, "Not found")
+        );
+
+        let none = checks(Vec::new());
+        assert_eq!(status(&none, "cert_manager_pods"), CheckStatus::Fail);
+    }
+
+    #[test]
+    fn missing_evidence_is_unknown_never_a_failure() {
+        // No Kubernetes client: collection records why, from the access state.
+        let no_client = |source: &str| {
+            DeploymentEvidence::Unavailable(SourceUnavailable {
+                source: source.to_string(),
+                reason: "Kubeconfig unavailable".to_string(),
+            })
+        };
+        let checks = snapshot(
+            Some(cilium(
+                no_client("Kubernetes Cilium operator API"),
+                no_client("Kubernetes Hubble Relay API"),
+            )),
+            None,
+        )
+        .evaluate();
+        for id in ["cilium_operator", "hubble_relay", "cni", "cert_manager"] {
+            assert_eq!(
+                check(&checks, id).unwrap().status,
+                CheckStatus::Unknown,
+                "{id}"
+            );
+        }
+        // Detected without a pod read is one unknown, not two.
+        assert!(check(&checks, "cert_manager_pods").is_none());
+
+        // Neither operator Deployment exists.
+        assert_eq!(
+            outcome(
+                &snapshot(
+                    Some(cilium(
+                        DeploymentEvidence::NotFound,
+                        DeploymentEvidence::NotFound
+                    )),
+                    Some(healthy_cert_manager()),
+                ),
+                "cilium_operator",
+            )
+            .0,
+            CheckStatus::Unknown
+        );
+
+        // A Cilium snapshot whose component state was never collected.
+        let checks = snapshot(None, Some(healthy_cert_manager())).evaluate();
+        assert_eq!(
+            check(&checks, "cilium_operator").unwrap().status,
+            CheckStatus::Unknown
+        );
+        assert_eq!(
+            check(&checks, "hubble_relay").unwrap().status,
+            CheckStatus::Unknown
+        );
+        assert_eq!(check(&checks, "cni").unwrap().status, CheckStatus::Unknown);
+    }
+
+    #[test]
+    fn a_refused_deployment_read_is_unknown_with_its_reason() {
+        let evidence = deployment_evidence(Err(refused()), "Kubernetes Cilium operator API");
+        let DeploymentEvidence::Unavailable(unavailable) = &evidence else {
+            panic!("a 403 is unavailable evidence, got {evidence:?}");
+        };
+        assert_eq!(unavailable.source, "Kubernetes Cilium operator API");
+        assert!(
+            unavailable.reason.contains("Forbidden"),
+            "{}",
+            unavailable.reason
+        );
+
+        let checks = snapshot(
+            Some(cilium(evidence.clone(), evidence)),
+            Some(healthy_cert_manager()),
+        )
+        .evaluate();
+        for id in ["cilium_operator", "hubble_relay"] {
+            let check = check(&checks, id).unwrap();
+            assert_eq!(check.status, CheckStatus::Unknown, "{id}");
+            assert!(
+                check.details.as_deref().unwrap().contains("Forbidden"),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_deployment_read_is_unknown_with_its_reason() {
+        let evidence = deployment_evidence(Err(failed()), "Kubernetes Hubble Relay API");
+        let DeploymentEvidence::Unavailable(unavailable) = &evidence else {
+            panic!("a failed read is unavailable evidence, got {evidence:?}");
+        };
+        assert!(
+            unavailable.reason.contains("connection refused"),
+            "{}",
+            unavailable.reason
+        );
+
+        let checks = snapshot(
+            Some(cilium(evidence.clone(), evidence)),
+            Some(healthy_cert_manager()),
+        )
+        .evaluate();
+        for id in ["cilium_operator", "hubble_relay"] {
+            let check = check(&checks, id).unwrap();
+            assert_eq!(check.status, CheckStatus::Unknown, "{id}");
+            assert!(
+                check
+                    .details
+                    .as_deref()
+                    .unwrap()
+                    .contains("connection refused"),
+                "{id}"
+            );
+        }
+        // Only a 404 means not installed.
+        assert_eq!(
+            deployment_evidence(
+                Err(api_error(404, "NotFound")),
+                "Kubernetes Hubble Relay API"
+            ),
+            DeploymentEvidence::NotFound
+        );
+    }
+
+    #[test]
+    fn a_refused_or_failed_cert_manager_list_is_unknown_for_both_checks() {
+        for (error, reason) in [(refused(), "Forbidden"), (failed(), "connection refused")] {
+            let pods = cert_manager_pods(Err(error));
+            assert!(!pods.is_available());
+            let checks = snapshot(None, Some(pods)).evaluate();
+            for id in ["cert_manager_pods", "cert_manager_webhook"] {
+                let check = check(&checks, id).unwrap();
+                assert_eq!(check.status, CheckStatus::Unknown, "{id} on {reason}");
+                assert!(check.details.as_deref().unwrap().contains(reason), "{id}");
+            }
+        }
+    }
+
+    #[test]
+    fn cert_manager_pods_are_reduced_to_name_phase_and_readiness() {
+        let pod = |name: &str, ready: &str| Pod {
+            metadata: kube::api::ObjectMeta {
+                name: Some(name.to_string()),
+                ..Default::default()
+            },
+            status: Some(PodStatus {
+                phase: Some("Running".to_string()),
+                conditions: Some(vec![PodCondition {
+                    type_: "Ready".to_string(),
+                    status: ready.to_string(),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let SourceState::Available(pods) = cert_manager_pods(Ok(vec![
+            pod("cert-manager-webhook-a", "True"),
+            pod("cert-manager-b", "False"),
+        ])) else {
+            panic!("a listed namespace is available");
+        };
+        assert_eq!(
+            pods.iter().map(|pod| pod.ready).collect::<Vec<_>>(),
+            [true, false]
+        );
+        assert_eq!(pods[1].phase.as_deref(), Some("Running"));
+    }
+
+    #[test]
+    fn the_next_snapshot_recovers_with_nothing_kept_from_a_failure() {
+        let failing = snapshot(
+            Some(cilium(deployment(1, 0, 0, 1), deployment(1, 0, 0, 1))),
+            Some(SourceState::Available(Vec::new())),
+        );
+        let unreadable = snapshot(
+            Some(cilium(
+                deployment_evidence(Err(failed()), "Kubernetes Cilium operator API"),
+                deployment_evidence(Err(refused()), "Kubernetes Hubble Relay API"),
+            )),
+            Some(cert_manager_pods(Err(failed()))),
+        );
+        let recovered = snapshot(
+            Some(cilium(deployment(1, 1, 1, 0), deployment(1, 1, 1, 0))),
+            Some(healthy_cert_manager()),
+        );
+
+        let ids = [
+            "cilium_operator",
+            "hubble_relay",
+            "cni",
+            "cert_manager_pods",
+        ];
+        let statuses = |snapshot: &DiagnosticSnapshot| ids.map(|id| outcome(snapshot, id).0);
+        assert_eq!(statuses(&failing), [(); 4].map(|_| CheckStatus::Fail));
+        assert_eq!(statuses(&unreadable), [(); 4].map(|_| CheckStatus::Unknown));
+        assert_eq!(statuses(&recovered), [(); 4].map(|_| CheckStatus::Pass));
+        // Evaluating is a function of the snapshot alone.
+        assert_eq!(statuses(&failing), [(); 4].map(|_| CheckStatus::Fail));
+    }
+}
