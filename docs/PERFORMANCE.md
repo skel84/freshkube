@@ -33,7 +33,7 @@ scripts/stress.sh terminal-50k terminal 50000
 | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
 | `workload-logs <lines/s>` | an example Deployment's log tab in the dock: its pods' containers, through the shared channel live streams use, writing that many lines a second between them |
 | `terminal <lines/s>` | a window with only the terminal view, fed coloured lines at that rate from another thread, every 10 ms; each line is new text |
-| `loading [resources\|nodes\|system-services]` | opens that page in example mode with `FRESHKUBE_FIXTURE_HOLD` set, so it stays on its loading rows and their motion asks a frame every 16 ms |
+| `loading [resources\|nodes\|system-services\|health\|etcd]` | opens that page in example mode with `FRESHKUBE_FIXTURE_HOLD` set, so it stays on its loading rows and their motion asks a frame every 16 ms |
 | `terminal-top` | the terminal, redrawn whole on the alternate screen by a `top`-like stream about 60 times a second |
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
 | `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again. The run keeps its own home, so Monitoring reads the folder and the remembered Service from there, and `scripts/stress.sh` fails it when it records no `monitoring.*` span after the warm-up, unless its keys only wait and it drew during the warm-up |

@@ -16,7 +16,7 @@
 //! | `summary-410 <changes/s>` | the same changes, with a forced Pod relist after 10 s |
 //! | `pod-logs <lines/s>` | opens a pod's Logs tab while its container writes at that rate |
 //! | `talos-logs <lines/s>` | example Talos logs, the collected services writing that many lines a second between them |
-//! | `loading <page>` | example data held (`FRESHKUBE_FIXTURE_HOLD`), so `resources` (Pods), `nodes` or `system-services` shows its loading rows for the whole run |
+//! | `loading <page>` | example data held (`FRESHKUBE_FIXTURE_HOLD`), so `resources` (Pods), `nodes`, `system-services`, `health` or `etcd` shows its loading rows for the whole run |
 //! | `workload-logs <lines/s>` | an example Deployment's Logs tab, its 13 pods' containers writing that many lines a second between them |
 //! | `terminal <lines/s>` | a window with only a terminal, fed coloured lines at that rate |
 //! | `terminal-top` | the terminal, redrawn whole by a `top`-like program about 60 times a second |
@@ -110,6 +110,8 @@ impl Scenario {
                     "resources" => "resources",
                     "nodes" => "nodes",
                     "system-services" => "system-services",
+                    "health" => "health",
+                    "etcd" => "etcd",
                     _ => return None,
                 },
             },
@@ -158,8 +160,8 @@ impl Scenario {
             ],
             Scenario::Loading { page } => {
                 // Pods waits for its list alone, so the shell keeps still;
-                // Nodes and System services wait for Talos, as they do
-                // while a cluster connects.
+                // Nodes, System services, Health and etcd wait for Talos,
+                // as they do while a cluster connects.
                 let hold = if page == "resources" { "lists" } else { "talos" };
                 let mut env = vec![
                     ("FRESHKUBE_PAGE", page.into()),
