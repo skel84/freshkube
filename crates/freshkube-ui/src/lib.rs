@@ -3,6 +3,7 @@
 //! ([docs/DESIGN.md](../../docs/DESIGN.md#components)).
 
 pub mod card;
+pub mod column;
 pub mod dock;
 pub mod document;
 pub mod drawer;
