@@ -22,7 +22,9 @@ use crate::delivery::source::{Source, Truncation};
 use crate::workloads::WorkloadKind;
 
 mod derive;
+pub mod example;
 mod overrides;
+pub mod read;
 mod rules;
 
 #[cfg(test)]

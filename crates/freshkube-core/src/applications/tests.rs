@@ -527,3 +527,147 @@ fn an_override_round_trips_through_json() {
     let text = serde_json::to_string(&over).unwrap();
     assert_eq!(serde_json::from_str::<Override>(&text).unwrap(), over);
 }
+
+mod reading {
+    use serde_json::json;
+
+    use super::*;
+    use crate::applications::read::{MAX_PROJECTS, read_session};
+    use crate::delivery::fixtures::FixtureReader;
+    use crate::delivery::kargo;
+
+    fn world() -> FixtureReader {
+        let namespaced = |ns: &str, name: &str, labels: Value| json!({"metadata": {"namespace": ns, "name": name, "labels": labels}});
+        FixtureReader::default()
+            .serves("kargo.akuity.io", "v1alpha1", &["projects", "stages", "warehouses"])
+            .serves("argoproj.io", "v1alpha1", &["applications", "applicationsets"])
+            .with(
+                "namespaces",
+                vec![json!({"metadata": {"name": "checkout", "labels": {kargo::PROJECT_LABEL: "true"}}})],
+            )
+            .with("stages", vec![namespaced("checkout", "dev", json!({}))])
+            .with("warehouses", vec![namespaced("checkout", "images", json!({}))])
+            .with(
+                "applications",
+                vec![json!({"metadata": {"namespace": "argocd", "name": "storefront"}})],
+            )
+            .with(
+                "applicationsets",
+                vec![json!({"metadata": {"namespace": "argocd", "name": "catalog"}})],
+            )
+            .with(
+                "deployments",
+                vec![
+                    namespaced("shop", "web", json!({"app.kubernetes.io/part-of": "storefront"})),
+                    namespaced("shop", "plain", json!({"app.kubernetes.io/name": "plain"})),
+                ],
+            )
+            .with(
+                "statefulsets",
+                vec![namespaced("shop", "db", json!({"app.kubernetes.io/part-of": "storefront"}))],
+            )
+    }
+
+    #[tokio::test]
+    async fn a_session_reads_every_source_and_derives_from_them() {
+        let reader = world();
+        let read = read_session(&reader, key("core-fra"), "argocd").await;
+        let found = derive(
+            &Inputs {
+                sessions: vec![read],
+                stage_naming: None,
+            },
+            &Override::default(),
+        );
+        let found_names: Vec<_> = found.applications.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(found_names, ["catalog", "checkout", "storefront"]);
+        let storefront = found.find(&id(Rule::ArgoCd, "storefront")).unwrap();
+        assert_eq!(
+            names(storefront),
+            ["storefront", "web", "db"],
+            "the label matches the name, kinds in order"
+        );
+        assert!(found.unknown().is_empty());
+    }
+
+    #[tokio::test]
+    async fn reads_are_only_gets_and_scoped_lists() {
+        let reader = world();
+        read_session(&reader, key("core-fra"), "argocd").await;
+        let requests = reader.requests.borrow();
+        assert!(
+            requests
+                .iter()
+                .all(|r| r.starts_with("GET /apis") || r.starts_with("LIST "))
+        );
+        assert!(
+            requests
+                .iter()
+                .filter(|r| r.contains("/deployments") || r.contains("/namespaces"))
+                .all(|r| r.contains("selector=Some(")),
+            "cluster-wide lists carry a selector: {requests:?}"
+        );
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.contains("applications ns=Some(\"argocd\")"))
+        );
+    }
+
+    #[tokio::test]
+    async fn sources_that_are_not_served_or_are_refused_are_told_apart() {
+        let bare = FixtureReader::default().refusing("deployments");
+        let read = read_session(&bare, key("core-fra"), "argocd").await;
+        assert!(matches!(read.kargo, Source::NotInstalled(_)));
+        assert!(matches!(read.argo_applications, Source::NotInstalled(_)));
+        assert!(matches!(read.workloads, Source::Refused(_)));
+        let found = derive(
+            &Inputs {
+                sessions: vec![read],
+                stage_naming: None,
+            },
+            &Override::default(),
+        );
+        assert!(found.applications.is_empty());
+        assert_eq!(
+            found.unknown().keys().copied().collect::<Vec<_>>(),
+            [Rule::PartOf]
+        );
+    }
+
+    #[tokio::test]
+    async fn projects_past_the_cap_are_not_read_and_say_so() {
+        let namespaces = (0..MAX_PROJECTS + 2)
+            .map(|n| json!({"metadata": {"name": format!("p{n:03}"), "labels": {kargo::PROJECT_LABEL: "true"}}}))
+            .collect();
+        let reader = FixtureReader::default()
+            .serves(
+                "kargo.akuity.io",
+                "v1alpha1",
+                &["projects", "stages", "warehouses"],
+            )
+            .with("namespaces", namespaces);
+        let read = read_session(&reader, key("core-fra"), "argocd").await;
+        let Source::Capped(projects, truncation) = read.kargo else {
+            panic!("expected a capped read");
+        };
+        assert_eq!(
+            (projects.len(), truncation.read),
+            (MAX_PROJECTS, MAX_PROJECTS)
+        );
+        let stage_lists = reader
+            .requests
+            .borrow()
+            .iter()
+            .filter(|r| r.contains("/stages"))
+            .count();
+        assert_eq!(stage_lists, MAX_PROJECTS);
+    }
+
+    #[tokio::test]
+    async fn a_listing_cut_at_the_page_cap_marks_the_source_capped() {
+        let reader = world().capped("deployments");
+        let read = read_session(&reader, key("core-fra"), "argocd").await;
+        assert!(matches!(read.workloads, Source::Capped(_, _)));
+    }
+}
