@@ -4,6 +4,7 @@
 use super::app_view::{Chart, Series};
 use crate::monitoring::PanelResult;
 use crate::monitoring::markers::{Marker, MarkerKind};
+use coroot_rs::{DeploymentRevision, SeriesCoverage, SeriesHistory};
 use grafaui_model::{
     Dashboard, PanelSpec,
     data::{Frame, Series as FrameSeries},
@@ -25,11 +26,32 @@ pub struct ChartPanel {
     /// Coroot's deployment annotations. Incidents and other events have no
     /// marker kind yet, so they are left out.
     pub markers: Vec<Marker>,
+    /// How much of the window Coroot covered, when it isn't all of it;
+    /// always empty for [`Self::new`], which knows nothing of coverage.
+    pub coverage: Vec<Coverage>,
     /// The Console colour of each severity series, by the series' name;
     /// empty unless the chart counts log severities ([`Self::severities`]).
     /// Elsewhere Coroot's colours only tell series apart, so the series
     /// take the next colour in turn.
     pub colors: Vec<(String, SeriesColor)>,
+}
+
+/// Where a chart's history falls short of its window. Nothing is filled
+/// in for it: a short series stops, an empty one isn't drawn.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Coverage {
+    /// Coroot shortened the window it was asked for.
+    Truncated,
+    /// The series has the first `samples` of the window's `expected`
+    /// points; Coroot doesn't say where it really starts, so the rest of the
+    /// window is unknown.
+    Partial {
+        series: String,
+        samples: usize,
+        expected: usize,
+    },
+    /// Coroot sent no data for the series.
+    Empty { series: String },
 }
 
 /// The Console colour for a log severity's Coroot colour. Coroot names
@@ -214,10 +236,130 @@ impl ChartPanel {
             },
             window,
             markers,
+            coverage: vec![],
             colors: vec![],
         })
     }
 
+    /// The chart drawn from its [`Chart::history`]: sample *i* at
+    /// [`coroot_rs::ChartHistory::point_time`], across the whole window whatever a
+    /// series covers, a missing sample a gap, and what the history lacks in
+    /// [`Self::coverage`]. The layout gives the legend names, colours and
+    /// fill. Deploy markers come from the revisions
+    /// ([`Self::with_revisions`]), not annotations, which can't tell a
+    /// deploy from an incident. None without a history or with fewer than
+    /// two points in its window.
+    pub fn from_history(chart: &Chart) -> Option<Self> {
+        let history = chart.history.as_ref()?;
+        let points = history.expected_points();
+        let step = i64::try_from(history.step.as_secs()).ok()?.max(1);
+        if points < 2 {
+            return None;
+        }
+        let start = history.anchor().timestamp();
+        let span = step * (points as i64 - 1);
+        let window = TimeWindow::new(start + span, span as u64, points);
+        let dashboard = Dashboard::parse(&panel_json(chart).to_string()).ok()?;
+        let spec = dashboard.panels.into_iter().next()?;
+        let named = |ix: Option<usize>, s: &SeriesHistory| {
+            let layout = match ix {
+                Some(ix) => chart.series.get(ix),
+                None => chart.threshold.as_ref(),
+            };
+            match layout {
+                Some(layout) => label(layout).to_owned(),
+                None if s.title.is_empty() => s.name.clone(),
+                None => s.title.clone(),
+            }
+        };
+        let mut coverage = vec![];
+        if history.truncated {
+            coverage.push(Coverage::Truncated);
+        }
+        let mut series = vec![];
+        let all = history
+            .series
+            .iter()
+            .enumerate()
+            .map(|(ix, s)| (Some(ix), s))
+            .chain(history.threshold.iter().map(|s| (None, s)));
+        for (ix, s) in all {
+            let name = named(ix, s);
+            match s.coverage {
+                SeriesCoverage::Empty => {
+                    coverage.push(Coverage::Empty { series: name });
+                    continue;
+                }
+                SeriesCoverage::Partial => coverage.push(Coverage::Partial {
+                    series: name.clone(),
+                    samples: s.samples.len(),
+                    expected: points,
+                }),
+                SeriesCoverage::Full => {}
+            }
+            series.push(FrameSeries {
+                name,
+                query: "A".into(),
+                field: None,
+                labels: vec![],
+                values: (0..points)
+                    .map(|i| s.samples.get(i).copied().flatten().unwrap_or(f64::NAN))
+                    .collect(),
+            });
+        }
+        Some(Self {
+            spec,
+            result: PanelResult {
+                frame: Frame {
+                    times: (0..points as i64)
+                        .map(|i| (start + i * step) as f64)
+                        .collect(),
+                    series,
+                },
+                warnings: vec![],
+                expressions: vec![],
+            },
+            window,
+            markers: vec![],
+            coverage,
+            colors: vec![],
+        })
+    }
+
+    /// Marks each revision that started within the window, as Monitoring
+    /// marks a Deployment's new ReplicaSet.
+    pub fn with_revisions(
+        mut self,
+        revisions: &[DeploymentRevision],
+        namespace: Option<&str>,
+    ) -> Self {
+        let times = self.window.times();
+        let (Some(first), Some(last)) = (times.first().copied(), times.last().copied()) else {
+            return self;
+        };
+        self.markers.extend(
+            revisions
+                .iter()
+                .map(|r| revision_marker(r, namespace))
+                .filter(|m| (first..=last).contains(&m.at)),
+        );
+        self
+    }
+}
+
+/// A revision as a deploy marker, at the second its rollout started,
+/// labelled as Coroot labels the revision: its hash and images.
+pub fn revision_marker(revision: &DeploymentRevision, namespace: Option<&str>) -> Marker {
+    Marker {
+        kind: MarkerKind::Deploy,
+        at: revision.started_at.timestamp(),
+        namespace: namespace.map(str::to_owned),
+        node: None,
+        label: revision.version.clone(),
+    }
+}
+
+impl ChartPanel {
     /// A chart of log messages by severity, as the Logs report's histogram
     /// and a pattern's chart are: [`Self::new`], with each series drawn in
     /// its severity's colour.
@@ -236,6 +378,7 @@ impl ChartPanel {
 mod tests {
     use super::super::app_view::Annotation;
     use super::*;
+    use coroot_rs::ChartHistory;
     use grafaui_model::{
         Viz,
         chart::StackMode,
@@ -267,6 +410,7 @@ mod tests {
             shift_colors: false,
             hide_legend: false,
             annotations: vec![],
+            history: None,
         }
     }
 
@@ -476,6 +620,135 @@ mod tests {
                 ..chart()
             })
             .is_none()
+        );
+    }
+
+    fn sampled(name: &str, samples: Vec<Option<f64>>, coverage: SeriesCoverage) -> SeriesHistory {
+        SeriesHistory {
+            name: name.into(),
+            title: String::new(),
+            samples,
+            coverage,
+        }
+    }
+
+    /// Five minutes at one-minute steps, asked from 20 s past a minute:
+    /// sample 0 sits on the minute, where Coroot read it from.
+    fn history() -> ChartHistory {
+        let at = |s: i64| chrono::DateTime::from_timestamp(s, 0).unwrap();
+        ChartHistory {
+            group: None,
+            title: "CPU usage, cores".into(),
+            from: at(1_759_999_980 + 20),
+            to: at(1_759_999_980 + 260),
+            step: std::time::Duration::from_secs(60),
+            truncated: false,
+            stacked: false,
+            series: vec![
+                sampled(
+                    "worker-a",
+                    vec![Some(0.5), None, Some(0.7), Some(0.6), Some(0.4)],
+                    SeriesCoverage::Full,
+                ),
+                sampled(
+                    "worker-b",
+                    vec![Some(0.2), Some(0.3)],
+                    SeriesCoverage::Partial,
+                ),
+                sampled("worker-c", vec![], SeriesCoverage::Empty),
+            ],
+            threshold: Some(sampled("limit", vec![Some(1.); 5], SeriesCoverage::Full)),
+            annotations: vec![],
+        }
+    }
+
+    fn charted(history: ChartHistory) -> Chart {
+        Chart {
+            series: vec![series("worker-a", vec![]), series("worker-b", vec![])],
+            threshold: Some(Series {
+                name: "limit".into(),
+                title: "CPU limit".into(),
+                ..Default::default()
+            }),
+            history: Some(Box::new(history)),
+            ..chart()
+        }
+    }
+
+    #[test]
+    fn a_history_fills_its_window_and_keeps_its_gaps() {
+        let panel = ChartPanel::from_history(&charted(history())).unwrap();
+        let frame = &panel.result.frame;
+        // From the minute the data starts at, every point of the window.
+        assert_eq!(frame.times.len(), 5);
+        assert_eq!(frame.times[0], 1_759_999_980.);
+        assert_eq!(panel.window.times()[4], 1_759_999_980 + 240);
+        let names: Vec<_> = frame.series.iter().map(|s| s.name.as_str()).collect();
+        // An empty series isn't drawn; the threshold keeps its layout name.
+        assert_eq!(names, ["worker-a", "worker-b", "CPU limit"]);
+        assert!(frame.series[0].values[1].is_nan());
+        assert_eq!(frame.series[0].values[4], 0.4);
+        // A short series stops; the rest of the window stays unknown.
+        assert_eq!(frame.series[1].values[1], 0.3);
+        assert!(frame.series[1].values[2..].iter().all(|v| v.is_nan()));
+        assert_eq!(
+            panel.coverage,
+            [
+                Coverage::Partial {
+                    series: "worker-b".into(),
+                    samples: 2,
+                    expected: 5,
+                },
+                Coverage::Empty {
+                    series: "worker-c".into()
+                },
+            ]
+        );
+        assert!(panel.markers.is_empty());
+    }
+
+    #[test]
+    fn a_shortened_window_says_so_and_no_history_draws_nothing() {
+        let mut truncated = history();
+        truncated.truncated = true;
+        truncated.series.truncate(1);
+        let panel = ChartPanel::from_history(&charted(truncated)).unwrap();
+        assert_eq!(panel.coverage, [Coverage::Truncated]);
+        assert!(ChartPanel::from_history(&chart()).is_none());
+        // The layout's own points don't stand in for a missing history.
+        assert!(ChartPanel::new(&chart()).is_some());
+    }
+
+    #[test]
+    fn revisions_mark_the_window_they_started_in() {
+        let revision = |at: i64, version: &str| DeploymentRevision {
+            id: format!("{version}:{at}"),
+            hash: version.into(),
+            started_at: chrono::DateTime::from_timestamp(at, 0).unwrap(),
+            version: format!("{version}: example.test/shop/worker:1.8.2"),
+            status: coroot_rs::Status::Ok,
+            findings: vec![],
+            note: Some("No notable changes".into()),
+        };
+        let panel = ChartPanel::from_history(&charted(history()))
+            .unwrap()
+            .with_revisions(
+                &[
+                    revision(1_759_999_980 + 300, "after"),
+                    revision(1_759_999_980 + 130, "within"),
+                    revision(1_759_990_000, "before"),
+                ],
+                Some("shop"),
+            );
+        assert_eq!(
+            panel.markers,
+            [Marker {
+                kind: MarkerKind::Deploy,
+                at: 1_759_999_980 + 130,
+                namespace: Some("shop".into()),
+                node: None,
+                label: "within: example.test/shop/worker:1.8.2".into(),
+            }]
         );
     }
 }

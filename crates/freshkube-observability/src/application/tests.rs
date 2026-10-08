@@ -248,6 +248,7 @@ fn loading_failure_refusal_empty_and_stale_stay_distinct(cx: &mut TestAppContext
             ..Default::default()
         },
         reports: vec![],
+        ..Default::default()
     };
     cx.update(|cx| page.update(cx, |page, _| answer(page, &worker(), Ok(empty))));
     cx.update_window(handle, |_, window, cx| {
@@ -431,6 +432,7 @@ fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
             custom: false,
             instrumentation: String::new(),
         }],
+        ..Default::default()
     };
     cx.update(|cx| page.update(cx, |page, _| answer(page, &worker(), Ok(view))));
     cx.update_window(handle, |_, window, cx| {

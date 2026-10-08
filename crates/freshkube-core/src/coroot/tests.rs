@@ -644,7 +644,7 @@ fn app_view_wire() -> serde_json::Value {
                 {"id":"CPUContainer","title":"Container CPU utilization","status":"warning","message":"high CPU utilization","threshold":80,"unit":"percent","condition_format_template":"the CPU usage of a container > <threshold> of its CPU limit"}],
              "widgets":[
                 {"chart_group":{"title":"CPU usage <selector>, cores","charts":[
-                    {"ctx":ctx,"title":"container: app","series":[{"name":"auth-7d9f-a1","data":[0.1,null,0.2]}],"threshold":{"name":"limit","color":"black","data":[1,1,1]},"featured":true,"stacked":false,"column":false,"color_shift":0,"annotations":[{"name":"deployment","x1":1789998000000_i64,"x2":0,"icon":"mdi-swap"}],"drill_down_link":null,"hide_legend":false},
+                    {"ctx":ctx,"title":"container: app","series":[{"name":"auth-7d9f-a1","data":[0.1,null,0.2]}],"threshold":{"name":"limit","color":"black","data":[1,1,1]},"featured":true,"stacked":false,"column":false,"color_shift":0,"annotations":[{"name":"deployment","x1":1789998000000_i64,"x2":null,"icon":"mdi-swap"}],"drill_down_link":null,"hide_legend":false},
                     {"ctx":ctx,"title":"overview","series":null,"threshold":null}]},
                  "doc_link":{"group":"inspections","item":"cpu","hash":""}},
                 {"chart":{"ctx":ctx,"title":"Node CPU usage, %","series":[{"name":"node-a","color":"red","fill":true,"data":[10,null,12]}],"column":true}},
@@ -1158,4 +1158,141 @@ fn a_refresh_asks_from_the_newest_nanosecond_and_adds_no_message_twice() {
     let third = cursor.take(&mut answer(&[d, e.clone()], 4_000_000_000, true));
     assert_eq!(third.lines, [e]);
     assert!(third.gap);
+}
+
+fn decode_wire(wire: serde_json::Value) -> Result<AppView, ReadError> {
+    let envelope = coroot_rs::Envelope {
+        context: wire["context"].clone(),
+        data: wire["data"].clone(),
+    };
+    app_view::decode_all(envelope, &AppId::new("c:shop:Deployment:auth"))
+}
+
+fn deployments_report(rows: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"name":"Deployments","status":"warning","checks":null,"widgets":[{"table":{
+        "header":["Deployment","Deployed","Summary"],"rows":rows},"width":"100%"}]})
+}
+
+fn deployment_row(id: &str, version: &str, summaries: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"id":id,"cells":[
+        {"value":version,"status":"warning"},
+        {"value":"1h ago"},
+        {"value":"","deployment_summaries":summaries}]})
+}
+
+#[test]
+fn every_chart_takes_its_history_from_the_answer_its_layout_came_from() {
+    let view = decode_wire(app_view_wire()).unwrap();
+    assert_eq!(view.history_error, None);
+    let WidgetKind::ChartGroup { charts, .. } = &view.reports[1].widgets[0].kind else {
+        panic!("the CPU group");
+    };
+    let history = charts[0].history.as_ref().unwrap();
+    assert_eq!(history.series[0].samples, [Some(0.1), None, Some(0.2)]);
+    // Three samples of a 61-point window: Coroot covered only its start.
+    assert_eq!(history.series[0].coverage, SeriesCoverage::Partial);
+    assert_eq!(history.expected_points(), 61);
+    assert_eq!(
+        history.group.as_deref(),
+        Some("CPU usage <selector>, cores")
+    );
+    // The group's second chart and the report's own chart keep their places.
+    assert!(charts[1].history.as_ref().unwrap().series.is_empty());
+    let WidgetKind::Chart(node) = &view.reports[1].widgets[1].kind else {
+        panic!("the node chart");
+    };
+    assert_eq!(node.history.as_ref().unwrap().title, "Node CPU usage, %");
+    // No Deployments report: Coroot knows no deployment, which is an answer.
+    assert_eq!(view.revisions, Some(Ok(vec![])));
+}
+
+#[test]
+fn a_history_coroot_rs_refuses_leaves_the_page_and_says_why() {
+    let mut wire = app_view_wire();
+    // Longer than its window: the layout takes it, the history doesn't.
+    wire["data"]["reports"][1]["widgets"][1]["chart"]["series"][0]["data"] = vec![1.0; 62].into();
+    let view = decode_wire(wire).unwrap();
+    assert_eq!(view.history_error, Some(ReadError::InvalidResponse));
+    let WidgetKind::Chart(node) = &view.reports[1].widgets[1].kind else {
+        panic!("the node chart");
+    };
+    assert!(node.history.is_none());
+    assert_eq!(view.reports.len(), 7);
+}
+
+#[test]
+fn revisions_come_newest_first_with_coroot_s_own_words() {
+    let mut wire = app_view_wire();
+    let rows = serde_json::json!([
+        deployment_row(
+            "9c41e7:1789999000",
+            "9c41e7: example.test/shop/auth:1.4.0",
+            serde_json::json!([{"report":"SLO","ok":false,"message":"Availability: 97% (objective: 99%)","time":null}])
+        ),
+        deployment_row(
+            "2b70aa:1789990000",
+            "2b70aa: example.test/shop/auth:1.3.9",
+            serde_json::json!([{"report":"CPU","ok":true,"message":"CPU usage unchanged","time":null}])
+        ),
+    ]);
+    wire["data"]["reports"]
+        .as_array_mut()
+        .unwrap()
+        .push(deployments_report(rows));
+    let view = decode_wire(wire).unwrap();
+    let revisions = view.revisions.unwrap().unwrap();
+    let ids: Vec<_> = revisions.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(ids, ["9c41e7:1789999000", "2b70aa:1789990000"]);
+    assert_eq!(revisions[0].started_at.timestamp(), 1_789_999_000);
+    assert_eq!(
+        revisions[0].findings[0].message,
+        "Availability: 97% (objective: 99%)"
+    );
+    assert_eq!(view.history_error, None);
+}
+
+#[test]
+fn bad_revisions_fail_alone() {
+    let row = |id: &str| {
+        deployment_row(
+            id,
+            "9c41e7",
+            serde_json::json!([{"report":"SLO","ok":true,"message":"ok","time":null}]),
+        )
+    };
+    let mut wire = app_view_wire();
+    wire["data"]["reports"]
+        .as_array_mut()
+        .unwrap()
+        .push(deployments_report(serde_json::json!([
+            row("9c41e7:1789999000"),
+            row("9c41e7:1789999000")
+        ])));
+    let view = decode_wire(wire).unwrap();
+    assert_eq!(view.revisions, Some(Err(ReadError::InvalidResponse)));
+    assert_eq!(view.history_error, None);
+    assert_eq!(view.reports.len(), 8);
+}
+
+#[test]
+fn revision_text_is_bounded() {
+    let revision = |message: String| coroot_rs::DeploymentRevision {
+        id: "9c41e7:1789999000".into(),
+        hash: "9c41e7".into(),
+        started_at: chrono::DateTime::from_timestamp(1_789_999_000, 0).unwrap(),
+        version: "9c41e7".into(),
+        status: Status::Ok,
+        findings: vec![coroot_rs::RevisionFinding {
+            report: "SLO".into(),
+            ok: true,
+            message,
+            time: None,
+        }],
+        note: None,
+    };
+    assert_eq!(limits::revisions(&[revision("ok".into())]), Ok(()));
+    assert_eq!(
+        limits::revisions(&[revision("x".repeat(4_097))]),
+        Err(ReadError::Limit)
+    );
 }
