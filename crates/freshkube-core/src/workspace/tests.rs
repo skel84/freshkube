@@ -162,3 +162,156 @@ fn the_example_workspace_is_valid_and_has_one_core() {
         1
     );
 }
+
+fn sample() -> Workspace {
+    Workspace {
+        kubeconfig: Some(absolute("kubeconfig")),
+        clusters: vec![
+            {
+                let mut mgmt = Entry::new("mgmt", Role::Core, "acme-mgmt");
+                mgmt.talosconfig = Some(absolute("talosconfig"));
+                mgmt
+            },
+            Entry::new("ci", Role::Cicd, "acme-ci"),
+            Entry::new("prod", Role::Environment, "acme-prod"),
+        ],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_workspace_round_trips_through_its_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    save(&file, &sample()).unwrap();
+    assert_eq!(load(&file), Loaded::Workspace(sample()));
+    let written = std::fs::read_to_string(&file).unwrap();
+    assert!(written.starts_with("{\n  \"version\": 1,"));
+    // An entry without a talosconfig writes none.
+    assert_eq!(written.matches("\"talosconfig\":").count(), 1);
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn keys_this_version_does_not_know_survive_a_save() {
+    let source = serde_json::json!({
+        "version": 1,
+        "clusters": [{"id": "mgmt", "role": "core", "context": "acme-mgmt", "note": "kept"}],
+        "destinations": [{"server": "https://prod.example.test", "entry": "mgmt"}],
+        "sources": {"a": 1},
+        "talosconfg": "misspelt",
+    });
+    let workspace = parse(&text(source)).unwrap();
+    let written: serde_json::Value = serde_json::from_str(&to_text(&workspace)).unwrap();
+    assert_eq!(
+        written["destinations"][0]["server"],
+        "https://prod.example.test"
+    );
+    assert_eq!(written["sources"]["a"], 1);
+    assert_eq!(written["talosconfg"], "misspelt");
+    assert_eq!(written["clusters"][0]["note"], "kept");
+    assert_eq!(written["version"], 1);
+    assert_eq!(parse(to_text(&workspace).as_bytes()), Ok(workspace));
+}
+
+#[test]
+fn an_unknown_key_is_named_but_a_reserved_one_is_not() {
+    let workspace = parse(&text(serde_json::json!({
+        "version": 1,
+        "clusters": [
+            {"id": "mgmt", "role": "core", "context": "x", "talosconfg": "/a"},
+            {"id": "ci", "role": "cicd", "context": "y"},
+        ],
+        "destinations": [],
+        "sources": {},
+        "kubeconfg": "/b",
+    })))
+    .unwrap();
+    assert_eq!(
+        workspace.unknown_keys(),
+        vec!["kubeconfg", "mgmt.talosconfg"]
+    );
+    assert!(sample().unknown_keys().is_empty());
+}
+
+#[test]
+fn saving_an_invalid_workspace_writes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    let bad = Workspace {
+        clusters: vec![
+            Entry::new("a", Role::Core, ""),
+            Entry::new("a", Role::Cicd, "x"),
+        ],
+        ..Default::default()
+    };
+    assert!(save(&file, &bad).is_err());
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn a_save_replaces_the_file_whole() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    save(&file, &sample()).unwrap();
+    let mut smaller = sample();
+    smaller.clusters.truncate(1);
+    save(&file, &smaller).unwrap();
+    assert_eq!(load(&file), Loaded::Workspace(smaller));
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn a_refused_file_is_set_aside_and_never_over_an_earlier_backup() {
+    use chrono::TimeZone;
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    let now = chrono::Utc
+        .with_ymd_and_hms(2026, 10, 8, 14, 30, 5)
+        .unwrap();
+
+    std::fs::write(&file, "first").unwrap();
+    let first = set_aside(&file, now).unwrap();
+    assert_eq!(first, directory.path().join("workspace.json.bak"));
+    assert!(!file.exists());
+
+    std::fs::write(&file, "second").unwrap();
+    let second = set_aside(&file, now).unwrap();
+    assert_eq!(
+        second,
+        directory.path().join("workspace.20261008T143005Z.bak")
+    );
+
+    std::fs::write(&file, "third").unwrap();
+    let third = set_aside(&file, now).unwrap();
+    assert_eq!(
+        third,
+        directory.path().join("workspace.20261008T143005Z-2.bak")
+    );
+
+    for (backup, content) in [(first, "first"), (second, "second"), (third, "third")] {
+        assert_eq!(std::fs::read_to_string(backup).unwrap(), content);
+    }
+    assert!(!file.exists());
+}
+
+#[test]
+fn setting_aside_a_missing_file_fails_and_makes_no_backup() {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("workspace.json");
+    assert!(set_aside(&file, chrono::Utc::now()).is_err());
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn fresh_ids_come_from_the_context_and_never_repeat() {
+    let mut workspace = sample();
+    assert_eq!(workspace.fresh_id("Acme Staging!"), "acme-staging");
+    assert_eq!(workspace.fresh_id("???"), "cluster");
+    assert_eq!(workspace.fresh_id("acme-ci"), "acme-ci");
+    workspace
+        .clusters
+        .push(Entry::new("acme-ci", Role::Cicd, "x"));
+    assert_eq!(workspace.fresh_id("acme-ci"), "acme-ci-2");
+    assert!(workspace.fresh_id(&"x".repeat(200)).len() <= MAX_ID_BYTES);
+}

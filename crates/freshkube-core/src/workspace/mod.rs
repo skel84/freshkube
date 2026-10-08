@@ -7,16 +7,21 @@
 //! `navigation.json`, not here.
 //!
 //! A file that can't be used is ignored, never half-used: [`load`] says why
-//! and leaves it where it is. This half only reads; writing the file, setting
-//! a refused one aside, and starting on an entry arrive with the callers that
-//! need them.
+//! and leaves it where it is. The first [`save`] after that sets it aside
+//! with [`set_aside`], which never replaces a backup. Keys this version
+//! doesn't know are kept when the file is written again, and
+//! [`Workspace::unknown_keys`] names them, so a misspelt `talosconfg` doesn't
+//! go unnoticed. Starting on an entry arrives with the callers that open one.
 
 use std::{
     collections::HashSet,
+    fs,
+    io::Write,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{BoundedReadError, read_bounded_regular_file};
 
@@ -29,7 +34,7 @@ pub const MAX_ENTRIES: usize = 64;
 const MAX_ID_BYTES: usize = 64;
 
 /// What a cluster is for. A fixed set; the file refuses any other.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     /// The management cluster, where the others are described.
@@ -41,6 +46,8 @@ pub enum Role {
 }
 
 impl Role {
+    pub const ALL: [Role; 3] = [Role::Core, Role::Cicd, Role::Environment];
+
     pub fn label(self) -> &'static str {
         match self {
             Role::Core => "Core",
@@ -54,13 +61,16 @@ impl Role {
 /// `context` is the kubeconfig context it opens. Every entry in a file has a
 /// role: having none is reserved for the implicit workspace of one, which is
 /// never written.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
     pub id: String,
     pub role: Role,
     pub context: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub talosconfig: Option<PathBuf>,
+    /// Keys this version doesn't know, written back as they were read.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Entry {
@@ -70,20 +80,28 @@ impl Entry {
             role,
             context: context.into(),
             talosconfig: None,
+            extra: Default::default(),
         }
     }
 }
 
 /// The clusters of a workspace, in the order the person keeps them.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
     /// The kubeconfig every entry's context is read from; `None` is the
     /// automatic one (`KUBECONFIG`, then the home default).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kubeconfig: Option<PathBuf>,
     #[serde(default)]
     pub clusters: Vec<Entry>,
+    /// Keys this version doesn't know (`destinations`, `sources` and later
+    /// ones), written back as they were read.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, serde_json::Value>,
 }
+
+/// Top-level keys reserved for later steps: kept on save, never warned about.
+const RESERVED: [&str; 2] = ["destinations", "sources"];
 
 /// Why a file or a workspace is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +175,47 @@ impl Workspace {
         }
         Ok(())
     }
+
+    /// Keys this version doesn't know, as `key` or `cluster-id.key`, in file
+    /// order. They are kept when the file is saved; the page names them so a
+    /// misspelt key doesn't go unnoticed. The reserved `destinations` and
+    /// `sources` are not listed.
+    pub fn unknown_keys(&self) -> Vec<String> {
+        let top = self
+            .extra
+            .keys()
+            .filter(|key| !RESERVED.contains(&key.as_str()))
+            .cloned();
+        let entries = self
+            .clusters
+            .iter()
+            .flat_map(|entry| entry.extra.keys().map(|key| format!("{}.{key}", entry.id)));
+        top.chain(entries).collect()
+    }
+
+    /// An id for a new entry that no entry uses, from the context's name.
+    pub fn fresh_id(&self, context: &str) -> String {
+        let mut base: String = context
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect();
+        base.truncate(MAX_ID_BYTES - 6);
+        let base = base.trim_matches('-');
+        let base = if base.is_empty() { "cluster" } else { base };
+        if !self.clusters.iter().any(|entry| entry.id == base) {
+            return base.to_owned();
+        }
+        (2..)
+            .map(|n| format!("{base}-{n}"))
+            .find(|id| !self.clusters.iter().any(|entry| &entry.id == id))
+            .expect("an unused suffix exists")
+    }
 }
 
 /// What reading the file found.
@@ -182,8 +241,10 @@ pub fn parse(bytes: &[u8]) -> Result<Workspace, Invalid> {
             Some(_) => {}
         },
     }
-    let workspace: Workspace =
+    let mut workspace: Workspace =
         serde_json::from_value(value).map_err(|error| Invalid::Malformed(error.to_string()))?;
+    // The version is written fresh each time; it isn't an unknown key.
+    workspace.extra.remove("version");
     workspace.validate()?;
     Ok(workspace)
 }
@@ -199,6 +260,83 @@ pub fn load(file: &Path) -> Loaded {
         Err(BoundedReadError::NotFound) => Loaded::Missing,
         Err(error) => Loaded::Refused(Invalid::NotReadable(error.to_string())),
     }
+}
+
+/// The file's text, with its version first.
+pub fn to_text(workspace: &Workspace) -> String {
+    let mut object = serde_json::Map::new();
+    object.insert("version".into(), VERSION.into());
+    if let serde_json::Value::Object(rest) =
+        serde_json::to_value(workspace).expect("a workspace serializes")
+    {
+        object.extend(rest);
+    }
+    format!("{:#}\n", serde_json::Value::Object(object))
+}
+
+/// Writes the workspace through a temporary file renamed into place, so a
+/// failed save leaves the old file whole. An invalid workspace writes nothing.
+pub fn save(file: &Path, workspace: &Workspace) -> std::io::Result<()> {
+    workspace.validate().map_err(|invalid| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, invalid.to_string())
+    })?;
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    static NEXT_WRITE: AtomicU64 = AtomicU64::new(0);
+    let temporary = file.with_extension(format!(
+        "json.{}.{}.tmp",
+        std::process::id(),
+        NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| {
+        let mut output = options.open(&temporary)?;
+        output.write_all(to_text(workspace).as_bytes())?;
+        output.sync_all()?;
+        fs::rename(&temporary, file)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+/// Moves a refused file to a backup beside it and returns the backup's path:
+/// `workspace.json.bak`, or `workspace.<UTC time>.bak` (then `-2`, `-3`, …)
+/// when that exists. A backup is never replaced: the file is linked to the
+/// name, which fails if the name is taken, and only then unlinked, so a backup
+/// that appears between the check and the move is not overwritten.
+pub fn set_aside(file: &Path, now: chrono::DateTime<chrono::Utc>) -> std::io::Result<PathBuf> {
+    let stem = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("workspace");
+    let stamp = now.format("%Y%m%dT%H%M%SZ");
+    let candidates = std::iter::once(file.with_extension("json.bak"))
+        .chain(std::iter::once(
+            file.with_file_name(format!("{stem}.{stamp}.bak")),
+        ))
+        .chain((2..100).map(|n| file.with_file_name(format!("{stem}.{stamp}-{n}.bak"))));
+    for target in candidates {
+        match fs::hard_link(file, &target) {
+            Ok(()) => {
+                fs::remove_file(file)?;
+                return Ok(target);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(std::io::Error::other(
+        "too many backups of the workspace file",
+    ))
 }
 
 /// The acme workspace of `docs/platform/`'s mocks as a workspace: one core
@@ -217,6 +355,7 @@ pub fn example() -> Workspace {
             entry("prod-ams", Role::Environment),
             entry("prod-fra", Role::Environment),
         ],
+        extra: Default::default(),
     }
 }
 
