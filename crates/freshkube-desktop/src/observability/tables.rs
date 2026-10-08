@@ -104,9 +104,12 @@ impl ObservabilityPage {
         &self,
         cx: &App,
     ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        let patterns = (self.destination == Destination::Application)
-            .then(|| self.live_logs.loading_motion(cx))
-            .flatten();
+        // Only while the Logs report is drawn: its read runs on behind
+        // another report, whose frames mustn't pulse its rows.
+        let shown = self.destination == Destination::Application
+            && self.selected_app.is_some()
+            && self.embeds_logs();
+        let patterns = shown.then(|| self.live_logs.loading_motion(cx)).flatten();
         self.loading.motion(self.first_read()).or(patterns)
     }
 

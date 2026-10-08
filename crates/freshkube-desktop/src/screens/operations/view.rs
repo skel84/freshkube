@@ -283,13 +283,10 @@ impl OperationsScreen {
     /// its rows, scrolling sideways when the page is narrower than its
     /// columns, with the run order and the node's name kept at the left
     /// edge.
-    fn nodes_panel(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        // Before the overview, as many loading rows as Lifecycle shows.
-        let rows = if self.roster.is_empty() && self.first_read(cx) {
-            3
-        } else {
-            self.roster.len().max(1)
-        };
+    /// The roster; `loading` before the overview, with as many loading rows
+    /// as Lifecycle shows.
+    fn nodes_panel(&self, loading: bool, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let rows = if loading { 3 } else { self.roster.len().max(1) };
         DataTable::new()
             .fit(rows)
             .render(self, window, cx)
@@ -900,7 +897,7 @@ impl Render for OperationsScreen {
         let page = match self.source.clone() {
             Some(source) => page.child(self.render_body(&source, window, cx)),
             // The roster comes with the overview: its table waits for it.
-            None if first_read => page.child(self.nodes_panel(window, cx)),
+            None if first_read => page.child(self.nodes_panel(true, window, cx)),
             None => page.child(
                 page::inset().child(
                     div()
@@ -983,7 +980,7 @@ impl OperationsScreen {
                 .aria_label(text.clone())
                 .child(ui::warning_banner(None, text, None, cx))
         });
-        let nodes = self.nodes_panel(window, cx);
+        let nodes = self.nodes_panel(false, window, cx);
         // The plan sits beside the roster only while the roster still fits
         // whole; otherwise it goes under it.
         let beside = page_width(window) >= self.columns.1 + PLAN_WIDTH + GAP;

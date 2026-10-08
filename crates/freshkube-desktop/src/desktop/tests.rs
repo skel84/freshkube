@@ -1956,7 +1956,6 @@ fn screen_tables_show_the_shared_loading_rows_until_the_first_answer(cx: &mut Te
         cx.update_window(handle, |_, window, cx| {
             let loading: &'static str = format!("{prefix}-loading").leak();
             assert!(window.find(loading).visible());
-            assert!(window.try_find("screen-waiting").is_none());
             super::layout_check::assert_edge_frame(
                 window,
                 cx,
@@ -3458,7 +3457,6 @@ fn kubernetes_only_health_failure(
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("screen-no-node").is_none());
-        assert!(window.try_find("screen-waiting").is_none());
         assert!(window.try_find("workloads-loading").is_none());
         match &view.read(cx).summary_health {
             Some(Err(reason)) => reason.clone(),

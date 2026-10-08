@@ -245,6 +245,7 @@ impl ObservabilityPage {
             .update(cx, |view, cx| view.start(app, SharedString::default(), cx));
         logs.patterns
             .update(cx, |table, cx| table.set(Rc::default(), cx));
+        self.note_pattern_waiting(cx);
     }
 
     /// Takes an answer: its histogram and patterns replace the last ones,
@@ -262,6 +263,7 @@ impl ObservabilityPage {
             Err(failure) => {
                 logs.asked = None;
                 logs.failure = Some(failure.into());
+                self.note_pattern_waiting(cx);
                 cx.notify();
                 return;
             }
@@ -269,6 +271,8 @@ impl ObservabilityPage {
         let first = !logs.answered;
         logs.answered = true;
         logs.failure = None;
+        self.note_pattern_waiting(cx);
+        let logs = &mut self.live_logs;
         logs.read_to_ms = to_ms;
         logs.status = answer.status;
         logs.note = answer.message.clone().into();
@@ -331,15 +335,17 @@ impl ObservabilityPage {
     fn change_logs(&mut self, change: impl FnOnce(&mut api::LogQuery), cx: &mut Context<Self>) {
         let before = self.live_logs.query.clone();
         change(&mut self.live_logs.query);
+        self.note_pattern_waiting(cx);
         if self.live_logs.query != before {
             self.read_logs(cx);
         }
         cx.notify();
     }
 
-    /// Tells the patterns table whether it waits, as the page draws.
-    pub(super) fn sync_pattern_waiting(&self, cx: &mut Context<Self>) {
-        let waiting = self.selected_app.is_some() && self.live_logs.waits_for_patterns();
+    /// Tells the patterns table whether it waits: when a read starts, its
+    /// query changes, or it answers or fails.
+    pub(super) fn note_pattern_waiting(&mut self, cx: &mut Context<Self>) {
+        let waiting = self.live_logs.waits_for_patterns();
         self.live_logs
             .patterns
             .update(cx, |table, cx| table.set_waiting(waiting, cx));

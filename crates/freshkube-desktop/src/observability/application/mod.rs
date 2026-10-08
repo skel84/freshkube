@@ -269,7 +269,7 @@ impl ObservabilityPage {
             .is_some_and(|page| page.embeds(|b| matches!(b, BlockKind::Profiling)))
     }
 
-    fn embeds_logs(&self) -> bool {
+    pub(super) fn embeds_logs(&self) -> bool {
         self.app_page
             .as_ref()
             .is_some_and(|page| page.embeds(|b| matches!(b, BlockKind::Logs)))

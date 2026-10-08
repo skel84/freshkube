@@ -378,7 +378,12 @@ fn patterns_asked_for_show_loading_rows_until_the_answer(cx: &mut TestAppContext
     open(cx, &page, example::WORKER);
     draw(cx, handle);
     let waiting = |cx: &mut TestAppContext, waiting: bool| {
-        cx.update(|cx| page.update(cx, |page, _| page.live_logs.answered = !waiting));
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.live_logs.answered = !waiting;
+                page.note_pattern_waiting(cx);
+            })
+        });
         draw(cx, handle);
     };
     // Messages: the list's kind is the answer's to say.
@@ -400,6 +405,22 @@ fn patterns_asked_for_show_loading_rows_until_the_answer(cx: &mut TestAppContext
         let table = window.find("obs-log-patterns-list").bounds();
         assert!(table.contains(&rows.origin), "{rows:?} {table:?}");
         assert!(window.try_find("obs-log-patterns-row-0").is_none());
+        assert!(page.read(cx).loading_motion(cx).is_some());
+    })
+    .unwrap();
+    // Another report, mid-read: the patterns aren't drawn, so their rows
+    // ask no frames, though the read runs on.
+    cx.update(|cx| page.update(cx, |page, cx| page.select_report("CPU".into(), cx)));
+    draw(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.try_find("obs-log-patterns-loading").is_none());
+        assert!(page.read(cx).loading_motion(cx).is_none());
+    })
+    .unwrap();
+    cx.update(|cx| page.update(cx, |page, cx| page.select_report("Logs".into(), cx)));
+    draw(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.find("obs-log-patterns-loading").visible());
         assert!(page.read(cx).loading_motion(cx).is_some());
     })
     .unwrap();
