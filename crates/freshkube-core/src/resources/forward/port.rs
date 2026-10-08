@@ -141,7 +141,7 @@ pub fn is_taken(error: &io::Error) -> bool {
 }
 
 /// Windows keeps the port from us: one in a range it reserves.
-fn is_reserved(error: &io::Error) -> bool {
+pub fn is_reserved(error: &io::Error) -> bool {
     cfg!(windows) && error.kind() == io::ErrorKind::PermissionDenied
 }
 

@@ -151,6 +151,9 @@ pub enum ForwardFailureKind {
     Request(FailureKind),
     /// Something else listens on the local port the user typed.
     PortInUse,
+    /// The system keeps the local port the user typed for itself: one in a
+    /// range Windows reserves.
+    PortReserved,
     /// The pod isn't running.
     NotRunning,
     /// The target selects no pods: a Service without a selector.
@@ -181,7 +184,9 @@ impl ForwardFailure {
     pub fn is_permanent(&self) -> bool {
         match self.kind {
             ForwardFailureKind::Request(kind) => kind.is_permanent(),
-            ForwardFailureKind::PortInUse | ForwardFailureKind::NotRunning => false,
+            ForwardFailureKind::PortInUse
+            | ForwardFailureKind::PortReserved
+            | ForwardFailureKind::NotRunning => false,
             ForwardFailureKind::NoPods | ForwardFailureKind::NotTcp => true,
         }
     }
@@ -200,6 +205,7 @@ impl fmt::Display for ForwardFailure {
                 return Failure::new(kind, self.message.clone()).fmt(f);
             }
             ForwardFailureKind::PortInUse => "In use",
+            ForwardFailureKind::PortReserved => "Reserved",
             ForwardFailureKind::NotRunning => "Not running",
             ForwardFailureKind::NoPods => "No pods",
             ForwardFailureKind::NotTcp => "Not TCP",
@@ -270,7 +276,7 @@ pub async fn start_forward(
     watches: &PodWatches,
     request: ForwardRequest,
 ) -> Result<Forward, ForwardFailure> {
-    let listeners = listen_local(request.local_port, request.port)?;
+    let listeners = listen_blocking(request.local_port, request.port).await?;
     let resolved = resolve(watches.client(), &request).await?;
     let pods = watches.subscribe(&request.namespace, resolved.selector.clone());
     let (route, _) = watch::channel(Route::default());
@@ -309,9 +315,26 @@ pub async fn start_forward(
     })
 }
 
+/// [`listen_local`] on Tokio's blocking pool: on Windows, asking whether a
+/// port is free can take a couple of seconds.
+pub async fn listen_blocking(
+    local_port: Option<u16>,
+    remote: u16,
+) -> Result<Listeners, ForwardFailure> {
+    tokio::task::spawn_blocking(move || listen_local(local_port, remote))
+        .await
+        .unwrap_or_else(|error| {
+            Err(ForwardFailure::new(
+                ForwardFailureKind::Request(FailureKind::Other),
+                format!("Couldn't listen on the loopback · {error}"),
+            ))
+        })
+}
+
 /// Listens on the loopback as a forward would: on `local_port` exactly, or
 /// on the automatic port for `remote`. Example mode serves its own answers
-/// on what this returns.
+/// on what this returns. It blocks, on Windows for a couple of seconds, so
+/// it runs off the UI thread ([`listen_blocking`]).
 pub fn listen_local(local_port: Option<u16>, remote: u16) -> Result<Listeners, ForwardFailure> {
     let bound = match local_port {
         Some(port) => port::bind_loopback(port),
@@ -321,6 +344,10 @@ pub fn listen_local(local_port: Option<u16>, remote: u16) -> Result<Listeners, F
         Some(port) if port::is_taken(&error) => ForwardFailure::new(
             ForwardFailureKind::PortInUse,
             format!("Port {port} is in use"),
+        ),
+        Some(port) if port::is_reserved(&error) => ForwardFailure::new(
+            ForwardFailureKind::PortReserved,
+            format!("Windows reserves port {port}"),
         ),
         _ => ForwardFailure::new(
             ForwardFailureKind::Request(FailureKind::Other),
