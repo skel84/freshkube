@@ -49,6 +49,10 @@ use crate::state::Snapshot;
 use crate::ui::{self, MONO_FONT, clock, dp};
 // The page widths live in `freshkube_ui::page`; screens reach them here.
 pub(crate) use freshkube_ui::page::{content_width, inset_width, page_width, set_chrome_width};
+/// What a table screen shows until its first answer: its `TableSource::loading`
+/// returns the rows while [`first_read`], and [`ScreenPanel::loading_motion`]
+/// their motion, which the shell draws beside the page.
+pub(crate) use freshkube_ui::table::TableLoading;
 
 /// Upper bound for one screen request, including Kubernetes client setup.
 pub(crate) const SCREEN_DEADLINE: Duration = Duration::from_secs(60);
@@ -741,47 +745,6 @@ pub(crate) fn first_read<T: Send + 'static>(
         return false;
     }
     loader.error().is_none()
-}
-
-/// What a table screen shows until its first answer: the shared loading
-/// rows under its real header, which its `TableSource::loading` returns
-/// while [`showing`](Self::showing), and their motion, which the shell
-/// draws beside the page ([`ScreenPanel::loading_motion`]). The screen sets
-/// it from [`first_read`] as it renders; it holds no state of its own.
-pub(crate) struct TableLoading {
-    rows: freshkube_ui::table::LoadingRows,
-    motion: Entity<freshkube_ui::table::LoadingMotion>,
-    showing: std::cell::Cell<bool>,
-}
-
-impl TableLoading {
-    pub(crate) fn new(prefix: &str, cx: &mut App) -> Self {
-        let rows = freshkube_ui::table::LoadingRows::new(prefix);
-        let motion = cx.new(|_| rows.motion(freshkube_ui::table::Look::Pulse));
-        Self {
-            rows,
-            motion,
-            showing: std::cell::Cell::new(false),
-        }
-    }
-
-    /// Says whether the table shows the rows this frame: [`first_read`].
-    pub(crate) fn show(&self, showing: bool) {
-        self.showing.set(showing);
-    }
-
-    /// For `TableSource::loading`.
-    pub(crate) fn rows(&self) -> Option<&freshkube_ui::table::LoadingRows> {
-        self.showing.get().then_some(&self.rows)
-    }
-
-    /// For [`ScreenPanel::loading_motion`], from the screen's [`first_read`].
-    pub(crate) fn motion(
-        &self,
-        showing: bool,
-    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        showing.then(|| self.motion.clone())
-    }
 }
 
 /// What to show instead of data: no target yet, a silent node, or a first
