@@ -877,6 +877,57 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// The header is 44 dp with one row of controls centred in it, at the
+/// default text size and the largest; the page starts under it.
+#[gpui_kit::test]
+fn header_is_one_row_of_controls_at_every_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 1280., 880.);
+    for text_size in [13., 20.] {
+        cx.update(|cx| crate::text_size::set(text_size, cx));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let dp = |n| crate::ui::dp_px(n, window);
+            let close = |what: &str, got: gpui_kit::Pixels, want: gpui_kit::Pixels| {
+                assert!(
+                    (got - want).abs() < px(0.5),
+                    "{what} at text {text_size}: {got:?}, not {want:?}"
+                );
+            };
+            close(
+                "the page's top",
+                window.find("page-cell").bounds().top(),
+                dp(44.),
+            );
+            close(
+                "the page's bottom, over the status bar",
+                window.find("page-cell").bounds().bottom(),
+                px(880.) - dp(28.),
+            );
+            // Centred on the header less its hairline.
+            let middle = (dp(44.) - px(1.)) / 2.;
+            for (id, height) in [
+                ("context-switcher", 28.),
+                ("search-everything", 28.),
+                ("refresh", 24.),
+                ("theme-toggle", 24.),
+                ("settings", 24.),
+            ] {
+                let bounds = window.find(id).bounds();
+                close(id, bounds.size.height, dp(height));
+                close(id, bounds.center().y, middle);
+            }
+            // The selected tab's underline sits on the hairline.
+            close(
+                "the tab's bottom",
+                window.find("section-dashboard").bounds().bottom(),
+                dp(44.) - px(1.),
+            );
+        })
+        .unwrap();
+    }
+}
+
 #[gpui_kit::test]
 fn narrow_window_keeps_screens_and_actions_reachable(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 760., 560.);

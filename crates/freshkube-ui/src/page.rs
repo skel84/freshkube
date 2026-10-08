@@ -11,8 +11,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui_kit::{
-    Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, Pixels, SharedString, Stateful,
-    TestSupportExt, Window, canvas, div, px,
+    Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, Pixels, Point, SharedString,
+    Stateful, TestSupportExt, Window, canvas, div, point, px,
 };
 
 use crate::palette::palette;
@@ -36,8 +36,38 @@ pub const SHORT_HEIGHT: f32 = 620.;
 pub const SHORT_LIST_HEIGHT: f32 = 180.;
 /// A toolbar row's height: the header's row, and its secondary row.
 pub const TOOLBAR_HEIGHT: f32 = 38.;
-/// The app frame's header, above every page, in dp.
-pub const APP_HEADER_HEIGHT: f32 = 52.;
+/// The app frame's header, above every page, in dp, its bottom hairline
+/// included: one row of [`APP_HEADER_CONTROL`] controls with even padding.
+pub const APP_HEADER_HEIGHT: f32 = 44.;
+/// The height of the header's controls, in dp: the context switcher and
+/// Search everything, and the slot of Refresh's countdown ring.
+pub const APP_HEADER_CONTROL: f32 = 28.;
+/// Where the header's content starts on macOS, in points: clear of the
+/// traffic lights, which don't scale with the text size.
+pub const TRAFFIC_LIGHT_INSET: f32 = 80.;
+/// The close button's left edge from the window's, in points. AppKit's
+/// button frames are 14 × 16 with the 12 pt circle 1 in and 2 down, so the
+/// circle starts at 15, as far as it sits from the header's top at 13 px.
+const TRAFFIC_LIGHT_X: f32 = 14.;
+/// The traffic light circle's diameter, and how far below its button
+/// frame's top it starts, in points.
+const TRAFFIC_LIGHT: f32 = 12.;
+const TRAFFIC_LIGHT_TOP: f32 = 2.;
+// The zoom button's circle, two 20 pt steps from the close button's, ends
+// at 67 pt: the header's content starts at least 12 pt after it.
+const _: () =
+    assert!(TRAFFIC_LIGHT_INSET - (TRAFFIC_LIGHT_X + 1. + 2. * 20. + TRAFFIC_LIGHT) >= 12.);
+
+/// Where macOS puts the close button's frame so the traffic lights are
+/// centred on the header, whose dp lengths are `rem` pixels per 13: the
+/// lights stay one size, so a fixed position centres them at only one
+/// text size, and the shell places them again when the text size changes.
+pub fn traffic_light_position(rem: f32) -> Point<Pixels> {
+    let header = APP_HEADER_HEIGHT * rem / crate::ui::BASE_TEXT;
+    // Centre the circle on the header less its 1 px hairline.
+    let top = (header - 1. - TRAFFIC_LIGHT) / 2. - TRAFFIC_LIGHT_TOP;
+    point(px(TRAFFIC_LIGHT_X), px(top))
+}
 /// The app frame's status bar, below every page, in dp.
 pub const STATUS_BAR_HEIGHT: f32 = 28.;
 /// The icon rail's width, and the navigation column's beside it, in dp.
@@ -942,6 +972,29 @@ mod tests {
 
     /// Applications-like controls: the first never folds, the rest do.
     const CONTROLS: [f32; 5] = [160., 132., 80., 100., 24.];
+
+    /// The traffic lights' circles sit centred on the header less its
+    /// hairline at every text size, and their left edge as far from the
+    /// window's as from the header's top at the default size.
+    #[test]
+    fn traffic_lights_centre_on_the_header_at_every_text_size() {
+        for rem in crate::text_size::STEPS {
+            let header = APP_HEADER_HEIGHT * rem / crate::ui::BASE_TEXT - 1.;
+            let at = traffic_light_position(rem);
+            let top = f32::from(at.y) + TRAFFIC_LIGHT_TOP;
+            let bottom = header - top - TRAFFIC_LIGHT;
+            assert!(
+                (top - bottom).abs() < 0.01,
+                "{rem}: {top} above, {bottom} below"
+            );
+        }
+        let at = traffic_light_position(crate::ui::BASE_TEXT);
+        let (left, top) = (f32::from(at.x) + 1., f32::from(at.y) + TRAFFIC_LIGHT_TOP);
+        assert!(
+            (left - top).abs() <= 0.5,
+            "{left} from the left, {top} from the top"
+        );
+    }
 
     #[test]
     fn controls_fold_right_to_left_then_the_chips_move_down() {

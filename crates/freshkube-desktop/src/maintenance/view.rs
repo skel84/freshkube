@@ -169,7 +169,9 @@ impl MaintenanceView {
         TitleBar::new()
             // The app header's height, where the window puts its traffic lights.
             .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
-            .when(cfg!(target_os = "macos"), |bar| bar.pl(dp(84.)))
+            .when(cfg!(target_os = "macos"), |bar| {
+                bar.pl(px(freshkube_ui::page::TRAFFIC_LIGHT_INSET))
+            })
             .child(
                 h_flex()
                     .id("maint-location")
