@@ -6,15 +6,15 @@ use std::time::Duration;
 
 use freshkube_core::resources::{
     FailureKind, ForwardEnd, ForwardFailure, ForwardFailureKind, ForwardGuard, ForwardRequest,
-    ForwardState, ForwardStatus, ForwardTarget, start_forward,
+    ForwardState, ForwardStatus, ForwardTarget, Listeners, start_forward,
 };
 use gpui_kit::*;
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use super::Watches;
 use super::example::{self, ExampleForward, ExampleGuard, Route};
+use super::{Listen, Watches};
 use crate::backend::{self, OwnedJob};
 use crate::resources::KubeAccess;
 use crate::resources::model::ResourceIdentity;
@@ -92,14 +92,26 @@ impl Guard {
 }
 
 enum Session {
-    Starting { _job: OwnedJob, _task: Task<()> },
-    Running { guard: Guard, _delivery: Task<()> },
+    Starting {
+        _job: OwnedJob,
+        _task: Task<()>,
+    },
+    /// An example forward waiting for its port, bound on Tokio's blocking
+    /// pool. Dropping it leaves the bind to finish and drops its listeners.
+    Binding {
+        _task: Task<()>,
+    },
+    Running {
+        guard: Guard,
+        _delivery: Task<()>,
+    },
 }
 
 pub(crate) struct ForwardView {
     pub(crate) id: u64,
     spec: ForwardSpec,
     watches: Watches,
+    listen: Listen,
     /// The port it listened on last, which Start again asks for first.
     pub(crate) local_port: Option<u16>,
     pub(crate) phase: Phase,
@@ -113,11 +125,12 @@ pub(crate) struct ForwardView {
 }
 
 impl ForwardView {
-    pub(super) fn new(id: u64, spec: ForwardSpec, watches: Watches) -> Self {
+    pub(super) fn new(id: u64, spec: ForwardSpec, watches: Watches, listen: Listen) -> Self {
         let mut view = Self {
             id,
             spec,
             watches,
+            listen,
             local_port: None,
             phase: Phase::Starting,
             status: None,
@@ -153,12 +166,13 @@ impl ForwardView {
         self.local_port.map(|port| format!("localhost:{port}"))
     }
 
-    /// The local port was taken, so the automatic one may do instead.
+    /// The typed local port was taken, or Windows reserves it, so the
+    /// automatic one may do instead.
     pub(crate) fn port_was_taken(&self) -> bool {
         matches!(
             &self.end,
             Some(ForwardEnd::Failed(ForwardFailure {
-                kind: ForwardFailureKind::PortInUse,
+                kind: ForwardFailureKind::PortInUse | ForwardFailureKind::PortReserved,
                 ..
             }))
         )
@@ -182,7 +196,8 @@ impl ForwardView {
         self.begin(first, fallback, cx);
     }
 
-    /// Starts again on the automatic port, after the typed one was taken.
+    /// Starts again on the automatic port, after the typed one was taken
+    /// or reserved.
     pub(super) fn use_automatic(&mut self, cx: &mut Context<Self>) {
         if self.running() {
             return;
@@ -215,25 +230,7 @@ impl ForwardView {
         self.status = None;
         self.end = None;
         if let KubeAccess::Example = self.spec.access {
-            let started = example::route(
-                &self.spec.context,
-                &self.spec.identity,
-                &self.spec.target,
-                self.spec.port,
-            )
-            .and_then(|route| self.start_example(&request, fallback.as_ref(), route));
-            match started {
-                Ok(forward) => {
-                    let ExampleForward {
-                        local_port,
-                        status,
-                        guard,
-                    } = forward;
-                    self.run(seq, local_port, status, Guard::Example(guard), cx);
-                }
-                Err(failure) => self.finish(ForwardEnd::Failed(failure), cx),
-            }
-            return;
+            return self.begin_example(seq, request, fallback, cx);
         }
         let access = self.spec.access.clone();
         let watches = self.watches.clone();
@@ -293,20 +290,70 @@ impl ForwardView {
         cx.notify();
     }
 
-    fn start_example(
-        &self,
-        request: &ForwardRequest,
-        fallback: Option<&ForwardRequest>,
-        route: Option<Route>,
-    ) -> Result<ExampleForward, ForwardFailure> {
-        match (
-            example::start(&self.spec.runtime, request, route.clone()),
-            fallback,
+    /// Resolves an example target at once, then listens on Tokio's blocking
+    /// pool, since asking whether a port is free can take seconds on
+    /// Windows; the click that started it returns before then.
+    fn begin_example(
+        &mut self,
+        seq: u64,
+        request: ForwardRequest,
+        fallback: Option<ForwardRequest>,
+        cx: &mut Context<Self>,
+    ) {
+        let route = match example::route(
+            &self.spec.context,
+            &self.spec.identity,
+            &self.spec.target,
+            self.spec.port,
         ) {
-            (Err(failure), Some(fallback)) if failure.kind == ForwardFailureKind::PortInUse => {
-                example::start(&self.spec.runtime, fallback, route)
+            Ok(route) => route,
+            Err(failure) => return self.finish(ForwardEnd::Failed(failure), cx),
+        };
+        let listen = self.listen.clone();
+        let binding = self.spec.runtime.spawn_blocking(move || {
+            match (listen(request.local_port, request.port), fallback) {
+                (Err(failure), Some(fallback)) if failure.kind == ForwardFailureKind::PortInUse => {
+                    listen(fallback.local_port, fallback.port)
+                }
+                (result, _) => result,
             }
-            (result, _) => result,
+        });
+        let task = cx.spawn(async move |this, cx| {
+            let bound = binding.await.unwrap_or_else(|error| {
+                Err(ForwardFailure::new(
+                    ForwardFailureKind::Request(FailureKind::Other),
+                    format!("Couldn't listen on the loopback · {error}"),
+                ))
+            });
+            _ = this.update(cx, |view, cx| view.bound(seq, bound, route, cx));
+        });
+        self.session = Some(Session::Binding { _task: task });
+        self.describe();
+        cx.notify();
+    }
+
+    /// An example forward's port answered: it serves there, unless it was
+    /// stopped or started again meanwhile, which drops the listeners.
+    fn bound(
+        &mut self,
+        seq: u64,
+        bound: Result<Listeners, ForwardFailure>,
+        route: Option<Route>,
+        cx: &mut Context<Self>,
+    ) {
+        if seq != self.seq || self.phase != Phase::Starting {
+            return;
+        }
+        match bound {
+            Ok(listeners) => {
+                let ExampleForward {
+                    local_port,
+                    status,
+                    guard,
+                } = example::serve_on(&self.spec.runtime, listeners, route);
+                self.run(seq, local_port, status, Guard::Example(guard), cx);
+            }
+            Err(failure) => self.finish(ForwardEnd::Failed(failure), cx),
         }
     }
 

@@ -1,0 +1,1 @@
+- **Layout checks beside the components:** the tests that measure a page against the design now live in the shared UI crate, behind its testing feature, beside the components they measure. Nothing on screen changes.

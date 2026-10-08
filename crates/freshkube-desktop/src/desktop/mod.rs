@@ -6,8 +6,6 @@ mod gate_tests;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
-#[cfg(test)]
-pub(crate) mod layout_check;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -72,6 +70,9 @@ use pages::{Area, ColumnReveal, ScreenKind};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 pub(crate) use freshkube_ui::page::{COLUMN_WIDTH, PAGE_PADDING, RAIL_WIDTH};
+// Desktop's screen tests measure pages at this old path.
+#[cfg(test)]
+pub(crate) use freshkube_ui::layout_check;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NodeView {

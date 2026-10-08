@@ -8,7 +8,8 @@
 //! several), and `assert_table_page` checks a table page with the edge
 //! frame and its table, and that the table sits in no card;
 //! `assert_inspector` checks an inspector against its table, and
-//! `assert_drawer` a drawer over its list. A page names a few
+//! `assert_drawer` a drawer over its list; `settle_header` draws until a
+//! page's header settles. A page names a few
 //! elements by id; rows and group headers are found by their accessibility
 //! roles inside the list, so the checks need no access to the page's state.
 
@@ -16,21 +17,20 @@ use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{App, ElementId, Pixels, Role, SharedString, TextRun, Window, font, px};
 
-use super::PAGE_PADDING;
+use crate::page::{PAGE_PADDING, PANE_PADDING};
 use crate::ui::dp_px;
-use freshkube_ui::page::PANE_PADDING;
 
 /// DESIGN.md's table page, in dp.
-pub(crate) const HEADER_HEIGHT: f32 = 26.;
-pub(crate) const ROW_HEIGHT: f32 = 26.;
-pub(crate) const FOOTER_HEIGHT: f32 = 26.;
+pub const HEADER_HEIGHT: f32 = 26.;
+pub const ROW_HEIGHT: f32 = 26.;
+pub const FOOTER_HEIGHT: f32 = 26.;
 /// The header's toolbar: its row, the title as its label, and its controls.
-pub(crate) const TOOLBAR_HEIGHT: f32 = 38.;
-pub(crate) const LABEL_TEXT: f32 = 13.;
-pub(crate) const CONTROL_HEIGHT: f32 = 24.;
+pub const TOOLBAR_HEIGHT: f32 = 38.;
+pub const LABEL_TEXT: f32 = 13.;
+pub const CONTROL_HEIGHT: f32 = 24.;
 
 /// The elements a page names for the frame check.
-pub(crate) struct PageFrame {
+pub struct PageFrame {
     /// The page's root; its edges are where the page padding starts.
     pub page: &'static str,
     /// The page title, `<prefix>-title` in a `PageHeader`, and the text it
@@ -45,7 +45,7 @@ pub(crate) struct PageFrame {
 
 /// The elements a table names for the row check. A page may hold several,
 /// such as a dashboard's table panels or a list beside a detail.
-pub(crate) struct Table {
+pub struct Table {
     /// The table's frame, with the column header drawn at its top, or `None`
     /// for a list without column captions.
     pub table: Option<&'static str>,
@@ -55,7 +55,7 @@ pub(crate) struct Table {
 }
 
 /// The elements a table page names for the check: its frame and its table.
-pub(crate) struct TablePage {
+pub struct TablePage {
     pub page: &'static str,
     pub title: &'static str,
     pub title_text: &'static str,
@@ -65,7 +65,7 @@ pub(crate) struct TablePage {
 
 /// What a page's frame drew, in pixels.
 #[derive(Debug)]
-pub(crate) struct FrameLayout {
+pub struct FrameLayout {
     pub padding_left: Pixels,
     pub padding_right: Pixels,
     /// The toolbar's row.
@@ -78,7 +78,7 @@ pub(crate) struct FrameLayout {
 /// What a table drew, in pixels: its header, if it has one, a row and,
 /// when the list showed one, a group header.
 #[derive(Debug)]
-pub(crate) struct TableRows {
+pub struct TableRows {
     pub header: Option<Pixels>,
     pub row: Pixels,
     pub group: Option<Pixels>,
@@ -88,7 +88,7 @@ pub(crate) struct TableRows {
 /// failure messages.
 #[derive(Debug)]
 #[allow(dead_code, reason = "each caller reads the measurements it needs")]
-pub(crate) struct TableLayout {
+pub struct TableLayout {
     pub header: Pixels,
     pub row: Pixels,
     /// The group header, when the list showed a group.
@@ -101,11 +101,7 @@ pub(crate) struct TableLayout {
 
 /// Asserts DESIGN.md's table page: `assert_edge_frame` on its frame,
 /// `assert_table` on its table, and `assert_bare` on the table.
-pub(crate) fn assert_table_page(
-    window: &mut Window,
-    cx: &mut App,
-    page: &TablePage,
-) -> TableLayout {
+pub fn assert_table_page(window: &mut Window, cx: &mut App, page: &TablePage) -> TableLayout {
     let frame = assert_edge_frame(
         window,
         cx,
@@ -141,7 +137,7 @@ pub(crate) fn assert_table_page(
 
 /// Asserts that no card, a rounded quad bordered on both sides, frames the
 /// element `table`: DESIGN.md's table pages draw their table bare.
-pub(crate) fn assert_bare(window: &Window, table: &'static str) {
+pub fn assert_bare(window: &Window, table: &'static str) {
     let view = window.find(table).bounds().scale(window.scale_factor());
     let card = window.painted_quads().into_iter().find(|quad| {
         let (b, w) = (quad.bounds, quad.border_widths);
@@ -163,7 +159,7 @@ pub(crate) fn assert_bare(window: &Window, table: &'static str) {
 /// the split's right edge, or under it across the split's width; in no
 /// card; and its heading's `title` `PANE_PADDING` in from its left, with
 /// the heading at its top.
-pub(crate) fn assert_inspector(
+pub fn assert_inspector(
     window: &mut Window,
     cx: &mut App,
     split: &'static str,
@@ -221,7 +217,7 @@ pub(crate) fn assert_inspector(
 /// at least `MIN_WIDTH` wide and leaving the list at least `LIST_KEEPS`; in
 /// no card; and its inspector's `title` `PANE_PADDING` in from its left.
 /// Returns the drawer's width in dp.
-pub(crate) fn assert_drawer(
+pub fn assert_drawer(
     window: &mut Window,
     cx: &mut App,
     body: &'static str,
@@ -229,7 +225,7 @@ pub(crate) fn assert_drawer(
     inspector: &'static str,
     title: &'static str,
 ) -> f32 {
-    use freshkube_ui::drawer::{FULL_BELOW, LIST_KEEPS, MIN_WIDTH};
+    use crate::drawer::{FULL_BELOW, LIST_KEEPS, MIN_WIDTH};
     window.render_frame(cx);
     let body = window.find(body).bounds();
     let pane = window.find(drawer).bounds();
@@ -274,18 +270,14 @@ pub(crate) fn assert_drawer(
 
 /// Asserts DESIGN.md's padded frame, a page of cards': 26 dp side padding and
 /// the header's toolbar (see [`assert_toolbar`]).
-pub(crate) fn assert_page_frame(
-    window: &mut Window,
-    cx: &mut App,
-    frame: &PageFrame,
-) -> FrameLayout {
+pub fn assert_page_frame(window: &mut Window, cx: &mut App, frame: &PageFrame) -> FrameLayout {
     assert_page_frame_from(window, cx, frame, frame.title)
 }
 
 /// [`assert_page_frame`] for a header that leads with something before the
 /// title, such as a breadcrumb's parent: the left padding is measured from
 /// `lead`, and the toolbar checks still go by the title.
-pub(crate) fn assert_page_frame_from(
+pub fn assert_page_frame_from(
     window: &mut Window,
     cx: &mut App,
     frame: &PageFrame,
@@ -322,11 +314,7 @@ pub(crate) fn assert_page_frame_from(
 /// (see [`assert_toolbar`]) whose title sits `PANE_PADDING` in from the
 /// page's left edge, with a hairline under it across the page. The layout's
 /// paddings are the title's inset and the space right of the content.
-pub(crate) fn assert_edge_frame(
-    window: &mut Window,
-    cx: &mut App,
-    frame: &PageFrame,
-) -> FrameLayout {
+pub fn assert_edge_frame(window: &mut Window, cx: &mut App, frame: &PageFrame) -> FrameLayout {
     window.render_frame(cx);
     let layout = measure_frame(window, frame);
     let root = window.find(frame.page).bounds();
@@ -352,7 +340,7 @@ pub(crate) fn assert_edge_frame(
 /// left edge, centred on the 38 dp row. A toolbar of controls alone, which
 /// sit at its right, passes no lead. The layout's `title_text` is zero, and
 /// its `padding_left` too without a lead.
-pub(crate) fn assert_untitled_edge_frame(
+pub fn assert_untitled_edge_frame(
     window: &mut Window,
     cx: &mut App,
     frame: &PageFrame,
@@ -422,7 +410,7 @@ fn assert_hairline(window: &Window, frame: &PageFrame, layout: &FrameLayout) {
 
 /// Asserts DESIGN.md's toolbar: a 38 dp row with the title as its 13 dp
 /// label, centred on the row, and every control 24 dp high.
-pub(crate) fn assert_toolbar(window: &Window, frame: &PageFrame, layout: &FrameLayout) {
+pub fn assert_toolbar(window: &Window, frame: &PageFrame, layout: &FrameLayout) {
     let check = |what: &str, actual: Pixels, expected: f32| {
         close(window, frame, layout, what, actual, expected)
     };
@@ -498,7 +486,7 @@ fn close(
 
 /// Asserts DESIGN.md's table: a 26 dp column header, and 26 dp rows with
 /// group headers at the row height (a `uniform_list` needs uniform lines).
-pub(crate) fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> TableRows {
+pub fn assert_table(window: &mut Window, cx: &mut App, table: &Table) -> TableRows {
     window.render_frame(cx);
     let header = table
         .table
@@ -591,4 +579,16 @@ fn shaped_width(window: &Window, text: &str, size: Pixels) -> Pixels {
         .text_system()
         .shape_line(SharedString::from(text.to_owned()), size, &[run], None)
         .width
+}
+
+/// Draws until the page's header stops asking for frames: it folds its
+/// controls from what its parts measured on the frame before.
+pub fn settle_header(window: &mut Window, cx: &mut App) {
+    for _ in 0..4 {
+        window.render_frame(cx);
+        if window.simulate_next_frame(cx) == 0 {
+            return;
+        }
+    }
+    panic!("the header keeps moving");
 }
