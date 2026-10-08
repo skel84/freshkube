@@ -67,3 +67,65 @@ impl SecretStore for MemoryStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+
+    /// Fails to build if `T` implements `Debug` or `Display`: with either,
+    /// `check` has two candidates and the call is ambiguous.
+    trait Unformatted<A> {
+        fn check() {}
+    }
+    impl<T: ?Sized> Unformatted<()> for T {}
+    struct ByDebug;
+    impl<T: ?Sized + std::fmt::Debug> Unformatted<ByDebug> for T {}
+    struct ByDisplay;
+    impl<T: ?Sized + std::fmt::Display> Unformatted<ByDisplay> for T {}
+
+    #[test]
+    fn no_store_can_be_formatted() {
+        <dyn SecretStore as Unformatted<_>>::check();
+        <Secrets as Unformatted<_>>::check();
+        <MemoryStore as Unformatted<_>>::check();
+    }
+
+    #[test]
+    fn a_memory_store_keeps_reads_and_forgets_a_key() {
+        let store = MemoryStore::default();
+        assert_eq!(store.read("Coroot https://coroot.example"), Ok(None));
+        store
+            .write("Coroot https://coroot.example", "s3cret")
+            .unwrap();
+        assert_eq!(
+            store.read("Coroot https://coroot.example"),
+            Ok(Some("s3cret".into()))
+        );
+        store.forget("Coroot https://coroot.example").unwrap();
+        assert_eq!(store.read("Coroot https://coroot.example"), Ok(None));
+        // Forgetting a key that isn't there succeeds.
+        assert_eq!(store.forget("Coroot https://coroot.example"), Ok(()));
+    }
+
+    #[test]
+    fn an_unavailable_memory_store_names_the_store_and_never_the_key() {
+        let store = MemoryStore::default();
+        store.write("account", "s3cret").unwrap();
+        store.unavailable.store(true, Ordering::SeqCst);
+        let expected = Err(format!("No {STORE_NAME} is available"));
+        assert_eq!(store.read("account"), expected);
+        assert_eq!(store.write("account", "other").map(|_| None), expected);
+        assert_eq!(store.forget("account").map(|_| None), expected);
+        assert_eq!(
+            store
+                .keys
+                .lock()
+                .unwrap()
+                .get("account")
+                .map(String::as_str),
+            Some("s3cret")
+        );
+    }
+}
