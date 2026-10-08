@@ -126,6 +126,19 @@ impl<K: Clone + Eq + Hash + 'static> FlashLayer<K> {
         flashed
     }
 
+    /// Counts a batch of `count` changes too big to flash
+    /// ([`burst`](Self::burst)) without its keys, as [`changed`](Self::changed)
+    /// would count it.
+    pub fn held_back(&mut self, count: usize, cx: &mut Context<Self>) {
+        let now = cx.background_executor().now();
+        self.flashes.held_back(count, now);
+    }
+
+    /// The most changes one batch can bring and still flash.
+    pub fn burst(&self) -> usize {
+        self.flashes.burst()
+    }
+
     /// Looks the flashing rows up again when the rows' `revision` is new:
     /// the page calls it whenever its rows are sorted, filtered or changed.
     pub fn rows_changed(&mut self, revision: u64, cx: &mut Context<Self>) {

@@ -596,6 +596,7 @@ mod tests {
                 ResourceEvent::reset(columns, rows),
                 ResourceEvent::Read(ReadState::Loaded),
             ]],
+            usize::MAX,
         );
         let mut view = ResourceProjection::new();
         view.rebuild(&store);
@@ -608,7 +609,7 @@ mod tests {
 
     fn apply(store: &mut ResourceStore, view: &mut ResourceProjection, events: Vec<ResourceEvent>) {
         let epoch = store.epoch();
-        assert!(store.apply(epoch, vec![events]).is_some());
+        assert!(store.apply(epoch, vec![events], usize::MAX).is_some());
         view.rebuild(store);
     }
 
@@ -806,6 +807,7 @@ mod tests {
         store.apply(
             epoch,
             vec![vec![ResourceEvent::Delete(rows[0].identity.clone())]],
+            usize::MAX,
         );
         assert!(!view.is_current(&store));
         assert!(view.row(&store, 0).is_none());

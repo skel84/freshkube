@@ -125,6 +125,15 @@ fn state_changed(old: &ResourceRow, new: &ResourceRow, columns: &[ResourceColumn
         .any(|(ix, _)| old.cells.get(ix) != new.cells.get(ix))
 }
 
+/// What one part of a batch changed: the rows, or, past the most the
+/// caller keeps, only how many, so nothing is cloned for a batch the
+/// flash would hold back anyway.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Changed {
+    Rows(Vec<ResourceIdentity>),
+    Many(usize),
+}
+
 /// A retained observation plus a search key derived once when it arrives, so
 /// filtering never allocates per row.
 #[derive(Clone, Debug)]
@@ -310,7 +319,8 @@ impl ResourceStore {
     /// kind or namespace cannot populate the current view. Epoch 0 means
     /// no session has started, so nothing is accepted.
     ///
-    /// For each part it returns the rows whose state changed in it: a
+    /// For each part it returns the rows whose state changed in it, or
+    /// their count when there are more than `keep`: a
     /// pod's state, reason or restarts, or another kind's status cells
     /// ([`STATUS_COLUMNS`]). A part is what one watch batch sent, so a list
     /// can flash each as it would have flashed alone. A reset reports
@@ -321,26 +331,38 @@ impl ResourceStore {
         &mut self,
         epoch: u64,
         parts: Vec<Vec<ResourceEvent>>,
-    ) -> Option<Vec<Vec<ResourceIdentity>>> {
+        keep: usize,
+    ) -> Option<Vec<Changed>> {
         if self.epoch == 0 || epoch != self.epoch {
             return None;
         }
-        let mut changes = Vec::with_capacity(parts.len());
+        // Changed rows by slot, kept current as deletes move rows, so
+        // nothing is cloned until the end.
+        let mut changes: Vec<Vec<usize>> = Vec::with_capacity(parts.len());
         for events in parts {
-            let mut changed = Vec::new();
+            changes.push(Vec::new());
             for event in events {
                 match event {
                     ResourceEvent::Reset(snapshot) => {
-                        changed.clear();
                         changes.iter_mut().for_each(Vec::clear);
                         self.reset(snapshot)
                     }
                     ResourceEvent::Upsert(row) => {
                         if let Some(slot) = self.upsert(row) {
-                            changed.push(self.entries[slot].row.identity.clone());
+                            changes.last_mut().expect("a part").push(slot);
                         }
                     }
-                    ResourceEvent::Delete(identity) => self.delete(&identity),
+                    ResourceEvent::Delete(identity) => {
+                        if let Some((gone, moved)) = self.delete(&identity) {
+                            for slot in changes.iter_mut().flatten() {
+                                if *slot == gone {
+                                    *slot = usize::MAX;
+                                } else if *slot == moved {
+                                    *slot = gone;
+                                }
+                            }
+                        }
+                    }
                     // A failure with rows on screen leaves them up, marked stale.
                     ResourceEvent::Read(ReadState::Failed(reason)) if !self.entries.is_empty() => {
                         self.read_state = ReadState::Stale(reason)
@@ -348,7 +370,6 @@ impl ResourceStore {
                     ResourceEvent::Read(state) => self.read_state = state,
                 }
             }
-            changes.push(changed);
         }
         self.node_prefix = rows::shared_prefix(
             self.entries
@@ -357,13 +378,26 @@ impl ResourceStore {
                 .map(|pod| pod.node.as_str()),
         );
         self.revision += 1;
-        // A part that changed a row twice reports it once.
-        for changed in &mut changes {
-            if changed.len() > 1 {
-                let mut seen = std::collections::HashSet::with_capacity(changed.len());
-                changed.retain(|identity| seen.insert(identity.clone()));
-            }
-        }
+        // A part that changed a row twice reports it once; a deleted row
+        // not at all.
+        let changes = changes
+            .into_iter()
+            .map(|mut slots| {
+                slots.sort_unstable();
+                slots.dedup();
+                // Gone rows sort last.
+                let count = slots.partition_point(|slot| *slot != usize::MAX);
+                if count > keep {
+                    return Changed::Many(count);
+                }
+                Changed::Rows(
+                    slots[..count]
+                        .iter()
+                        .map(|slot| self.entries[*slot].row.identity.clone())
+                        .collect(),
+                )
+            })
+            .collect();
         Some(changes)
     }
 
@@ -388,14 +422,15 @@ impl ResourceStore {
         changed.then_some(slot)
     }
 
-    fn delete(&mut self, identity: &ResourceIdentity) {
-        let Some(slot) = self.index.remove(identity) else {
-            return;
-        };
+    /// Removes the row, and returns its slot and the slot of the row that
+    /// moved into it, which was the last.
+    fn delete(&mut self, identity: &ResourceIdentity) -> Option<(usize, usize)> {
+        let slot = self.index.remove(identity)?;
         self.entries.swap_remove(slot);
         if let Some(moved) = self.entries.get(slot) {
             self.index.insert(moved.row.identity.clone(), slot);
         }
+        Some((slot, self.entries.len()))
     }
 
     fn reset(&mut self, snapshot: Snapshot) {
@@ -427,7 +462,8 @@ mod tests {
                     vec![vec![
                         ResourceEvent::reset(pod_columns(), rows),
                         ResourceEvent::Read(ReadState::Loaded)
-                    ]]
+                    ]],
+                    usize::MAX,
                 )
                 .is_some()
         );
@@ -436,7 +472,7 @@ mod tests {
 
     fn apply(store: &mut ResourceStore, events: Vec<ResourceEvent>) {
         let epoch = store.epoch();
-        assert!(store.apply(epoch, vec![events]).is_some());
+        assert!(store.apply(epoch, vec![events], usize::MAX).is_some());
     }
 
     fn reset(rows: Vec<ResourceRow>) -> ResourceEvent {
@@ -453,7 +489,11 @@ mod tests {
     #[test]
     fn nothing_is_accepted_before_a_session_starts() {
         let mut store = ResourceStore::new();
-        assert!(!store.apply(0, vec![vec![reset(pod_rows(3))]]).is_some());
+        assert!(
+            !store
+                .apply(0, vec![vec![reset(pod_rows(3))]], usize::MAX)
+                .is_some()
+        );
         assert!(store.is_empty());
     }
 
@@ -474,7 +514,8 @@ mod tests {
                     vec![vec![
                         reset(pod_rows(10)),
                         ResourceEvent::Read(ReadState::Loaded)
-                    ]]
+                    ]],
+                    usize::MAX,
                 )
                 .is_some()
         );
@@ -632,6 +673,7 @@ mod tests {
         empty.apply(
             epoch,
             vec![vec![ResourceEvent::Read(ReadState::Failed("gone".into()))]],
+            usize::MAX,
         );
         assert_eq!(empty.read_state(), &ReadState::Failed("gone".into()));
     }
@@ -650,7 +692,15 @@ mod tests {
         parts: Vec<Vec<ResourceEvent>>,
     ) -> Vec<Vec<ResourceIdentity>> {
         let epoch = store.epoch();
-        store.apply(epoch, parts).expect("the session's batch")
+        store
+            .apply(epoch, parts, usize::MAX)
+            .expect("the session's batch")
+            .into_iter()
+            .map(|changed| match changed {
+                Changed::Rows(rows) => rows,
+                Changed::Many(count) => panic!("{count} rows kept"),
+            })
+            .collect()
     }
 
     #[test]
@@ -695,11 +745,49 @@ mod tests {
     }
 
     #[test]
+    fn a_changed_row_keeps_its_change_while_deletes_move_it() {
+        let mut store = loaded(pod_rows(10));
+        // Row 9 is last: deleting row 2 moves it into slot 2.
+        let moved = restarted(&store, 9);
+        let last_gone = restarted(&store, 8);
+        let gone = store.entries()[2].row().identity.clone();
+        let changes = parts(
+            &mut store,
+            vec![
+                vec![
+                    ResourceEvent::Upsert(moved.clone()),
+                    ResourceEvent::Upsert(last_gone.clone()),
+                ],
+                vec![
+                    ResourceEvent::Delete(gone),
+                    ResourceEvent::Delete(last_gone.identity),
+                ],
+            ],
+        );
+        assert_eq!(changes, vec![vec![moved.identity], vec![]]);
+    }
+
+    #[test]
+    fn a_part_past_what_is_kept_is_only_counted() {
+        let mut store = loaded(pod_rows(10));
+        let few = vec![ResourceEvent::Upsert(restarted(&store, 1))];
+        let many = (2..5)
+            .map(|ix| ResourceEvent::Upsert(restarted(&store, ix)))
+            .collect();
+        let id = store.entries()[1].row().identity.clone();
+        let epoch = store.epoch();
+        let changes = store.apply(epoch, vec![few, many], 2).unwrap();
+        assert_eq!(changes, vec![Changed::Rows(vec![id]), Changed::Many(3)]);
+    }
+
+    #[test]
     fn lists_arrivals_and_deletes_are_no_change() {
         let mut store = ResourceStore::new();
         let epoch = store.start_session();
-        let changes = store.apply(epoch, vec![vec![reset(pod_rows(10))]]).unwrap();
-        assert_eq!(changes, vec![Vec::<ResourceIdentity>::new()]);
+        let changes = store
+            .apply(epoch, vec![vec![reset(pod_rows(10))]], usize::MAX)
+            .unwrap();
+        assert_eq!(changes, vec![Changed::Rows(Vec::new())]);
         let gone = store.entries()[0].row().identity.clone();
         let changes = parts(
             &mut store,
@@ -741,20 +829,28 @@ mod tests {
         let mut next = 0;
         let mut pending: Vec<Vec<ResourceEvent>> = Vec::new();
         let mut last: Option<u64> = None;
+        // As the screen reports them: rows up to the burst, else a count.
         let apply = |store: &mut ResourceStore,
                      flashes: &mut Flashes<ResourceIdentity>,
                      pending: Vec<Vec<ResourceEvent>>,
                      at: u64| {
+            let at = start + Duration::from_millis(at);
             let relist = pending
                 .iter()
                 .flatten()
                 .any(|event| matches!(event, ResourceEvent::Reset(_)));
-            let changes = parts(store, pending);
+            let epoch = store.epoch();
+            let changes = store.apply(epoch, pending, flashes.burst()).unwrap();
             if relist {
                 flashes.clear();
             }
             for part in changes {
-                flashes.changed(part, start + Duration::from_millis(at));
+                match part {
+                    Changed::Rows(rows) => {
+                        flashes.changed(rows, at);
+                    }
+                    Changed::Many(count) => flashes.held_back(count, at),
+                }
             }
         };
         let mut end = 0;

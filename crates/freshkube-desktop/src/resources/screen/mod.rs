@@ -32,7 +32,7 @@ use super::model::{
 };
 use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab};
 use super::projection::ResourceProjection;
-use super::store::{ResourceEvent, ResourceStore};
+use super::store::{Changed, ResourceEvent, ResourceStore};
 use super::{ResourceLink, example, live, navigation};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
@@ -791,20 +791,31 @@ impl ResourcesScreen {
         (!self.embedded && table::TableSource::loading(self).is_none()).then(|| self.flash.clone())
     }
 
+    /// Whether changes flash: not in an embedded list, nor with reduced
+    /// motion.
+    fn flashes(&self, cx: &App) -> bool {
+        !self.embedded && !cx.reduce_motion()
+    }
+
     /// Flashes the rows a watch changed, one part per watch batch, so a
     /// burst holds back only the batch that brought it. Reported once
     /// this update ends, since the layer looks the rows' lines up in the
-    /// list. An embedded list doesn't flash, nor does any with reduced
-    /// motion.
-    fn flash(&self, changes: Vec<Vec<ResourceIdentity>>, cx: &mut Context<Self>) {
-        if self.embedded || cx.reduce_motion() || changes.iter().all(Vec::is_empty) {
+    /// list.
+    fn flash(&self, changes: Vec<Changed>, cx: &mut Context<Self>) {
+        let quiet = |part: &Changed| matches!(part, Changed::Rows(rows) if rows.is_empty());
+        if !self.flashes(cx) || changes.iter().all(quiet) {
             return;
         }
         let layer = self.flash.clone();
         cx.defer(move |cx| {
             layer.update(cx, |layer, cx| {
                 for part in changes {
-                    layer.changed(part, cx);
+                    match part {
+                        Changed::Rows(rows) => {
+                            layer.changed(rows, cx);
+                        }
+                        Changed::Many(count) => layer.held_back(count, cx),
+                    }
                 }
             })
         });
@@ -943,9 +954,15 @@ impl ResourcesScreen {
             .flatten()
             .any(|event| matches!(event, ResourceEvent::Reset(_)));
         let served = !matches!(self.store.read_state(), ReadState::Missing(_));
+        // Rows only for a part that could flash.
+        let keep = if self.flashes(cx) {
+            self.flash.read(cx).burst()
+        } else {
+            0
+        };
         let changes = {
             let _span = crate::perf::span("table.store");
-            self.store.apply(epoch, parts)
+            self.store.apply(epoch, parts, keep)
         };
         let Some(changes) = changes else {
             return;

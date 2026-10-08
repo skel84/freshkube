@@ -25,6 +25,15 @@ impl Pilot {
         let dashboard = std::env::var_os("FRESHKUBE_DASHBOARD").map(std::path::PathBuf::from);
         // Text typed into the startup page's log search.
         let log_search = std::env::var("FRESHKUBE_LOG_SEARCH").ok();
+        // Reduced or full motion, whatever the OS says.
+        let motion = match std::env::var("FRESHKUBE_MOTION").as_deref() {
+            Ok("reduced") => Some(freshkube_ui::motion::Choice::Reduced),
+            Ok("full") => Some(freshkube_ui::motion::Choice::Full),
+            _ => None,
+        };
+        if let Some(choice) = motion {
+            freshkube_ui::motion::choose(choice, cx);
+        }
         cx.defer_in(window, move |this, window, cx| {
             this.startup_selection(
                 page.as_deref(),
