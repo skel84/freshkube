@@ -313,6 +313,7 @@ impl Render for ProcessesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::desktop::probe::hit("processes");
         self.sync_rows(cx);
+        self.loading.show(self.first_read(cx));
         let header = self.render_header(window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -358,6 +359,9 @@ impl Render for ProcessesScreen {
                     )
                 })
                 .child(self.render_split(window, cx))
+            }
+            (None, None) if self.loading.rows().is_some() => {
+                page.child(self.render_split(window, cx))
             }
             (None, None) => page,
         };

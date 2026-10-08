@@ -15,6 +15,8 @@ use gpui_kit::component::{
 impl Render for EtcdScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.derive_if_changed();
+        let first_read = self.first_read(cx);
+        self.loading.show(first_read);
         let header = self.render_header(window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -31,6 +33,7 @@ impl Render for EtcdScreen {
             .child(page::toolbar(cx).child(header));
         let page = match state {
             Some(state) => page.child(page::inset().child(state)),
+            None if first_read => page.child(self.render_members(window, cx)),
             None => {
                 let banners: Vec<AnyElement> = failure_banner(&self.loader, cx)
                     .map(IntoElement::into_any_element)
@@ -186,7 +189,12 @@ impl EtcdScreen {
     fn render_members(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let beside = crate::screens::beside(window, false);
         let table = DataTable::new()
-            .fit(self.derived.lines.len().max(1))
+            // A first read shows three loading rows, a usual quorum.
+            .fit(if self.loading.rows().is_some() {
+                3
+            } else {
+                self.derived.lines.len().max(1)
+            })
             .render(self, window, cx)
             .w_full()
             .flex_none()

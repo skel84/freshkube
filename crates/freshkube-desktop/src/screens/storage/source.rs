@@ -426,6 +426,10 @@ impl TableSource for StorageScreen {
     }
 
     /// Says whether the showing side failed or the node reported none.
+    fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
+        self.loading.rows()
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         let data = self.loader.data()?;
         let message = match self.mode {

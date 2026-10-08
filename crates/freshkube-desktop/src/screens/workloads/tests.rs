@@ -757,6 +757,11 @@ fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
         // No target.
         screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
         window.render_frame(cx);
+        // While the overview is read, the table shows its loading rows.
+        window.find("workloads-loading");
+        // Once it answered with no node to target, the state says so.
+        crate::screens::set_reading(crate::screens::Reading::Answered, cx);
+        window.render_frame(cx);
         under_the_toolbar(window, "workloads-state");
         assert!(window.try_find("k8s-unavailable").is_none());
     })
@@ -939,4 +944,29 @@ fn a_stacked_inspector_keeps_the_clicked_row_in_view(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+/// Until the first answer the table shows its header's columns over the
+/// loading rows, as Pods does, though no row has sized them yet.
+#[gpui_kit::test]
+fn the_first_read_shows_the_columns_over_loading_rows(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
+    cx.update_window(handle.into(), |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            let target = screen.source.as_ref().unwrap().target.clone();
+            screen.loader.reset();
+            screen.loader.state.begin(target);
+            screen.derived = None;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.find("workloads-loading").visible());
+        screen.read_with(cx, |screen, _| {
+            // The glyph, Name, Kind, Ready / restarts and Issue.
+            assert_eq!(table::TableSource::columns(screen).len(), 5);
+            assert!(table::TableSource::width(screen) > 0.);
+        });
+        assert!(screen.read(cx).loading_motion(cx).is_some());
+    })
+    .unwrap();
 }

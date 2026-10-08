@@ -419,6 +419,11 @@ fn every_state_sits_under_the_toolbar(cx: &mut TestAppContext) {
         // No node.
         screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
         window.render_frame(cx);
+        // While the overview is read, the table shows its loading rows.
+        window.find("processes-loading");
+        // Once it answered with no node to target, the state says so.
+        crate::screens::set_reading(crate::screens::Reading::Answered, cx);
+        window.render_frame(cx);
         under_the_toolbar(window, "processes-state");
         assert!(window.try_find("screen-retry").is_none());
         // The page keeps its keys while a state shows.

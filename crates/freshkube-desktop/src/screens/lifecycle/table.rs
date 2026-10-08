@@ -264,7 +264,7 @@ impl TableSource for LifecycleScreen {
     }
 
     fn loading(&self) -> Option<&table::LoadingRows> {
-        self.waiting().then_some(&self.loading)
+        self.loading.rows()
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

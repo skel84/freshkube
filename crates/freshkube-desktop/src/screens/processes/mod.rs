@@ -28,8 +28,8 @@ use talos_rs::{CpuStat, ProcessInfo, ProcessState};
 use tokio::runtime::Handle;
 
 use super::{
-    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, failure_banner, field, gate, meta, mono,
-    panel, partial_notice, refresh_control,
+    Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, failure_banner, field,
+    first_read, gate, meta, mono, panel, partial_notice, refresh_control,
 };
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, Tone, dp};
@@ -125,6 +125,8 @@ struct RowSettings {
 }
 
 pub(crate) struct ProcessesScreen {
+    /// The table's rows until the first answer.
+    loading: TableLoading,
     embedded: bool,
     runtime: Handle,
     source: Option<ScreenSource>,
@@ -148,6 +150,10 @@ pub(crate) struct ProcessesScreen {
 impl EventEmitter<ScreenEvent> for ProcessesScreen {}
 
 impl ScreenPanel for ProcessesScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
     fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
         self.embedded = embedded;
         cx.notify();
@@ -194,6 +200,7 @@ impl ScreenPanel for ProcessesScreen {
             _query_observer: cx.observe(&query, |_, _, cx| cx.notify()),
             query,
             focus: cx.focus_handle(),
+            loading: TableLoading::new(PREFIX, cx),
             table: TableState::new("processes"),
             derived: None,
             _subscription: subscription,
@@ -269,6 +276,12 @@ impl ScreenPanel for ProcessesScreen {
 }
 
 impl ProcessesScreen {
+    /// Whether the first answer is still to come: the table shows its
+    /// loading rows.
+    fn first_read(&self, cx: &App) -> bool {
+        first_read(self.source.as_ref(), &self.loader, Scope::Node, cx)
+    }
+
     fn settings(&self, cx: &App) -> RowSettings {
         let text = self.query.read(cx).value().trim().to_owned();
         RowSettings {

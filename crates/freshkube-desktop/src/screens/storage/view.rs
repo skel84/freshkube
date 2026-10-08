@@ -97,7 +97,12 @@ impl StorageScreen {
             .w_full()
             .child(
                 DataTable::new()
-                    .fit(table::TableSource::line_count(self).max(1))
+                    // A first read shows 4 loading rows, a few disks.
+                    .fit(if self.loading.rows().is_some() {
+                        4
+                    } else {
+                        table::TableSource::line_count(self).max(1)
+                    })
                     .render(self, window, cx)
                     .w_full()
                     .flex_none(),
@@ -243,6 +248,7 @@ impl StorageScreen {
 
 impl Render for StorageScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.loading.show(self.first_read(cx));
         let header = self.render_header(window, cx);
         let state = gate(
             self.source.as_ref(),
@@ -287,6 +293,9 @@ impl Render for StorageScreen {
                     )
                 })
                 .child(self.render_split(window, cx))
+            }
+            (None, None) if self.loading.rows().is_some() => {
+                page.child(self.render_split(window, cx))
             }
             (None, None) => page,
         };
