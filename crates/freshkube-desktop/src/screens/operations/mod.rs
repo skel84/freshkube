@@ -74,6 +74,8 @@ use gpui_kit::*;
 use talos_rs::{EtcdMemberInfo, EtcdMemberStatus};
 use tokio::{runtime::Handle, sync::mpsc};
 
+use crate::resources::talos::AppliedAccess;
+
 use super::{
     Loader, Reading, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, TableLoading,
     page_width, panel, reading, refresh_control, retry_button, segment, split_at,
@@ -329,6 +331,9 @@ struct Preview {
     pdb: PdbNote,
     /// The sources behind the preview, e.g. the example data note.
     source: String,
+    /// The access the preview was taken with, `None` for example data. A
+    /// run confirmed on this preview builds its client only through it.
+    access: Option<AppliedAccess>,
 }
 
 enum PreviewState {
@@ -487,6 +492,8 @@ struct RunPlan {
     /// Set for example data.
     world: Option<ExampleWorld>,
     step: Duration,
+    /// The preview's access; a live run refuses to start without it.
+    access: Option<AppliedAccess>,
 }
 
 /// What the example cluster looks like to a simulated run.
@@ -736,12 +743,13 @@ async fn run_live(
     request.stop_on_failure = plan.options.stop_on_failure;
     request.delay_between_nodes = delay;
     let client = live.client.clone();
-    // Identity revalidation belongs to the desktop's access session. Core polls this
-    // future after its confirmation/cancellation gates and catches access failures.
-    let connect = async move {
+    // Core polls this future after its confirmation/cancellation gates and
+    // catches access failures; it mutates nothing until the client is in.
+    let applied = live.applied.clone();
+    let connect = run_client(plan.access, applied, async move {
         live.forget_kubernetes();
         live.kubernetes().await
-    };
+    });
     let outcome = run_selection(request, client, connect, &audit, cancel, move |event| {
         let event = match event {
             SelectionEvent::Progress(event) => RunEvent::Progress(event),
@@ -756,6 +764,25 @@ async fn run_live(
         note: outcome.note,
         audit: Vec::new(),
     }
+}
+
+/// The run's Kubernetes client, built only through the access its preview
+/// was taken with: the confirmed source must carry the same access identity,
+/// and the local files must keep the preview's revision before and after
+/// `connect` builds the client. Any change refuses the run, with nothing
+/// submitted, until the user refreshes and reviews again.
+async fn run_client<T>(
+    previewed: Option<AppliedAccess>,
+    confirmed: Option<AppliedAccess>,
+    connect: impl Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    let Some(previewed) = previewed else {
+        return Err("The preview didn't record its access; refresh and review again".into());
+    };
+    if confirmed.map(|access| access.identity) != Some(previewed.identity) {
+        return Err("Access changed since the preview; refresh and review again".into());
+    }
+    previewed.client(connect).await
 }
 
 // ---------------------------------------------------------------------------
@@ -776,8 +803,6 @@ struct AuditView {
 pub(crate) struct OperationsScreen {
     runtime: Handle,
     source: Option<ScreenSource>,
-    /// Set once the screen has been shown; before that nothing is requested.
-    activated: bool,
     operation: OperationKind,
     options: Options,
     /// Selected targets in run order.
@@ -841,7 +866,6 @@ impl ScreenPanel for OperationsScreen {
         Self {
             runtime,
             source: None,
-            activated: false,
             operation: OperationKind::Drain,
             options: Options::default(),
             selected: Vec::new(),
@@ -869,12 +893,9 @@ impl ScreenPanel for OperationsScreen {
         }
     }
 
-    fn set_source(
-        &mut self,
-        source: Option<ScreenSource>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
+        // Every retained screen gets the source, shown or not, so this only
+        // invalidates; `activate` reads, and only the shown screen is activated.
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);
         self.source = source;
@@ -910,15 +931,10 @@ impl ScreenPanel for OperationsScreen {
         }
         self.derive_order();
         self.cursor = self.cursor.min(self.roster.len().saturating_sub(1));
-        if self.activated {
-            self.ensure_preview(false, window, cx);
-            self.load_audit(cx);
-        }
         cx.notify();
     }
 
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.activated = true;
         self.ensure_preview(false, window, cx);
         if self.audit.data().is_none() && !self.audit.is_loading() {
             self.load_audit(cx);
@@ -1030,6 +1046,16 @@ impl OperationsScreen {
             cx.notify();
             return;
         };
+        let Some(access) = live.applied.clone() else {
+            // The overview hasn't said which access it used yet.
+            self.preview = PreviewState::Failed {
+                key,
+                error: "The access configuration isn't known yet; refresh".into(),
+            };
+            self.confirm_when_ready = false;
+            cx.notify();
+            return;
+        };
         self.preview = PreviewState::Loading(key.clone());
         let endpoint = source.inspection_target();
         let work_key = key.clone();
@@ -1037,7 +1063,7 @@ impl OperationsScreen {
             &self.runtime,
             SCREEN_DEADLINE,
             "Checking the nodes timed out".into(),
-            async move { preview_live(live, endpoint, work_key).await },
+            async move { preview_live(live, access, endpoint, work_key).await },
         );
         self.preview_job = Some(job);
         self.preview_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -1282,6 +1308,7 @@ impl OperationsScreen {
                 .is_example()
                 .then(|| example_world(&source, &preview.key.targets)),
             step: self.step,
+            access: preview.access.clone(),
         };
         let weak = cx.weak_entity();
         let current = weak.clone();
@@ -1483,10 +1510,11 @@ impl OperationsScreen {
 /// target, a fresh etcd sample, and the PodDisruptionBudgets a drain might hit.
 async fn preview_live(
     live: super::LiveSource,
+    access: AppliedAccess,
     endpoint: InspectionTarget,
     key: PreviewKey,
 ) -> Result<Preview, String> {
-    let kubernetes = live.kubernetes().await?;
+    let kubernetes = access.client(live.kubernetes()).await?;
     let checked = tokio::time::timeout(
         PREFLIGHT_TIMEOUT,
         preflight_nodes(&kubernetes, live.client.clone(), endpoint, &key.targets),
@@ -1529,5 +1557,6 @@ async fn preview_live(
         nodes,
         pdb,
         source: "Kubernetes API and a fresh etcd sample.".into(),
+        access: Some(access),
     })
 }

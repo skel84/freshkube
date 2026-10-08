@@ -220,6 +220,21 @@ pub fn freight(name: &str, digest: &str, commit: &str) -> Value {
     })
 }
 
+/// The storefront Warehouse, subscribed to the image repository, with the
+/// digests its status lists as recently discovered.
+pub fn warehouse(discovered: &[&str]) -> Value {
+    let references: Vec<Value> = discovered
+        .iter()
+        .map(|digest| json!({"tag": "v1.4.0", "digest": digest}))
+        .collect();
+    json!({
+        "metadata": {"name": "storefront", "namespace": "storefront"},
+        "spec": {"subscriptions": [{"image": {"repoURL": REPO}}]},
+        "status": {"discoveredArtifacts": {"images": [
+            {"repoURL": REPO, "references": references}]}}
+    })
+}
+
 pub fn stage(current: &[&str]) -> Value {
     let items: serde_json::Map<String, Value> = current
         .iter()
@@ -519,6 +534,7 @@ pub fn healthy() -> World {
                 "v1alpha1",
                 &["warehouses", "freights", "stages", "promotions"],
             )
+            .with("warehouses", vec![warehouse(&[NEW, OLD])])
             .with(
                 "freights",
                 vec![freight("f-new", NEW, SHA), freight("f-old", OLD, OTHER_SHA)],
