@@ -203,11 +203,7 @@ impl Pilot {
     fn render_context_switcher(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let pilot = cx.entity().downgrade();
-        let full = self
-            .applied
-            .context
-            .clone()
-            .unwrap_or_else(|| "No context".into());
+        let full = self.context_display.full.clone();
         let open_pilot = pilot.clone();
         let label = self.context_display.name.clone();
         let detail = self.context_display.detail.clone();

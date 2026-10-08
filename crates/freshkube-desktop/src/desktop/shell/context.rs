@@ -14,6 +14,8 @@ pub(in crate::desktop) enum Connection {
 
 #[derive(Default)]
 pub(in crate::desktop) struct ContextDisplay {
+    /// The context's whole name, for the label and tooltip.
+    pub(in crate::desktop) full: SharedString,
     pub(in crate::desktop) name: SharedString,
     pub(in crate::desktop) detail: SharedString,
     pub(in crate::desktop) status: SharedString,
@@ -39,8 +41,24 @@ fn middle(name: &str, max: usize) -> String {
 }
 
 impl Pilot {
+    /// The context the header names: the applied one, else the context the
+    /// active workspace entry asks for while its connection has not named
+    /// one (its kubeconfig can't be read yet, or at all), else none.
+    pub(in crate::desktop) fn display_context(&self, cx: &App) -> String {
+        if let Some(context) = &self.applied.context {
+            return context.clone();
+        }
+        let workspace = self.settings_page.read(cx).workspace();
+        self.active_cluster()
+            .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id))
+            .map(|entry| entry.context.clone())
+            .unwrap_or_else(|| "No context".into())
+    }
+
     pub(in crate::desktop) fn prepare_context_display(&mut self, window: &mut Window, cx: &App) {
-        let full = self.applied.context.as_deref().unwrap_or("No context");
+        let full = self.display_context(cx);
+        self.context_display.full = full.clone().into();
+        let full = full.as_str();
         let font = window.text_system().resolve_font(&Font {
             family: cx.theme().font_family.clone(),
             weight: ui::HEADING_WEIGHT,
