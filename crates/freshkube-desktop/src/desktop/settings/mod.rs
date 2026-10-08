@@ -26,10 +26,10 @@ use gpui_kit::*;
 use source::Column;
 use std::path::{Path, PathBuf};
 
-/// The page's id prefix: `settings-title`, `-list`, `-banner`.
 /// The most unknown keys the page names before it says how many more.
 const MOST_KEYS_NAMED: usize = 5;
 
+/// The page's id prefix: `settings-title`, `-list`, `-banner`.
 const PREFIX: &str = "settings";
 /// The list's key context, around the table.
 pub(super) const CONTEXT: &str = "SettingsWorkspace";

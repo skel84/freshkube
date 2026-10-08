@@ -104,9 +104,12 @@ async fn editing_a_cluster_changes_its_role_and_keeps_its_place(cx: &mut TestApp
         window.click("settings-cluster-prod", cx);
         window.press("e", cx);
         window.render_frame(cx);
-        // The id is fixed: typing at it changes nothing.
-        window.click("settings-form-id", cx);
-        window.input("zz", cx);
+        // The id is shown, not a field: there is nothing to type into, and
+        // the id saved below is the one the cluster had. (Clicking the text
+        // does not move the keyboard off the context field, so typing after
+        // it would edit the context; this test does not type.)
+        assert!(window.find("settings-form-id").visible());
+        assert!(window.try_find("settings-form-id-input").is_none());
         window.click(("settings-role", 1usize), cx);
         window.click("settings-form-save", cx);
     })
@@ -127,6 +130,8 @@ async fn editing_a_cluster_changes_its_role_and_keeps_its_place(cx: &mut TestApp
             ("prod", workspace::Role::Cicd)
         ]
     );
+    let contexts: Vec<_> = file.clusters.iter().map(|e| e.context.as_str()).collect();
+    assert_eq!(contexts, vec!["acme-mgmt", "acme-prod"]);
 }
 
 #[gpui_kit::test]
@@ -431,11 +436,12 @@ async fn the_form_stays_open_with_what_was_typed_when_the_save_fails(cx: &mut Te
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("settings-form-error").visible());
-        // What was typed is still there: saving again after a reload works.
-        window.click("settings-form-cancel", cx);
-        window.render_frame(cx);
-        window.click("settings-reload", cx);
-        add(window, cx, "acme-ci", "");
+        // Reading the file again behind the open form, as the Reload button
+        // would, makes the same Save go through. Nothing is typed again, so
+        // the cluster that is written is the one that was typed before.
+        let page = view.read(cx).settings_page.clone();
+        page.update(cx, |page, cx| page.reload(cx));
+        window.click("settings-form-save", cx);
     })
     .unwrap();
     saved(cx, handle, &view).await;

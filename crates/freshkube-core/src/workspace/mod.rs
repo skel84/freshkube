@@ -187,7 +187,8 @@ impl Workspace {
         Ok(())
     }
 
-    /// Keys this version doesn't know, as `key` or `cluster-id.key`, sorted. They are kept when the file is saved; the page names them so a
+    /// Keys this version doesn't know, as `key` or `cluster-id.key`, sorted.
+    /// They are kept when the file is saved; the page names them so a
     /// misspelt key doesn't go unnoticed. The reserved `destinations` and
     /// `sources` are not listed.
     pub fn unknown_keys(&self) -> Vec<String> {

@@ -77,10 +77,10 @@ impl ClusterForm {
         let submit = |this: &mut Self,
                       _: &Entity<InputState>,
                       event: &InputEvent,
-                      window: &mut Window,
+                      _: &mut Window,
                       cx: &mut Context<Self>| {
             if matches!(event, InputEvent::PressEnter { .. }) {
-                this.submit(window, cx);
+                this.submit(cx);
             }
         };
         let subscriptions = vec![
@@ -102,7 +102,7 @@ impl ClusterForm {
         }
     }
 
-    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn submit(&mut self, cx: &mut Context<Self>) {
         if self.pending {
             return;
         }
@@ -119,7 +119,6 @@ impl ClusterForm {
             Ok(()) => self.pending = true,
             Err(why) => self.error = Some(why),
         }
-        let _ = window;
         cx.notify();
     }
 
@@ -244,7 +243,7 @@ impl Render for ClusterForm {
                             .primary()
                             .label("Save")
                             .disabled(self.pending)
-                            .on_click(cx.listener(|form, _, window, cx| form.submit(window, cx))),
+                            .on_click(cx.listener(|form, _, _, cx| form.submit(cx))),
                     ),
             )
     }
