@@ -352,6 +352,15 @@ pub(super) fn settings_content(
             .font_weight(FontWeight::SEMIBOLD)
             .child(text)
     };
+    // `flex_none` keeps the 1 px line when the panel scrolls in a short window.
+    let divider = |ix: usize| {
+        div()
+            .id(("settings-divider", ix))
+            .test_support()
+            .h(px(1.))
+            .flex_none()
+            .bg(p.line)
+    };
     let hint = |text: &'static str| div().text_size(dp(12.)).text_color(p.muted).child(text);
     v_flex()
         .id("settings-panel")
@@ -418,13 +427,13 @@ pub(super) fn settings_content(
                     "Browse loads the chosen file right away; a typed path loads when you press Apply. Leave it empty to use TALOSCONFIG or ~/.talos/config."
                 })),
         )
-        .child(div().h(px(1.)).flex_none().bg(p.line))
+        .child(divider(1))
         .child(if kubernetes_only {
             kubernetes_only::settings_section(&view, popover.clone(), cx)
         } else {
             super::super::kubeconfig::settings_section(&view, popover.clone(), cx).into_any_element()
         })
-        .child(div().h(px(1.)).flex_none().bg(p.line))
+        .child(divider(2))
         .child(
             h_flex()
                 .justify_between()
@@ -449,7 +458,7 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).flex_none().bg(p.line))
+        .child(divider(3))
         .child(
             h_flex()
                 .justify_between()
@@ -510,7 +519,7 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).flex_none().bg(p.line))
+        .child(divider(4))
         .child(
             h_flex()
                 .justify_between()
@@ -533,9 +542,9 @@ pub(super) fn settings_content(
                         }),
                 ),
         )
-        .child(div().h(px(1.)).flex_none().bg(p.line))
+        .child(divider(5))
         .child(crate::monitoring::page::source_section(&monitoring, cx))
-        .child(div().h(px(1.)).flex_none().bg(p.line))
+        .child(divider(6))
         .child(crate::monitoring::page::settings_section(
             &monitoring,
             popover.clone(),

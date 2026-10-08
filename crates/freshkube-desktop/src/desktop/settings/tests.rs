@@ -210,3 +210,28 @@ fn a_row_tooltip_holds_the_full_talosconfig_path(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_gear_panels_dividers_keep_their_pixel_in_a_short_window(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings", cx);
+        window.render_frame(cx);
+        // The panel scrolls in a short window; a divider that can shrink
+        // would draw as nothing there.
+        let mut found = 0;
+        for ix in 1..=7usize {
+            let Some(divider) = window.try_find(("settings-divider", ix)) else {
+                continue;
+            };
+            found += 1;
+            assert!(
+                divider.bounds().size.height > gpui_kit::px(0.),
+                "divider {ix}: {:?}",
+                divider.bounds()
+            );
+        }
+        assert!(found >= 5, "found {found} dividers");
+    })
+    .unwrap();
+}
