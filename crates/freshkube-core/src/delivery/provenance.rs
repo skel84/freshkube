@@ -26,6 +26,9 @@ fn kinds(hop: Hop) -> &'static [&'static str] {
         // declared; no read object reports the signature.
         Hop::SupplyChain => &[],
         Hop::Freight => &["Freight"],
+        // The Freight's origin is Kargo's own record; the Warehouse reports
+        // the digests it discovered.
+        Hop::Warehouse => &["Warehouse"],
         Hop::Promotion => &["Promotion"],
         // Kargo records the push on the Promotion, not on the Stage.
         Hop::Stage => &["Stage", "Promotion"],
@@ -248,6 +251,7 @@ async fn a_confirmed_link_stands_on_what_was_read_on_each_side() {
         (Hop::Commit, Hop::PipelineRun),
         (Hop::PipelineRun, Hop::Freight),
         (Hop::Commit, Hop::Freight),
+        (Hop::Freight, Hop::Warehouse),
         (Hop::Freight, Hop::Promotion),
         (Hop::Freight, Hop::Stage),
         (Hop::Stage, Hop::Application),
@@ -1047,7 +1051,10 @@ async fn the_existing_fixtures_keep_their_confidence_counts() {
 }
 
 /// `[confirmed, claimed, unknown]` of each fixture.
-const COUNTS: [[usize; 3]; 4] = [[2, 6, 0], [5, 3, 0], [11, 1, 0], [3, 9, 0]];
+// Each fixture's one Freight gained a Freight -> Warehouse link, Confirmed: the
+// fixture Warehouse lists the Freight's digest among its discoveries. That is
+// the one more Confirmed in each.
+const COUNTS: [[usize; 3]; 4] = [[3, 6, 0], [6, 3, 0], [12, 1, 0], [4, 9, 0]];
 // healthy: Commit -> PipelineRun (declared label and parameter) and PipelineRun -> supply chain.
 // promoted: the same two links.
 // confirmed: only PipelineRun -> supply chain; the clone TaskRun's `commit` result keeps

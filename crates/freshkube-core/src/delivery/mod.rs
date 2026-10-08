@@ -29,6 +29,8 @@ mod fixtures;
 mod provenance;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod warehouse_tests;
 
 pub use argocd::StageNaming;
 pub use collect::{Clusters, Plan, collect, commit_of_pull_request};
