@@ -103,8 +103,18 @@ pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_
     }
 }
 
+/// The shell's retained screen of type `T`.
+pub(crate) fn screen<T: 'static>(pilot: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<T> {
+    pilot
+        .read(cx)
+        .screens
+        .iter()
+        .find_map(|(_, screen)| screen.view().downcast::<T>().ok())
+        .expect("a retained screen of this type")
+}
+
 /// Choose through the Nodes page, then return to the previously visible view.
-fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
+pub(crate) fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
     let view = root_pilot(window, cx);
     let page = view.read(cx).page;
     let tab = view.read(cx).node_workspace.tab;

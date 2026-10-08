@@ -780,3 +780,109 @@ fn the_etcd_verdict_wraps_inside_the_plan(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// What the screen has read: the nodes its preview is for, if it has one,
+/// and its audit log's revision and whether the log is in.
+#[derive(Debug, PartialEq)]
+struct Reads {
+    preview: Option<Vec<String>>,
+    audit: (u64, bool),
+}
+
+fn reads(screen: &Entity<OperationsScreen>, cx: &gpui_kit::App) -> Reads {
+    let screen = screen.read(cx);
+    Reads {
+        preview: screen
+            .preview
+            .key()
+            .map(|key| key.targets.iter().map(|t| t.name.clone()).collect()),
+        audit: (screen.audit.revision(), screen.audit.data().is_some()),
+    }
+}
+
+/// Lifecycle, then the next page in Control plane's column.
+fn open_operations(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    window.press("secondary-9", cx);
+    window.render_frame(cx);
+    window.press("ctrl-tab", cx);
+    window.render_frame(cx);
+}
+
+/// The shell hands every retained screen a new target, shown or not. Once
+/// left, Operations reads nothing for it until it is shown again.
+#[gpui_kit::test]
+fn hidden_operations_reads_nothing_for_a_new_target_until_shown(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = app(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| open_operations(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    let screen = cx.read(|cx| crate::desktop::tests::screen::<OperationsScreen>(&pilot, cx));
+    let shown = cx.read(|cx| reads(&screen, cx));
+    assert!(shown.preview.is_some() && shown.audit.1, "{shown:?}");
+
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-2", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::pick_target(window, cx, 4);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let node = cx.read(|cx| screen.read(cx).source.as_ref().unwrap().target.node.clone());
+    assert_ne!(Some(&vec![node.clone()]), shown.preview.as_ref());
+    // The new target cleared the old preview and audit and asked for neither.
+    let hidden = cx.read(|cx| reads(&screen, cx));
+    assert_eq!(hidden.preview, None);
+    assert!(!hidden.audit.1, "{hidden:?}");
+    assert_eq!(names(&screen, cx), std::slice::from_ref(&node));
+
+    cx.update_window(handle, |_, window, cx| open_operations(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    let again = cx.read(|cx| reads(&screen, cx));
+    assert_eq!(again.preview, Some(vec![node]));
+    assert!(again.audit.1, "{again:?}");
+}
+
+/// The overview publishes the same target again while Operations is hidden:
+/// its preview and audit log stay as they are, read once.
+#[gpui_kit::test]
+fn a_same_target_update_while_hidden_reads_nothing(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "prod-fra", 1);
+    let before = cx.read(|cx| reads(&screen, cx));
+    assert!(before.preview.is_some() && before.audit.1, "{before:?}");
+    cx.update_window(handle.into(), |_, window, cx| {
+        for _ in 0..3 {
+            let same = source("prod-fra", 0);
+            screen.update(cx, |screen, cx| screen.set_source(Some(same), window, cx));
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| reads(&screen, cx)), before);
+}
+
+/// A submitted run outlives the screen being left and its target changing:
+/// it finishes on the cluster it started on, and the hidden screen starts no
+/// preview for the new target meanwhile.
+#[gpui_kit::test]
+fn a_submitted_run_carries_on_through_hidden_source_updates(cx: &mut TestAppContext) {
+    let (runtime, screen, handle) = mount(cx, "prod-fra", 40);
+    review(cx, handle);
+    confirm(cx, handle);
+    step(cx, &runtime, &screen);
+    cx.update_window(handle.into(), |_, window, cx| {
+        for other in [source("staging-eu", 0), source("staging-eu", 0)] {
+            screen.update(cx, |screen, cx| screen.set_source(Some(other), window, cx));
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(cx.read(|cx| reads(&screen, cx)).preview, None);
+    // A drain of one node takes 7 steps.
+    wait_until_finished(cx, &runtime, &screen, 10, "the run");
+    assert_eq!(
+        results(&screen, cx),
+        [("talos-cp-fra1-01".to_owned(), OperationStatus::Succeeded)]
+    );
+    assert_eq!(cx.read(|cx| reads(&screen, cx)).preview, None);
+}
