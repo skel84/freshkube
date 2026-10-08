@@ -48,7 +48,7 @@ pub(super) async fn run_with(
 
 /// An invented naming a setup without the authorized-stage annotation might
 /// configure.
-fn naming() -> StageNaming {
+pub(super) fn naming() -> StageNaming {
     StageNaming {
         project_key: "example.test/project".into(),
         name_template: "app-{project}-in-{stage}".into(),
@@ -143,6 +143,41 @@ async fn a_rollout_that_pins_the_digest_is_confirmed() {
         one(&trail, Hop::Application, Hop::Rollout).confidence,
         Confidence::Confirmed
     );
+}
+
+#[tokio::test]
+async fn a_rollout_joins_a_freight_on_another_spelling_of_its_repository() {
+    // Docker Hub, spelled three ways: the Freight names no registry, the
+    // Rollout pins its legacy host, and the pods and Argo CD name docker.io.
+    let pin = format!("index.docker.io/acme/storefront@{NEW}");
+    let running = "docker.io/acme/storefront:v1.4.0";
+    let mut world = healthy();
+    world.kargo = world.kargo.with("freights", freights_on("acme/storefront"));
+    world.argocd = world.argocd.with(
+        "applications",
+        vec![summarised(
+            application(Some("https://env-a.example:6443")),
+            &[&format!("docker.io/acme/storefront@{NEW}")],
+        )],
+    );
+    world.environment = world
+        .environment
+        .with("rollouts", vec![rollout(&pin)])
+        .with("replicasets", vec![replica_set("5d9c", &pin, 1, 1)])
+        .with(
+            "pods",
+            vec![pod(
+                "storefront-5d9c-x",
+                running,
+                &format!("docker-pullable://docker.io/acme/storefront@{NEW}"),
+            )],
+        );
+    let trail = run(&world, &ENV).await;
+    let rollout = one(&trail, Hop::Application, Hop::Rollout);
+    assert_eq!(rollout.confidence, Confidence::Confirmed, "{rollout:#?}");
+    let pods = one(&trail, Hop::Rollout, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed, "{pods:#?}");
+    assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
 }
 
 #[tokio::test]
@@ -592,7 +627,7 @@ async fn a_pull_request_number_leads_to_its_merge_commit_or_its_head() {
 }
 
 #[tokio::test]
-async fn without_rollouts_the_pods_of_the_destination_namespace_are_judged_by_digest() {
+async fn a_deployment_is_joined_through_its_current_replica_set_to_its_pods() {
     let world = without_rollouts();
     let trail = run_configured(&world, &ENV, &FixtureGitHub::default(), None, |plan| {
         plan.stage_naming = Some(naming())
@@ -602,19 +637,33 @@ async fn without_rollouts_the_pods_of_the_destination_namespace_are_judged_by_di
     // Named by convention is weaker than the annotation, and says so.
     assert_eq!(stage.confidence, Confidence::Claimed);
     assert!(stage.reason.contains("no authorized-stage annotation"));
-    let pods = one(&trail, Hop::Application, Hop::Pod);
-    assert_eq!(pods.confidence, Confidence::Confirmed);
+    let deployment = one(&trail, Hop::Application, Hop::Deployment);
+    assert_eq!(
+        deployment.confidence,
+        Confidence::Confirmed,
+        "{deployment:#?}"
+    );
+    assert_eq!(deployment.subject, "shop/storefront");
+    let pods = one(&trail, Hop::Deployment, Hop::Pod);
+    assert_eq!(pods.confidence, Confidence::Confirmed, "{pods:#?}");
     assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
     assert!(
+        pods.reason.contains("ReplicaSet storefront-6fdf"),
+        "{}",
         pods.reason
-            .contains("image summary lists the Freight's digest")
     );
     assert_eq!(trail.running(), Some(Confidence::Confirmed));
-    // The only environment request is one LIST of pods in the namespace.
+    // Only reads: the namespace's Deployments and ReplicaSets, and the pods
+    // of the current ReplicaSet's hash.
     let requests = world.environment.requests.borrow();
-    assert!(requests.iter().all(|r| r.contains("pods")), "{requests:?}");
     assert!(
-        requests.iter().any(|r| r.contains("ns=Some(\"shop\")")),
+        requests.iter().all(|r| r.starts_with("LIST")),
+        "{requests:?}"
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.contains("pods") && r.contains("pod-template-hash=6fdf")),
         "{requests:?}"
     );
 }
@@ -959,8 +1008,8 @@ async fn pods_are_not_read_from_a_cluster_that_is_not_the_destination() {
     plan.stage_naming = Some(naming());
     plan.environment = "env-b".into();
     let trail = join(&collect(&clusters, &plan, observed_at()).await);
-    let pods = one(&trail, Hop::Application, Hop::Pod);
-    assert_eq!(pods.confidence, Confidence::Unknown);
+    let deployment = one(&trail, Hop::Application, Hop::Deployment);
+    assert_eq!(deployment.confidence, Confidence::Unknown);
     assert!(world.environment.requests.borrow().is_empty());
 }
 

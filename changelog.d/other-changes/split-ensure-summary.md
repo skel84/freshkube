@@ -1,0 +1,1 @@
+- Split the Kubernetes summary session's start into the example start, the Tokio driver and the delivery to the shell, with no change in behaviour.

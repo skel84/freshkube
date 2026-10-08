@@ -42,3 +42,64 @@ fn refused_services_keep_other_links_and_late_answers_are_ignored(cx: &mut TestA
         });
     });
 }
+
+fn node_row(responding: Option<bool>) -> crate::desktop::nodes::NodeRow {
+    use crate::desktop::nodes::{NodeKey, NodeRow};
+    let mut talos =
+        crate::presentation::node_summaries(&crate::fixture::cluster("prod-fra", 0))[0].clone();
+    let name = "node-a".to_string();
+    let talos = responding.map(|responding| {
+        talos.responding = responding;
+        talos
+    });
+    NodeRow {
+        kubernetes_current: true,
+        key: NodeKey {
+            kubernetes: Some(name.clone()),
+            talos: talos.as_ref().map(|talos| talos.name.clone()),
+        },
+        id: "node-a".into(),
+        open_id: "node-a-open".into(),
+        pod_label: "Pods".into(),
+        kubelet_pods: "Pods".into(),
+        service_problem: false,
+        name: name.into(),
+        role: crate::presentation::node_summaries(&crate::fixture::cluster("prod-fra", 0))[0].role,
+        tone: crate::ui::Tone::Good,
+        kubernetes: None,
+        talos,
+        ready: "Ready",
+        talos_state: "".into(),
+        address: "".into(),
+        load: "".into(),
+        table_load: "".into(),
+        memory: "61% of 16 GiB".into(),
+        pods: "".into(),
+        services: "".into(),
+        service_status: Default::default(),
+        note: "".into(),
+        chips: Vec::new(),
+        facts: Vec::new(),
+        problems: Vec::new(),
+    }
+}
+
+/// The pod's node shows its memory as last known unless Talos answers for
+/// that node right now.
+#[test]
+fn a_node_link_marks_memory_stale_unless_talos_responds() {
+    let stale = |row: Option<&crate::desktop::nodes::NodeRow>| {
+        let link = super::node_link("node-a", row);
+        (link.memory_stale, link.memory_label.to_string())
+    };
+    let responding = node_row(Some(true));
+    let silent = node_row(Some(false));
+    let kubernetes_only = node_row(None);
+    assert_eq!(stale(Some(&responding)), (false, "61% of 16 GiB".into()));
+    assert_eq!(stale(Some(&silent)), (true, "61% of 16 GiB".into()));
+    assert_eq!(
+        stale(Some(&kubernetes_only)),
+        (true, "61% of 16 GiB".into())
+    );
+    assert_eq!(stale(None), (true, "Unavailable".into()));
+}

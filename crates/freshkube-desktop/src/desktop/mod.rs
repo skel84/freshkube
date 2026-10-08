@@ -12,6 +12,7 @@ mod overview;
 mod pages;
 mod search;
 mod services;
+mod session;
 mod shell;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
@@ -280,6 +281,16 @@ fn cached_page_style() -> StyleRefinement {
     StyleRefinement::default().size_full()
 }
 
+/// The entities whose events the shell routes.
+struct PageEntities<'a> {
+    node_pods: &'a Entity<ResourcesScreen>,
+    resources: &'a Entity<ResourcesScreen>,
+    dock: &'a Entity<dock::Dock>,
+    observability: &'a Entity<crate::observability::ObservabilityPage>,
+    monitoring: &'a Entity<MonitoringPage>,
+    custom: &'a Entity<CustomResources>,
+}
+
 pub(crate) struct Pilot {
     runtime: Handle,
     connection_store: Option<ConnectionStore>,
@@ -303,12 +314,8 @@ pub(crate) struct Pilot {
         Option<freshkube_core::AccessIdentity>,
     )>,
     overview: Snapshot<ClusterOverview>,
-    kubernetes_summary: Snapshot<Arc<freshkube_core::kubernetes_summary::KubernetesSummary>>,
-    summary_health: Option<Result<Arc<crate::screens::WorkloadData>, String>>,
-    summary_session: Option<kubernetes_summary::SummarySession>,
-    summary_epoch: u64,
-    summary_job: Option<OwnedJob>,
-    summary_task: Option<Task<()>>,
+    /// The cluster sessions: a workspace of one.
+    registry: session::Registry,
     object_open_job: Option<OwnedJob>,
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
@@ -429,19 +436,8 @@ impl Pilot {
         self.health.clone()
     }
 
-    fn new(
-        options: GpuiOptions,
-        runtime: Handle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        // The window opens on Overview, which has no navigation column.
-        crate::screens::set_chrome_width(RAIL_WIDTH);
-        // Opened before the pages, which read their inspectors' widths from it.
-        let navigation =
-            crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
-        cx.set_global(navigation.clone());
-        freshkube_ui::inspector::set_saved_widths(std::rc::Rc::new(navigation.clone()), cx);
+    /// The shell's global key bindings, by key context.
+    fn bind_shell_keys(cx: &mut App) {
         cx.bind_keys([
             KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
@@ -466,6 +462,274 @@ impl Pilot {
             KeyBinding::new("up", PreviousService, Some("TalosServices")),
             KeyBinding::new("down", NextService, Some("TalosServices")),
         ]);
+        cx.bind_keys([
+            KeyBinding::new("down", NextNode, Some("NodeWorkspace")),
+            KeyBinding::new("up", PreviousNode, Some("NodeWorkspace")),
+            KeyBinding::new("enter", nodes::OpenNode, Some("NodeWorkspace")),
+            KeyBinding::new("h", nodes::ToggleHealthyNodes, Some("NodeWorkspace")),
+            KeyBinding::new(
+                "down",
+                system_services::NextService,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "up",
+                system_services::PreviousService,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "enter",
+                system_services::OpenServiceNode,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "o",
+                system_services::OpenServiceNode,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "l",
+                system_services::ServiceLogs,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new(
+                "escape",
+                system_services::ClearService,
+                Some(system_services::CONTEXT),
+            ),
+            KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
+            KeyBinding::new(
+                "secondary-shift-enter",
+                nodes::ExpandNode,
+                Some("NodeWorkspace"),
+            ),
+            KeyBinding::new("secondary-}", nodes::NextNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new("secondary-{", nodes::PreviousNodeTab, Some("NodeWorkspace")),
+            KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
+            KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
+        ]);
+    }
+
+    /// Routes the pages' and the dock's events to the shell.
+    fn subscribe_page_events(
+        subscriptions: &mut Vec<Subscription>,
+        pages: PageEntities<'_>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let PageEntities {
+            node_pods,
+            resources,
+            dock,
+            observability,
+            monitoring,
+            custom,
+        } = pages;
+        subscriptions.push(cx.subscribe_in(
+            node_pods,
+            window,
+            |this, _, event: &resources::NodePodsEvent, window, cx| match event {
+                resources::NodePodsEvent::Back => this.node_back(window, cx),
+                resources::NodePodsEvent::Open(identity) => {
+                    let identity = identity.clone();
+                    this.open_object(
+                        builtin("pods").expect("pod kind"),
+                        identity.into(),
+                        resources::Tab::Overview,
+                        window,
+                        cx,
+                    );
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            resources,
+            window,
+            |this, _, event: &resources::ResourceLink, window, cx| {
+                this.resource_link(event.clone(), window, cx)
+            },
+        ));
+        subscriptions.push(cx.observe(dock, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe_in(
+            dock,
+            window,
+            |this, _, event: &dock::DockEvent, window, cx| match event {
+                dock::DockEvent::Leave(back) => {
+                    // What had the keyboard may no longer be drawn, as after
+                    // going to another page; the shell's root contains it
+                    // only if the last frame drew it.
+                    if let Some(back) = back {
+                        window.focus(back, cx);
+                        if this.focus.contains_focused(window, cx) {
+                            return;
+                        }
+                    }
+                    this.focus_page(window, cx)
+                }
+            },
+        ));
+        subscriptions.push(
+            cx.subscribe_in(observability, window, |this, _, event, window, cx| {
+                use crate::observability::ObservabilityEvent;
+                match event {
+                    ObservabilityEvent::Navigation => cx.notify(),
+                    ObservabilityEvent::Dashboards => {
+                        this.navigate_from_keyboard(Page::Monitoring, window, cx)
+                    }
+                    ObservabilityEvent::OpenExamplePod {
+                        namespace,
+                        name,
+                        logs,
+                    } if this.fixture => this.open_object(
+                        builtin("pods").unwrap(),
+                        resources::model::ObjectRef {
+                            namespace: namespace.clone(),
+                            name: name.clone(),
+                            uid: String::new(),
+                        },
+                        if *logs {
+                            resources::Tab::Logs
+                        } else {
+                            resources::Tab::Overview
+                        },
+                        window,
+                        cx,
+                    ),
+                    ObservabilityEvent::OpenExamplePod { .. } => {}
+                    ObservabilityEvent::OpenObject {
+                        source,
+                        app,
+                        subject,
+                    } => {
+                        if this
+                            .observability
+                            .read(cx)
+                            .link_is_current(source, app, subject)
+                            && this
+                                .kube_source()
+                                .is_some_and(|source| source.id == subject.access())
+                        {
+                            this.open_object(
+                                subject.kind().clone(),
+                                resources::model::ObjectRef {
+                                    namespace: subject.namespace().into(),
+                                    name: subject.name().into(),
+                                    uid: String::new(),
+                                },
+                                resources::Tab::Overview,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                }
+            }),
+        );
+        subscriptions.push(
+            cx.subscribe_in(
+                monitoring,
+                window,
+                |this, _, event, window, cx| match event {
+                    MonitoringEvent::Catalog => cx.notify(),
+                    MonitoringEvent::History => this.push_history(cx),
+                    // The column lists the dashboards; an open one stays open.
+                    MonitoringEvent::Dashboards => {
+                        if this.column_collapsed(window) {
+                            this.toggle_column(window, cx);
+                        }
+                    }
+                },
+            ),
+        );
+        subscriptions.extend([
+            cx.observe(custom, |_, _, cx| cx.notify()),
+            // A kind that stopped being served may have taken its group's
+            // other kinds with it; discover the group again.
+            cx.subscribe(resources, |view, _, NotServed(kind), cx| {
+                let group = kind.group.clone();
+                view.custom
+                    .update(cx, |custom, cx| custom.not_served(&group, cx));
+            }),
+        ]);
+    }
+
+    /// The one-second tick: the countdown, and the automatic refresh.
+    fn start_tick(window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this
+                    .update_in(cx, |view, window, cx| {
+                        view.elapsed += Duration::from_secs(1);
+                        if view.automatic
+                            && view.kubernetes_only.is_none()
+                            && view.elapsed >= AUTO_REFRESH
+                            && !view.overview.is_loading()
+                            && !view.config_loading
+                        {
+                            view.refresh(window, cx);
+                        }
+                        // The ring advances every second; a refresh that
+                        // started above notified the shell by itself.
+                        view.tick_countdown(cx);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Loads the first source: the example clusters, a kubeconfig without
+    /// Talos, or the talosconfig.
+    fn open_initial_source(
+        &mut self,
+        kubernetes_only: bool,
+        kubeconfig_path: Option<PathBuf>,
+        kube_context: Option<String>,
+        remembered_kubernetes: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.fixture {
+            self.contexts = fixture::CONTEXTS
+                .iter()
+                .map(|name| (*name).into())
+                .collect();
+            self.applied.context = Some(self.contexts[0].clone());
+            self.seed_fixture_history();
+            self.refresh(window, cx);
+        } else if kubernetes_only {
+            let kube = kubernetes_only::KubernetesOnly::new(kubeconfig_path, kube_context);
+            self.kubernetes_only = Some(if remembered_kubernetes {
+                kube.remembering()
+            } else {
+                kube
+            });
+            self.load_kube_contexts(window, cx);
+        } else {
+            self.load_configuration(window, cx);
+            if let Some(path) = kubeconfig_path {
+                self.inspect_kubeconfig_file(path, None, window, cx);
+            }
+        }
+    }
+
+    fn new(
+        options: GpuiOptions,
+        runtime: Handle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        // The window opens on Overview, which has no navigation column.
+        crate::screens::set_chrome_width(RAIL_WIDTH);
+        // Opened before the pages, which read their inspectors' widths from it.
+        let navigation =
+            crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
+        cx.set_global(navigation.clone());
+        freshkube_ui::inspector::set_saved_widths(std::rc::Rc::new(navigation.clone()), cx);
+        Self::bind_shell_keys(cx);
         let path = cx.new(|cx| InputState::new(window, cx).placeholder("Default talosconfig"));
         path.update(cx, |input, cx| {
             input.set_value(
@@ -529,69 +793,6 @@ impl Pilot {
             mutation::may_close(window, cx)
                 && pod_shell::may_close(window, cx, |window, _| window.remove_window())
         });
-        subscriptions.push(cx.subscribe_in(
-            &node_pods,
-            window,
-            |this, _, event: &resources::NodePodsEvent, window, cx| match event {
-                resources::NodePodsEvent::Back => this.node_back(window, cx),
-                resources::NodePodsEvent::Open(identity) => {
-                    let identity = identity.clone();
-                    this.open_object(
-                        builtin("pods").expect("pod kind"),
-                        identity.into(),
-                        resources::Tab::Overview,
-                        window,
-                        cx,
-                    );
-                }
-            },
-        ));
-        cx.bind_keys([
-            KeyBinding::new("down", NextNode, Some("NodeWorkspace")),
-            KeyBinding::new("up", PreviousNode, Some("NodeWorkspace")),
-            KeyBinding::new("enter", nodes::OpenNode, Some("NodeWorkspace")),
-            KeyBinding::new("h", nodes::ToggleHealthyNodes, Some("NodeWorkspace")),
-            KeyBinding::new(
-                "down",
-                system_services::NextService,
-                Some(system_services::CONTEXT),
-            ),
-            KeyBinding::new(
-                "up",
-                system_services::PreviousService,
-                Some(system_services::CONTEXT),
-            ),
-            KeyBinding::new(
-                "enter",
-                system_services::OpenServiceNode,
-                Some(system_services::CONTEXT),
-            ),
-            KeyBinding::new(
-                "o",
-                system_services::OpenServiceNode,
-                Some(system_services::CONTEXT),
-            ),
-            KeyBinding::new(
-                "l",
-                system_services::ServiceLogs,
-                Some(system_services::CONTEXT),
-            ),
-            KeyBinding::new(
-                "escape",
-                system_services::ClearService,
-                Some(system_services::CONTEXT),
-            ),
-            KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
-            KeyBinding::new(
-                "secondary-shift-enter",
-                nodes::ExpandNode,
-                Some("NodeWorkspace"),
-            ),
-            KeyBinding::new("secondary-}", nodes::NextNodeTab, Some("NodeWorkspace")),
-            KeyBinding::new("secondary-{", nodes::PreviousNodeTab, Some("NodeWorkspace")),
-            KeyBinding::new("right", nodes::NextNodeTab, Some("NodeWorkspaceTabs")),
-            KeyBinding::new("left", nodes::PreviousNodeTab, Some("NodeWorkspaceTabs")),
-        ]);
         let health =
             Self::screen_entity::<WorkloadsScreen>(runtime.clone(), &mut subscriptions, window, cx);
         let lifecycle =
@@ -629,34 +830,8 @@ impl Pilot {
             })
             .collect();
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
-        subscriptions.push(cx.subscribe_in(
-            &resources,
-            window,
-            |this, _, event: &resources::ResourceLink, window, cx| {
-                this.resource_link(event.clone(), window, cx)
-            },
-        ));
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
         // Its height and whether it shows are laid out by the shell.
-        subscriptions.push(cx.observe(&dock, |_, _, cx| cx.notify()));
-        subscriptions.push(cx.subscribe_in(
-            &dock,
-            window,
-            |this, _, event: &dock::DockEvent, window, cx| match event {
-                dock::DockEvent::Leave(back) => {
-                    // What had the keyboard may no longer be drawn, as after
-                    // going to another page; the shell's root contains it
-                    // only if the last frame drew it.
-                    if let Some(back) = back {
-                        window.focus(back, cx);
-                        if this.focus.contains_focused(window, cx) {
-                            return;
-                        }
-                    }
-                    this.focus_page(window, cx)
-                }
-            },
-        ));
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
         let secrets = options.keyring.then(|| -> crate::secrets::Secrets {
             std::sync::Arc::new(crate::secrets::SystemStore)
@@ -687,91 +862,6 @@ impl Pilot {
             }
             page
         });
-        subscriptions.push(cx.subscribe_in(
-            &observability,
-            window,
-            |this, _, event, window, cx| {
-                use crate::observability::ObservabilityEvent;
-                match event {
-                    ObservabilityEvent::Navigation => cx.notify(),
-                    ObservabilityEvent::Dashboards => {
-                        this.navigate_from_keyboard(Page::Monitoring, window, cx)
-                    }
-                    ObservabilityEvent::OpenExamplePod {
-                        namespace,
-                        name,
-                        logs,
-                    } if this.fixture => this.open_object(
-                        builtin("pods").unwrap(),
-                        resources::model::ObjectRef {
-                            namespace: namespace.clone(),
-                            name: name.clone(),
-                            uid: String::new(),
-                        },
-                        if *logs {
-                            resources::Tab::Logs
-                        } else {
-                            resources::Tab::Overview
-                        },
-                        window,
-                        cx,
-                    ),
-                    ObservabilityEvent::OpenExamplePod { .. } => {}
-                    ObservabilityEvent::OpenObject {
-                        source,
-                        app,
-                        subject,
-                    } => {
-                        if this
-                            .observability
-                            .read(cx)
-                            .link_is_current(source, app, subject)
-                            && this
-                                .kube_source()
-                                .is_some_and(|source| source.id == subject.access())
-                        {
-                            this.open_object(
-                                subject.kind().clone(),
-                                resources::model::ObjectRef {
-                                    namespace: subject.namespace().into(),
-                                    name: subject.name().into(),
-                                    uid: String::new(),
-                                },
-                                resources::Tab::Overview,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                }
-            },
-        ));
-        subscriptions.push(
-            cx.subscribe_in(
-                &monitoring,
-                window,
-                |this, _, event, window, cx| match event {
-                    MonitoringEvent::Catalog => cx.notify(),
-                    MonitoringEvent::History => this.push_history(cx),
-                    // The column lists the dashboards; an open one stays open.
-                    MonitoringEvent::Dashboards => {
-                        if this.column_collapsed(window) {
-                            this.toggle_column(window, cx);
-                        }
-                    }
-                },
-            ),
-        );
-        subscriptions.extend([
-            cx.observe(&custom, |_, _, cx| cx.notify()),
-            // A kind that stopped being served may have taken its group's
-            // other kinds with it; discover the group again.
-            cx.subscribe(&resources, |view, _, NotServed(kind), cx| {
-                let group = kind.group.clone();
-                view.custom
-                    .update(cx, |custom, cx| custom.not_served(&group, cx));
-            }),
-        ]);
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
         subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
@@ -796,30 +886,20 @@ impl Pilot {
             cx.observe(&logs, |_, _, cx| cx.notify()),
             cx.observe(&service_filter, |_, _, cx| cx.notify()),
         ]);
-        let tick = cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this
-                    .update_in(cx, |view, window, cx| {
-                        view.elapsed += Duration::from_secs(1);
-                        if view.automatic
-                            && view.kubernetes_only.is_none()
-                            && view.elapsed >= AUTO_REFRESH
-                            && !view.overview.is_loading()
-                            && !view.config_loading
-                        {
-                            view.refresh(window, cx);
-                        }
-                        // The ring advances every second; a refresh that
-                        // started above notified the shell by itself.
-                        view.tick_countdown(cx);
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
+        Self::subscribe_page_events(
+            &mut subscriptions,
+            PageEntities {
+                node_pods: &node_pods,
+                resources: &resources,
+                dock: &dock,
+                observability: &observability,
+                monitoring: &monitoring,
+                custom: &custom,
+            },
+            window,
+            cx,
+        );
+        let tick = Self::start_tick(window, cx);
         let mut view = Self {
             runtime: runtime.clone(),
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
@@ -841,12 +921,7 @@ impl Pilot {
             access_configuration: None,
             prompted_access: None,
             overview: Snapshot::default(),
-            kubernetes_summary: Snapshot::default(),
-            summary_health: None,
-            summary_session: None,
-            summary_epoch: 0,
-            summary_job: None,
-            summary_task: None,
+            registry: session::Registry::new(),
             object_open_job: None,
             object_open_task: None,
             object_open_sequence: 0,
@@ -924,29 +999,14 @@ impl Pilot {
             service_task: None,
             _tick: tick,
         };
-        if view.fixture {
-            view.contexts = fixture::CONTEXTS
-                .iter()
-                .map(|name| (*name).into())
-                .collect();
-            view.applied.context = Some(view.contexts[0].clone());
-            view.seed_fixture_history();
-            view.refresh(window, cx);
-        } else if options.kubernetes_only {
-            let kube =
-                kubernetes_only::KubernetesOnly::new(options.kubeconfig_path, options.kube_context);
-            view.kubernetes_only = Some(if options.remembered_kubernetes {
-                kube.remembering()
-            } else {
-                kube
-            });
-            view.load_kube_contexts(window, cx);
-        } else {
-            view.load_configuration(window, cx);
-            if let Some(path) = options.kubeconfig_path {
-                view.inspect_kubeconfig_file(path, None, window, cx);
-            }
-        }
+        view.open_initial_source(
+            options.kubernetes_only,
+            options.kubeconfig_path,
+            options.kube_context,
+            options.remembered_kubernetes,
+            window,
+            cx,
+        );
         view._subscriptions.push(cx.subscribe_in(
             &view.system_services,
             window,
@@ -1001,7 +1061,7 @@ impl Pilot {
         self.service_display = services::ServiceDisplay::default();
         self.load_history.clear();
         self.overview = Snapshot::default();
-        self.kubernetes_summary = Snapshot::default();
+        self.registry.active_mut().kubernetes_summary = Snapshot::default();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
@@ -1011,7 +1071,7 @@ impl Pilot {
             .document
             .update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
-        self.summary_health = None;
+        self.registry.active_mut().summary_health = None;
         self.stop_summary();
         self.attention_expanded = false;
         self.object_open_job = None;
@@ -1178,7 +1238,8 @@ impl Pilot {
             // With nothing reading yet, Health's Retry reads the kubeconfig
             // and connects again too.
             ScreenEvent::RefreshSummary
-                if self.kubernetes_only.is_some() && self.summary_session.is_none() =>
+                if self.kubernetes_only.is_some()
+                    && self.registry.active().summary_session.is_none() =>
             {
                 self.refresh(window, cx)
             }
@@ -1220,6 +1281,7 @@ impl Pilot {
                 cluster: Arc::new(cluster.clone()),
                 collector,
                 config_path: self.applied.path.clone(),
+                applied: self.applied_access(),
             })
         };
         Some(ScreenSource {
@@ -1231,6 +1293,17 @@ impl Pilot {
             },
             nodes: Arc::new(self.nodes.clone()),
             live,
+        })
+    }
+
+    /// The local access the last overview was collected with, which a live
+    /// source carries for Operations to pin its clients to.
+    fn applied_access(&self) -> Option<resources::talos::AppliedAccess> {
+        Some(resources::talos::AppliedAccess {
+            config_path: self.applied.path.clone(),
+            selection: self.kubeconfig.clone(),
+            configuration: self.access_configuration?,
+            identity: self.access?,
         })
     }
 
@@ -1285,6 +1358,7 @@ impl Pilot {
                     cluster: Arc::new(cluster.clone()),
                     collector,
                     config_path: self.applied.path.clone(),
+                    applied: self.applied_access(),
                 },
             })),
         })
@@ -1310,7 +1384,7 @@ impl Pilot {
         for (_, screen) in &self.screens {
             screen.set_source(source.clone(), window, cx);
         }
-        if let Some(data) = self.summary_health.clone() {
+        if let Some(data) = self.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);
         }
         self.sync_unread_health(cx);

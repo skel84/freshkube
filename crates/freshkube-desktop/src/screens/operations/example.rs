@@ -132,6 +132,7 @@ pub(super) fn example_preview(source: &ScreenSource, key: PreviewKey) -> Preview
             PdbNote::NotNeeded
         },
         source: "Example data; no cluster was contacted.".into(),
+        access: None,
         nodes,
         key,
     }

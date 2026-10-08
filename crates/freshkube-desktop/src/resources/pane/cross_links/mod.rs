@@ -2,7 +2,7 @@
 use super::*;
 use crate::desktop::nodes::{NodeRow, NodeTab};
 use crate::resources::{ResourceLink, model::ObjectRef};
-use freshkube_core::resources::{ContainerState, Owner, PodLinks};
+use freshkube_core::resources::{ContainerState, ObjectDocument, Owner, PodLinks};
 use std::sync::Arc;
 
 mod cause;
@@ -92,6 +92,129 @@ pub(super) struct CrossLinks {
     recent: Vec<RecentEvent>,
     pod: bool,
 }
+/// The pod's node, from the shell's joined node row when it has one.
+fn node_link(name: &str, row: Option<&NodeRow>) -> NodeLink {
+    NodeLink {
+        memory: row
+            .and_then(|row| row.talos.as_ref())
+            .and_then(|talos| talos.memory),
+        memory_label: row
+            .map(|row| row.memory.clone())
+            .unwrap_or_else(|| "Unavailable".into()),
+        memory_stale: row
+            .and_then(|row| row.talos.as_ref())
+            .is_none_or(|talos| !talos.responding),
+        name: name.to_owned(),
+        ready: row
+            .map(|row| row.ready)
+            .unwrap_or("Node unavailable")
+            .into(),
+        tone: row.map(|row| row.tone).unwrap_or_default(),
+        problems: row.map(|row| row.problems.clone()).unwrap_or_default(),
+        services: row.is_some_and(|row| row.service_problem || row.talos.is_some()),
+        kubelet: row.and_then(|row| row.talos.as_ref()).map(|talos| {
+            match talos
+                .services
+                .iter()
+                .find(|service| service.id == "kubelet")
+            {
+                Some(service) => {
+                    let health = crate::presentation::service_health(service);
+                    (
+                        crate::ui::health_tone(health),
+                        format!(
+                            "kubelet {} · {}",
+                            service.state.to_lowercase(),
+                            crate::presentation::health_text(&health).to_lowercase()
+                        )
+                        .into(),
+                    )
+                }
+                None => (crate::ui::Tone::Unknown, "kubelet not reported".into()),
+            }
+        }),
+    }
+}
+
+/// The pod's owners, then, when the controller chain was read and starts at
+/// one of them, the chain beyond.
+fn owner_links(
+    document: &ObjectDocument,
+    links: Option<&PodLinks>,
+    namespace: &str,
+    errors: &mut Vec<SharedString>,
+) -> Vec<OwnerLink> {
+    let mut owners = document
+        .overview
+        .owners
+        .iter()
+        .map(|owner| OwnerLink::new(owner, namespace))
+        .collect::<Vec<_>>();
+    if let Some(links) = links {
+        if let Some(chain) = &links.controller
+            && document
+                .overview
+                .owners
+                .iter()
+                .any(|owner| owner.uid == chain.via_uid)
+        {
+            owners.extend(
+                chain
+                    .owners
+                    .iter()
+                    .map(|owner| OwnerLink::new(owner, namespace)),
+            );
+        }
+        if let Some(error) = &links.controller_error {
+            errors.push(format!("Can't read controller: {error}").into());
+        }
+    }
+    owners
+}
+
+/// The Services that select the pod, and the note under them.
+fn service_links(
+    document: &ObjectDocument,
+    links: Option<&PodLinks>,
+    errors: &mut Vec<SharedString>,
+) -> (Vec<ServiceLink>, SharedString) {
+    let Some(links) = links else {
+        return (Vec::new(), "Looking up Services and controller…".into());
+    };
+    match &links.services {
+        Err(error) => {
+            errors.push(format!("Can't list services: {error}").into());
+            (Vec::new(), "Services unavailable".into())
+        }
+        Ok(_) => {
+            let matches = links
+                .selected_by(&document.overview.labels)
+                .collect::<Vec<_>>();
+            let services = matches
+                .iter()
+                .take(200)
+                .map(|service| ServiceLink {
+                    id: format!("selected-service-{}-{}", service.namespace, service.name).into(),
+                    label: service.name.clone().into(),
+                    object: ObjectRef {
+                        namespace: service.namespace.clone(),
+                        name: service.name.clone(),
+                        uid: service.uid.clone(),
+                    },
+                })
+                .collect();
+            let note = if matches.len() > 200 {
+                format!("First 200 of {} matching Services", matches.len()).into()
+            } else if matches.is_empty() {
+                "No matching Services".into()
+            } else {
+                SharedString::default()
+            };
+            (services, note)
+        }
+    }
+}
+
 impl DetailPane {
     pub(crate) fn set_node_rows(&mut self, rows: Arc<Vec<NodeRow>>, cx: &mut Context<Self>) {
         self.node_rows = rows;
@@ -110,114 +233,18 @@ impl DetailPane {
             self.cross_links = Default::default();
             return;
         };
+        let namespace = document.namespace.as_deref().unwrap_or_default();
         let node = pod.node.as_ref().map(|name| {
             let row = self
                 .node_rows
                 .iter()
                 .find(|row| row.key.kubernetes.as_ref() == Some(name));
-            NodeLink {
-                memory: row
-                    .and_then(|row| row.talos.as_ref())
-                    .and_then(|talos| talos.memory),
-                memory_label: row
-                    .map(|row| row.memory.clone())
-                    .unwrap_or_else(|| "Unavailable".into()),
-                memory_stale: row
-                    .and_then(|row| row.talos.as_ref())
-                    .is_none_or(|talos| !talos.responding),
-                name: name.clone(),
-                ready: row
-                    .map(|row| row.ready)
-                    .unwrap_or("Node unavailable")
-                    .into(),
-                tone: row.map(|row| row.tone).unwrap_or_default(),
-                problems: row.map(|row| row.problems.clone()).unwrap_or_default(),
-                services: row.is_some_and(|row| row.service_problem || row.talos.is_some()),
-                kubelet: row.and_then(|row| row.talos.as_ref()).map(|talos| {
-                    match talos
-                        .services
-                        .iter()
-                        .find(|service| service.id == "kubelet")
-                    {
-                        Some(service) => {
-                            let health = crate::presentation::service_health(service);
-                            (
-                                crate::ui::health_tone(health),
-                                format!(
-                                    "kubelet {} · {}",
-                                    service.state.to_lowercase(),
-                                    crate::presentation::health_text(&health).to_lowercase()
-                                )
-                                .into(),
-                            )
-                        }
-                        None => (crate::ui::Tone::Unknown, "kubelet not reported".into()),
-                    }
-                }),
-            }
+            node_link(name, row)
         });
-        let namespace = document.namespace.as_deref().unwrap_or_default();
-        let mut owners = document
-            .overview
-            .owners
-            .iter()
-            .map(|owner| OwnerLink::new(owner, namespace))
-            .collect::<Vec<_>>();
-        let mut services = Vec::new();
         let mut errors = Vec::new();
-        let services_note = if let Some(links) = &self.pod_links {
-            if let Some(chain) = &links.controller
-                && document
-                    .overview
-                    .owners
-                    .iter()
-                    .any(|owner| owner.uid == chain.via_uid)
-            {
-                owners.extend(
-                    chain
-                        .owners
-                        .iter()
-                        .map(|owner| OwnerLink::new(owner, namespace)),
-                );
-            }
-            if let Some(error) = &links.controller_error {
-                errors.push(format!("Can't read controller: {error}").into());
-            }
-            match &links.services {
-                Err(error) => {
-                    errors.push(format!("Can't list services: {error}").into());
-                    "Services unavailable".into()
-                }
-                Ok(_) => {
-                    let matches = links
-                        .selected_by(&document.overview.labels)
-                        .collect::<Vec<_>>();
-                    services = matches
-                        .iter()
-                        .take(200)
-                        .map(|service| ServiceLink {
-                            id: format!("selected-service-{}-{}", service.namespace, service.name)
-                                .into(),
-                            label: service.name.clone().into(),
-                            object: ObjectRef {
-                                namespace: service.namespace.clone(),
-                                name: service.name.clone(),
-                                uid: service.uid.clone(),
-                            },
-                        })
-                        .collect();
-                    if matches.len() > 200 {
-                        format!("First 200 of {} matching Services", matches.len()).into()
-                    } else if matches.is_empty() {
-                        "No matching Services".into()
-                    } else {
-                        SharedString::default()
-                    }
-                }
-            }
-        } else {
-            "Looking up Services and controller…".into()
-        };
+        let owners = owner_links(document, self.pod_links.as_ref(), namespace, &mut errors);
+        let (services, services_note) =
+            service_links(document, self.pod_links.as_ref(), &mut errors);
         let containers_note = if pod.containers.len() > 200 {
             format!("First 200 of {} containers", pod.containers.len()).into()
         } else {
@@ -386,6 +413,7 @@ impl DetailPane {
             Some(super::super::LogsAt {
                 container: name,
                 previous,
+                all: false,
             }),
             cx,
         );

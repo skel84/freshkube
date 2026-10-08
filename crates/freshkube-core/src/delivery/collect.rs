@@ -10,10 +10,15 @@ use chrono::{DateTime, Utc};
 use super::argocd::{
     DestinationMatch, Destinations, StageNaming, match_destination, read_applications,
 };
+use super::deployments::{
+    Deployment, DeploymentSet, current_set, read_deployment_sets, read_deployments,
+};
 use super::github::GitHub;
-use super::join::{Evidence, RolloutPods, candidate_applications, candidate_rollouts};
+use super::join::{
+    Evidence, RolloutPods, candidate_applications, candidate_deployments, candidate_rollouts,
+};
 use super::kargo::read_project;
-use super::pods::{read_namespace_pods, read_rollout_pods};
+use super::pods::{read_deployment_pods, read_namespace_pods, read_rollout_pods};
 use super::read::Reader;
 use super::rollouts::{
     AnalysisRun, ReplicaSet, Rollout, read_analysis_runs, read_replica_sets, read_rollouts,
@@ -131,6 +136,9 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         analysis_runs: Source::Read(Vec::new()),
         replica_sets: Source::Read(Vec::new()),
         pods: BTreeMap::new(),
+        deployments: Source::Read(Vec::new()),
+        deployment_sets: Source::Read(Vec::new()),
+        deployment_pods: BTreeMap::new(),
         namespace_pods: BTreeMap::new(),
         pull_requests: None,
         pr_builds: BTreeMap::new(),
@@ -176,6 +184,8 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         evidence.pods = pods;
     }
 
+    read_deployment_chain(clusters.environment, &mut evidence).await;
+
     // Applications that manage no Rollout: read the pods of their namespace.
     // Both candidate lists hold only Applications whose destination is the
     // environment cluster.
@@ -184,6 +194,53 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         evidence.namespace_pods.insert(app_id, pods);
     }
     evidence
+}
+
+/// The Deployments this change can reach, in their namespaces, the
+/// ReplicaSets they own, and the pods of each one's current ReplicaSet.
+async fn read_deployment_chain<E: Reader>(environment: &E, evidence: &mut Evidence) {
+    let wanted = candidate_deployments(evidence);
+    let mut namespaces: Vec<&str> = wanted.iter().map(|w| w.namespace.as_str()).collect();
+    namespaces.sort_unstable();
+    namespaces.dedup();
+    if namespaces.is_empty() {
+        return;
+    }
+    let mut deployments: Vec<Source<Vec<Deployment>>> = Vec::new();
+    let mut sets: Vec<Source<Vec<DeploymentSet>>> = Vec::new();
+    for namespace in &namespaces {
+        deployments.push(read_deployments(environment, namespace).await);
+        sets.push(read_deployment_sets(environment, namespace).await);
+    }
+    evidence.deployments = merge(deployments);
+    evidence.deployment_sets = merge(sets);
+    let (Some(found), Some(owned)) = (evidence.deployments.read(), evidence.deployment_sets.read())
+    else {
+        return;
+    };
+    // Only the current ReplicaSet's pods are read: the controller names it by
+    // revision, and an older revision's pods run another template.
+    let mut pods = BTreeMap::new();
+    for wanted in &wanted {
+        let Some(deployment) = found
+            .iter()
+            .find(|d| d.namespace == wanted.namespace && d.name == wanted.name)
+        else {
+            continue;
+        };
+        let Ok(set) = current_set(deployment, owned) else {
+            continue;
+        };
+        let Some(hash) = set.pod_hash.clone() else {
+            continue;
+        };
+        let read = read_deployment_pods(environment, &wanted.namespace, &hash).await;
+        pods.insert(
+            format!("{}/{}", wanted.namespace, wanted.name),
+            RolloutPods { hash, pods: read },
+        );
+    }
+    evidence.deployment_pods = pods;
 }
 
 /// Pull requests for the commit, and the builds of each one's head commit

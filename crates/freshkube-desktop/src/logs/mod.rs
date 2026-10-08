@@ -5,6 +5,7 @@
 //! - `talos`: Talos service logs: the node's catalog, collection and
 //!   delivery. The Logs page is `LogView<TalosLogs>`, named [`LogPanel`].
 //! - `pod`: one pod container's log, for the pane's Logs tab.
+//! - `streams`: many container logs read into one view, for a workload.
 //! - `workload`: every container of a workload's pods, interleaved by
 //!   time, for a workload pane's Logs tab.
 //!
@@ -12,6 +13,7 @@
 //! `freshkube-observability`'s; desktop names its view here.
 
 mod pod;
+mod streams;
 mod talos;
 mod workload;
 

@@ -220,7 +220,7 @@ impl Pilot {
             {
                 HealthSummary::Reading
             }
-            _ if self.summary_session.is_some() => HealthSummary::Reading,
+            _ if self.registry.active().summary_session.is_some() => HealthSummary::Reading,
             _ => HealthSummary::Unread,
         };
         self.health
@@ -232,10 +232,10 @@ impl Pilot {
             (Some(error), _) | (None, KubeConnection::Failed(error)) => error.clone(),
             _ => return,
         };
-        if matches!(self.summary_health, Some(Ok(_))) {
+        if matches!(self.registry.active().summary_health, Some(Ok(_))) {
             return;
         }
-        self.summary_health = Some(Err(failure.clone()));
+        self.registry.active_mut().summary_health = Some(Err(failure.clone()));
         self.deliver_workloads(Err(failure), cx);
     }
 
@@ -572,6 +572,8 @@ impl Pilot {
         if self.fixture {
             kube.connection = KubeConnection::Connected {
                 version: self
+                    .registry
+                    .active()
                     .kubernetes_summary
                     .data()
                     .and_then(|summary| summary.version.loaded())
@@ -821,6 +823,8 @@ mod tests {
                 view.applied.context = Some("chosen".into());
                 view.ensure_summary(window, cx);
                 let observation = view
+                    .registry
+                    .active()
                     .summary_session
                     .as_ref()
                     .unwrap()
@@ -830,7 +834,13 @@ mod tests {
                 view.kubeconfig_checked(access.clone(), report, window, cx);
                 assert_eq!(view.kube_source().unwrap().id, access.id());
                 assert_eq!(
-                    view.summary_session.as_ref().unwrap().core.identity(),
+                    view.registry
+                        .active()
+                        .summary_session
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .identity(),
                     &observation
                 );
 
@@ -851,7 +861,13 @@ mod tests {
                     }
                 );
                 assert_eq!(
-                    view.summary_session.as_ref().unwrap().core.identity(),
+                    view.registry
+                        .active()
+                        .summary_session
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .identity(),
                     &observation
                 );
 
@@ -878,10 +894,12 @@ mod tests {
                 let current = view.kube_source().unwrap().id;
                 assert_ne!(current, access.id());
                 assert_eq!(view.applied.context.as_deref(), Some("chosen"));
-                assert!(view.kubernetes_summary.data().is_none());
+                assert!(view.registry.active().kubernetes_summary.data().is_none());
                 view.ensure_summary(window, cx);
                 assert_eq!(
-                    view.summary_session
+                    view.registry
+                        .active()
+                        .summary_session
                         .as_ref()
                         .unwrap()
                         .core
@@ -890,7 +908,13 @@ mod tests {
                     current
                 );
                 assert_ne!(
-                    view.summary_session.as_ref().unwrap().core.identity(),
+                    view.registry
+                        .active()
+                        .summary_session
+                        .as_ref()
+                        .unwrap()
+                        .core
+                        .identity(),
                     &observation
                 );
 

@@ -729,7 +729,8 @@ fn a_crashing_pod_opens_on_why_with_its_restarts_and_relations(cx: &mut TestAppC
         asked[0].at,
         Some(LogsAt {
             container,
-            previous: true
+            previous: true,
+            all: false,
         })
     );
 }
@@ -805,7 +806,8 @@ fn logs_opens_the_container_at_fault_rather_than_the_default(cx: &mut TestAppCon
         asked[0].at,
         Some(LogsAt {
             container: blamed,
-            previous: false
+            previous: false,
+            all: false,
         })
     );
 }

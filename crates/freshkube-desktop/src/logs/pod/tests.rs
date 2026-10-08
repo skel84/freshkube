@@ -671,3 +671,400 @@ fn a_wide_toolbar_shows_the_status_tag_with_its_word(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+// All containers: every app container at once, tagged by its name.
+
+/// A running pod with more than one app container: a gateway's proxy and
+/// its sidecars, none of them restarted when `restarts` is false.
+fn many_containers(restarts: bool) -> ResourceIdentity {
+    pod(|status, containers| {
+        status == "Running" && apps(containers).len() > 1 && restarted(containers) == restarts
+    })
+}
+
+fn apps(containers: &PodContainers) -> Vec<String> {
+    containers
+        .containers
+        .iter()
+        .filter(|container| container.role == ContainerRole::App)
+        .map(|container| container.name.clone())
+        .collect()
+}
+
+/// The containers read, by name.
+fn read(view: &Entity<PodLogView>, cx: &App) -> Vec<String> {
+    let mut names: Vec<String> = view
+        .read(cx)
+        .source()
+        .reads
+        .streams
+        .keys()
+        .map(|key| key.container.clone())
+        .collect();
+    names.sort();
+    names
+}
+
+fn sorted(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names
+}
+
+/// Picks All containers from the container picker, as the user does.
+fn pick_all(window: &mut gpui_kit::Window, cx: &mut App) {
+    window.click("pod-logs-container", cx);
+    window.render_frame(cx);
+    window.within("popup-menu").click(0, cx);
+    window.render_frame(cx);
+}
+
+#[gpui_kit::test]
+fn all_containers_reads_every_app_container_and_only_beside_another(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    cx.update_window(handle, |_, window, cx| {
+        // One app container, an init container beside it or not: nothing
+        // to pick but the containers themselves.
+        let single = pod(|status, containers| {
+            status == "Running" && has_init(containers) && apps(containers).len() == 1
+        });
+        show(&view, &single, cx);
+        window.render_frame(cx);
+        assert!(!view.read(cx).source().offers_all);
+
+        let identity = many_containers(false);
+        let pod = containers(&identity);
+        show(&view, &identity, cx);
+        window.render_frame(cx);
+        assert!(view.read(cx).source().offers_all);
+        assert!(!view.read(cx).source().all);
+        assert!(!view.read(cx).columns().source);
+        let default = pod.default.clone().unwrap();
+        assert_eq!(view.read(cx).selected_container(), Some(default.as_str()));
+
+        pick_all(window, cx);
+        assert!(view.read(cx).shows_all());
+        // Every app container streams; the Source column tells them apart.
+        assert_eq!(read(&view, cx), sorted(apps(&pod)));
+        assert!(view.read(cx).columns().source);
+        assert_eq!(state(&view, cx), StreamState::All);
+        assert_eq!(window.find("pod-logs-status").label(), Some("Streaming"));
+
+        // Picking one container goes back to its log alone.
+        view.update(cx, |view, cx| view.choose_container(default.clone(), cx));
+        window.render_frame(cx);
+        assert!(!view.read(cx).source().all);
+        assert!(read(&view, cx).is_empty());
+        assert!(!view.read(cx).columns().source);
+        assert_eq!(state(&view, cx), StreamState::Streaming);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn all_containers_interleave_by_time_tagged_by_container(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let identity = many_containers(false);
+    let names = sorted(apps(&containers(&identity)));
+    cx.update_window(handle, |_, window, cx| {
+        show(&view, &identity, cx);
+        pick_all(window, cx);
+        assert!(view.read(cx).columns().source);
+        let view = view.read(cx);
+        let entries: Vec<_> = view
+            .retained()
+            .iter()
+            .filter(|entry| !entry.is_marker())
+            .collect();
+        // Every container wrote, each line tagged by its container.
+        let mut tags: Vec<String> = entries
+            .iter()
+            .map(|entry| entry.service.as_str().to_owned())
+            .collect();
+        tags.sort();
+        tags.dedup();
+        assert_eq!(tags, names);
+        // In time order, the containers' lines between each other's.
+        let keys: Vec<i64> = entries
+            .iter()
+            .map(|entry| entry.timestamp.as_ref().unwrap().sort_key)
+            .collect();
+        assert!(keys.is_sorted(), "{keys:?}");
+        let switches = entries
+            .windows(2)
+            .filter(|pair| pair[0].service != pair[1].service)
+            .count();
+        assert!(switches > names.len() * 2, "{switches}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_container_that_ends_says_so_while_the_others_read_on(cx: &mut TestAppContext) {
+    use super::super::streams::{StreamReads, StreamState as Read};
+    use freshkube_core::resources::{PodLogUpdate, Termination};
+    let (_runtime, view, handle) = mount(cx);
+    let identity = many_containers(false);
+    let ended = cx
+        .update_window(handle, |_, window, cx| {
+            show(&view, &identity, cx);
+            pick_all(window, cx);
+            let (key, generation) = {
+                let source = view.read(cx).source();
+                let (key, stream) = source
+                    .reads
+                    .streams
+                    .iter()
+                    .find(|(key, _)| Some(&key.container) != source.containers.default.as_ref())
+                    .unwrap();
+                (key.clone(), stream.generation)
+            };
+            view.update(cx, |view, cx| {
+                assert!(StreamReads::apply_updates(
+                    view,
+                    &key,
+                    generation,
+                    vec![PodLogUpdate::Ended(Some(Termination {
+                        exit_code: 1,
+                        reason: "Error".into(),
+                        finished: None,
+                    }))],
+                    cx,
+                ));
+            });
+            window.render_frame(cx);
+            let name = key.container.clone();
+            assert_eq!(
+                markers(&view, cx),
+                vec![format!("{name} ended: exited 1 (Error)")]
+            );
+            let source = view.read(cx).source();
+            assert_eq!(source.reads.streams[&key].state, Read::Ended);
+            assert!(source.running());
+            // The tab still streams, and the note names the one that ended.
+            assert_eq!(
+                window.find("pod-logs-status").label(),
+                Some(format!("Streaming: {name}: Ended").as_str())
+            );
+            let note = window.find("pod-logs-note").label().unwrap().to_owned();
+            assert_eq!(note, format!("{name}: Ended"));
+            key
+        })
+        .unwrap();
+    let count = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            let tags: Vec<String> = view
+                .read(cx)
+                .retained()
+                .iter()
+                .filter(|entry| !entry.is_marker())
+                .map(|entry| entry.service.as_str().to_owned())
+                .collect();
+            let of_ended = tags.iter().filter(|tag| **tag == ended.container).count();
+            (tags.len(), of_ended)
+        })
+    };
+    let (before, ended_before) = count(cx);
+    cx.executor()
+        .advance_clock(super::super::streams::EXAMPLE_INTERVAL * 4);
+    cx.run_until_parked();
+    let (after, ended_after) = count(cx);
+    assert!(after > before, "{before} → {after}");
+    assert_eq!(ended_after, ended_before);
+}
+
+#[gpui_kit::test]
+fn previous_with_all_containers_reads_each_one_that_ran_before_only_when_asked(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, view, handle) = mount(cx);
+    let identity = many_containers(true);
+    let pod = containers(&identity);
+    let ran_before: Vec<String> = sorted(
+        pod.containers
+            .iter()
+            .filter(|container| container.role == ContainerRole::App && container.has_previous())
+            .map(|container| container.name.clone())
+            .collect(),
+    );
+    let never: Vec<String> = apps(&pod)
+        .into_iter()
+        .filter(|name| !ran_before.contains(name))
+        .collect();
+    assert!(!ran_before.is_empty() && !never.is_empty());
+    cx.update_window(handle, |_, window, cx| {
+        show(&view, &identity, cx);
+        pick_all(window, cx);
+        // Following reads only the running instances.
+        let source = view.read(cx).source();
+        assert!(!source.previous);
+        assert!(
+            source
+                .reads
+                .streams
+                .values()
+                .all(|stream| !stream.request.previous)
+        );
+
+        window.click("pod-logs-previous", cx);
+        window.render_frame(cx);
+        let source = view.read(cx).source();
+        assert!(source.previous && source.all);
+        assert_eq!(read(&view, cx), ran_before);
+        assert!(
+            source
+                .reads
+                .streams
+                .values()
+                .all(|stream| stream.request.previous)
+        );
+        assert!(!source.running());
+        assert!(lines(&view, cx) > 0);
+        assert!(markers(&view, cx).is_empty());
+        assert_eq!(
+            window.find("pod-logs-status").label(),
+            Some(
+                format!(
+                    "Previous instances: Previous instances · complete · No previous instance: {}",
+                    never.join(", ")
+                )
+                .as_str()
+            )
+        );
+
+        // Back to the running instances, every app container again.
+        window.click("pod-logs-previous", cx);
+        window.render_frame(cx);
+        assert!(!view.read(cx).source().previous);
+        assert_eq!(read(&view, cx), sorted(apps(&pod)));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn stop_and_hiding_stop_every_container_and_each_reads_on(cx: &mut TestAppContext) {
+    let (_runtime, view, handle) = mount(cx);
+    let identity = many_containers(false);
+    let names = sorted(apps(&containers(&identity)));
+    cx.update_window(handle, |_, window, cx| {
+        show(&view, &identity, cx);
+        pick_all(window, cx);
+        let held = lines(&view, cx);
+        window.click("pod-logs-stream", cx);
+        assert_eq!(state(&view, cx), StreamState::Stopped);
+        assert!(read(&view, cx).is_empty());
+        window.click("pod-logs-stream", cx);
+        assert_eq!(state(&view, cx), StreamState::All);
+        assert_eq!(read(&view, cx), names);
+        // Each reads on from its last line, repeating none.
+        assert_eq!(lines(&view, cx), held);
+        assert!(
+            view.read(cx)
+                .source()
+                .reads
+                .streams
+                .values()
+                .all(|stream| stream.request.resume.is_some())
+        );
+
+        view.update(cx, |view, cx| view.set_active(false, cx));
+        assert!(read(&view, cx).is_empty());
+        view.update(cx, |view, cx| view.set_active(true, cx));
+        assert_eq!(read(&view, cx), names);
+        assert_eq!(lines(&view, cx), held);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn all_containers_copy_and_download_lead_each_line_with_its_container(cx: &mut TestAppContext) {
+    use crate::logs::{DownloadLines, LogSource};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gateway.log");
+    let (_runtime, view, handle) = mount(cx);
+    let identity = many_containers(false);
+    let names = apps(&containers(&identity));
+    let copied = cx
+        .update_window(handle, |_, window, cx| {
+            show(&view, &identity, cx);
+            pick_all(window, cx);
+            assert_eq!(
+                super::PodLogs::download_name(view.read(cx), DownloadLines::Visible),
+                format!("{}-{}-all", identity.namespace, identity.name)
+            );
+            window.click(last_row(&view, cx), cx);
+            window.press("secondary-a", cx);
+            window.press("secondary-c", cx);
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .unwrap()
+        })
+        .unwrap();
+    let led = |line: &str| {
+        names
+            .iter()
+            .any(|name| line.starts_with(&format!("{name} ")))
+    };
+    assert!(copied.lines().count() > names.len());
+    for line in copied.lines() {
+        assert!(led(line), "{line}");
+    }
+    cx.update_window(handle, |_, window, cx| window.click("logs-download", cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.within("popup-menu").click(0, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.did_prompt_for_new_path());
+    cx.simulate_new_path_selection(|_| Some(path.clone()));
+    cx.run_until_parked();
+    let file = std::fs::read_to_string(&path).unwrap();
+    assert!(file.ends_with(&format!("\n{copied}\n")) || file == format!("{copied}\n"));
+    for line in file.lines() {
+        assert!(led(line), "{line}");
+    }
+}
+
+#[gpui_kit::test]
+fn all_containers_reads_at_most_the_cap_and_says_how_many_it_leaves_out(cx: &mut TestAppContext) {
+    use super::super::streams::MAX_STREAMS;
+    let (_runtime, view, handle) = mount(cx);
+    let identity = many_containers(false);
+    // The gateway's containers, copied until the pod runs more than the
+    // cap allows.
+    let mut pod = containers(&identity);
+    let app = pod
+        .containers
+        .iter()
+        .find(|container| container.role == ContainerRole::App)
+        .unwrap()
+        .clone();
+    let total = MAX_STREAMS + 3;
+    for ix in apps(&pod).len()..total {
+        let mut extra = app.clone();
+        extra.name = format!("extra-{ix}");
+        pod.containers.push(extra);
+    }
+    assert_eq!(apps(&pod).len(), total);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.show_pod(Some(identity.clone()), Some(KubeAccess::Example), cx);
+            view.want(cx);
+            view.set_containers(pod.clone(), cx);
+        });
+        pick_all(window, cx);
+        // The first containers in the pod's order, up to the cap.
+        let first: Vec<String> = apps(&pod).into_iter().take(MAX_STREAMS).collect();
+        assert_eq!(read(&view, cx), sorted(first));
+        let note = window.find("pod-logs-note").label().unwrap().to_owned();
+        assert!(
+            note.ends_with(&format!(
+                "Reading {MAX_STREAMS} of {total} containers, in the pod's order."
+            )),
+            "{note}"
+        );
+    })
+    .unwrap();
+}
