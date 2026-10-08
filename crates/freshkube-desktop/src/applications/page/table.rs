@@ -262,14 +262,14 @@ impl TableSource for ApplicationPage {
         key: &SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<kit::RowAction> {
+    ) -> Vec<freshkube_ui::menu::MenuAction> {
         if self.selected.as_ref() != Some(key) {
             self.selected = Some(key.clone());
             cx.notify();
         }
         self.focus(window, cx);
         let opens = self.selected_row().is_some_and(|row| row.closed.is_none());
-        vec![kit::RowAction::new("Open in Resources", OpenPart).enabled(opens)]
+        vec![freshkube_ui::menu::MenuAction::new("Open in Resources", OpenPart).enabled(opens)]
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
