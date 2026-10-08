@@ -14,12 +14,13 @@ crates/
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
 ├── freshkube-graph/     graph layout without GPUI: columns of boxes and the curves between them
 ├── freshkube-monitoring/ Grafana dashboards from the cluster's Prometheus, and the CPU and memory history charts
+├── freshkube-observability/ Coroot's applications, service map, incidents, traces, profiles and logs
 ├── freshkube-workbench/ the shared components on invented data, one story at a time; never shipped
 └── freshkube-desktop/   the GPUI Kit application (shell, screens, the log sources)
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
 
-Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary. Shared components live in `freshkube-ui`, which depends on neither; desktop reaches its modules by their old paths (`crate::ui`, `crate::palette`, `crate::theme`, `crate::text_size`, `crate::meters`). Monitoring is `freshkube-monitoring`, which desktop reaches as `crate::monitoring`; it sits under desktop and uses only core, `talos-rs`, `freshkube-ui` and `freshkube-probe`, so Resources and Observability depend on it, never the other way. A new page draws with `freshkube_ui::page` and `freshkube_ui::table` ([DESIGN.md](docs/DESIGN.md#in-code)).
+Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary. Shared components live in `freshkube-ui`, which depends on neither; desktop reaches its modules by their old paths (`crate::ui`, `crate::palette`, `crate::theme`, `crate::text_size`, `crate::meters`). Monitoring is `freshkube-monitoring`, which desktop reaches as `crate::monitoring`; it sits under desktop and uses only core, `talos-rs`, `freshkube-ui` and `freshkube-probe`, so Resources and Observability depend on it, never the other way. Observability is `freshkube-observability`, which desktop reaches as `crate::observability`; it uses core, `freshkube-ui`, `freshkube-logs`, `freshkube-graph` and `freshkube-monitoring`, and names nothing of desktop: the shell turns its `ObservabilityEvent`s into navigation, and desktop's tests reach its fixture links through its `testing` feature. A new page draws with `freshkube_ui::page` and `freshkube_ui::table` ([DESIGN.md](docs/DESIGN.md#in-code)).
 
 ### Module layout
 

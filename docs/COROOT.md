@@ -144,10 +144,10 @@ Core reads an application's logs with `Provider::logs`, and the Application page
 - **Refreshing.** `LogCursor` asks a refresh for messages from the newest one's nanosecond on, since Coroot's `since` is exclusive. It drops a message of that millisecond equal to one already taken, because Coroot stamps messages only to the millisecond. A new message equal in every part to one already taken in the same millisecond is taken for it. A refresh that comes back capped may leave a gap before its messages, and says so.
 - **No logs store.** Without one, Coroot answers `unknown` with its reason and the patterns it found in its own metrics. That is information, not a read failure.
 
-The Logs tab (`observability/logs/`) reads only while the page shows the Logs report, once per window, and only ever GET.
+The Logs tab (`freshkube-observability`'s `logs/`) reads only while the page shows the Logs report, once per window, and only ever GET.
 
 - **Controls.** The origin (container logs or OpenTelemetry) shows when Coroot lists more than one; Messages and Patterns, and a limit of 10 to 1,000. Each starts the list over. Coroot's note, such as which logs it used, sits above the histogram.
-- **Messages.** The shared log view (`LogView<CorootLogs>`, `logs/coroot.rs`) holds them, oldest first, with Coroot's time and level, search, the level filter, copy and wrap. A message of many lines, such as a stack trace, is one row; past 64 KiB it is cut and says how much it left out.
+- **Messages.** The shared log view (`LogView<CorootLogs>`, `logs/source.rs`) holds them, oldest first, with Coroot's time and level, search, the level filter, copy and wrap. A message of many lines, such as a stack trace, is one row; past 64 KiB it is cut and says how much it left out.
 - **Refreshing.** The list keeps earlier messages; the histogram shows the window. A refresh asks only for messages after the newest one, through `LogCursor`. A capped refresh, or a page hidden until the window moved past its last read, adds a marker where messages may be missing.
 - **Capped.** A first read that comes back with as many messages as the limit says these are some of the matching messages, not the latest.
 - **Patterns.** Coroot's patterns in a table of level, count and sample; selecting one draws its messages over time under the table.
