@@ -208,6 +208,9 @@ pub struct Series {
     /// empty for the next colour in turn.
     pub color: String,
     pub fill: bool,
+    /// The layout's own points, for a chart drawn without a history, such
+    /// as the Logs report's histogram. Emptied once the chart takes its
+    /// [`Chart::history`], which alone places samples in time.
     pub points: Vec<Option<f32>>,
 }
 
@@ -914,6 +917,9 @@ fn attach(reports: &mut [AppReport], histories: AppCharts) -> Result<(), ReadErr
                 chart.history = None;
                 result = result.and(Err(ReadError::Limit));
                 continue;
+            }
+            for series in chart.series.iter_mut().chain(&mut chart.threshold) {
+                series.points = Vec::new();
             }
             chart.history = Some(Box::new(history));
         }

@@ -729,7 +729,12 @@ async fn app_view_reads_the_map_reports_checks_and_widgets() {
         (charts[0].step_ms, charts[0].from_ms),
         (60_000, 1_789_996_400_000)
     );
-    assert_eq!(charts[0].series[0].points, [Some(0.1), None, Some(0.2)]);
+    // The history holds the samples; the layout keeps no second copy.
+    assert!(charts[0].series[0].points.is_empty());
+    assert_eq!(
+        charts[0].history.as_ref().unwrap().series[0].samples,
+        [Some(0.1), None, Some(0.2)]
+    );
     assert_eq!(charts[0].threshold.as_ref().unwrap().name, "limit");
     assert_eq!(charts[0].annotations[0].from_ms, 1_789_998_000_000);
     assert!(charts[1].series.is_empty());

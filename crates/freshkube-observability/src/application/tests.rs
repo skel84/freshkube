@@ -391,10 +391,10 @@ fn another_applications_charts_never_show(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-#[gpui_kit::test]
-fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = live(cx);
-    let chart = |title: &str, series| api::AppChart {
+/// A three-minute chart of `series`, carrying the history coroot-rs would
+/// decode from it.
+fn chart(title: &str, series: Vec<api::Series>) -> api::AppChart {
+    let mut chart = api::AppChart {
         title: title.into(),
         from_ms: 1_760_000_000_000,
         to_ms: 1_760_000_120_000,
@@ -402,12 +402,21 @@ fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
         series,
         ..Default::default()
     };
-    let points = api::Series {
-        name: "worker".into(),
-        points: vec![Some(0.1), None, Some(0.2)],
+    super::example::give_history(&mut chart, None);
+    chart
+}
+
+fn points(name: &str, points: Vec<Option<f32>>) -> api::Series {
+    api::Series {
+        name: name.into(),
+        points,
         ..Default::default()
-    };
-    let view = api::AppView {
+    }
+}
+
+/// The worker's view with one CPU report of half-width charts.
+fn cpu_view(charts: Vec<api::AppChart>) -> api::AppView {
+    api::AppView {
         map: api::AppMap {
             app: api::MapApp {
                 id: worker(),
@@ -419,27 +428,38 @@ fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
             name: "CPU".into(),
             status: api::Status::Ok,
             checks: vec![],
-            widgets: vec![
-                api::Widget {
-                    kind: api::WidgetKind::Chart(chart("CPU usage, cores", vec![])),
+            widgets: charts
+                .into_iter()
+                .map(|chart| api::Widget {
+                    kind: api::WidgetKind::Chart(chart),
                     width: 0.5,
-                },
-                api::Widget {
-                    kind: api::WidgetKind::Chart(chart("CPU delay, seconds/second", vec![points])),
-                    width: 0.5,
-                },
-            ],
+                })
+                .collect(),
             custom: false,
             instrumentation: String::new(),
         }],
         ..Default::default()
-    };
+    }
+}
+
+#[gpui_kit::test]
+fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = live(cx);
+    let view = cpu_view(vec![
+        chart("CPU usage, cores", vec![]),
+        chart(
+            "CPU delay, seconds/second",
+            vec![points("worker", vec![Some(0.1), None, Some(0.2)])],
+        ),
+    ]);
     cx.update(|cx| page.update(cx, |page, _| answer(page, &worker(), Ok(view))));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("obs-chart-cpu-0-empty").visible());
         assert!(window.try_find("obs-chart-cpu-0").is_none());
         assert!(window.find("obs-chart-cpu-1").visible());
+        // A full window says nothing of its coverage.
+        assert!(window.try_find("obs-chart-cpu-1-coverage").is_none());
         // Only the chart with points has a panel.
         let keys: Vec<_> = chart_keys(page.read(cx)).into_iter().map(|k| k.2).collect();
         assert_eq!(keys, [1]);
@@ -450,6 +470,155 @@ fn a_chart_without_points_says_so(cx: &mut TestAppContext) {
         );
         assert!((left.top() - right.top()).abs() < gpui_kit::px(1.));
         assert!(left.right() <= right.left());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn partial_empty_and_truncated_series_say_so_under_their_chart(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = live(cx);
+    let mut cut = chart(
+        "CPU delay, seconds/second",
+        vec![points("worker", vec![Some(0.1), Some(0.1), Some(0.2)])],
+    );
+    cut.history.as_mut().unwrap().truncated = true;
+    let view = cpu_view(vec![
+        chart(
+            "CPU usage, cores",
+            vec![
+                points("worker-a", vec![Some(0.5), None, Some(0.7)]),
+                points("worker-b", vec![Some(0.2), Some(0.3)]),
+                points("worker-c", vec![]),
+            ],
+        ),
+        cut,
+    ]);
+    cx.update(|cx| page.update(cx, |page, _| answer(page, &worker(), Ok(view))));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-chart-cpu-0").visible());
+        assert!(window.find("obs-chart-cpu-0-coverage").visible());
+        assert!(window.find("obs-chart-cpu-1-coverage").visible());
+        let page = page.read(cx);
+        let words: Vec<_> = page
+            .app_page
+            .as_ref()
+            .unwrap()
+            .chart_words()
+            .into_iter()
+            .map(|(_, coverage, _)| coverage)
+            .collect();
+        assert_eq!(
+            words,
+            [
+                Some("worker-b covers 2 of 3 points · worker-c: no data".into()),
+                Some("Truncated range".into()),
+            ]
+        );
+        // The empty series is left out of the chart, never drawn as zero.
+        let drawn: Vec<_> = page.app_charts[0]
+            .view()
+            .read(cx)
+            .series_colors(cx)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(drawn, ["worker-a", "worker-b"]);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn histories_that_fail_to_decode_say_so_once_for_the_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = live(cx);
+    let mut view = cpu_view(vec![chart(
+        "CPU usage, cores",
+        vec![points("worker", vec![Some(0.1), None, Some(0.2)])],
+    )]);
+    // As core leaves it: the layout without its history, and why.
+    for widget in &mut view.reports[0].widgets {
+        if let api::WidgetKind::Chart(chart) = &mut widget.kind {
+            chart.history = None;
+        }
+    }
+    view.history_error = Some(api::ReadError::Limit);
+    cx.update(|cx| page.update(cx, |page, _| answer(page, &worker(), Ok(view))));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-app-history-error").visible());
+        // The layout's points never stand in for the history.
+        assert!(window.find("obs-chart-cpu-0-empty").visible());
+        let page = page.read(cx);
+        let app = page.app_page.as_ref().unwrap();
+        assert!(
+            app.history_note
+                .as_ref()
+                .unwrap()
+                .contains("exceeded the size limit")
+        );
+        assert_eq!(
+            app.chart_words()[0].2,
+            "Coroot's history for this chart couldn't be read."
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_deployment_is_marked_only_on_the_window_it_started_in(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = live(cx);
+    let mut view = cpu_view(vec![chart(
+        "CPU usage, cores",
+        vec![points("worker", vec![Some(0.1), None, Some(0.2)])],
+    )]);
+    let revision = |hash: &str, at: i64| api::DeploymentRevision {
+        id: format!("{hash}:{at}"),
+        hash: hash.into(),
+        started_at: chrono::DateTime::from_timestamp(at, 0).unwrap(),
+        version: format!("{hash}: example.test/payments/worker:1.8.2"),
+        status: api::Status::Unknown,
+        findings: vec![],
+        note: Some("Collecting data...".into()),
+    };
+    view.revisions = Some(Ok(vec![
+        revision("4f2a9c", 1_760_000_060),
+        revision("b71e03", 1_759_000_000),
+    ]));
+    cx.update(|cx| page.update(cx, |page, _| answer(page, &worker(), Ok(view))));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = page.read(cx);
+        let labels = page.app_charts[0].view().read(cx).marker_labels();
+        assert_eq!(labels, ["4f2a9c · worker:1.8.2"]);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_example_draws_from_histories_with_the_worker_s_rollout(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    cx.update(|cx| {
+        page.update(cx, |page, _| {
+            page.destination = Destination::Application;
+            page.selected_app = Some(worker());
+            page.report_name = "CPU".into();
+            page.prepare_report();
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = page.read(cx);
+        assert!(!page.app_charts.is_empty());
+        let app = page.app_page.as_ref().unwrap();
+        assert!(app.history_note.is_none());
+        // Every example series covers its whole hour.
+        assert!(
+            app.chart_words()
+                .iter()
+                .all(|(_, coverage, _)| coverage.is_none())
+        );
+        let labels = page.app_charts[0].view().read(cx).marker_labels();
+        assert_eq!(labels, ["4f2a9c · worker:1.8.2"]);
     })
     .unwrap();
 }
