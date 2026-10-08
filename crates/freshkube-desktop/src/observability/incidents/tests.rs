@@ -271,21 +271,13 @@ mod ui_tests {
         .unwrap();
     }
 
-    /// A width dragged to is saved in `navigation.json` beside the
-    /// preferences, and the next page opens its inspector at it.
+    /// A width dragged to is saved in the app's store of widths, and the
+    /// next page opens its inspector at it.
     #[gpui_kit::test]
     fn the_inspector_width_survives_reopening(cx: &mut TestAppContext) {
-        use crate::navigation_file::NavigationFile;
-        let directory = std::env::temp_dir().join(format!(
-            "freshkube-inspector-width-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let preferences = directory.join("preferences.json");
-        cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+        use freshkube_ui::inspector::{MemoryWidths, SavedWidths, set_saved_widths};
+        let widths = std::rc::Rc::new(MemoryWidths::default());
+        cx.update(|cx| set_saved_widths(widths.clone(), cx));
         let (_runtime, handle, page) = open_example(cx, 1260.);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -296,11 +288,9 @@ mod ui_tests {
         })
         .unwrap();
         cx.run_until_parked();
-        let reopened = NavigationFile::open(Some(&preferences));
-        assert_eq!(reopened.inspector_width("incidents"), Some(560.));
-        assert_eq!(reopened.inspector_width("traces"), None);
+        assert_eq!(widths.width("incidents"), Some(560.));
+        assert_eq!(widths.width("traces"), None);
 
-        cx.update(|cx| cx.set_global(reopened));
         let (_runtime, handle, _page) = open_example(cx, 1260.);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -312,7 +302,6 @@ mod ui_tests {
             );
         })
         .unwrap();
-        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[gpui_kit::test]

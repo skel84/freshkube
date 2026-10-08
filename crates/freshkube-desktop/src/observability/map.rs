@@ -284,21 +284,13 @@ mod tests {
         .unwrap();
     }
 
-    /// A width dragged to beside the map is saved under `map` in
-    /// `navigation.json`, and the next page opens its inspector at it.
+    /// A width dragged to beside the map is saved under `map` in the app's
+    /// store of widths, and the next page opens its inspector at it.
     #[gpui_kit::test]
     fn the_map_inspector_width_survives_reopening(cx: &mut TestAppContext) {
-        use crate::navigation_file::NavigationFile;
-        let directory = std::env::temp_dir().join(format!(
-            "freshkube-map-width-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let preferences = directory.join("preferences.json");
-        cx.update(|cx| cx.set_global(NavigationFile::open(Some(&preferences))));
+        use freshkube_ui::inspector::{MemoryWidths, SavedWidths, set_saved_widths};
+        let widths = std::rc::Rc::new(MemoryWidths::default());
+        cx.update(|cx| set_saved_widths(widths.clone(), cx));
         let open = |cx: &mut TestAppContext| {
             let (runtime, handle, page) =
                 crate::observability::tests::mount_size(cx, true, 1800., 900.);
@@ -321,11 +313,9 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
-        let reopened = NavigationFile::open(Some(&preferences));
-        assert_eq!(reopened.inspector_width("map"), Some(400.));
-        assert_eq!(reopened.inspector_width("incidents"), None);
+        assert_eq!(widths.width("map"), Some(400.));
+        assert_eq!(widths.width("incidents"), None);
 
-        cx.update(|cx| cx.set_global(reopened));
         let (_runtime, handle, _page) = open(cx);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -337,6 +327,5 @@ mod tests {
             );
         })
         .unwrap();
-        std::fs::remove_dir_all(directory).unwrap();
     }
 }
