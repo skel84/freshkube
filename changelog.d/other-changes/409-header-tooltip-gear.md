@@ -1,1 +1,0 @@
-- **Header fixes:** the Refresh button's tooltip counts down with the ring while it's open, and reads "Refreshing…" while a refresh runs, instead of keeping the number it opened with. The Settings gear goes back to its idle colour when Settings closes from a click elsewhere, instead of keeping its hover colour until the pointer moves.
