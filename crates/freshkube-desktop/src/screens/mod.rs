@@ -23,7 +23,7 @@ pub(crate) use operations::OperationsScreen;
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
-pub(crate) use workloads::{WorkloadData, WorkloadsScreen};
+pub(crate) use workloads::{Summary as HealthSummary, WorkloadData, WorkloadsScreen};
 
 use std::{future::Future, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
@@ -690,7 +690,7 @@ pub(crate) fn set_reading(reading: Reading, cx: &mut App) -> bool {
 /// node to target, that there is none.
 pub(crate) fn unsourced<V: ScreenPanel>(what: &str, cx: &mut Context<V>) -> AnyElement {
     let (id, state) = match reading(cx) {
-        Reading::Waiting => ("screen-waiting", skeleton(cx)),
+        Reading::Waiting => return waiting(cx),
         Reading::Failed(reason) => (
             "screen-unreachable",
             ui::empty_state(
@@ -728,6 +728,16 @@ pub(crate) fn unsourced<V: ScreenPanel>(what: &str, cx: &mut Context<V>) -> AnyE
         .test_support()
         .size_full()
         .child(state)
+        .into_any_element()
+}
+
+/// The loading state of a page whose first read is in flight.
+pub(crate) fn waiting(cx: &App) -> AnyElement {
+    div()
+        .id("screen-waiting")
+        .test_support()
+        .size_full()
+        .child(skeleton(cx))
         .into_any_element()
 }
 

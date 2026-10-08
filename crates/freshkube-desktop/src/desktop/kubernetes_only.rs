@@ -5,6 +5,7 @@ use super::{PAGE_PADDING, Page, Pilot};
 use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
 use crate::resources::direct::DirectAccess;
+use crate::screens::HealthSummary;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::resources::{KubeconfigReport, discover_contexts, kubeconfig_sources};
 use gpui_kit::assets::IconName;
@@ -154,6 +155,7 @@ impl Pilot {
                     Ok(report) => view.kubeconfig_read(report, window, cx),
                     Err(error) => view.config_error = Some(error),
                 }
+                view.sync_unread_health(cx);
                 cx.notify();
             });
         }));
@@ -194,6 +196,47 @@ impl Pilot {
         // Having chosen the file is not having chosen a context.
         let wanted = if kube.choosing { None } else { wanted };
         self.use_kube_context(wanted, window, cx);
+    }
+
+    /// What Health shows before the summary answers: waiting while
+    /// something reads it, nothing to read without a context, or why the
+    /// kubeconfig or its context couldn't be read. Data the summary already
+    /// gave Health stays.
+    pub(super) fn sync_unread_health(&mut self, cx: &mut Context<Self>) {
+        let summary = match &self.kubernetes_only {
+            Some(_)
+                if !self.config_loading
+                    && self.config_error.is_none()
+                    && self.applied.context.is_none() =>
+            {
+                HealthSummary::NoContext
+            }
+            Some(kube)
+                if self.config_loading
+                    || matches!(
+                        kube.connection,
+                        KubeConnection::Connecting | KubeConnection::Connected { .. }
+                    ) =>
+            {
+                HealthSummary::Reading
+            }
+            _ if self.summary_session.is_some() => HealthSummary::Reading,
+            _ => HealthSummary::Unread,
+        };
+        self.health
+            .update(cx, |health, cx| health.set_summary(summary, cx));
+        let Some(kube) = &self.kubernetes_only else {
+            return;
+        };
+        let failure = match (&self.config_error, &kube.connection) {
+            (Some(error), _) | (None, KubeConnection::Failed(error)) => error.clone(),
+            _ => return,
+        };
+        if matches!(self.summary_health, Some(Ok(_))) {
+            return;
+        }
+        self.summary_health = Some(Err(failure.clone()));
+        self.deliver_workloads(Err(failure), cx);
     }
 
     /// Connects the window to `context` of the kubeconfig files, or to none.
@@ -269,6 +312,7 @@ impl Pilot {
                 view.kube_connection_received(access, generation, recovering, result, window, cx);
             });
         }));
+        self.sync_unread_health(cx);
         self.prepare_context_display(window, cx);
         cx.notify();
     }
@@ -306,6 +350,7 @@ impl Pilot {
                 kube.connection = KubeConnection::Failed(error);
             }
         }
+        self.sync_unread_health(cx);
         self.prepare_context_display(window, cx);
         cx.notify();
     }
@@ -370,6 +415,7 @@ impl Pilot {
                         kube.connection = KubeConnection::Failed(error);
                     }
                 }
+                view.sync_unread_health(cx);
                 view.prepare_context_display(window, cx);
                 cx.notify();
             });
@@ -378,6 +424,7 @@ impl Pilot {
         kube.revision_check = Some((job, task));
         if retrying {
             kube.connection = KubeConnection::Connecting;
+            self.sync_unread_health(cx);
             self.prepare_context_display(window, cx);
             cx.notify();
         }
