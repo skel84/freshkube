@@ -227,7 +227,20 @@ impl ApplicationsPage {
                 row.mark_short.clone(),
                 cx,
             ));
-        let heading = h_flex().gap_2().min_w_0().child(title).child(mark);
+        // A Kargo Project and an Argo CD Application may share a name.
+        let what = div()
+            .id("applications-detail-what")
+            .test_support()
+            .aria_label(row.what.clone())
+            .flex_none()
+            .text_color(p.muted)
+            .child(row.what.clone());
+        let heading = h_flex()
+            .gap_2()
+            .min_w_0()
+            .child(title)
+            .child(what)
+            .child(mark);
         let notes = row.notes.iter().enumerate().map(|(ix, note)| {
             div()
                 .id(SharedString::from(format!("applications-detail-note-{ix}")))

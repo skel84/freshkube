@@ -295,3 +295,52 @@ fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAp
         }
     }
 }
+
+#[gpui_kit::test]
+fn the_page_and_the_inspector_say_what_the_application_is(cx: &mut TestAppContext) {
+    // A Kargo Project and an Argo CD Application may share a name.
+    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = shown(&view, cx).unwrap();
+        assert_eq!(page.read(cx).what().as_ref(), "Kargo Project");
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let what = |window: &mut gpui_kit::Window| {
+            window
+                .find("applications-detail-what")
+                .label()
+                .map(str::to_owned)
+        };
+        window.click(CHECKOUT, cx);
+        window.render_frame(cx);
+        assert_eq!(what(window).as_deref(), Some("Kargo Project"));
+        window.click("application-argocd:applicationset/argocd/catalog", cx);
+        window.render_frame(cx);
+        assert_eq!(what(window).as_deref(), Some("Argo CD ApplicationSet"));
+    })
+    .unwrap();
+}
+
+#[test]
+fn what_was_not_checked_names_its_cluster_and_namespaces() {
+    use freshkube_core::applications::claims::Unchecked;
+    let words = |unchecked| super::unchecked_words(&unchecked, "core-fra");
+    assert_eq!(
+        words(Unchecked::Namespaces(vec!["gitops".into()])),
+        "Argo CD read in gitops only on core-fra"
+    );
+    assert_eq!(words(Unchecked::NotRead), "Argo CD not read on core-fra");
+    assert_eq!(
+        words(Unchecked::NotFound("argocd".into())),
+        "Argo CD not found on core-fra: argocd holds no Applications"
+    );
+    assert_eq!(
+        words(Unchecked::Capped(500)),
+        "Argo CD read in part on core-fra: stopped after 500"
+    );
+}

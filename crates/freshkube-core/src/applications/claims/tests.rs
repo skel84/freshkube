@@ -253,7 +253,7 @@ fn a_label_where_argo_cd_was_not_checked_is_claimed_and_says_so() {
     // say otherwise is named, not shown as a side that wasn't read.
     assert_eq!(api.confidence, Confidence::Claimed);
     assert_eq!(api.member_side.fact, Some(Fact::Declared));
-    assert_eq!(api.unchecked.as_deref(), Some("Argo CD not checked here"));
+    assert_eq!(api.unchecked, Some(Unchecked::NotRead));
     assert!(api.why.contains("one may manage it"), "{}", api.why);
 }
 
@@ -270,8 +270,8 @@ fn a_label_where_argo_cd_was_read_in_part_says_in_part() {
     let api = link(&loyalty, "loyalty-api");
     assert_eq!(api.confidence, Confidence::Claimed);
     assert_eq!(
-        api.unchecked.as_deref(),
-        Some("Argo CD checked in part here")
+        api.unchecked,
+        Some(Unchecked::Namespaces(vec!["gitops".into()]))
     );
 }
 

@@ -61,13 +61,26 @@ pub struct Claim {
     pub member_side: Side,
     /// Why the link has its confidence.
     pub why: String,
-    /// What wasn't checked that could still say otherwise, in a few words,
-    /// such as "Argo CD not checked here": a labelled part in a cluster
-    /// whose Argo CD Applications weren't all read.
-    pub unchecked: Option<String>,
+    /// What wasn't checked that could still say otherwise: Argo CD's
+    /// Applications in the part's cluster, for a labelled part there.
+    pub unchecked: Option<Unchecked>,
     /// Lower rules that also found the part, with what each would have
     /// called its application.
     pub lower: Vec<(Rule, String)>,
+}
+
+/// How Argo CD's Applications in a labelled part's cluster were read,
+/// when not in full: the cluster is the part's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unchecked {
+    /// Refused or failed: none were read.
+    NotRead,
+    /// Read in these namespaces only.
+    Namespaces(Vec<String>),
+    /// Nothing marks Argo CD, and its default namespace holds none.
+    NotFound(String),
+    /// Stopped at the page cap after this many.
+    Capped(usize),
 }
 
 /// A read in one cluster that may have left parts of this application out.
@@ -362,16 +375,18 @@ fn part_of(at: &MemberRef, name: &str) -> Side {
 
 /// What wasn't checked in the part's cluster: Argo CD's Applications,
 /// none of them or only some.
-fn argo_unchecked(derived: &Derived, at: &MemberRef) -> String {
+fn argo_unchecked(derived: &Derived, at: &MemberRef) -> Unchecked {
     let state = derived
         .coverage
         .iter()
         .find(|c| c.session == at.session && c.source == SourceKind::ArgoApplications);
     match state.map(|c| &c.state) {
-        Some(CoverageState::Refused(_) | CoverageState::Unreadable(_)) | None => {
-            "Argo CD not checked here".into()
+        Some(CoverageState::NamespaceOnly { namespaces, .. }) => {
+            Unchecked::Namespaces(namespaces.clone())
         }
-        Some(_) => "Argo CD checked in part here".into(),
+        Some(CoverageState::NamespaceNotFound(namespace)) => Unchecked::NotFound(namespace.clone()),
+        Some(CoverageState::Capped(read)) => Unchecked::Capped(*read),
+        _ => Unchecked::NotRead,
     }
 }
 

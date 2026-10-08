@@ -12,7 +12,7 @@ mod table;
 mod tests;
 mod view;
 
-use freshkube_core::applications::claims::{Claim, Claims, Gap, Side, claims};
+use freshkube_core::applications::claims::{Claim, Claims, Gap, Side, Unchecked, claims};
 use freshkube_core::applications::{
     Application, ApplicationId, Basis, Derived, Evidence, MemberKind, MemberRef,
 };
@@ -22,7 +22,7 @@ use freshkube_ui::table::{self as kit, TableState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::display::{Labels, kind_label, rule_label};
+use super::display::{Labels, kind_label, rule_label, what_it_is};
 
 /// The page's id prefix: `application-title`, `-list`, `-back`.
 const PREFIX: &str = "application";
@@ -98,6 +98,8 @@ enum Entry {
 pub(crate) struct ApplicationPage {
     id: ApplicationId,
     name: SharedString,
+    /// What the application is, as the header names it beside the name.
+    what: SharedString,
     rows: Vec<PartRow>,
     groups: Vec<GroupLine>,
     lines: Vec<Entry>,
@@ -124,6 +126,7 @@ impl ApplicationPage {
         let mut page = Self {
             id: app.id.clone(),
             name: app.name.clone().into(),
+            what: what_it_is(app).into(),
             rows: Vec::new(),
             groups: Vec::new(),
             lines: Vec::new(),
@@ -153,6 +156,7 @@ impl ApplicationPage {
         cx: &mut Context<Self>,
     ) {
         self.name = app.name.clone().into();
+        self.what = what_it_is(app).into();
         self.show(app, derived, labels);
         cx.notify();
     }
@@ -222,6 +226,10 @@ impl ApplicationPage {
                 }
             })
             .collect()
+    }
+
+    pub(crate) fn what(&self) -> &SharedString {
+        &self.what
     }
 
     pub(crate) fn selected(&self) -> Option<&SharedString> {
@@ -313,14 +321,38 @@ fn side_words(side: &Side, labels: &Labels) -> String {
     format!("{}{at} ({fact})", side.text)
 }
 
+/// How Argo CD was read in the part's cluster, naming the cluster and
+/// the namespaces.
+fn unchecked_words(unchecked: &Unchecked, cluster: &str) -> String {
+    match unchecked {
+        Unchecked::NotRead => format!("Argo CD not read on {cluster}"),
+        Unchecked::Namespaces(namespaces) => {
+            format!(
+                "Argo CD read in {} only on {cluster}",
+                namespaces.join(", ")
+            )
+        }
+        Unchecked::NotFound(namespace) => {
+            format!("Argo CD not found on {cluster}: {namespace} holds no Applications")
+        }
+        Unchecked::Capped(read) => {
+            format!("Argo CD read in part on {cluster}: stopped after {read}")
+        }
+    }
+}
+
 fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
     let member = &claim.member;
     let cluster = labels.of(&member.session);
     let namespace = member.namespace.clone().unwrap_or_default();
     let found = found_by(app, member);
     let word = row_word(app, claim);
-    // What wasn't checked says more than the label's fact.
-    let read_from = claim.unchecked.clone().unwrap_or_else(|| {
+    // What wasn't checked, and where, says more than the label's fact.
+    let unchecked = claim
+        .unchecked
+        .as_ref()
+        .map(|unchecked| unchecked_words(unchecked, &cluster));
+    let read_from = unchecked.clone().unwrap_or_else(|| {
         claim
             .member_side
             .fact
@@ -374,10 +406,7 @@ fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
             Some(("Link", word.into())),
             Some(("Application", side_words(&claim.app_side, labels).into())),
             Some(("This part", side_words(&claim.member_side, labels).into())),
-            claim
-                .unchecked
-                .clone()
-                .map(|unchecked| ("Not checked", unchecked.into())),
+            unchecked.map(|unchecked| ("Not checked", unchecked.into())),
             Some(("Why", claim.why.clone().into())),
         ]
         .into_iter()

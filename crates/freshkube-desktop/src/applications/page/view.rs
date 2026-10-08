@@ -17,6 +17,7 @@ impl ApplicationPage {
             .parent("back", "Applications", move |_, _, cx| {
                 _ = this.update(cx, |_, cx| cx.emit(ApplicationEvent::Back));
             })
+            .crumb(self.what.clone())
             .render(window, cx)
     }
 
