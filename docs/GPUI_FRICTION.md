@@ -165,7 +165,7 @@ Source locations for K01–K10 are relative to a `gpui-kit` checkout at `201b55a
 
 - **Found in:** the desktop app (and the Freshkube prototype's backend).
 - **Symptom:** GPUI runs its own executor, while tonic (Talos gRPC) and kube need Tokio. Every data load starts on Tokio and hops back to a GPUI task to update entities.
-- **Freshkube workaround:** the binary owns a Tokio runtime and passes its handle to the app; requests are tied to a target epoch and owned by `OwnedJob` handles that cancel on drop (`backend.rs`).
+- **Freshkube workaround:** the binary owns a Tokio runtime and passes its handle to the app; requests are tied to a target epoch and owned by `OwnedJob` handles that cancel on drop (`freshkube_core::job`).
 - **Classification:** framework issue (integration cost, not a defect).
 
 ## K15 UI test harness traps

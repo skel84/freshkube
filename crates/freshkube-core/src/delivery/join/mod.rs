@@ -200,53 +200,17 @@ impl Evidence {
     }
 }
 
-/// Which of a Rollout's pods show what it runs for the change.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PodSet {
-    /// The ReplicaSets, `(name, pod-template hash)`, whose pod template pins
-    /// the Freight's digest. Another ReplicaSet of the Rollout, such as an
-    /// older one that never became healthy, is not judged.
-    Pinned(Vec<(String, String)>),
-    /// The Rollout's current pod hash, when no ReplicaSet of it pins the
-    /// digest or they weren't read.
-    Current(String),
-}
-
-impl PodSet {
-    pub fn hashes(&self) -> Vec<&str> {
-        match self {
-            Self::Pinned(sets) => sets.iter().map(|(_, hash)| hash.as_str()).collect(),
-            Self::Current(hash) => vec![hash],
-        }
-    }
-}
-
-/// The pods read for one Rollout, and which.
+/// The pods read for one Rollout: those labelled with the pod-template hash
+/// its status reports as current. During a canary or a blue-green rollout
+/// the stable ReplicaSet's pods run the previous revision, so only the
+/// current revision's are judged.
 #[derive(Clone, Debug)]
 pub struct RolloutPods {
-    pub set: PodSet,
+    pub hash: String,
     pub pods: Source<Vec<RunningImage>>,
 }
 
-/// The pods to read for a Rollout: those of its ReplicaSets that pin one of
-/// `digests`, else its current pod hash. `None` when it reports none.
-pub fn pod_set(
-    rollout: &Rollout,
-    replica_sets: Option<&[ReplicaSet]>,
-    digests: &[Digest],
-) -> Option<PodSet> {
-    let pinned: Vec<(String, String)> = owned_replica_sets(rollout, replica_sets)
-        .filter(|set| set.pins(digests))
-        .filter_map(|set| Some((set.name.clone(), set.pod_hash.clone()?)))
-        .collect();
-    if pinned.is_empty() {
-        rollout.current_pod_hash.clone().map(PodSet::Current)
-    } else {
-        Some(PodSet::Pinned(pinned))
-    }
-}
-
-fn owned_replica_sets<'a>(
+pub(super) fn owned_replica_sets<'a>(
     rollout: &'a Rollout,
     replica_sets: Option<&'a [ReplicaSet]>,
 ) -> impl Iterator<Item = &'a ReplicaSet> {
@@ -257,13 +221,11 @@ fn owned_replica_sets<'a>(
     })
 }
 
-/// A Rollout the change reaches, with the digests of the Freight that lead
-/// to it.
+/// A Rollout the change reaches.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WantedRollout {
     pub namespace: String,
     pub name: String,
-    pub digests: Vec<Digest>,
 }
 
 /// The trail of one change.
@@ -433,8 +395,6 @@ pub fn candidate_rollouts(evidence: &Evidence) -> Vec<WantedRollout> {
     };
     let mut wanted: Vec<WantedRollout> = Vec::new();
     for (item, _) in matching_freight(&evidence.sha, builds, freight) {
-        let digests = item.images.iter().filter_map(|image| image.digest.clone());
-        let digests: Vec<Digest> = digests.collect();
         for stage in stages
             .iter()
             .filter(|stage| stage.current_freight.contains(&item.name))
@@ -448,24 +408,12 @@ pub fn candidate_rollouts(evidence: &Evidence) -> Vec<WantedRollout> {
                     let Some(namespace) = rollout_namespace(app, managed) else {
                         continue;
                     };
-                    let found = wanted
-                        .iter()
-                        .position(|w| w.namespace == namespace && w.name == managed.name);
-                    let entry = match found {
-                        Some(index) => &mut wanted[index],
-                        None => {
-                            wanted.push(WantedRollout {
-                                namespace,
-                                name: managed.name.clone(),
-                                digests: Vec::new(),
-                            });
-                            wanted.last_mut().expect("just pushed")
-                        }
+                    let rollout = WantedRollout {
+                        namespace,
+                        name: managed.name.clone(),
                     };
-                    for digest in &digests {
-                        if !entry.digests.contains(digest) {
-                            entry.digests.push(digest.clone());
-                        }
+                    if !wanted.contains(&rollout) {
+                        wanted.push(rollout);
                     }
                 }
             }

@@ -7,6 +7,7 @@ use std::{
 
 use freshkube_core::BoundedReadError;
 use freshkube_core::cluster_overview::{ClusterOverviewCollector, KubeconfigSelection};
+pub(crate) use freshkube_core::job::{OwnedJob, spawn_job};
 use freshkube_core::{
     cluster_overview::{ClusterOverview, ConfigIdentity},
     logs::ServiceId,
@@ -17,7 +18,7 @@ use talos_rs::{ServiceInfo, TalosClient};
 use tokio::{
     runtime::Handle,
     sync::{mpsc, oneshot},
-    task::{JoinHandle, JoinSet},
+    task::JoinSet,
 };
 
 /// Room for log lines between a stream's task and the view, and the most the
@@ -51,23 +52,6 @@ pub(crate) struct Target {
     pub(crate) context: String,
     pub(crate) node: String,
     pub(crate) address: String,
-}
-
-/// The UI owns this guard for exactly as long as the request is relevant.
-pub(crate) struct OwnedJob {
-    task: JoinHandle<()>,
-}
-
-impl OwnedJob {
-    pub(crate) fn new(task: JoinHandle<()>) -> Self {
-        Self { task }
-    }
-}
-
-impl Drop for OwnedJob {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
 }
 
 #[derive(Debug)]
@@ -275,31 +259,6 @@ pub(crate) fn collect(
             result = tokio::time::timeout(COLLECT_DEADLINE, operation) => {
                 let result = result.unwrap_or_else(|_| Err("Refreshing the Talos overview timed out".into()));
                 let _ = sender.send(result);
-            }
-        }
-    });
-    (OwnedJob::new(task), receiver)
-}
-
-/// Runs `work` on Tokio under `deadline`. Dropping the job or the receiver
-/// cancels it, so a screen that moves on never receives a late result.
-pub(crate) fn spawn_job<T, F>(
-    runtime: &Handle,
-    deadline: Duration,
-    timeout_message: String,
-    work: F,
-) -> (OwnedJob, oneshot::Receiver<Result<T, String>>)
-where
-    T: Send + 'static,
-    F: Future<Output = Result<T, String>> + Send + 'static,
-{
-    let (mut sender, receiver) = oneshot::channel();
-    let task = runtime.spawn(async move {
-        tokio::select! {
-            biased;
-            _ = sender.closed() => {}
-            result = tokio::time::timeout(deadline, work) => {
-                let _ = sender.send(result.unwrap_or_else(|_| Err(timeout_message)));
             }
         }
     });

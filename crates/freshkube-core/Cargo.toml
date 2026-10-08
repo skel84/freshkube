@@ -43,7 +43,8 @@ chrono.workspace = true
 thiserror.workspace = true
 
 [features]
-# Tests pin the zone log times show in (`logs::pin_zone`).
+# Tests pin the zone log times show in (`logs::pin_zone`) and keep keys in
+# memory (`secrets::MemoryStore`).
 testing = []
 
 [dev-dependencies]
