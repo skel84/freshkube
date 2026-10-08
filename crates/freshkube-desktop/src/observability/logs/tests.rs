@@ -369,3 +369,45 @@ fn a_short_window_still_shows_the_toolbar_and_three_rows(cx: &mut TestAppContext
         .unwrap();
     }
 }
+
+/// Asked for patterns, the logs report shows their table's loading rows
+/// until Coroot answers; asked for messages, it says it is reading.
+#[gpui_kit::test]
+fn patterns_asked_for_show_loading_rows_until_the_answer(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, true);
+    open(cx, &page, example::WORKER);
+    draw(cx, handle);
+    let waiting = |cx: &mut TestAppContext, waiting: bool| {
+        cx.update(|cx| page.update(cx, |page, _| page.live_logs.answered = !waiting));
+        draw(cx, handle);
+    };
+    // Messages: the list's kind is the answer's to say.
+    waiting(cx, true);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.try_find("obs-log-patterns-loading").is_none());
+        assert!(page.read(cx).loading_motion(cx).is_none());
+    })
+    .unwrap();
+    waiting(cx, false);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("obs-logs-mode-patterns", cx)
+    })
+    .unwrap();
+    draw(cx, handle);
+    waiting(cx, true);
+    cx.update_window(handle, |_, window, cx| {
+        let rows = window.find("obs-log-patterns-loading").bounds();
+        let table = window.find("obs-log-patterns-list").bounds();
+        assert!(table.contains(&rows.origin), "{rows:?} {table:?}");
+        assert!(window.try_find("obs-log-patterns-row-0").is_none());
+        assert!(page.read(cx).loading_motion(cx).is_some());
+    })
+    .unwrap();
+    waiting(cx, false);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(window.try_find("obs-log-patterns-loading").is_none());
+        assert!(window.find("obs-log-patterns-row-0").visible());
+        assert!(page.read(cx).loading_motion(cx).is_none());
+    })
+    .unwrap();
+}

@@ -66,6 +66,19 @@ pub(super) struct Logs {
 }
 
 impl Logs {
+    /// Whether the patterns the query asked for are still to come.
+    fn waits_for_patterns(&self) -> bool {
+        !self.answered && self.failure.is_none() && self.query.mode == api::LogsMode::Patterns
+    }
+
+    /// The patterns table's loading motion, while it waits.
+    pub(super) fn loading_motion(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.patterns.read(cx).loading_motion()
+    }
+
     pub(super) fn new(
         page: WeakEntity<ObservabilityPage>,
         window: &mut Window,
@@ -73,7 +86,7 @@ impl Logs {
     ) -> Self {
         Self {
             view: cx.new(|cx| CorootLogView::for_coroot(window, cx)),
-            patterns: cx.new(|_| PatternTable::new(page)),
+            patterns: cx.new(|cx| PatternTable::new(page, cx)),
             query: api::LogQuery::default(),
             key: None,
             asked: None,
@@ -324,6 +337,14 @@ impl ObservabilityPage {
         cx.notify();
     }
 
+    /// Tells the patterns table whether it waits, as the page draws.
+    pub(super) fn sync_pattern_waiting(&self, cx: &mut Context<Self>) {
+        let waiting = self.selected_app.is_some() && self.live_logs.waits_for_patterns();
+        self.live_logs
+            .patterns
+            .update(cx, |table, cx| table.set_waiting(waiting, cx));
+    }
+
     pub(super) fn render_live_logs(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let logs = &self.live_logs;
         let mut block = v_flex()
@@ -343,8 +364,14 @@ impl ObservabilityPage {
             block = block.child(self.logs_banner(failure.clone(), cx));
         }
         if !logs.answered {
+            // Asked for patterns, their table shows its loading rows; whether
+            // messages come as a list or patterns, only the answer says.
             if logs.failure.is_none() {
-                block = block.child(muted("Reading logs from Coroot…", cx));
+                block = block.child(if logs.waits_for_patterns() {
+                    logs.patterns.clone().into_any_element()
+                } else {
+                    muted("Reading logs from Coroot…", cx).into_any_element()
+                });
             }
             return block.into_any_element();
         }

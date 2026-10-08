@@ -796,7 +796,7 @@ fn applications_loading_failure_refusal_and_stale_keep_distinct_surfaces(cx: &mu
         assert!(window.try_find("obs-loading").is_none());
         assert!(window.find("obs-title").visible());
         assert!(window.try_find("obs-failed").is_none());
-        assert!(page.read(cx).loading_motion().is_some());
+        assert!(page.read(cx).loading_motion(cx).is_some());
     })
     .unwrap();
     for (error, surface) in [
@@ -820,7 +820,7 @@ fn applications_loading_failure_refusal_and_stale_keep_distinct_surfaces(cx: &mu
             assert!(window.find("obs-retry").visible());
             assert!(window.try_find("obs-loading").is_none());
             assert!(window.try_find("obs-table-loading").is_none());
-            assert!(page.read(cx).loading_motion().is_none());
+            assert!(page.read(cx).loading_motion(cx).is_none());
         })
         .unwrap();
     }
@@ -1728,7 +1728,7 @@ fn held_tables_show_the_shared_loading_rows(cx: &mut TestAppContext) {
             let table = window.find(table).bounds();
             assert!(table.contains(&rows.origin), "{rows:?} {table:?}");
             assert!(window.try_find("obs-loading").is_none());
-            assert!(page.read(cx).loading_motion().is_some());
+            assert!(page.read(cx).loading_motion(cx).is_some());
         })
         .unwrap();
         cx.update(|cx| page.update(cx, |page, _| page.hold = false));
@@ -1736,7 +1736,7 @@ fn held_tables_show_the_shared_loading_rows(cx: &mut TestAppContext) {
             window.render_frame(cx);
             assert!(window.try_find("obs-table-loading").is_none());
             assert!(window.find(table).visible());
-            assert!(page.read(cx).loading_motion().is_none());
+            assert!(page.read(cx).loading_motion(cx).is_none());
         })
         .unwrap();
     }

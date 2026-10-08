@@ -100,8 +100,14 @@ impl ObservabilityPage {
 
     /// The motion over the loading rows, for the shell to draw beside the
     /// page while the shown table waits for its first answer.
-    pub(crate) fn loading_motion(&self) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read())
+    pub(crate) fn loading_motion(
+        &self,
+        cx: &App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        let patterns = (self.destination == Destination::Application)
+            .then(|| self.live_logs.loading_motion(cx))
+            .flatten();
+        self.loading.motion(self.first_read()).or(patterns)
     }
 
     fn shown_table(&self) -> Shown {

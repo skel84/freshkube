@@ -180,7 +180,7 @@ impl Pilot {
     ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
         match self.page {
             Page::Resources => self.resources.read(cx).loading_motion(),
-            Page::Observability => self.observability.read(cx).loading_motion(),
+            Page::Observability => self.observability.read(cx).loading_motion(cx),
             _ if self.kubernetes_only.is_some()
                 && !matches!(self.page, Page::Overview | Page::Health | Page::Nodes) =>
             {
