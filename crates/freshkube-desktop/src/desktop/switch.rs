@@ -28,6 +28,55 @@ pub(super) struct ClusterItem {
     pub(super) tooltip: SharedString,
 }
 
+/// What a link into another entry does once that entry is open.
+#[derive(Clone)]
+pub(super) enum LinkWork {
+    Open {
+        kind: ResourceKind,
+        tab: resources::Tab,
+    },
+    /// An owner named by API version and kind, resolved against the entry
+    /// it belongs to, never the one the link was made in.
+    Owner { api_version: String, kind: String },
+}
+
+/// A link waiting for the entry it names to open: held from the moment the
+/// user agrees to the switch until that entry has a Kubernetes source, and
+/// forgotten as soon as anything else changes the entry.
+pub(super) struct PendingLink {
+    entry: String,
+    generation: u64,
+    object: resources::model::ObjectRef,
+    work: LinkWork,
+}
+
+#[cfg(test)]
+impl PendingLink {
+    pub(super) fn for_test(
+        entry: &str,
+        generation: u64,
+        object: resources::model::ObjectRef,
+        work: LinkWork,
+    ) -> Self {
+        Self {
+            entry: entry.into(),
+            generation,
+            object,
+            work,
+        }
+    }
+}
+
+/// Where a link goes.
+pub(super) enum LinkRoute {
+    /// The open cluster's own, or one that names no cluster.
+    Here,
+    /// Another listed entry: open it, then the object.
+    Activate(String),
+    /// Not opened, for this reason.
+    Refuse(String),
+}
+
 /// What an opening Talos entry still needs from its talosconfig and the
 /// kubeconfig files before it is open as defined.
 #[derive(Clone)]
@@ -202,6 +251,18 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.switch_cluster_for(id, None, window, cx);
+    }
+
+    /// `switch_cluster`, holding `link` for the entry once the user has
+    /// agreed. Cancel at the shell question holds nothing.
+    fn switch_cluster_for(
+        &mut self,
+        id: String,
+        link: Option<(resources::model::ObjectRef, LinkWork)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.active_cluster() == Some(id.as_str()) {
             return;
         }
@@ -214,8 +275,110 @@ impl Pilot {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
-            this.activate_entry(&id, window, cx)
+            this.activate_entry(&id, window, cx);
+            // Held after the switch, under the generation it started, so
+            // anything that changes the entry afterwards drops it.
+            this.pending_link = link.map(|(object, work)| PendingLink {
+                entry: id.clone(),
+                generation: this.entry_generation,
+                object,
+                work,
+            });
+            this.open_pending_link(window, cx);
         });
+    }
+
+    /// Where a link goes. A link made in a session that has ended is never
+    /// opened against the cluster that is open: the entry it came from is
+    /// opened first, or the link is refused.
+    pub(super) fn route_link(&self, object: &resources::model::ObjectRef, cx: &App) -> LinkRoute {
+        let Some(connection) = &object.connection else {
+            return LinkRoute::Here;
+        };
+        if self.kube_identity().is_some_and(|open| open == *connection) {
+            return LinkRoute::Here;
+        }
+        let refused = || {
+            LinkRoute::Refuse(format!(
+                "Can’t open {}: it belongs to a cluster that isn’t open",
+                object.name
+            ))
+        };
+        let Some(retired) = self.registry.retired(connection) else {
+            return refused();
+        };
+        let SessionKey::Entry(id) = &retired.key else {
+            return refused();
+        };
+        let workspace = self.settings_page.read(cx).workspace();
+        let Some(entry) = workspace.clusters.iter().find(|entry| &entry.id == id) else {
+            return refused();
+        };
+        // The entry's session has been replaced since (it was left and came
+        // back, or its kubeconfig or definition changed): the object may be
+        // gone, or another cluster's.
+        if &retired.key == self.registry.active_key()
+            || retired.definition != definition(entry, workspace)
+        {
+            return LinkRoute::Refuse(format!(
+                "{id} reconnected since this link was made; open it again"
+            ));
+        }
+        LinkRoute::Activate(id.clone())
+    }
+
+    /// Sends a link where `route_link` says. True when it has been dealt
+    /// with (refused, or held for another entry) and the caller stops.
+    pub(super) fn divert_link(
+        &mut self,
+        object: &resources::model::ObjectRef,
+        work: LinkWork,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match self.route_link(object, cx) {
+            LinkRoute::Here => false,
+            LinkRoute::Refuse(message) => {
+                gpui_kit::component::WindowExt::push_notification(window, message, cx);
+                true
+            }
+            LinkRoute::Activate(id) => {
+                self.pending_link = None;
+                self.switch_cluster_for(id, Some((object.clone(), work)), window, cx);
+                true
+            }
+        }
+    }
+
+    /// Opens the held link once its entry has a source. Anything that moved
+    /// the entry on since, or a different active one, forgets it instead.
+    pub(super) fn open_pending_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = &self.pending_link else {
+            return;
+        };
+        if pending.generation != self.entry_generation
+            || self.active_cluster() != Some(pending.entry.as_str())
+        {
+            self.pending_link = None;
+            return;
+        }
+        let Some(source) = self.kube_source() else {
+            return;
+        };
+        let Some(pending) = self.pending_link.take() else {
+            return;
+        };
+        self.cancel_object_open();
+        let object = resources::model::ObjectRef {
+            connection: Some(source.id.clone()),
+            ..pending.object
+        };
+        match pending.work {
+            LinkWork::Open { kind, tab } => self.open_object(kind, object, tab, window, cx),
+            LinkWork::Owner { api_version, kind } => {
+                self.resolve_owner_remote(source, api_version, kind, object, window, cx)
+            }
+        }
     }
 
     /// The contents of the kubeconfig or talosconfig the active session is
@@ -249,6 +412,8 @@ impl Pilot {
         let applied = self.applied.clone();
         let left = std::mem::take(&mut self.active_definition);
         let revision = self.current_revision();
+        self.registry.retire_connection(self.kube_identity(), &left);
+        self.pending_link = None;
         self.registry.activate(
             SessionKey::Entry(entry.id.clone()),
             &left,
@@ -265,6 +430,8 @@ impl Pilot {
         self.settings_page
             .update(cx, |page, cx| page.set_note(&entry.id, None, cx));
         self.open_entry(&entry, &workspace, window, cx);
+        // Names the entry now, even if its kubeconfig never answers.
+        self.prepare_context_display(window, cx);
         cx.notify();
     }
 

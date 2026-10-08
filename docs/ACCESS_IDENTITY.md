@@ -60,7 +60,7 @@ Object links name their cluster: `ObjectRef::connection` is a
 `ResourceIdentity::connection` (the opaque `KubeSource.id`), and `None` means
 the cluster that is open. `open_object` and the owner-kind read refuse a link
 that names another cluster, also while none is open, and say so; they never open
-a same-named object here. The Kubernetes source (`Pilot::kube_source`) and the
+a same-named object here (see below for a link into another listed entry). The Kubernetes source (`Pilot::kube_source`) and the
 Talos target are still derived from `Pilot`'s selection, overview and kubeconfig
 rather than held by the session.
 
@@ -84,6 +84,23 @@ thing the shell holds:
 | Running shells | Ask first ("End the shell in …?"); a parked cluster has none. |
 | Port forwards | Keep running on the connection they started with, as for a context change. |
 | Active entry | Saved as `workspace.active` in `navigation.json` (an entry id), read at the next launch. |
+| A link naming another listed entry | Opens that entry (asking first if a shell runs), then the object; see below. |
+| A link from an older session of the active entry | Refused: "⟨entry⟩ reconnected since this link was made; open it again". |
+| A link naming no session this window held, or an entry no longer listed | Refused with the generic notice. |
+
+A link names its session by the connection id it was made under, which ends
+with the session. `Registry::retire_connection` remembers, when a session ends
+(a switch, or a context, kubeconfig or talosconfig change), the id with the
+entry and the definition it belonged to (at most 64, oldest first; forgotten
+with an entry the file no longer lists). `Pilot::route_link` is the one path
+every link takes (`open_object` and the owner-kind read): the open session's
+id or no id opens here; an id that ended under another listed entry, defined as
+before, activates that entry (`switch_cluster`, so a running shell asks and
+Cancel drops the link) and holds the link until the entry has a Kubernetes
+source, then opens it under the new id; an id that ended under the active
+entry, or under an entry edited since, is refused as reconnected; any other id
+is refused. A held link lives until the activation's entry generation ends: a
+manual pick, another switch or an entry error drops it, and it has no timer.
 
 Coming back to an entry puts its last summary back as last known: every part
 keeps its value but is no longer current (`Part::last_known`, no source live),

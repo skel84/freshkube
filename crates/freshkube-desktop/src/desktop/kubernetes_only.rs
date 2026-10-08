@@ -161,6 +161,8 @@ impl Pilot {
                     Err(error) => view.config_error = Some(error),
                 }
                 view.sync_unread_health(cx);
+                // The header reads a failed read as a failed connection.
+                view.prepare_context_display(window, cx);
                 cx.notify();
             });
         }));

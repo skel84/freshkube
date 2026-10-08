@@ -83,12 +83,26 @@ struct Parked {
     taken: SystemTime,
 }
 
+/// A connection id a session had that has ended, with the entry it belonged
+/// to and how that entry was defined. Links made while it was open still
+/// carry the id; this is how they find their entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Retired {
+    pub(super) connection: String,
+    pub(super) key: SessionKey,
+    pub(super) definition: Definition,
+}
+
+/// How many ended connections are remembered; the oldest go first.
+const RETIRED_LIMIT: usize = 64;
+
 /// The sessions the shell holds: the active one, and the last summary of
 /// each entry parked since, at most one per entry.
 pub(super) struct Registry {
     active_key: SessionKey,
     active: ClusterSession,
     parked: Vec<Parked>,
+    retired: Vec<Retired>,
     /// Advances each time a summary session stops or the session is
     /// replaced, so a late answer from an older one is recognised. It lives
     /// here, not in a session, so a session made again never repeats a value.
@@ -101,6 +115,7 @@ impl Registry {
             active_key: SessionKey::Implicit,
             active: ClusterSession::new(),
             parked: Vec::new(),
+            retired: Vec::new(),
             summary_epoch: 0,
         }
     }
@@ -123,6 +138,36 @@ impl Registry {
 
     pub(super) fn active_key(&self) -> &SessionKey {
         &self.active_key
+    }
+
+    /// Remembers that the active entry's session had `connection`, which
+    /// is about to end: a link carrying it is from a session that is gone.
+    /// Call before the session is replaced or parked.
+    pub(super) fn retire_connection(
+        &mut self,
+        connection: Option<String>,
+        definition: &Definition,
+    ) {
+        let Some(connection) = connection else {
+            return;
+        };
+        self.retired
+            .retain(|retired| retired.connection != connection);
+        self.retired.push(Retired {
+            connection,
+            key: self.active_key.clone(),
+            definition: definition.clone(),
+        });
+        if self.retired.len() > RETIRED_LIMIT {
+            self.retired.remove(0);
+        }
+    }
+
+    /// The entry a link's connection id belonged to, if it ended here.
+    pub(super) fn retired(&self, connection: &str) -> Option<&Retired> {
+        self.retired
+            .iter()
+            .find(|retired| retired.connection == connection)
     }
 
     /// Parks the active session and makes `key` the active one, empty. The
@@ -165,6 +210,7 @@ impl Registry {
     /// Drops what is parked for entries that are no longer listed.
     pub(super) fn retain_parked(&mut self, listed: impl Fn(&SessionKey) -> bool) {
         self.parked.retain(|parked| listed(&parked.key));
+        self.retired.retain(|retired| listed(&retired.key));
     }
 
     /// Puts the active entry's parked summary back, stale and with the time

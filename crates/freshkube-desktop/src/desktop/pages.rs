@@ -1,6 +1,6 @@
 //! Pages and how the shell moves between them: which page shows, which
 //! Kubernetes kind and context it shows, and where focus lands.
-use super::Pilot;
+use super::{Pilot, switch::LinkWork};
 use crate::desktop::{COLUMN_WIDTH, RAIL_WIDTH};
 use crate::logs::TalosPanel;
 use crate::resources::{self, navigation, shell};
@@ -639,7 +639,11 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         // Before anything moves: not the page, not the list.
-        if self.refuse_foreign_link(&object, window, cx) {
+        let work = LinkWork::Open {
+            kind: kind.clone(),
+            tab,
+        };
+        if self.divert_link(&object, work, window, cx) {
             return;
         }
         let object = resources::model::ObjectRef {
@@ -676,32 +680,6 @@ impl Pilot {
             return;
         }
         self.resolve_identity_remote(source, kind, object, identity, tab, window, cx);
-    }
-
-    /// A link made in another cluster than the one that is open is never
-    /// opened against this one: the same name here is a different object.
-    /// While no cluster is open, a link that names one is refused too.
-    /// Says so and returns true.
-    pub(super) fn refuse_foreign_link(
-        &self,
-        object: &resources::model::ObjectRef,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(connection) = &object.connection else {
-            return false;
-        };
-        if self.kube_identity().is_some_and(|open| open == *connection) {
-            return false;
-        }
-        window.push_notification(
-            format!(
-                "Can’t open {}: it belongs to a cluster that isn’t open",
-                object.name
-            ),
-            cx,
-        );
-        true
     }
 
     /// Finds the object's UID without a read: in the open list, or, with

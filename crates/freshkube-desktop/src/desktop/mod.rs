@@ -6,6 +6,8 @@ mod gate_tests;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
+#[cfg(test)]
+mod link_tests;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -332,6 +334,8 @@ pub(crate) struct Pilot {
     active_definition: session::Definition,
     /// The Talos entry waiting for its talosconfig's contexts.
     entry_open: Option<switch::EntryOpen>,
+    /// A link into another entry, waiting for it to open.
+    pending_link: Option<switch::PendingLink>,
     /// The read that finds the default kubeconfig file an entry's context is in.
     entry_locate: Option<(OwnedJob, Task<()>)>,
     entry_generation: u64,
@@ -1073,6 +1077,7 @@ impl Pilot {
             kubernetes_only: None,
             active_definition: Default::default(),
             entry_open: None,
+            pending_link: None,
             entry_locate: None,
             entry_generation: 0,
             switcher_revision: 0,
@@ -1169,7 +1174,9 @@ impl Pilot {
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.epoch = self.epoch.wrapping_add(1);
         // The whole session goes, with its summary tasks, before anything
-        // below rebuilds from it.
+        // below rebuilds from it. Links made in it name an id that ends here.
+        self.registry
+            .retire_connection(self.kube_identity(), &self.active_definition);
         self.registry.reset_active();
         self.search.update(cx, |search, cx| search.invalidate(cx));
         self.overview_task = None;
@@ -1263,6 +1270,7 @@ impl Pilot {
                     Err(error) => {
                         view.config_error = Some(error);
                         view.rebuild_joined_nodes(cx);
+                        view.prepare_context_display(window, cx);
                     }
                 }
                 cx.notify();

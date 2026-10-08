@@ -1,4 +1,5 @@
 //! Relationship navigation uses the same object entry point as cards and search.
+use super::switch::LinkWork;
 use super::*;
 use crate::resources::ResourceLink;
 use gpui_kit::component::WindowExt;
@@ -61,8 +62,8 @@ impl Pilot {
     }
 
     /// Reads which kind an owner's API version and kind name, then opens the
-    /// owner. A link made in another cluster is refused first: this read
-    /// would otherwise go to the cluster that is open.
+    /// owner. A link made in another cluster is sent to it or refused first:
+    /// this read would otherwise go to the cluster that is open.
     pub(super) fn resolve_owner_remote(
         &mut self,
         source: resources::KubeSource,
@@ -72,7 +73,11 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.refuse_foreign_link(&object, window, cx) {
+        let work = LinkWork::Owner {
+            api_version: api_version.clone(),
+            kind: kind.clone(),
+        };
+        if self.divert_link(&object, work, window, cx) {
             return;
         }
         self.cancel_object_open();
