@@ -5,7 +5,7 @@ use super::rail::RowTarget;
 use super::*;
 use crate::monitoring::page::EntryId;
 use crate::observability::Destination;
-use freshkube_ui::source_list::{Line, Note, Prose, Row, Section, SourceListHost};
+use freshkube_ui::source_list::{Line, Menu, Note, Prose, Row, Section, SourceListHost};
 
 /// What a row of the column opens.
 #[derive(Clone, Debug, PartialEq)]
@@ -157,6 +157,7 @@ impl Pilot {
     /// Workloads' namespaces, with their pods counted.
     fn namespace_lines(&self, lines: &mut Vec<Line<ColumnKey>>, cx: &App) {
         let chosen = self.resources.read(cx).namespace();
+        let pods = self.page == Page::Resources && self.resource_kind.is_pod();
         let namespaces = &self.column_state.namespaces;
         lines.push(Section::new("nav-namespaces", "Namespaces").into());
         lines.push(
@@ -166,6 +167,7 @@ impl Pilot {
                 "All namespaces",
             )
             .icon(IconName::Folders)
+            .current(pods && chosen.is_none())
             .count(self.column_state.total.clone(), None)
             .into(),
         );
@@ -186,15 +188,23 @@ impl Pilot {
                     .into()
                 }),
         );
+        // Past the rows the column lists, a menu names every namespace,
+        // as the All namespaces row's menu did.
         if namespaces.len() > COLUMN_NAMESPACES {
-            lines.push(
-                Note::new(
-                    "nav-namespaces-more",
-                    format!(
-                        "{} more in Pods' namespace menu",
-                        namespaces.len() - COLUMN_NAMESPACES
-                    ),
+            let entries = std::iter::once(("All namespaces".into(), ColumnKey::Namespace(None)))
+                .chain(
+                    namespaces
+                        .iter()
+                        .map(|(name, _)| (name.clone(), ColumnKey::Namespace(Some(name.clone())))),
                 )
+                .collect();
+            lines.push(
+                Menu::new(
+                    "nav-namespaces-more",
+                    format!("{} more namespaces…", namespaces.len() - COLUMN_NAMESPACES),
+                    entries,
+                )
+                .tooltip("Choose any namespace")
                 .into(),
             );
         }

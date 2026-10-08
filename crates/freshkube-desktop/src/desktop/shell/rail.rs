@@ -35,7 +35,12 @@ impl RailMarks {
                 CardTarget::Services => Some(RowTarget::Page(Page::SystemServices)),
                 CardTarget::Destination(_) => None,
             };
-            if let Some(row) = row {
+            // Two cards about one row: the critical one keeps its mark.
+            if let Some(row) = row
+                && rows
+                    .get(&row)
+                    .is_none_or(|(tone, _)| *tone != Tone::Crit || card.tone == Tone::Crit)
+            {
                 rows.insert(
                     row,
                     (
@@ -223,5 +228,39 @@ impl Pilot {
             })
             .on_click(cx.listener(move |view, _, window, cx| view.show_area(area, window, cx)))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Card, CardTarget, RailMarks, RowTarget};
+    use crate::presentation::overview::CardState;
+    use crate::ui::Tone;
+
+    fn card(id: &'static str, tone: Tone) -> Card {
+        Card {
+            id,
+            label: "Pods",
+            figure: "3".into(),
+            detail: id.into(),
+            tone,
+            segments: Vec::new(),
+            meter: None,
+            target: CardTarget::Kind("pods", String::new()),
+            state: CardState::Current,
+        }
+    }
+
+    #[test]
+    fn the_more_severe_card_keeps_the_rows_mark() {
+        for cards in [
+            [card("critical", Tone::Crit), card("warning", Tone::Warn)],
+            [card("warning", Tone::Warn), card("critical", Tone::Crit)],
+        ] {
+            let marks = RailMarks::from_cards(&cards, false);
+            let (tone, why) = marks.row(RowTarget::Kind("pods")).unwrap();
+            assert_eq!(*tone, Tone::Crit);
+            assert_eq!(why.as_ref(), "Pods: 3 · critical");
+        }
     }
 }

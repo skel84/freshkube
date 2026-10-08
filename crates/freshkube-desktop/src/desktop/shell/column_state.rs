@@ -6,7 +6,7 @@ pub(in crate::desktop) struct ColumnState {
     pub(in crate::desktop) collapsed: bool,
     narrow_override: Option<bool>,
     file: NavigationFile,
-    pub(super) namespaces: Vec<(SharedString, SharedString)>,
+    pub(in crate::desktop) namespaces: Vec<(SharedString, SharedString)>,
     pub(super) total: SharedString,
 }
 impl ColumnState {
@@ -66,7 +66,11 @@ impl Pilot {
     pub(in crate::desktop) fn layout_chrome(&self, window: &Window) {
         crate::screens::set_chrome_width(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
     }
-    pub(in crate::desktop) fn toggle_column(&mut self, window: &Window, cx: &mut Context<Self>) {
+    pub(in crate::desktop) fn toggle_column(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.area.has_column() {
             return;
         }
@@ -75,8 +79,25 @@ impl Pilot {
         self.column_state.narrow_override =
             (window.viewport_size().width / ui::dp_px(1., window) < 1000.).then_some(collapsed);
         self.column_state.save(cx);
+        if collapsed && self.column_list.focus_handle().is_focused(window) {
+            self.focus_page(window, cx);
+        }
         self.notify_cached(cx);
         cx.notify();
+    }
+
+    /// The list isn't drawn when the column folds or the area has none, so
+    /// a list that has the keyboard hands it to the page; keys sent to an
+    /// undrawn element reach nothing. A narrower window folds the column
+    /// without an action, so its draw checks.
+    pub(in crate::desktop) fn release_column_focus(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.column_list.focus_handle().is_focused(window) {
+            cx.defer_in(window, |this, window, cx| this.focus_page(window, cx));
+        }
     }
 }
 

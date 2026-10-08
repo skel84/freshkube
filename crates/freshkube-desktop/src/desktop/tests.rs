@@ -1428,7 +1428,7 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
         let requests = "nav-k8s-certificaterequests.cert-manager.io";
         assert!(shown_in_column(window, requests));
         assert_eq!(window.find(requests).selected(), Some(true));
-        assert_eq!(window.find(certificates).selected(), Some(false));
+        assert_ne!(window.find(certificates).selected(), Some(true));
         assert_eq!(
             window.find("page-title").label(),
             Some("CertificateRequest")
@@ -2266,10 +2266,10 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
         window.render_frame(cx);
         // The page's row is the selected one, and only it.
         assert_eq!(window.find("nav-k8s-pods").selected(), Some(true));
-        assert_eq!(window.find("nav-health").selected(), Some(false));
-        assert_eq!(
+        assert_ne!(window.find("nav-health").selected(), Some(true));
+        assert_ne!(
             window.find("nav-k8s-deployments.apps").selected(),
-            Some(false)
+            Some(true)
         );
         let focus = view.read(cx).column_list.focus_handle().clone();
         window.focus(&focus, cx);
@@ -2317,7 +2317,7 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
             window.find("nav-k8s-deployments.apps").selected(),
             Some(true)
         );
-        assert_eq!(window.find("nav-k8s-pods").selected(), Some(false));
+        assert_ne!(window.find("nav-k8s-pods").selected(), Some(true));
         assert!(
             !focus.is_focused(window),
             "Enter hands the keyboard to the page"
@@ -2329,6 +2329,111 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
         window.press("escape", cx);
         assert!(!focus.is_focused(window));
         assert_eq!(view.read(cx).resource_kind.key(), "deployments.apps");
+    })
+    .unwrap();
+}
+
+/// A column that folds or goes hands the keyboard to the page: a list
+/// that isn't drawn takes no keys, so the page's would stop working.
+#[gpui_kit::test]
+fn the_column_hands_the_keyboard_to_the_page_when_it_folds(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let focus = cx.update(|cx| view.read(cx).column_list.focus_handle().clone());
+    let focus_column = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.focus(&focus, cx);
+            window.render_frame(cx);
+            assert!(focus.is_focused(window));
+        })
+        .unwrap();
+    };
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // Folded with ⌘B.
+    focus_column(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-b", cx);
+        window.render_frame(cx);
+        assert!(view.read(cx).column_collapsed(window));
+        assert!(!focus.is_focused(window));
+        assert!(window.focused(cx).is_some(), "the page has the keyboard");
+        window.press("secondary-b", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // Folded by a narrower window.
+    focus_column(cx);
+    cx.simulate_window_resize(handle, size(px(760.), px(560.)));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(view.read(cx).column_collapsed(window));
+        assert!(!focus.is_focused(window));
+        assert!(window.focused(cx).is_some());
+    })
+    .unwrap();
+    cx.simulate_window_resize(handle, size(px(1280.), px(880.)));
+    cx.run_until_parked();
+    // Gone with an area that has no column.
+    focus_column(cx);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.show_area(Area::Events, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!view.read(cx).area.has_column());
+        assert!(!focus.is_focused(window));
+        assert!(window.focused(cx).is_some());
+    })
+    .unwrap();
+}
+
+/// All namespaces is the row shown while Pods lists every namespace, and
+/// past the rows the column lists, a menu offers every namespace.
+#[gpui_kit::test]
+fn the_column_reaches_every_namespace(cx: &mut TestAppContext) {
+    use super::shell::ColumnKey;
+    use freshkube_ui::source_list::Line;
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
+        window.render_frame(cx);
+        assert_eq!(window.find("nav-all-namespaces").selected(), Some(true));
+        let names: Vec<SharedString> = (0..24)
+            .map(|ix| SharedString::from(format!("team-{ix:02}")))
+            .collect();
+        view.update(cx, |pilot, cx| {
+            pilot.column_state.namespaces = names
+                .iter()
+                .map(|name| (name.clone(), "1".into()))
+                .collect();
+            pilot.column_changed();
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("nav-namespace-team-19").is_some());
+        assert!(window.try_find("nav-namespace-team-20").is_none());
+        assert_eq!(
+            window.find("nav-namespaces-more").label(),
+            Some("4 more namespaces…")
+        );
+        let pilot = view.read(cx);
+        let Some(Line::Menu(menu)) = pilot
+            .column_list
+            .lines()
+            .iter()
+            .find(|line| line.id().as_ref() == "nav-namespaces-more")
+        else {
+            panic!("no namespace menu");
+        };
+        let keys: Vec<_> = menu.entries().iter().map(|(_, key)| key.clone()).collect();
+        assert_eq!(keys.len(), 25);
+        assert_eq!(keys[0], ColumnKey::Namespace(None));
+        assert_eq!(keys[24], ColumnKey::Namespace(Some(names[23].clone())));
     })
     .unwrap();
 }

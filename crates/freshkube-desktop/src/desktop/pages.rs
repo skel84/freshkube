@@ -141,7 +141,7 @@ impl Area {
                 .iter()
                 .find(|group| group.slug == slug)
                 .map_or(slug, |group| group.label),
-            Self::Custom => "Custom Resources",
+            Self::Custom => "Custom resources",
             Self::ControlPlane => "Control plane",
         }
     }

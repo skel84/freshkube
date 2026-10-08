@@ -165,9 +165,11 @@ impl Pilot {
         if !self.area.has_column() {
             // A kind outside every column has no row to reveal.
             self.column_reveal = None;
+            self.release_column_focus(window, cx);
             return None;
         }
         if self.column_collapsed(window) {
+            self.release_column_focus(window, cx);
             return Some(self.render_collapsed_column(window, cx));
         }
         self.derive_column(cx);

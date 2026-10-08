@@ -9,7 +9,9 @@ use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
     Icon, Sizable,
     button::{Button, ButtonVariants},
-    h_flex, v_flex,
+    h_flex,
+    menu::{DropdownMenu, PopupMenuItem},
+    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -36,7 +38,7 @@ gpui_kit::actions!(
 /// The key context of a source list.
 pub const CONTEXT: &str = "SourceList";
 /// The column's width, in dp.
-pub const WIDTH: f32 = 208.;
+pub const WIDTH: f32 = crate::page::COLUMN_WIDTH;
 /// A row's height, a section label's and a note's: the table's row.
 pub const ROW_HEIGHT: f32 = crate::table::ROW_HEIGHT;
 /// How far each level of depth moves a row in.
@@ -69,6 +71,9 @@ pub enum Line<K> {
     Note(Note<K>),
     /// A column with nothing to list and something to do about it.
     Prose(Prose<K>),
+    /// A row that opens a menu of more rows, such as the namespaces past
+    /// those the column lists. The keyboard passes over it, as over a note.
+    Menu(Menu<K>),
 }
 
 impl<K> Line<K> {
@@ -87,6 +92,7 @@ impl<K> Line<K> {
             Line::Row(row) => &row.id,
             Line::Note(note) => &note.id,
             Line::Prose(prose) => &prose.id,
+            Line::Menu(menu) => &menu.id,
         }
     }
 }
@@ -127,6 +133,7 @@ pub struct Row<K> {
     count: Option<(SharedString, Option<Tone>)>,
     mark: Option<(Tone, SharedString)>,
     mark_id: SharedString,
+    label_id: SharedString,
     detail: Option<SharedString>,
     shortcut: Option<SharedString>,
     tip: SharedString,
@@ -139,6 +146,7 @@ impl<K> Row<K> {
         Self {
             key,
             mark_id: format!("{id}-mark").into(),
+            label_id: format!("{id}-label").into(),
             id,
             tip: label.clone(),
             label,
@@ -336,6 +344,52 @@ impl<K> From<Prose<K>> for Line<K> {
     }
 }
 
+/// A row that opens a menu: each entry's label and what it opens.
+#[derive(Clone)]
+pub struct Menu<K> {
+    id: SharedString,
+    label: SharedString,
+    icon: IconName,
+    tooltip: Option<SharedString>,
+    entries: Vec<(SharedString, K)>,
+}
+
+impl<K> Menu<K> {
+    pub fn new(
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        entries: Vec<(SharedString, K)>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon: IconName::ChevronDown,
+            tooltip: None,
+            entries,
+        }
+    }
+
+    pub fn icon(mut self, icon: IconName) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    pub fn entries(&self) -> &[(SharedString, K)] {
+        &self.entries
+    }
+}
+
+impl<K> From<Menu<K>> for Line<K> {
+    fn from(menu: Menu<K>) -> Self {
+        Line::Menu(menu)
+    }
+}
+
 /// A source list's state, kept by its host: the lines, the keyboard's row,
 /// the focus and the scroll.
 pub struct SourceList<K> {
@@ -508,7 +562,11 @@ pub fn list<V: SourceListHost>(
         // Taking the focus again starts on the row shown.
         list.cursor = None;
     }
-    let ring = focused.then(|| list.cursor_line()).flatten();
+    // The ring follows the keyboard: a click that focuses the list shows
+    // the row's fill alone.
+    let ring = (focused && window.last_input_was_keyboard())
+        .then(|| list.cursor_line())
+        .flatten();
     let mut column = v_flex()
         .id(list.id.clone())
         .test_support()
@@ -554,6 +612,7 @@ pub fn list<V: SourceListHost>(
             Line::Row(row) => row_line(row, ring == Some(ix), cx),
             Line::Note(note) => note_line(note, cx),
             Line::Prose(prose) => prose_line(prose, cx),
+            Line::Menu(menu) => menu_line(menu, cx),
         });
     }
     column
@@ -611,7 +670,9 @@ fn row_line<V: SourceListHost>(row: &Row<V::Key>, ring: bool, cx: &mut Context<V
         .test_support()
         .map(|this| match row.disclosure {
             Some(open) => this.role(Role::Button).aria_expanded(open),
-            None => this.role(Role::Tab).aria_selected(current),
+            None => this
+                .role(Role::Tab)
+                .when(current, |this| this.aria_selected(true)),
         })
         .aria_label(row.label.clone())
         .flex_none()
@@ -634,6 +695,8 @@ fn row_line<V: SourceListHost>(row: &Row<V::Key>, ring: bool, cx: &mut Context<V
         .child(leading.flex_none().text_color(p.muted))
         .child(
             div()
+                .id(row.label_id.clone())
+                .test_support()
                 .flex_1()
                 .min_w_0()
                 .truncate()
@@ -710,6 +773,47 @@ fn prose_line<V: SourceListHost>(prose: &Prose<V::Key>, cx: &mut Context<V>) -> 
                 .child(prose.text.clone()),
         )
         .children(action)
+        .into_any_element()
+}
+
+fn menu_line<V: SourceListHost>(menu: &Menu<V::Key>, cx: &mut Context<V>) -> AnyElement {
+    let p = palette(cx);
+    let host = cx.weak_entity();
+    let entries = menu.entries.clone();
+    Button::new(ElementId::Name(menu.id.clone()))
+        .ghost()
+        .small()
+        .w_full()
+        .h(dp(ROW_HEIGHT))
+        .px(dp(PADDING))
+        .gap(dp(PADDING))
+        .justify_start()
+        .accessibility_label(menu.label.clone())
+        .when_some(menu.tooltip.clone(), |this, tip| this.tooltip(tip))
+        .child(
+            Icon::new(menu.icon)
+                .size(dp(14.))
+                .flex_none()
+                .text_color(p.muted),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_size(dp(12.))
+                .text_color(p.muted)
+                .child(menu.label.clone()),
+        )
+        .dropdown_menu(move |mut popup, _, _| {
+            for (label, key) in entries.clone() {
+                let host = host.clone();
+                popup = popup.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+                    _ = host.update(cx, |host, cx| host.open(&key, window, cx));
+                }));
+            }
+            popup
+        })
         .into_any_element()
 }
 

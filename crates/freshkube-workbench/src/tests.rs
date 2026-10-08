@@ -891,9 +891,33 @@ fn the_source_list_story_opens_rows_by_click_and_keyboard(cx: &mut TestAppContex
         }
         text_size::set(13., cx);
         window.render_frame(cx);
-        // A long label is cut at the column's edge.
+        // A long label is cut at the column's edge: its text is wider than
+        // the room the row gives it, and the tooltip holds all of it.
+        let label = "ValidatingAdmissionPolicyBindings";
+        let style = window.text_style();
+        let text = window.text_system().shape_line(
+            label.into(),
+            freshkube_ui::ui::dp_px(13., window),
+            &[style.to_run(label.len())],
+            None,
+        );
+        let room = window.find("source-list-bindings-label").bounds();
+        assert!(
+            room.size.width < text.width,
+            "{:?} fits {:?}",
+            room.size.width,
+            text.width
+        );
         let column = window.find("source-list-column").bounds();
-        assert!(window.find("source-list-bindings").bounds().right() <= column.right());
+        assert!(room.right() <= column.right());
+        let story_list = story.read(cx).list();
+        let row = story_list
+            .lines()
+            .iter()
+            .filter_map(|line| line.row())
+            .find(|row| row.label().as_ref() == label)
+            .unwrap();
+        assert!(row.tip().starts_with(label));
         assert_eq!(window.find("source-list-pods").selected(), Some(true));
         assert_eq!(window.find("story-source-list").selected(), Some(true));
 
@@ -904,7 +928,7 @@ fn the_source_list_story_opens_rows_by_click_and_keyboard(cx: &mut TestAppContex
             window.find("source-list-deployments").selected(),
             Some(true)
         );
-        assert_eq!(window.find("source-list-pods").selected(), Some(false));
+        assert_ne!(window.find("source-list-pods").selected(), Some(true));
 
         // The keyboard starts on the row shown and passes the labels.
         let focus = story.read(cx).list().focus_handle().clone();

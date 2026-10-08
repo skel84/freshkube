@@ -6,7 +6,7 @@
 use super::motion::{option, segments};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
-use freshkube_ui::source_list::{self, Line, Note, Row, Section, SourceList, SourceListHost};
+use freshkube_ui::source_list::{self, Line, Menu, Note, Row, Section, SourceList, SourceListHost};
 use freshkube_ui::ui::{Tone, dp};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, v_flex};
@@ -140,6 +140,22 @@ impl SourceListStory {
                 .into(),
             );
         }
+        // The namespaces past those listed, as the app's column offers them.
+        lines.push(
+            Menu::new(
+                format!("{PREFIX}-namespaces-more"),
+                "2 more namespaces…",
+                [
+                    ("All namespaces", None),
+                    ("payments", Some("payments")),
+                    ("search", Some("search")),
+                ]
+                .map(|(label, key)| (label.into(), Key::Namespace(key)))
+                .to_vec(),
+            )
+            .tooltip("Choose any namespace")
+            .into(),
+        );
         self.list.set_lines(lines);
     }
 }

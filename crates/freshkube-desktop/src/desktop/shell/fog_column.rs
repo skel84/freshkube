@@ -116,7 +116,7 @@ impl Pilot {
                         .ghost()
                         .size(dp(36.))
                         .icon(IconName::Puzzle)
-                        .tooltip("Custom Resources · expand to choose")
+                        .tooltip("Custom resources · expand to choose")
                         .tooltip_placement(Placement::Right)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.toggle_column(window, cx)),
