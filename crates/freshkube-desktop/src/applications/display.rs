@@ -1170,7 +1170,7 @@ mod tests {
         let cart = display.rows.iter().find(|r| r.name == "cart").unwrap();
         assert!(
             cart.notes.contains(&SharedString::from(
-                "4 parts on core-fra deploy to another cluster, not mapped yet: argocd/cart-dev, argocd/cart-stage, argocd/cart-prod-ams, argocd/cart-prod-fra"
+                "4 parts on core-fra deploy to another cluster, not mapped yet: argocd/cart-dev, argocd/cart-stage, argocd/cart-prod-ams, argocd/cart-prod-lon"
             )),
             "{:?}",
             cart.notes

@@ -38,7 +38,7 @@ pub(crate) enum Variant {
     /// `checkout`'s Stages didn't answer in `core-fra`: its page shows
     /// what may be missing as a group row.
     Stages,
-    /// Deployments refused in `prod-fra`: labelled parts there may be
+    /// Deployments refused in `prod-lon`: labelled parts there may be
     /// missing, as `checkout`'s page says in a group row.
     Workloads,
 }
@@ -145,7 +145,7 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
             }
         }
         Variant::Workloads => {
-            if let Some(prod) = inputs.sessions.iter_mut().find(|s| s.key.0 == "prod-fra") {
+            if let Some(prod) = inputs.sessions.iter_mut().find(|s| s.key.0 == "prod-lon") {
                 prod.workloads = refused("deployments.apps");
             }
         }
@@ -168,4 +168,22 @@ pub(crate) fn labels(inputs: &Inputs) -> Labels {
 /// open.
 pub(crate) fn connections(open: &str) -> Connections {
     Connections::new(open, [(SessionKey::new(acme::CORE), open.to_owned())])
+}
+
+#[cfg(test)]
+mod tests {
+    /// Only `core-fra` is mapped to the open example cluster, so no other
+    /// acme cluster may share an example context's name: one would read as
+    /// the open cluster while its parts are refused.
+    #[test]
+    fn no_acme_cluster_is_named_as_an_example_context() {
+        let inputs = freshkube_core::applications::example::acme();
+        for session in &inputs.sessions {
+            assert!(
+                !crate::fixture::CONTEXTS.contains(&session.key.0.as_str()),
+                "{} is also an example context",
+                session.key.0
+            );
+        }
+    }
 }

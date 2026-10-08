@@ -694,13 +694,13 @@ impl Pilot {
         if self.kube_identity().is_some_and(|open| open == *connection) {
             return false;
         }
-        window.push_notification(
-            format!(
-                "Can’t open {}: it belongs to a cluster that isn’t open",
-                object.name
-            ),
-            cx,
+        let notice = format!(
+            "Can’t open {}: it belongs to a cluster that isn’t open",
+            object.name
         );
+        #[cfg(test)]
+        REFUSED.with_borrow_mut(|refused| refused.push(notice.clone()));
+        window.push_notification(notice, cx);
         true
     }
 
@@ -796,4 +796,18 @@ impl Pilot {
             cx,
         );
     }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The notices `refuse_foreign_link` pushed on this thread, for tests:
+    /// Kit's notifications don't show their text to them.
+    static REFUSED: std::cell::RefCell<Vec<String>> = Default::default();
+}
+
+/// The notices links to a cluster that isn't open have given on this
+/// test's thread, in order.
+#[cfg(test)]
+pub(crate) fn refused_links() -> Vec<String> {
+    REFUSED.with_borrow(Clone::clone)
 }

@@ -19,7 +19,7 @@ const APPLICATION: layout_check::TablePage = layout_check::TablePage {
 const CHECKOUT: &str = "application-kargo:checkout";
 /// checkout's first Stage, `dev` in `core-fra`.
 const DEV_STAGE: &str = "application-part-core-fra/0/checkout/dev";
-const WORKER: &str = "application-part-prod-fra/3/checkout/checkout-worker";
+const WORKER: &str = "application-part-prod-lon/3/checkout/checkout-worker";
 
 fn list(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<ApplicationsPage> {
     view.read(cx).applications().0
@@ -83,14 +83,14 @@ fn parts_come_in_kind_order_with_their_links(cx: &mut TestAppContext) {
                 "# Kargo Stages",
                 "dev Confirmed",
                 "prod-ams Confirmed",
-                "prod-fra Confirmed",
+                "prod-lon Confirmed",
                 "stage Confirmed",
                 "# Kargo Warehouses",
                 "checkout-images Confirmed",
                 "# Argo CD Applications",
                 "checkout-dev Claimed",
                 "checkout-prod-ams Claimed",
-                "checkout-prod-fra Claimed",
+                "checkout-prod-lon Claimed",
                 "checkout-stage Claimed",
                 // Argo CD on core-fra was read in argocd only, so the
                 // Applications checkout's Stages promote to may be missing.
@@ -230,6 +230,73 @@ fn read_from_fits_what_was_not_checked(cx: &mut TestAppContext) {
         // 39 characters would be 316.5; the widest column is 280.
         assert_eq!(words(&rows), 280.);
         assert!(short < words(&rows));
+    })
+    .unwrap();
+}
+
+/// At 760 and text size 20 the Inspector stacks under the table. The split
+/// settles on the frames the app asks for, so a sideways wheel over the table
+/// only moves its columns: the table keeps its height and the page stays put.
+#[gpui_kit::test]
+fn a_sideways_wheel_over_the_stacked_table_keeps_its_height(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point};
+    let (_runtime, handle, view) = open(cx, 760., 560., Variant::Acme);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    // Draw only the frames the app asks for, as the screen does.
+    let settle = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+        for _ in 0..8 {
+            if window.simulate_next_frame(cx) == 0 {
+                return;
+            }
+            window.render_frame(cx);
+        }
+        panic!("the split never settles");
+    };
+    let table = |window: &mut gpui_kit::Window| window.find("application-table").bounds();
+    let object = ("application-sort", 1usize);
+    let read_from = |page: &Entity<ApplicationPage>, cx: &gpui_kit::App| {
+        ("application-sort", page.read(cx).columns.len() - 1)
+    };
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        settle(window, cx);
+        window.click(DEV_STAGE, cx);
+        settle(window, cx);
+        assert!(window.try_find("application-detail").is_some(), "stacked");
+        let settled = table(window);
+        let page = shown(&view, cx).unwrap();
+        let column = read_from(&page, cx);
+        let before = window.find(column).bounds();
+        // A wheel draws a frame of its own; the split was settled already.
+        window.render_frame(cx);
+        assert_eq!(
+            table(window),
+            settled,
+            "the split moved on a frame of its own"
+        );
+        window.scroll(
+            "application-table-scroll",
+            ScrollDelta::Pixels(point(px(-600.), px(0.))),
+            cx,
+        );
+        window.render_frame(cx);
+        settle(window, cx);
+        assert_eq!(table(window), settled, "the wheel moved the split");
+        assert!(
+            window.find(column).bounds().left() < before.left(),
+            "the columns didn't scroll"
+        );
+        assert_eq!(
+            page.read(cx).page_scroll.offset().y,
+            px(0.),
+            "the page scrolled"
+        );
+        let pinned = window.find(object).bounds();
+        assert!(
+            pinned.left() >= settled.left() - px(1.),
+            "{pinned:?} in {settled:?}"
+        );
     })
     .unwrap();
 }
@@ -561,10 +628,10 @@ fn labelled_parts_that_may_be_missing_are_a_group_row(cx: &mut TestAppContext) {
         assert!(
             lines
                 .iter()
-                .any(|line| line == "# May be missing on prod-fra"),
+                .any(|line| line == "# May be missing on prod-lon"),
             "{lines:?}"
         );
-        // prod-fra's worker wasn't read, so it isn't a part.
+        // prod-lon's worker wasn't read, so it isn't a part.
         assert!(!lines.iter().any(|line| line.starts_with("checkout-worker")));
     })
     .unwrap();
@@ -716,7 +783,7 @@ fn the_row_menu_opens_a_part_without_opening_the_inspector(cx: &mut TestAppConte
     .unwrap();
 }
 
-/// acme's `prod-fra` is another cluster than the example's open `prod-fra`:
+/// acme's `prod-lon` is a cluster no example context opens:
 /// its link names its bare key, and the shell refuses it with the notice
 /// every link to a cluster that isn't open gets.
 #[gpui_kit::test]
@@ -746,6 +813,17 @@ fn a_part_in_an_unmapped_acme_cluster_is_refused_and_nothing_moves(cx: &mut Test
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(notices(window, cx), before + 1, "the refusal says so");
+        let page = shown(&view, cx).expect("the page stays");
+        assert_eq!(
+            page.read(cx)
+                .selected_row()
+                .map(|row| row.open_tip.to_string()),
+            Some("prod-lon isn't the open cluster, so its objects don't open in Resources".into())
+        );
+        assert_eq!(
+            crate::desktop::refused_links().last().map(String::as_str),
+            Some("Can’t open checkout-worker: it belongs to a cluster that isn’t open")
+        );
         assert_eq!(view.read(cx).applications().1, Page::Applications);
         assert_eq!(opened(&view, cx), None);
         let page = shown(&view, cx).expect("the page stays");

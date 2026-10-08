@@ -13,7 +13,7 @@
 //!   manages a workload labelled `part-of=public-status`, whose instance
 //!   label names it back.
 //! - `loyalty` is found only by its label.
-//! - `checkout-worker`, labelled `part-of=checkout` in `prod-fra`, joins the
+//! - `checkout-worker`, labelled `part-of=checkout` in `prod-lon`, joins the
 //!   Kargo application by its name.
 
 use serde_json::{Value, json};
@@ -31,7 +31,7 @@ const ENVIRONMENTS: [(&str, &str); 4] = [
     ("dev", "dev-fra"),
     ("stage", "stage-fra"),
     ("prod-ams", "prod-ams"),
-    ("prod-fra", "prod-fra"),
+    ("prod-lon", "prod-lon"),
 ];
 const AUTHORIZED_STAGE: &str = "kargo.akuity.io/authorized-stage";
 
@@ -228,7 +228,7 @@ fn environment(cluster: &str) -> SessionInputs {
             ("cart", "cart-api", "cart"),
             ("loyalty", "loyalty-api", "loyalty"),
         ],
-        "prod-fra" => &[
+        "prod-lon" => &[
             ("checkout", "checkout-api", "checkout"),
             ("checkout", "checkout-worker", "checkout"),
             ("catalog", "catalog-api", "catalog"),

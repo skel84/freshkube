@@ -231,7 +231,7 @@ fn acme_core_objects_list_and_read_in_full_on_every_context() {
     .unwrap()
     .1;
     let names: Vec<_> = stage.iter().map(|row| row.identity.name.as_str()).collect();
-    assert_eq!(names, ["dev", "stage", "prod-ams", "prod-fra"]);
+    assert_eq!(names, ["dev", "stage", "prod-ams", "prod-lon"]);
     let projects = read(
         "prod-fra",
         "projects.kargo.akuity.io",
@@ -265,4 +265,37 @@ fn acme_status_page_is_a_deployment_of_its_own_beside_the_examples() {
     for namespace in ["argocd", "cart", "checkout", "status"] {
         assert!(namespaces().iter().any(|name| name == namespace));
     }
+}
+
+/// The fixture's Kubernetes summary reads status-page as Resources does, not
+/// as one of the example's own Deployments.
+#[test]
+fn the_summary_reads_status_page_as_its_own_deployment() {
+    use k8s_openapi::api::apps::v1::Deployment;
+    let deployments: Vec<Deployment> =
+        super::summary::summary_objects("homelab", "deployments.apps", TEST_NOW);
+    assert_eq!(deployments.len(), WORKLOADS.len() + 1);
+    let status = deployments.last().unwrap();
+    assert_eq!(status.metadata.name.as_deref(), Some("status-page"));
+    assert_eq!(status.metadata.namespace.as_deref(), Some("status"));
+    let labels = status.metadata.labels.clone().unwrap_or_default();
+    assert_eq!(
+        labels.get("app.kubernetes.io/part-of").map(String::as_str),
+        Some("public-status")
+    );
+    let containers = &status
+        .spec
+        .as_ref()
+        .unwrap()
+        .template
+        .spec
+        .as_ref()
+        .unwrap()
+        .containers;
+    assert_eq!(
+        containers[0].image.as_deref(),
+        Some("ghcr.io/example/status-page:1.4.0")
+    );
+    // The example's first Deployment is a different object.
+    assert_ne!(deployments[0].metadata.name, status.metadata.name);
 }

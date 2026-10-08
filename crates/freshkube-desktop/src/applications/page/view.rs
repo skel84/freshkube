@@ -179,10 +179,7 @@ impl Render for ApplicationPage {
 /// Open in Resources, greyed out with why for a part in a cluster that
 /// isn't open.
 fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> impl IntoElement {
-    let tooltip = row
-        .closed
-        .clone()
-        .unwrap_or_else(|| format!("Open {} on {}, in Resources", row.name, row.cluster).into());
+    let tip = row.open_tip.clone();
     h_flex().child(
         Button::new("application-detail-open")
             .outline()
@@ -190,7 +187,12 @@ fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> impl IntoEle
             .icon(IconName::ExternalLink)
             .label("Open in Resources")
             .disabled(row.closed.is_some())
-            .tooltip_with_action(tooltip, &OpenPart, Some(CONTEXT))
+            // O only for a part that opens: a greyed-out one says why alone.
+            .when_else(
+                row.closed.is_some(),
+                |button| button.tooltip(tip.clone()),
+                |button| button.tooltip_with_action(tip.clone(), &OpenPart, Some(CONTEXT)),
+            )
             .on_click(cx.listener(|this, _, _, cx| this.open_part(cx))),
     )
 }

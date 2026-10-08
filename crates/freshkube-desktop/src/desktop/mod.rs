@@ -12,6 +12,8 @@ pub(crate) mod nodes;
 mod object_links;
 mod overview;
 mod pages;
+#[cfg(test)]
+pub(crate) use pages::refused_links;
 mod search;
 mod services;
 mod session;

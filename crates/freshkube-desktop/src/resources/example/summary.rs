@@ -127,7 +127,9 @@ pub(crate) fn summary_objects<T: serde::de::DeserializeOwned>(
             let yaml = match key {
                 "pods" => pod_yaml(&row, ix, created, now),
                 "nodes" => node_yaml(&row, created),
-                "deployments.apps" => deployment_yaml(&row, ix, created),
+                // acme's Deployments follow the example's own and are read
+                // as Resources reads them.
+                "deployments.apps" if ix < WORKLOADS.len() => deployment_yaml(&row, ix, created),
                 _ => document(&row.identity, now).expect("example document").yaml,
             };
             serde_yaml::from_str(&yaml).expect("typed example object")

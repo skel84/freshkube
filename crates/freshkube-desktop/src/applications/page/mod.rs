@@ -97,6 +97,9 @@ pub(crate) struct PartRow {
     pub(super) open: ResourceLink,
     /// Why the part doesn't open here: its cluster isn't the open one.
     pub(super) closed: Option<SharedString>,
+    /// The Open in Resources button's tooltip: where it opens the part, or
+    /// why it doesn't.
+    pub(super) open_tip: SharedString,
 }
 
 /// A group row: a kind's, or a read's that may have left parts out.
@@ -433,6 +436,9 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
         tooltip.push(' ');
         tooltip.push_str(lower);
     }
+    let closed: Option<SharedString> = (!connections.opens(&member.session)).then(|| {
+        format!("{cluster} isn't the open cluster, so its objects don't open in Resources").into()
+    });
     PartRow {
         key: key.into(),
         rank: member.kind.rank(),
@@ -473,10 +479,10 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
             .then(|| format!("{}.", claim.why.trim_end_matches('.')).into()),
         lower,
         open: links::link(member, connections),
-        closed: (!connections.opens(&member.session)).then(|| {
-            format!("{cluster} isn't the open cluster, so its objects don't open in Resources")
-                .into()
-        }),
+        open_tip: closed
+            .clone()
+            .unwrap_or_else(|| format!("Open {} on {cluster}, in Resources", member.name).into()),
+        closed,
     }
 }
 
