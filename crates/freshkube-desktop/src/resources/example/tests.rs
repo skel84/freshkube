@@ -84,8 +84,14 @@ fn example_secrets_hide_values_until_one_is_revealed() {
 #[test]
 fn example_discovery_covers_every_group_state() {
     let groups = custom_groups();
-    assert_eq!(groups.len(), CUSTOM_GROUPS.len());
-    assert_eq!(groups[1].versions, ["v2", "v2alpha1"]);
+    assert_eq!(groups.len(), CUSTOM_GROUPS.len() + acme::GROUPS.len());
+    let names: Vec<_> = groups.iter().map(|group| group.name.as_str()).collect();
+    assert!(names.is_sorted(), "{names:?}");
+    let cilium = groups
+        .iter()
+        .find(|group| group.name == "cilium.io")
+        .unwrap();
+    assert_eq!(cilium.versions, ["v2", "v2alpha1"]);
     let certs = group_kinds("cert-manager.io").unwrap();
     assert_eq!(certs.kinds.len(), 4);
     assert!(certs.failures.is_empty());
@@ -189,4 +195,74 @@ fn long_context_keeps_the_homelab_shape() {
         read(long, "nodes", None, TEST_NOW).unwrap().1.len(),
         read("homelab", "nodes", None, TEST_NOW).unwrap().1.len()
     );
+}
+
+#[test]
+fn acme_core_objects_list_and_read_in_full_on_every_context() {
+    let keys = acme::KINDS
+        .iter()
+        .map(|(group, _, _, plural, _)| format!("{plural}.{group}"));
+    for context in fixture::CONTEXTS {
+        for key in keys.clone() {
+            let (_, rows) = read(context, &key, None, TEST_NOW).unwrap();
+            assert!(!rows.is_empty(), "{key}");
+            let identities: std::collections::BTreeSet<_> =
+                rows.iter().map(|row| row.identity.uid.clone()).collect();
+            assert_eq!(identities.len(), rows.len(), "{key}");
+            for row in &rows {
+                assert_eq!(row.cells[0], row.identity.name);
+                let document = document(&row.identity, TEST_NOW)
+                    .unwrap_or_else(|| panic!("{key} {}", row.identity.address()));
+                assert_eq!(document.uid, row.identity.uid);
+                assert_eq!(
+                    document.namespace.unwrap_or_default(),
+                    row.identity.namespace
+                );
+                assert!(events(&row.identity, TEST_NOW).is_empty());
+            }
+        }
+    }
+    let stage = read(
+        "prod-fra",
+        "stages.kargo.akuity.io",
+        Some("checkout"),
+        TEST_NOW,
+    )
+    .unwrap()
+    .1;
+    let names: Vec<_> = stage.iter().map(|row| row.identity.name.as_str()).collect();
+    assert_eq!(names, ["dev", "stage", "prod-ams", "prod-fra"]);
+    let projects = read(
+        "prod-fra",
+        "projects.kargo.akuity.io",
+        Some("checkout"),
+        TEST_NOW,
+    )
+    .unwrap()
+    .1;
+    assert_eq!(projects.len(), 2, "Projects are cluster-scoped");
+}
+
+#[test]
+fn acme_status_page_is_a_deployment_of_its_own_beside_the_examples() {
+    let (_, rows) = read("homelab", "deployments.apps", None, TEST_NOW).unwrap();
+    assert_eq!(rows.len(), WORKLOADS.len() + 1);
+    assert_eq!(
+        rows[..WORKLOADS.len()]
+            .iter()
+            .map(|row| row.identity.clone())
+            .collect::<Vec<_>>(),
+        (0..WORKLOADS.len())
+            .map(|ix| deployment(&connection("homelab"), ix, TEST_NOW).identity)
+            .collect::<Vec<_>>(),
+        "the example's own Deployments keep their identities"
+    );
+    let status = rows.last().unwrap();
+    assert_eq!(status.identity.address(), "status/status-page");
+    let document = document(&status.identity, TEST_NOW).unwrap();
+    assert_eq!(document.name, "status-page");
+    assert!(events(&status.identity, TEST_NOW).is_empty());
+    for namespace in ["argocd", "cart", "checkout", "status"] {
+        assert!(namespaces().iter().any(|name| name == namespace));
+    }
 }

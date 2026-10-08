@@ -7,6 +7,12 @@
 //! The list owns the page and hands it each new read; it reads nothing
 //! itself. Its breadcrumb, and Escape with nothing selected, go back to the
 //! list, which keeps its selection.
+//!
+//! O, the row menu and the Inspector's button open the selected part in
+//! Resources, on its Overview: the list passes its link on to the shell,
+//! which opens it as every object link opens. The button and the menu item
+//! are greyed out, with why, for a part in a cluster that isn't open; O
+//! sends its link anyway, and the shell says it can't open it.
 mod table;
 #[cfg(test)]
 mod tests;
@@ -14,7 +20,7 @@ mod view;
 
 use freshkube_core::applications::claims::{Claim, Claims, Gap, Side, Unchecked, claims};
 use freshkube_core::applications::{
-    Application, ApplicationId, Basis, Derived, Evidence, MemberKind, MemberRef,
+    Application, ApplicationId, Basis, Evidence, MemberKind, MemberRef,
 };
 use freshkube_core::delivery::join::Confidence;
 use freshkube_ui::inspector::InspectorSplit;
@@ -22,7 +28,10 @@ use freshkube_ui::table::{self as kit, TableState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+use super::Read;
 use super::display::{Labels, kind_label, rule_label, what_it_is};
+use super::links::{self, Connections};
+use crate::resources::ResourceLink;
 
 /// The page's id prefix: `application-title`, `-list`, `-back`.
 const PREFIX: &str = "application";
@@ -37,15 +46,18 @@ gpui_kit::actions!(
         /// Selects the previous part.
         PreviousPart,
         /// Clears the selection; with none, goes back to the list.
-        Back
+        Back,
+        /// Opens the selected part in Resources.
+        OpenPart
     ]
 );
 
-pub(crate) fn key_bindings() -> [KeyBinding; 3] {
+pub(crate) fn key_bindings() -> [KeyBinding; 4] {
     [
         KeyBinding::new("down", NextPart, Some(CONTEXT)),
         KeyBinding::new("up", PreviousPart, Some(CONTEXT)),
         KeyBinding::new("escape", Back, Some(CONTEXT)),
+        KeyBinding::new("o", OpenPart, Some(CONTEXT)),
     ]
 }
 
@@ -53,6 +65,8 @@ pub(crate) fn key_bindings() -> [KeyBinding; 3] {
 pub(crate) enum ApplicationEvent {
     /// Back to the list.
     Back,
+    /// A part to open in Resources.
+    Open(Box<ResourceLink>),
 }
 
 /// One part as the table and the Inspector show it.
@@ -77,6 +91,10 @@ pub(crate) struct PartRow {
     pub(super) link: Vec<(&'static str, SharedString)>,
     /// Lower rules' claims, in words.
     pub(super) lower: Vec<SharedString>,
+    /// The link that opens the part in Resources.
+    pub(super) open: ResourceLink,
+    /// Why the part doesn't open here: its cluster isn't the open one.
+    pub(super) closed: Option<SharedString>,
 }
 
 /// A group row: a kind's, or a read's that may have left parts out.
@@ -111,6 +129,9 @@ pub(crate) struct ApplicationPage {
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
     selected: Option<SharedString>,
+    /// Whether the Inspector shows the selection. A right-click selects
+    /// without opening it, so the table keeps its place under the menu.
+    inspect: bool,
     /// The list's last read failed over an earlier one: the banner's text
     /// and label, as the list shows them.
     stale: Option<(SharedString, SharedString)>,
@@ -119,10 +140,9 @@ pub(crate) struct ApplicationPage {
 impl EventEmitter<ApplicationEvent> for ApplicationPage {}
 
 impl ApplicationPage {
-    pub(crate) fn new(
+    pub(super) fn new(
         app: &Application,
-        derived: &Derived,
-        labels: &Labels,
+        read: &Read,
         stale: Option<(SharedString, SharedString)>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -141,9 +161,10 @@ impl ApplicationPage {
             split,
             page_scroll: ScrollHandle::new(),
             selected: None,
+            inspect: false,
             stale,
         };
-        page.show(app, derived, labels);
+        page.show(app, read);
         page
     }
 
@@ -153,26 +174,28 @@ impl ApplicationPage {
 
     /// A new read of the application, keeping the selection while its part
     /// is still there.
-    pub(crate) fn update(
+    pub(super) fn update(
         &mut self,
         app: &Application,
-        derived: &Derived,
-        labels: &Labels,
+        read: &Read,
         stale: Option<(SharedString, SharedString)>,
         cx: &mut Context<Self>,
     ) {
         self.stale = stale;
         self.name = app.name.clone().into();
         self.what = what_it_is(app).into();
-        self.show(app, derived, labels);
+        self.show(app, read);
         cx.notify();
     }
 
     /// Derives the rows, groups and lines from the claims.
-    fn show(&mut self, app: &Application, derived: &Derived, labels: &Labels) {
-        let Claims { links, gaps } = claims(derived, app);
-        self.rows = links.iter().map(|claim| row(app, claim, labels)).collect();
-        (self.groups, self.lines) = lines(&self.rows, &gaps, labels);
+    fn show(&mut self, app: &Application, read: &Read) {
+        let Claims { links, gaps } = claims(&read.derived, app);
+        self.rows = links
+            .iter()
+            .map(|claim| row(app, claim, &read.labels, &read.connections))
+            .collect();
+        (self.groups, self.lines) = lines(&self.rows, &gaps, &read.labels);
         (self.columns, self.width) = table::columns(&self.rows);
         if self
             .selected
@@ -180,6 +203,7 @@ impl ApplicationPage {
             .is_some_and(|key| !self.rows.iter().any(|row| &row.key == key))
         {
             self.selected = None;
+            self.inspect = false;
         }
     }
 
@@ -199,6 +223,7 @@ impl ApplicationPage {
 
     fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
         self.selected = Some(key);
+        self.inspect = true;
         kit::reveal(self, ScrollStrategy::Nearest);
         cx.notify();
     }
@@ -209,8 +234,17 @@ impl ApplicationPage {
         }
     }
 
+    /// O: the selected part in Resources, through the shell, which says so
+    /// when its cluster isn't open.
+    fn open_part(&mut self, cx: &mut Context<Self>) {
+        if let Some(row) = self.selected_row() {
+            cx.emit(ApplicationEvent::Open(Box::new(row.open.clone())));
+        }
+    }
+
     /// Escape: the selection first, then back to the list.
     fn back(&mut self, cx: &mut Context<Self>) {
+        self.inspect = false;
         if self.selected.take().is_some() {
             cx.notify();
         } else {
@@ -241,6 +275,10 @@ impl ApplicationPage {
 
     pub(crate) fn selected(&self) -> Option<&SharedString> {
         self.selected.as_ref()
+    }
+
+    pub(crate) fn inspects(&self) -> bool {
+        self.inspect
     }
 }
 
@@ -348,7 +386,7 @@ fn unchecked_words(unchecked: &Unchecked, cluster: &str) -> String {
     }
 }
 
-fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
+fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connections) -> PartRow {
     let member = &claim.member;
     let cluster = labels.of(&member.session);
     let namespace = member.namespace.clone().unwrap_or_default();
@@ -401,7 +439,7 @@ fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
         tooltip: tooltip.into(),
         fields: [
             ("Kind", kind_label(member.kind).to_owned()),
-            ("Cluster", cluster),
+            ("Cluster", cluster.clone()),
             ("Namespace", namespace),
             ("Found by", found.to_owned()),
         ]
@@ -420,6 +458,11 @@ fn row(app: &Application, claim: &Claim, labels: &Labels) -> PartRow {
         .flatten()
         .collect(),
         lower,
+        open: links::link(member, connections),
+        closed: (!connections.opens(&member.session)).then(|| {
+            format!("{cluster} isn't the open cluster, so its objects don't open in Resources")
+                .into()
+        }),
     }
 }
 

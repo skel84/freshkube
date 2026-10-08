@@ -307,6 +307,7 @@ struct PageEntities<'a> {
     observability: &'a Entity<crate::observability::ObservabilityPage>,
     monitoring: &'a Entity<MonitoringPage>,
     custom: &'a Entity<CustomResources>,
+    applications: &'a Entity<crate::applications::ApplicationsPage>,
 }
 
 pub(crate) struct Pilot {
@@ -480,6 +481,13 @@ impl Pilot {
         (self.applications.clone(), self.page)
     }
 
+    /// The object Resources shows in its drawer, for tests of the links
+    /// that open one.
+    #[cfg(test)]
+    pub(crate) fn opened_object(&self, cx: &App) -> Option<resources::model::ResourceIdentity> {
+        self.resources.read(cx).detail_identity(cx).cloned()
+    }
+
     /// Chooses another context, as the header's switcher does.
     #[cfg(test)]
     pub(crate) fn choose_context(
@@ -611,7 +619,16 @@ impl Pilot {
             observability,
             monitoring,
             custom,
+            applications,
         } = pages;
+        // A part of an open application, opened as every object link is.
+        subscriptions.push(cx.subscribe_in(
+            applications,
+            window,
+            |this, _, link: &resources::ResourceLink, window, cx| {
+                this.resource_link(link.clone(), window, cx)
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             node_pods,
             window,
@@ -984,6 +1001,8 @@ impl Pilot {
             cx.observe(&logs, |_, _, cx| cx.notify()),
             cx.observe(&service_filter, |_, _, cx| cx.notify()),
         ]);
+        let applications =
+            cx.new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx));
         Self::subscribe_page_events(
             &mut subscriptions,
             PageEntities {
@@ -993,6 +1012,7 @@ impl Pilot {
                 observability: &observability,
                 monitoring: &monitoring,
                 custom: &custom,
+                applications: &applications,
             },
             window,
             cx,
@@ -1045,8 +1065,7 @@ impl Pilot {
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             settings_page: cx.new(settings::SettingsPage::new),
-            applications: cx
-                .new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx)),
+            applications,
             workspace_file: options
                 .preferences
                 .as_deref()

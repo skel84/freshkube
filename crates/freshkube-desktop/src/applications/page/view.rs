@@ -8,7 +8,7 @@ use freshkube_ui::inspector::{self, Inspector};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::tooltip::FollowTooltip as _;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Disableable, IconName, Sizable, button::Button, h_flex, v_flex};
 
 impl ApplicationPage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -24,6 +24,9 @@ impl ApplicationPage {
     /// The selected part's details, then its link: each side, why, and
     /// any lower rule's claim.
     fn render_details(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.inspect {
+            return None;
+        }
         let row = self.selected_row()?;
         let p = palette(cx);
         let title = div()
@@ -65,6 +68,7 @@ impl ApplicationPage {
         Some(
             Inspector::new("application-detail")
                 .heading(heading)
+                .child(render_open(row, cx))
                 .children(fields(&row.fields, cx))
                 .child(link)
                 .render(cx)
@@ -126,6 +130,7 @@ impl Render for ApplicationPage {
             .on_action(cx.listener(|this, _: &NextPart, _, cx| this.step(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousPart, _, cx| this.step(-1, cx)))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))
+            .on_action(cx.listener(|this, _: &OpenPart, _, cx| this.open_part(cx)))
             .flex()
             .flex_col()
             .size_full()
@@ -149,4 +154,23 @@ impl Render for ApplicationPage {
                     ),
             )
     }
+}
+
+/// Open in Resources, greyed out with why for a part in a cluster that
+/// isn't open.
+fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> impl IntoElement {
+    let tooltip = row
+        .closed
+        .clone()
+        .unwrap_or_else(|| format!("Open {} on {}, in Resources", row.name, row.cluster).into());
+    h_flex().child(
+        Button::new("application-detail-open")
+            .outline()
+            .xsmall()
+            .icon(IconName::ExternalLink)
+            .label("Open in Resources")
+            .disabled(row.closed.is_some())
+            .tooltip_with_action(tooltip, &OpenPart, Some(CONTEXT))
+            .on_click(cx.listener(|this, _, _, cx| this.open_part(cx))),
+    )
 }

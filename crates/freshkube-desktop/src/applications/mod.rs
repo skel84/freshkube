@@ -11,9 +11,11 @@
 //! Enter, a double-click or the row menu's Open shows the selected
 //! application's own page (`page/`) in the list's place; its breadcrumb
 //! comes back to the list with the selection kept. Each new read reaches the
-//! open page, and one without its application closes it.
+//! open page, and one without its application closes it. A part opens in
+//! Resources as any object link does (`links.rs`).
 mod display;
 mod example;
+mod links;
 mod page;
 mod table;
 #[cfg(test)]
@@ -35,9 +37,10 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
-use crate::resources::{KubeAccess, KubeSource};
+use crate::resources::{KubeAccess, KubeSource, ResourceLink};
 use display::{Body, Display, Labels, MARKS, Mark};
 pub(crate) use example::Variant;
+use links::Connections;
 use page::{ApplicationEvent, ApplicationPage};
 
 /// The page's id prefix: `applications-title`, `-list`, `-tally-…`.
@@ -74,19 +77,32 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
     bindings
 }
 
-/// One read: what was derived and what its clusters are called.
+/// One read: what was derived, what its clusters are called, and which
+/// connection each is.
 #[derive(Clone)]
 struct Read {
     derived: Derived,
     labels: Labels,
+    connections: Connections,
 }
 
 impl Read {
-    fn of(inputs: &Inputs, labels: Labels) -> Self {
+    fn of(inputs: &Inputs, labels: Labels, connections: Connections) -> Self {
         Self {
             derived: derive(inputs, &Override::default()),
             labels,
+            connections,
         }
+    }
+
+    /// A live read of one connection: its cluster is that connection.
+    fn live(inputs: &Inputs, source: &KubeSource) -> Self {
+        let key = SessionKey::new(source.id.clone());
+        Self::of(
+            inputs,
+            Labels::new([(key.clone(), source.context.clone())]),
+            Connections::new(source.id.clone(), [(key, source.id.clone())]),
+        )
     }
 }
 
@@ -150,6 +166,9 @@ pub(crate) struct ApplicationsPage {
     pub(crate) status: Segment,
     _subscription: Subscription,
 }
+
+/// A part to open in Resources, from the open application's page.
+impl EventEmitter<ResourceLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
     pub(crate) fn new(
@@ -298,7 +317,11 @@ impl ApplicationsPage {
                     return;
                 }
                 let inputs = example::inputs(self.variant);
-                let read = Read::of(&inputs, example::labels(&inputs));
+                let read = Read::of(
+                    &inputs,
+                    example::labels(&inputs),
+                    example::connections(&source.id),
+                );
                 if self.example_delay.is_zero() {
                     self.answer(&request, Ok(read), cx);
                 } else {
@@ -312,7 +335,6 @@ impl ApplicationsPage {
             access => {
                 let access = access.clone();
                 let key = SessionKey::new(source.id.clone());
-                let labels = Labels::new([(key.clone(), source.context.clone())]);
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
                     DEADLINE,
@@ -325,7 +347,7 @@ impl ApplicationsPage {
                             sessions: vec![session],
                             stage_naming: None,
                         };
-                        Ok(Read::of(&inputs, labels))
+                        Ok(Read::live(&inputs, &source))
                     },
                 );
                 self.job = Some(job);
@@ -373,10 +395,7 @@ impl ApplicationsPage {
                 sessions: vec![SessionInputs::unread(key.clone(), why)],
                 stage_naming: None,
             };
-            Some(Read::of(
-                &inputs,
-                Labels::new([(key, source.context.clone())]),
-            ))
+            Some(Read::live(&inputs, source))
         };
         self.display = match self.snapshot.data().cloned().or_else(unread) {
             Some(read) => Display::new(&read.derived, &read.labels),
@@ -404,9 +423,7 @@ impl ApplicationsPage {
         match read.and_then(|read| Some((read.derived.find(&id)?, read))) {
             Some((app, read)) => {
                 let stale = self.stale.clone();
-                open.update(cx, |page, cx| {
-                    page.update(app, &read.derived, &read.labels, stale, cx)
-                });
+                open.update(cx, |page, cx| page.update(app, read, stale, cx));
             }
             None => self.close_open(cx),
         }
@@ -451,12 +468,12 @@ impl ApplicationsPage {
         else {
             return;
         };
-        let (derived, labels) = (&read.derived, &read.labels);
         let stale = self.stale.clone();
-        let page = cx.new(|cx| ApplicationPage::new(app, derived, labels, stale, cx));
+        let page = cx.new(|cx| ApplicationPage::new(app, read, stale, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ApplicationEvent::Back => this.close_application(window, cx),
+                ApplicationEvent::Open(link) => cx.emit(link.as_ref().clone()),
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.open = Some((page, subscription));

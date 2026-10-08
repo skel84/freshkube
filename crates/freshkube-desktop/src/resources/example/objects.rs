@@ -86,6 +86,7 @@ pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDo
     let (row, ix) = find(identity, now)?;
     let created = row.created.unwrap_or_default();
     let yaml = match identity.resource.as_str() {
+        _ if acme::holds(&identity.resource, ix) => acme::document(&row, ix)?,
         "replicasets.apps" | "events" | "persistentvolumeclaims" | "persistentvolumes" => {
             let context = identity.connection.strip_prefix("example:")?;
             let object = super::summary::extra_objects(context, &identity.resource, now)
@@ -700,6 +701,7 @@ pub(crate) fn events(identity: &ResourceIdentity, now: i64) -> Vec<ObjectEvent> 
             }
             events
         }
+        _ if acme::holds(&identity.resource, ix) => Vec::new(),
         "deployments.apps" => {
             let (_, app, ..) = WORKLOADS[ix % WORKLOADS.len()];
             vec![event(

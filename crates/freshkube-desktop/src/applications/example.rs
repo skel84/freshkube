@@ -3,10 +3,13 @@
 //! look: nothing is labelled as Argo CD's, so in `argocd`.
 //! Debug builds reshape it for captures with `FRESHKUBE_APPLICATIONS`.
 use freshkube_core::applications::read::argo_namespaces;
-use freshkube_core::applications::{ArgoFound, ArgoScope, Inputs, SessionInputs, example as acme};
+use freshkube_core::applications::{
+    ArgoFound, ArgoScope, Inputs, SessionInputs, SessionKey, example as acme,
+};
 use freshkube_core::delivery::source::{Source, Truncation};
 
 use super::display::Labels;
+use super::links::Connections;
 
 /// A shape of the example, for captures and tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -158,4 +161,11 @@ pub(crate) fn labels(inputs: &Inputs) -> Labels {
             .iter()
             .map(|s| (s.key.clone(), s.key.0.clone())),
     )
+}
+
+/// `core-fra` is the example cluster that is open, whose Resources list its
+/// objects; acme's other clusters are no connection, so their parts don't
+/// open.
+pub(crate) fn connections(open: &str) -> Connections {
+    Connections::new(open, [(SessionKey::new(acme::CORE), open.to_owned())])
 }
