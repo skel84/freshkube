@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 
 use crate::palette::palette;
-use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, status_glyph, toolbar_label};
+use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, dp_px, status_glyph, toolbar_label};
 
 /// Left and right padding of a [`padded`] page.
 pub const PAGE_PADDING: f32 = 26.;
@@ -40,6 +40,40 @@ pub const TOOLBAR_HEIGHT: f32 = 38.;
 pub const APP_HEADER_HEIGHT: f32 = 52.;
 /// The app frame's status bar, below every page, in dp.
 pub const STATUS_BAR_HEIGHT: f32 = 28.;
+/// The icon rail's width, and the navigation column's beside it, in dp.
+pub const RAIL_WIDTH: f32 = 64.;
+pub const COLUMN_WIDTH: f32 = 208.;
+thread_local! {
+    /// The width of the navigation beside the page in dp: the rail, and the
+    /// column when it shows. Windows draw on one thread, and the shell sets
+    /// it whenever the column shows or hides.
+    static CHROME_WIDTH: Cell<f32> = const { Cell::new(RAIL_WIDTH + COLUMN_WIDTH) };
+}
+
+pub fn set_chrome_width(width: f32) {
+    CHROME_WIDTH.set(width);
+}
+
+/// The width of a page in `dp` (pixels at the default text size): the
+/// window less the rail and column. A page without margins has all of it,
+/// so its breakpoints compare this; a larger text size leaves less room, as
+/// a narrower window would.
+pub fn page_width(window: &Window) -> f32 {
+    let viewport = window.viewport_size().width / dp_px(1., window);
+    (viewport - CHROME_WIDTH.get()).max(240.)
+}
+
+/// The width inside a page's [`inset`], such as its header's, in `dp`.
+pub fn inset_width(window: &Window) -> f32 {
+    (page_width(window) - PANE_PADDING * 2.).max(240.)
+}
+
+/// The width inside a [padded] page's margins in `dp`, for choosing between
+/// side-by-side and stacked layouts there.
+pub fn content_width(window: &Window) -> f32 {
+    (page_width(window) - PAGE_PADDING * 2.).max(240.)
+}
+
 /// The header's filter beside the title, at its full width.
 const FILTER_WIDTH: f32 = 150.;
 /// The filter's width when the row is full with every control folded.
