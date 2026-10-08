@@ -94,6 +94,12 @@ impl Pilot {
     }
 
     pub(super) fn ensure_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.ensure_summary_session(window, cx);
+        // A link into this entry waits for its source, which is known here.
+        self.open_pending_link(window, cx);
+    }
+
+    fn ensure_summary_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(source) = self.kube_source() else {
             return;
         };
