@@ -80,7 +80,7 @@ impl Render for Pilot {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .key_context("Freshkube")
+            .key_context(freshkube_ui::page::SHELL_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
             .on_action(

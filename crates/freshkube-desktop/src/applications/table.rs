@@ -240,13 +240,13 @@ impl TableSource for ApplicationsPage {
         key: &SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<kit::RowAction> {
+    ) -> Vec<freshkube_ui::menu::MenuAction> {
         if self.selected.as_ref() != Some(key) {
             self.selected = Some(key.clone());
             cx.notify();
         }
         self.focus(window, cx);
-        vec![kit::RowAction::new("Open", OpenApplication)]
+        vec![freshkube_ui::menu::MenuAction::new("Open", OpenApplication)]
     }
 
     fn loading(&self) -> Option<&kit::LoadingRows> {

@@ -101,20 +101,19 @@ impl Pilot {
         } else {
             header
         };
-        let refresh = page::handler(cx, |view: &mut Self, window, cx| view.refresh(window, cx));
         let button = Button::new("nodes-refresh")
             .ghost()
             .small()
             .size(dp(crate::ui::CONTROL_HEIGHT))
             .icon(IconName::RefreshCw)
             .accessibility_label("Refresh nodes")
-            .tooltip("Refresh nodes")
-            .on_click({
-                let refresh = refresh.clone();
-                move |_, window, cx| refresh(window, cx)
-            });
+            .tooltip_with_action("Refresh nodes", &page::Refresh, Some(page::SHELL_CONTEXT))
+            .on_click(page::dispatch(page::Refresh, &self.node_focus));
         header
-            .foldable(button, page::item("Refresh", refresh))
+            .foldable(
+                button,
+                page::action_item("Refresh", page::Refresh, &self.node_focus),
+            )
             .render(window, cx)
     }
 }

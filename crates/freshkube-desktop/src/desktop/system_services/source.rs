@@ -220,12 +220,12 @@ impl TableSource for SystemServices {
         key: &SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<table::RowAction> {
+    ) -> Vec<menu::MenuAction> {
         self.select(key.clone(), cx);
         self.focus(window, cx);
         vec![
-            table::RowAction::new("Logs", ServiceLogs),
-            table::RowAction::new("Open node", OpenServiceNode),
+            menu::MenuAction::new("Logs", ServiceLogs),
+            menu::MenuAction::new("Open node", OpenServiceNode),
         ]
     }
 

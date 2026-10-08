@@ -6,6 +6,8 @@ mod gate_tests;
 mod kubeconfig;
 mod kubernetes_only;
 mod kubernetes_summary;
+#[cfg(test)]
+mod menu_tests;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -109,11 +111,12 @@ pub(crate) enum Appearance {
     Dark,
 }
 
+pub(crate) use freshkube_ui::page::Refresh;
+
 gpui_kit::actions!(
     pilot,
     [
         Quit,
-        Refresh,
         ShowOverview,
         ShowNodes,
         ShowNamespaces,
@@ -148,10 +151,7 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             // Kit's animations draw still when the OS asks for reduced motion.
             // Tests never run this, so they keep the reduced motion they set.
             freshkube_ui::motion::follow_system(cx);
-            cx.bind_keys([
-                KeyBinding::new("secondary-q", Quit, None),
-                KeyBinding::new("secondary-r", Refresh, Some("Freshkube")),
-            ]);
+            cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
             cx.on_action(|_: &Quit, cx| {
                 // Quitting mid-operation would abandon a half-done change,
                 // and quitting ends a shell, so it asks first.
@@ -495,6 +495,11 @@ impl Pilot {
     fn bind_shell_keys(cx: &mut App) {
         freshkube_ui::source_list::bind_keys(cx);
         cx.bind_keys([
+            KeyBinding::new(
+                "secondary-r",
+                Refresh,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
             KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
             KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
             KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
@@ -557,8 +562,9 @@ impl Pilot {
             KeyBinding::new("up", settings::PreviousCluster, Some(settings::CONTEXT)),
             KeyBinding::new("escape", settings::ClearCluster, Some(settings::CONTEXT)),
             KeyBinding::new("a", settings::AddCluster, Some(settings::CONTEXT)),
-            KeyBinding::new("e", settings::EditCluster, Some(settings::CONTEXT)),
+            // A key shows its last binding: E, as Enter on a list opens.
             KeyBinding::new("enter", settings::EditCluster, Some(settings::CONTEXT)),
+            KeyBinding::new("e", settings::EditCluster, Some(settings::CONTEXT)),
             KeyBinding::new(
                 "backspace",
                 settings::RemoveCluster,

@@ -233,7 +233,7 @@ pub trait TableSource: Sized + 'static {
         _key: &Self::Key,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> Vec<super::RowAction> {
+    ) -> Vec<crate::menu::MenuAction> {
         Vec::new()
     }
     /// What replaces the rows until the first answer: the
@@ -730,7 +730,7 @@ fn render_line<S: TableSource>(
                         view.selected_key() == Some(&key) && view.line_of(&key).is_some()
                     })
                 };
-                super::menu::row_menu(menu, actions, &focus, live, cx)
+                crate::menu::actions(menu, actions, &focus, live, window, cx)
             })
             .into_any_element(),
         None => element.into_any_element(),

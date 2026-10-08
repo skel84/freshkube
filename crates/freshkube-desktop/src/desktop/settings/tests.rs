@@ -115,7 +115,7 @@ fn a_refused_file_says_why_and_lists_nothing(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-pub(super) fn launch(
+pub(crate) fn launch(
     cx: &mut TestAppContext,
     directory: &std::path::Path,
 ) -> (

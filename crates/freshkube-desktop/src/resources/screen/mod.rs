@@ -493,6 +493,11 @@ impl ResourcesScreen {
         self.restart(window, cx);
     }
 
+    /// The list's read: a refresh, or any read from scratch, starts the next.
+    #[cfg(test)]
+    pub(crate) fn read_epoch(&self) -> u64 {
+        self.store.epoch()
+    }
     #[cfg(test)]
     pub(crate) fn filter_value(&self, cx: &App) -> String {
         self.query.read(cx).value().to_string()

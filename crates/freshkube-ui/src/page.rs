@@ -11,12 +11,26 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui_kit::{
-    Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, Pixels, Point, SharedString,
-    Stateful, TestSupportExt, Window, canvas, div, point, px,
+    Action, Anchor, AnyElement, App, ClickEvent, Context, Div, ElementId, FocusHandle, Pixels,
+    Point, SharedString, Stateful, TestSupportExt, Window, canvas, div, point, px,
 };
 
+use crate::menu::{self, MenuAction};
 use crate::palette::palette;
 use crate::ui::{CONTROL_HEIGHT, Tone, badge_dot, dp, dp_px, status_glyph, toolbar_label};
+
+gpui_kit::actions!(
+    pilot,
+    [
+        /// Reads the shown page again: `⌘R`, and a page's Refresh button
+        /// or its folded entry, wherever the page's crate lives.
+        Refresh
+    ]
+);
+
+/// The app shell's key context, where [`Refresh`]'s key is bound: a
+/// Refresh button's `tooltip_with_action` names it to find the key.
+pub const SHELL_CONTEXT: &str = "Freshkube";
 
 /// Left and right padding of a [`padded`] page.
 pub const PAGE_PADDING: f32 = 26.;
@@ -249,6 +263,49 @@ pub fn checked_item(label: impl Into<SharedString>, checked: bool, handler: Hand
                 .on_click(move |_, window, cx| handler(window, cx)),
         )
     })
+}
+
+/// The folded form of a button whose command has a key: `label`, running
+/// `action` on `focus`, the page's list where the key is bound, so the
+/// entry shows the key the button's tooltip names.
+pub fn action_item(
+    label: impl Into<SharedString>,
+    action: impl Action,
+    focus: &FocusHandle,
+) -> MenuItems {
+    action_entry(MenuAction::new(label, action), focus)
+}
+
+/// [`action_item`] for a button that shows whether it's on: checked when
+/// it is.
+pub fn checked_action_item(
+    label: impl Into<SharedString>,
+    checked: bool,
+    action: impl Action,
+    focus: &FocusHandle,
+) -> MenuItems {
+    action_entry(MenuAction::new(label, action).checked(checked), focus)
+}
+
+/// The folded form of a button whose command has a key, as `entry` says,
+/// such as one disabled while nothing is selected; it keeps its key.
+pub fn action_entry(entry: MenuAction, focus: &FocusHandle) -> MenuItems {
+    let focus = focus.clone();
+    Rc::new(move |menu, window, cx| {
+        menu::actions(menu, vec![entry.clone()], &focus, |_| true, window, cx)
+    })
+}
+
+/// A button's click that runs `action` on `focus`, the page's, so the
+/// button, its folded entry and its key are one action: a Refresh button's
+/// click is ⌘R's. Give the button `tooltip_with_action` with the same
+/// action, so its tooltip names the key.
+pub fn dispatch(
+    action: impl Action,
+    focus: &FocusHandle,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    let focus = focus.clone();
+    move |_, window, cx| focus.dispatch_action(&action, window, cx)
 }
 
 /// The folded form of a button that is disabled: `label`, greyed.
@@ -855,6 +912,9 @@ impl PageHeader {
                         .dropdown_menu_with_anchor(
                             Anchor::TopRight,
                             move |mut menu, window, cx| {
+                                // Escape gives the keyboard back, also
+                                // when no folded control has a key.
+                                menu::return_focus(None, window, cx);
                                 for form in &forms {
                                     menu = form(menu, window, cx);
                                 }
