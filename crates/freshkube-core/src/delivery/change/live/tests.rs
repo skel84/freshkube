@@ -552,6 +552,13 @@ fn links_out(change: &Change) -> Vec<(String, String, Option<String>, Option<Str
                         pod.cluster, pod.namespace, pod.name
                     )),
                 ),
+                Target::Revision { deployment, hash } => (
+                    "Coroot revision".to_owned(),
+                    Some(format!(
+                        "{}/{}/{} {hash:?}",
+                        deployment.cluster, deployment.namespace, deployment.name
+                    )),
+                ),
                 Target::Resource { .. } => continue,
             };
             out.push((hop.key.clone(), label, to, action.disabled.clone()));
@@ -943,5 +950,104 @@ async fn the_logs_are_the_task_that_ended_last() {
     assert_eq!(
         link_out(&links, "Logs of build").2.as_deref(),
         Some("cluster-key/acme-builds/storefront-push-x-build-pod Some(\"step-build\")")
+    );
+}
+
+/// [`one_cluster`] with its Application deploying the storefront
+/// Deployment, whose current ReplicaSet is `sets`' revision `2`.
+fn deployed(sets: Vec<Value>) -> FixtureReader {
+    let image = format!("{REPO}@{NEW}");
+    one_cluster(|world| {
+        let mut app = application(Some(IN_CLUSTER_SERVER));
+        app["status"]["resources"] = json!([
+            {"group": "apps", "kind": "Deployment", "namespace": "shop", "name": "storefront"}]);
+        world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
+        world.environment = FixtureReader::default()
+            .with("deployments", vec![deployment(&image)])
+            .with("replicasets", sets)
+            .with(
+                "pods",
+                vec![deployment_pod(
+                    "storefront-6fdf-x",
+                    "6fdf",
+                    &image,
+                    &format!("docker-pullable://{image}"),
+                    true,
+                )],
+            );
+    })
+}
+
+/// The hop's field labelled `label`, as shown.
+fn field<'a>(hop: &'a Row, label: &str) -> Option<&'a Shown> {
+    let Shows::Hop(detail) = &hop.shows else {
+        return None;
+    };
+    detail
+        .fields
+        .iter()
+        .find(|field| field.label == label)
+        .map(|field| &field.value)
+}
+
+#[tokio::test]
+async fn a_deployment_names_coroots_revision_by_its_current_replica_sets_hash() {
+    let image = format!("{REPO}@{NEW}");
+    let reader = deployed(vec![
+        deployment_set("4b1c", "1", &image, 0, 0),
+        deployment_set("6fdf", "2", &image, 1, 1),
+    ]);
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+    let (key, _, to, disabled) = link_out(&links, "Coroot revision");
+    assert_eq!(
+        to.as_deref(),
+        Some("cluster-key/shop/storefront Some(\"6fdf\")"),
+        "the current revision's hash, not an older one's"
+    );
+    assert_eq!(disabled, &None);
+    let hop = change.hop(key).expect("the Deployment's hop");
+    assert!(hop.name.starts_with("Deployment"), "{}", hop.name);
+    assert_eq!(
+        field(hop, "Pod template hash"),
+        Some(&Shown::Mono("6fdf".into()))
+    );
+}
+
+#[tokio::test]
+async fn a_deployment_without_a_current_replica_set_says_why_its_revision_isnt_known() {
+    let image = format!("{REPO}@{NEW}");
+    let reader = deployed(vec![deployment_set("4b1c", "1", &image, 0, 0)]);
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+    let (key, _, to, disabled) = link_out(&links, "Coroot revision");
+    assert_eq!(to.as_deref(), Some("cluster-key/shop/storefront None"));
+    assert_eq!(
+        disabled.as_deref(),
+        Some(
+            "No ReplicaSet the Deployment owns carries its current revision 2, so Coroot's \
+             revision of it isn't known."
+        )
+    );
+    let hop = change.hop(key).expect("the Deployment's hop");
+    assert_eq!(field(hop, "Pod template hash"), None);
+}
+
+#[tokio::test]
+async fn a_rollouts_revision_is_greyed_out_since_coroot_keeps_deployments_only() {
+    let reader = one_cluster(|_| {});
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+    let (key, _, _, disabled) = link_out(&links, "Coroot revision");
+    assert_eq!(key, "dev-rollout-1");
+    assert_eq!(
+        disabled.as_deref(),
+        Some("Coroot keeps revisions of Deployments only, and this is an Argo Rollout.")
     );
 }

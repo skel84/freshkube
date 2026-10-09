@@ -176,6 +176,14 @@ pub enum Target {
         pod: Object,
         container: Option<String>,
     },
+    /// The revision Coroot keeps of a Deployment, in Observability: the one
+    /// its current ReplicaSet's pod-template hash names, as Coroot names a
+    /// revision by that hash. `None` when the hash isn't known; the action
+    /// says why.
+    Revision {
+        deployment: Object,
+        hash: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -196,6 +204,22 @@ impl Action {
     pub fn disabled(mut self, why: impl Into<String>) -> Self {
         self.disabled = Some(why.into());
         self
+    }
+
+    /// Coroot's revision of `deployment` that `hash` names, or greyed out
+    /// with why the hash isn't known.
+    pub fn revision(deployment: Object, hash: Result<String, String>) -> Self {
+        match hash {
+            Ok(hash) => Self::new(Target::Revision {
+                deployment,
+                hash: Some(hash),
+            }),
+            Err(why) => Self::new(Target::Revision {
+                deployment,
+                hash: None,
+            })
+            .disabled(why),
+        }
     }
 
     /// A tool's page at `address`, or greyed out with why there's none.

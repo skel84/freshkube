@@ -27,6 +27,12 @@ pub const KARGO_PAGE: &str = "https://kargo.example.test";
 pub const ARGOCD_PAGE: &str = "https://argocd.example.test";
 
 const DIGEST: &str = "sha256:9c4e…b21a";
+/// The pod-template hash of checkout-api's ReplicaSet that runs this
+/// change: the same template on dev and stage, so the same hash, which
+/// Coroot's example names its revision by.
+pub const POD_HASH: &str = "5d8f7c9b6";
+/// The checkout-api Deployment each environment runs.
+pub const DEPLOYMENT: &str = "checkout-api";
 const COMMIT: &str = "a1f3c9e";
 /// The pull request's head commit, which its pull_request run built.
 const HEAD: &str = "7d2e04b";
@@ -127,6 +133,17 @@ fn object(cluster: &str, group: &str, kind: &str, namespace: &str, name: &str) -
         namespace: namespace.into(),
         name: name.into(),
     }
+}
+
+/// checkout-api's Deployment on `cluster`.
+fn deployment(cluster: &str) -> Object {
+    object(
+        cluster,
+        deployments::GROUP,
+        "Deployment",
+        PROJECT,
+        DEPLOYMENT,
+    )
 }
 
 fn resource(what: &str, object: Object) -> Action {
@@ -408,6 +425,7 @@ fn deployed(
                     text("Running", pods),
                     mono("Image", "checkout-api:1.43.0 (tag, shown only)"),
                     mono("Image ID", DIGEST),
+                    mono("Pod template hash", POD_HASH),
                 ],
                 link: link(
                     Confidence::Confirmed,
@@ -418,16 +436,10 @@ fn deployed(
                     "What runs is read from the pods, not from the plan, and the digest matches.",
                 ),
                 unlinked: None,
-                actions: vec![resource(
-                    "the Deployment",
-                    object(
-                        cluster,
-                        deployments::GROUP,
-                        "Deployment",
-                        PROJECT,
-                        "checkout-api",
-                    ),
-                )],
+                actions: vec![
+                    resource("the Deployment", deployment(cluster)),
+                    Action::revision(deployment(cluster), Ok(POD_HASH.into())),
+                ],
             })),
         },
     ]

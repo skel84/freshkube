@@ -12,6 +12,7 @@ use super::gates::{self, Row, instant};
 use super::links;
 use super::pages::Pages;
 use crate::delivery::argocd::DestinationMatch;
+use crate::delivery::deployments::current_set;
 use crate::delivery::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, freight_links};
 use crate::delivery::kargo::{self, Freight, Stage as KargoStage};
 use crate::delivery::observation::{ObjectRef, Observation};
@@ -659,6 +660,21 @@ fn link_hop(
             value: Value::Mono(name.into()),
         });
     }
+    let revision = (!missing)
+        .then(|| revision(place, evidence, link))
+        .flatten();
+    if let Some(Action {
+        target: Target::Revision {
+            hash: Some(hash), ..
+        },
+        ..
+    }) = &revision
+    {
+        fields.push(Field {
+            label: "Pod template hash".into(),
+            value: Value::Mono(hash.clone()),
+        });
+    }
     if link.key != Key::None {
         fields.push(Field {
             label: "Joined on".into(),
@@ -681,6 +697,7 @@ fn link_hop(
                 })
             }),
     );
+    actions.extend(revision);
     let notice = (link.confidence == Confidence::Unknown).then(|| Notice {
         state: Warning,
         lead: "Not joined.".into(),
@@ -716,6 +733,53 @@ fn link_hop(
             actions,
         })),
     }
+}
+
+/// Coroot's revision of the workload a link leads to: a Deployment's is
+/// the one its current ReplicaSet's pod-template hash names. Coroot keeps
+/// revisions of Deployments only, so a Rollout's says so.
+fn revision(place: &Place, evidence: &Evidence, link: &Link) -> Option<Action> {
+    let seen = link
+        .evidence
+        .iter()
+        .find(|seen| Some(seen.object.kind.as_str()) == kind_of(link.to))?;
+    let workload = object(place, &seen.object);
+    match link.to {
+        Joined::Deployment => Some(Action::revision(
+            workload,
+            current_hash(evidence, link)
+                .map_err(|why| sentence(&format!("{why}, so Coroot's revision of it isn't known"))),
+        )),
+        Joined::Rollout => Some(
+            Action::new(Target::Revision {
+                deployment: workload,
+                hash: None,
+            })
+            .disabled("Coroot keeps revisions of Deployments only, and this is an Argo Rollout."),
+        ),
+        _ => None,
+    }
+}
+
+/// The pod-template hash of the current ReplicaSet of the Deployment a
+/// link leads to, or why it isn't known.
+fn current_hash(evidence: &Evidence, link: &Link) -> Result<String, String> {
+    let deployment = evidence
+        .deployments
+        .read()
+        .and_then(|all| {
+            all.iter()
+                .find(|d| format!("{}/{}", d.namespace, d.name) == link.subject)
+        })
+        .ok_or("the Deployment wasn't read")?;
+    let sets = evidence
+        .deployment_sets
+        .read()
+        .ok_or("the Deployment's ReplicaSets couldn't be read")?;
+    let set = current_set(deployment, sets)?;
+    set.pod_hash
+        .clone()
+        .ok_or_else(|| "its current ReplicaSet carries no pod-template hash".into())
 }
 
 /// The builds of the Freight's commit: every link the join made before it
