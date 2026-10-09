@@ -502,6 +502,15 @@ impl ResourcesScreen {
     pub(crate) fn filter_value(&self, cx: &App) -> String {
         self.query.read(cx).value().to_string()
     }
+    /// The rows the list holds, in the store's order.
+    #[cfg(test)]
+    pub(crate) fn store_identities(&self) -> Vec<ResourceIdentity> {
+        self.store
+            .entries()
+            .iter()
+            .map(|entry| entry.row().identity.clone())
+            .collect()
+    }
     #[cfg(test)]
     pub(crate) fn selected_row(&self) -> Option<&ResourceIdentity> {
         self.projection.selected()

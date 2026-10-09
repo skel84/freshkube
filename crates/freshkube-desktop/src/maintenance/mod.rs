@@ -197,11 +197,11 @@ impl MaintenanceView {
         // The operation slot's holder shows in the footer.
         let operations = Operations::global(cx);
         subscriptions.push(cx.observe(&operations, |_, _, cx| cx.notify()));
-        // The traffic lights follow the header's height as the text size
+        // The window's controls follow the header's height as the text size
         // changes.
         subscriptions.push(
             cx.observe_global_in::<gpui_kit::component::Theme>(window, |_, window, cx| {
-                crate::desktop::place_traffic_lights(window, cx)
+                crate::desktop::place_window_controls(window, cx)
             }),
         );
         subscriptions.push(cx.observe_window_appearance(window, |view, window, cx| {

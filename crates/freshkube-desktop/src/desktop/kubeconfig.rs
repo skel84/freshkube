@@ -35,10 +35,15 @@ pub(super) struct KubeconfigDraft {
     pub(super) mode: KubeconfigMode,
     pub(super) path: Option<PathBuf>,
     pub(super) inspection: Option<Result<KubeconfigFileInfo, String>>,
-    inspecting: bool,
+    pub(super) inspecting: bool,
     job: Option<OwnedJob>,
     /// Held only to keep the inspection alive; replacing it cancels it.
     _task: Option<Task<()>>,
+}
+
+/// What a held link is told when its entry's own kubeconfig can't be used.
+pub(super) fn unusable_kubeconfig_notice(object: &str, entry: &str, why: &str) -> String {
+    format!("Can’t open {object}: {entry}’s kubeconfig can’t be used ({why})")
 }
 
 impl Pilot {
@@ -65,6 +70,37 @@ impl Pilot {
             this.refresh(window, cx);
             cx.notify();
         });
+    }
+
+    /// The entry's own kubeconfig can't be read or lacks its context: the
+    /// source a held link waits for will never be the entry's, so say so.
+    fn drop_link_for_unusable_kubeconfig(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_link.take() else {
+            return;
+        };
+        let why = match &self.kubeconfig_draft.inspection {
+            Some(Err(error)) => error.clone(),
+            _ => "it names no usable context".into(),
+        };
+        self.tell(
+            unusable_kubeconfig_notice(&pending.object.name, &pending.entry, &why),
+            window,
+            cx,
+        );
+    }
+
+    /// The entry's own kubeconfig, applied as the entry opens: it stays the
+    /// active entry, and no shell question is asked (the switch asked).
+    fn apply_entry_kubeconfig(
+        &mut self,
+        selection: KubeconfigSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.kubeconfig = selection;
+        self.invalidate_target(window, cx);
+        self.refresh(window, cx);
+        cx.notify();
     }
 
     /// Automatic and Talos apply at once; File applies once a file with a
@@ -164,6 +200,31 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.inspect_kubeconfig(path, context, false, window, cx);
+    }
+
+    /// `inspect_kubeconfig_file` for the entry being opened: its own file
+    /// and context apply without leaving the entry or asking about shells
+    /// (the switch asked), and not at all if the entry moved on meanwhile.
+    pub(super) fn inspect_entry_kubeconfig(
+        &mut self,
+        path: PathBuf,
+        context: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.inspect_kubeconfig(path, Some(context), true, window, cx);
+    }
+
+    fn inspect_kubeconfig(
+        &mut self,
+        path: PathBuf,
+        context: Option<String>,
+        for_entry: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.entry_generation;
         let file = path.clone();
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
@@ -182,9 +243,14 @@ impl Pilot {
                 .await
                 .unwrap_or_else(|_| Err("Reading the kubeconfig stopped unexpectedly".into()));
             _ = this.update_in(cx, |view, window, cx| {
+                // Finished either way, so a draft the entry left behind
+                // doesn't read as still inspecting.
                 let draft = &mut view.kubeconfig_draft;
                 draft.job = None;
                 draft.inspecting = false;
+                if for_entry && generation != view.entry_generation {
+                    return;
+                }
                 draft.inspection = Some(result);
                 if let Some(wanted) = &context
                     && let Some(Ok(info)) = &draft.inspection
@@ -195,7 +261,13 @@ impl Pilot {
                     )));
                 }
                 if let Some(selection) = view.kubeconfig_file_selection(context.clone()) {
-                    view.apply_kubeconfig(selection, window, cx);
+                    if for_entry {
+                        view.apply_entry_kubeconfig(selection, window, cx);
+                    } else {
+                        view.apply_kubeconfig(selection, window, cx);
+                    }
+                } else if for_entry {
+                    view.drop_link_for_unusable_kubeconfig(window, cx);
                 }
                 cx.notify();
             });

@@ -821,7 +821,7 @@ fn a_part_in_an_unmapped_acme_cluster_is_refused_and_nothing_moves(cx: &mut Test
             Some("prod-lon isn't the open cluster, so its objects don't open in Resources".into())
         );
         assert_eq!(
-            crate::desktop::refused_links().last().map(String::as_str),
+            view.read(cx).told.last().map(String::as_str),
             Some("Can’t open checkout-worker: it belongs to a cluster that isn’t open")
         );
         assert_eq!(view.read(cx).applications().1, Page::Applications);

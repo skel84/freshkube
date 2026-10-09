@@ -188,6 +188,114 @@ fn steps() -> impl IntoElement {
 EOF
 expect 1 "a chain of animations outside ui::motion fails" "motion crates/freshkube-desktop/src/steps.rs:2:"
 
+tree
+mkdir -p "$work/tree/crates/freshkube-ui/src/motion" "$work/tree/crates/freshkube-core/src"
+cat >"$work/tree/crates/freshkube-ui/src/platform.rs" <<'EOF'
+pub const fn current() -> Platform { if cfg!(target_os = "macos") { MacOs } else { Linux } }
+EOF
+cat >"$work/tree/crates/freshkube-ui/src/motion/system.rs" <<'EOF'
+#[cfg(target_os = "macos")]
+mod platform {}
+EOF
+cat >"$work/tree/crates/freshkube-core/src/secrets.rs" <<'EOF'
+#[cfg(target_os = "macos")]
+fn keychain() {}
+EOF
+page tests.rs <<'EOF'
+const COPY: &str = if cfg!(target_os = "macos") { "cmd-c" } else { "ctrl-shift-c" };
+EOF
+page files.rs <<'EOF'
+#[cfg(unix)]
+fn private(options: &mut OpenOptions) { options.mode(0o600); }
+EOF
+expect 0 "the platform module, the OS readers, the domain crates, tests and cfg(unix) may test the platform"
+
+tree
+page header.rs <<'EOF'
+fn header() -> TitleBar {
+    TitleBar::new().when(cfg!(target_os = "macos"), |bar| bar.pl(px(80.)))
+}
+EOF
+expect 1 "a page testing the platform fails" "platform crates/freshkube-desktop/src/header.rs:2:"
+
+tree
+cat >"$work/tree/crates/freshkube-ui/src/ui.rs" <<'EOF'
+#[cfg(not(windows))]
+pub fn modifier() -> &'static str { "⌘" }
+EOF
+expect 1 "a shared component testing the platform fails too" "platform crates/freshkube-ui/src/ui.rs:1:"
+
+tree
+cat >"$work/tree/crates/freshkube-terminal/src/input.rs" <<'EOF'
+#[cfg(any(target_os = "linux", windows))]
+fn bind() {}
+EOF
+expect 1 "the terminal testing the platform fails" "platform crates/freshkube-terminal/src/input.rs:1:"
+
+tree
+page nested.rs <<'EOF'
+#[cfg(all(not(test), target_os = "macos"))]
+fn bind() {}
+EOF
+expect 1 "a target_os nested in a cfg fails" "platform crates/freshkube-desktop/src/nested.rs:1:"
+
+tree
+page split.rs <<'EOF'
+#[cfg(any(
+    unix,
+    windows
+))]
+fn bind() {}
+EOF
+expect 1 "windows in a cfg split over lines fails" "platform crates/freshkube-desktop/src/split.rs:3:"
+
+tree
+page attr.rs <<'EOF'
+#[cfg_attr(windows, path = "keys_windows.rs")]
+mod keys;
+EOF
+expect 1 "windows in a cfg_attr fails" "platform crates/freshkube-desktop/src/attr.rs:1:"
+
+tree
+page vendor.rs <<'EOF'
+const MAC: bool = cfg!(target_vendor = "apple");
+EOF
+expect 1 "target_vendor fails" "platform crates/freshkube-desktop/src/vendor.rs:1:"
+
+tree
+page family.rs <<'EOF'
+#[cfg(target_family = "wasm")]
+fn bind() {}
+EOF
+expect 1 "target_family fails" "platform crates/freshkube-desktop/src/family.rs:1:"
+
+tree
+page os.rs <<'EOF'
+fn mac() -> bool { std::env::consts::OS == "macos" }
+EOF
+expect 1 "std::env::consts::OS fails" "platform crates/freshkube-desktop/src/os.rs:1:"
+
+tree
+page notes.rs <<'EOF'
+// Not cfg(target_os = "macos"): the platform module answers.
+fn windows() -> usize { 3 }
+#[cfg(test)]
+fn open_windows() {}
+EOF
+mkdir -p "$work/tree/src"
+cat >"$work/tree/src/main.rs" <<'EOF'
+#[cfg(all(windows, not(debug_assertions)))]
+fn attach_console() {}
+EOF
+expect 0 "comments, windows outside a cfg and the binary's console pass"
+
+tree
+mkdir -p "$work/tree/crates/freshkube-desktop"
+cat >"$work/tree/crates/freshkube-desktop/build.rs" <<'EOF'
+fn main() { let _mac = cfg!(target_os = "macos"); }
+EOF
+expect 1 "a crate's build script is scanned" "platform crates/freshkube-desktop/build.rs:1:"
+
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"
   exit 1

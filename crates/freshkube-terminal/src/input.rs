@@ -32,28 +32,13 @@ struct Terminals {
 
 impl Global for Terminals {}
 
-/// Display label for returning focus to the terminal's owner.
-pub fn leave_shortcut_label() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "⌘Esc"
-    } else {
-        "Ctrl+Shift+Q"
-    }
-}
-
 pub(super) fn register(view: WeakEntity<TerminalView>, cx: &mut App) {
     if !cx.has_global::<Terminals>() {
-        #[cfg(target_os = "macos")]
+        let keys = freshkube_ui::platform::terminal_keys();
         cx.bind_keys([
-            KeyBinding::new("secondary-c", CopySelection, Some(CONTEXT)),
-            KeyBinding::new("secondary-v", PasteClipboard, Some(CONTEXT)),
-            KeyBinding::new("secondary-escape", LeaveTerminal, Some(CONTEXT)),
-        ]);
-        #[cfg(not(target_os = "macos"))]
-        cx.bind_keys([
-            KeyBinding::new("ctrl-shift-c", CopySelection, Some(CONTEXT)),
-            KeyBinding::new("ctrl-shift-v", PasteClipboard, Some(CONTEXT)),
-            KeyBinding::new("ctrl-shift-q", LeaveTerminal, Some(CONTEXT)),
+            KeyBinding::new(keys.copy, CopySelection, Some(CONTEXT)),
+            KeyBinding::new(keys.paste, PasteClipboard, Some(CONTEXT)),
+            KeyBinding::new(keys.leave, LeaveTerminal, Some(CONTEXT)),
         ]);
         let interceptor = cx.intercept_keystrokes(intercept);
         cx.set_global(Terminals {
@@ -67,8 +52,7 @@ pub(super) fn register(view: WeakEntity<TerminalView>, cx: &mut App) {
 }
 
 fn is_shortcut(keystroke: &Keystroke) -> bool {
-    let modifiers = &keystroke.modifiers;
-    modifiers.platform || (cfg!(not(target_os = "macos")) && modifiers.control && modifiers.shift)
+    freshkube_ui::platform::terminal_keys().is_shortcut(&keystroke.modifiers)
 }
 
 /// Runs before any binding: a key for a focused terminal goes to it, unless
