@@ -773,13 +773,14 @@ pub const IN_CLUSTER_SERVER: &str = "https://kubernetes.default.svc";
 
 /// How a destination that matches no context says it could be: by the
 /// spike's flags, or in the app's Settings.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum MapHint {
     /// `--known-as` and `--known-as-name`.
     #[default]
     Flags,
-    /// Settings › Workspace, where the contexts are workspace clusters.
-    Settings,
+    /// Settings › Workspace, where the contexts are workspace clusters, of
+    /// which these are the ones the workspace lists.
+    Settings { listed: Vec<String> },
 }
 
 /// How an Application's destination matches the kubeconfig contexts. Several

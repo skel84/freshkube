@@ -237,12 +237,22 @@ async fn an_application_in_a_cluster_that_isnt_read_leaves_its_pods_unknown() {
             "server https://env-a.example:6443 isn't mapped to a workspace cluster".into()
         )
     );
+    // Until Settings can map it, the reasons keep the spike's words.
+    assert!(
+        change
+            .hops
+            .iter()
+            .any(|hop| hop.detail.contains("--known-as")),
+        "{:#?}",
+        change.hops
+    );
+    let change = read_mapped(Some("https://env-a.example:6443"), mapped(&[])).await;
     assert!(
         change
             .hops
             .iter()
             .any(|hop| hop.detail.contains("map it in Settings › Workspace")),
-        "the app says where to map it, not the spike's flags: {:#?}",
+        "with Settings, the app says where to map it, not the spike's flags: {:#?}",
         change.hops
     );
     assert!(
@@ -562,7 +572,7 @@ fn links_out(change: &Change) -> Vec<(String, String, Option<String>, Option<Str
                         pod.cluster, pod.namespace, pod.name
                     )),
                 ),
-                Target::Resource { .. } => continue,
+                Target::Resource { .. } | Target::OnEntry { .. } => continue,
             };
             out.push((hop.key.clone(), label, to, action.disabled.clone()));
         }
@@ -958,22 +968,29 @@ async fn the_logs_are_the_task_that_ended_last() {
 
 /// The workspace `core` (open), `prod` and `stage`, with these rows.
 fn mapped(rows: &[(Key, &str)]) -> Mapping {
+    // The open entry's id differs from the place's label, so a test can
+    // tell which one a row names.
     Mapping {
-        open: Some("core".into()),
-        entries: vec!["core".into(), "prod".into(), "stage".into()],
+        open: Some("home".into()),
+        entries: vec!["home".into(), "prod".into(), "stage".into()],
         destinations: rows
             .iter()
             .map(|(key, entry)| MappedRow::new(key.clone(), *entry))
             .collect(),
+        settings: true,
     }
 }
 
 /// The change, its Application deploying to `server`, or to Argo CD's
 /// cluster `env-dev` without one, read with `mapping`.
 async fn read_mapped(server: Option<&str>, mapping: Mapping) -> Change {
+    read_app(application(server), mapping).await
+}
+
+/// The change, its one Application `app`, read with `mapping`.
+async fn read_app(app: Value, mapping: Mapping) -> Change {
     let reader = one_cluster(|world| {
-        world.argocd =
-            std::mem::take(&mut world.argocd).with("applications", vec![application(server)]);
+        world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
     });
     let mut place = place("f-new");
     place.mapping = mapping;
@@ -1023,17 +1040,21 @@ async fn a_destination_mapped_by_server_names_its_workspace_cluster() {
         detail.link.as_ref().map(|link| link.confidence),
         Some(Confidence::Claimed)
     );
-    let object = detail
+    let (entry, object) = detail
         .actions
         .iter()
         .find_map(|action| match &action.target {
-            super::super::Target::Resource { object, .. } => Some(object),
+            super::super::Target::OnEntry { entry, object, .. } => Some((entry, object)),
             _ => None,
         })
-        .expect("it opens");
+        .expect("it opens on its workspace cluster");
+    assert_eq!(
+        object.cluster, "",
+        "a workspace entry is never a connection"
+    );
     assert_eq!(
         (
-            object.cluster.as_str(),
+            entry.as_str(),
             object.group.as_str(),
             object.version.as_str(),
             object.plural.as_str(),
@@ -1107,6 +1128,20 @@ async fn a_destination_mapped_to_a_cluster_no_longer_listed_is_unknown() {
         Destination::Unknown("mapped to gone, which the workspace no longer lists".into())
     );
     assert!(!change.hops.iter().any(|hop| hop.key.contains("-reported-")));
+    // Its rows say so as the Stage does.
+    let rows: Vec<&str> = change
+        .hops
+        .iter()
+        .filter(|hop| hop.group == 2 && hop.detail.contains("nothing was read there"))
+        .map(|hop| hop.detail.as_str())
+        .collect();
+    assert!(!rows.is_empty(), "{:#?}", change.hops);
+    assert!(
+        rows.iter()
+            .all(|detail| detail
+                .ends_with("it is mapped to gone, which the workspace no longer lists")),
+        "{rows:#?}"
+    );
 }
 
 #[tokio::test]
@@ -1144,7 +1179,7 @@ async fn one_destination_mapped_twice_is_never_guessed() {
 
 #[tokio::test]
 async fn a_destination_mapped_to_the_open_cluster_is_read_there() {
-    let change = read_mapped(Some(ENV_A), mapped(&[(by_server(), "core")])).await;
+    let change = read_mapped(Some(ENV_A), mapped(&[(by_server(), "home")])).await;
     assert_eq!(
         change.stages[0].cluster,
         Destination::Cluster("core".into())
@@ -1156,4 +1191,62 @@ async fn a_destination_mapped_to_the_open_cluster_is_read_there() {
         .expect("the pods are reached");
     assert_eq!(pods.state, HealthIndicator::Healthy, "its pods were read");
     assert!(!change.hops.iter().any(|hop| hop.key.contains("-reported-")));
+}
+
+/// What Argo CD reports of a workload nobody read is its claim: Healthy is
+/// never more than Info, so the Stage doesn't fold as fine.
+#[tokio::test]
+async fn a_reported_workload_takes_argo_cds_health_no_higher_than_info() {
+    let mut app = application(Some(ENV_A));
+    app["status"]["resources"] = json!([
+        {"group": "apps", "version": "v1", "kind": "Deployment", "namespace": "shop", "name": "web", "health": {"status": "Healthy"}},
+        {"group": "apps", "version": "v1", "kind": "StatefulSet", "namespace": "shop", "name": "db", "health": {"status": "Degraded"}},
+        {"group": "apps", "version": "v1", "kind": "DaemonSet", "namespace": "shop", "name": "agent", "health": {"status": "Missing"}},
+        {"group": "argoproj.io", "kind": "Rollout", "namespace": "shop", "name": "storefront", "health": {"status": "Progressing"}},
+        {"group": "", "kind": "ConfigMap", "namespace": "shop", "name": "settings", "health": {"status": "Healthy"}},
+        {"group": "batch", "kind": "Job", "namespace": "shop", "name": "migrate"}
+    ]);
+    let change = read_app(app, mapped(&[(by_server(), "prod")])).await;
+    let reported: Vec<(&str, HealthIndicator)> = change
+        .hops
+        .iter()
+        .filter(|hop| hop.key.starts_with("dev-reported-"))
+        .map(|hop| (hop.name.as_str(), hop.state))
+        .collect();
+    assert_eq!(
+        reported,
+        vec![
+            ("Deployment web", HealthIndicator::Info),
+            ("StatefulSet db", HealthIndicator::Warning),
+            ("DaemonSet agent", HealthIndicator::Warning),
+            ("Rollout storefront", HealthIndicator::Info),
+        ],
+        "only workloads, each worded as Argo CD's claim"
+    );
+    assert!(
+        change
+            .hops
+            .iter()
+            .any(|hop| hop.group == 2 && hop.state != HealthIndicator::Healthy),
+        "a Stage known only from Argo CD's claim isn't all fine: {:#?}",
+        change.hops
+    );
+}
+
+#[test]
+fn a_mapping_is_the_workspace_with_the_open_entry() {
+    let workspace = crate::workspace::example();
+    let mapping = Mapping::of(&workspace, Some("core-fra"));
+    assert_eq!(mapping.open.as_deref(), Some("core-fra"));
+    assert_eq!(
+        mapping.entries,
+        workspace
+            .clusters
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(mapping.destinations, workspace.destinations);
+    assert!(mapping.settings, "the app's Settings can map them");
+    assert_eq!(Mapping::of(&workspace, None).open, None);
 }

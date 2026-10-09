@@ -386,8 +386,10 @@ fn reported_hop(
     } else {
         format!("Argo CD reports {}", reports.join(" · "))
     };
+    // Argo CD's word for an object nobody read is never Healthy, so a Stage
+    // known only from it doesn't fold as fine.
     let state = match object.health.as_deref() {
-        Some("Healthy") => Healthy,
+        Some("Healthy") => Info,
         Some("Degraded" | "Missing") => Warning,
         Some("Progressing" | "Suspended") => Info,
         _ => Unknown,
@@ -423,7 +425,7 @@ fn reported_hop(
         format!("{namespace}/{}", object.name)
     };
     let target = Object {
-        cluster: entry.to_owned(),
+        cluster: String::new(),
         group: object.group.clone(),
         version: object.version.clone().unwrap_or_else(|| {
             if object.group == "apps" {
@@ -469,8 +471,9 @@ fn reported_hop(
                 ),
             }),
             unlinked: None,
-            actions: vec![Action::new(Target::Resource {
+            actions: vec![Action::new(Target::OnEntry {
                 what: format!("the {}", object.kind),
+                entry: entry.to_owned(),
                 object: target,
             })],
         })),

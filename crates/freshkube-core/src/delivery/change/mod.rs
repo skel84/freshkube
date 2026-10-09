@@ -168,6 +168,14 @@ pub enum Target {
         label: String,
         address: Option<Address>,
     },
+    /// An object on another workspace cluster, which only Argo CD on the
+    /// open one reports: `entry` is that cluster's workspace id, never a
+    /// connection, and `object.cluster` is left empty.
+    OnEntry {
+        what: String,
+        entry: String,
+        object: Object,
+    },
     /// The steps' logs of the pod a TaskRun ran in, in the dock, from the
     /// cluster that ran it: `what` names the task on the button, and
     /// `container` is its first step's.

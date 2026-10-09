@@ -75,6 +75,10 @@ pub struct Mapping {
     /// Every entry the workspace lists, by id.
     pub entries: Vec<String>,
     pub destinations: Vec<workspace::Destination>,
+    /// Whether Settings › Workspace can map a destination, so the reasons
+    /// beside an unmatched one say to map it there; until it can, they keep
+    /// the delivery spike's words.
+    pub settings: bool,
 }
 
 impl Mapping {
@@ -84,6 +88,7 @@ impl Mapping {
             open: open.map(str::to_owned),
             entries: workspace.clusters.iter().map(|e| e.id.clone()).collect(),
             destinations: workspace.destinations.clone(),
+            settings: true,
         }
     }
 
@@ -180,7 +185,12 @@ pub async fn read<R: Reader>(
         evidence_result: None,
         commit_names: Default::default(),
         stage_naming: None,
-        map_hint: MapHint::Settings,
+        map_hint: match place.mapping.settings {
+            true => MapHint::Settings {
+                listed: place.mapping.entries.clone(),
+            },
+            false => MapHint::Flags,
+        },
     };
     let clusters = Clusters {
         kargo: reader,

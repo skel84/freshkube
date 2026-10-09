@@ -139,7 +139,7 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         evidence_result: plan.evidence_result.clone(),
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
-        map_hint: plan.map_hint,
+        map_hint: plan.map_hint.clone(),
         builds,
         kargo,
         applications,

@@ -249,8 +249,8 @@ pub(super) fn rollout_namespace(app: &Application, managed: &ManagedObject) -> O
 /// Why nothing was read in the environment cluster for an Application, and
 /// how the user would say otherwise when its destination is that cluster.
 pub(super) fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
-    if evidence.map_hint == MapHint::Settings {
-        return not_the_open_cluster(evidence, app_id);
+    if let MapHint::Settings { listed } = &evidence.map_hint {
+        return not_the_open_cluster(evidence, app_id, listed);
     }
     let env = &evidence.environment;
     let why = match evidence.destinations.get(app_id) {
@@ -278,7 +278,7 @@ pub(super) fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
 
 /// [`not_the_environment`] in the app, whose contexts are workspace
 /// clusters, mapped in Settings › Workspace.
-fn not_the_open_cluster(evidence: &Evidence, app_id: &str) -> String {
+fn not_the_open_cluster(evidence: &Evidence, app_id: &str, listed: &[String]) -> String {
     let why = match evidence.destinations.get(app_id) {
         Some(DestinationMatch::ByName(name)) => format!(
             "Argo CD's cluster {name} isn't mapped to a workspace cluster; map it in Settings › Workspace"
@@ -292,10 +292,15 @@ fn not_the_open_cluster(evidence: &Evidence, app_id: &str) -> String {
             entries.join(", ")
         ),
         Some(DestinationMatch::Unspecified) => "the Application names no destination".to_owned(),
-        Some(matched) => format!(
-            "it is {}, which isn't the open cluster",
-            matched.context().unwrap_or("?")
-        ),
+        Some(matched) => match matched.context() {
+            Some(entry) if !listed.iter().any(|listed| listed == entry) => {
+                format!("it is mapped to {entry}, which the workspace no longer lists")
+            }
+            entry => format!(
+                "it is {}, which isn't the open cluster",
+                entry.unwrap_or("?")
+            ),
+        },
         None => "its destination was not matched".to_owned(),
     };
     format!("nothing was read there for it: {why}")
