@@ -18,7 +18,8 @@ use freshkube_core::resources::{
     EventScope, EventUpdate, Failure, FailureKind, ResourceKind, SecretValue, get_object,
     reveal_secret_value, runs_pods, watch_object_events,
 };
-use gpui_kit::component::input::{InputEvent, InputState};
+use freshkube_ui::menu::{Find, FindNext, FindPrevious};
+use gpui_kit::component::input::{self, InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use tokio::runtime::Handle;
@@ -57,19 +58,7 @@ const READ_DEADLINE: Duration = Duration::from_secs(30);
 /// holding one down doesn't read every object it passes.
 pub(crate) const KEYBOARD_PAUSE: Duration = Duration::from_millis(150);
 
-actions!(
-    kube_detail,
-    [
-        FindInYaml,
-        SelectAllLines,
-        CopyLines,
-        Dismiss,
-        NextTab,
-        PreviousTab,
-        FindNextMatch,
-        FindPreviousMatch
-    ]
-);
+actions!(kube_detail, [Dismiss, NextTab, PreviousTab]);
 
 /// What the pane asks of the page around it.
 #[derive(Clone, Debug, PartialEq)]
@@ -252,26 +241,26 @@ fn after(
 impl DetailPane {
     pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
-            KeyBinding::new("secondary-f", FindInYaml, Some(CONTEXT)),
-            KeyBinding::new("secondary-a", SelectAllLines, Some(CONTEXT)),
-            KeyBinding::new("secondary-c", CopyLines, Some(CONTEXT)),
+            KeyBinding::new("secondary-f", Find, Some(CONTEXT)),
+            KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
+            KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
             KeyBinding::new("escape", Dismiss, Some(CONTEXT)),
             // Command-Shift-] and [, as macOS reports them.
             KeyBinding::new("secondary-}", NextTab, Some(CONTEXT)),
             KeyBinding::new("secondary-{", PreviousTab, Some(CONTEXT)),
-            KeyBinding::new("secondary-g", FindNextMatch, Some(CONTEXT)),
-            KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some(CONTEXT)),
-            KeyBinding::new("f3", FindNextMatch, Some(CONTEXT)),
-            KeyBinding::new("shift-f3", FindPreviousMatch, Some(CONTEXT)),
+            KeyBinding::new("secondary-g", FindNext, Some(CONTEXT)),
+            KeyBinding::new("secondary-shift-g", FindPrevious, Some(CONTEXT)),
+            KeyBinding::new("f3", FindNext, Some(CONTEXT)),
+            KeyBinding::new("shift-f3", FindPrevious, Some(CONTEXT)),
             KeyBinding::new("right", NextTab, Some(TABS_CONTEXT)),
             KeyBinding::new("left", PreviousTab, Some(TABS_CONTEXT)),
         ]);
         cx.bind_keys([
-            KeyBinding::new("secondary-f", FindInYaml, Some("NodeDocument")),
-            KeyBinding::new("secondary-a", SelectAllLines, Some("NodeDocument")),
-            KeyBinding::new("secondary-c", CopyLines, Some("NodeDocument")),
-            KeyBinding::new("secondary-g", FindNextMatch, Some("NodeDocument")),
-            KeyBinding::new("secondary-shift-g", FindPreviousMatch, Some("NodeDocument")),
+            KeyBinding::new("secondary-f", Find, Some("NodeDocument")),
+            KeyBinding::new("secondary-a", input::SelectAll, Some("NodeDocument")),
+            KeyBinding::new("secondary-c", input::Copy, Some("NodeDocument")),
+            KeyBinding::new("secondary-g", FindNext, Some("NodeDocument")),
+            KeyBinding::new("secondary-shift-g", FindPrevious, Some("NodeDocument")),
             // As in the drawer: clear find, leave it, clear a selection,
             // then hand the keyboard back to the node table (`Leave`).
             KeyBinding::new("escape", Dismiss, Some("NodeDocument")),
@@ -1114,10 +1103,6 @@ impl DetailPane {
 
     /// Command-F: the YAML search. The dock's logs have their own.
     fn focus_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.tab {
-            Tab::Logs | Tab::Ports => return,
-            _ => {}
-        }
         self.set_tab(Tab::Yaml, cx);
         let focus = self.find.read(cx).focus_handle(cx);
         window.focus(&focus, cx);

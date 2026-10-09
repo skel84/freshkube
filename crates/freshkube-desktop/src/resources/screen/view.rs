@@ -2,6 +2,7 @@ use super::super::model::format_age;
 use super::super::projection::{Cause, PodFilter};
 use super::*;
 use freshkube_core::pluralize;
+use freshkube_ui::menu::Find;
 use gpui_kit::base::Selectable;
 use gpui_kit::component::menu::ContextMenuExt as _;
 use std::rc::Rc;
@@ -274,7 +275,7 @@ impl ResourcesScreen {
             .on_action(cx.listener(|view, _: &LastItem, _, cx| view.step(isize::MAX, cx)))
             .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
             .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+            .on_action(cx.listener(|view, _: &Find, window, cx| {
                 view.page_scroll.set_offset(point(px(0.), px(0.)));
                 let focus = view.query.read(cx).focus_handle(cx);
                 window.focus(&focus, cx);

@@ -45,13 +45,14 @@ use gpui_kit::{
     actions,
     component::{
         VirtualListScrollHandle,
-        input::{InputEvent, InputState},
+        input::{self, InputEvent, InputState},
         scroll::ScrollbarHandle,
     },
     point, px,
 };
 
 use freshkube_core::logs::{LogEvent, ServiceId};
+use freshkube_ui::menu::{Find, FindNext, FindPrevious};
 
 use review::{LogReview, MAX_SELECTED_LINES};
 
@@ -65,7 +66,6 @@ const PANEL_CONTEXT: &str = "LogPanel";
 actions!(
     log_view,
     [
-        CopySelected,
         NextLine,
         PreviousLine,
         ExtendNext,
@@ -75,12 +75,8 @@ actions!(
         PageNext,
         PagePrevious,
         ClearSelection,
-        FindNext,
-        FindPrevious,
         LeaveSearch,
-        StayInSearch,
-        FocusSearch,
-        SelectAll
+        StayInSearch
     ]
 );
 
@@ -430,7 +426,7 @@ impl<S: LogSource> LogView<S> {
         if !cx.has_global::<KeysBound>() {
             cx.set_global(KeysBound);
             cx.bind_keys([
-                KeyBinding::new("secondary-c", CopySelected, Some(CONTEXT)),
+                KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
                 KeyBinding::new("down", NextLine, Some(CONTEXT)),
                 KeyBinding::new("up", PreviousLine, Some(CONTEXT)),
                 KeyBinding::new("shift-down", ExtendNext, Some(CONTEXT)),
@@ -440,14 +436,14 @@ impl<S: LogSource> LogView<S> {
                 KeyBinding::new("pagedown", PageNext, Some(CONTEXT)),
                 KeyBinding::new("pageup", PagePrevious, Some(CONTEXT)),
                 KeyBinding::new("escape", ClearSelection, Some(CONTEXT)),
-                KeyBinding::new("secondary-a", SelectAll, Some(CONTEXT)),
+                KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
                 KeyBinding::new("escape", LeaveSearch, Some(SEARCH_CONTEXT)),
                 // The input searches on Enter, then lets the key go on; these
                 // stop it there, so a page's own Enter doesn't take the
                 // keyboard and the next Enter steps again (#316).
                 KeyBinding::new("enter", StayInSearch, Some(SEARCH_CONTEXT)),
                 KeyBinding::new("shift-enter", StayInSearch, Some(SEARCH_CONTEXT)),
-                KeyBinding::new("secondary-f", FocusSearch, Some(PANEL_CONTEXT)),
+                KeyBinding::new("secondary-f", Find, Some(PANEL_CONTEXT)),
                 KeyBinding::new("secondary-g", FindNext, Some(PANEL_CONTEXT)),
                 KeyBinding::new("secondary-shift-g", FindPrevious, Some(PANEL_CONTEXT)),
                 KeyBinding::new("f3", FindNext, Some(PANEL_CONTEXT)),

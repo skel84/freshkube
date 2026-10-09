@@ -5,6 +5,8 @@
 //! data, `set_source` that drops data only when the target changes, example
 //! data for `--fixture`, the toolbar header over `gate`'s states, and
 //! element ids plus roles so UI tests can drive it.
+use freshkube_ui::menu::Find;
+use gpui_kit::component::input;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -60,14 +62,12 @@ actions!(
         LastProcess,
         NextPage,
         PreviousPage,
-        CopyCommand,
         ToggleSubtree,
         ToggleTree,
         SortByCpu,
         SortByMemory,
         ToggleZombies,
         ToggleDiskWait,
-        FocusFilter,
         ClearFilter,
         LeaveFilter
     ]
@@ -166,15 +166,16 @@ impl ScreenPanel for ProcessesScreen {
             KeyBinding::new("pageup", PreviousPage, Some(CONTEXT)),
             KeyBinding::new("home", FirstProcess, Some(LIST_ONLY)),
             KeyBinding::new("end", LastProcess, Some(LIST_ONLY)),
-            KeyBinding::new("secondary-c", CopyCommand, Some(LIST_ONLY)),
-            KeyBinding::new("y", CopyCommand, Some(LIST_ONLY)),
+            KeyBinding::new("secondary-c", input::Copy, Some(LIST_ONLY)),
+            KeyBinding::new("y", input::Copy, Some(LIST_ONLY)),
             KeyBinding::new("t", ToggleSubtree, Some(LIST_ONLY)),
             KeyBinding::new("shift-t", ToggleTree, Some(LIST_ONLY)),
             KeyBinding::new("1", SortByCpu, Some(LIST_ONLY)),
             KeyBinding::new("2", SortByMemory, Some(LIST_ONLY)),
             KeyBinding::new("z", ToggleZombies, Some(LIST_ONLY)),
             KeyBinding::new("d", ToggleDiskWait, Some(LIST_ONLY)),
-            KeyBinding::new("/", FocusFilter, Some(LIST_ONLY)),
+            KeyBinding::new("/", Find, Some(LIST_ONLY)),
+            KeyBinding::new("secondary-f", Find, Some(LIST_ONLY)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
             KeyBinding::new("escape", LeaveFilter, Some(FILTER_CONTEXT)),
         ]);

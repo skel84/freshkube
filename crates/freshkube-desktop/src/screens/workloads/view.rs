@@ -1,6 +1,7 @@
 //! What the Workloads page draws: its header, the table with the
 //! Inspector beside or under it, and the states in the table's place.
 use super::*;
+use freshkube_ui::menu::Find;
 
 impl WorkloadsScreen {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -218,7 +219,7 @@ impl Render for WorkloadsScreen {
             .on_action(cx.listener(|view, _: &ToggleUnhealthy, _, cx| {
                 view.set_only_unhealthy(!view.only_unhealthy, cx)
             }))
-            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+            .on_action(cx.listener(|view, _: &Find, window, cx| {
                 let focus = view.query.read(cx).focus_handle(cx);
                 window.focus(&focus, cx);
             }))

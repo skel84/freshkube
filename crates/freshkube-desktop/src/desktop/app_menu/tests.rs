@@ -270,12 +270,13 @@ fn live(action: impl Action, cx: &mut TestAppContext) -> bool {
 }
 
 /// Edit's entries are live only where the focused view handles them: on
-/// a table nothing pastes, cuts or selects all, and in its filter Kit's
-/// input does. The check sees the page's handlers through Kit's Root, not
+/// a table nothing pastes, cuts or selects all, and Find opens its filter;
+/// in the filter Kit's input does the rest; a log copies, selects all and
+/// finds. The check sees the page's handlers through Kit's Root, not
 /// only Root's own.
 #[gpui_kit::test]
 fn edit_greys_what_the_focused_view_does_not_handle(cx: &mut TestAppContext) {
-    let (_runtime, handle, _pilot) = on_pods(cx);
+    let (_runtime, handle, pilot) = on_pods(cx);
     let focused = |id: &'static str, cx: &mut TestAppContext| {
         cx.update_window(handle, |_, window, _| window.find(id).focused())
             .unwrap()
@@ -288,8 +289,10 @@ fn edit_greys_what_the_focused_view_does_not_handle(cx: &mut TestAppContext) {
     // Kit's Root answers Copy in every window, copying the window's
     // selected text, so it stays live on a table (DESIGN.md).
     assert!(live(Copy, cx));
-    // Find is the next step's.
-    assert!(!live(Find, cx));
+    // Find opens the list's filter; there is nothing to step through.
+    assert!(live(Find, cx));
+    assert!(!live(FindNext, cx));
+    assert!(!live(FindPrevious, cx));
     // The shell's own entries are live here.
     assert!(live(Refresh, cx));
     assert!(live(ToggleColumn, cx));
@@ -304,7 +307,35 @@ fn edit_greys_what_the_focused_view_does_not_handle(cx: &mut TestAppContext) {
     assert!(live(SelectAll, cx));
     assert!(live(Undo, cx));
     assert!(live(Copy, cx));
+    // The filter sits outside the list's context: it is what Find opens.
     assert!(!live(Find, cx));
+
+    // A log copies, selects all and finds with the same entries, and
+    // takes no text.
+    let pod = running_pod(&pilot, cx);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(builtin("pods").unwrap(), pod.into(), Tab::Logs, window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.within("dock").click("logs-viewport", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert_eq!(focused("logs-viewport", cx), Some(true));
+    assert!(live(Copy, cx));
+    assert!(live(SelectAll, cx));
+    assert!(live(Find, cx));
+    assert!(live(FindNext, cx));
+    assert!(live(FindPrevious, cx));
+    assert!(!live(Paste, cx));
+    assert!(!live(Cut, cx));
+    assert!(!live(Undo, cx));
 }
 
 /// Where there is no menu bar, the header's menu button opens the menus
@@ -491,7 +522,8 @@ fn the_buttons_menu_greys_what_the_view_does_not_handle(cx: &mut TestAppContext)
 }
 
 /// F10 opens the menu with the keyboard on it, not on the button's
-/// popover, which would otherwise take it as it opens.
+/// popover, which would otherwise take it as it opens, and Escape gives
+/// it back.
 #[gpui_kit::test]
 fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = with_button(cx);
@@ -508,6 +540,15 @@ fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
     let popup = popup.expect("F10 opens the menu");
     cx.update_window(handle, |_, window, cx| {
         assert!(popup.focus_handle(cx).is_focused(window));
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_none()));
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(window.find("resource-body").focused(), Some(true));
     })
     .unwrap();
 }
@@ -540,6 +581,11 @@ fn the_bar_shows_keys_appkit_reads(cx: &mut TestAppContext) {
         "delete",
         "insert",
     ];
+    // F1 to F35, which GPUI maps too.
+    fn function_key(key: &str) -> bool {
+        key.strip_prefix('f')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    }
     fn actions(items: &[OwnedMenuItem], out: &mut Vec<(String, Box<dyn Action>)>) {
         for item in items {
             match item {
@@ -575,10 +621,112 @@ fn the_bar_shows_keys_appkit_reads(cx: &mut TestAppContext) {
                     return None;
                 };
                 let key = stroke.key();
-                (key.chars().count() > 1 && !MAPPED.contains(&key) && !key.starts_with('f'))
+                (key.chars().count() > 1 && !MAPPED.contains(&key) && !function_key(key))
                     .then(|| format!("{name}: {key}"))
             })
             .collect()
     });
     assert!(unread.is_empty(), "AppKit can't read {unread:?}");
+}
+
+/// The resource pane answers Edit by its tab: on Details, Find opens the
+/// YAML's search and nothing else acts; on YAML its lines copy, select
+/// all and step through matches.
+#[gpui_kit::test]
+fn the_pane_answers_edit_by_its_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_pods(cx);
+    let pod = running_pod(&pilot, cx);
+    let show = |tab: Tab, cx: &mut TestAppContext| {
+        let pod = pod.clone();
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_object(builtin("pods").unwrap(), pod.into(), tab, window, cx)
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+        cx.update_window(handle, |_, window, cx| window.click("resource-detail", cx))
+            .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+    };
+    show(Tab::Overview, cx);
+    assert!(live(Find, cx));
+    assert!(!live(FindNext, cx));
+    assert!(!live(SelectAll, cx));
+    show(Tab::Yaml, cx);
+    assert!(live(Find, cx));
+    assert!(live(FindNext, cx));
+    assert!(live(FindPrevious, cx));
+    assert!(live(SelectAll, cx));
+    assert!(live(Copy, cx));
+    assert!(!live(Paste, cx));
+}
+
+/// Edit's Copy and Select all act as the view's own keys do when the menu
+/// dispatches them: a log copies its selected lines as written, and the
+/// YAML its selected lines, all of them after Select all.
+#[gpui_kit::test]
+fn edit_copies_the_focused_views_selection(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_pods(cx);
+    let pod = running_pod(&pilot, cx);
+    let clipboard = |cx: &mut TestAppContext| {
+        cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .unwrap_or_default()
+    };
+
+    let open = |tab: Tab, cx: &mut TestAppContext| {
+        let pod = pod.clone();
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_object(builtin("pods").unwrap(), pod.into(), tab, window, cx)
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+    };
+    open(Tab::Logs, cx);
+    let log = cx.update(|cx| {
+        let dock = pilot.read(cx).dock.read(cx);
+        match &dock.tabs[0].kind {
+            dock::TabKind::Pod(view) => view.clone(),
+            _ => panic!("not a pod's log tab"),
+        }
+    });
+    let (row, last, every) = cx.update(|cx| {
+        let view = log.read(cx);
+        let lines: Vec<&str> = view
+            .visible_rows()
+            .iter()
+            .map(|&ix| view.retained()[ix].raw.as_str())
+            .collect();
+        let last = view.visible_rows().len() - 1;
+        let row = format!("log-line-{}-{}", view.generation(), view.row_id(last));
+        (row, lines[last].to_owned(), lines.join("\n"))
+    });
+    assert!(every.contains('\n'), "the example has several lines");
+    cx.update_window(handle, |_, window, cx| window.within("dock").click(row, cx))
+        .unwrap();
+    cx.run_until_parked();
+    dispatch(handle, Copy, cx);
+    assert_eq!(clipboard(cx), last);
+    dispatch(handle, SelectAll, cx);
+    dispatch(handle, Copy, cx);
+    assert_eq!(clipboard(cx), every);
+
+    open(Tab::Yaml, cx);
+    cx.update_window(handle, |_, window, cx| window.click("resource-detail", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    dispatch(handle, SelectAll, cx);
+    dispatch(handle, Copy, cx);
+    let lines = clipboard(cx);
+    cx.update_window(handle, |_, window, cx| window.click("detail-copy-yaml", cx))
+        .unwrap();
+    let document = clipboard(cx);
+    assert!(document.starts_with("apiVersion:"), "{document}");
+    assert_eq!(lines.trim_end(), document.trim_end());
 }

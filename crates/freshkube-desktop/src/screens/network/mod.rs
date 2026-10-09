@@ -9,6 +9,8 @@
 mod capture;
 
 use freshkube_core::group_digits;
+use freshkube_ui::menu::Find;
+use gpui_kit::component::input;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -50,6 +52,11 @@ use freshkube_ui::table::{self, DataTable, TableState};
 use source::Derived;
 
 const CONTEXT: &str = "TalosNetwork";
+/// The key context around the filter, deeper than the list's.
+const FILTER_CONTEXT: &str = "TalosNetworkFilter";
+/// The list's keys that the filter types or uses itself, such as `y`, the
+/// digits, `/` and Command-C, bound only while it hasn't the keyboard.
+const LIST_ONLY: &str = "TalosNetwork && !TalosNetworkFilter";
 const PAGE_ROWS: isize = 20;
 /// The page header's id prefix.
 const PREFIX: &str = "network";
@@ -72,9 +79,7 @@ actions!(
         OpenConnections,
         SortPrimary,
         SortSecondary,
-        FocusFilter,
-        ClearFilter,
-        CopyConnection
+        ClearFilter
     ]
 );
 
@@ -325,12 +330,13 @@ impl ScreenPanel for NetworkScreen {
             KeyBinding::new("tab", NextView, Some(CONTEXT)),
             KeyBinding::new("shift-tab", PreviousView, Some(CONTEXT)),
             KeyBinding::new("enter", OpenConnections, Some(CONTEXT)),
-            KeyBinding::new("1", SortPrimary, Some(CONTEXT)),
-            KeyBinding::new("2", SortSecondary, Some(CONTEXT)),
-            KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
+            KeyBinding::new("1", SortPrimary, Some(LIST_ONLY)),
+            KeyBinding::new("2", SortSecondary, Some(LIST_ONLY)),
+            KeyBinding::new("/", Find, Some(LIST_ONLY)),
+            KeyBinding::new("secondary-f", Find, Some(LIST_ONLY)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
-            KeyBinding::new("secondary-c", CopyConnection, Some(CONTEXT)),
-            KeyBinding::new("y", CopyConnection, Some(CONTEXT)),
+            KeyBinding::new("secondary-c", input::Copy, Some(LIST_ONLY)),
+            KeyBinding::new("y", input::Copy, Some(LIST_ONLY)),
         ]);
         let query = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Filter by address, service, process or state")
