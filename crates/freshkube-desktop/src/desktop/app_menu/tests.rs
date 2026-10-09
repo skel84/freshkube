@@ -491,7 +491,8 @@ fn the_buttons_menu_greys_what_the_view_does_not_handle(cx: &mut TestAppContext)
 }
 
 /// F10 opens the menu with the keyboard on it, not on the button's
-/// popover, which would otherwise take it as it opens.
+/// popover, which would otherwise take it as it opens, and Escape gives
+/// it back.
 #[gpui_kit::test]
 fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = with_button(cx);
@@ -508,6 +509,15 @@ fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
     let popup = popup.expect("F10 opens the menu");
     cx.update_window(handle, |_, window, cx| {
         assert!(popup.focus_handle(cx).is_focused(window));
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_none()));
+    cx.update_window(handle, |_, window, _| {
+        assert_eq!(window.find("resource-body").focused(), Some(true));
     })
     .unwrap();
 }
@@ -540,6 +550,11 @@ fn the_bar_shows_keys_appkit_reads(cx: &mut TestAppContext) {
         "delete",
         "insert",
     ];
+    // F1 to F35, which GPUI maps too.
+    fn function_key(key: &str) -> bool {
+        key.strip_prefix('f')
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    }
     fn actions(items: &[OwnedMenuItem], out: &mut Vec<(String, Box<dyn Action>)>) {
         for item in items {
             match item {
@@ -575,7 +590,7 @@ fn the_bar_shows_keys_appkit_reads(cx: &mut TestAppContext) {
                     return None;
                 };
                 let key = stroke.key();
-                (key.chars().count() > 1 && !MAPPED.contains(&key) && !key.starts_with('f'))
+                (key.chars().count() > 1 && !MAPPED.contains(&key) && !function_key(key))
                     .then(|| format!("{name}: {key}"))
             })
             .collect()
