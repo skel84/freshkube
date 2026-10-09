@@ -14,11 +14,13 @@ use gpui_kit::{
 };
 
 use crate::palette::palette;
+use crate::tooltip::FollowTooltip as _;
 
 mod data;
 mod flash;
 mod loading;
 mod pinned;
+mod words;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 pub use data::{
     DataTable, Line, RowStyle, SortOrder, TableRow, TableSource, TableState, data_table, reveal,
@@ -27,6 +29,9 @@ pub use data::{
 pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look, TableLoading};
 pub use pinned::widest_pinned_run;
+#[cfg(any(test, feature = "testing"))]
+pub use words::{Shown as WordCutShown, shown as word_cut_shown, shown_style as word_cut_style};
+pub use words::{WordCut, word_cut};
 
 /// Every table's row height. Group rows take the same height, so the list
 /// stays uniform; the text size scales it for anyone who wants it larger.
@@ -85,6 +90,21 @@ pub fn cell(column: &impl TableColumn) -> Div {
     } else {
         cell.flex_none().w(dp(column.width()))
     }
+}
+
+/// A cell of prose, such as a trail's Detail: cut at a word when it
+/// doesn't fit, with the whole text in its tooltip (#522). Its text keeps
+/// the id `<id>`; the cell's is `<id>-cell`.
+pub fn word_cell(
+    column: &impl TableColumn,
+    id: impl Into<SharedString>,
+    text: impl Into<SharedString>,
+) -> Stateful<Div> {
+    let (id, text) = (id.into(), text.into());
+    cell(column)
+        .id(SharedString::from(format!("{id}-cell")))
+        .follow_tooltip(text.clone())
+        .child(word_cut(id, text))
 }
 
 /// A glyph column's cell: unpadded, its glyph (or a marked row's box)

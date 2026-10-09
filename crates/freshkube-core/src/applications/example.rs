@@ -47,6 +47,7 @@ const APPLICATIONS: (&str, &str, &str) = ("applications.argoproj.io", ARGO, "App
 const APPLICATION_SETS: (&str, &str, &str) =
     ("applicationsets.argoproj.io", ARGO, "ApplicationSet");
 const DEPLOYMENTS: (&str, &str, &str) = ("deployments.apps", "apps/v1", "Deployment");
+const FREIGHT: (&str, &str, &str) = ("freights.kargo.akuity.io", KARGO, "Freight");
 const KARGO: &str = "kargo.akuity.io/v1alpha1";
 const ARGO: &str = "argoproj.io/v1alpha1";
 
@@ -122,8 +123,10 @@ pub struct CoreObject {
 
 /// Every object `core-fra` holds that the applications are read from:
 /// Kargo's Projects, Stages and Warehouses, Argo CD's Applications and
-/// ApplicationSet, and the labelled Deployment, in that order. The example
-/// Resources page lists them, so it shows what the Applications page read.
+/// ApplicationSet, and the labelled Deployment, in that order; then the
+/// Freight the example change follows (`delivery::change::example`). The
+/// example Resources page lists them, so it shows what the Applications
+/// page read and where the change page leads.
 pub fn core_objects() -> Vec<CoreObject> {
     let mut objects = Vec::new();
     for project in ["checkout", "cart"] {
@@ -173,6 +176,13 @@ pub fn core_objects() -> Vec<CoreObject> {
                 "app.kubernetes.io/part-of": "public-status",
                 "app.kubernetes.io/instance": "status-page",
             },
+        }}),
+    ));
+    objects.push(object(
+        FREIGHT,
+        json!({"metadata": {
+            "namespace": crate::delivery::change::example::PROJECT,
+            "name": crate::delivery::change::example::FREIGHT,
         }}),
     ));
     objects

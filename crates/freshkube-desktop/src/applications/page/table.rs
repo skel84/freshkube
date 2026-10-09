@@ -256,7 +256,8 @@ impl TableSource for ApplicationPage {
     /// A right-click selects the part as an arrow does, but an Inspector
     /// that was closed stays closed, so the table keeps its place under
     /// the pointer. Open in Resources acts as O does, greyed out for a part
-    /// in a cluster that isn't open.
+    /// in a cluster that isn't open; a Stage whose change was read adds
+    /// Follow, as F does.
     fn row_menu(
         &mut self,
         key: &SharedString,
@@ -269,7 +270,16 @@ impl TableSource for ApplicationPage {
         }
         self.focus(window, cx);
         let opens = self.selected_row().is_some_and(|row| row.closed.is_none());
-        vec![freshkube_ui::menu::MenuAction::new("Open in Resources", OpenPart).enabled(opens)]
+        let follows = self.selected_row().and_then(|row| row.follows.clone());
+        let mut menu =
+            vec![freshkube_ui::menu::MenuAction::new("Open in Resources", OpenPart).enabled(opens)];
+        if let Some(freight) = follows {
+            menu.push(freshkube_ui::menu::MenuAction::new(
+                format!("Follow {freight}"),
+                FollowFreight,
+            ));
+        }
+        menu
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {

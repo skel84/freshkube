@@ -183,7 +183,9 @@ impl ApplicationsPage {
         else {
             return;
         };
+        // Its page shows already; a change followed from it gives way.
         if self.shown_application(cx).as_ref() == Some(&key) {
+            self.close_change(window, cx);
             return;
         }
         if !self.lists(&key) {

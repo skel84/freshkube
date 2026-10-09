@@ -360,6 +360,8 @@ Following one change from commit to running pods ([#42](https://github.com/skel8
 
 Joins use only the commit SHA and the image digest. A pull request joins through its merge commit. The first screen is one change, from commit to running pods.
 
+The change page (5.4, with [#522](https://github.com/skel84/freshkube/issues/522)) has begun on example data: a Kargo application's Stage offers Follow ⟨Freight⟩, and the change shows in the application page's place, its hops in travel order with each Stage's three gates apart, Link confidence and the Inspector (`applications/change/`, core's `delivery::change`), from core's invented acme `checkout`, Freight `wonky-otter`. Still to come: deriving the change from what a cluster reports and reading it live, then the links out to the tools, Copy link and a step's logs.
+
 ### 6. Coroot completion, then linked to the chain
 
 The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histories and deployment comparisons through typed APIs. Then link Coroot to the chain: this deploy, and what its metrics did after it.

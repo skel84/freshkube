@@ -413,3 +413,45 @@ fn another_cluster_shows_reading_until_it_answers(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// A change followed from the shown application keeps its row filled; a
+/// click on that row brings back the application's page, with its Stage
+/// still selected and the keyboard on the page.
+#[gpui_kit::test]
+fn the_shown_applications_row_closes_a_change_followed_from_it(cx: &mut TestAppContext) {
+    const CHECKOUT: &str = "nav-application-kargo:checkout";
+    const PROD_AMS: &str = "application-part-core-fra/0/checkout/prod-ams";
+    let (_runtime, handle, view) = applications(cx, Variant::Acme);
+    let page = cx.update(|cx| view.read(cx).applications.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.click(CHECKOUT, cx);
+        window.render_frame(cx);
+        window.click(PROD_AMS, cx);
+        window.render_frame(cx);
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(page.read(cx).change_page().is_some(), "the change shows");
+        assert_eq!(window.find(CHECKOUT).selected(), Some(true));
+        window.click(CHECKOUT, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(page.read(cx).change_page().is_none(), "the change gave way");
+        let open = page.read(cx).open_page().cloned().expect("its page shows");
+        assert_eq!(open.read(cx).id().as_str(), "kargo:checkout");
+        assert_eq!(
+            open.read(cx).selected().map(|key| key.to_string()),
+            Some(PROD_AMS.trim_start_matches("application-part-").into())
+        );
+        assert!(open.read(cx).focus_handle().is_focused(window));
+        assert_eq!(window.find(CHECKOUT).selected(), Some(true));
+    })
+    .unwrap();
+}

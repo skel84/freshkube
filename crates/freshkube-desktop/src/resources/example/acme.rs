@@ -1,5 +1,6 @@
 //! The objects of acme's `core-fra` (core's `applications::example`) in the
-//! example cluster: Kargo's Projects, Stages and Warehouses, Argo CD's
+//! example cluster: Kargo's Projects, Stages, Warehouses and the change
+//! page's Freight, Argo CD's
 //! Applications and ApplicationSet, and the `status/status-page`
 //! Deployment. The Applications page maps `core-fra` to the open example
 //! cluster, so a part it opens in Resources is listed here, the same object
@@ -23,7 +24,7 @@ pub(super) const GROUPS: [(&str, &[&str]); 2] = [
 ];
 
 /// (group, version, kind, plural, namespaced) of acme's custom kinds.
-pub(super) const KINDS: [(&str, &str, &str, &str, bool); 5] = [
+pub(super) const KINDS: [(&str, &str, &str, &str, bool); 6] = [
     (
         "argoproj.io",
         "v1alpha1",
@@ -47,6 +48,7 @@ pub(super) const KINDS: [(&str, &str, &str, &str, bool); 5] = [
         "warehouses",
         true,
     ),
+    ("kargo.akuity.io", "v1alpha1", "Freight", "freights", true),
 ];
 
 /// Whether a row of this kind, at this position in its UID, is one of

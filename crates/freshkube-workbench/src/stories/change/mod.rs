@@ -426,7 +426,14 @@ impl TableSource for ChangeStory {
                     .into_any_element()
             }
             Kind::Hop => text(&cells.name).into_any_element(),
-            Kind::Detail => text(&cells.detail).text_color(p.ink_2).into_any_element(),
+            // Cut at a word, its whole text in the tooltip (#522).
+            Kind::Detail => table::word_cell(
+                column,
+                format!("change-hop-{}-detail", row.key),
+                cells.detail.clone(),
+            )
+            .text_color(p.ink_2)
+            .into_any_element(),
             Kind::From => text(&cells.from)
                 .font_family(MONO_FONT)
                 .text_color(p.ink_2)
