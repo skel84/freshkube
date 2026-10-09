@@ -40,6 +40,17 @@ impl Key {
             Key::Server(value) | Key::Name(value) => value,
         }
     }
+
+    /// Whether both match the same destination, as an Application is
+    /// matched: servers without case, a trailing slash or an explicit
+    /// `:443`, names exactly.
+    pub fn same(&self, other: &Key) -> bool {
+        match (self, other) {
+            (Key::Server(a), Key::Server(b)) => normalize_server(a) == normalize_server(b),
+            (Key::Name(a), Key::Name(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// One mapping: an Argo CD destination, and the workspace entry it is.
@@ -172,7 +183,7 @@ impl Fault {
             Fault::EmptyName => "names an empty name",
             Fault::Spaces => "names a server or name with spaces around it",
             Fault::NotHttp => "names a server that isn’t an http or https address",
-            Fault::ArgoCdOwn => "names Argo CD’s own cluster, which is known already",
+            Fault::ArgoCdOwn => "names Argo CD's own cluster, which is known already",
             Fault::NoEntry => "names no workspace cluster",
             Fault::Unreadable => {
                 "isn’t a server or name and an entry, each a string, so it can’t be read"

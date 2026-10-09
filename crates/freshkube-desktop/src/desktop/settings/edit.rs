@@ -5,7 +5,7 @@
 //! were. The first save after a refused file sets that file aside.
 use super::*;
 use chrono::Utc;
-use freshkube_core::workspace::Entry;
+use freshkube_core::workspace::{Destination, Entry, Fault, Key};
 
 impl SettingsPage {
     /// Whether a change can be saved now: not example data, not without a
@@ -117,6 +117,27 @@ impl SettingsPage {
             return;
         }
         let page = cx.entity().downgrade();
+        let mapped = self
+            .workspace
+            .destinations
+            .iter()
+            .filter(|row| row.entry == id)
+            .count();
+        let body = match mapped {
+            0 => String::new(),
+            1 => format!(
+                " The Argo CD destination mapped to {id} stays mapped to it, marked, until \
+                 it is edited."
+            ),
+            n => format!(
+                " The {n} Argo CD destinations mapped to {id} stay mapped to it, marked, \
+                 until they are edited."
+            ),
+        };
+        let body = format!(
+            "This takes the cluster out of the workspace file. Nothing on the cluster, and \
+             no kubeconfig or talosconfig, is touched.{body}"
+        );
         window.open_dialog(cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_id = id.clone();
@@ -131,10 +152,7 @@ impl SettingsPage {
                         .aria_label(format!("Remove {id}"))
                         .gap_3()
                         .text_size(dp(13.))
-                        .child(
-                            "This takes the cluster out of the workspace file. Nothing on the \
-                             cluster, and no kubeconfig or talosconfig, is touched.",
-                        )
+                        .child(body.clone())
                         .child(
                             h_flex()
                                 .gap_2()
@@ -168,6 +186,109 @@ impl SettingsPage {
         let mut next = self.workspace.clone();
         next.clusters.retain(|entry| entry.id != id);
         self.commit(next, format!("Removed {id}."), cx);
+    }
+
+    /// Applies the destination form: maps a destination to a workspace
+    /// cluster, or changes the mapping at `editing`, which must still match
+    /// `was`. Returns what the row now matches once the save has started, or
+    /// why not, for the form to show; the file is untouched then.
+    pub(super) fn map_destination(
+        &mut self,
+        editing: Option<(usize, &Key)>,
+        key: Key,
+        entry: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<Key, SharedString> {
+        if !self.editable() {
+            return Err(self.why_not_editable().into());
+        }
+        let key = match key {
+            Key::Server(server) => Key::Server(server.trim().to_owned()),
+            Key::Name(name) => Key::Name(name.trim().to_owned()),
+        };
+        if !key.value().is_empty() && !self.workspace.clusters.iter().any(|e| e.id == entry) {
+            return Err("Pick a workspace cluster".into());
+        }
+        let mut next = self.workspace.clone();
+        let at = match editing {
+            Some((at, was)) => {
+                let row = next
+                    .destinations
+                    .get_mut(at)
+                    .filter(|row| row.key() == *was)
+                    .ok_or_else(|| SharedString::from("That mapping is no longer listed"))?;
+                row.set_key(key.clone());
+                row.entry = entry.to_owned();
+                at
+            }
+            None => {
+                next.destinations
+                    .push(Destination::new(key.clone(), entry.to_owned()));
+                next.destinations.len() - 1
+            }
+        };
+        if let Some(fault) = next.destinations[at].fault() {
+            return Err(match fault {
+                Fault::EmptyServer => "Enter the server URL the Application names".into(),
+                Fault::EmptyName => "Enter Argo CD's name for the cluster".into(),
+                Fault::NotHttp => "The server must be an http or https address".into(),
+                Fault::ArgoCdOwn => {
+                    "Argo CD knows its own cluster already; it needs no mapping".into()
+                }
+                fault => capitalized(&format!("the mapping {}", fault.words())).into(),
+            });
+        }
+        if let Some(other) = next
+            .destinations
+            .iter()
+            .enumerate()
+            .find(|(ix, row)| *ix != at && row.key().same(&key))
+        {
+            let entry = &other.1.entry;
+            let what = match &key {
+                Key::Server(server) => format!("Server {server}"),
+                Key::Name(name) => format!("Argo CD's cluster {name}"),
+            };
+            return Err(
+                match self.workspace.clusters.iter().any(|e| e.id == *entry) {
+                    true => format!("{what} is already mapped to {entry}"),
+                    false => format!(
+                        "{what} is already mapped to {entry}, which the workspace no longer \
+                         lists: edit that mapping"
+                    ),
+                }
+                .into(),
+            );
+        }
+        next.check_saveable()
+            .map_err(|why| SharedString::from(capitalized(&why.to_string())))?;
+        let what = match editing {
+            Some(_) => format!("Changed the mapping for {}.", key.describe()),
+            None => format!("Mapped {} to {entry}.", key.describe()),
+        };
+        self.commit(next, what, cx);
+        Ok(key)
+    }
+
+    /// Removes the mapping at `at`, if it still matches `was`.
+    pub(super) fn remove_destination(&mut self, at: usize, was: &Key, cx: &mut Context<Self>) {
+        if !self.editable() {
+            return;
+        }
+        let mut next = self.workspace.clone();
+        if next
+            .destinations
+            .get(at)
+            .is_none_or(|row| row.key() != *was)
+        {
+            return;
+        }
+        next.destinations.remove(at);
+        self.commit(
+            next,
+            format!("Removed the mapping for {}.", was.describe()),
+            cx,
+        );
     }
 
     /// Moves the selected cluster one place; the first and last stay put.
@@ -305,7 +426,7 @@ impl SettingsPage {
     }
 }
 
-fn capitalized(text: &str) -> String {
+pub(super) fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),

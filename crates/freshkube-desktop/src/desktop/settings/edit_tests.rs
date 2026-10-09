@@ -21,7 +21,7 @@ fn ids(directory: &Path) -> Vec<String> {
     }
 }
 
-async fn open_settings(
+pub(super) async fn open_settings(
     cx: &mut TestAppContext,
     handle: gpui_kit::AnyWindowHandle,
     view: &gpui_kit::Entity<crate::desktop::Pilot>,
@@ -36,7 +36,7 @@ async fn open_settings(
 }
 
 /// Waits for the save in flight to answer.
-async fn saved(
+pub(super) async fn saved(
     cx: &mut TestAppContext,
     handle: gpui_kit::AnyWindowHandle,
     view: &gpui_kit::Entity<crate::desktop::Pilot>,
@@ -79,7 +79,7 @@ async fn adding_a_cluster_creates_the_file_and_lists_it(cx: &mut TestAppContext)
     .unwrap();
 }
 
-fn write(directory: &Path, text: &str) {
+pub(super) fn write(directory: &Path, text: &str) {
     std::fs::write(directory.join("workspace.json"), text).unwrap();
 }
 
