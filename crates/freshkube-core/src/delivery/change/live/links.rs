@@ -12,9 +12,13 @@ use crate::delivery::join::{Evidence, Hop as Joined, Link};
 use crate::delivery::kargo::Freight;
 use crate::delivery::tekton::{Build, TaskRun};
 
-/// The host Pipelines as Code writes into `log-url` when no console is
-/// configured: its fallback console, which serves no page.
-const NO_CONSOLE: &str = "dashboard.url.is.not.configured";
+/// The hosts Pipelines as Code writes into `log-url` when no console is
+/// configured: its fallback console, which serves no page. Releases
+/// differ in which they write.
+const NO_CONSOLE: [&str; 2] = [
+    "dashboard.url.is.not.configured",
+    "dashboard.is.not.configured",
+];
 
 /// The Freight's page in Kargo, which the page's header opens and copies.
 pub(super) fn freight_page(pages: &Pages, freight: &Freight) -> Result<Address, String> {
@@ -112,7 +116,7 @@ fn run_page(build: &Build) -> Result<Address, String> {
         .as_deref()
         .ok_or("The run has no Pipelines as Code log-url")?;
     let page = Address::parse_route(raw).map_err(|why| format!("The run's log-url: {why}"))?;
-    if page.host() == NO_CONSOLE {
+    if NO_CONSOLE.contains(&page.host()) {
         return Err("Pipelines as Code has no dashboard configured".into());
     }
     Ok(page)

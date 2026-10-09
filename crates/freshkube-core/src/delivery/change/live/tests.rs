@@ -825,19 +825,28 @@ async fn each_provider_has_its_own_pull_request_page() {
 
 /// Pipelines as Code names a fallback console when none is configured;
 /// it serves no page, so the run's link is greyed out.
-#[tokio::test]
-async fn pipelines_as_codes_fallback_console_is_no_page() {
-    let links = run_links(
-        "github",
-        "https://git.example/c",
-        "https://dashboard.url.is.not.configured/#/namespaces/acme-builds/pipelineruns/x",
-    )
-    .await;
+async fn assert_no_console(log_url: &str) {
+    let links = run_links("github", "https://git.example/c", log_url).await;
     let run = link_out(&links, "Open the run");
     assert_eq!(
         (run.2.as_deref(), run.3.as_deref()),
-        (None, Some("Pipelines as Code has no dashboard configured"))
+        (None, Some("Pipelines as Code has no dashboard configured")),
+        "{log_url}"
     );
+}
+
+#[tokio::test]
+async fn pipelines_as_codes_fallback_console_is_no_page() {
+    assert_no_console(
+        "https://dashboard.url.is.not.configured/#/namespaces/acme-builds/pipelineruns/x",
+    )
+    .await;
+}
+
+/// Some releases write the fallback without `url`.
+#[tokio::test]
+async fn pipelines_as_codes_shorter_fallback_console_is_no_page() {
+    assert_no_console("https://dashboard.is.not.configured/acme-builds/x").await;
 }
 
 /// The Tekton Dashboard's run page is a route in the fragment: it is kept,

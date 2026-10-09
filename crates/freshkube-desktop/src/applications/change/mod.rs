@@ -493,8 +493,6 @@ impl ChangePage {
         }
     }
 
-    /// The link that opens an object in Resources, on its cluster's
-    /// connection, and why it doesn't open when that cluster isn't open.
     /// Why a step pod's logs don't open: its cluster isn't the open one.
     fn logs_closed(&self, pod: &Object) -> Option<SharedString> {
         (!self
@@ -509,6 +507,8 @@ impl ChangePage {
         })
     }
 
+    /// The link that opens an object in Resources, on its cluster's
+    /// connection, and why it doesn't open when that cluster isn't open.
     fn object_link(&self, object: &Object) -> (ResourceLink, Option<SharedString>) {
         let session = SessionKey::new(object.cluster.clone());
         let link = ResourceLink::Object(
