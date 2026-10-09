@@ -4,6 +4,48 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.13.0 (2026-10-09)
+
+### Coroot
+
+- **Compare a change in Observability:** a Deployment's hop on the change page
+  shows its current ReplicaSet's pod-template hash, and Compare in
+  Observability opens Deployments on the revision Coroot keeps under that
+  hash. When it can't, the page says why: Coroot keeps no such revision, lists
+  no such application, or no Coroot cluster is linked to the open one. The
+  button is greyed out unless the Deployment's pods are confirmed to run the
+  change, and for an Argo Rollout, since Coroot keeps revisions of Deployments
+  only. Connected without a project, Observability now says "Choose a
+  project" instead of "Connect Coroot", and a revision Coroot reports no image
+  for no longer shows a bare "—" in the Inspector.
+- **Deployments:** Observability's Deployments lists the chosen application's
+  revisions as Coroot keeps them (its last 100; the time range doesn't filter
+  them), each with Coroot's own findings, and reads the application's charts in
+  a window around the selected one's start (±30 min, ±1 h or ±3 h), saying how
+  many samples fall before and after it. Coroot's 404 for a window reads as no
+  data, never as a missing application, and only Kubernetes Deployments have
+  revisions. It shows live too. The example preview's invented YAML diff,
+  Compare with, Roll back and Synced by Argo CD are removed.
+
+### Other changes
+
+- **Argo CD destinations:** `workspace.json`'s `destinations` maps an Argo CD
+  destination, by server URL or cluster name, to a workspace cluster. On the
+  change page a Stage deploying to a mapped cluster names it and lists the
+  workloads Argo CD reports there, as Argo CD's claim; an unmapped destination
+  stays Unknown and says so. A malformed row refuses the file and is named by
+  its index.
+- **Settings › Workspace's Argo CD destinations:** a second list under the
+  clusters maps an Argo CD destination, by server URL or cluster name, to a
+  workspace cluster, saved to `workspace.json` at once. Map, Edit and Remove
+  act on the selection, a mapping already made is refused, and one whose
+  cluster was removed is kept and marked.
+- **Argo CD destinations on the change page:** a Stage's destination resolves
+  through the mappings made in Settings › Workspace, and an unmatched one says
+  to map it there. An object on another workspace cluster offers Switch and
+  open: the window asks, switches to that cluster, then opens it in
+  Resources.
+
 ## 0.12.0 (2026-10-09)
 
 ### Other changes
