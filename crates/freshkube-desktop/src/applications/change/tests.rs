@@ -1062,14 +1062,15 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
             page.fetch = Fetch::Live {
                 runtime: runtime.handle().clone(),
                 access: KubeAccess::Example,
-                place: Place {
+                place: Box::new(Place {
                     // The open example cluster's key, as live objects carry.
                     cluster: "core-fra".into(),
                     label: "home-lab".into(),
                     project: "checkout".into(),
                     freight: "f".into(),
                     argocd_namespace: "argocd".into(),
-                },
+                    mapping: Default::default(),
+                }),
             };
         });
         window.click(hop("freight"), cx);

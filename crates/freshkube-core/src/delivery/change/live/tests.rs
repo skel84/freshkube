@@ -3,12 +3,13 @@ use serde_json::{Value, json};
 use super::super::{
     Change, Destination, Eligible, Hop as Row, Phase, Promotion, Shows, Value as Shown,
 };
-use super::{Place, read};
+use super::{Mapping, Place, read};
 use crate::delivery::argocd::IN_CLUSTER_SERVER;
 use crate::delivery::fixtures::*;
 use crate::delivery::join::{Confidence, Hop, join};
 use crate::delivery::tests::{observed_at, plan};
 use crate::indicators::HealthIndicator;
+use crate::workspace::{Destination as MappedRow, Key};
 
 fn place(freight: &str) -> Place {
     Place {
@@ -17,6 +18,7 @@ fn place(freight: &str) -> Place {
         project: "storefront".into(),
         freight: freight.into(),
         argocd_namespace: "argocd".into(),
+        mapping: Mapping::default(),
     }
 }
 
@@ -232,8 +234,16 @@ async fn an_application_in_a_cluster_that_isnt_read_leaves_its_pods_unknown() {
     assert_eq!(
         change.stages[0].cluster,
         Destination::Unknown(
-            "server https://env-a.example:6443, not known to be this cluster".into()
+            "server https://env-a.example:6443 isn't mapped to a workspace cluster".into()
         )
+    );
+    assert!(
+        change
+            .hops
+            .iter()
+            .any(|hop| hop.detail.contains("map it in Settings › Workspace")),
+        "the app says where to map it, not the spike's flags: {:#?}",
+        change.hops
     );
     assert!(
         change
@@ -944,4 +954,206 @@ async fn the_logs_are_the_task_that_ended_last() {
         link_out(&links, "Logs of build").2.as_deref(),
         Some("cluster-key/acme-builds/storefront-push-x-build-pod Some(\"step-build\")")
     );
+}
+
+/// The workspace `core` (open), `prod` and `stage`, with these rows.
+fn mapped(rows: &[(Key, &str)]) -> Mapping {
+    Mapping {
+        open: Some("core".into()),
+        entries: vec!["core".into(), "prod".into(), "stage".into()],
+        destinations: rows
+            .iter()
+            .map(|(key, entry)| MappedRow::new(key.clone(), *entry))
+            .collect(),
+    }
+}
+
+/// The change, its Application deploying to `server`, or to Argo CD's
+/// cluster `env-dev` without one, read with `mapping`.
+async fn read_mapped(server: Option<&str>, mapping: Mapping) -> Change {
+    let reader = one_cluster(|world| {
+        world.argocd =
+            std::mem::take(&mut world.argocd).with("applications", vec![application(server)]);
+    });
+    let mut place = place("f-new");
+    place.mapping = mapping;
+    read(&reader, &place, observed_at()).await.expect("read")
+}
+
+const ENV_A: &str = "https://env-a.example:6443";
+
+fn by_server() -> Key {
+    // Written as the person might: case, a trailing slash.
+    Key::Server("https://ENV-A.example:6443/".into())
+}
+
+fn by_name() -> Key {
+    Key::Name("env-dev".into())
+}
+
+#[tokio::test]
+async fn a_destination_mapped_by_server_names_its_workspace_cluster() {
+    let change = read_mapped(Some(ENV_A), mapped(&[(by_server(), "prod")])).await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Entry {
+            entry: "prod".into(),
+            via: format!("server {ENV_A}"),
+        }
+    );
+    assert_eq!(change.groups[2].detail, "deploys to prod (mapped)");
+
+    // What Argo CD reports there, its claim, opening on prod; the Service it
+    // also lists is no workload.
+    let reported: Vec<&Row> = change
+        .hops
+        .iter()
+        .filter(|hop| hop.key.starts_with("dev-reported-"))
+        .collect();
+    assert_eq!(reported.len(), 1, "{:#?}", change.hops);
+    let rollout = reported[0];
+    assert_eq!(rollout.name, "Rollout storefront");
+    assert_eq!(rollout.group, 2);
+    assert_eq!(rollout.link, Some(Confidence::Claimed));
+    assert_eq!(rollout.from, "core", "Argo CD was read on the open cluster");
+    let Shows::Hop(detail) = &rollout.shows else {
+        panic!("a hop")
+    };
+    assert_eq!(
+        detail.link.as_ref().map(|link| link.confidence),
+        Some(Confidence::Claimed)
+    );
+    let object = detail
+        .actions
+        .iter()
+        .find_map(|action| match &action.target {
+            super::super::Target::Resource { object, .. } => Some(object),
+            _ => None,
+        })
+        .expect("it opens");
+    assert_eq!(
+        (
+            object.cluster.as_str(),
+            object.group.as_str(),
+            object.version.as_str(),
+            object.plural.as_str(),
+            object.namespace.as_str(),
+            object.name.as_str(),
+        ),
+        (
+            "prod",
+            "argoproj.io",
+            "v1alpha1",
+            "rollouts",
+            "shop",
+            "storefront"
+        )
+    );
+    // Nothing on prod was read, so no row says it was not the environment.
+    assert!(
+        !change
+            .hops
+            .iter()
+            .any(|hop| hop.group == 2 && hop.detail.contains("nothing was read there")),
+        "{:#?}",
+        change.hops
+    );
+}
+
+#[tokio::test]
+async fn a_destination_mapped_by_name_names_its_workspace_cluster() {
+    let change = read_mapped(None, mapped(&[(by_name(), "prod")])).await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Entry {
+            entry: "prod".into(),
+            via: "name env-dev".into(),
+        }
+    );
+    // A server row doesn't match a destination given by name.
+    let change = read_mapped(None, mapped(&[(Key::Server(ENV_A.into()), "prod")])).await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Unknown(
+            "Argo CD's cluster env-dev isn't mapped to a workspace cluster".into()
+        )
+    );
+}
+
+#[tokio::test]
+async fn an_unmapped_destination_stays_unknown_with_why() {
+    let change = read_mapped(Some(ENV_A), mapped(&[(by_name(), "prod")])).await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Unknown(format!(
+            "server {ENV_A} isn't mapped to a workspace cluster"
+        ))
+    );
+    assert!(!change.hops.iter().any(|hop| hop.key.contains("-reported-")));
+    let change = read_mapped(None, Mapping::default()).await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Unknown(
+            "Argo CD's cluster env-dev isn't mapped to a workspace cluster".into()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_destination_mapped_to_a_cluster_no_longer_listed_is_unknown() {
+    let change = read_mapped(Some(ENV_A), mapped(&[(by_server(), "gone")])).await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Unknown("mapped to gone, which the workspace no longer lists".into())
+    );
+    assert!(!change.hops.iter().any(|hop| hop.key.contains("-reported-")));
+}
+
+#[tokio::test]
+async fn two_destinations_mapped_to_one_cluster_both_name_it() {
+    let rows = [(by_server(), "prod"), (by_name(), "prod")];
+    for (server, via) in [
+        (Some(ENV_A), format!("server {ENV_A}")),
+        (None, "name env-dev".to_owned()),
+    ] {
+        let change = read_mapped(server, mapped(&rows)).await;
+        assert_eq!(
+            change.stages[0].cluster,
+            Destination::Entry {
+                entry: "prod".into(),
+                via,
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn one_destination_mapped_twice_is_never_guessed() {
+    let change = read_mapped(
+        Some(ENV_A),
+        mapped(&[(by_server(), "stage"), (Key::Server(ENV_A.into()), "prod")]),
+    )
+    .await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Unknown(
+            "its destination is mapped to more than one workspace cluster (prod, stage)".into()
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_destination_mapped_to_the_open_cluster_is_read_there() {
+    let change = read_mapped(Some(ENV_A), mapped(&[(by_server(), "core")])).await;
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Cluster("core".into())
+    );
+    let pods = change
+        .hops
+        .iter()
+        .find(|hop| hop.name == "Pods")
+        .expect("the pods are reached");
+    assert_eq!(pods.state, HealthIndicator::Healthy, "its pods were read");
+    assert!(!change.hops.iter().any(|hop| hop.key.contains("-reported-")));
 }

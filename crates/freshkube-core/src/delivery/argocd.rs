@@ -771,6 +771,17 @@ pub const IN_CLUSTER_NAME: &str = "in-cluster";
 /// The address Argo CD gives the cluster it runs in, as seen from inside it.
 pub const IN_CLUSTER_SERVER: &str = "https://kubernetes.default.svc";
 
+/// How a destination that matches no context says it could be: by the
+/// spike's flags, or in the app's Settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MapHint {
+    /// `--known-as` and `--known-as-name`.
+    #[default]
+    Flags,
+    /// Settings › Workspace, where the contexts are workspace clusters.
+    Settings,
+}
+
 /// How an Application's destination matches the kubeconfig contexts. Several
 /// matches are never resolved by guessing.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -26,6 +26,7 @@ pub(super) fn plan(contexts: &[(&str, &str)]) -> Plan {
         cluster_names: Vec::new(),
         evidence_result: None,
         stage_naming: None,
+        map_hint: Default::default(),
         commit_names: Default::default(),
         contexts: contexts
             .iter()

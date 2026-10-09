@@ -175,6 +175,11 @@ impl ChangePage {
                     line("Project", self.change.project.clone(), false),
                     match &stage.cluster {
                         Destination::Cluster(cluster) => line("Deploys to", cluster.clone(), true),
+                        Destination::Entry { entry, via } => line(
+                            "Deploys to",
+                            format!("{entry}, mapped from {via} in Settings › Workspace"),
+                            false,
+                        ),
                         Destination::Unknown(why) => {
                             line("Deploys to", format!("Unknown: {why}"), false)
                         }
