@@ -4,6 +4,46 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.12.0 (2026-10-09)
+
+### Other changes
+
+- **The change page:** a Kargo application's Stage offers Follow, which shows one
+  change from its pull request to the pods that run it: its hops in the order the
+  change travels, each Stage's three gates apart, how sure each link is, and the
+  hop or Stage in the Inspector, with links into Resources. The trail's Detail
+  cells end at a whole word, with the whole text in the tooltip
+  ([#522](https://github.com/skel84/freshkube/issues/522)).
+- **The change page reads live:** following a Kargo Stage reads its current
+  Freight's change from the open cluster: the builds of its commit, its
+  Warehouse, each Stage's gates from what Kargo records, and the Application,
+  workload and pods after it, with each link as sure as what was read on both
+  sides. It reads while it shows, again on Refresh, and keeps the last answer
+  when a refresh fails ([#42](https://github.com/skel84/freshkube/issues/42)).
+- **The change page links out:** a hop opens its tool's page in the browser
+  (Argo CD, Kargo, the pull request, the commit, the run) at the address the
+  cluster records, and a run's step logs in the dock; the header opens and
+  copies the Freight's Kargo page. Only http and https addresses open, without
+  user info or query, and a link without one is greyed out with why
+  ([#42](https://github.com/skel84/freshkube/issues/42)).
+- **The change page keeps Detail in sight beside the Inspector:** Detail now
+  comes right after Link, and Hop and Link are narrower, so at 1280 points with
+  the Applications column open it shows nearly twice as much as before; the time
+  and Read from follow it. A cut hop name shows whole in its row's tooltip
+  ([#42](https://github.com/skel84/freshkube/issues/42)).
+- **Applications column:** the Applications area has a sidebar listing every
+  application under what found it, so you can move between applications'
+  pages without going back to the list
+  ([#521](https://github.com/skel84/freshkube/issues/521)).
+- **Open on another cluster:** on an application's page, a part in another
+  cluster of your workspace offers Switch and open. Freshkube asks once,
+  including any running shell, switches to that cluster and opens the part in
+  Resources. Port forwards keep running
+  ([#521](https://github.com/skel84/freshkube/issues/521)).
+- **Stacked Inspector:** in a short window the table above a stacked Inspector
+  keeps its header and one whole row above its legend, and on Applications the
+  page scrolls down to the whole Inspector instead of cutting it off.
+
 ## 0.11.0 (2026-10-09)
 
 ### Coroot
