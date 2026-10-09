@@ -234,7 +234,7 @@ impl Pilot {
         match self.page {
             Page::Resources => self.resources.read(cx).loading_motion(),
             Page::Observability => self.observability.read(cx).loading_motion(cx),
-            Page::Applications => self.applications.read(cx).loading_motion(),
+            Page::Applications => self.applications.read(cx).loading_motion(cx),
             _ if self.kubernetes_only.is_some()
                 && !matches!(self.page, Page::Overview | Page::Health | Page::Nodes) =>
             {

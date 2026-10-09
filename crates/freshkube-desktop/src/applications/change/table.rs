@@ -221,10 +221,19 @@ impl TableSource for ChangePage {
         Some(row.render(cx).into_any_element())
     }
 
+    fn loading(&self) -> Option<&kit::LoadingRows> {
+        self.loading_rows()
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
-        self.lines
-            .is_empty()
-            .then(|| "No hops match this filter.".into_any_element())
+        if !self.lines.is_empty() {
+            return None;
+        }
+        Some(if self.rows.is_empty() {
+            "Nothing read yet.".into_any_element()
+        } else {
+            "No hops match this filter.".into_any_element()
+        })
     }
 
     fn selected_key(&self) -> Option<&SharedString> {

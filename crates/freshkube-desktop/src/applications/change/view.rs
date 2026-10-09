@@ -1,9 +1,15 @@
 //! The page: its breadcrumb header with the hops counted by state, then
 //! the trail edge to edge with the selection in the Inspector, beside it on
-//! a wide page and under it on a narrow one.
+//! a wide page and under it on a narrow one; or, when the change couldn't
+//! be read, the state that says why in place of the trail.
 use super::*;
-use crate::ui::dp;
+use crate::ui::{self, dp};
 use freshkube_ui::page::{self, PageHeader};
+use gpui_kit::assets::IconName;
+use gpui_kit::component::{
+    Disableable, Sizable,
+    button::{Button, ButtonVariants},
+};
 
 impl ChangePage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -31,7 +37,71 @@ impl ChangePage {
             }),
             cx,
         );
-        header.chips(Some(chips)).render(window, cx)
+        let reading = self.pending;
+        let label = "Read the change again";
+        let refresh = Button::new(header.id("refresh"))
+            .ghost()
+            .small()
+            .size(dp(ui::CONTROL_HEIGHT))
+            .icon(ui::refresh_icon(reading, cx))
+            .accessibility_label(label)
+            .tooltip_with_action(
+                if reading { "Reading…" } else { label },
+                &page::Refresh,
+                Some(page::SHELL_CONTEXT),
+            )
+            .disabled(reading)
+            // The button and ⌘R are one action, which the shell runs.
+            .on_click(page::dispatch(page::Refresh, &self.focus));
+        header
+            .chips(Some(chips))
+            .control(refresh)
+            .render(window, cx)
+    }
+
+    /// A refresh that failed over an earlier answer.
+    fn render_stale(&self, cx: &App) -> Option<AnyElement> {
+        let text = self.stale.clone()?;
+        Some(
+            page::inset()
+                .child(
+                    ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
+                        .id("change-stale")
+                        .aria_label(SharedString::from(format!("Couldn't read again: {text}")))
+                        .test_support()
+                        .role(Role::Status),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// In place of the trail when nothing could be read: why, and Retry.
+    fn render_failed(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let why = self.failure()?.to_owned();
+        let retrying = self.pending;
+        let label = if retrying { "Retrying…" } else { "Retry" };
+        let retry = Button::new("change-retry")
+            .primary()
+            .icon(ui::refresh_icon(retrying, cx))
+            .label(label)
+            .accessibility_label(label)
+            .disabled(retrying)
+            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
+            .into_any_element();
+        let state = ui::empty_state(
+            IconName::CircleDashed,
+            "Couldn't read the change",
+            "Nothing of it was read; the trail shows once the Freight answers.",
+            Some(why),
+            vec![retry],
+            cx,
+        );
+        Some(
+            page::inset()
+                .flex_1()
+                .child(state.id("change-failed").test_support().role(Role::Status))
+                .into_any_element(),
+        )
     }
 
     fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -55,7 +125,11 @@ impl Render for ChangePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
-        let body = self.render_table(window, cx);
+        let stale = self.render_stale(cx);
+        let body = match self.render_failed(cx) {
+            Some(failed) => failed,
+            None => self.render_table(window, cx),
+        };
         let short = page::is_short(window);
         // The keys live on a wrapper drawn in every state.
         div()
@@ -76,6 +150,7 @@ impl Render for ChangePage {
                         this.overflow_y_scroll().restrict_scroll_to_axis()
                     })
                     .child(page::toolbar(cx).child(header))
+                    .children(stale)
                     .child(
                         div()
                             .flex()

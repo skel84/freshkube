@@ -157,7 +157,7 @@ fn reads_only_while_shown(cx: &mut TestAppContext) {
                 .applications()
                 .0
                 .read(cx)
-                .loading_motion()
+                .loading_motion(cx)
                 .is_some()
         );
 
@@ -613,4 +613,61 @@ fn a_scoped_application_keeps_its_name_in_the_inspector(cx: &mut TestAppContext)
         );
     })
     .unwrap();
+}
+
+/// A live read follows each Kargo Stage's current Freight, and reads Argo
+/// CD where the applications read found it.
+#[test]
+fn a_live_read_follows_each_stages_current_freight() {
+    use super::change::{Changes, LiveChanges};
+    use super::example;
+    use crate::resources::{KubeAccess, KubeSource};
+    use freshkube_core::applications::{ArgoFound, ArgoScope, KargoProjectRead};
+    use freshkube_core::delivery::kargo::parse_stage;
+    use freshkube_core::delivery::source::Source;
+
+    let stage = |name: &str, current: &[&str]| {
+        let items: serde_json::Map<String, serde_json::Value> = current
+            .iter()
+            .map(|freight| {
+                (
+                    format!("Warehouse/shop/{freight}"),
+                    serde_json::json!({"name": freight}),
+                )
+            })
+            .collect();
+        parse_stage(&serde_json::json!({
+            "metadata": {"name": name, "namespace": "shop"},
+            "status": {"freightHistory": [{"id": "x", "items": items}]}
+        }))
+        .expect("a Stage")
+    };
+    let mut inputs = example::inputs(Variant::Acme);
+    let session = &mut inputs.sessions[0];
+    session.argo_scope = ArgoScope::Namespace {
+        namespaces: vec!["gitops".into()],
+        found: ArgoFound::Labelled {
+            skipped: Vec::new(),
+        },
+    };
+    session.kargo = Source::Read(vec![KargoProjectRead {
+        name: "shop".into(),
+        stages: Source::Read(vec![stage("dev", &["f-1"]), stage("prod", &[])]),
+        warehouses: Source::Read(Vec::new()),
+    }]);
+    let source = KubeSource {
+        id: "connection-1".into(),
+        context: "core-fra".into(),
+        access: KubeAccess::Example,
+    };
+    let live = LiveChanges::of(&inputs, &source);
+    assert_eq!(live.argocd_namespace, "gitops");
+    let changes = Changes::Live(std::sync::Arc::new(live));
+    assert_eq!(changes.freight_of("shop", "dev").as_deref(), Some("f-1"));
+    assert_eq!(
+        changes.freight_of("shop", "prod"),
+        None,
+        "a Stage running nothing"
+    );
+    assert_eq!(changes.freight_of("shop", "no-such-stage"), None);
 }

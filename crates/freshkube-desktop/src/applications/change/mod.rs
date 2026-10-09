@@ -7,18 +7,23 @@
 //! state. The selection's Inspector shows the hop, or for a gate row its
 //! Stage with the three gates apart.
 //!
-//! It is opened from a Kargo application's page, on a Stage, and reads
-//! nothing itself: core's [`Change`] is handed to it whole. Its breadcrumb,
-//! and Escape with nothing selected, go back to the application's page.
+//! It is opened from a Kargo application's page, on a Stage, and reads the
+//! change itself (`read.rs`): live, through core's `delivery::change::live`
+//! on the open connection, while it shows; example data answers at once.
+//! Its breadcrumb, and Escape with nothing selected, go back to the
+//! application's page.
 //! An action that leads into Resources goes through the shell, as every
 //! object link does; the page never approves, promotes or syncs.
+mod changes;
 mod detail;
+mod read;
 mod table;
 #[cfg(test)]
 mod tests;
 mod view;
 
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
 use freshkube_core::applications::SessionKey;
@@ -26,6 +31,7 @@ use freshkube_core::delivery::change::{Change, Object, Phase, Shows, Target};
 use freshkube_core::delivery::join::Confidence;
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
+use freshkube_core::snapshot::Snapshot;
 use freshkube_ui::inspector::{self, InspectorSplit, Pane, Stacked};
 use freshkube_ui::table::{self as kit, TableState};
 use freshkube_ui::ui::Tone;
@@ -33,7 +39,12 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::links::Connections;
+use crate::backend::OwnedJob;
 use crate::resources::{ResourceLink, Tab, model::ObjectRef};
+pub(super) use changes::Changes;
+#[cfg(test)]
+pub(super) use changes::LiveChanges;
+pub(super) use read::Fetch;
 
 /// The page's id prefix: `change-title`, `change-hop-<key>`, `change-detail`.
 const PREFIX: &str = "change";
@@ -170,6 +181,25 @@ enum Entry {
 }
 
 pub(crate) struct ChangePage {
+    /// What reads the change, and the read: its answer, its failure, and
+    /// whether one is in flight.
+    fetch: Fetch,
+    snapshot: Snapshot<Change, String>,
+    pending: bool,
+    job: Option<OwnedJob>,
+    task: Option<Task<()>>,
+    /// When the shown change's answer arrived, on the executor's clock.
+    read_at: Option<Instant>,
+    visible: bool,
+    /// The window the page shows in, where an answer selects its Stage.
+    window: AnyWindowHandle,
+    /// The Stage to select once the first answer arrives.
+    stage: Option<String>,
+    /// A refresh that failed over an earlier answer, derived with it.
+    stale: Option<SharedString>,
+    loading: kit::LoadingRows,
+    loading_motion: Entity<kit::LoadingMotion>,
+    /// The change shown: the last answer, or before one only its name.
     change: Change,
     connections: Connections,
     rows: Vec<HopRow>,
@@ -195,7 +225,54 @@ pub(crate) struct ChangePage {
 impl EventEmitter<ChangeEvent> for ChangePage {}
 
 impl ChangePage {
-    pub(super) fn new(change: Change, connections: Connections, cx: &mut Context<Self>) -> Self {
+    /// The page on `stage`, reading the change `fetch` names at once.
+    pub(super) fn new(
+        fetch: Fetch,
+        stage: &str,
+        connections: Connections,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let loading = kit::LoadingRows::new(PREFIX);
+        let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
+        let mut page = Self {
+            change: fetch.unread(),
+            fetch,
+            snapshot: Snapshot::default(),
+            pending: false,
+            job: None,
+            task: None,
+            read_at: None,
+            visible: true,
+            window: window.window_handle(),
+            stage: Some(stage.to_owned()),
+            stale: None,
+            loading,
+            loading_motion,
+            connections,
+            rows: Vec::new(),
+            groups: Vec::new(),
+            lines: Vec::new(),
+            counts: [0; TONES.len()],
+            folded: BTreeSet::new(),
+            filter: None,
+            columns: table::columns(),
+            table: TableState::new(PREFIX),
+            focus: cx.focus_handle(),
+            split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
+            page_scroll: ScrollHandle::new(),
+            selected: None,
+            detail: None,
+        };
+        page.read(Some(window), cx);
+        page
+    }
+
+    /// Derives the rows, groups and chips from a change. The first answer
+    /// folds the Stages that are fine; a later one keeps the folds, the
+    /// filter and the selection where their rows still are.
+    fn show(&mut self, change: Change) {
+        let first = self.rows.is_empty();
         let rows: Vec<HopRow> = change
             .hops
             .iter()
@@ -250,15 +327,21 @@ impl ChangePage {
                 }
             })
             .collect();
-        // A Stage whose every row is fine folds while anything else on the
-        // page needs a look; a waiting or failing one never folds itself.
-        let anything_wrong = groups.iter().any(|group| group.tone != Tone::Good);
-        let folded = groups
-            .iter()
-            .enumerate()
-            .filter(|(_, group)| anything_wrong && group.folds && group.tone == Tone::Good)
-            .map(|(ix, _)| ix)
-            .collect();
+        if first {
+            // A Stage whose every row is fine folds while anything else on
+            // the page needs a look; a waiting or failing one never folds
+            // itself.
+            let anything_wrong = groups.iter().any(|group| group.tone != Tone::Good);
+            self.folded = groups
+                .iter()
+                .enumerate()
+                .filter(|(_, group)| anything_wrong && group.folds && group.tone == Tone::Good)
+                .map(|(ix, _)| ix)
+                .collect();
+        } else {
+            self.folded
+                .retain(|&ix| groups.get(ix).is_some_and(|g| g.folds));
+        }
         let mut counts = [0; TONES.len()];
         for row in &rows {
             if let Some(ix) = TONES
@@ -268,25 +351,19 @@ impl ChangePage {
                 counts[ix] += 1;
             }
         }
-        let mut page = Self {
-            change,
-            connections,
-            rows,
-            groups,
-            lines: Vec::new(),
-            counts,
-            folded,
-            filter: None,
-            columns: table::columns(),
-            table: TableState::new(PREFIX),
-            focus: cx.focus_handle(),
-            split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
-            page_scroll: ScrollHandle::new(),
-            selected: None,
-            detail: None,
-        };
-        page.derive();
-        page
+        self.change = change;
+        self.rows = rows;
+        self.groups = groups;
+        self.counts = counts;
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|key| !self.rows.iter().any(|row| &row.key == key))
+        {
+            self.selected = None;
+        }
+        self.detail = self.derive_detail();
+        self.derive();
     }
 
     /// The lines, when the folds or the filter change; drawing only reads
