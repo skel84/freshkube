@@ -65,6 +65,12 @@ pub struct Stage {
     /// `metadata.uid` and `metadata.resourceVersion`.
     pub meta: Meta,
     pub warehouses: Vec<String>,
+    /// The Stages it takes Freight from once they verify it
+    /// (`spec.requestedFreight[].sources.stages`), declared.
+    pub upstream: Vec<String>,
+    /// Whether it takes Freight straight from a Warehouse
+    /// (`spec.requestedFreight[].sources.direct`), declared.
+    pub direct: bool,
     /// Names of the freight the Stage says it currently runs.
     pub current_freight: Vec<String>,
     /// Digests of the images in that Freight, as the Stage's own record holds
@@ -322,6 +328,21 @@ pub fn parse_stage(value: &Value) -> Option<Stage> {
         warehouses: array(value, "/spec/requestedFreight")
             .filter_map(|request| text(request, "/origin/name"))
             .collect(),
+        upstream: {
+            let mut upstream: Vec<String> = array(value, "/spec/requestedFreight")
+                .flat_map(|request| array(request, "/sources/stages"))
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            upstream.dedup();
+            upstream
+        },
+        direct: array(value, "/spec/requestedFreight").any(|request| {
+            request
+                .pointer("/sources/direct")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        }),
         current_freight: current,
         current_digests: digests,
         current_digests_at: digests_at,
@@ -636,6 +657,23 @@ pub async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
             read_kind(reader, "promotions", project, parse_promotion).await,
         ),
     }
+}
+
+/// One Freight of a project, by name: a GET, for the commit to follow it
+/// by before the rest is read.
+pub async fn read_freight<R: Reader>(
+    reader: &R,
+    project: &str,
+    name: &str,
+) -> Result<Freight, Failure> {
+    let resource = resolve(reader, GROUP, "freights", VERSIONS, true).await?;
+    let value = reader.get(&resource, Some(project), name).await?;
+    parse_freight(&value).ok_or_else(|| {
+        Failure::new(
+            crate::resources::FailureKind::Other,
+            format!("Freight {project}/{name} has no name or namespace"),
+        )
+    })
 }
 
 /// The names of the cluster's Kargo Projects, from the cluster-scoped

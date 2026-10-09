@@ -345,7 +345,10 @@ fn which_pods(
     };
     if foreign > 0 {
         which.push_str(&format!(
-            "; {foreign} pod container(s) with that hash label belong to another owner and were not judged"
+            "; {} with that hash label {} to another owner and {} not judged",
+            super::workload::count(foreign, "pod container"),
+            if foreign == 1 { "belongs" } else { "belong" },
+            if foreign == 1 { "was" } else { "were" }
         ));
     }
     which

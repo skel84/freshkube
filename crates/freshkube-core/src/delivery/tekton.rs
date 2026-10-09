@@ -16,6 +16,10 @@ use crate::resources::Failure;
 pub const TEKTON_GROUP: &str = "tekton.dev";
 const TEKTON_VERSIONS: &[&str] = &["v1", "v1beta1"];
 
+/// How many of a commit's builds have their TaskRuns listed, one list each,
+/// so a busy commit can't run the read past its deadline.
+pub const MOST_TASK_READS: usize = 10;
+
 /// The label PaC puts on every PipelineRun it starts.
 pub const SHA_LABEL: &str = "pipelinesascode.tekton.dev/sha";
 const REPOSITORY_LABEL: &str = "pipelinesascode.tekton.dev/repository";
@@ -437,7 +441,8 @@ async fn list_scoped<R: Reader, T>(
 }
 
 /// The builds PaC started for one commit, with their TaskRuns, in one
-/// namespace. The SHA is only ever sent as a label selector value. Capped
+/// namespace, or in every namespace when none is named; each build's
+/// TaskRuns are read from its own. The SHA is only ever sent as a label selector value. Capped
 /// when any of the listings was.
 ///
 /// Tekton's API is discovered once for the whole read: PipelineRuns and
@@ -448,10 +453,14 @@ async fn list_scoped<R: Reader, T>(
 /// A SHA-256 commit (64 digits) is longer than a label value may be, so no
 /// build is found by it: that read says so, and the commit joins Kargo
 /// Freight on the commit alone.
-pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> Source<Vec<Build>> {
+pub async fn read_builds<R: Reader>(
+    reader: &R,
+    namespace: Option<&str>,
+    sha: &str,
+) -> Source<Vec<Build>> {
     async fn run<R: Reader>(
         reader: &R,
-        namespace: &str,
+        namespace: Option<&str>,
         sha: &str,
     ) -> Result<(Vec<Build>, Option<Truncation>), Failure> {
         check_sha(sha)?;
@@ -474,24 +483,30 @@ pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> S
             reader,
             &pipeline_runs?,
             Scope::Labels {
-                namespace: Some(namespace.to_owned()),
+                namespace: namespace.map(str::to_owned),
                 selector,
             },
             parse_pipeline_run,
         )
         .await?;
         let mut builds = Vec::new();
-        for run in runs {
+        for (n, run) in runs.into_iter().enumerate() {
             // One run's TaskRuns that can't be read leave that build without
             // them; the other builds are still read.
             let tasks = match &task_runs {
+                _ if n >= MOST_TASK_READS => Err(Failure::new(
+                    crate::resources::FailureKind::Other,
+                    format!(
+                        "not read: only the first {MOST_TASK_READS} builds of a commit have their TaskRuns read"
+                    ),
+                )),
                 Ok(task_runs) => match label_equals(PIPELINE_RUN_LABEL, &run.name) {
                     Ok(selector) => {
                         list_scoped(
                             reader,
                             task_runs,
                             Scope::Labels {
-                                namespace: Some(namespace.to_owned()),
+                                namespace: Some(run.namespace.clone()),
                                 selector,
                             },
                             parse_task_run,
