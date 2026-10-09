@@ -258,12 +258,40 @@ pub enum Promotion {
     Unknown { why: String },
 }
 
+/// Where a Stage deploys.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Destination {
+    /// The environment cluster, by its name.
+    Cluster(String),
+    /// Not known, and why: its Application wasn't found, or its
+    /// destination wasn't matched to a cluster.
+    Unknown(String),
+}
+
+impl Destination {
+    /// The cluster's name, when it is known.
+    pub fn cluster(&self) -> Option<&str> {
+        match self {
+            Self::Cluster(name) => Some(name),
+            Self::Unknown(_) => None,
+        }
+    }
+
+    /// The Stage's group row: `deploys to prod-ams`, or why it isn't known.
+    pub fn words(&self) -> String {
+        match self {
+            Self::Cluster(name) => format!("deploys to {name}"),
+            Self::Unknown(why) => format!("destination unknown: {why}"),
+        }
+    }
+}
+
 /// A Stage and its three gates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stage {
     pub name: String,
-    /// The environment cluster it deploys to.
-    pub cluster: String,
+    /// Where it deploys, as far as what was read says.
+    pub cluster: Destination,
     pub state: HealthIndicator,
     /// Its state in words: `Verified`, `Waiting for promotion`.
     pub words: String,

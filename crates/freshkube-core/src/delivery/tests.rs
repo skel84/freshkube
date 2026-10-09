@@ -377,6 +377,45 @@ async fn a_selector_cannot_be_injected_through_the_sha() {
 }
 
 #[tokio::test]
+async fn a_busy_commit_has_only_its_first_builds_task_runs_read() {
+    use super::tekton::MOST_TASK_READS;
+    let runs: Vec<serde_json::Value> = (0..MOST_TASK_READS + 2)
+        .map(|n| {
+            let mut run = pipeline_run(SHA, true, Some(NEW));
+            run["metadata"]["name"] = serde_json::json!(format!("storefront-push-{n}"));
+            run
+        })
+        .collect();
+    let tekton = FixtureReader::default()
+        .serves("tekton.dev", "v1", &["pipelineruns", "taskruns"])
+        .with("pipelineruns", runs)
+        .with("taskruns", vec![task_run()]);
+    let read = read_builds(&tekton, Some("acme-builds"), SHA).await;
+    let builds = read.read().expect("read");
+    assert_eq!(builds.len(), MOST_TASK_READS + 2, "every build is kept");
+    assert!(
+        builds[..MOST_TASK_READS]
+            .iter()
+            .all(|b| b.tasks_unread.is_none())
+    );
+    assert!(
+        builds[MOST_TASK_READS..].iter().all(|b| b
+            .tasks_unread
+            .as_deref()
+            .is_some_and(|why| why.contains("first"))),
+        "{:?}",
+        builds[MOST_TASK_READS].tasks_unread
+    );
+    let task_lists = tekton
+        .requests
+        .borrow()
+        .iter()
+        .filter(|r| r.contains("taskruns"))
+        .count();
+    assert!(task_lists <= MOST_TASK_READS, "{task_lists}");
+}
+
+#[tokio::test]
 async fn an_older_tekton_version_is_used_when_it_is_all_that_is_served() {
     let world = healthy();
     let tekton = FixtureReader::default()
@@ -1556,7 +1595,7 @@ async fn only_the_current_revisions_pods_are_judged() {
     assert_eq!(pods.confidence, Confidence::Confirmed);
     assert!(matches!(&pods.key, Key::Digest(d) if d.as_str() == NEW));
     for words in [
-        "2 container(s) run the Freight's digest, 2 ready of 2 pod container(s) read",
+        "2 containers run the Freight's digest, 2 ready of 2 pod containers read",
         "the pods of the Rollout's current pod hash 5d9c, ReplicaSet storefront-5d9c",
         "not judged: the pods of ReplicaSet storefront-7f3b",
     ] {
@@ -1612,7 +1651,7 @@ async fn pods_without_an_owner_chain_to_the_rollout_only_claim() {
     for words in [
         "its ReplicaSets were not read",
         "so no owner reference ties the pods to the Rollout",
-        "1 container(s) run the Freight's digest",
+        "1 container runs the Freight's digest",
     ] {
         assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
     }
@@ -1649,7 +1688,7 @@ async fn pods_without_an_owner_chain_to_the_rollout_only_claim() {
     assert_eq!(pods.confidence, Confidence::Claimed);
     for words in [
         "no pod of the current revision reports a digest yet",
-        "1 pod container(s) with that hash label belong to another owner",
+        "1 pod container with that hash label belongs to another owner",
     ] {
         assert!(pods.reason.contains(words), "{words}: {}", pods.reason);
     }

@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
 
-use super::super::{Eligible, Phase, Promotion, Shows};
+use super::super::{
+    Change, Destination, Eligible, Hop as Row, Phase, Promotion, Shows, Value as Shown,
+};
 use super::{Place, read};
 use crate::delivery::argocd::IN_CLUSTER_SERVER;
 use crate::delivery::fixtures::*;
@@ -59,7 +61,12 @@ async fn a_change_reads_from_its_freight_to_the_pods_in_one_cluster() {
 
     let dev = &change.stages[0];
     assert_eq!(dev.name, "dev");
-    assert_eq!(dev.cluster, "core", "Argo CD deploys to its own cluster");
+    assert_eq!(
+        dev.cluster,
+        Destination::Cluster("core".into()),
+        "Argo CD deploys to its own cluster"
+    );
+    assert_eq!(change.groups[2].detail, "deploys to core");
     assert_eq!(
         (dev.state, dev.words.as_str()),
         (HealthIndicator::Healthy, "Verified")
@@ -93,6 +100,7 @@ async fn a_change_reads_from_its_freight_to_the_pods_in_one_cluster() {
         .find(|hop| hop.name == "Pods")
         .expect("the pods are reached");
     assert_eq!(pods.group, 2);
+    assert_eq!(pods.state, HealthIndicator::Healthy, "the pod is ready");
     assert!(change.hops.iter().all(|hop| hop.from == "core"));
 }
 
@@ -196,7 +204,13 @@ async fn stages_follow_promotion_order_and_say_what_they_wait_for() {
     assert_eq!(staging.running.as_deref(), Some("f-old"));
     assert!(matches!(&staging.eligible, Eligible::Verified { upstream, .. } if upstream == "dev"));
     assert_eq!(staging.promotion, Promotion::NotYet);
-    assert_eq!(staging.cluster, "no Application found");
+    assert_eq!(
+        staging.cluster,
+        Destination::Unknown(
+            "it doesn't run this Freight, so its Application wasn't looked for".into()
+        ),
+        "nothing was looked for, so nothing is said to be missing"
+    );
 
     let prod = &change.stages[2];
     assert_eq!(prod.words, "Not eligible yet");
@@ -215,7 +229,12 @@ async fn an_application_in_a_cluster_that_isnt_read_leaves_its_pods_unknown() {
         .await
         .expect("read");
 
-    assert_eq!(change.stages[0].cluster, "a cluster that isn't open");
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Unknown(
+            "server https://env-a.example:6443, not known to be this cluster".into()
+        )
+    );
     assert!(
         change
             .hops
@@ -272,4 +291,179 @@ async fn a_freight_that_cant_be_read_says_why() {
         .await
         .expect_err("refused");
     assert!(refused.contains("refused"), "{refused}");
+}
+
+fn row<'a>(change: &'a Change, key: &str) -> &'a Row {
+    change
+        .hops
+        .iter()
+        .find(|hop| hop.key == key)
+        .unwrap_or_else(|| {
+            let keys: Vec<&str> = change.hops.iter().map(|hop| hop.key.as_str()).collect();
+            panic!("{key} in {keys:?}")
+        })
+}
+
+#[tokio::test]
+async fn refused_applications_leave_the_destination_unknown_and_say_where() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).refusing("applications");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    let dev = &change.stages[0];
+    let Destination::Unknown(why) = &dev.cluster else {
+        panic!("{:?}", dev.cluster);
+    };
+    assert!(
+        why.starts_with("Argo CD Applications in argocd weren't read") && why.contains("forbidden"),
+        "{why}"
+    );
+    assert!(change.groups[2].detail.starts_with("destination unknown: "));
+
+    // The join's Unknown link names the Stage: the row says what wasn't found.
+    let app = row(&change, "dev-argocd-0");
+    assert_eq!(app.name, "Application not found");
+    assert_eq!(app.state, HealthIndicator::Unknown);
+    let Shows::Hop(detail) = &app.shows else {
+        panic!("a hop");
+    };
+    assert_eq!(detail.title, "Application not found");
+    assert!(
+        detail
+            .fields
+            .iter()
+            .any(|f| f.label == "Kargo Stage" && f.value == Shown::Mono("storefront/dev".into())),
+        "{:?}",
+        detail.fields
+    );
+    assert!(
+        detail.fields.iter().all(|f| f.label != "Name"),
+        "the Stage isn't shown as the Application: {:?}",
+        detail.fields
+    );
+}
+
+#[tokio::test]
+async fn no_application_for_the_stage_is_unknown_not_another_cluster() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).with("applications", Vec::new());
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Unknown("no Argo CD Application in argocd was found for it".into())
+    );
+}
+
+#[tokio::test]
+async fn refused_stages_say_so_rather_than_showing_none() {
+    let reader = one_cluster(|world| {
+        world.kargo = std::mem::take(&mut world.kargo).refusing("stages");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    assert!(change.stages.is_empty());
+    let stages = row(&change, "stages");
+    assert_eq!(stages.state, HealthIndicator::Unknown);
+    assert_eq!(stages.group, 1);
+    assert!(stages.detail.contains("forbidden"), "{}", stages.detail);
+}
+
+#[tokio::test]
+async fn refused_promotions_leave_the_promotion_gate_unknown() {
+    let reader = one_cluster(|world| {
+        world.kargo = std::mem::take(&mut world.kargo).refusing("promotions");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    let dev = &change.stages[0];
+    assert!(
+        matches!(&dev.promotion, Promotion::Unknown { why } if why.contains("forbidden")),
+        "{:?}",
+        dev.promotion
+    );
+    let gate = row(&change, "dev-promotion");
+    assert_eq!(
+        (gate.state, gate.detail.as_str()),
+        (HealthIndicator::Unknown, "Promotions not readable")
+    );
+}
+
+#[tokio::test]
+async fn a_degraded_rollout_and_unready_pods_are_shown_as_they_are() {
+    let image_id = format!("docker-pullable://{REPO}@{NEW}");
+    let reader = one_cluster(|world| {
+        let mut degraded = rollout(&format!("{REPO}:v1.4.0"));
+        degraded["status"]["phase"] = json!("Degraded");
+        world.environment = std::mem::take(&mut world.environment)
+            .with("rollouts", vec![degraded])
+            .with(
+                "pods",
+                vec![pod_of(
+                    "storefront-5d9c-a",
+                    "5d9c",
+                    &format!("{REPO}:v1.4.0"),
+                    &image_id,
+                    false,
+                )],
+            );
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    let rollout = row(&change, "dev-rollout-1");
+    assert_eq!(
+        rollout.state,
+        HealthIndicator::Error,
+        "joined, and degraded all the same"
+    );
+    assert_ne!(rollout.link, Some(Confidence::Unknown));
+    let pods = row(&change, "dev-pods-2");
+    let Shows::Hop(detail) = &pods.shows else {
+        panic!("a hop");
+    };
+    assert_eq!(
+        (pods.state, detail.state.as_str()),
+        (HealthIndicator::Warning, "None ready")
+    );
+}
+
+#[tokio::test]
+async fn a_commit_from_an_image_revision_says_why_no_build_joined() {
+    let reader = one_cluster(|world| {
+        let mut bare = freight("f-new", NEW, SHA);
+        bare["commits"] = json!([]);
+        bare["images"][0]["annotations"] = json!({"org.opencontainers.image.revision": SHA});
+        world.kargo = std::mem::take(&mut world.kargo).with("freights", vec![bare]);
+        world.tekton = std::mem::take(&mut world.tekton).with("pipelineruns", Vec::new());
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    let freight = row(&change, "freight");
+    assert!(
+        freight
+            .detail
+            .contains("from an image's revision annotation")
+            && freight.detail.contains("no PipelineRun"),
+        "{}",
+        freight.detail
+    );
+    assert!(
+        !freight.detail.contains("names no commit"),
+        "{}",
+        freight.detail
+    );
 }

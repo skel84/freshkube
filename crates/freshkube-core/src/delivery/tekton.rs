@@ -16,6 +16,10 @@ use crate::resources::Failure;
 pub const TEKTON_GROUP: &str = "tekton.dev";
 const TEKTON_VERSIONS: &[&str] = &["v1", "v1beta1"];
 
+/// How many of a commit's builds have their TaskRuns listed, one list each,
+/// so a busy commit can't run the read past its deadline.
+pub const MOST_TASK_READS: usize = 10;
+
 /// The label PaC puts on every PipelineRun it starts.
 pub const SHA_LABEL: &str = "pipelinesascode.tekton.dev/sha";
 const REPOSITORY_LABEL: &str = "pipelinesascode.tekton.dev/repository";
@@ -486,10 +490,16 @@ pub async fn read_builds<R: Reader>(
         )
         .await?;
         let mut builds = Vec::new();
-        for run in runs {
+        for (n, run) in runs.into_iter().enumerate() {
             // One run's TaskRuns that can't be read leave that build without
             // them; the other builds are still read.
             let tasks = match &task_runs {
+                _ if n >= MOST_TASK_READS => Err(Failure::new(
+                    crate::resources::FailureKind::Other,
+                    format!(
+                        "not read: only the first {MOST_TASK_READS} builds of a commit have their TaskRuns read"
+                    ),
+                )),
                 Ok(task_runs) => match label_equals(PIPELINE_RUN_LABEL, &run.name) {
                     Ok(selector) => {
                         list_scoped(

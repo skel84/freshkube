@@ -241,7 +241,7 @@ async fn a_pod_with_the_hash_label_and_another_owner_is_not_the_deployments() {
     assert_eq!(pods.confidence, Confidence::Claimed, "{pods:#?}");
     assert!(
         pods.reason
-            .contains("belong to another owner and were not judged"),
+            .contains("belongs to another owner and was not judged"),
         "{}",
         pods.reason
     );

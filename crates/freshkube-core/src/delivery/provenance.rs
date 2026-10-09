@@ -1256,9 +1256,8 @@ async fn a_sidecar_of_another_image_does_not_count() {
     let pods = one(&trail, Hop::Rollout, Hop::Pod);
     assert_eq!(pods.confidence, Confidence::Confirmed, "{}", pods.reason);
     assert!(
-        pods.reason.contains(
-            "1 container(s) run the Freight's digest, 1 ready of 1 pod container(s) read"
-        ),
+        pods.reason
+            .contains("1 container runs the Freight's digest, 1 ready of 1 pod container read"),
         "{}",
         pods.reason
     );
@@ -1321,7 +1320,7 @@ async fn without_a_ready_current_pod_reporting_the_digest_the_link_only_claims()
         (
             Some(running(NEW)),
             false,
-            "1 container(s) of the current revision report the Freight's digest, none ready yet",
+            "1 container of the current revision reports the Freight's digest, none ready yet",
         ),
         (
             None,
@@ -1502,7 +1501,7 @@ async fn a_capped_pod_listing_only_claims_even_when_every_pod_read_matches() {
     let pods = one(&trail, Hop::Rollout, Hop::Pod);
     assert_eq!(pods.confidence, Confidence::Claimed, "{}", pods.reason);
     for words in [
-        "1 container(s) run the Freight's digest, 1 ready of 1 pod container(s) read",
+        "1 container runs the Freight's digest, 1 ready of 1 pod container read",
         "the pod listing stopped at the page cap after 1 items, so a pod not read may run another digest",
     ] {
         assert!(pods.reason.contains(words), "{words}: {}", pods.reason);

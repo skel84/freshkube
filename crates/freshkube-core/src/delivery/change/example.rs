@@ -174,7 +174,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
                  steps,
                  verification| Stage {
         name: name.into(),
-        cluster: cluster.into(),
+        cluster: Destination::Cluster(cluster.into()),
         state,
         words: words.into(),
         running: None,
@@ -782,7 +782,7 @@ pub fn change(now: DateTime<Utc>) -> Change {
     ];
     groups.extend(stages.iter().enumerate().map(|(ix, stage)| Group {
         phase: Phase::Stage(ix),
-        detail: format!("deploys to {}", stage.cluster),
+        detail: stage.cluster.words(),
     }));
     let mut hops = build(now);
     let (dev, stage, ams, lon) = (2, 3, 4, 5);

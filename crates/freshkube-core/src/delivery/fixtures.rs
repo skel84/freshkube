@@ -571,7 +571,20 @@ impl World {
                     }
                 }
             }
-            one.lists.extend(reader.lists);
+            // Two roles may list one plural, as Argo CD's and the
+            // environment's ReplicaSets: one cluster lists both, and a refusal
+            // of either refuses it.
+            for (plural, list) in reader.lists {
+                let merged = match (one.lists.remove(&plural), list) {
+                    (Some(Ok(mut earlier)), Ok(later)) => {
+                        earlier.extend(later);
+                        Ok(earlier)
+                    }
+                    (Some(Err(failure)), _) | (_, Err(failure)) => Err(failure),
+                    (None, list) => list,
+                };
+                one.lists.insert(plural, merged);
+            }
             one.capped.extend(reader.capped);
             one.refused_selectors.extend(reader.refused_selectors);
             one.stamp_meta |= reader.stamp_meta;
