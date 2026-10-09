@@ -41,6 +41,11 @@ pub(super) struct KubeconfigDraft {
     _task: Option<Task<()>>,
 }
 
+/// What a held link is told when its entry's own kubeconfig can't be used.
+pub(super) fn unusable_kubeconfig_notice(object: &str, entry: &str, why: &str) -> String {
+    format!("Can’t open {object}: {entry}’s kubeconfig can’t be used ({why})")
+}
+
 impl Pilot {
     /// Uses `selection` for the roster and every screen. Data gathered with
     /// the previous credentials is dropped and the cluster loads again.
@@ -79,10 +84,7 @@ impl Pilot {
         };
         gpui_kit::component::WindowExt::push_notification(
             window,
-            format!(
-                "Can’t open {}: {}’s kubeconfig can’t be used ({why})",
-                pending.object.name, pending.entry
-            ),
+            unusable_kubeconfig_notice(&pending.object.name, &pending.entry, &why),
             cx,
         );
     }

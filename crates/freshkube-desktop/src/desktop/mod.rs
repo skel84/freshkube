@@ -14,6 +14,8 @@ pub(crate) mod nodes;
 mod object_links;
 mod overview;
 mod pages;
+#[cfg(test)]
+mod proof_tests;
 mod search;
 mod services;
 mod session;

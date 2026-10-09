@@ -67,6 +67,11 @@ impl PendingLink {
     }
 }
 
+/// What a link is told when its entry's access changed since it was made.
+pub(super) fn reconnected_notice(entry: &str) -> String {
+    format!("{entry} reconnected since this link was made; open it again")
+}
+
 /// Where a link goes.
 pub(super) enum LinkRoute {
     /// The open cluster's own, or one that names no cluster.
@@ -324,9 +329,7 @@ impl Pilot {
         if &retired.key == self.registry.active_key()
             || retired.definition != definition(entry, workspace)
         {
-            return LinkRoute::Refuse(format!(
-                "{id} reconnected since this link was made; open it again"
-            ));
+            return LinkRoute::Refuse(reconnected_notice(id));
         }
         LinkRoute::Activate(id.clone())
     }
@@ -385,10 +388,7 @@ impl Pilot {
         if pending.object.connection.as_deref() != Some(source.id.as_str()) {
             gpui_kit::component::WindowExt::push_notification(
                 window,
-                format!(
-                    "{} reconnected since this link was made; open it again",
-                    pending.entry
-                ),
+                reconnected_notice(&pending.entry),
                 cx,
             );
             return;

@@ -416,7 +416,7 @@ fn both() -> tempfile::TempDir {
 
 const KUBE_ENTRY: &str = r#"{"id":"dev","role":"environment","context":"acme-dev"}"#;
 
-fn live_launch(
+pub(super) fn live_launch(
     cx: &mut TestAppContext,
     directory: &Path,
     named: bool,
@@ -773,6 +773,13 @@ fn talos_folder_with_workspace_kubeconfig(body: &str) -> (tempfile::TempDir, std
     (guard, file)
 }
 
+/// How many notices the window holds.
+fn notice_count(cx: &mut TestAppContext, handle: AnyWindowHandle) -> usize {
+    use gpui_kit::component::WindowExt as _;
+    cx.update_window(handle, |_, window, cx| window.notifications(cx).len())
+        .unwrap()
+}
+
 /// Starts the window on a Kubernetes-only entry listed before `mgmt`.
 fn start_on_dev_first(guard: &tempfile::TempDir) {
     let file = guard.path().join("workspace.json");
@@ -876,13 +883,32 @@ async fn a_held_link_is_dropped_when_the_entrys_kubeconfig_lacks_its_context(
     })
     .await;
     open_and_hold_link(cx, handle, &view, "mgmt");
+    let told = notice_count(cx, handle);
     cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
         !view.read(cx).kubeconfig_draft.inspecting
     })
     .await;
     cx.run_until_parked();
+    assert_eq!(notice_count(cx, handle), told + 1, "the entry is told why");
     cx.read(|cx| {
         let pilot = view.read(cx);
+        // The reason the notice carries is the read's own.
+        let why = "The context 'acme-mgmt' isn't in this kubeconfig, so it wasn't used";
+        assert_eq!(
+            pilot
+                .kubeconfig_draft
+                .inspection
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .err()
+                .map(String::as_str),
+            Some(why)
+        );
+        assert_eq!(
+            super::kubeconfig::unusable_kubeconfig_notice("p", "mgmt", why),
+            format!("Can’t open p: mgmt’s kubeconfig can’t be used ({why})")
+        );
         assert!(
             pilot.pending_link.is_none(),
             "never left to be refused later"

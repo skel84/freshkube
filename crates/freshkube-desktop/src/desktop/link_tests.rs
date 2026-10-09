@@ -160,7 +160,7 @@ fn a_link_from_an_older_session_of_the_open_entry_is_refused_and_says_so(cx: &mu
     });
     assert_eq!(
         refusal(route(cx, &view, &link)),
-        "dev-fra reconnected since this link was made; open it again"
+        super::switch::reconnected_notice("dev-fra")
     );
     // It is never re-resolved against the new session.
     open(cx, handle, &view, link);
