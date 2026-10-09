@@ -905,9 +905,12 @@ async fn a_held_link_is_dropped_when_the_entrys_kubeconfig_lacks_its_context(
                 .map(String::as_str),
             Some(why)
         );
+        // The notice that was pushed, word for word.
         assert_eq!(
-            super::kubeconfig::unusable_kubeconfig_notice("p", "mgmt", why),
-            format!("Can’t open p: mgmt’s kubeconfig can’t be used ({why})")
+            pilot.told.last().map(String::as_str),
+            Some(
+                "Can’t open p: mgmt’s kubeconfig can’t be used (The context 'acme-mgmt' isn't in this kubeconfig, so it wasn't used)"
+            )
         );
         assert!(
             pilot.pending_link.is_none(),

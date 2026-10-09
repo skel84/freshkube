@@ -82,9 +82,9 @@ impl Pilot {
             Some(Err(error)) => error.clone(),
             _ => "it names no usable context".into(),
         };
-        gpui_kit::component::WindowExt::push_notification(
-            window,
+        self.tell(
             unusable_kubeconfig_notice(&pending.object.name, &pending.entry, &why),
+            window,
             cx,
         );
     }

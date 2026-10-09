@@ -6,70 +6,148 @@ use super::{Page, Pilot};
 use gpui_kit::test::TestAppContextExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-/// A Kubernetes API that refuses every request but /version and remembers what
-/// it was asked: the request line and its Accept header. Anything that
-/// contacts a cluster shows here, whatever it does with the answer.
+/// A Kubernetes API on loopback that remembers every request. It answers
+/// `/version`, then lists empty (a printer table when asked for one), holds
+/// every watch open until the client closes it, and can be told to refuse
+/// every list or to hold them unanswered. Anything that contacts a cluster
+/// shows here, whatever it does with the answer.
+#[derive(Clone, Default)]
 struct FakeApi {
     port: u16,
-    requests: Arc<Mutex<Vec<(String, String)>>>,
+    requests: Arc<Mutex<Vec<Request>>>,
+    /// Watch connections the client still holds open: summary, and the
+    /// Resources page's (printer table) apart.
+    watching: Arc<AtomicUsize>,
+    table_watching: Arc<AtomicUsize>,
+    refuse_lists: Arc<AtomicBool>,
+    hold_lists: Arc<AtomicBool>,
+}
+
+struct Request {
+    line: String,
+    table: bool,
+    watch: bool,
 }
 
 impl FakeApi {
     fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let requests: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
-        let seen = requests.clone();
+        let api = Self {
+            port: listener.local_addr().unwrap().port(),
+            ..Self::default()
+        };
+        let served = api.clone();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
-                let Ok(mut stream) = stream else { continue };
-                let seen = seen.clone();
-                std::thread::spawn(move || {
-                    let mut head = Vec::new();
-                    let mut byte = [0u8; 1];
-                    while !head.ends_with(b"\r\n\r\n") {
-                        match stream.read(&mut byte) {
-                            Ok(1) => head.push(byte[0]),
-                            _ => return,
-                        }
-                    }
-                    let text = String::from_utf8_lossy(&head).into_owned();
-                    let line = text.lines().next().unwrap_or_default().to_owned();
-                    let accept = text
-                        .lines()
-                        .find_map(|l| {
-                            l.to_ascii_lowercase()
-                                .strip_prefix("accept:")
-                                .map(str::to_owned)
-                        })
-                        .unwrap_or_default();
-                    let version = line.starts_with("GET /version ");
-                    seen.lock().unwrap().push((line, accept));
-                    // The connection check is answered, so the cluster reads
-                    // as connected; anything else is refused.
-                    let answer = if version {
-                        let body = r#"{"major":"1","minor":"30","gitVersion":"v1.30.0","platform":"linux/amd64"}"#;
-                        format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                            body.len()
-                        )
-                    } else {
-                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            .to_owned()
-                    };
-                    _ = stream.write_all(answer.as_bytes());
-                });
+                let Ok(stream) = stream else { continue };
+                let api = served.clone();
+                std::thread::spawn(move || api.serve(stream));
             }
         });
-        Self { port, requests }
+        api
+    }
+
+    fn serve(&self, mut stream: TcpStream) {
+        let mut head = Vec::new();
+        let mut byte = [0u8; 1];
+        while !head.ends_with(b"\r\n\r\n") {
+            match stream.read(&mut byte) {
+                Ok(1) => head.push(byte[0]),
+                _ => return,
+            }
+        }
+        let text = String::from_utf8_lossy(&head).to_ascii_lowercase();
+        let line = text.lines().next().unwrap_or_default().to_owned();
+        let request = Request {
+            table: text.contains("as=table"),
+            watch: line.contains("watch="),
+            line,
+        };
+        let (version, watch, table) = (
+            request.line.starts_with("get /version "),
+            request.watch,
+            request.table,
+        );
+        self.requests.lock().unwrap().push(request);
+        let json = |body: &str| {
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        if version {
+            let body =
+                r#"{"major":"1","minor":"30","gitVersion":"v1.30.0","platform":"linux/amd64"}"#;
+            _ = stream.write_all(json(body).as_bytes());
+            return;
+        }
+        if self.refuse_lists.load(Ordering::SeqCst) {
+            _ = stream.write_all(
+                b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            return;
+        }
+        if watch {
+            self.hold_watch(stream, table);
+            return;
+        }
+        while self.hold_lists.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let body = if table {
+            r#"{"kind":"Table","apiVersion":"meta.k8s.io/v1","metadata":{"resourceVersion":"1"},"columnDefinitions":[{"name":"Name","type":"string","format":"name","description":"","priority":0}],"rows":[]}"#
+        } else {
+            r#"{"kind":"List","apiVersion":"v1","metadata":{"resourceVersion":"1"},"items":[]}"#
+        };
+        _ = stream.write_all(json(body).as_bytes());
+    }
+
+    /// Answers a watch's headers and sends nothing more until the client
+    /// closes its end.
+    fn hold_watch(&self, mut stream: TcpStream, table: bool) {
+        let counter = if table {
+            &self.table_watching
+        } else {
+            &self.watching
+        };
+        _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n",
+        );
+        counter.fetch_add(1, Ordering::SeqCst);
+        _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+        let mut byte = [0u8; 1];
+        loop {
+            match stream.read(&mut byte) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(_) => break,
+            }
+        }
+        counter.fetch_sub(1, Ordering::SeqCst);
     }
 
     fn hits(&self) -> usize {
         self.requests.lock().unwrap().len()
+    }
+
+    /// Requests that are not the connection check: the reads themselves.
+    fn reads(&self) -> usize {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| !request.line.starts_with("get /version "))
+            .count()
     }
 
     /// Requests for a printer table: what the Resources lists send.
@@ -78,16 +156,74 @@ impl FakeApi {
             .lock()
             .unwrap()
             .iter()
-            .filter(|(_, accept)| accept.contains("as=table"))
+            .filter(|request| request.table)
             .count()
+    }
+
+    fn watching(&self) -> usize {
+        self.watching.load(Ordering::SeqCst)
+    }
+
+    fn table_watching(&self) -> usize {
+        self.table_watching.load(Ordering::SeqCst)
     }
 }
 
+/// Polls `until` against a real-time deadline, letting the app run between
+/// looks. True when it held in time.
+async fn within(
+    cx: &mut TestAppContext,
+    limit: Duration,
+    until: impl Fn(&mut TestAppContext) -> bool,
+) -> bool {
+    let deadline = Instant::now() + limit;
+    loop {
+        cx.run_until_parked();
+        if until(cx) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// True when `holds` stays true for the whole of `span` of real time.
+async fn throughout(
+    cx: &mut TestAppContext,
+    span: Duration,
+    holds: impl Fn(&mut TestAppContext) -> bool,
+) -> bool {
+    let deadline = Instant::now() + span;
+    while Instant::now() < deadline {
+        cx.run_until_parked();
+        if !holds(cx) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    true
+}
+
 /// A folder whose workspace lists `one` and `two`, Kubernetes-only entries
-/// whose kubeconfig contexts point at the two fake APIs.
+/// whose kubeconfig contexts point at the two fake APIs. The kubeconfig is
+/// written by `write_kubeconfig`, so a test can replace it.
 fn folder(one: &FakeApi, two: &FakeApi) -> tempfile::TempDir {
     let guard = tempfile::tempdir().unwrap();
-    let kubeconfig = guard.path().join("kubeconfig");
+    write_kubeconfig(guard.path(), one, two, "not-a-real-token");
+    std::fs::write(
+        guard.path().join("workspace.json"),
+        format!(
+            r#"{{"version":1,"kubeconfig":{},"clusters":[{{"id":"one","role":"core","context":"one"}},{{"id":"two","role":"core","context":"two"}}]}}"#,
+            serde_json::to_string(&guard.path().join("kubeconfig")).unwrap()
+        ),
+    )
+    .unwrap();
+    guard
+}
+
+fn write_kubeconfig(directory: &std::path::Path, one: &FakeApi, two: &FakeApi, token: &str) {
     let server = |name: &str, api: &FakeApi| {
         format!(
             "- name: {name}\n  cluster:\n    server: http://127.0.0.1:{}\n",
@@ -95,32 +231,18 @@ fn folder(one: &FakeApi, two: &FakeApi) -> tempfile::TempDir {
         )
     };
     std::fs::write(
-        &kubeconfig,
+        directory.join("kubeconfig"),
         format!(
-            "apiVersion: v1\nkind: Config\ncurrent-context: one\nclusters:\n{}{}contexts:\n- name: one\n  context:\n    cluster: one\n    user: u\n- name: two\n  context:\n    cluster: two\n    user: u\nusers:\n- name: u\n  user:\n    token: not-a-real-token\n",
+            "apiVersion: v1\nkind: Config\ncurrent-context: one\nclusters:\n{}{}contexts:\n- name: one\n  context:\n    cluster: one\n    user: u\n- name: two\n  context:\n    cluster: two\n    user: u\nusers:\n- name: u\n  user:\n    token: {token}\n",
             server("one", one),
             server("two", two),
         ),
     )
     .unwrap();
-    std::fs::write(
-        guard.path().join("workspace.json"),
-        format!(
-            r#"{{"version":1,"kubeconfig":{},"clusters":[{{"id":"one","role":"core","context":"one"}},{{"id":"two","role":"core","context":"two"}}]}}"#,
-            serde_json::to_string(&kubeconfig).unwrap()
-        ),
-    )
-    .unwrap();
-    guard
 }
 
 fn key(id: &str) -> SessionKey {
     SessionKey::Entry(id.into())
-}
-
-/// Lets real-time work run: the fake API is on other threads.
-fn let_threads_run() {
-    std::thread::sleep(Duration::from_millis(400));
 }
 
 async fn launched(
@@ -138,34 +260,85 @@ async fn launched(
     (runtime, handle, view)
 }
 
+fn open_entry(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<Pilot>, id: &str) {
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.switch_cluster(id.into(), window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+async fn settled(cx: &mut TestAppContext, view: &Entity<Pilot>) {
+    assert!(
+        within(cx, Duration::from_secs(10), |cx| !view
+            .read_with(cx, |pilot, _| pilot.config_loading))
+        .await,
+        "the startup read never finished"
+    );
+}
+
 #[gpui_kit::test]
-async fn a_parked_session_contacts_nothing_and_the_open_one_does(cx: &mut TestAppContext) {
+async fn a_parked_session_stops_retrying_though_the_open_one_retries(cx: &mut TestAppContext) {
     let (one, two) = (FakeApi::start(), FakeApi::start());
+    // `one` refuses every list, so its reads go on retrying while it is open.
+    one.refuse_lists.store(true, Ordering::SeqCst);
     let guard = folder(&one, &two);
     let (_runtime, handle, view) = launched(cx, &guard, &one).await;
     assert_eq!(two.hits(), 0, "an entry not opened is not contacted");
-    cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |pilot, cx| pilot.activate_entry("two", window, cx))
-    })
-    .unwrap();
-    cx.wait_for(handle, Duration::from_secs(10), |_, _| two.hits() > 0)
-        .await;
-    let_threads_run();
-    let parked = one.hits();
-    // Everything that can reach a cluster is asked to: a manual Refresh, the
-    // shell's cycle, more time. The parked entry hears nothing.
-    cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |pilot, cx| {
-            pilot.refresh_summary(window, cx);
-        })
-    })
-    .unwrap();
-    cx.executor().advance_clock(Duration::from_secs(120));
-    cx.run_until_parked();
-    let_threads_run();
-    assert_eq!(one.hits(), parked, "the parked entry was contacted");
-    assert!(two.hits() > 0);
+    let first = {
+        assert!(within(cx, Duration::from_secs(10), |_| one.reads() > 0).await);
+        one.reads()
+    };
+    // The detector sees a retry while the entry is open: more than one
+    // round of reads arrives, 1 s and 2 s of backoff apart.
+    assert!(
+        within(cx, Duration::from_secs(10), |_| one.reads() >= first * 2).await,
+        "the open session's retry was never seen, so the check below proves nothing"
+    );
+    open_entry(cx, handle, &view, "two");
+    assert!(within(cx, Duration::from_secs(10), |_| two.hits() > 0).await);
     cx.read(|cx| assert_eq!(view.read(cx).registry.active_key(), &key("two")));
+    // A switch can land mid-round: let what was in flight arrive.
+    std::thread::sleep(Duration::from_millis(300));
+    cx.run_until_parked();
+    let parked = one.reads();
+    // Longer than the next backoff steps, so a retry still alive would show.
+    assert!(
+        throughout(cx, Duration::from_secs(5), |_| one.reads() == parked).await,
+        "the parked entry was contacted again"
+    );
+    assert!(two.hits() > 0);
+}
+
+#[gpui_kit::test]
+async fn a_parked_sessions_watches_are_closed_and_not_reopened(cx: &mut TestAppContext) {
+    let (one, two) = (FakeApi::start(), FakeApi::start());
+    let guard = folder(&one, &two);
+    let (_runtime, handle, view) = launched(cx, &guard, &one).await;
+    assert!(
+        within(cx, Duration::from_secs(10), |_| one.watching() > 0).await,
+        "the open session holds watches"
+    );
+    open_entry(cx, handle, &view, "two");
+    assert!(
+        within(cx, Duration::from_secs(10), |_| two.watching() > 0).await,
+        "the new session holds its own"
+    );
+    assert!(
+        within(cx, Duration::from_secs(10), |_| one.watching() == 0).await,
+        "the parked session still holds a watch open"
+    );
+    let parked = one.reads();
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.refresh_summary(window, cx))
+    })
+    .unwrap();
+    assert!(
+        throughout(cx, Duration::from_secs(4), |_| one.watching() == 0
+            && one.reads() == parked)
+        .await,
+        "the parked session read or watched again"
+    );
 }
 
 #[gpui_kit::test]
@@ -173,7 +346,7 @@ async fn a_hidden_resources_page_reads_nothing_and_a_shown_one_does(cx: &mut Tes
     let (one, two) = (FakeApi::start(), FakeApi::start());
     let guard = folder(&one, &two);
     let (_runtime, handle, view) = launched(cx, &guard, &one).await;
-    let_threads_run();
+    assert!(within(cx, Duration::from_secs(10), |_| one.watching() > 0).await);
     assert_eq!(
         one.table_reads(),
         0,
@@ -183,24 +356,84 @@ async fn a_hidden_resources_page_reads_nothing_and_a_shown_one_does(cx: &mut Tes
         view.update(cx, |pilot, cx| pilot.navigate(Page::Resources, window, cx))
     })
     .unwrap();
-    cx.wait_for(handle, Duration::from_secs(10), |_, _| {
-        one.table_reads() > 0
-    })
-    .await;
+    assert!(
+        within(cx, Duration::from_secs(10), |_| one.table_watching() > 0).await,
+        "a shown Resources page lists and watches"
+    );
     let shown = one.table_reads();
-    // Leaving it stops the page: nothing more is listed while it is hidden.
+    assert!(shown > 0);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx))
     })
     .unwrap();
-    cx.run_until_parked();
-    let_threads_run();
-    let settled = one.table_reads();
-    cx.executor().advance_clock(Duration::from_secs(120));
-    cx.run_until_parked();
-    let_threads_run();
-    assert!(settled >= shown);
-    assert_eq!(one.table_reads(), settled, "a hidden page read again");
+    assert!(
+        within(cx, Duration::from_secs(10), |_| one.table_watching() == 0).await,
+        "hiding the page left its watch open"
+    );
+    // Past the first retry step (1 s) and the next (2 s).
+    assert!(
+        throughout(cx, Duration::from_secs(3), |_| one.table_reads() == shown
+            && one.table_watching() == 0)
+        .await,
+        "a hidden page read again"
+    );
+}
+
+#[gpui_kit::test]
+async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unchanged(
+    cx: &mut TestAppContext,
+) {
+    let (one, two) = (FakeApi::start(), FakeApi::start());
+    let guard = folder(&one, &two);
+    let (_runtime, handle, view) = launched(cx, &guard, &one).await;
+    let has_data = |cx: &mut TestAppContext| {
+        view.read_with(cx, |pilot, _| {
+            pilot.registry.active().kubernetes_summary.data().is_some()
+        })
+    };
+    assert!(
+        within(cx, Duration::from_secs(10), &has_data).await,
+        "one's summary never loaded"
+    );
+
+    // Control: away and back with the kubeconfig as it was. The returning
+    // reads are held, so the restored summary stays what is on show.
+    open_entry(cx, handle, &view, "two");
+    settled(cx, &view).await;
+    one.hold_lists.store(true, Ordering::SeqCst);
+    open_entry(cx, handle, &view, "one");
+    settled(cx, &view).await;
+    assert!(
+        within(cx, Duration::from_secs(10), |cx| view
+            .read_with(cx, |pilot, _| pilot.last_known_since().is_some()))
+        .await,
+        "an unchanged kubeconfig gets its last summary back"
+    );
+    one.hold_lists.store(false, Ordering::SeqCst);
+    assert!(
+        within(cx, Duration::from_secs(10), |cx| view
+            .read_with(cx, |pilot, _| pilot.last_known_since().is_none())
+            && has_data(cx))
+        .await,
+        "the reads that follow replace it"
+    );
+
+    // Away again, the kubeconfig replaced, and back: nothing comes back.
+    open_entry(cx, handle, &view, "two");
+    settled(cx, &view).await;
+    write_kubeconfig(guard.path(), &one, &two, "a-replaced-token");
+    one.hold_lists.store(true, Ordering::SeqCst);
+    open_entry(cx, handle, &view, "one");
+    settled(cx, &view).await;
+    assert!(
+        throughout(cx, Duration::from_secs(1), |cx| view
+            .read_with(cx, |pilot, _| {
+                pilot.last_known_since().is_none() && pilot.restored_taken.is_none()
+            }))
+        .await,
+        "a replaced kubeconfig still got the old summary"
+    );
+    one.hold_lists.store(false, Ordering::SeqCst);
 }
 
 // Two example sessions -----------------------------------------------------
@@ -341,25 +574,32 @@ fn a_same_named_object_resolves_to_its_own_cluster_before_and_after_a_switch(
 #[gpui_kit::test]
 fn each_clusters_rows_carry_their_own_connection_after_a_switch(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = super::tests::fixture(cx, 1280., 820.);
+    let mut uids: Vec<(String, std::collections::BTreeSet<String>)> = Vec::new();
     for id in ["core-fra", "dev-fra", "core-fra"] {
         switch_to(cx, handle, &view, id);
-        let (context, source) = cx.read(|cx| {
-            let pilot = view.read(cx);
-            (
-                pilot.applied.context.clone().unwrap(),
-                pilot.kube_source().unwrap().id,
-            )
-        });
-        assert_eq!(context, id);
-        assert_eq!(source, example::connection(id));
-        let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
-        assert!(!rows.is_empty());
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| pilot.navigate(Page::Resources, window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        // The Resources list's own rows, not the example data they came from.
+        let rows = cx.read(|cx| view.read(cx).resources.read(cx).store_identities());
+        assert!(!rows.is_empty(), "{id}: the list shows no rows");
         assert!(
             rows.iter()
-                .all(|row| row.identity.connection == example::connection(id)),
+                .all(|row| row.connection == example::connection(id)),
             "{id}: a row names another cluster"
         );
+        assert_eq!(
+            cx.read(|cx| view.read(cx).kube_source().unwrap().id),
+            example::connection(id)
+        );
+        uids.push((id.into(), rows.into_iter().map(|row| row.uid).collect()));
     }
+    // The same names, other objects: no UID is shared between the clusters,
+    // and coming back shows the first cluster's own again.
+    assert!(uids[0].1.is_disjoint(&uids[1].1));
+    assert_eq!(uids[0].1, uids[2].1);
 }
 
 // Late answers ---------------------------------------------------------------
@@ -377,6 +617,7 @@ async fn an_object_answer_from_the_cluster_just_left_is_dropped(cx: &mut TestApp
     let (_runtime, handle, view) = super::tests::fixture(cx, 1280., 820.);
     switch_to(cx, handle, &view, "core-fra");
     let applied = std::rc::Rc::new(std::cell::Cell::new(0));
+    let epoch = cx.read(|cx| view.read(cx).epoch);
     let (open, gate) = tokio::sync::oneshot::channel::<()>();
     let seen = applied.clone();
     cx.update_window(handle, |_, window, cx| {
@@ -397,9 +638,14 @@ async fn an_object_answer_from_the_cluster_just_left_is_dropped(cx: &mut TestApp
     .unwrap();
     // The window moves to another cluster while the answer is out.
     switch_to(cx, handle, &view, "dev-fra");
-    // The switch cancelled the read itself, so there is nothing to answer;
-    // a send that finds its receiver gone is the proof.
-    assert!(open.send(()).is_err(), "the read outlived the switch");
+    cx.read(|cx| assert_ne!(view.read(cx).epoch, epoch, "the epoch did not move"));
+    // The switch cancels the read itself: its abort lands on a Tokio worker,
+    // so look for the receiver closing until a real-time deadline.
+    assert!(
+        within(cx, Duration::from_secs(5), |_| open.is_closed()).await,
+        "the read outlived the switch"
+    );
+    _ = open.send(());
     settle(cx);
     assert_eq!(applied.get(), 0, "core's answer landed in dev's window");
     cx.read(|cx| assert!(view.read(cx).object_open_job.is_none()));
@@ -412,12 +658,7 @@ async fn a_forward_keeps_running_on_its_own_connection_through_a_switch(cx: &mut
     cx.executor().allow_parking();
     let (runtime, handle, view) = super::tests::fixture(cx, 1280., 820.);
     switch_to(cx, handle, &view, "core-fra");
-    let (_, rows) = example::read("core-fra", "pods", None, live::now()).unwrap();
-    let pod = rows
-        .into_iter()
-        .find(|row| row.cells[2] == "Running")
-        .unwrap()
-        .identity;
+    let pod = pod_of("core-fra", SAME_NAME);
     let resource = builtin("pods").unwrap();
     let spec = crate::forwards::ForwardSpec {
         runtime: runtime.handle().clone(),
@@ -458,6 +699,6 @@ async fn a_forward_keeps_running_on_its_own_connection_through_a_switch(cx: &mut
         // same-named one.
         assert_eq!(forward.port_of(&pod), Some(8080));
         assert!(forward.local_port.is_some());
-        assert!(forward.port_of(&pod_of("dev-fra", &pod.name)).is_none());
+        assert!(forward.port_of(&pod_of("dev-fra", SAME_NAME)).is_none());
     });
 }

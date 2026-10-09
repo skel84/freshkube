@@ -222,6 +222,13 @@ impl Pilot {
         }
     }
 
+    /// Says `message` in a notice, and remembers it for tests.
+    pub(super) fn tell(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        self.told.push(message.clone());
+        gpui_kit::component::WindowExt::push_notification(window, message, cx);
+    }
+
     /// The entry the window is on, if the workspace file lists it.
     pub(super) fn active_cluster(&self) -> Option<&str> {
         match self.registry.active_key() {
@@ -276,9 +283,9 @@ impl Pilot {
             return;
         }
         if self.config_loading {
-            gpui_kit::component::WindowExt::push_notification(
+            self.tell(
+                "Still reading the configuration; pick the cluster again in a moment".into(),
                 window,
-                "Still reading the configuration; pick the cluster again in a moment",
                 cx,
             );
             return;
@@ -346,7 +353,7 @@ impl Pilot {
         match self.route_link(object, cx) {
             LinkRoute::Here => false,
             LinkRoute::Refuse(message) => {
-                gpui_kit::component::WindowExt::push_notification(window, message, cx);
+                self.tell(message, window, cx);
                 true
             }
             LinkRoute::Activate(id) => {
@@ -386,11 +393,7 @@ impl Pilot {
         // The same id is the same access; another means the entry's access
         // changed since the link was made, and the object may be another's.
         if pending.object.connection.as_deref() != Some(source.id.as_str()) {
-            gpui_kit::component::WindowExt::push_notification(
-                window,
-                reconnected_notice(&pending.entry),
-                cx,
-            );
+            self.tell(reconnected_notice(&pending.entry), window, cx);
             return;
         }
         self.cancel_object_open();
