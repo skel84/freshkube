@@ -133,6 +133,21 @@ enum Entry {
     Row(usize),
 }
 
+/// The workspace file's entries and the one the window is on, as the shell
+/// says: a part in another entry's cluster opens there after a switch.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Clusters {
+    pub(crate) entries: Vec<String>,
+    pub(crate) active: Option<String>,
+}
+
+/// A part to open once the window has switched to the workspace entry its
+/// cluster is: the shell asks first.
+pub(crate) struct SwitchLink {
+    pub(crate) entry: SharedString,
+    pub(crate) link: ResourceLink,
+}
+
 pub(crate) struct ApplicationsPage {
     runtime: tokio::runtime::Handle,
     source: Option<KubeSource>,
@@ -149,6 +164,7 @@ pub(crate) struct ApplicationsPage {
     /// Example data answers after this, in tests, so a read stays in
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
+    clusters: Clusters,
     /// When the shown read's answer arrived, on the executor's clock.
     read_at: Option<Instant>,
     display: Display,
@@ -196,6 +212,7 @@ pub(crate) struct ApplicationsPage {
 
 /// A part to open in Resources, from the open application's page.
 impl EventEmitter<ResourceLink> for ApplicationsPage {}
+impl EventEmitter<SwitchLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
     pub(crate) fn new(
@@ -224,6 +241,7 @@ impl ApplicationsPage {
             job: None,
             task: None,
             example_delay: Duration::ZERO,
+            clusters: Clusters::default(),
             read_at: None,
             display: Display::default(),
             stale: None,
@@ -285,6 +303,37 @@ impl ApplicationsPage {
         if self.visible {
             self.read(cx);
         }
+    }
+
+    /// The workspace's entries and the open one. The open application's
+    /// parts say again where each opens.
+    pub(crate) fn set_clusters(&mut self, clusters: Clusters, cx: &mut Context<Self>) {
+        if clusters == self.clusters {
+            return;
+        }
+        self.clusters = clusters;
+        self.update_open(cx);
+    }
+
+    /// Which connection each cluster of a read is, and which workspace
+    /// entries are a switch away. In example data the acme cluster the open
+    /// entry is stands for the open example cluster, so it follows a switch
+    /// whichever arrives first, the switch or the read.
+    fn connections(&self, read: &Read) -> Connections {
+        let connections = match &self.source {
+            Some(source) if matches!(source.access, KubeAccess::Example) => {
+                example::connections(&source.id, self.clusters.active.as_deref())
+            }
+            _ => read.connections.clone(),
+        };
+        let active = self.clusters.active.as_ref();
+        connections.with_entries(
+            self.clusters
+                .entries
+                .iter()
+                .filter(|entry| Some(*entry) != active)
+                .cloned(),
+        )
     }
 
     /// Shown, the page reads unless what it has is fresh; hidden, it drops
@@ -362,7 +411,7 @@ impl ApplicationsPage {
                     ..Read::of(
                         &inputs,
                         example::labels(&inputs),
-                        example::connections(&source.id),
+                        example::connections(&source.id, self.clusters.active.as_deref()),
                     )
                 };
                 if self.example_delay.is_zero() {
@@ -468,7 +517,10 @@ impl ApplicationsPage {
         match read.and_then(|read| Some((read.derived.find(&id)?, read))) {
             Some((app, read)) => {
                 let stale = self.stale.clone();
-                open.update(cx, |page, cx| page.update(app, read, stale, cx));
+                let connections = self.connections(read);
+                open.update(cx, |page, cx| {
+                    page.update(app, read, &connections, stale, cx)
+                });
             }
             None => self.close_open(cx),
         }
@@ -521,12 +573,17 @@ impl ApplicationsPage {
         // Its page shows, not a change followed from another.
         self.change = None;
         let stale = self.stale.clone();
-        let page = cx.new(|cx| ApplicationPage::new(app, read, stale, cx));
+        let connections = self.connections(read);
+        let page = cx.new(|cx| ApplicationPage::new(app, read, &connections, stale, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ApplicationEvent::Back => this.close_application(window, cx),
                 ApplicationEvent::Open(link) => cx.emit(link.as_ref().clone()),
                 ApplicationEvent::Follow(stage) => this.follow(stage, window, cx),
+                ApplicationEvent::Switch(entry, link) => cx.emit(SwitchLink {
+                    entry: entry.clone(),
+                    link: link.as_ref().clone(),
+                }),
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.open = Some((page, subscription));

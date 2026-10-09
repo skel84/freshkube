@@ -459,3 +459,424 @@ fn a_window_that_is_no_entrys_retires_nothing(cx: &mut TestAppContext) {
         })
     });
 }
+
+/// checkout's Deployment in `dev-fra`, a workspace entry that isn't open.
+const DEV_API: &str = "application-part-dev-fra/3/checkout/checkout-api";
+/// checkout's Deployment in `prod-lon`, which no workspace entry is.
+const LON_WORKER: &str = "application-part-prod-lon/3/checkout/checkout-worker";
+
+/// The fixture on checkout's application page, with `part` selected.
+fn on_checkout_part(
+    cx: &mut TestAppContext,
+    part: &'static str,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        window.double_click("application-kargo:checkout", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(part, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    (runtime, handle, view)
+}
+
+/// Presses the Inspector's button for the selected part.
+fn press_open(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+    cx.update_window(handle, |_, window, cx| {
+        window.click("application-detail-open", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+}
+
+fn on_application_page(cx: &mut TestAppContext, view: &Entity<Pilot>) -> bool {
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        pilot.applications().1 == Page::Applications
+            && pilot.applications().0.read(cx).open_page().is_some()
+    })
+}
+
+#[gpui_kit::test]
+fn a_part_in_another_workspace_entry_switches_there_and_opens(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_checkout_part(cx, DEV_API);
+    let before = active(cx, &view);
+    cx.update_window(handle, |_, window, _| {
+        // Short on the button; the whole sentence is its tooltip and label.
+        let button = window.find("application-detail-open");
+        assert_eq!(
+            button.label(),
+            Some("Switch to dev-fra and open checkout-api there, in Resources")
+        );
+    })
+    .unwrap();
+    press_open(cx, handle);
+    // Asked first; nothing moves until the answer.
+    let (question, detail) = cx.pending_prompt().expect("asked before switching");
+    assert_eq!(
+        question,
+        "Switch to dev-fra to open Deployment checkout-api?"
+    );
+    assert!(detail.contains("Port forwards keep running"), "{detail}");
+    assert_eq!(active(cx, &view), before);
+    let told = notices(cx, handle);
+    cx.simulate_prompt_answer("Switch");
+    cx.run_until_parked();
+    assert_eq!(active(cx, &view), key("dev-fra"));
+    assert_eq!(
+        opened(cx, &view),
+        Some((example::connection("dev-fra"), "checkout-api".into()))
+    );
+    assert_eq!(notices(cx, handle), told, "nothing to say");
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applications().1, Page::Resources);
+        assert!(pilot.pending_link.is_none(), "spent once opened");
+    });
+    // Another context closed the page. Back on it, dev-fra is the open
+    // cluster: its part opens at once, and core-fra's is the switch away.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.double_click("application-kargo:checkout", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("application-part-core-fra/0/checkout/dev", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("application-detail-open").label(),
+            Some("Switch to core-fra and open dev there, in Resources")
+        );
+        window.click(DEV_API, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("application-detail-open").label(),
+            Some("Open in Resources")
+        );
+        window.click("application-detail-open", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.pending_prompt().is_none(), "opens without asking");
+    assert_eq!(
+        opened(cx, &view),
+        Some((example::connection("dev-fra"), "checkout-api".into()))
+    );
+}
+
+#[gpui_kit::test]
+fn the_row_menu_and_o_ask_the_same_question(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = on_checkout_part(cx, DEV_API);
+    cx.update_window(handle, |_, window, cx| {
+        window.right_click(DEV_API, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menu = window.within("popup-menu");
+        assert_eq!(
+            menu.find(0usize).label(),
+            Some("Switch to dev-fra and open")
+        );
+        window.within("popup-menu").click(0usize, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (question, _) = cx.pending_prompt().expect("the menu asks");
+    assert_eq!(
+        question,
+        "Switch to dev-fra to open Deployment checkout-api?"
+    );
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("o", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (question, _) = cx.pending_prompt().expect("O asks");
+    assert_eq!(
+        question,
+        "Switch to dev-fra to open Deployment checkout-api?"
+    );
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn cancelling_the_switch_changes_nothing(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_checkout_part(cx, DEV_API);
+    let before = active(cx, &view);
+    let context = cx.read(|cx| view.read(cx).applied.context.clone());
+    // A link an earlier switch holds outlives the question Cancel answers.
+    view.update(cx, |pilot, _| {
+        pilot.pending_link = Some(super::switch::PendingLink::for_test(
+            "stage-fra",
+            pilot.entry_generation,
+            pod_link("stage-fra"),
+            LinkWork::Open {
+                kind: builtin("pods").unwrap(),
+                tab: resources::Tab::Overview,
+            },
+        ));
+    });
+    press_open(cx, handle);
+    assert!(cx.pending_prompt().is_some());
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(active(cx, &view), before);
+    assert!(on_application_page(cx, &view), "the page stays");
+    assert_eq!(opened(cx, &view), None);
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applied.context, context);
+        let held = pilot.pending_link.as_ref().expect("still held");
+        assert_eq!(held.entry, "stage-fra");
+    });
+}
+
+/// A part of the entry that is already active, as after a switch the page
+/// hasn't heard of yet, waits for that entry's own connection: it never
+/// opens on the one the window had before it answered.
+#[gpui_kit::test]
+fn a_part_of_the_active_entry_waits_for_its_connection(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let deployments = builtin("deployments.apps").unwrap();
+    let (_, rows) = example::read("dev-fra", "deployments.apps", None, live::now()).unwrap();
+    let mut object = ObjectRef::from(
+        rows.iter()
+            .find(|row| row.identity.name == "checkout-api")
+            .expect("dev-fra runs checkout-api")
+            .identity
+            .clone(),
+    );
+    object.connection = None;
+    switch(cx, handle, &view, "dev-fra");
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            // The entry's source hasn't answered: no context is applied.
+            pilot.applied.context = None;
+            let link = resources::ResourceLink::Object(
+                deployments.clone(),
+                object.clone(),
+                resources::Tab::Overview,
+            );
+            pilot.open_on_entry("dev-fra".into(), link, window, cx);
+            let held = pilot.pending_link.as_ref().expect("held for dev-fra");
+            assert_eq!(held.entry, "dev-fra");
+        })
+    })
+    .unwrap();
+    assert!(cx.pending_prompt().is_none(), "nothing to ask");
+    cx.run_until_parked();
+    assert_eq!(opened(cx, &view), None, "nothing opens before it answers");
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.applied.context = Some("dev-fra".into());
+            pilot.open_pending_link(window, cx);
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        opened(cx, &view),
+        Some((example::connection("dev-fra"), "checkout-api".into()))
+    );
+    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+}
+
+/// A running shell is folded into the one question, never asked about
+/// twice.
+#[gpui_kit::test]
+fn a_running_shell_is_asked_about_in_the_same_question(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_checkout_part(cx, DEV_API);
+    let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
+    let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
+    let pod = rows
+        .iter()
+        .find(|row| row.cells[2] == "Running")
+        .unwrap()
+        .identity
+        .clone();
+    start_shell(handle, &view, &pod, cx);
+    // The shell's tab took the dock; the page keeps its part.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(DEV_API, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    press_open(cx, handle);
+    let (question, detail) = cx.pending_prompt().expect("asked once");
+    assert_eq!(
+        question,
+        format!(
+            "Switch to dev-fra to open Deployment checkout-api and end the shell in {}?",
+            pod.name
+        )
+    );
+    assert!(detail.contains("Port forwards keep running"), "{detail}");
+    cx.simulate_prompt_answer("Switch and end the shell");
+    cx.run_until_parked();
+    assert!(cx.pending_prompt().is_none(), "no second question");
+    assert_eq!(active(cx, &view), key("dev-fra"));
+    assert_eq!(
+        opened(cx, &view),
+        Some((example::connection("dev-fra"), "checkout-api".into()))
+    );
+}
+
+/// `prod-lon` is no workspace entry: its parts keep the refusal, greyed
+/// out, and O says why.
+#[gpui_kit::test]
+fn a_cluster_the_workspace_does_not_list_is_still_refused(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_checkout_part(cx, LON_WORKER);
+    let before = active(cx, &view);
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(
+            window.find("application-detail-open").label(),
+            Some("Open in Resources")
+        );
+        window.press("o", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.pending_prompt().is_none(), "nothing to switch to");
+    assert_eq!(active(cx, &view), before);
+    cx.read(|cx| {
+        assert_eq!(
+            view.read(cx).told.last().map(String::as_str),
+            Some("Can’t open checkout-worker: it belongs to a cluster that isn’t open")
+        );
+    });
+}
+
+/// An entry the page was told of but the workspace file no longer lists
+/// is refused as any other cluster that isn't open.
+#[gpui_kit::test]
+fn an_entry_no_longer_listed_is_refused(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let before = active(cx, &view);
+    let link = resources::ResourceLink::Object(
+        builtin("deployments.apps").unwrap(),
+        ObjectRef {
+            namespace: "checkout".into(),
+            name: "checkout-api".into(),
+            uid: String::new(),
+            connection: Some("removed-fra".into()),
+        },
+        resources::Tab::Overview,
+    );
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.open_on_entry("removed-fra".into(), link, window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.pending_prompt().is_none());
+    assert_eq!(active(cx, &view), before);
+    cx.read(|cx| {
+        assert_eq!(
+            view.read(cx).told.last().map(String::as_str),
+            Some("Can’t open checkout-api: it belongs to a cluster that isn’t open")
+        );
+    });
+}
+
+/// A link made by the cluster's name for an object the entry doesn't hold
+/// says so as any link to a missing object does, and holds nothing after.
+#[gpui_kit::test]
+fn a_missing_object_after_the_switch_says_so(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let link = resources::ResourceLink::Object(
+        builtin("deployments.apps").unwrap(),
+        ObjectRef {
+            namespace: "checkout".into(),
+            name: "gone-api".into(),
+            uid: String::new(),
+            connection: Some("dev-fra".into()),
+        },
+        resources::Tab::Overview,
+    );
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.open_on_entry("dev-fra".into(), link, window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let before = notices(cx, handle);
+    let told = cx.read(|cx| view.read(cx).told.len());
+    cx.simulate_prompt_answer("Switch");
+    cx.run_until_parked();
+    assert_eq!(active(cx, &view), key("dev-fra"));
+    assert_eq!(opened(cx, &view), None);
+    // The read for its identity says it can't open it; the switch itself
+    // says nothing, not that the entry reconnected.
+    assert_eq!(notices(cx, handle), before + 1, "says it can't open it");
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.told.len(), told, "{:?}", &pilot.told[told..]);
+        assert!(pilot.pending_link.is_none());
+    });
+}
+
+fn notices(cx: &mut TestAppContext, handle: AnyWindowHandle) -> usize {
+    use gpui_kit::component::WindowExt as _;
+    cx.update_window(handle, |_, window, cx| window.notifications(cx).len())
+        .unwrap()
+}
+
+/// Another link, or a switch elsewhere, before the entry opens drops the
+/// held one: it never lands on a page the user has left.
+#[gpui_kit::test]
+fn another_link_or_switch_drops_a_link_held_for_an_entry(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let hold = |cx: &mut TestAppContext, view: &Entity<Pilot>| {
+        let view = view.clone();
+        cx.update(move |cx| {
+            view.update(cx, |pilot, _| {
+                pilot.pending_link = Some(super::switch::PendingLink::for_test(
+                    "dev-fra",
+                    pilot.entry_generation,
+                    pod_link("dev-fra"),
+                    LinkWork::Open {
+                        kind: builtin("pods").unwrap(),
+                        tab: resources::Tab::Overview,
+                    },
+                ));
+            })
+        })
+    };
+    hold(cx, &view);
+    // A link here replaces it.
+    let here = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
+    open(cx, handle, &view, pod_link(&here));
+    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+    hold(cx, &view);
+    switch(cx, handle, &view, "stage-fra");
+    assert_eq!(active(cx, &view), key("stage-fra"));
+    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+}

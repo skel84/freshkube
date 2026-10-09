@@ -733,6 +733,62 @@ pub(crate) fn unless_shell<V: 'static>(
     .detach();
 }
 
+/// A question about leaving the connection for another reason, such as a
+/// switch to another cluster, with its detail and the agreeing answer.
+pub(crate) struct Leaving {
+    pub(crate) question: String,
+    pub(crate) detail: String,
+    pub(crate) answer: String,
+}
+
+/// Asks `leaving` and runs `then` once the user agrees. With shells running
+/// in `pods`, ending them is folded into the same question ("… and end the
+/// shell in ⟨pod⟩?"), so they're asked about once. Cancel leaves everything
+/// as it was.
+pub(crate) fn asking<V: 'static>(
+    leaving: Leaving,
+    pods: Vec<SharedString>,
+    window: &mut Window,
+    cx: &mut Context<V>,
+    then: impl FnOnce(&mut V, &mut Window, &mut Context<V>) + 'static,
+) {
+    let (question, detail, answer) = leaving_question(leaving, &pods);
+    let answer = window.prompt(
+        PromptLevel::Warning,
+        &question,
+        Some(&detail),
+        &[answer.as_str(), "Cancel"],
+        cx,
+    );
+    cx.spawn_in(window, async move |this, cx| {
+        if answer.await == Ok(0) {
+            _ = this.update_in(cx, then);
+        }
+    })
+    .detach();
+}
+
+/// The question, its detail and the agreeing answer, with the shells in
+/// `pods` folded in.
+fn leaving_question(leaving: Leaving, pods: &[SharedString]) -> (String, String, String) {
+    if pods.is_empty() {
+        return (leaving.question, leaving.detail, leaving.answer);
+    }
+    let (ending, detail, answer) = ending_question(pods);
+    let ending = ending.trim_end_matches('?');
+    let mut chars = ending.chars();
+    let ending: String = chars
+        .next()
+        .map(|first| first.to_lowercase().chain(chars).collect())
+        .unwrap_or_default();
+    let answer = answer.to_lowercase();
+    (
+        format!("{} and {ending}?", leaving.question.trim_end_matches('?')),
+        format!("{} {detail}", leaving.detail),
+        format!("{} and {answer}", leaving.answer),
+    )
+}
+
 /// Whether the window may close now. With a shell or a forward running it
 /// asks first, in one question, and `close` runs once the user agrees and
 /// every shell has ended and every forward stopped.

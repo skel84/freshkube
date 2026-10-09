@@ -184,15 +184,24 @@ impl Render for ApplicationPage {
 }
 
 /// Open in Resources, greyed out with why for a part in a cluster that
-/// isn't open.
+/// isn't open; Switch and open for one in another workspace entry, with
+/// the whole sentence in its tooltip, since an entry's name may be long.
 fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> Div {
     let tip = row.open_tip.clone();
+    let label = if row.switch.is_some() {
+        "Switch and open"
+    } else {
+        "Open in Resources"
+    };
     h_flex().gap(dp(6.)).flex_wrap().child(
         Button::new("application-detail-open")
             .outline()
             .xsmall()
             .icon(IconName::ExternalLink)
-            .label("Open in Resources")
+            .label(label)
+            .when(row.switch.is_some(), |button| {
+                button.accessibility_label(tip.clone())
+            })
             .disabled(row.closed.is_some())
             // O only for a part that opens: a greyed-out one says why alone.
             .when_else(

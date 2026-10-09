@@ -731,6 +731,14 @@ impl Pilot {
                 this.resource_link(link.clone(), window, cx)
             },
         ));
+        // One in another workspace entry's cluster, after a switch.
+        subscriptions.push(cx.subscribe_in(
+            applications,
+            window,
+            |this, _, event: &crate::applications::SwitchLink, window, cx| {
+                this.open_on_entry(event.entry.to_string(), event.link.clone(), window, cx)
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             node_pods,
             window,
