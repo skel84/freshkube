@@ -549,13 +549,21 @@ fn a_short_page_scrolls_to_the_whole_stacked_inspector(cx: &mut TestAppContext) 
                 break;
             }
         }
-        let (table, row) = (
-            window.find("applications-table").bounds(),
-            window.find(CART).bounds(),
+        let bounds = |id: &'static str| window.find(id).bounds();
+        // The list has no footer: its legend is in the notes above the
+        // split, so the rows end where the list does.
+        let (list, group, row) = (
+            bounds("applications-list"),
+            bounds("applications-group-kargo-projects"),
+            bounds(CART),
         );
         assert!(
-            row.top() >= table.top() && row.bottom() <= table.bottom(),
-            "cart is cut: {row:?} in {table:?}"
+            group.top() >= list.top() - px(0.5),
+            "the group row scrolled out: {group:?} in {list:?}"
+        );
+        assert!(
+            row.bottom() <= list.bottom() + px(0.5),
+            "cart is cut: {row:?} in {list:?}"
         );
         let (frame, detail) = (
             window.find("applications-page").bounds(),

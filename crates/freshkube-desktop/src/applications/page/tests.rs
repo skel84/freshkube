@@ -326,6 +326,16 @@ fn a_short_stacked_table_keeps_its_first_part_whole(cx: &mut TestAppContext) {
             bounds(DEV_STAGE),
             bounds("application-footer"),
         );
+        // Selecting dev must not have scrolled the Kargo Stages group row
+        // above the list's top to make room for it.
+        let (list, group) = (
+            bounds("application-list"),
+            bounds("application-group-kargo-stages"),
+        );
+        assert!(
+            group.top() >= list.top() - px(0.5),
+            "the group row scrolled out: {group:?} in {list:?}"
+        );
         let (detail, title, button) = (
             bounds("application-detail"),
             bounds("application-detail-title"),
