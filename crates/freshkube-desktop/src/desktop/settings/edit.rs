@@ -117,6 +117,27 @@ impl SettingsPage {
             return;
         }
         let page = cx.entity().downgrade();
+        let mapped = self
+            .workspace
+            .destinations
+            .iter()
+            .filter(|row| row.entry == id)
+            .count();
+        let body = match mapped {
+            0 => String::new(),
+            1 => format!(
+                " The Argo CD destination mapped to {id} stays mapped to it, marked, until \
+                 it is edited."
+            ),
+            n => format!(
+                " The {n} Argo CD destinations mapped to {id} stay mapped to it, marked, \
+                 until they are edited."
+            ),
+        };
+        let body = format!(
+            "This takes the cluster out of the workspace file. Nothing on the cluster, and \
+             no kubeconfig or talosconfig, is touched.{body}"
+        );
         window.open_dialog(cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_id = id.clone();
@@ -131,10 +152,7 @@ impl SettingsPage {
                         .aria_label(format!("Remove {id}"))
                         .gap_3()
                         .text_size(dp(13.))
-                        .child(
-                            "This takes the cluster out of the workspace file. Nothing on the \
-                             cluster, and no kubeconfig or talosconfig, is touched.",
-                        )
+                        .child(body.clone())
                         .child(
                             h_flex()
                                 .gap_2()
@@ -172,15 +190,15 @@ impl SettingsPage {
 
     /// Applies the destination form: maps a destination to a workspace
     /// cluster, or changes the mapping at `editing`, which must still match
-    /// `was`. Returns the row's index once the save has started, or why not,
-    /// for the form to show; the file is untouched then.
+    /// `was`. Returns what the row now matches once the save has started, or
+    /// why not, for the form to show; the file is untouched then.
     pub(super) fn map_destination(
         &mut self,
         editing: Option<(usize, &Key)>,
         key: Key,
         entry: &str,
         cx: &mut Context<Self>,
-    ) -> Result<usize, SharedString> {
+    ) -> Result<Key, SharedString> {
         if !self.editable() {
             return Err(self.why_not_editable().into());
         }
@@ -188,16 +206,7 @@ impl SettingsPage {
             Key::Server(server) => Key::Server(server.trim().to_owned()),
             Key::Name(name) => Key::Name(name.trim().to_owned()),
         };
-        match &key {
-            Key::Server(server) if server.is_empty() => {
-                return Err("Enter the server URL the Application names".into());
-            }
-            Key::Name(name) if name.is_empty() => {
-                return Err("Enter Argo CD’s name for the cluster".into());
-            }
-            _ => {}
-        }
-        if !self.workspace.clusters.iter().any(|e| e.id == entry) {
+        if !key.value().is_empty() && !self.workspace.clusters.iter().any(|e| e.id == entry) {
             return Err("Pick a workspace cluster".into());
         }
         let mut next = self.workspace.clone();
@@ -220,6 +229,8 @@ impl SettingsPage {
         };
         if let Some(fault) = next.destinations[at].fault() {
             return Err(match fault {
+                Fault::EmptyServer => "Enter the server URL the Application names".into(),
+                Fault::EmptyName => "Enter Argo CD's name for the cluster".into(),
                 Fault::NotHttp => "The server must be an http or https address".into(),
                 Fault::ArgoCdOwn => {
                     "Argo CD knows its own cluster already; it needs no mapping".into()
@@ -233,12 +244,21 @@ impl SettingsPage {
             .enumerate()
             .find(|(ix, row)| *ix != at && row.key().same(&key))
         {
-            return Err(format!(
-                "{} is already mapped to {}",
-                capitalized(&key.describe()),
-                other.1.entry
-            )
-            .into());
+            let entry = &other.1.entry;
+            let what = match &key {
+                Key::Server(server) => format!("Server {server}"),
+                Key::Name(name) => format!("Argo CD's cluster {name}"),
+            };
+            return Err(
+                match self.workspace.clusters.iter().any(|e| e.id == *entry) {
+                    true => format!("{what} is already mapped to {entry}"),
+                    false => format!(
+                        "{what} is already mapped to {entry}, which the workspace no longer \
+                         lists: edit that mapping"
+                    ),
+                }
+                .into(),
+            );
         }
         next.check_saveable()
             .map_err(|why| SharedString::from(capitalized(&why.to_string())))?;
@@ -247,7 +267,7 @@ impl SettingsPage {
             None => format!("Mapped {} to {entry}.", key.describe()),
         };
         self.commit(next, what, cx);
-        Ok(at)
+        Ok(key)
     }
 
     /// Removes the mapping at `at`, if it still matches `was`.

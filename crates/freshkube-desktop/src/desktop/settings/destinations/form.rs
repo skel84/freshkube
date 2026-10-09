@@ -13,18 +13,32 @@ use gpui_kit::component::{
 /// What the form matches by, in its order.
 const BY: [&str; 2] = ["Server URL", "Cluster name"];
 
+/// The mapping a form changes, as it was when the form opened.
+pub(super) struct Editing {
+    /// Its place in the file, which the page checks still holds `key`.
+    pub(super) at: usize,
+    pub(super) key: Key,
+    pub(super) entry: SharedString,
+    /// Whether the workspace still lists `entry`; when it doesn't, the
+    /// picker says so instead of showing nothing.
+    pub(super) listed: bool,
+}
+
 pub(super) struct DestinationForm {
     page: Entity<SettingsPage>,
     list: WeakEntity<Destinations>,
-    /// A save the form started is in flight: it closes when the page says it
-    /// landed, and shows why when it did not.
-    pending: bool,
+    /// A save the form started is in flight, for the mapping it saves: the
+    /// form closes and the list selects it when the page says it landed, and
+    /// shows why when it did not.
+    pending: Option<Key>,
     /// The row being changed and what it matched when the form opened; none
     /// when mapping a new one.
     editing: Option<(usize, Key)>,
     by_server: bool,
     value: Entity<InputState>,
     entry: Entity<SelectState<Vec<SharedString>>>,
+    /// The picker's placeholder when the mapping's cluster is gone.
+    gone: Option<SharedString>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -32,33 +46,35 @@ pub(super) struct DestinationForm {
 pub(super) fn open(
     page: Entity<SettingsPage>,
     list: WeakEntity<Destinations>,
-    editing: Option<(usize, Key, SharedString)>,
+    editing: Option<Editing>,
     entries: Vec<SharedString>,
     window: &mut Window,
     cx: &mut App,
-) {
+) -> Entity<DestinationForm> {
     let title = match &editing {
-        Some((_, key, _)) => format!("Change the mapping for {}", key.describe()),
+        Some(Editing { key, .. }) => format!("Change the mapping for {}", key.describe()),
         None => "Map an Argo CD destination".to_owned(),
     };
     let form = cx.new(|cx| DestinationForm::new(page, list, editing, entries, window, cx));
     let value = form.read(cx).value.clone();
+    let shown = form.clone();
     window.open_dialog(cx, move |dialog, window, _| {
         dialog
             .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
             .overlay_closable(false)
             .title(title.clone())
-            .child(form.clone())
+            .child(shown.clone())
     });
     // A dialog remembers what had focus when it opened: focus its field after.
     value.update(cx, |state, cx| state.focus(window, cx));
+    form
 }
 
 impl DestinationForm {
     fn new(
         page: Entity<SettingsPage>,
         list: WeakEntity<Destinations>,
-        editing: Option<(usize, Key, SharedString)>,
+        editing: Option<Editing>,
         entries: Vec<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -67,18 +83,28 @@ impl DestinationForm {
             cx.new(|cx| InputState::new(window, cx).placeholder("As the Application names it"));
         let picked = editing
             .as_ref()
-            .and_then(|(_, _, entry)| entries.iter().position(|id| id == entry))
+            .and_then(|editing| entries.iter().position(|id| *id == editing.entry))
             .or((entries.len() == 1).then_some(0));
         let entry = cx.new(|cx| {
             SelectState::new(entries, picked.map(IndexPath::new), window, cx).searchable(true)
         });
         let mut by_server = true;
-        if let Some((_, key, _)) = &editing {
+        if let Some(Editing { key, .. }) = &editing {
             by_server = matches!(key, Key::Server(_));
             value.update(cx, |input, cx| {
                 input.set_value(key.value().to_owned(), window, cx)
             });
         }
+        let gone = editing
+            .as_ref()
+            .filter(|editing| !editing.listed)
+            .map(|editing| {
+                format!(
+                    "{} is gone, no longer in the workspace: pick a cluster",
+                    editing.entry
+                )
+                .into()
+            });
         let subscriptions = vec![
             cx.subscribe_in(&value, window, |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::PressEnter { .. }) {
@@ -92,8 +118,9 @@ impl DestinationForm {
         Self {
             page,
             list,
-            pending: false,
-            editing: editing.map(|(at, key, _)| (at, key)),
+            pending: None,
+            gone,
+            editing: editing.map(|editing| (editing.at, editing.key)),
             by_server,
             value,
             entry,
@@ -103,7 +130,7 @@ impl DestinationForm {
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
-        if self.pending {
+        if self.pending.is_some() {
             return;
         }
         let value = self.value.read(cx).value().to_string();
@@ -128,12 +155,8 @@ impl DestinationForm {
         });
         match started {
             // The save has started; the form stays until it answers, so a
-            // failed write loses nothing that was typed. The row is selected
-            // now and stays so once the save lands.
-            Ok(at) => {
-                self.pending = true;
-                _ = self.list.update(cx, |list, cx| list.select(at, cx));
-            }
+            // failed write loses nothing that was typed.
+            Ok(saved) => self.pending = Some(saved),
             Err(why) => self.error = Some(why),
         }
         cx.notify();
@@ -142,7 +165,7 @@ impl DestinationForm {
     /// The page changed: if our save has answered, close on success, or show
     /// why not and keep what was typed.
     fn saved(&mut self, page: &Entity<SettingsPage>, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.pending {
+        if self.pending.is_none() {
             return;
         }
         let (saving, notice) = {
@@ -152,7 +175,7 @@ impl DestinationForm {
         if saving {
             return;
         }
-        self.pending = false;
+        let saved = self.pending.take();
         match notice {
             Some(super::super::Notice::Failed(why)) => {
                 self.error = Some(why);
@@ -161,9 +184,30 @@ impl DestinationForm {
                     cx.notify();
                 });
             }
-            _ => window.close_dialog(cx),
+            // Landed: the mapping saved is the selected one.
+            _ => {
+                window.close_dialog(cx);
+                if let Some(key) = saved {
+                    _ = self.list.update(cx, |list, cx| list.select(key, cx));
+                }
+            }
         }
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+impl DestinationForm {
+    /// Picks the workspace cluster, as choosing it in the picker does.
+    pub(super) fn pick(&mut self, entry: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let entry = SharedString::from(entry.to_owned());
+        self.entry.update(cx, |select, cx| {
+            select.set_selected_value(&entry, window, cx)
+        });
+    }
+
+    pub(super) fn gone(&self) -> Option<&str> {
+        self.gone.as_deref()
     }
 }
 
@@ -191,7 +235,7 @@ impl Render for DestinationForm {
         let hint = if self.by_server {
             "spec.destination.server, such as https://prod.example.test"
         } else {
-            "spec.destination.name: Argo CD’s name for the cluster"
+            "spec.destination.name: Argo CD's name for the cluster"
         };
         v_flex()
             .id("settings-destination-form")
@@ -236,7 +280,7 @@ impl Render for DestinationForm {
                     Select::new(&self.entry)
                         .id("settings-destination-entry")
                         .small()
-                        .placeholder("Pick a cluster")
+                        .placeholder(self.gone.clone().unwrap_or("Pick a cluster".into()))
                         .search_placeholder("Find a cluster"),
                 ),
             )
@@ -262,7 +306,7 @@ impl Render for DestinationForm {
                         Button::new("settings-destination-save")
                             .primary()
                             .label("Save")
-                            .disabled(self.pending)
+                            .disabled(self.pending.is_some())
                             .on_click(cx.listener(|form, _, _, cx| form.submit(cx))),
                     ),
             )

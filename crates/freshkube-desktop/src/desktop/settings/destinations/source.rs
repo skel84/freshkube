@@ -70,7 +70,7 @@ pub(super) fn columns(rows: &[DestinationRow]) -> (Vec<Column>, f32) {
 }
 
 impl TableSource for Destinations {
-    type Key = usize;
+    type Key = Key;
     type Sort = ();
     type Column = Column;
     type Row<'a> = &'a DestinationRow;
@@ -101,11 +101,11 @@ impl TableSource for Destinations {
         self.rows.len()
     }
 
-    fn line(&self, line: usize, _: &App) -> Option<Line<usize, &DestinationRow>> {
+    fn line(&self, line: usize, _: &App) -> Option<Line<Key, &DestinationRow>> {
         let row = self.rows.get(line)?;
         Some(Line::Row(TableRow {
-            key: line,
-            id: format!("settings-destination-{line}").into(),
+            key: row.key.clone(),
+            id: row.id.clone().into(),
             label: format!("{} · {} · {}", row.destination, row.by, row.entry).into(),
             tooltip: Some(row.tooltip.clone()),
             marked: false,
@@ -116,7 +116,7 @@ impl TableSource for Destinations {
 
     fn cell(
         &self,
-        line: &TableRow<usize, &DestinationRow>,
+        line: &TableRow<Key, &DestinationRow>,
         style: &RowStyle,
         column: &Column,
         cx: &mut Context<Self>,
@@ -127,9 +127,9 @@ impl TableSource for Destinations {
             Field::Glyph => table::glyph_cell(column)
                 .when(!row.listed, |this| {
                     this.child(ui::status_mark(
-                        SharedString::from(format!("settings-destination-{}-mark", line.key)),
+                        row.mark_id.clone(),
                         ui::Tone::Unknown,
-                        format!("{} isn’t in the workspace", row.entry),
+                        row.mark.clone(),
                         cx,
                     ))
                 })
@@ -147,16 +147,16 @@ impl TableSource for Destinations {
         None
     }
 
-    fn selected_key(&self) -> Option<&usize> {
+    fn selected_key(&self) -> Option<&Key> {
         self.selected.as_ref()
     }
 
-    fn line_of(&self, key: &usize) -> Option<usize> {
-        (*key < self.rows.len()).then_some(*key)
+    fn line_of(&self, key: &Key) -> Option<usize> {
+        self.rows.iter().position(|row| &row.key == key)
     }
 
-    fn click(&mut self, key: &usize, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.select(*key, cx);
+    fn click(&mut self, key: &Key, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.select(key.clone(), cx);
         self.focus(window, cx);
     }
 
@@ -168,11 +168,11 @@ impl TableSource for Destinations {
     /// it, with their keys.
     fn row_menu(
         &mut self,
-        key: &usize,
+        key: &Key,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<menu::MenuAction> {
-        self.select(*key, cx);
+        self.select(key.clone(), cx);
         self.focus(window, cx);
         vec![
             menu::MenuAction::new("Edit", EditDestination).enabled(self.mappable()),

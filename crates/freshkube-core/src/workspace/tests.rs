@@ -596,11 +596,11 @@ fn a_destination_row_that_cannot_be_used_refuses_the_file_and_is_named() {
         ),
         (
             serde_json::json!({"server": "https://Kubernetes.default.svc:443/", "entry": "prod"}),
-            "destinations[1] (server https://Kubernetes.default.svc:443/) names Argo CD’s own cluster, which is known already",
+            "destinations[1] (server https://Kubernetes.default.svc:443/) names Argo CD's own cluster, which is known already",
         ),
         (
             serde_json::json!({"name": "in-cluster", "entry": "prod"}),
-            "destinations[1] (name in-cluster) names Argo CD’s own cluster, which is known already",
+            "destinations[1] (name in-cluster) names Argo CD's own cluster, which is known already",
         ),
         (
             serde_json::json!({"name": "a", "entry": " "}),

@@ -305,30 +305,43 @@ impl SettingsPage {
             ),
             Origin::Example | Origin::File => {
                 let count = self.rows.len();
-                let mapped = workspace.destinations.len();
+                // Only mappings to a listed cluster map anything; a part
+                // that would say 0 is left out.
+                let mapped = workspace
+                    .destinations
+                    .iter()
+                    .filter(|row| workspace.clusters.iter().any(|e| e.id == row.entry))
+                    .count();
+                let mapped = (mapped > 0).then(|| {
+                    Part::new(format!(
+                        "{mapped} {} mapped",
+                        if mapped == 1 {
+                            "destination"
+                        } else {
+                            "destinations"
+                        }
+                    ))
+                });
                 Segment::new(
                     None::<SharedString>,
                     [
-                        Part::new(format!(
+                        Some(Part::new(format!(
                             "{count} {}",
                             if count == 1 { "cluster" } else { "clusters" }
-                        )),
-                        Part::new(format!(
-                            "{mapped} {} mapped",
-                            if mapped == 1 {
-                                "destination"
+                        ))),
+                        mapped,
+                        Some(
+                            Part::new(if self.origin == Origin::Example {
+                                "Example workspace".to_owned()
                             } else {
-                                "destinations"
-                            }
-                        )),
-                        Part::new(if self.origin == Origin::Example {
-                            "Example workspace".to_owned()
-                        } else {
-                            "workspace.json".to_owned()
-                        })
-                        .minor(),
-                        Part::new(kubeconfig).minor(),
-                    ],
+                                "workspace.json".to_owned()
+                            })
+                            .minor(),
+                        ),
+                        Some(Part::new(kubeconfig).minor()),
+                    ]
+                    .into_iter()
+                    .flatten(),
                 )
             }
         };
@@ -353,10 +366,30 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+    /// Down past the last cluster hands the keyboard to the destinations,
+    /// on their first row; their Up from the first comes back here.
+    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let last = self.rows.last().map(|row| &row.id);
+        if delta > 0
+            && self.selected.is_some()
+            && self.selected.as_ref() == last
+            && self
+                .destinations
+                .update(cx, |list, cx| list.enter_from_above(window, cx))
+        {
+            return;
+        }
         if let Some(key) = table::step(self, delta, cx) {
             self.select(key, cx);
         }
+    }
+
+    /// Takes the keyboard back from the destinations, onto the last cluster.
+    fn enter_from_below(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.rows.last().map(|row| row.id.clone()) {
+            self.select(id, cx);
+        }
+        self.focus(window, cx);
     }
 
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
@@ -560,8 +593,12 @@ impl Render for SettingsPage {
                 div()
                     .key_context(CONTEXT)
                     .track_focus(&self.focus)
-                    .on_action(cx.listener(|this, _: &NextCluster, _, cx| this.step(1, cx)))
-                    .on_action(cx.listener(|this, _: &PreviousCluster, _, cx| this.step(-1, cx)))
+                    .on_action(
+                        cx.listener(|this, _: &NextCluster, window, cx| this.step(1, window, cx)),
+                    )
+                    .on_action(cx.listener(|this, _: &PreviousCluster, window, cx| {
+                        this.step(-1, window, cx)
+                    }))
                     .on_action(
                         cx.listener(|this, _: &ClearCluster, _, cx| this.clear_selection(cx)),
                     )

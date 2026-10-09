@@ -4,9 +4,10 @@
 //! saves through the page, as the clusters do. It derives its rows when the
 //! page's workspace changes, so `render` only reads them.
 //!
-//! A row is keyed by its place in the file: only this list and Reload change
-//! the file's order, and each change checks that the row still matches what
-//! was selected before it saves.
+//! A row is selected by what it matches (its `Key`), found again whenever
+//! the rows are derived, so a save or a Reload never moves the selection to
+//! another row. A change names the row by its place in the file and what it
+//! matched, and the page checks both before it saves.
 mod form;
 mod source;
 #[cfg(test)]
@@ -15,7 +16,7 @@ mod tests;
 use super::SettingsPage;
 use crate::ui::{self, dp};
 use freshkube_core::workspace::Key;
-use freshkube_ui::{menu, page, table};
+use freshkube_ui::{menu, page, table, table::TableSource as _};
 use gpui_kit::component::{
     Disableable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
@@ -58,6 +59,11 @@ pub(crate) struct DestinationRow {
     /// is kept, marked, and maps nothing.
     listed: bool,
     tooltip: SharedString,
+    /// The row's id, `settings-destination-{place}`, and its mark's.
+    id: SharedString,
+    mark_id: SharedString,
+    /// The mark's words, for a row whose cluster is gone.
+    mark: SharedString,
 }
 
 pub(crate) struct Destinations {
@@ -72,8 +78,11 @@ pub(crate) struct Destinations {
     why_not: &'static str,
     /// The workspace's cluster ids, for the form's picker.
     entries: Vec<SharedString>,
-    selected: Option<usize>,
+    selected: Option<Key>,
     focus: FocusHandle,
+    /// The form last opened, for tests to pick its cluster.
+    #[cfg(test)]
+    form: Option<WeakEntity<form::DestinationForm>>,
     _observe: Subscription,
 }
 
@@ -92,6 +101,8 @@ impl Destinations {
             entries: Vec::new(),
             selected: None,
             focus: cx.focus_handle(),
+            #[cfg(test)]
+            form: None,
             _observe: cx.observe(page, |this, page, cx| this.follow(&page, cx)),
         }
     }
@@ -113,7 +124,8 @@ impl Destinations {
             self.rows = workspace
                 .destinations
                 .iter()
-                .map(|row| {
+                .enumerate()
+                .map(|(at, row)| {
                     let key = row.key();
                     let listed = workspace.clusters.iter().any(|e| e.id == row.entry);
                     let by = match key {
@@ -134,12 +146,19 @@ impl Destinations {
                         entry: row.entry.clone().into(),
                         listed,
                         tooltip: tooltip.into(),
+                        id: format!("settings-destination-{at}").into(),
+                        mark_id: format!("settings-destination-{at}-mark").into(),
+                        mark: format!("{} isn’t in the workspace", row.entry).into(),
                         key,
                     }
                 })
                 .collect();
             (self.columns, self.width) = source::columns(&self.rows);
-            if self.selected.is_some_and(|at| at >= self.rows.len()) {
+            if self
+                .selected
+                .as_ref()
+                .is_some_and(|key| self.line_of(key).is_none())
+            {
                 self.selected = None;
             }
         }
@@ -149,16 +168,38 @@ impl Destinations {
         }
     }
 
-    fn select(&mut self, at: usize, cx: &mut Context<Self>) {
-        self.selected = Some(at);
+    pub(super) fn select(&mut self, key: Key, cx: &mut Context<Self>) {
+        self.selected = Some(key);
         table::reveal(self, ScrollStrategy::Nearest);
         cx.notify();
     }
 
-    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
-        if let Some(at) = table::step(self, delta, cx) {
-            self.select(at, cx);
+    /// Up from the first mapping hands the keyboard back to the clusters,
+    /// on their last row; the clusters' Down past their last comes here.
+    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let first = self.rows.first().map(|row| &row.key);
+        if delta < 0
+            && self.selected.is_some()
+            && self.selected.as_ref() == first
+            && let Some(page) = self.page.upgrade()
+        {
+            page.update(cx, |page, cx| page.enter_from_below(window, cx));
+            return;
         }
+        if let Some(key) = table::step(self, delta, cx) {
+            self.select(key, cx);
+        }
+    }
+
+    /// Takes the keyboard from the clusters' last row, onto the first
+    /// mapping. Returns false when there is none to go to.
+    pub(super) fn enter_from_above(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(key) = self.rows.first().map(|row| row.key.clone()) else {
+            return false;
+        };
+        self.select(key, cx);
+        self.focus(window, cx);
+        true
     }
 
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
@@ -174,8 +215,8 @@ impl Destinations {
     }
 
     fn selected_row(&self) -> Option<(usize, &DestinationRow)> {
-        let at = self.selected?;
-        Some((at, self.rows.get(at)?))
+        let at = self.line_of(self.selected.as_ref()?)?;
+        Some((at, &self.rows[at]))
     }
 
     /// Whether the form can open: a change can be saved, and there is a
@@ -193,12 +234,20 @@ impl Destinations {
         };
         let editing = match editing {
             true => match self.selected_row() {
-                Some((at, row)) => Some((at, row.key.clone(), row.entry.clone())),
+                Some((at, row)) => Some(form::Editing {
+                    at,
+                    key: row.key.clone(),
+                    entry: row.entry.clone(),
+                    listed: row.listed,
+                }),
                 None => return,
             },
             false => None,
         };
-        form::open(
+        // The dialog gives the keyboard back to what had it when it opened:
+        // this list, whether a key or the toolbar opened it.
+        self.focus(window, cx);
+        let _form = form::open(
             page,
             cx.entity().downgrade(),
             editing,
@@ -206,6 +255,10 @@ impl Destinations {
             window,
             cx,
         );
+        #[cfg(test)]
+        {
+            self.form = Some(_form.downgrade());
+        }
     }
 
     fn ask_remove_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -215,6 +268,7 @@ impl Destinations {
         if !self.editable || window.has_active_dialog(cx) {
             return;
         }
+        self.focus(window, cx);
         let page = self.page.clone();
         let what = key.describe();
         window.open_dialog(cx, move |dialog, window, _| {
@@ -340,6 +394,21 @@ impl Destinations {
     }
 
     #[cfg(test)]
+    pub(super) fn selected(&self) -> Option<&Key> {
+        self.selected.as_ref()
+    }
+
+    #[cfg(test)]
+    fn form(&self) -> Option<Entity<form::DestinationForm>> {
+        self.form.as_ref()?.upgrade()
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_focused(&self, window: &Window) -> bool {
+        self.focus.is_focused(window)
+    }
+
+    #[cfg(test)]
     pub(super) fn rows(&self) -> impl Iterator<Item = (&str, &str, bool)> {
         self.rows
             .iter()
@@ -355,7 +424,6 @@ impl Render for Destinations {
             .id("settings-destinations")
             .flex_1()
             .min_h_0()
-            .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
             .child(
                 page::toolbar(cx)
                     .border_t_1()
@@ -366,10 +434,14 @@ impl Render for Destinations {
                 div()
                     .key_context(CONTEXT)
                     .track_focus(&self.focus)
-                    .on_action(cx.listener(|this, _: &NextDestination, _, cx| this.step(1, cx)))
                     .on_action(
-                        cx.listener(|this, _: &PreviousDestination, _, cx| this.step(-1, cx)),
+                        cx.listener(|this, _: &NextDestination, window, cx| {
+                            this.step(1, window, cx)
+                        }),
                     )
+                    .on_action(cx.listener(|this, _: &PreviousDestination, window, cx| {
+                        this.step(-1, window, cx)
+                    }))
                     .on_action(
                         cx.listener(|this, _: &ClearDestination, _, cx| this.clear_selection(cx)),
                     )
@@ -386,6 +458,7 @@ impl Render for Destinations {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
                     .child(table::data_table(self, window, cx).flex_1().min_h_0()),
             )
     }
