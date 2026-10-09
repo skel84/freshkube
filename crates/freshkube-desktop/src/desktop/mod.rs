@@ -193,22 +193,16 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             let window_options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(window_size, cx)),
                 window_min_size: Some(size(px(760.), px(560.))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(
-                        if options.maintenance_endpoint().is_some() || example_maintenance {
-                            "Freshkube (maintenance)"
-                        } else {
-                            "Freshkube"
-                        }
-                        .into(),
-                    ),
-                    // Centred in the header at the saved text size; the
-                    // shell moves them when it changes.
-                    traffic_light_position: Some(freshkube_ui::page::traffic_light_position(
-                        crate::text_size::current(cx),
-                    )),
-                    ..TitleBar::title_bar_options()
-                }),
+                // The window's controls sit on the header at the saved text
+                // size; the shell moves them when it changes.
+                titlebar: Some(freshkube_ui::platform::titlebar_options(
+                    if options.maintenance_endpoint().is_some() || example_maintenance {
+                        "Freshkube (maintenance)"
+                    } else {
+                        "Freshkube"
+                    },
+                    crate::text_size::current(cx),
+                )),
                 ..TitleBar::window_options()
             };
             // Maintenance mode replaces the cluster shell: no talosconfig,
@@ -287,15 +281,10 @@ impl Render for PageHost {
     }
 }
 
-/// Centres macOS's traffic lights on the header at the current text size:
-/// the header is in dp and grows with it, the lights don't.
-pub(crate) fn place_traffic_lights(window: &mut Window, cx: &App) {
-    #[cfg(target_os = "macos")]
-    window.set_traffic_light_position(freshkube_ui::page::traffic_light_position(
-        crate::text_size::current(cx),
-    ));
-    #[cfg(not(target_os = "macos"))]
-    let _ = (window, cx);
+/// Puts the window's controls on the header at the current text size: the
+/// header is in dp and grows with it, macOS's traffic lights don't.
+pub(crate) fn place_window_controls(window: &mut Window, cx: &App) {
+    freshkube_ui::platform::place_window_controls(window, crate::text_size::current(cx));
 }
 
 /// What a cached page view is laid out as: the whole space it is given.
@@ -510,22 +499,82 @@ impl Pilot {
                 Refresh,
                 Some(freshkube_ui::page::SHELL_CONTEXT),
             ),
-            KeyBinding::new("secondary-b", ToggleColumn, Some("Freshkube")),
-            KeyBinding::new("secondary-1", ShowOverview, Some("Freshkube")),
-            KeyBinding::new("secondary-2", ShowNodes, Some("Freshkube")),
-            KeyBinding::new("secondary-3", ShowNamespaces, Some("Freshkube")),
-            KeyBinding::new("secondary-4", ShowEvents, Some("Freshkube")),
-            KeyBinding::new("secondary-5", ShowHealth, Some("Freshkube")),
-            KeyBinding::new("secondary-6", ShowEtcd, Some("Freshkube")),
-            KeyBinding::new("secondary-7", ShowSystemServices, Some("Freshkube")),
-            KeyBinding::new("secondary-8", ShowSecurity, Some("Freshkube")),
-            KeyBinding::new("secondary-9", ShowLifecycle, Some("Freshkube")),
+            KeyBinding::new(
+                "secondary-b",
+                ToggleColumn,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-1",
+                ShowOverview,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-2",
+                ShowNodes,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-3",
+                ShowNamespaces,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-4",
+                ShowEvents,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-5",
+                ShowHealth,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-6",
+                ShowEtcd,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-7",
+                ShowSystemServices,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-8",
+                ShowSecurity,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-9",
+                ShowLifecycle,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
             // Reaches the screens without a number of their own.
-            KeyBinding::new("ctrl-tab", NextScreen, Some("Freshkube")),
-            KeyBinding::new("ctrl-shift-tab", PreviousScreen, Some("Freshkube")),
-            KeyBinding::new("alt-up", PreviousContext, Some("Freshkube")),
-            KeyBinding::new("alt-down", NextContext, Some("Freshkube")),
-            KeyBinding::new("secondary-k", GoToKind, Some("Freshkube")),
+            KeyBinding::new(
+                "ctrl-tab",
+                NextScreen,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "ctrl-shift-tab",
+                PreviousScreen,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "alt-up",
+                PreviousContext,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "alt-down",
+                NextContext,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-k",
+                GoToKind,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
             KeyBinding::new("up", PreviousNode, Some("TalosNodes")),
             KeyBinding::new("left", PreviousNode, Some("TalosNodes")),
             KeyBinding::new("down", NextNode, Some("TalosNodes")),
@@ -972,7 +1021,7 @@ impl Pilot {
         // Cached views keep their last frame; a font size or palette change
         // that doesn't refresh the window by itself must still redraw them.
         subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
-            place_traffic_lights(window, cx);
+            place_window_controls(window, cx);
             view.prepare_context_display(window, cx);
             view.notify_cached(cx);
             cx.notify();

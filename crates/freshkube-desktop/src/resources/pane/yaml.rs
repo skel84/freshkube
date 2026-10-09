@@ -18,8 +18,9 @@ use gpui_kit::*;
 use super::DetailPane;
 use crate::palette::{Palette, palette};
 use crate::resources::detail::{DocumentView, MAX_MATCHES, YamlLine};
-use crate::ui::{self, dp};
+use crate::ui::dp;
 use freshkube_ui::document;
+use freshkube_ui::platform::primary_modifier;
 
 /// Styles for one drawn line: the key tinted, and search matches marked,
 /// the current one more strongly. `StyledText` needs ranges in order and
@@ -99,7 +100,7 @@ impl DetailPane {
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronUp)
-                    .tooltip(format!("Previous match (Shift Enter, {}⇧G)", ui::modifier()))
+                    .tooltip(format!("Previous match (Shift Enter, {}⇧G)", primary_modifier()))
                     .on_click(cx.listener(|pane, _, _, cx| pane.step_match(-1, cx))),
             )
             .child(
@@ -107,7 +108,7 @@ impl DetailPane {
                     .ghost()
                     .xsmall()
                     .icon(IconName::ChevronDown)
-                    .tooltip(format!("Next match (Enter, {}G)", ui::modifier()))
+                    .tooltip(format!("Next match (Enter, {}G)", primary_modifier()))
                     .on_click(cx.listener(|pane, _, _, cx| pane.step_match(1, cx))),
             )
             .children(selected.map(|lines| {

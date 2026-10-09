@@ -3,12 +3,12 @@
 use super::refresh_tip::{RefreshTip, TooltipView as _};
 use super::*;
 use freshkube_ui::page::{APP_HEADER_CONTROL, APP_HEADER_HEIGHT};
+use freshkube_ui::platform::Platform;
 
-/// Command-K's hint on the search field.
-const SEARCH_KEY: &str = if cfg!(target_os = "macos") {
-    "⌘K"
-} else {
-    "Ctrl K"
+/// Command-K's hint on the search field, as the platform labels it.
+const SEARCH_KEY: &str = match Platform::current() {
+    Platform::MacOs => "⌘K",
+    Platform::Windows | Platform::Linux => "Ctrl+K",
 };
 
 /// Below this window width, in dp, Search everything shrinks to its icon.
@@ -22,13 +22,13 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let minimal = window.viewport_size().width / ui::dp_px(1., window) < 680.;
+        // Clear of the window's controls: macOS's traffic lights keep their
+        // size in points.
+        let insets = freshkube_ui::platform::header_insets();
         TitleBar::new()
             .h(dp(APP_HEADER_HEIGHT))
             .bg(cx.theme().title_bar)
-            // Clear of the traffic lights, which keep their size in points.
-            .when(cfg!(target_os = "macos"), |bar| {
-                bar.pl(px(freshkube_ui::page::TRAFFIC_LIGHT_INSET))
-            })
+            .pl(insets.leading)
             .child(
                 h_flex()
                     .gap(dp(if minimal { 6. } else { 14. }))
@@ -48,7 +48,7 @@ impl Pilot {
                 h_flex()
                     .gap(dp(6.))
                     .pl(dp(12.))
-                    .pr(dp(freshkube_ui::page::PANE_PADDING))
+                    .pr(insets.trailing)
                     .flex_shrink_0()
                     .child(self.render_search_field(window, cx))
                     .when(!minimal, |this| {
