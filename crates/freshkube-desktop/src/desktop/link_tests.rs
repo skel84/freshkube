@@ -402,6 +402,13 @@ fn a_link_whose_connection_is_not_the_entrys_now_says_it_reconnected(cx: &mut Te
     settle(cx, handle, &view);
     assert!(!held(cx, &view));
     assert_eq!(opened(cx, &view), None, "never opened by name alone");
+    // And the notice that was actually pushed says why.
+    cx.read(|cx| {
+        assert_eq!(
+            view.read(cx).told.last().map(String::as_str),
+            Some("dev-fra reconnected since this link was made; open it again")
+        )
+    });
 }
 
 #[gpui_kit::test]
