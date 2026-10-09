@@ -521,6 +521,27 @@ mod wanted {
     }
 
     #[gpui_kit::test]
+    fn a_revision_not_found_does_not_take_back_an_application_opened_since(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, _handle, page) = asked(cx, link("checkout-api", "0a1b2c3d4"));
+        assert_eq!(outcome(cx, &page), Some(Outcome::NoRevision));
+        let worker = crate::example::id(crate::example::WORKER);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.open_linked_app(worker.clone(), cx);
+                page.refresh_current(cx);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), None);
+        assert_eq!(
+            page.read_with(cx, |page, _| page.selected_app.clone()),
+            Some(worker)
+        );
+    }
+
+    #[gpui_kit::test]
     fn choosing_another_application_forgets_the_revision_asked_for(cx: &mut TestAppContext) {
         let (_runtime, _handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
         cx.update(|cx| {
