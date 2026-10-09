@@ -1,4 +1,4 @@
-use super::{Revisions, WINDOWS, detail, image};
+use super::{Revisions, WINDOWS, detail, image, short_image};
 use crate::application::example as app_example;
 use crate::tables::TableKey;
 use freshkube_core::coroot as api;
@@ -31,6 +31,12 @@ fn the_selection_follows_a_revision_by_id_and_a_new_application_starts_again() {
         !state.prepare_list(Some(&app), Some(&Ok(vec![b.clone(), a.clone()]))),
         "a reorder keeps the revision"
     );
+    // Read again, as Refresh or coming back reads it, the same
+    // application keeps its rows and the older revision until it answers.
+    assert!(!state.prepare_list(Some(&app), None));
+    assert_eq!(state.selected, Some(TableKey::Revision(b.id.clone())));
+    assert_eq!(state.rows.len(), 2);
+    assert!(state.answered);
     assert!(state.prepare_list(Some(&app), Some(&Ok(vec![a.clone()]))));
     assert_eq!(state.selected, Some(TableKey::Revision(a.id.clone())));
     assert_eq!(state.count, "1 deployment");
@@ -52,6 +58,10 @@ fn a_row_shows_coroots_images_and_its_first_finding() {
     state.prepare_list(None, Some(&Ok(vec![value.clone()])));
     assert_eq!(state.rows[0].finding, "No notable changes");
     assert_eq!(state.rows[0].id, "obs-revision-9c41e7-1789999000");
+    // The list shows each image's name and tag; the tooltip and the
+    // inspector the whole reference.
+    assert_eq!(state.rows[0].short_image, "auth:1.4.0");
+    assert_eq!(state.rows[0].image, "example.test/shop/auth:1.4.0");
 
     let finding = |report: &str, message: &str| api::RevisionFinding {
         report: report.into(),
@@ -70,6 +80,24 @@ fn a_row_shows_coroots_images_and_its_first_finding() {
         "Availability: 97% (objective: 99%) (+1 more)"
     );
     assert_eq!(state.rows[0].image, "—", "Coroot knew no image");
+    assert_eq!(state.rows[0].short_image, "—");
+}
+
+#[test]
+fn a_short_image_is_each_references_last_segment_and_tag() {
+    assert_eq!(
+        short_image("example.test/payments/worker:1.8.2"),
+        "worker:1.8.2"
+    );
+    assert_eq!(
+        short_image("example.test/shop/api:1.4.0, example.test/shop/proxy:2.1"),
+        "api:1.4.0, proxy:2.1"
+    );
+    assert_eq!(
+        short_image("example.test:5000/a/b@sha256:ab12"),
+        "b@sha256:ab12"
+    );
+    assert_eq!(short_image("nginx:1.27"), "nginx:1.27");
 }
 
 #[test]

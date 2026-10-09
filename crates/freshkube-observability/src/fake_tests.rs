@@ -24,6 +24,8 @@ struct Server {
     /// window answers 403.
     deploy_mode: Arc<AtomicUsize>,
     window_gate: Arc<tokio::sync::Notify>,
+    /// The paths answered, once the answer is written.
+    responded: Arc<Mutex<Vec<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -51,10 +53,12 @@ impl Server {
         let deploys = deploy_mode.clone();
         let window_gate = Arc::new(tokio::sync::Notify::new());
         let held = window_gate.clone();
+        let responded = Arc::new(Mutex::new(Vec::new()));
+        let written = responded.clone();
         let task=runtime.spawn(async move {
             loop {
                 let (mut socket,_)=listener.accept().await.unwrap();
-                let (state,reads,captured,mode,gate,logs_state,deploys,held)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone(),logs_state.clone(),deploys.clone(),held.clone());
+                let (state,reads,captured,mode,gate,logs_state,deploys,held,written)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone(),logs_state.clone(),deploys.clone(),held.clone(),written.clone());
                 tokio::spawn(async move {
                     let mut buf=vec![0;16384]; let Ok(n)=socket.read(&mut buf).await else{return;};
                     let request=String::from_utf8_lossy(&buf[..n]);
@@ -115,6 +119,7 @@ impl Server {
                     };
                     let response=format!("HTTP/1.1 {code} Test\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
                     _=socket.write_all(response.as_bytes()).await;
+                    written.lock().unwrap().push(path.to_string());
                 });
             }
         });
@@ -128,6 +133,7 @@ impl Server {
             logs_status,
             deploy_mode,
             window_gate,
+            responded,
             task,
         }
     }
@@ -1507,6 +1513,24 @@ async fn sent(
     .await;
 }
 
+/// Waits until the fake has written `count` answers to requests named
+/// `part`, so a late answer has reached the page if it ever will.
+async fn responded(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    server: &Server,
+    part: &'static str,
+    count: usize,
+) {
+    let answered = server.responded.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+        let answered = answered.lock().unwrap();
+        answered.iter().filter(|p| p.contains(part)).count() >= count
+    })
+    .await;
+    cx.run_until_parked();
+}
+
 /// Opens Deployments on the fake's application.
 fn open_deployments(cx: &mut TestAppContext, page: &gpui_kit::Entity<ObservabilityPage>) {
     cx.update(|cx| {
@@ -1654,7 +1678,12 @@ async fn coming_from_the_application_page_keeps_its_revisions_while_it_is_read_a
     });
     sent(cx, handle, &page, &server, "/app/", 1).await;
     cx.update_window(handle, |_, window, cx| {
-        page.update(cx, |page, cx| page.open(Destination::Deployments, cx));
+        page.update(cx, |page, cx| {
+            page.open(Destination::Deployments, cx);
+            // Forgets the first read's page, so only the read again can
+            // derive it.
+            page.app_page = None;
+        });
         assert!(
             page.read(cx).live.view.is_loading(),
             "the page is read again"
@@ -1674,6 +1703,66 @@ async fn coming_from_the_application_page_keeps_its_revisions_while_it_is_read_a
             "the Application page follows the read"
         )
     });
+}
+
+#[gpui_kit::test]
+async fn refresh_and_coming_back_keep_an_older_revision_chosen(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    connected(cx, handle, &page, server.url.clone()).await;
+    open_deployments(cx, &page);
+    revision_read(cx, handle, &page).await;
+    let older = crate::tables::TableKey::Revision("2b70aa:1789990000".into());
+    // The ±30 min window around the older revision's start.
+    let around_older = Some(1_789_988_200_000);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-revision-2b70aa-1789990000", cx);
+    })
+    .unwrap();
+    revision_read(cx, handle, &page).await;
+    assert_eq!(answered_from(cx, &page), around_older);
+
+    // While it reads, the table shows its loading rows, as after any
+    // Refresh, and the choice waits for the answer.
+    let chosen = |cx: &mut TestAppContext, what: &str| {
+        cx.read(|cx| {
+            let page = page.read(cx);
+            assert!(page.live.view.is_loading());
+            assert_eq!(page.revision_selected_key(), Some(&older), "{what}");
+        })
+    };
+    let check = |cx: &mut TestAppContext, what: &str| {
+        cx.update_window(handle, |_, window, cx| {
+            assert_eq!(
+                page.read(cx).revision_selected_key(),
+                Some(&older),
+                "{what} keeps the older revision"
+            );
+            window.render_frame(cx);
+            assert!(window.find("obs-revision-2b70aa-1789990000").visible());
+            assert!(window.try_find("obs-deployments-empty").is_none());
+        })
+        .unwrap();
+    };
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh_current(cx)));
+    chosen(cx, "reading again");
+    revision_read(cx, handle, &page).await;
+    check(cx, "Refresh");
+    assert_eq!(answered_from(cx, &page), around_older);
+
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.set_visible(true, cx);
+        })
+    });
+    chosen(cx, "coming back, while reading");
+    revision_read(cx, handle, &page).await;
+    check(cx, "coming back");
+    assert_eq!(answered_from(cx, &page), around_older);
 }
 
 #[gpui_kit::test]
@@ -1698,7 +1787,7 @@ async fn a_window_read_shows_loading_and_a_newer_choice_or_hiding_drops_its_answ
     .unwrap();
     revision_read(cx, handle, &page).await;
     server.window_gate.notify_one();
-    cx.run_until_parked();
+    responded(cx, handle, &server, NEWEST_WINDOW, 1).await;
     cx.read(|cx| {
         let answer = page.read(cx).live.revision.data().unwrap();
         assert_eq!(answer.revision.id, "2b70aa:1789990000");
@@ -1718,7 +1807,7 @@ async fn a_window_read_shows_loading_and_a_newer_choice_or_hiding_drops_its_answ
     .unwrap();
     revision_read(cx, handle, &page).await;
     server.window_gate.notify_one();
-    cx.run_until_parked();
+    responded(cx, handle, &server, NEWEST_WINDOW, 2).await;
     assert_eq!(answered_from(cx, &page), Some(1_789_995_400_000));
 
     // Hiding drops the read in flight, and its late answer never lands.
@@ -1735,7 +1824,7 @@ async fn a_window_read_shows_loading_and_a_newer_choice_or_hiding_drops_its_answ
         })
     });
     server.window_gate.notify_one();
-    cx.run_until_parked();
+    responded(cx, handle, &server, NEWEST_WINDOW, 3).await;
     assert_ne!(answered_from(cx, &page), Some(1_789_997_200_000));
 }
 

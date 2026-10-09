@@ -4,6 +4,7 @@
 use super::*;
 use crate::tables::TableCells;
 use freshkube_ui::table::{self, DataTable, Line, RowStyle, TableRow};
+use freshkube_ui::tooltip::FollowTooltip as _;
 
 /// Coroot keeps the history; the status bar's tooltip says how much.
 const NOTE: &str = "Coroot keeps an application's last 100 deployments.";
@@ -76,7 +77,7 @@ impl ObservabilityPage {
                     .iter()
                     .map(|row| match kind {
                         ColumnKind::Revision => metrics.value(row.hash.clone(), 12.5),
-                        ColumnKind::Image => metrics.value(row.image.clone(), 12.5),
+                        ColumnKind::Image => metrics.value(row.short_image.clone(), 12.5),
                         ColumnKind::Started => metrics.value(row.started.clone(), 12.),
                         _ => 0.,
                     })
@@ -90,7 +91,7 @@ impl ObservabilityPage {
                         ColumnKind::Glyph => table::GLYPH_WIDTH,
                         ColumnKind::Finding => 160.,
                         // Narrow enough beside the inspector for Coroot's
-                        // finding to show; the tooltip has every image.
+                        // finding to show; the tooltip has every reference.
                         ColumnKind::Image => measured.clamp(96., 200.),
                         _ => measured.max(56.),
                     },
@@ -175,16 +176,22 @@ impl ObservabilityPage {
                 .children(ui::status_glyph(row.status.tone(), cx))
                 .into_any_element(),
             ColumnKind::Revision => mono(cell, &row.hash, 12.5).into_any_element(),
-            ColumnKind::Image => {
-                table::word_cell(column, format!("{}-image", row.id), row.image.clone())
-                    .h_full()
-                    .flex()
-                    .items_center()
-                    .font_family(MONO_FONT)
-                    .text_size(dp(12.5))
-                    .text_color(p.ink_2)
-                    .into_any_element()
-            }
+            // Each image's name and tag; the tooltip and the inspector have
+            // the whole reference.
+            ColumnKind::Image => table::cell(column)
+                .id(SharedString::from(format!("{}-image-cell", row.id)))
+                .follow_tooltip(row.image.clone())
+                .child(table::word_cut(
+                    SharedString::from(format!("{}-image", row.id)),
+                    row.short_image.clone(),
+                ))
+                .h_full()
+                .flex()
+                .items_center()
+                .font_family(MONO_FONT)
+                .text_size(dp(12.5))
+                .text_color(p.ink_2)
+                .into_any_element(),
             ColumnKind::Started => {
                 mono(cell.text_color(p.ink_2), &row.started, 12.).into_any_element()
             }

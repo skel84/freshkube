@@ -52,6 +52,8 @@ struct Row {
     hash: SharedString,
     /// Coroot's label without its hash: the images it knows.
     image: SharedString,
+    /// Each image's last path segment and tag, for the list.
+    short_image: SharedString,
     started: SharedString,
     /// Coroot's first finding, or its note.
     finding: SharedString,
@@ -87,6 +89,11 @@ impl Revisions {
         if self.app.as_ref() != app {
             *self = self.cleared();
             self.app = app.cloned();
+        } else if revisions.is_none() {
+            // The same application's page is being read again, as after
+            // Refresh or coming back: its rows and selection stay until
+            // it answers.
+            return false;
         }
         let values = match revisions {
             Some(Ok(values)) => values.as_slice(),
@@ -147,6 +154,23 @@ fn image(revision: &api::DeploymentRevision) -> String {
     if rest.is_empty() { "—" } else { rest }.to_owned()
 }
 
+/// Each reference's last path segment, with its tag or digest:
+/// `example.test/payments/worker:1.8.2` reads `worker:1.8.2`.
+fn short_image(image: &str) -> String {
+    image
+        .split_whitespace()
+        .map(|reference| {
+            let (body, comma) = match reference.strip_suffix(',') {
+                Some(body) => (body, ","),
+                None => (reference, ""),
+            };
+            let name = body.rsplit('/').next().unwrap_or(body);
+            format!("{name}{comma}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn row(revision: &api::DeploymentRevision) -> Row {
     let status = Status::from(revision.status);
     let image = image(revision);
@@ -168,6 +192,7 @@ fn row(revision: &api::DeploymentRevision) -> Row {
         revision: revision.clone(),
         status,
         hash: revision.hash.clone().into(),
+        short_image: short_image(&image).into(),
         image: image.into(),
         started: started.into(),
         finding: finding.into(),
