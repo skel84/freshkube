@@ -322,6 +322,7 @@ struct PageEntities<'a> {
     observability: &'a Entity<crate::observability::ObservabilityPage>,
     monitoring: &'a Entity<MonitoringPage>,
     custom: &'a Entity<CustomResources>,
+    applications: &'a Entity<crate::applications::ApplicationsPage>,
 }
 
 pub(crate) struct Pilot {
@@ -352,7 +353,7 @@ pub(crate) struct Pilot {
     /// What the notices about links and switches said, for tests: the
     /// window offers no way to read a notice back.
     #[cfg(test)]
-    told: Vec<String>,
+    pub(crate) told: Vec<String>,
     /// The read that finds the default kubeconfig file an entry's context is in.
     entry_locate: Option<(OwnedJob, Task<()>)>,
     entry_generation: u64,
@@ -511,6 +512,13 @@ impl Pilot {
     #[cfg(test)]
     pub(crate) fn applications(&self) -> (Entity<crate::applications::ApplicationsPage>, Page) {
         (self.applications.clone(), self.page)
+    }
+
+    /// The object Resources shows in its drawer, for tests of the links
+    /// that open one.
+    #[cfg(test)]
+    pub(crate) fn opened_object(&self, cx: &App) -> Option<resources::model::ResourceIdentity> {
+        self.resources.read(cx).detail_identity(cx).cloned()
     }
 
     /// Chooses another context, as the header's switcher does.
@@ -711,7 +719,16 @@ impl Pilot {
             observability,
             monitoring,
             custom,
+            applications,
         } = pages;
+        // A part of an open application, opened as every object link is.
+        subscriptions.push(cx.subscribe_in(
+            applications,
+            window,
+            |this, _, link: &resources::ResourceLink, window, cx| {
+                this.resource_link(link.clone(), window, cx)
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             node_pods,
             window,
@@ -1084,6 +1101,8 @@ impl Pilot {
             cx.observe(&logs, |_, _, cx| cx.notify()),
             cx.observe(&service_filter, |_, _, cx| cx.notify()),
         ]);
+        let applications =
+            cx.new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx));
         Self::subscribe_page_events(
             &mut subscriptions,
             PageEntities {
@@ -1093,6 +1112,7 @@ impl Pilot {
                 observability: &observability,
                 monitoring: &monitoring,
                 custom: &custom,
+                applications: &applications,
             },
             window,
             cx,
@@ -1145,8 +1165,7 @@ impl Pilot {
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
             settings_page: cx.new(settings::SettingsPage::new),
-            applications: cx
-                .new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx)),
+            applications,
             workspace_file: options
                 .preferences
                 .as_deref()

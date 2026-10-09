@@ -8,7 +8,15 @@ use freshkube_ui::inspector::{self, Inspector};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::tooltip::FollowTooltip as _;
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Disableable, IconName, Sizable, button::Button, h_flex, v_flex};
+
+/// A field's value: names in the monospace face, prose in the UI's.
+fn value_text(label: &str, value: &SharedString) -> Div {
+    match label {
+        "Cluster" | "Namespace" => mono(value.clone()).whitespace_normal(),
+        _ => div().child(value.clone()),
+    }
+}
 
 impl ApplicationPage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -24,6 +32,9 @@ impl ApplicationPage {
     /// The selected part's details, then its link: each side, why, and
     /// any lower rule's claim.
     fn render_details(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.inspect {
+            return None;
+        }
         let row = self.selected_row()?;
         let p = palette(cx);
         let title = div()
@@ -43,17 +54,29 @@ impl ApplicationPage {
             .child(table::link_mark(row.confidence, row.word, cx));
         let fields = |rows: &[(&'static str, SharedString)], cx: &App| {
             rows.iter()
-                .map(|(label, value)| field(label, mono(value.clone()).whitespace_normal(), cx))
+                .map(|(label, value)| field(label, value_text(label, value), cx))
                 .collect::<Vec<_>>()
         };
+        // A lower rule's claim follows Why in its value column.
         let lower = row.lower.iter().enumerate().map(|(ix, lower)| {
             div()
                 .id(SharedString::from(format!("application-detail-lower-{ix}")))
                 .test_support()
                 .aria_label(lower.clone())
-                .text_size(dp(12.5))
                 .text_color(p.muted)
                 .child(lower.clone())
+        });
+        let why = row.why.clone().map(|why| {
+            field(
+                "Why",
+                v_flex()
+                    .id("application-detail-why")
+                    .test_support()
+                    .gap(dp(4.))
+                    .child(why)
+                    .children(lower),
+                cx,
+            )
         });
         let link = v_flex()
             .id("application-detail-link")
@@ -61,10 +84,11 @@ impl ApplicationPage {
             .gap(dp(8.))
             .child(ui::caption("Link", cx))
             .children(fields(&row.link, cx))
-            .children(lower);
+            .children(why);
         Some(
             Inspector::new("application-detail")
                 .heading(heading)
+                .child(render_open(row, cx))
                 .children(fields(&row.fields, cx))
                 .child(link)
                 .render(cx)
@@ -126,6 +150,7 @@ impl Render for ApplicationPage {
             .on_action(cx.listener(|this, _: &NextPart, _, cx| this.step(1, cx)))
             .on_action(cx.listener(|this, _: &PreviousPart, _, cx| this.step(-1, cx)))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))
+            .on_action(cx.listener(|this, _: &OpenPart, _, cx| this.open_part(cx)))
             .flex()
             .flex_col()
             .size_full()
@@ -149,4 +174,25 @@ impl Render for ApplicationPage {
                     ),
             )
     }
+}
+
+/// Open in Resources, greyed out with why for a part in a cluster that
+/// isn't open.
+fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> impl IntoElement {
+    let tip = row.open_tip.clone();
+    h_flex().child(
+        Button::new("application-detail-open")
+            .outline()
+            .xsmall()
+            .icon(IconName::ExternalLink)
+            .label("Open in Resources")
+            .disabled(row.closed.is_some())
+            // O only for a part that opens: a greyed-out one says why alone.
+            .when_else(
+                row.closed.is_some(),
+                |button| button.tooltip(tip.clone()),
+                |button| button.tooltip_with_action(tip.clone(), &OpenPart, Some(CONTEXT)),
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.open_part(cx))),
+    )
 }

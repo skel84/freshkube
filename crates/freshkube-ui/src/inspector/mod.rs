@@ -8,11 +8,11 @@ pub(crate) use tabs::bare_strip;
 
 pub use tabs::{Edges, TAB_HEIGHT, TabStrip, tab};
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
 
-use gpui_kit::base::ObservedElement as Observed;
+use gpui_kit::base::{ElementExt as _, ObservedElement as Observed};
 use gpui_kit::component::resizable::{
     ResizablePanelEvent, ResizableState, h_resizable, resizable_panel, v_resizable,
 };
@@ -287,6 +287,8 @@ pub struct InspectorSplit {
     /// The inspector's width beside the table as Kit showed it when the
     /// pointer last went down in the split, in dp: where a drag starts.
     pressed: Rc<Cell<Option<f32>>>,
+    /// Kit's stacked sizes as the last draw left them; see [`settle`].
+    settled: Rc<RefCell<Vec<Pixels>>>,
     _resized: Subscription,
     _dragged: Subscription,
 }
@@ -335,6 +337,7 @@ impl InspectorSplit {
             keep: Cell::new(None),
             dragged,
             pressed,
+            settled: Rc::default(),
             _resized,
             _dragged,
         }
@@ -513,7 +516,34 @@ pub fn split(
                     .child(inspector),
             )
     };
+    let frame = if beside {
+        frame
+    } else {
+        let (state, settled) = (split.stacked.clone(), split.settled.clone());
+        frame.on_prepaint(move |_, window, cx| settle(&state, &settled, window, cx))
+    };
     frame.child(panels).into_any_element()
+}
+
+/// Kit lays a stacked panel out at its start height on the first draw, then
+/// records the sizes it drew with a notify that, raised while drawing, asks
+/// for no frame. The next draw fits the panels to the split and the table
+/// shrinks to its least, so the layout jumps on whatever input comes next,
+/// a wheel or a hover. Once the panels are drawn, a draw that changed Kit's
+/// sizes asks for the frame that settles them.
+fn settle(
+    state: &Entity<ResizableState>,
+    settled: &RefCell<Vec<Pixels>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let sizes = state.read(cx).sizes();
+    if *settled.borrow() == *sizes {
+        return;
+    }
+    settled.replace(sizes.clone());
+    let view = window.current_view();
+    window.on_next_frame(move |_, cx| cx.notify(view));
 }
 
 #[cfg(test)]

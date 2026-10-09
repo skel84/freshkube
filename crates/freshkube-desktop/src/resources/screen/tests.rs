@@ -1193,6 +1193,8 @@ fn the_namespace_picker_hands_the_keyboard_back_to_the_list(cx: &mut TestAppCont
         screen.update(cx, |screen, cx| screen.focus(window, cx));
     });
     step(cx, &|window, cx| window.press("n", cx));
+    // Past `argocd`, which holds no pods, to `batch`.
+    step(cx, &|window, cx| window.press("down", cx));
     step(cx, &|window, cx| window.press("down", cx));
     step(cx, &|window, cx| window.press("enter", cx));
     step(cx, &|window, cx| {

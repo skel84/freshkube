@@ -203,6 +203,24 @@ fn a_fresh_read_is_shown_again_without_reading(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// The Refresh button runs ⌘R's action, so the key reads the list again
+/// as the button does.
+#[gpui_kit::test]
+fn command_r_reads_the_applications_again_as_refresh_does(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
+    cx.update_window(handle, |_, window, cx| {
+        let page = page(&view, cx);
+        window.render_frame(cx);
+        page.update(cx, |page, _| page.set_hold(true));
+        assert!(!page.read(cx).is_reading());
+        window.press("secondary-r", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).is_reading());
+        assert!(window.find(CART).visible());
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_stale_read_is_read_again_when_shown(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
