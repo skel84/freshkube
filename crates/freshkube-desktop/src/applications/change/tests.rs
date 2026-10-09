@@ -253,6 +253,54 @@ fn a_stage_mapped_to_another_cluster_never_folds(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// In example data the workspace lists prod-ams, whose example cluster
+/// holds the checkout-api Deployment its Stage reports: Switch and open
+/// asks, switches there, and ends on the Deployment's Overview.
+#[gpui_kit::test]
+fn switch_and_open_lands_on_prod_amss_deployment_in_example_data(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click(hop("prod-ams-pods"), cx);
+        window.render_frame(cx);
+        let label = "Switch and open the Deployment · prod-ams";
+        assert_eq!(change(&view, cx).unwrap().read(cx).action_why(label), None);
+        window.click(action(&view, label, cx), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (question, _) = cx.pending_prompt().expect("asked before switching");
+    assert_eq!(
+        question,
+        "Switch to prod-ams to open Deployment checkout-api?"
+    );
+    cx.simulate_prompt_answer("Switch");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applications().1, Page::Resources);
+        let opened = pilot.opened_object(cx).expect("the Deployment opened");
+        assert_eq!(
+            (
+                opened.connection.as_str(),
+                opened.resource.as_str(),
+                opened.namespace.as_str(),
+                opened.name.as_str()
+            ),
+            (
+                crate::resources::example::connection("prod-ams").as_str(),
+                "deployments.apps",
+                "checkout",
+                "checkout-api"
+            )
+        );
+        assert_eq!(pilot.opened_tab(cx), crate::resources::Tab::Overview);
+        assert!(pilot.told.is_empty(), "nothing to say: {:?}", pilot.told);
+    })
+    .unwrap();
+}
+
 /// An object on another workspace entry's cluster offers Switch and open,
 /// in the Inspector and the row menu, and asks the shell to switch.
 #[gpui_kit::test]

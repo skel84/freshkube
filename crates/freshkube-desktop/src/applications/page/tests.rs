@@ -96,6 +96,8 @@ fn parts_come_in_kind_order_with_their_links(cx: &mut TestAppContext) {
                 // Applications checkout's Stages promote to may be missing.
                 "# May be missing on core-fra",
                 "# Deployments",
+                // dev-fra's, prod-ams's and prod-lon's.
+                "checkout-api By label",
                 "checkout-api By label",
                 "checkout-api By label",
                 "checkout-worker By label",

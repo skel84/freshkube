@@ -235,6 +235,9 @@ pub fn environment_objects(cluster: &str) -> Vec<CoreObject> {
             ("cart", "cart-api", "cart"),
             ("loyalty", "loyalty-api", "loyalty"),
         ],
+        // The Deployment the change page's prod-ams Stage reports, so
+        // Switch and open lands on it.
+        "prod-ams" => &[("checkout", "checkout-api", "checkout")],
         "prod-lon" => &[
             ("checkout", "checkout-api", "checkout"),
             ("checkout", "checkout-worker", "checkout"),
@@ -323,7 +326,7 @@ mod tests {
         assert_eq!(count(|k| *k == MemberKind::KargoStage), 4);
         assert_eq!(count(|k| *k == MemberKind::KargoWarehouse), 1);
         assert_eq!(count(|k| *k == MemberKind::ArgoApplication), 4);
-        assert_eq!(count(|k| matches!(k, MemberKind::Workload(_))), 3);
+        assert_eq!(count(|k| matches!(k, MemberKind::Workload(_))), 4);
         let remote = checkout
             .members
             .iter()
