@@ -157,11 +157,11 @@ pub struct ObservabilityPage {
     /// The Traces and Profiling picker, and the choices it was last given.
     app_select: Entity<SelectState<SearchableVec<view::AppChoice>>>,
     app_select_source: Rc<[(freshkube_core::coroot::AppId, SharedString)]>,
-    release: usize,
-    comparison: usize,
-    full_yaml: bool,
-    release_diff: Vec<(char, String)>,
-    release_yaml: String,
+    /// Deployments: the chosen application's revisions and the window
+    /// around the selected one.
+    revision_observations: deployments::Revisions,
+    revision_table: freshkube_ui::table::TableState,
+    revision_split: InspectorSplit,
     compare_profile: bool,
     frames: Vec<FlameFrame>,
     visible_frames: Vec<usize>,
@@ -235,6 +235,7 @@ impl ObservabilityPage {
         });
         let incident_split = InspectorSplit::new("incidents", cx);
         let trace_split = InspectorSplit::new("traces", cx);
+        let revision_split = InspectorSplit::new("deployments", cx);
         let map_split = freshkube_ui::graph::inspector_split("map", cx);
         let subscriptions = vec![
             cx.observe_global_in::<gpui_kit::component::Theme>(window, |this, _, cx| {
@@ -374,11 +375,9 @@ impl ObservabilityPage {
             app_choices: Rc::new([]),
             app_select,
             app_select_source: Rc::new([]),
-            release: 0,
-            comparison: 1,
-            full_yaml: false,
-            release_diff: vec![],
-            release_yaml: String::new(),
+            revision_observations: Default::default(),
+            revision_table: freshkube_ui::table::TableState::new("obs-deployments"),
+            revision_split,
             compare_profile: true,
             frames: if fixture { example::flame() } else { vec![] },
             visible_frames: vec![],
@@ -417,9 +416,9 @@ impl ObservabilityPage {
         this.prepare_application_columns();
         this.prepare_incident_columns();
         this.prepare_trace_columns();
+        this.prepare_revision_columns();
         this.prepare_map();
         this.prepare_report();
-        this.prepare_release();
         this
     }
     pub fn destination(&self) -> Destination {
@@ -565,17 +564,6 @@ impl ObservabilityPage {
         });
         self.threshold
             .update(cx, |input, cx| input.focus(window, cx));
-    }
-    fn preview(&self, action: &'static str, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.fixture {
-            return;
-        }
-        window.open_alert_dialog(cx,move |dialog,_,cx| dialog.ok_text("Close preview").title(format!("Preview: {action}"))
-            .child(v_flex().gap(dp(12.)).child(ui::tag(Tone::Accent,None,"Example data",cx))
-                .child("Deployment payments/worker · revision 14 → 13")
-                .child(div().font_family(MONO_FONT).text_size(dp(12.)).child("image: worker:1.8.2 → worker:1.8.1\nDATABASE_URL: ledger-db:5432 → ledger-db:6432"))
-                .child("Expected result: the worker connects to the Service on port 6432. The next revision must be observed before recovery is confirmed.")
-                .child("This preview does not change a cluster.")));
     }
 }
 impl Focusable for ObservabilityPage {

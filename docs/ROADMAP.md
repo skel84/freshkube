@@ -367,6 +367,8 @@ The change page (5.4, with [#522](https://github.com/skel84/freshkube/issues/522
 
 The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histories and deployment comparisons through typed APIs. Then link Coroot to the chain: this deploy, and what its metrics did after it.
 
+Deployments has begun: Observability's Deployments lists an application's revisions with Coroot's findings and reads its charts around the selected one's start, split there with the samples counted on each side and nothing compared across it ([COROOT.md](COROOT.md#deployments)); the example preview's invented diff, comparison, rollback and sync are gone. Next, the change page's Coroot revision and Compare in Observability, joined by the ReplicaSet's hash.
+
 ### 7. Small daily wins
 
 Taken as they come up, between larger steps:
@@ -419,7 +421,7 @@ Steps 1 to 5 are done. What remains here is checking them against the live clust
 
 The user selected Fog and the canonical G7/G7c, G8 and H1–H7 PDF comps. [DESIGN.md](DESIGN.md) supersedes Console's tokens, typography, frame, meters and chart palette. That pass added interactive H1–H7 fixtures and an Integration required state for real connections. Threshold edits and incident muting stay in the example session; fixes and rollback are previews. The existing Prometheus dashboards retain their live provider.
 
-At that prototype checkpoint, `ObservabilityPage` owned selections and prepared display data without a runtime handle, credentials or provider. The [first live slice](COROOT.md) now adds the retained requests and connection controls, with a focused core provider, stable identities, explicit freshness/capabilities and guarded navigation. Empty healthy, empty unknown and absent signals stay distinct. Profiling and historical deployment comparisons still show their capability limitations. Diagnostics and Lifecycle rule extractions remain independent follow-ups.
+At that prototype checkpoint, `ObservabilityPage` owned selections and prepared display data without a runtime handle, credentials or provider. The [first live slice](COROOT.md) now adds the retained requests and connection controls, with a focused core provider, stable identities, explicit freshness/capabilities and guarded navigation. Empty healthy, empty unknown and absent signals stay distinct. Profiling and deployments have since landed. Diagnostics and Lifecycle rule extractions remain independent follow-ups.
 
 Validated on main `235ad5b` with all 941 workspace tests (including doctests), strict workspace/all-target Clippy and formatting passing. The subsequent rebase onto the docs-only `6e000bc` preserves the Coroot plan and sequencing with no application changes. Native fixture captures cover G7/G7c, G8 and H1–H7; the sidebar's expanded/collapsed states and the minimum 760 × 560 window at 20 px text were checked. The watch session, namespace Pod counts, typed Health/Lifecycle handles, Operations/quorum changes and Architecture review follow-up are preserved. At that checkpoint the state guidance was still pending; [#24's correction and compatibility decision](#done-state-guidance) now supersede that pending guide step.
 

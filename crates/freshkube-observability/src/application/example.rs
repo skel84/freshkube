@@ -218,27 +218,128 @@ pub(super) fn give_history(chart: &mut api::AppChart, group: Option<&str>) {
 }
 
 /// The worker's rollouts, newest first: 1.8.2 a little before ledger-db
-/// began refusing it, inside the charts' hour, and 1.8.1 days before it.
-fn revisions() -> Vec<api::DeploymentRevision> {
+/// began refusing it, inside the charts' hour, 1.8.1 days before it, and
+/// 1.7.4 longer ago than the example keeps data for.
+pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
     let (_, to_ms) = hour();
-    let revision = |hash: &str, at_ms: i64, image: &str, note: &str| api::DeploymentRevision {
+    let revision = |hash: &str, at_ms: i64, image: &str| api::DeploymentRevision {
         id: format!("{hash}:{}", at_ms / 1000),
         hash: hash.into(),
         started_at: chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_default(),
         version: format!("{hash}: example.test/payments/{image}"),
         status: api::Status::Unknown,
         findings: vec![],
-        note: Some(note.into()),
+        note: None,
     };
+    let finding = |report: &str, ok, message: &str, at_ms: i64| api::RevisionFinding {
+        report: report.into(),
+        ok,
+        message: message.into(),
+        time: chrono::DateTime::from_timestamp_millis(at_ms),
+    };
+    let previous = to_ms - 3 * 24 * 3_600_000;
+    let oldest = to_ms - 45 * 24 * 3_600_000;
     vec![
-        revision("4f2a9c", rollout_ms(), "worker:1.8.2", "Collecting data..."),
-        revision(
-            "b71e03",
-            to_ms - 3 * 24 * 3_600_000,
-            "worker:1.8.1",
-            "No notable changes",
-        ),
+        api::DeploymentRevision {
+            note: Some("Collecting data...".into()),
+            ..revision("4f2a9c", rollout_ms(), "worker:1.8.2")
+        },
+        api::DeploymentRevision {
+            status: api::Status::Ok,
+            findings: vec![
+                finding("SLO", true, "Availability: 100% (objective: 99%)", previous),
+                finding("CPU", true, "CPU usage: no change", previous),
+            ],
+            ..revision("b71e03", previous, "worker:1.8.1")
+        },
+        api::DeploymentRevision {
+            status: api::Status::Ok,
+            note: Some("No notable changes".into()),
+            ..revision("9e0d57", oldest, "worker:1.7.4")
+        },
     ]
+}
+
+/// How long the example keeps data for: a window older than this answers
+/// as Coroot's does for a window past its cache.
+const KEPT_MS: i64 = 7 * 24 * 3_600_000;
+
+/// What Coroot would answer around one of the example's revisions: the
+/// application's page over the window, cut at the current minute as Coroot
+/// cuts at its newest data, or no data when the window is older than the
+/// example keeps.
+pub(crate) fn around(
+    app: &api::AppId,
+    revision: &api::DeploymentRevision,
+    window: api::RevisionWindow,
+) -> Result<api::RevisionView, api::ReadError> {
+    let range = window
+        .range(revision.started_at)
+        .map_err(|_| api::ReadError::InvalidSelection)?;
+    let (Some(from), Some(to)) = (range.from, range.to) else {
+        return Err(api::ReadError::InvalidSelection);
+    };
+    let (_, now_ms) = hour();
+    let answer = if from.timestamp_millis() < now_ms - KEPT_MS {
+        api::Around::NoData
+    } else {
+        let mut view = app_view(app);
+        let from_ms = from.timestamp_millis() / 60_000 * 60_000;
+        let to_ms = to.timestamp_millis().min(now_ms) / 60_000 * 60_000;
+        for report in &mut view.reports {
+            for widget in &mut report.widgets {
+                match &mut widget.kind {
+                    api::WidgetKind::Chart(chart) => rewindow(chart, from_ms, to_ms),
+                    api::WidgetKind::ChartGroup { charts, .. } => charts
+                        .iter_mut()
+                        .for_each(|chart| rewindow(chart, from_ms, to_ms)),
+                    _ => {}
+                }
+            }
+        }
+        api::Around::View(Box::new(view))
+    };
+    Ok(api::RevisionView {
+        revision: revision.clone(),
+        from,
+        to,
+        answer,
+    })
+}
+
+/// The chart over `from_ms..=to_ms`, a minute a place: the example hour's
+/// samples where it has them and, before it, the hour's calm part repeated.
+fn rewindow(chart: &mut api::AppChart, from_ms: i64, to_ms: i64) {
+    let Some(history) = chart.history.as_deref_mut() else {
+        return;
+    };
+    let start = history.from.timestamp_millis();
+    let calm = (POINTS - FAILING_MINUTES) as i64;
+    let places = ((to_ms - from_ms) / 60_000 + 1).max(0);
+    let pick = |samples: &mut Vec<Option<f64>>| {
+        let hour = std::mem::take(samples);
+        *samples = (0..places)
+            .map(|place| {
+                let minute = (from_ms - start) / 60_000 + place;
+                let minute = if (0..hour.len() as i64).contains(&minute) {
+                    minute
+                } else {
+                    minute.rem_euclid(calm)
+                };
+                hour.get(minute as usize).copied().flatten()
+            })
+            .collect();
+    };
+    history
+        .series
+        .iter_mut()
+        .chain(history.threshold.as_mut())
+        .for_each(|series| pick(&mut series.samples));
+    let at = |ms: i64| chrono::DateTime::from_timestamp_millis(ms).unwrap_or_default();
+    history.from = at(from_ms);
+    history.to = at(to_ms);
+    chart.from_ms = from_ms;
+    chart.to_ms = to_ms;
 }
 
 /// The example's verdict on a signal, by the issue named after its check.

@@ -11,7 +11,7 @@ The integration review was expanded on 2026-10-02 against the same Rubick revisi
 | Kubeli | `06a19153bf7f2d5d3340972780dceb88bf7a52cf` | Selected Rust implementation donor and existing workflow reference |
 | Rubick | `030c6012bea9e00a934f6051add2f979f25f333d` | Future diagnostic behavior and architecture reference |
 | GPUI Kit | `201b55a431fb1b82a6047e908de63913db3d4354` | Toolkit, component examples, and development guidance |
-| [corust / coroot-rs](https://github.com/skel84/corust) | `59a4847e96d00e22ed93563d58d90822c83bcd5c` | Reviewed dependency for [Coroot integration](COROOT.md), pinned by git revision (MIT OR Apache-2.0). Includes signal preservation (PR #3), bounded response bodies (PR #4), Applications/map collection-shape validation (PR #5), the incident audit (PR #7), chart histories (PR #8), deployment revisions (PR #9) and decoders from one answer (PR #10). Freshkube uses typed application, map and report reads; richer native-view models remain in corust #2. Validation and live-check status are recorded in COROOT.md. |
+| [corust / coroot-rs](https://github.com/skel84/corust) | `5312f1efc4e68a286d42a0c5c1e58539ed2a243a` | Reviewed dependency for [Coroot integration](COROOT.md), pinned by git revision (MIT OR Apache-2.0). Includes signal preservation (PR #3), bounded response bodies (PR #4), Applications/map collection-shape validation (PR #5), the incident audit (PR #7), chart histories (PR #8), deployment revisions (PR #9), decoders from one answer (PR #10) and the window around a revision (PR #11). Freshkube uses typed application, map and report reads; richer native-view models remain in corust #2. Validation and live-check status are recorded in COROOT.md. |
 
 ## GPUI Kit starting points
 

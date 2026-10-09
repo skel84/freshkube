@@ -323,25 +323,6 @@ fn a_saved_threshold_lands_under_the_selected_report(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn rollback_preview_does_not_change_a_release(cx: &mut TestAppContext) {
-    let (_runtime, handle, page) = mount(cx, true);
-    cx.update(|cx| {
-        page.update(cx, |page, cx| {
-            page.open_app(example::id(example::WORKER), Report::Memory, cx)
-        })
-    });
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("obs-app-rollback", cx);
-        window.render_frame(cx);
-        assert_eq!(page.read(cx).release, 0);
-        window.click("ok", cx);
-        assert_eq!(page.read(cx).release, 0);
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
 fn ranges_reports_and_traces_have_independent_data(cx: &mut TestAppContext) {
     let (_runtime, _handle, page) = mount(cx, true);
     cx.update(|cx| {
@@ -466,7 +447,8 @@ fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestApp
                 name: "Same name".into(),
             };
             page.live.source = Some(provider.source(&project));
-            page.destination = Destination::Deployments; // Unsupported destination starts no I/O.
+            // Without a chosen application, its page starts no I/O.
+            page.destination = Destination::Application;
             let generation = page.live.generation;
             page.select_project(
                 &ProjectInfo {
@@ -1579,38 +1561,6 @@ fn the_folded_applications_controls_do_what_the_controls_do(cx: &mut TestAppCont
     open(cx, 2);
     choose(cx, 1);
     says(cx, &format!("More · Namespace {first} · 1 column hidden"));
-}
-
-#[gpui_kit::test]
-fn stacked_release_columns_span_the_content_width(cx: &mut TestAppContext) {
-    for (width, height, stacked) in [(760., 560., true), (1260., 900., false)] {
-        let (_runtime, handle, page) = mount_size(cx, true, width, height);
-        cx.update(|cx| page.update(cx, |page, cx| page.open(Destination::Deployments, cx)));
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            let row = window.find("obs-release-columns").bounds();
-            let list = window.find("obs-release-list").bounds();
-            let changes = window.find("obs-release-changes").bounds();
-            if stacked {
-                for (name, column) in [("Releases", list), ("What changed", changes)] {
-                    assert_eq!(
-                        (column.left(), column.size.width),
-                        (row.left(), row.size.width),
-                        "stacked at {width}×{height}, {name} spans the row"
-                    );
-                }
-                assert!(changes.top() >= list.bottom(), "What changed sits below");
-            } else {
-                assert_eq!(
-                    list.top(),
-                    changes.top(),
-                    "side by side at {width}×{height}"
-                );
-                assert!((list.size.width - changes.size.width).abs() < px(1.));
-            }
-        })
-        .unwrap();
-    }
 }
 
 #[gpui_kit::test]

@@ -52,9 +52,6 @@ impl ObservabilityPage {
                     )
                     .child(action("obs-threshold", "Example threshold…").on_click(
                         cx.listener(|this, _, window, cx| this.edit_threshold(window, cx)),
-                    ))
-                    .child(action("obs-app-rollback", "Preview rollback…").on_click(
-                        cx.listener(|this, _, window, cx| this.preview("Roll back", window, cx)),
                     ));
         }
         actions = actions

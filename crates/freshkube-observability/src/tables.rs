@@ -3,6 +3,7 @@
 //! list keeps its own state, columns and ids.
 use super::*;
 use applications::ApplicationCells;
+use deployments::RevisionCells;
 use freshkube_ui::table::{
     Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState,
 };
@@ -18,6 +19,8 @@ pub enum TableKey {
     Incident(String, freshkube_core::coroot::AppId),
     /// A listed span's trace and span ids.
     Span(String, String),
+    /// A deployment revision's id, `<hash>:<start seconds>`.
+    Revision(String),
 }
 
 /// A row's data, borrowed from the page for one frame.
@@ -25,6 +28,7 @@ pub enum TableCells<'a> {
     Application(ApplicationCells<'a>),
     Incident(IncidentCells<'a>),
     Span(SpanCells<'a>),
+    Revision(RevisionCells<'a>),
 }
 
 /// What a column shows. Each list uses its own kinds; Glyph is shared.
@@ -42,6 +46,9 @@ pub(crate) enum ColumnKind {
     Impact,
     Service,
     Started,
+    Revision,
+    Image,
+    Finding,
 }
 
 /// One of a list's columns, measured when its data or Columns change.
@@ -60,7 +67,10 @@ impl TableColumn for PageColumn {
         self.width
     }
     fn flexible(&self) -> bool {
-        matches!(self.kind, ColumnKind::Name | ColumnKind::Title)
+        matches!(
+            self.kind,
+            ColumnKind::Name | ColumnKind::Title | ColumnKind::Finding
+        )
     }
 }
 
@@ -70,6 +80,7 @@ enum Shown {
     Applications,
     Incidents,
     Traces,
+    Deployments,
 }
 
 impl ObservabilityPage {
@@ -94,6 +105,10 @@ impl ObservabilityPage {
                 self.selected_app.is_some()
                     && waits(live.tracing.data().is_some(), live.tracing.is_loading())
             }
+            Destination::Deployments => {
+                self.selected_app.is_some()
+                    && waits(live.view.data().is_some(), live.view.is_loading())
+            }
             _ => false,
         }
     }
@@ -114,6 +129,7 @@ impl ObservabilityPage {
         match self.destination {
             Destination::Incidents => Shown::Incidents,
             Destination::Traces => Shown::Traces,
+            Destination::Deployments => Shown::Deployments,
             // The Tracing report embeds the Traces page's view and its table.
             Destination::Application if self.embeds_tracing() => Shown::Traces,
             _ => Shown::Applications,
@@ -132,6 +148,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => &self.application_table,
             Shown::Incidents => &self.incident_table,
             Shown::Traces => &self.trace_table,
+            Shown::Deployments => &self.revision_table,
         }
     }
     fn columns(&self) -> &[PageColumn] {
@@ -139,6 +156,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => &self.application_columns,
             Shown::Incidents => self.incident_columns(),
             Shown::Traces => self.trace_columns(),
+            Shown::Deployments => self.revision_columns(),
         }
     }
     fn width(&self) -> f32 {
@@ -146,6 +164,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => self.application_width,
             Shown::Incidents => self.incident_width(),
             Shown::Traces => self.trace_width(),
+            Shown::Deployments => self.revision_width(),
         }
     }
     fn list_label(&self) -> String {
@@ -153,6 +172,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => self.application_list_label(),
             Shown::Incidents => self.incident_list_label(),
             Shown::Traces => self.trace_list_label(),
+            Shown::Deployments => self.revision_list_label(),
         }
     }
     fn sorting(&self, _: &PageColumn) -> Option<((), Option<SortOrder>)> {
@@ -164,6 +184,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => None,
             Shown::Incidents => self.incident_selected_key(),
             Shown::Traces => self.trace_selected_key(),
+            Shown::Deployments => self.revision_selected_key(),
         }
     }
     fn line_of(&self, key: &TableKey) -> Option<usize> {
@@ -171,18 +192,20 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => None,
             Shown::Incidents => self.incident_line_of(key),
             Shown::Traces => self.trace_line_of(key),
+            Shown::Deployments => self.revision_line_of(key),
         }
     }
     fn clickable(&self) -> bool {
         match self.shown_table() {
             Shown::Applications => false,
-            Shown::Incidents | Shown::Traces => true,
+            Shown::Incidents | Shown::Traces | Shown::Deployments => true,
         }
     }
     fn click(&mut self, key: &TableKey, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         match key {
             TableKey::Incident(key, app) => self.select_incident(key.clone(), app.clone(), cx),
             TableKey::Span(..) => self.open_span(key.clone(), cx),
+            TableKey::Revision(id) => self.select_revision(id.clone(), cx),
             TableKey::Application(_) => {}
         }
     }
@@ -191,6 +214,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => self.matrix.len(),
             Shown::Incidents => self.incident_line_count(),
             Shown::Traces => self.trace_line_count(),
+            Shown::Deployments => self.revision_line_count(),
         }
     }
     fn line(&self, line: usize, _: &App) -> Option<Line<TableKey, TableCells<'_>>> {
@@ -198,6 +222,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => self.application_line(line),
             Shown::Incidents => self.incident_line(line),
             Shown::Traces => self.trace_line(line),
+            Shown::Deployments => self.revision_line(line),
         }
     }
     fn cell(
@@ -211,12 +236,13 @@ impl TableSource for ObservabilityPage {
             TableCells::Application(cells) => self.application_cell(cells, style, column, cx),
             TableCells::Incident(cells) => self.incident_cell(cells, style, column, cx),
             TableCells::Span(cells) => self.span_cell(cells, style, column, cx),
+            TableCells::Revision(cells) => self.revision_cell(cells, style, column, cx),
         }
     }
     fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_group(group, cx),
-            Shown::Incidents | Shown::Traces => None,
+            Shown::Incidents | Shown::Traces | Shown::Deployments => None,
         }
     }
     fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
@@ -228,6 +254,7 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => self.application_empty(cx),
             Shown::Incidents => self.incident_empty(cx),
             Shown::Traces => self.trace_empty(cx),
+            Shown::Deployments => self.revision_empty(cx),
         }
     }
     fn counts(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -235,12 +262,13 @@ impl TableSource for ObservabilityPage {
             Shown::Applications => self.application_notes(cx),
             Shown::Incidents => self.incident_notes(cx),
             Shown::Traces => self.trace_notes(cx),
+            Shown::Deployments => Vec::new(),
         }
     }
     fn legend(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         match self.shown_table() {
             Shown::Applications => self.application_footer(window, cx),
-            Shown::Incidents | Shown::Traces => None,
+            Shown::Incidents | Shown::Traces | Shown::Deployments => None,
         }
     }
 }

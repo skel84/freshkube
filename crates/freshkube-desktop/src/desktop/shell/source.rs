@@ -557,13 +557,9 @@ impl Pilot {
         ]
     }
 
-    /// Observability's destinations in the column; Deployments has no live
-    /// source yet, so only example data shows it.
+    /// Observability's destinations in the column.
     pub(super) fn obs_destinations(&self) -> Vec<Destination> {
-        Destination::NAVIGATION
-            .into_iter()
-            .filter(|item| self.fixture || *item != Destination::Deployments)
-            .collect()
+        Destination::NAVIGATION.to_vec()
     }
 }
 

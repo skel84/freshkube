@@ -18,6 +18,9 @@ struct Server {
     incident_gate: Arc<tokio::sync::Notify>,
     /// The status the logs path answers with while the rest answer 200.
     logs_status: Arc<AtomicU16>,
+    /// 1: the application's page lists two revisions; 2: also, the window
+    /// around one answers Coroot's 404; 3: the window answers 500.
+    deploy_mode: Arc<AtomicUsize>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -41,10 +44,12 @@ impl Server {
         let (mode, gate) = (incident_mode.clone(), incident_gate.clone());
         let logs_status = Arc::new(AtomicU16::new(200));
         let logs_state = logs_status.clone();
+        let deploy_mode = Arc::new(AtomicUsize::new(0));
+        let deploys = deploy_mode.clone();
         let task=runtime.spawn(async move {
             loop {
                 let (mut socket,_)=listener.accept().await.unwrap();
-                let (state,reads,captured,mode,gate,logs_state)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone(),logs_state.clone());
+                let (state,reads,captured,mode,gate,logs_state,deploys)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone(),logs_state.clone(),deploys.clone());
                 tokio::spawn(async move {
                     let mut buf=vec![0;16384]; let Ok(n)=socket.read(&mut buf).await else{return;};
                     let request=String::from_utf8_lossy(&buf[..n]);
@@ -80,7 +85,11 @@ impl Server {
                     } else if path.contains("/app/") {
                         // The application the path names, as Coroot answers for it.
                         let id=path.split("/app/").nth(1).unwrap_or("").split('?').next().unwrap_or("").replace("%3A",":");
-                        serde_json::json!({"app_map":{"application":{"id":id,"status":"warning"},"dependencies":[{"id":"cluster-a:prod:Deployment:db","status":"ok","link":{"status":"critical"}}]},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available","threshold":80,"unit":"percent","condition_format_template":"the CPU usage > <threshold>"}],"widgets":[{"table":{"header":["Container","Usage"],"rows":[{"cells":[{"value":"api"},{"value":"0.2","unit":"cores"}]}]},"width":"100%"}]},{"name":"Logs","status":"ok","checks":[],"widgets":[{"logs":{},"width":"100%"}]}]})
+                        let mut page=serde_json::json!({"app_map":{"application":{"id":id,"status":"warning"},"dependencies":[{"id":"cluster-a:prod:Deployment:db","status":"ok","link":{"status":"critical"}}]},"reports":[{"name":"CPU","status":"unknown","checks":[{"id":"check","title":"Measured by Coroot","status":"unknown","message":"No measurement available","threshold":80,"unit":"percent","condition_format_template":"the CPU usage > <threshold>"}],"widgets":[{"table":{"header":["Container","Usage"],"rows":[{"cells":[{"value":"api"},{"value":"0.2","unit":"cores"}]}]},"width":"100%"}]},{"name":"Logs","status":"ok","checks":[],"widgets":[{"logs":{},"width":"100%"}]}]});
+                        if deploys.load(Ordering::SeqCst)>0 {
+                            page["reports"].as_array_mut().unwrap().push(deployments_wire());
+                        }
+                        page
                     } else if path.contains("map") {
                         serde_json::json!({"map":[]})
                     } else if status==204 {
@@ -90,7 +99,14 @@ impl Server {
                     };
                     let body = if path.contains("api/user") {body} else {serde_json::json!({"context":{},"data":body})}.to_string();
                     let code=if status==204 {200} else {status};
-                    let response=format!("HTTP/1.1 {code} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
+                    // The window around the revision at 1789999000 s.
+                    let window=path.contains("/app/") && path.contains("from=17899");
+                    let (code,body,kind)=match deploys.load(Ordering::SeqCst) {
+                        2 if window=>(404,"Application not found\n".to_owned(),"text/plain"),
+                        3 if window=>(500,"internal error".to_owned(),"text/plain"),
+                        _=>(code,body,"application/json"),
+                    };
+                    let response=format!("HTTP/1.1 {code} Test\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
                     _=socket.write_all(response.as_bytes()).await;
                 });
             }
@@ -103,6 +119,7 @@ impl Server {
             incident_mode,
             incident_gate,
             logs_status,
+            deploy_mode,
             task,
         }
     }
@@ -173,7 +190,6 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
         drop(paths);
         window.render_frame(cx);
         assert!(window.try_find("obs-threshold").is_none());
-        assert!(window.try_find("obs-app-rollback").is_none());
         page.update(cx, |page, cx| page.open(Destination::Applications, cx));
     })
     .unwrap();
@@ -1459,4 +1475,113 @@ async fn a_first_read_that_fails_says_so_with_retry(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+/// Coroot's Deployments report: two revisions, newest first.
+fn deployments_wire() -> serde_json::Value {
+    let row = |id: &str, version: &str, summaries: serde_json::Value| {
+        // Without findings, Coroot sends its note as a stub.
+        let summary = if summaries.as_array().is_some_and(Vec::is_empty) {
+            serde_json::json!({"value":"No notable changes","is_stub":true})
+        } else {
+            serde_json::json!({"value":"","deployment_summaries":summaries})
+        };
+        serde_json::json!({"id":id,"cells":[
+            {"value":version,"status":"ok"},{"value":"1h ago"},summary]})
+    };
+    serde_json::json!({"name":"Deployments","status":"ok","checks":null,"widgets":[{"table":{
+        "header":["Deployment","Deployed","Summary"],"rows":[
+            row("9c41e7:1789999000","9c41e7: example.test/shop/api:1.4.0",
+                serde_json::json!([{"report":"SLO","ok":true,"message":"Availability: 100% (objective: 99%)","time":null}])),
+            row("2b70aa:1789990000","2b70aa: example.test/shop/api:1.3.9",serde_json::json!([])),
+        ]},"width":"100%"}]})
+}
+
+async fn revision_read(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+) {
+    let observed = page.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        let page = observed.read(cx);
+        let failed = page.revision_observations.list_error().is_some();
+        !page.live.view.is_loading()
+            && (failed || page.live.revision_job.is_some() && !page.live.revision.is_loading())
+    })
+    .await;
+    cx.read(|cx| {
+        let error = page.read(cx).revision_observations.list_error().cloned();
+        assert_eq!(error, None, "Coroot's revisions decode");
+    });
+}
+
+#[gpui_kit::test]
+async fn deployments_read_coroots_revisions_and_the_window_around_one(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.selected_app = Some(page.applications[0].id.clone());
+            page.open(Destination::Deployments, cx);
+        })
+    });
+    revision_read(cx, handle, &page).await;
+    let window = last_path(&server, "from=17899");
+    assert!(
+        window.contains("/app/cluster-a%3Aprod%3ADeployment%3Aapi"),
+        "{window}"
+    );
+    assert!(window.contains("from=1789997200000"), "{window}");
+    assert!(window.contains("to=1790000800000"), "{window}");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-revision-9c41e7-1789999000").visible());
+        assert!(window.find("obs-revision-2b70aa-1789990000").visible());
+        assert!(window.find("obs-revision-finding-0").visible());
+        assert!(window.find("obs-revision-window").visible());
+        // Coroot's page in the fake has no charts.
+        assert!(window.find("obs-revision-no-charts").visible());
+    })
+    .unwrap();
+
+    // Coroot's 404 for the window is no data, never a missing application.
+    server.deploy_mode.store(2, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    revision_read(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.revision.error().is_none());
+        window.render_frame(cx);
+        assert!(window.find("obs-revision-no-data").visible());
+        assert!(window.try_find("obs-revision-failed").is_none());
+        assert!(window.find("obs-revision-9c41e7-1789999000").visible());
+    })
+    .unwrap();
+
+    // Any other failure says so, with Retry.
+    server.deploy_mode.store(3, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.refresh(cx)));
+    revision_read(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.revision.error().is_some());
+        window.render_frame(cx);
+        assert!(window.find("obs-revision-failed").visible());
+        assert!(window.find("obs-revision-retry").visible());
+    })
+    .unwrap();
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("obs-revision-retry", cx)
+    })
+    .unwrap();
+    revision_read(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("obs-revision-failed").is_none());
+        assert!(window.find("obs-revision-window").visible());
+    })
+    .unwrap();
 }

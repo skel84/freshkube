@@ -11,19 +11,22 @@ impl Render for ObservabilityPage {
         let p = palette(cx);
         let unavailable =
             !self.fixture && (self.live.provider.is_none() || self.live.source.is_none());
-        // Applications is a table page, edge to edge, and so are Incidents
-        // and Traces, whose tables share the page with an inspector. The
-        // other destinations are pages of cards and canvases, which keep the
-        // padded frame.
+        // Applications is a table page, edge to edge, and so are Incidents,
+        // Traces and Deployments, whose tables share the page with an
+        // inspector. The other destinations are pages of cards and canvases,
+        // which keep the padded frame.
         let edge = matches!(
             self.destination,
-            Destination::Applications | Destination::Incidents | Destination::Traces
+            Destination::Applications
+                | Destination::Incidents
+                | Destination::Traces
+                | Destination::Deployments
         );
         // An inspector's split fills the window, as tall as the scroll area;
         // when a short window scrolls the frame, the split has its own height.
         let fills = matches!(
             self.destination,
-            Destination::Incidents | Destination::Traces
+            Destination::Incidents | Destination::Traces | Destination::Deployments
         ) && !self.inspector_scrolls(window);
         let state = |state: AnyElement| {
             if edge {
@@ -43,9 +46,8 @@ impl Render for ObservabilityPage {
                 Destination::Application => self.render_report(window, cx),
                 Destination::Incidents => self.render_incidents(window, cx),
                 Destination::Traces => self.render_live_traces(window, cx),
-                Destination::Profiling if !self.fixture => self.render_live_profiling(cx),
-                _ if !self.fixture => self.render_limited(cx),
                 Destination::Deployments => self.render_deployments(window, cx),
+                Destination::Profiling if !self.fixture => self.render_live_profiling(cx),
                 Destination::Profiling => self.render_profiling(cx),
             }
         };
@@ -53,6 +55,7 @@ impl Render for ObservabilityPage {
             Destination::Applications => self.applications_header(window, cx),
             Destination::Incidents => self.incidents_header(window, cx),
             Destination::Traces => self.traces_header(window, cx),
+            Destination::Deployments => self.deployments_header(window, cx),
             _ => self
                 .source_controls(self.page_header(cx), cx)
                 .render(window, cx),

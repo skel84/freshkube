@@ -36,12 +36,17 @@ impl ObservabilityPage {
                     .error()
                     .or_else(|| self.live.apps.error()),
             ),
+            Destination::Deployments => (
+                self.live.view.data().is_some(),
+                self.live.view.is_loading(),
+                self.live.view.error().or_else(|| self.live.apps.error()),
+            ),
             _ => return None,
         };
         if has_data
             || (matches!(
                 self.destination,
-                Destination::Traces | Destination::Profiling
+                Destination::Traces | Destination::Profiling | Destination::Deployments
             ) && !loading
                 && error.is_none())
         {
@@ -286,12 +291,11 @@ impl ObservabilityPage {
                 self.live.profiling.is_stale(),
                 self.live.profiling.error(),
             ),
-            Destination::Application => (
+            Destination::Application | Destination::Deployments => (
                 self.live.view.is_loading(),
                 self.live.view.is_stale(),
                 self.live.view.error(),
             ),
-            _ => return None,
         };
         if stale {
             let last = match self.destination {
@@ -300,8 +304,9 @@ impl ObservabilityPage {
                 Destination::Incidents => self.live.incidents.last_successful(),
                 Destination::Traces => self.live.tracing.last_successful(),
                 Destination::Profiling => self.live.profiling.last_successful(),
-                Destination::Application => self.live.view.last_successful(),
-                _ => None,
+                Destination::Application | Destination::Deployments => {
+                    self.live.view.last_successful()
+                }
             };
             let lead = last.map(|time| {
                 format!(
@@ -338,11 +343,5 @@ impl ObservabilityPage {
             );
         }
         None
-    }
-    pub(super) fn render_limited(&self, cx: &Context<Self>) -> AnyElement {
-        v_flex().id("obs-capability-limited").test_support().gap(dp(12.))
-            .child(text("This destination is not connected in this read-only Coroot slice."))
-            .child(muted("Applications, the service map, incidents, traces, profiling and supported application reports are available. Full report histories and historical deployment comparisons require additional client APIs.",cx))
-            .into_any_element()
     }
 }
