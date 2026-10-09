@@ -166,6 +166,9 @@ impl Link {
 /// Everything read for one change, each part with its own outcome.
 pub struct Evidence {
     pub sha: String,
+    /// A Freight followed by name: its Stages' workloads count as reached
+    /// whether or not it matches the commit.
+    pub followed: Option<String>,
     /// When the caller read it all. The caller's clock, never read here.
     pub observed_at: DateTime<Utc>,
     /// Where the pipeline's own evidence record is; `None` when the caller
@@ -357,6 +360,22 @@ fn matching_freight<'a>(
     found
 }
 
+/// The Freight whose Stages the change reached: those matching the commit
+/// or a built digest, and the one followed by name.
+fn reached<'a>(evidence: &Evidence, builds: &[Build], freight: &'a [Freight]) -> Vec<&'a Freight> {
+    let mut reached: Vec<&Freight> = matching_freight(&evidence.sha, builds, freight)
+        .into_iter()
+        .map(|(item, _)| item)
+        .collect();
+    if let Some(followed) = &evidence.followed
+        && let Some(item) = freight.iter().find(|item| &item.name == followed)
+        && !reached.iter().any(|item| &item.name == followed)
+    {
+        reached.push(item);
+    }
+    reached
+}
+
 /// The link into a Freight the change reached: from the PipelineRun when the
 /// join has a build to stand on, else from the commit itself.
 ///
@@ -490,8 +509,10 @@ fn manages_rollout(app: &Application) -> bool {
 }
 
 fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<WantedRollout> {
-    let (Some(builds), Some(freight), Some(stages), Some(apps)) = (
-        evidence.builds.read(),
+    // Builds that couldn't be read leave the Freight joined on the commit
+    // alone, as `join` joins it.
+    let builds = evidence.builds.read().map_or(&[][..], Vec::as_slice);
+    let (Some(freight), Some(stages), Some(apps)) = (
         evidence.kargo.freight.read(),
         evidence.kargo.stages.read(),
         evidence.applications.read(),
@@ -499,7 +520,7 @@ fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<W
         return Vec::new();
     };
     let mut wanted: Vec<WantedRollout> = Vec::new();
-    for (item, _) in matching_freight(&evidence.sha, builds, freight) {
+    for item in reached(evidence, builds, freight) {
         for stage in stages
             .iter()
             .filter(|stage| stage.current_freight.contains(&item.name))
@@ -531,8 +552,10 @@ fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<W
 /// Rollout, nor a Deployment of the Freight's repository, with the namespace their workload runs in: the pods there are
 /// read instead, when the destination is the environment cluster.
 pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
-    let (Some(builds), Some(freight), Some(stages), Some(apps)) = (
-        evidence.builds.read(),
+    // Builds that couldn't be read leave the Freight joined on the commit
+    // alone, as `join` joins it.
+    let builds = evidence.builds.read().map_or(&[][..], Vec::as_slice);
+    let (Some(freight), Some(stages), Some(apps)) = (
         evidence.kargo.freight.read(),
         evidence.kargo.stages.read(),
         evidence.applications.read(),
@@ -540,7 +563,7 @@ pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
         return Vec::new();
     };
     let mut wanted = Vec::new();
-    for (item, _) in matching_freight(&evidence.sha, builds, freight) {
+    for item in reached(evidence, builds, freight) {
         for stage in stages
             .iter()
             .filter(|stage| stage.current_freight.contains(&item.name))
@@ -563,6 +586,16 @@ pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
         }
     }
     wanted
+}
+
+/// The links from one Freight onwards, as [`join`] makes them for each
+/// Freight it matches: its Warehouse, its Promotions, and each Stage that
+/// runs it with that Stage's Application, workloads and pods. In trail
+/// order; a Stage's links follow its Freight → Stage link.
+pub fn freight_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
+    let mut links = vec![warehouse_link(evidence, freight)];
+    links.extend(stage_links(evidence, freight));
+    links
 }
 
 pub fn join(evidence: &Evidence) -> Trail {
@@ -662,8 +695,7 @@ pub fn join(evidence: &Evidence) -> Trail {
         .observed(seen);
         link.conflicts = conflicts;
         links.push(link);
-        links.push(warehouse_link(evidence, freight));
-        links.extend(stage_links(evidence, freight));
+        links.extend(freight_links(evidence, freight));
     }
     Trail {
         sha: sha.clone(),

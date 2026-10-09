@@ -454,9 +454,9 @@ pub(super) fn judge_revision(
             Confidence::Claimed,
             Key::None,
             format!(
-                "{} container(s) run the Freight's digest, {ready} ready of {} pod container(s) read; the pod listing stopped at the page cap after {} items, so a pod not read may run another digest",
-                matching.len(),
-                containers.len(),
+                "{} the Freight's digest, {ready} ready of {} read; the pod listing stopped at the page cap after {} items, so a pod not read may run another digest",
+                count_run(matching.len(), "container"),
+                count(containers.len(), "pod container"),
                 truncation.read
             ),
         )
@@ -468,9 +468,9 @@ pub(super) fn judge_revision(
             Confidence::Confirmed,
             Key::Digest(digest.clone()),
             format!(
-                "{} container(s) run the Freight's digest, {ready} ready of {} pod container(s) read",
-                matching.len(),
-                containers.len()
+                "{} the Freight's digest, {ready} ready of {} read",
+                count_run(matching.len(), "container"),
+                count(containers.len(), "pod container")
             ),
         )
         .observed(pods_running(&matching));
@@ -480,8 +480,13 @@ pub(super) fn judge_revision(
             Confidence::Claimed,
             Key::None,
             format!(
-                "{} container(s) of the current revision report the Freight's digest, none ready yet",
-                matching.len()
+                "{} of the current revision {} the Freight's digest, none ready yet",
+                count(matching.len(), "container"),
+                if matching.len() == 1 {
+                    "reports"
+                } else {
+                    "report"
+                }
             ),
         )
         .observed(pods_running(&matching));
@@ -491,8 +496,8 @@ pub(super) fn judge_revision(
             Confidence::Unknown,
             Key::None,
             format!(
-                "read {} pod container(s); none runs the Freight's image{}",
-                pods.len(),
+                "read {}; none runs the Freight's image{}",
+                count(pods.len(), "pod container"),
                 cap_note(capped)
             ),
         );
@@ -525,7 +530,10 @@ fn which_pods(
     };
     if foreign > 0 {
         which.push_str(&format!(
-            "; {foreign} pod container(s) with that hash label belong to another owner and were not judged"
+            "; {} with that hash label {} to another owner and {} not judged",
+            count(foreign, "pod container"),
+            if foreign == 1 { "belongs" } else { "belong" },
+            if foreign == 1 { "was" } else { "were" }
         ));
     }
     let others: Vec<&str> =
@@ -644,8 +652,8 @@ fn judge_pods(
             String::new()
         } else {
             format!(
-                "; {} other container(s) of the same image run a different digest",
-                other.len()
+                "; {} of the same image a different digest",
+                count_run(other.len(), "other container")
             )
         };
         let mut seen = from_side;
@@ -657,9 +665,9 @@ fn judge_pods(
             Key::Digest((*digest).clone()),
             Confidence::Confirmed,
             format!(
-                "{} container(s) run the Freight's digest, {ready} ready of {} pod container(s) read{extra}",
-                matching.len(),
-                pods.len()
+                "{} the Freight's digest, {ready} ready of {} read{extra}",
+                count_run(matching.len(), "container"),
+                count(pods.len(), "pod container")
             ),
         )
         .observed(seen)
@@ -693,10 +701,24 @@ fn judge_pods(
             Key::None,
             Confidence::Unknown,
             format!(
-                "read {} pod container(s); none runs the Freight's image{}",
-                pods.len(),
+                "read {}; none runs the Freight's image{}",
+                count(pods.len(), "pod container"),
                 cap_note(capped)
             ),
         )
     }
+}
+
+/// `n` of a noun: "1 container", "2 containers".
+pub(super) fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
+/// `n` of a noun that run: "1 container runs", "2 containers run".
+fn count_run(n: usize, noun: &str) -> String {
+    format!("{} {}", count(n, noun), if n == 1 { "runs" } else { "run" })
 }

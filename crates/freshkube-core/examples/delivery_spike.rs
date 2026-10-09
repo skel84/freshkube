@@ -397,10 +397,11 @@ async fn main() {
         .collect();
     contexts.extend(args.known_as.iter().cloned());
     let plan = Plan {
+        followed: None,
         sha,
         kargo_project: project,
         argocd_namespace: argocd_ns,
-        build_namespace: build_ns,
+        build_namespace: Some(build_ns),
         github_repo: args.repo.clone(),
         environment: env.alias.clone(),
         argocd: argocd.alias.clone(),

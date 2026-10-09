@@ -9,6 +9,7 @@
 //! reads nothing; [`example`] invents one change for example mode.
 
 pub mod example;
+pub mod live;
 
 use chrono::{DateTime, Utc};
 
@@ -192,43 +193,105 @@ pub struct Check {
     pub at: Option<DateTime<Utc>>,
 }
 
-/// How the Freight became eligible for a Stage.
+/// How the Freight became eligible for a Stage. Times are those Kargo
+/// recorded, when it recorded one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Eligible {
     /// It passed verification in the upstream Stage.
     Verified {
         upstream: String,
-        at: DateTime<Utc>,
-        /// What passed there: `3 of 3 analyses`.
-        checks: String,
+        at: Option<DateTime<Utc>>,
+        /// What passed there: `3 of 3 analyses`, when it was read.
+        checks: Option<String>,
     },
     /// Someone approved it for this Stage by hand, past its upstream.
     Approved {
-        by: String,
-        at: DateTime<Utc>,
+        /// Who, when it was read; Kargo's record keeps no name.
+        by: Option<String>,
+        at: Option<DateTime<Utc>>,
         past: String,
-        /// When the upstream verified it after, if it has.
-        upstream_verified: Option<DateTime<Utc>>,
+        /// Whether the upstream has verified it since.
+        upstream: Upstream,
     },
     /// The first Stage takes Freight from the Warehouse.
-    Warehouse { at: DateTime<Utc> },
+    Warehouse { at: Option<DateTime<Utc>> },
+    /// Neither verified upstream nor approved for this Stage yet.
+    NotYet { upstream: Vec<String> },
+    /// What would say couldn't be read.
+    Unknown { why: String },
+}
+
+/// Whether the Stage an approval went past has verified the Freight since.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Upstream {
+    NotVerified,
+    /// It has, at the time Kargo recorded, when it recorded one.
+    Verified {
+        at: Option<DateTime<Utc>>,
+    },
 }
 
 /// How the Freight is promoted to a Stage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Promotion {
-    /// Auto-promotion is on: Kargo promoted it.
-    Automatic { at: DateTime<Utc> },
+    /// Kargo promoted it: auto-promotion is on.
+    Automatic { at: Option<DateTime<Utc>> },
+    /// A user promoted it.
+    ByHand { at: Option<DateTime<Utc>> },
+    /// Something else promoted it, in Kargo's words for its creator.
+    Other {
+        how: String,
+        at: Option<DateTime<Utc>>,
+    },
     /// Auto-promotion is off: it waits for someone who may promote.
     Waiting,
+    /// No Promotion of the Freight to the Stage was read.
+    NotYet,
+    /// A Promotion is under way, in Kargo's word for its phase.
+    Running { phase: String },
+    /// The Promotion ended without promoting.
+    Failed {
+        phase: String,
+        message: Option<String>,
+    },
+    /// What would say couldn't be read.
+    Unknown { why: String },
+}
+
+/// Where a Stage deploys.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Destination {
+    /// The environment cluster, by its name.
+    Cluster(String),
+    /// Not known, and why: its Application wasn't found, or its
+    /// destination wasn't matched to a cluster.
+    Unknown(String),
+}
+
+impl Destination {
+    /// The cluster's name, when it is known.
+    pub fn cluster(&self) -> Option<&str> {
+        match self {
+            Self::Cluster(name) => Some(name),
+            Self::Unknown(_) => None,
+        }
+    }
+
+    /// The Stage's group row: `deploys to prod-ams`, or why it isn't known.
+    pub fn words(&self) -> String {
+        match self {
+            Self::Cluster(name) => format!("deploys to {name}"),
+            Self::Unknown(why) => format!("destination unknown: {why}"),
+        }
+    }
 }
 
 /// A Stage and its three gates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stage {
     pub name: String,
-    /// The environment cluster it deploys to.
-    pub cluster: String,
+    /// Where it deploys, as far as what was read says.
+    pub cluster: Destination,
     pub state: HealthIndicator,
     /// Its state in words: `Verified`, `Waiting for promotion`.
     pub words: String,
@@ -236,14 +299,18 @@ pub struct Stage {
     pub running: Option<String>,
     pub eligible: Eligible,
     pub promotion: Promotion,
-    /// Who may approve Freight for the Stage, past its upstream.
-    pub approvers: String,
-    /// Who may promote Freight to it.
-    pub promoters: String,
-    /// The promotion's own steps.
+    /// Who may approve Freight for the Stage, past its upstream, when it
+    /// was read.
+    pub approvers: Option<String>,
+    /// Who may promote Freight to it, when it was read.
+    pub promoters: Option<String>,
+    /// The promotion's own steps; empty when they weren't read.
     pub steps: Vec<Check>,
     /// Each AnalysisRun after the promotion.
     pub verification: Vec<Check>,
+    /// How the Stage's record joins the Freight, when it runs it and the
+    /// join read it.
+    pub link: Option<LinkDetail>,
     /// The Stage itself, to open in Resources.
     pub object: Object,
 }

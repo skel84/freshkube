@@ -16,7 +16,9 @@
 //!
 //! On a Kargo application's page, a Stage leads to the change it carries
 //! (`change/`), which shows in the application page's place; its
-//! breadcrumb comes back. Only example data has a change to follow yet.
+//! breadcrumb comes back. The change page reads the change itself, on the
+//! open connection, while it shows; a live read records each Stage's
+//! current Freight, which is what it follows.
 mod change;
 mod column;
 mod display;
@@ -30,12 +32,11 @@ mod view;
 
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 use freshkube_core::applications::{
     Derived, Inputs, Override, SessionInputs, SessionKey, derive, read::read_session,
 };
-use freshkube_core::delivery::change::{self as delivery_change, Change};
 use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_ui::inspector::InspectorSplit;
@@ -47,7 +48,7 @@ use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
-use change::{ChangeEvent, ChangePage};
+use change::{ChangeEvent, ChangePage, Changes};
 pub(crate) use column::Column;
 #[cfg(test)]
 pub(crate) use column::{ColumnApp, ColumnSection};
@@ -101,33 +102,6 @@ struct Read {
     changes: Changes,
 }
 
-/// Where a Stage's change comes from.
-#[derive(Clone, Copy, Debug)]
-enum Changes {
-    /// Nothing reads a change yet.
-    None,
-    /// Example data's, its times counted from when it was read.
-    Example(DateTime<Utc>),
-}
-
-impl Changes {
-    /// The Freight a Kargo project's Stage carries, when a change was read.
-    fn freight_of(self, project: &str, stage: &str) -> Option<&'static str> {
-        match self {
-            Self::None => None,
-            Self::Example(_) => delivery_change::example::freight_of(project, stage),
-        }
-    }
-
-    /// The change a Kargo project's Stage carries, when one was read.
-    fn of_stage(self, project: &str, stage: &str) -> Option<Change> {
-        match self {
-            Self::None => None,
-            Self::Example(now) => delivery_change::example::for_stage(project, stage, now),
-        }
-    }
-}
-
 impl Read {
     fn of(inputs: &Inputs, labels: Labels, connections: Connections) -> Self {
         Self {
@@ -141,11 +115,14 @@ impl Read {
     /// A live read of one connection: its cluster is that connection.
     fn live(inputs: &Inputs, source: &KubeSource) -> Self {
         let key = SessionKey::new(source.id.clone());
-        Self::of(
-            inputs,
-            Labels::new([(key.clone(), source.context.clone())]),
-            Connections::new(source.id.clone(), [(key, source.id.clone())]),
-        )
+        Self {
+            changes: Changes::live(inputs, source),
+            ..Self::of(
+                inputs,
+                Labels::new([(key.clone(), source.context.clone())]),
+                Connections::new(source.id.clone(), [(key, source.id.clone())]),
+            )
+        }
     }
 }
 
@@ -317,6 +294,9 @@ impl ApplicationsPage {
             return;
         }
         self.visible = visible;
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |change, cx| change.set_visible(visible, cx));
+        }
         if !visible {
             self.stop();
             self.derive_column();
@@ -338,9 +318,14 @@ impl ApplicationsPage {
 
     /// Refresh: reads again, whatever is in flight, while shown.
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.visible {
-            self.read(cx);
+        if !self.visible {
+            return;
         }
+        // A change shown reads itself; the applications read on below it.
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |change, cx| change.refresh(cx));
+        }
+        self.read(cx);
     }
 
     /// Drops the read in flight; what was read stays.
@@ -555,16 +540,22 @@ impl ApplicationsPage {
         let (Some((open, _)), Some(read)) = (&self.open, self.snapshot.data()) else {
             return;
         };
+        let Some(source) = &self.source else {
+            return;
+        };
         let project = open.read(cx).name().to_string();
-        let Some(change) = read.changes.of_stage(&project, stage) else {
+        let Some(fetch) = read.changes.fetch(
+            &project,
+            stage,
+            &self.runtime,
+            &source.access,
+            self.example_delay,
+        ) else {
             return;
         };
         let connections = read.connections.clone();
-        let page = cx.new(|cx| {
-            let mut page = ChangePage::new(change, connections, cx);
-            page.select_stage(stage, window, cx);
-            page
-        });
+        let visible = self.visible;
+        let page = cx.new(|cx| ChangePage::new(fetch, stage, connections, visible, window, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ChangeEvent::Back => this.close_change(window, cx),
@@ -698,7 +689,13 @@ impl ApplicationsPage {
 
     /// The motion over the table's loading rows, which the shell mounts
     /// beside the cached page.
-    pub(crate) fn loading_motion(&self) -> Option<Entity<kit::LoadingMotion>> {
+    pub(crate) fn loading_motion(&self, cx: &App) -> Option<Entity<kit::LoadingMotion>> {
+        if let Some(change) = self.change_page() {
+            return change.read(cx).loading_motion();
+        }
+        if self.open.is_some() {
+            return None;
+        }
         kit::TableSource::loading(self)
             .is_some()
             .then(|| self.loading_motion.clone())

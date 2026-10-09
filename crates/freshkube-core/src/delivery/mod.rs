@@ -29,7 +29,7 @@ pub(crate) mod fixtures;
 #[cfg(test)]
 mod provenance;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 mod warehouse_tests;
 
