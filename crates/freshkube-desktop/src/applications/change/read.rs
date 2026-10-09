@@ -72,6 +72,7 @@ impl Fetch {
             freight,
             kargo_cluster: cluster,
             observed_at: DateTime::<Utc>::MIN_UTC,
+            page: Err("Nothing is read yet".into()),
             groups: Vec::new(),
             stages: Vec::new(),
             hops: Vec::new(),
@@ -258,6 +259,11 @@ impl ChangePage {
             .as_ref()
             .map(|detail| detail.action_labels())
             .unwrap_or_default()
+    }
+
+    /// As a change whose cluster doesn't record Kargo's address.
+    pub(crate) fn forget_link(&mut self) {
+        self.page_link = Err("Kargo's address isn't known".into());
     }
 
     /// A read that failed, as a refused or unreachable cluster answers.

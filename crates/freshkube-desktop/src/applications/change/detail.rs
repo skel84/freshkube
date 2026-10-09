@@ -3,9 +3,11 @@
 //! leads. A gate row shows its Stage, with its three gates apart: whether
 //! the Freight is eligible, how it is promoted, and the verification after.
 //!
-//! Every action leads out and changes nothing. One into Resources names
-//! its cluster, and is greyed out with why for a cluster that isn't open;
-//! the tools' own pages and a step's logs aren't linked yet, and say so.
+//! Every action leads out and changes nothing. One into Resources or to a
+//! step's logs names its cluster, and is greyed out with why for a cluster
+//! that isn't open; a tool's own page opens in the browser at the address
+//! core made from what the cluster records, and is greyed out with why
+//! without one.
 //!
 //! What the Inspector says is derived as a [`Detail`] when the selection
 //! changes; drawing only lays it out.
@@ -21,11 +23,6 @@ use gpui_kit::component::{Disableable as _, Sizable, button::Button, h_flex, v_f
 
 /// The width of a field's label.
 const LABEL_WIDTH: f32 = 112.;
-
-/// Why a tool's own page doesn't open yet: its address isn't read.
-const NOT_LINKED: &str = "Not linked yet: the tool's address isn't read";
-/// Why a step's log doesn't open yet.
-const NO_LOGS: &str = "Not linked yet: a step's log isn't read";
 
 /// The Inspector's words for the selection.
 pub(super) struct Detail {
@@ -84,12 +81,22 @@ struct CheckLine {
     found: SharedString,
 }
 
-/// An action's button: its label, why it can't be pressed, and the object
-/// it opens when it can.
+/// An action's button: its label, why it can't be pressed, and where it
+/// leads when it can.
 struct ActionLine {
     label: SharedString,
     why: Option<SharedString>,
-    opens: Option<Object>,
+    /// Its address, shown in the tooltip.
+    tooltip: Option<SharedString>,
+    leads: Option<Leads>,
+}
+
+/// Where a button leads.
+#[derive(Clone)]
+pub(super) enum Leads {
+    Resources(Object),
+    Browser(SharedString),
+    Logs(Object, Option<String>),
 }
 
 impl ChangePage {
@@ -198,19 +205,32 @@ impl ChangePage {
                         )
                         .into(),
                         why: action.disabled.clone().map(SharedString::from).or(closed),
-                        opens: Some(object.clone()),
+                        tooltip: None,
+                        leads: Some(Leads::Resources(object.clone())),
                     }
                 }
-                Target::Browser { label } => ActionLine {
+                Target::Browser { label, address } => ActionLine {
                     label: format!("{label} ↗").into(),
-                    why: Some(action.disabled.clone().unwrap_or(NOT_LINKED.into()).into()),
-                    opens: None,
+                    why: action.disabled.clone().map(SharedString::from),
+                    tooltip: address.as_ref().map(|address| address.to_string().into()),
+                    leads: address
+                        .as_ref()
+                        .map(|address| Leads::Browser(address.to_string().into())),
                 },
-                Target::Logs { .. } => ActionLine {
-                    label: "Logs".into(),
-                    why: Some(action.disabled.clone().unwrap_or(NO_LOGS.into()).into()),
-                    opens: None,
-                },
+                Target::Logs {
+                    what,
+                    pod,
+                    container,
+                } => {
+                    let (_, closed) = self.object_link(pod);
+                    ActionLine {
+                        label: format!("Logs of {what} · {}", self.cluster_name(&pod.cluster))
+                            .into(),
+                        why: action.disabled.clone().map(SharedString::from).or(closed),
+                        tooltip: None,
+                        leads: Some(Leads::Logs(pod.clone(), container.clone())),
+                    }
+                }
             })
             .collect()
     }
@@ -247,15 +267,18 @@ impl ChangePage {
                 .outline()
                 .xsmall()
                 .label(action.label.clone());
-            let button = match action.opens.clone() {
-                Some(object) => {
-                    button.on_click(cx.listener(move |this, _, _, cx| this.open(&object, cx)))
-                }
+            let button = match action.leads.clone() {
+                Some(leads) => button.on_click(cx.listener(move |this, _, _, cx| match &leads {
+                    Leads::Resources(object) => this.open(object, cx),
+                    Leads::Browser(address) => cx.open_url(address),
+                    Leads::Logs(pod, container) => this.open_logs(pod, container.clone(), cx),
+                })),
                 None => button,
             };
-            match action.why.clone() {
-                Some(why) => button.disabled(true).tooltip(why),
-                None => button,
+            match (action.why.clone(), action.tooltip.clone()) {
+                (Some(why), _) => button.disabled(true).tooltip(why),
+                (None, Some(tooltip)) => button.tooltip(tooltip),
+                (None, None) => button,
             }
         });
         h_flex()
