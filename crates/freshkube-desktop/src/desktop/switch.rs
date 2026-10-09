@@ -67,6 +67,11 @@ impl PendingLink {
     }
 }
 
+/// What a link is told when its entry's access changed since it was made.
+pub(super) fn reconnected_notice(entry: &str) -> String {
+    format!("{entry} reconnected since this link was made; open it again")
+}
+
 /// Where a link goes.
 pub(super) enum LinkRoute {
     /// The open cluster's own, or one that names no cluster.
@@ -217,6 +222,13 @@ impl Pilot {
         }
     }
 
+    /// Says `message` in a notice, and remembers it for tests.
+    pub(super) fn tell(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        self.told.push(message.clone());
+        gpui_kit::component::WindowExt::push_notification(window, message, cx);
+    }
+
     /// The entry the window is on, if the workspace file lists it.
     pub(super) fn active_cluster(&self) -> Option<&str> {
         match self.registry.active_key() {
@@ -271,9 +283,9 @@ impl Pilot {
             return;
         }
         if self.config_loading {
-            gpui_kit::component::WindowExt::push_notification(
+            self.tell(
+                "Still reading the configuration; pick the cluster again in a moment".into(),
                 window,
-                "Still reading the configuration; pick the cluster again in a moment",
                 cx,
             );
             return;
@@ -324,9 +336,7 @@ impl Pilot {
         if &retired.key == self.registry.active_key()
             || retired.definition != definition(entry, workspace)
         {
-            return LinkRoute::Refuse(format!(
-                "{id} reconnected since this link was made; open it again"
-            ));
+            return LinkRoute::Refuse(reconnected_notice(id));
         }
         LinkRoute::Activate(id.clone())
     }
@@ -343,7 +353,7 @@ impl Pilot {
         match self.route_link(object, cx) {
             LinkRoute::Here => false,
             LinkRoute::Refuse(message) => {
-                gpui_kit::component::WindowExt::push_notification(window, message, cx);
+                self.tell(message, window, cx);
                 true
             }
             LinkRoute::Activate(id) => {
@@ -383,14 +393,7 @@ impl Pilot {
         // The same id is the same access; another means the entry's access
         // changed since the link was made, and the object may be another's.
         if pending.object.connection.as_deref() != Some(source.id.as_str()) {
-            gpui_kit::component::WindowExt::push_notification(
-                window,
-                format!(
-                    "{} reconnected since this link was made; open it again",
-                    pending.entry
-                ),
-                cx,
-            );
+            self.tell(reconnected_notice(&pending.entry), window, cx);
             return;
         }
         self.cancel_object_open();
