@@ -46,6 +46,15 @@ impl ChangePage {
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
         let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        // Stacked, the Inspector shrinks the table over a few frames: the
+        // selection is revealed again until its height holds.
+        if std::mem::take(&mut self.reveal_settled) && !beside {
+            kit::reveal_when_settled(
+                cx.entity().downgrade(),
+                |page| page.selected.is_some(),
+                window,
+            );
+        }
         let details = self.render_detail(cx);
         inspector::split("change-split", &self.split, beside, table, details, window)
     }

@@ -30,7 +30,7 @@ pub use flash::{FlashLayer, Reduced, RowsAt};
 pub use loading::{LOADING_ROWS, LoadingMotion, LoadingRows, Look, TableLoading};
 pub use pinned::widest_pinned_run;
 #[cfg(any(test, feature = "testing"))]
-pub use words::shown as word_cut_shown;
+pub use words::{Shown as WordCutShown, shown as word_cut_shown, shown_style as word_cut_style};
 pub use words::{WordCut, word_cut};
 
 /// Every table's row height. Group rows take the same height, so the list

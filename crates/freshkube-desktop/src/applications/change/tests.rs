@@ -360,20 +360,65 @@ fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAp
     }
 }
 
+/// Stacked, the Inspector shrinks the trail as it opens; the Stage's gate
+/// the page opens on is still in view once the table settles, at the
+/// default text size and at 20.
+#[gpui_kit::test]
+fn a_stacked_page_opens_with_its_selection_in_view(cx: &mut TestAppContext) {
+    for size in [None, Some(20.)] {
+        let (_runtime, handle, view) = on_stage(cx, 760., 560.);
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(size) = size {
+                crate::text_size::set(size, cx);
+            }
+            window.render_frame(cx);
+            window.press("f", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            for _ in 0..10 {
+                if window.simulate_next_frame(cx) == 0 {
+                    break;
+                }
+            }
+            window.render_frame(cx);
+            let page = change(&view, cx).unwrap();
+            let key = page.read(cx).selected().cloned().unwrap();
+            assert_eq!(key.as_ref(), "prod-ams-eligible");
+            let scroll = window.find("change-table-scroll").bounds();
+            let row = window.find(hop(&key)).bounds();
+            assert!(
+                row.top() >= scroll.top() && row.bottom() <= scroll.bottom() + gpui_kit::px(0.5),
+                "{size:?}: row {row:?} out of the table {scroll:?}"
+            );
+        })
+        .unwrap();
+    }
+}
+
 /// #522: beside the Inspector, Detail ends at a whole word, with its whole
-/// text in the tooltip.
+/// text in the tooltip, in the row's font and the cell's colour.
 #[gpui_kit::test]
 fn detail_cuts_at_a_word_beside_the_inspector(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let page = change(&view, cx).unwrap();
+        let ink = freshkube_ui::palette::palette(cx).ink_2;
         let mut cut = 0;
         for row in &page.read(cx).rows {
             let id = SharedString::from(format!("change-hop-{}-detail", row.key));
-            let Some(shown) = freshkube_ui::table::word_cut_shown(id) else {
+            let Some(style) = freshkube_ui::table::word_cut_style(id) else {
                 continue;
             };
+            // Shaped and drawn in the row's monospace and the cell's ink,
+            // as the cells beside it are.
+            assert_eq!(style.font.as_ref(), crate::ui::MONO_FONT, "{}", row.key);
+            assert_eq!(style.size, gpui_kit::px(12.5), "{}", row.key);
+            assert_eq!(style.color, ink, "{}", row.key);
+            let shown = style.text;
             if shown == row.detail {
                 continue;
             }
@@ -461,6 +506,85 @@ fn unlinked_actions_open_nothing(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(change(&view, cx).is_some());
         assert_eq!(view.read(cx).applications().1, Page::Applications);
+    })
+    .unwrap();
+}
+
+/// Opening another application shows its page, not the change followed
+/// from checkout's.
+#[gpui_kit::test]
+fn opening_another_application_drops_the_change(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(change(&view, cx).is_some());
+        let page = list(&view, cx);
+        let other = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .map(|row| row.name.to_string())
+            .find(|name| name != "checkout")
+            .expect("acme has another application");
+        page.update(cx, |page, cx| page.open_named(&other, window, cx));
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_none());
+        let open = list(&view, cx).read(cx).open_page().cloned().unwrap();
+        assert_eq!(open.read(cx).name().as_ref(), other);
+        assert!(window.try_find("change-page").is_none());
+    })
+    .unwrap();
+}
+
+/// A read that no longer has checkout closes its page and the change on
+/// it, and the list takes the keys.
+#[gpui_kit::test]
+fn a_read_without_the_application_closes_the_change_too(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, cx| {
+            page.set_variant(Variant::Unserved);
+            page.refresh(cx);
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_none());
+        assert!(list(&view, cx).read(cx).open_page().is_none());
+        assert!(window.try_find("change-page").is_none());
+        assert!(list(&view, cx).read(cx).focus.is_focused(window));
+    })
+    .unwrap();
+}
+
+/// A Stage's row menu offers its Freight to follow, as F does.
+#[gpui_kit::test]
+fn the_row_menu_follows_a_stages_freight(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.right_click(PROD_AMS, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menu = window.within("popup-menu");
+        assert_eq!(menu.find(1usize).label(), Some("Follow wonky-otter"));
+        window.within("popup-menu").click(1usize, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = change(&view, cx).expect("the change shows");
+        assert_eq!(
+            page.read(cx).selected().map(|key| key.as_ref()),
+            Some("prod-ams-eligible")
+        );
+        assert!(window.find("change-page").visible());
     })
     .unwrap();
 }

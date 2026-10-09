@@ -188,6 +188,11 @@ pub(crate) struct ChangePage {
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
     selected: Option<SharedString>,
+    /// A selection made since the last frame, revealed once a stacked
+    /// Inspector has settled the table's height.
+    reveal_settled: bool,
+    /// What the Inspector says of the selection.
+    detail: Option<detail::Detail>,
 }
 
 impl EventEmitter<ChangeEvent> for ChangePage {}
@@ -281,6 +286,8 @@ impl ChangePage {
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
             page_scroll: ScrollHandle::new(),
             selected: None,
+            reveal_settled: false,
+            detail: None,
         };
         page.derive();
         page
@@ -325,10 +332,12 @@ impl ChangePage {
         };
         let group = row.group;
         self.selected = Some(row.key.clone());
+        self.detail = self.derive_detail();
         if self.folded.remove(&group) {
             self.derive();
         }
         kit::reveal(self, ScrollStrategy::Nearest);
+        self.reveal_settled = true;
         cx.notify();
     }
 
@@ -377,6 +386,7 @@ impl ChangePage {
     /// Escape: the selection first, then back.
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.selected.take().is_some() {
+            self.detail = None;
             cx.notify();
         } else {
             cx.emit(ChangeEvent::Back);

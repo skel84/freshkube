@@ -107,6 +107,14 @@ enum Changes {
 }
 
 impl Changes {
+    /// The Freight a Kargo project's Stage carries, when a change was read.
+    fn freight_of(self, project: &str, stage: &str) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Example(_) => delivery_change::example::freight_of(project, stage),
+        }
+    }
+
     /// The change a Kargo project's Stage carries, when one was read.
     fn of_stage(self, project: &str, stage: &str) -> Option<Change> {
         match self {

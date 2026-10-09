@@ -218,8 +218,8 @@ impl ApplicationPage {
                 if claim.member.kind == MemberKind::KargoStage {
                     row.follows = read
                         .changes
-                        .of_stage(&app.name, &claim.member.name)
-                        .map(|change| change.freight.into());
+                        .freight_of(&app.name, &claim.member.name)
+                        .map(SharedString::from);
                 }
                 row
             })

@@ -37,11 +37,18 @@ const STEPS: [&str; 4] = [
     "argocd-update",
 ];
 
-/// The change of a Stage of a project, when example mode has one: every
-/// Stage of `checkout` leads to `wonky-otter`.
+/// checkout's Stages, in promotion order.
+pub const STAGES: [&str; 4] = ["dev", "stage", "prod-ams", "prod-lon"];
+
+/// The Freight a Stage of a project carries, when example mode has one:
+/// every Stage of `checkout` leads to `wonky-otter`. Builds no change.
+pub fn freight_of(project: &str, stage: &str) -> Option<&'static str> {
+    (project == PROJECT && STAGES.contains(&stage)).then_some(FREIGHT)
+}
+
+/// The change of a Stage of a project, when example mode has one.
 pub fn for_stage(project: &str, stage: &str, now: DateTime<Utc>) -> Option<Change> {
-    let change = change(now);
-    (project == PROJECT && change.stages.iter().any(|s| s.name == stage)).then_some(change)
+    freight_of(project, stage).map(|_| change(now))
 }
 
 /// A time of the invented morning: `minute` minutes after nine, when the
@@ -515,7 +522,10 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         detail: "Tekton Chains, keyless · SLSA v1".into(),
         from: CICD.into(),
         at: Some(at(now, 18)),
-        link: Some(Confidence::Confirmed),
+        // Only Chains' annotation says it signed: no key or transparency
+        // log is read, so nothing here verifies the signature (ROADMAP
+        // step 5).
+        link: Some(Confidence::Claimed),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Tekton Chains".into(),
             title: "checkout-push-x7k2-build".into(),
@@ -527,12 +537,13 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
                 mono("Subject", DIGEST),
             ],
             link: link(
-                Confidence::Confirmed,
+                Confidence::Claimed,
                 "digest",
                 "Run checkout-push-x7k2",
                 DIGEST,
-                "the signed subject is the same digest",
-                "The digest matches on both sides.",
+                "Chains' annotation says it signed this digest",
+                "Only Chains' annotation says signed: no key or transparency log was read, \
+                 so the signature isn't verified.",
             ),
             unlinked: None,
             actions: vec![resource(
@@ -889,11 +900,30 @@ mod tests {
         }
     }
 
+    /// A hop's Link column and its Inspector's Link section say one
+    /// confidence; a hop with no link in its Inspector has none in the
+    /// column either.
+    #[test]
+    fn a_hops_link_is_said_once() {
+        for hop in change(now()).hops {
+            if let Shows::Hop(detail) = &hop.shows {
+                assert_eq!(
+                    hop.link,
+                    detail.link.as_ref().map(|link| link.confidence),
+                    "{}",
+                    hop.key
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_stages_are_acmes_checkout_stages_in_promotion_order() {
         let change = change(now());
         let names: Vec<&str> = change.stages.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, ["dev", "stage", "prod-ams", "prod-lon"]);
+        assert_eq!(names, STAGES);
+        assert_eq!(freight_of("checkout", "dev"), Some(FREIGHT));
+        assert_eq!(freight_of("cart", "dev"), None);
         assert!(for_stage("checkout", "prod-ams", now()).is_some());
         assert!(for_stage("checkout", "qa", now()).is_none());
         assert!(for_stage("cart", "dev", now()).is_none());

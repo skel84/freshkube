@@ -4,6 +4,10 @@
 //! fits with its ellipsis ("Waiting for…"), and cuts a word only when the
 //! first is too long alone. The caller puts the whole text in the cell's
 //! tooltip.
+//!
+//! The text style is the one in force where the cell is laid out, taken in
+//! `request_layout`, as GPUI's own text takes it: the measuring and the
+//! painting run later, outside the row's and the cell's styles.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,7 +15,7 @@ use std::rc::Rc;
 use gpui_kit::prelude::*;
 use gpui_kit::{
     App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId,
-    Pixels, ShapedLine, SharedString, Style, TextAlign, TruncateFrom, Window, px, size,
+    Pixels, ShapedLine, SharedString, Style, TextAlign, TextStyle, TruncateFrom, Window, px, size,
 };
 
 const ELLIPSIS: &str = "…";
@@ -31,12 +35,16 @@ pub struct WordCut {
 
 /// Where a cut that ends at a character moves back to: the end of the
 /// last whole word in `cut`, a prefix of `whole`. A cut that already ends
-/// a word stays; one inside the first word keeps the characters it has.
+/// a word stays, as does one that ends before punctuation that ends a
+/// word ("Not readable" of "Not readable: …"); one inside the first word
+/// keeps the characters it has.
 pub(crate) fn at_word<'a>(cut: &'a str, whole: &str) -> &'a str {
     let ends_word = whole[cut.len()..]
+        .trim_start_matches(is_separator)
         .chars()
         .next()
-        .is_none_or(char::is_whitespace);
+        .is_none_or(char::is_whitespace)
+        || whole[cut.len()..].starts_with(char::is_whitespace);
     let cut = if ends_word {
         cut
     } else {
@@ -45,15 +53,28 @@ pub(crate) fn at_word<'a>(cut: &'a str, whole: &str) -> &'a str {
             _ => cut,
         }
     };
-    // No separator is left hanging before the ellipsis.
-    cut.trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation() || c == '·')
+    // No separator is left hanging before the ellipsis; a closing bracket
+    // or a percent sign belongs to its word and stays.
+    cut.trim_end_matches(|c: char| c.is_whitespace() || is_separator(c))
+}
+
+/// Punctuation that ends a clause and may hang before the ellipsis.
+fn is_separator(c: char) -> bool {
+    matches!(
+        c,
+        ',' | ';' | ':' | '.' | '·' | '-' | '–' | '—' | '/' | '(' | '['
+    )
 }
 
 /// The text shaped for one width.
 #[derive(Default)]
 pub struct Cut {
+    style: TextStyle,
     line_height: Pixels,
     shaped: Option<(Option<Pixels>, ShapedLine)>,
+    /// The font, size and colour the line was shaped in.
+    #[cfg(any(test, feature = "testing"))]
+    ran: Option<(SharedString, Pixels, gpui_kit::Hsla)>,
 }
 
 impl WordCut {
@@ -65,7 +86,7 @@ impl WordCut {
         {
             return;
         }
-        let style = window.text_style();
+        let style = cut.style.clone();
         let font_size = style.font_size.to_pixels(window.rem_size());
         let run = |len| style.to_run(len);
         let mut text = self.text.clone();
@@ -87,6 +108,10 @@ impl WordCut {
             window
                 .text_system()
                 .shape_line(text.clone(), font_size, &[run(text.len())], None);
+        #[cfg(any(test, feature = "testing"))]
+        {
+            cut.ran = Some((style.font().family, font_size, style.color));
+        }
         cut.shaped = Some((width, shaped));
     }
 }
@@ -123,7 +148,10 @@ impl Element for WordCut {
         let font_size = style.font_size.to_pixels(rem);
         let cut = Rc::new(RefCell::new(Cut {
             line_height: window.pixel_snap(style.line_height.to_pixels(font_size.into(), rem)),
+            style,
             shaped: None,
+            #[cfg(any(test, feature = "testing"))]
+            ran: None,
         }));
         let mut layout = Style::default();
         layout.min_size.width = px(0.).into();
@@ -168,18 +196,35 @@ impl Element for WordCut {
         cx: &mut App,
     ) {
         let mut cut = cut.borrow_mut();
-        // Shaped again only when the bounds aren't the width it was cut
-        // for and the whole text doesn't fit them.
+        // Shaped again only when the line doesn't fit the bounds, or when
+        // it was cut for less room than they give. A flex parent sizes the
+        // cell to the measured line, a little under the width it was cut
+        // for: that line still fits and keeps its words.
         let width = bounds.size.width;
         let fits = cut.shaped.as_ref().is_some_and(|(cut_for, line)| {
-            *cut_for == Some(width) || (line.text == self.text && line.width() <= width)
+            *cut_for == Some(width)
+                || (line.width() <= width
+                    && (line.text == self.text || cut_for.is_some_and(|cut_for| width <= cut_for)))
         });
         if !fits {
             self.shape(&mut cut, Some(width), window, cx);
         }
         let line = &cut.shaped.as_ref().expect("shaped").1;
         #[cfg(any(test, feature = "testing"))]
-        SHOWN.with(|map| map.borrow_mut().insert(self.id.clone(), line.text.clone()));
+        if let Some((font, size, color)) = cut.ran.clone() {
+            let text = line.text.clone();
+            SHOWN.with(|map| {
+                map.borrow_mut().insert(
+                    self.id.clone(),
+                    Shown {
+                        text,
+                        font,
+                        size,
+                        color,
+                    },
+                )
+            });
+        }
         let _ = line.paint(
             bounds.origin,
             cut.line_height,
@@ -191,15 +236,31 @@ impl Element for WordCut {
     }
 }
 
+/// What a cell last drew and the style it shaped it in, for UI tests.
+#[cfg(any(test, feature = "testing"))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Shown {
+    pub text: SharedString,
+    pub font: SharedString,
+    pub size: Pixels,
+    pub color: gpui_kit::Hsla,
+}
+
 #[cfg(any(test, feature = "testing"))]
 thread_local! {
-    static SHOWN: RefCell<std::collections::HashMap<ElementId, SharedString>> =
+    static SHOWN: RefCell<std::collections::HashMap<ElementId, Shown>> =
         RefCell::default();
 }
 
 /// The text the cell `id` last drew, for UI tests.
 #[cfg(any(test, feature = "testing"))]
 pub fn shown(id: impl Into<ElementId>) -> Option<SharedString> {
+    shown_style(id).map(|shown| shown.text)
+}
+
+/// The text the cell `id` last drew, with its font, size and colour.
+#[cfg(any(test, feature = "testing"))]
+pub fn shown_style(id: impl Into<ElementId>) -> Option<Shown> {
     SHOWN.with(|map| map.borrow().get(&id.into()).cloned())
 }
 
@@ -222,6 +283,25 @@ mod tests {
         let whole = "push to main · 7 of 7 tasks";
         assert_eq!(at_word("push to main ·", whole), "push to main");
         assert_eq!(at_word("push to", whole), "push to");
+    }
+
+    #[test]
+    fn punctuation_that_ends_a_word_keeps_the_word() {
+        let whole = "Not readable: pods is forbidden";
+        assert_eq!(at_word("Not readable", whole), "Not readable");
+        assert_eq!(at_word("Not readable:", whole), "Not readable");
+        let whole = "3 of 3 analyses passed.";
+        assert_eq!(
+            at_word("3 of 3 analyses passed", whole),
+            "3 of 3 analyses passed"
+        );
+    }
+
+    #[test]
+    fn a_closing_bracket_or_percent_stays_with_its_word() {
+        let whole = "CPU 92% (throttled) over the hour";
+        assert_eq!(at_word("CPU 92% (throttled)", whole), "CPU 92% (throttled)");
+        assert_eq!(at_word("CPU 92%", whole), "CPU 92%");
     }
 
     #[test]
