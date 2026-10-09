@@ -143,12 +143,16 @@ impl ChangePage {
                 (
                     Tone::Crit,
                     "Verification failed.".into(),
-                    match stage.cluster.cluster() {
-                        Some(cluster) => format!(
+                    match &stage.cluster {
+                        Destination::Cluster(cluster) => format!(
                             "{}: {}. {freight} still runs on {cluster}.",
                             check.name, check.found
                         ),
-                        None => format!("{}: {}.", check.name, check.found),
+                        Destination::Entry { entry, .. } => format!(
+                            "{}: {}. Argo CD reports {freight} still on {entry}.",
+                            check.name, check.found
+                        ),
+                        Destination::Unknown(_) => format!("{}: {}.", check.name, check.found),
                     }
                     .into(),
                 )
@@ -177,6 +181,11 @@ impl ChangePage {
                     line("Project", self.change.project.clone(), false),
                     match &stage.cluster {
                         Destination::Cluster(cluster) => line("Deploys to", cluster.clone(), true),
+                        Destination::Entry { entry, via } => line(
+                            "Deploys to",
+                            format!("{entry}, mapped from {via} in Settings › Workspace"),
+                            false,
+                        ),
                         Destination::Unknown(why) => {
                             line("Deploys to", format!("Unknown: {why}"), false)
                         }
@@ -211,6 +220,13 @@ impl ChangePage {
                         leads: Some(Leads::Resources(object.clone())),
                     }
                 }
+                // Another workspace cluster: only the open one is read.
+                Target::OnEntry { what, entry, .. } => ActionLine {
+                    label: format!("Open {what} in Resources · {entry}").into(),
+                    why: Some(format!("{entry} isn’t the open cluster").into()),
+                    tooltip: None,
+                    leads: None,
+                },
                 Target::Browser { label, address } => ActionLine {
                     label: format!("{label} ↗").into(),
                     why: action.disabled.clone().map(SharedString::from),

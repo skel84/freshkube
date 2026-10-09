@@ -36,7 +36,7 @@ pub(in crate::applications) enum Fetch {
     Live {
         runtime: tokio::runtime::Handle,
         access: KubeAccess,
-        place: Place,
+        place: Box<Place>,
     },
 }
 

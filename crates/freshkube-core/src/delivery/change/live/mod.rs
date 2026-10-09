@@ -10,7 +10,10 @@
 //! word what Kargo's Stages, Freight and Promotions record.
 //!
 //! A cluster Argo CD deploys to that isn't this one isn't read: its
-//! Application's workloads and pods are Unknown, never missing.
+//! Application's workloads and pods are Unknown, never missing. Where the
+//! person mapped the destination to another workspace cluster
+//! ([`Mapping`]), the Stage names it, and the workloads Argo CD reports
+//! there are listed as Argo CD's claim, to open on that cluster.
 
 mod derive;
 mod gates;
@@ -22,12 +25,14 @@ mod tests;
 use chrono::{DateTime, Utc};
 
 use super::Change;
+use crate::delivery::argocd::MapHint;
 use crate::delivery::collect::{Clusters, Plan, collect};
 use crate::delivery::github::{GitHub, PullRequest};
 use crate::delivery::kargo::{Freight, read_freight};
 use crate::delivery::read::Reader;
 use crate::delivery::source::Source;
 use crate::resources::{Failure, FailureKind};
+use crate::workspace::{self, Key};
 
 pub use derive::derive;
 pub use pages::{KARGO_NAMESPACE, Pages};
@@ -44,6 +49,68 @@ pub struct Place {
     pub freight: String,
     /// The namespace Argo CD's Applications are read in.
     pub argocd_namespace: String,
+    /// Which workspace cluster each Argo CD destination is.
+    pub mapping: Mapping,
+}
+
+impl Place {
+    /// This cluster's name among the destinations: the open workspace
+    /// entry's id, else its key. A destination mapped to the open entry is
+    /// this cluster, and its workloads are read here.
+    fn here(&self) -> &str {
+        self.mapping.open.as_deref().unwrap_or(&self.cluster)
+    }
+}
+
+/// `(entry, server or name)`, as [`Plan`] takes contexts.
+type Pairs = Vec<(String, String)>;
+
+/// What the workspace says about where Argo CD deploys: the rows the person
+/// mapped, the entries it lists, and the one open. Nothing else is matched:
+/// kubeconfig servers are never compared.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Mapping {
+    /// The workspace entry open in the window, when it opened one.
+    pub open: Option<String>,
+    /// Every entry the workspace lists, by id.
+    pub entries: Vec<String>,
+    pub destinations: Vec<workspace::Destination>,
+    /// Whether Settings › Workspace can map a destination, so the reasons
+    /// beside an unmatched one say to map it there; until it can, they keep
+    /// the delivery spike's words.
+    pub settings: bool,
+}
+
+impl Mapping {
+    /// From a workspace, with `open` the entry open in the window.
+    pub fn of(workspace: &workspace::Workspace, open: Option<&str>) -> Self {
+        Self {
+            open: open.map(str::to_owned),
+            entries: workspace.clusters.iter().map(|e| e.id.clone()).collect(),
+            destinations: workspace.destinations.clone(),
+            settings: true,
+        }
+    }
+
+    /// Whether the workspace lists the entry.
+    fn lists(&self, entry: &str) -> bool {
+        self.entries.iter().any(|listed| listed == entry)
+    }
+
+    /// `(entry, server)` and `(entry, name)` of every row, as the
+    /// destination match takes contexts. A row whose entry the workspace no
+    /// longer lists is matched too, so the Stage can say so.
+    fn pairs(&self) -> (Pairs, Pairs) {
+        let mut servers = Vec::new();
+        let mut names = Vec::new();
+        for row in &self.destinations {
+            match row.key() {
+                Key::Server(server) => servers.push((row.entry.clone(), server)),
+                Key::Name(name) => names.push((row.entry.clone(), name)),
+            }
+        }
+        (servers, names)
+    }
 }
 
 /// No pull requests are read: GitHub is never called from the app.
@@ -103,6 +170,7 @@ pub async fn read<R: Reader>(
             ));
         }
     };
+    let (contexts, cluster_names) = place.mapping.pairs();
     let plan = Plan {
         sha: commit_of(&freight).unwrap_or_default().to_owned(),
         followed: Some(freight.name.clone()),
@@ -110,13 +178,19 @@ pub async fn read<R: Reader>(
         argocd_namespace: place.argocd_namespace.clone(),
         build_namespace: None,
         github_repo: None,
-        contexts: Vec::new(),
-        cluster_names: Vec::new(),
-        argocd: place.cluster.clone(),
-        environment: place.cluster.clone(),
+        contexts,
+        cluster_names,
+        argocd: place.here().to_owned(),
+        environment: place.here().to_owned(),
         evidence_result: None,
         commit_names: Default::default(),
         stage_naming: None,
+        map_hint: match place.mapping.settings {
+            true => MapHint::Settings {
+                listed: place.mapping.entries.clone(),
+            },
+            false => MapHint::Flags,
+        },
     };
     let clusters = Clusters {
         kargo: reader,

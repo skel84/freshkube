@@ -27,7 +27,7 @@ use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
 use freshkube_core::applications::SessionKey;
-use freshkube_core::delivery::change::{Change, Object, Phase, Shows, Target};
+use freshkube_core::delivery::change::{Change, Destination, Object, Phase, Shows, Target};
 use freshkube_core::delivery::join::Confidence;
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
@@ -329,10 +329,14 @@ impl ChangePage {
                     Phase::Freight => ("Freight".to_owned(), vec![group.detail.clone()], false),
                     Phase::Stage(stage) => {
                         let stage = &change.stages[stage];
+                        // A Stage on another workspace cluster is known
+                        // only from Argo CD's report: nothing there was
+                        // read, so it never folds as fine.
+                        let read_there = !matches!(stage.cluster, Destination::Entry { .. });
                         (
                             format!("Stage {}", stage.name),
                             vec![group.detail.clone(), stage.words.to_lowercase()],
-                            true,
+                            read_there,
                         )
                     }
                 };

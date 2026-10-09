@@ -406,6 +406,7 @@ async fn main() {
         environment: env.alias.clone(),
         argocd: argocd.alias.clone(),
         cluster_names: args.known_as_name.clone(),
+        map_hint: Default::default(),
         evidence_result: match (
             &args.evidence_result,
             &args.evidence_commit,

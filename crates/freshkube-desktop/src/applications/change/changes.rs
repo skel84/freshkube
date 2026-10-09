@@ -104,13 +104,14 @@ impl Changes {
             Self::Live(live) => Some(Fetch::Live {
                 runtime: runtime.clone(),
                 access: access.clone(),
-                place: Place {
+                place: Box::new(Place {
                     cluster: live.cluster.clone(),
                     label: live.label.clone(),
                     project: project.to_owned(),
                     freight,
                     argocd_namespace: live.argocd_namespace.clone(),
-                },
+                    mapping: Default::default(),
+                }),
             }),
         }
     }

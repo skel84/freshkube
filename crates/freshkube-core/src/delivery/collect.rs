@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 
 use super::argocd::{
-    DestinationMatch, Destinations, StageNaming, match_destination, read_applications,
+    DestinationMatch, Destinations, MapHint, StageNaming, match_destination, read_applications,
 };
 use super::deployments::{
     Deployment, DeploymentSet, current_set, read_deployment_sets, read_deployments,
@@ -66,6 +66,8 @@ pub struct Plan {
     /// How Applications without the authorized-stage annotation are tied to
     /// stages. Off unless named.
     pub stage_naming: Option<StageNaming>,
+    /// How a destination no context matches says it could be matched.
+    pub map_hint: MapHint,
 }
 
 /// One reader per role.
@@ -137,6 +139,7 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         evidence_result: plan.evidence_result.clone(),
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
+        map_hint: plan.map_hint.clone(),
         builds,
         kargo,
         applications,

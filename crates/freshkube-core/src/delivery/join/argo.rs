@@ -249,6 +249,9 @@ pub(super) fn rollout_namespace(app: &Application, managed: &ManagedObject) -> O
 /// Why nothing was read in the environment cluster for an Application, and
 /// how the user would say otherwise when its destination is that cluster.
 pub(super) fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
+    if let MapHint::Settings { listed } = &evidence.map_hint {
+        return not_the_open_cluster(evidence, app_id, listed);
+    }
     let env = &evidence.environment;
     let why = match evidence.destinations.get(app_id) {
         Some(DestinationMatch::ByName(_)) => format!(
@@ -271,4 +274,34 @@ pub(super) fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
     format!(
         "the destination is not known to be the environment cluster, so nothing was read there for it: {why}"
     )
+}
+
+/// [`not_the_environment`] in the app, whose contexts are workspace
+/// clusters, mapped in Settings › Workspace.
+fn not_the_open_cluster(evidence: &Evidence, app_id: &str, listed: &[String]) -> String {
+    let why = match evidence.destinations.get(app_id) {
+        Some(DestinationMatch::ByName(name)) => format!(
+            "Argo CD's cluster {name} isn't mapped to a workspace cluster; map it in Settings › Workspace"
+        ),
+        Some(DestinationMatch::None) => {
+            "its server isn't mapped to a workspace cluster; map it in Settings › Workspace"
+                .to_owned()
+        }
+        Some(DestinationMatch::Ambiguous(entries)) => format!(
+            "it is mapped to more than one workspace cluster ({})",
+            entries.join(", ")
+        ),
+        Some(DestinationMatch::Unspecified) => "the Application names no destination".to_owned(),
+        Some(matched) => match matched.context() {
+            Some(entry) if !listed.iter().any(|listed| listed == entry) => {
+                format!("it is mapped to {entry}, which the workspace no longer lists")
+            }
+            entry => format!(
+                "it is {}, which isn't the open cluster",
+                entry.unwrap_or("?")
+            ),
+        },
+        None => "its destination was not matched".to_owned(),
+    };
+    format!("nothing was read there for it: {why}")
 }
