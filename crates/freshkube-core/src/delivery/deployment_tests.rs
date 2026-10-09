@@ -327,6 +327,22 @@ async fn no_current_revision_is_unknown_not_a_guess() {
 }
 
 #[tokio::test]
+async fn a_current_replica_set_without_its_hash_label_is_unknown_and_says_so() {
+    let (deployment, mut sets, pods) = parts();
+    sets[0]["metadata"]["labels"]
+        .as_object_mut()
+        .expect("labels")
+        .remove("pod-template-hash");
+    let (_, pods) = chain(&world((deployment, sets, pods))).await;
+    assert_eq!(pods.confidence, Confidence::Unknown);
+    assert!(
+        pods.reason.contains("carries no pod-template-hash label"),
+        "{}",
+        pods.reason
+    );
+}
+
+#[tokio::test]
 async fn a_current_replica_set_among_those_not_read_is_unknown() {
     let (deployment, mut sets, pods) = parts();
     sets[0]["metadata"]["annotations"] = json!({"deployment.kubernetes.io/revision": "1"});
