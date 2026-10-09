@@ -396,16 +396,23 @@ mod tests {
                 .flat_map(|binding| binding.keystrokes().iter().map(|key| key.unparse()))
                 .collect()
         };
+        // GPUI names Command after the host (`cmd` on macOS, `super`
+        // elsewhere), so the expected keys are named on the same host.
+        let named = |keys: &[&str]| -> Vec<String> {
+            keys.iter()
+                .map(|key| gpui_kit::Keystroke::parse(key).unwrap().unparse())
+                .collect()
+        };
         assert_eq!(Platform::MacOs.app_menu(), AppMenu::Bar);
         assert_eq!(
             keys(Platform::MacOs),
-            ["cmd-,", "cmd-h", "alt-cmd-h", "cmd-m"]
+            named(&["cmd-,", "cmd-h", "alt-cmd-h", "cmd-m"])
         );
         assert_eq!(Platform::MacOs.system_items(SystemMenu::App).len(), 5);
         assert_eq!(Platform::MacOs.system_items(SystemMenu::Window).len(), 2);
         for platform in [Platform::Windows, Platform::Linux] {
             assert_eq!(platform.app_menu(), AppMenu::Button);
-            assert_eq!(keys(platform), ["f10"]);
+            assert_eq!(keys(platform), named(&["f10"]));
             assert!(platform.system_items(SystemMenu::App).is_empty());
             assert!(platform.system_items(SystemMenu::Window).is_empty());
         }
