@@ -194,10 +194,10 @@ impl ChangeStory {
             table: TableState::new(TABLE),
             columns: vec![
                 column(Kind::Glyph, "", GLYPH_WIDTH),
-                column(Kind::Hop, "Hop", 200.),
-                column(Kind::Link, "Link", 112.),
-                column(Kind::Time, "Time", 64.),
+                column(Kind::Hop, "Hop", 176.),
+                column(Kind::Link, "Link", 96.),
                 column(Kind::Detail, "Detail", 240.),
+                column(Kind::Time, "Time", 64.),
                 column(Kind::From, "Read from", 112.),
             ],
             trail,
