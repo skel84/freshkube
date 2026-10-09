@@ -16,6 +16,18 @@ use gpui_kit::{
     Action, App, Context, DismissEvent, EntityId, FocusHandle, Focusable as _, SharedString, Window,
 };
 
+gpui_kit::actions!(
+    menu,
+    [
+        /// Edit ▸ Find: searches what has the keyboard.
+        Find,
+        /// Edit ▸ Find next.
+        FindNext,
+        /// Edit ▸ Find previous.
+        FindPrevious,
+    ]
+);
+
 thread_local! {
     /// The open menus [`return_focus`] watches, each with the lists its
     /// items run on: a "…" menu gathers one from each folded control.
@@ -32,6 +44,11 @@ pub enum MenuAction {
         enabled: bool,
         /// For a toggle, whether it is on.
         checked: Option<bool>,
+    },
+    /// A submenu of more entries, run on the same list.
+    Submenu {
+        label: SharedString,
+        items: Vec<MenuAction>,
     },
     Separator,
 }
@@ -52,6 +69,14 @@ impl MenuAction {
             *on = enabled;
         }
         self
+    }
+
+    /// A submenu holding `items`.
+    pub fn submenu(label: impl Into<SharedString>, items: Vec<MenuAction>) -> Self {
+        Self::Submenu {
+            label: label.into(),
+            items,
+        }
     }
 
     /// A toggle, checked while `checked`.
@@ -76,6 +101,10 @@ impl Clone for MenuAction {
                 action: action.boxed_clone(),
                 enabled: *enabled,
                 checked: *checked,
+            },
+            Self::Submenu { label, items } => Self::Submenu {
+                label: label.clone(),
+                items: items.clone(),
             },
             Self::Separator => Self::Separator,
         }
@@ -102,23 +131,43 @@ pub fn actions(
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     return_focus(Some(focus), window, cx);
-    let live = Rc::new(live);
+    entries(menu, actions, focus, Rc::new(live), window, cx)
+}
+
+/// Adds `actions` to `menu` as [`actions`] does, a submenu's to a menu of
+/// its own. Only the outer menu hands the keyboard back: a submenu closes
+/// with it.
+fn entries(
+    menu: PopupMenu,
+    actions: Vec<MenuAction>,
+    focus: &FocusHandle,
+    live: Rc<dyn Fn(&App) -> bool>,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
     let mut menu = menu.action_context(focus.clone());
     let mut separate = false;
     let mut any = false;
     for action in actions {
+        if separate && !matches!(action, MenuAction::Separator) {
+            menu = menu.separator();
+            separate = false;
+        }
         match action {
             MenuAction::Separator => separate = any,
+            MenuAction::Submenu { label, items } => {
+                let (focus, live) = (focus.clone(), live.clone());
+                menu = menu.submenu(label, window, cx, move |menu, window, cx| {
+                    entries(menu, items.clone(), &focus, live.clone(), window, cx)
+                });
+                any = true;
+            }
             MenuAction::Item {
                 label,
                 action,
                 enabled,
                 checked,
             } => {
-                if separate {
-                    menu = menu.separator();
-                    separate = false;
-                }
                 let (live, focus, run) = (live.clone(), focus.clone(), action.boxed_clone());
                 let mut item = PopupMenuItem::new(label)
                     .action(action)

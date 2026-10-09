@@ -33,7 +33,12 @@ impl Pilot {
                 h_flex()
                     .gap(dp(if minimal { 6. } else { 14. }))
                     .min_w_0()
-                    .child(self.render_context_switcher(minimal, cx))
+                    .child(
+                        h_flex()
+                            .gap(dp(8.))
+                            .children(self.render_menu_button(cx))
+                            .child(self.render_context_switcher(minimal, cx)),
+                    )
                     .child(self.render_section_tabs(window, cx))
                     .child(
                         div()

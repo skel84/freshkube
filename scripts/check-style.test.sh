@@ -276,6 +276,12 @@ EOF
 expect 1 "std::env::consts::OS fails" "platform crates/freshkube-desktop/src/os.rs:1:"
 
 tree
+page family.rs <<'EOF'
+fn unix() -> bool { std::env::consts::FAMILY == "unix" }
+EOF
+expect 1 "std::env::consts::FAMILY fails" "platform crates/freshkube-desktop/src/family.rs:1:"
+
+tree
 page notes.rs <<'EOF'
 // Not cfg(target_os = "macos"): the platform module answers.
 fn windows() -> usize { 3 }

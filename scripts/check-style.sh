@@ -25,11 +25,11 @@
 # Outside the domain crates (core, talos-rs) and tests, the shared components
 # included, nothing but freshkube-ui's platform module may
 #   platform  name the target (target_os, target_family, target_vendor,
-#             consts::OS) or put windows in a cfg, cfg! or cfg_attr, on any
-#             line: ask freshkube_ui::platform. Three files read the OS
-#             themselves and are exempt: motion/system.rs (reduced motion),
-#             desktop's stress.rs (process counters) and src/main.rs (a
-#             release build's Windows console). Tests spell out each
+#             consts::OS, consts::FAMILY) or put windows in a cfg, cfg! or
+#             cfg_attr, on any line: ask freshkube_ui::platform. Three files
+#             read the OS themselves and are exempt: motion/system.rs (reduced
+#             motion), desktop's stress.rs (process counters) and src/main.rs
+#             (a release build's Windows console). Tests spell out each
 #             platform's keys, as an independent check of the module. The
 #             domain crates (core, talos-rs) and cfg(unix) file modes and
 #             paths are the OS's, not the app's look, and stay where they are.
@@ -163,14 +163,14 @@ platform_files() {
     LC_ALL=C sort
 }
 
-# A line that names the target (target_os, target_family, target_vendor or
-# std::env::consts::OS) anywhere, or `windows` inside a cfg, cfg! or
+# A line that names the target (target_os, target_family, target_vendor,
+# std::env::consts::OS or FAMILY) anywhere, or `windows` inside a cfg, cfg! or
 # cfg_attr, which rustfmt may spread over several lines. Comments don't count.
 platform_offences() {
   platform_files | xargs perl -CSD -ne '
     BEGIN { $depth = 0 }
     unless (m{^\s*//}) {
-      my $hit = /\btarget_(?:os|family|vendor)\b|\bconsts::OS\b/;
+      my $hit = /\btarget_(?:os|family|vendor)\b|\bconsts::(?:OS|FAMILY)\b/;
       my $cfg = "";
       if ($depth > 0) { $cfg = $_ }
       elsif (/\bcfg(?:_attr)?!?\s*\(/) { $cfg = substr($_, $-[0]) }
