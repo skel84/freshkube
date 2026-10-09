@@ -902,3 +902,95 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
     })
     .unwrap();
 }
+
+/// The column headers' labels and bounds, in order.
+fn headers(window: &mut gpui_kit::Window) -> Vec<(String, gpui_kit::Bounds<gpui_kit::Pixels>)> {
+    (1..6usize)
+        .filter_map(|ix| window.try_find(("change-sort", ix)))
+        .map(|cell| (cell.label().unwrap_or_default().to_owned(), cell.bounds()))
+        .collect()
+}
+
+/// Beside the Inspector at 1280, with the Applications column shown, Detail
+/// comes right after Link and has the rest of the table's room, 240 dp;
+/// Time and Read from follow it, scrolled away. At 760 the Inspector is
+/// under the table and Detail shows whole.
+#[gpui_kit::test]
+fn detail_keeps_its_room_beside_the_inspector(cx: &mut TestAppContext) {
+    for width in [1280., 760.] {
+        let (_runtime, handle, _view) = open(cx, width, 880.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let scroll = window.find("change-table-scroll").bounds();
+            let headers = headers(window);
+            let labels: Vec<&str> = headers.iter().map(|(label, _)| label.as_str()).collect();
+            assert_eq!(
+                labels,
+                ["Hop", "Link", "Detail", "Time", "Read from"],
+                "{width}"
+            );
+            let detail = headers[2].1;
+            let shown = detail.right().min(scroll.right()) - detail.left().max(scroll.left());
+            assert!(
+                shown >= gpui_kit::px(239.5),
+                "{width}: {shown:?} of Detail shows in {scroll:?}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// Link is as narrow as its words: the widest, with its glyph, still fits
+/// inside the cell's padding, at the default text size and the largest.
+#[gpui_kit::test]
+fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
+    use freshkube_core::delivery::join::Confidence;
+    use freshkube_ui::table::{CELL_PAD, TableColumn as _};
+    use gpui_kit::{TextRun, font};
+
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    let columns = super::table::columns();
+    let link = columns
+        .iter()
+        .find(|column| column.label().as_ref() == "Link")
+        .expect("a Link column")
+        .width();
+    for size in [None, Some(20.)] {
+        cx.update_window(handle, |_, window, cx| {
+            if let Some(size) = size {
+                crate::text_size::set(size, cx);
+            }
+            window.render_frame(cx);
+            let room = crate::ui::dp_px(link - 2. * CELL_PAD, window);
+            for confidence in [
+                Confidence::Confirmed,
+                Confidence::Claimed,
+                Confidence::Unknown,
+            ] {
+                let word = super::link_word(confidence);
+                let run = TextRun {
+                    len: word.len(),
+                    font: font(".SystemUIFont"),
+                    color: Default::default(),
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                };
+                let text = window
+                    .text_system()
+                    .shape_line(word.into(), crate::ui::dp_px(12.5, window), &[run], None)
+                    .width;
+                let glyph = match super::link_glyph(confidence) {
+                    Some(_) => crate::ui::dp_px(10. + 5., window),
+                    None => gpui_kit::px(0.),
+                };
+                assert!(
+                    glyph + text <= room,
+                    "{size:?}: {word} needs {:?} of {room:?}",
+                    glyph + text
+                );
+            }
+        })
+        .unwrap();
+    }
+}

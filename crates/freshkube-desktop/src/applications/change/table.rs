@@ -41,15 +41,17 @@ impl TableColumn for Column {
     }
 
     /// The glyph and the hop stay in view when the table scrolls sideways,
-    /// so beside the Inspector the link and the time stay whole and
-    /// Detail's tail and Read from scroll away.
+    /// so beside the Inspector the link stays whole, Detail takes what is
+    /// left, and the time and Read from scroll away.
     fn pinned(&self) -> bool {
         matches!(self.field, Field::Glyph | Field::Hop)
     }
 }
 
-/// DESIGN.md's columns: the glyph, Hop (pinned), Link, Time, Detail (the
-/// flexible one) and Read from.
+/// DESIGN.md's columns: the glyph, Hop (pinned), Link, Detail (the
+/// flexible one), Time and Read from. Hop and Link are as narrow as their
+/// usual words, so beside the Inspector most of Detail shows; a longer hop
+/// is cut, with its whole name in the row's tooltip.
 pub(super) fn columns() -> Vec<Column> {
     let column = |field, label: &str, width| Column {
         field,
@@ -58,10 +60,10 @@ pub(super) fn columns() -> Vec<Column> {
     };
     vec![
         column(Field::Glyph, "", kit::GLYPH_WIDTH),
-        column(Field::Hop, "Hop", 200.),
-        column(Field::Link, "Link", 112.),
-        column(Field::Time, "Time", 64.),
+        column(Field::Hop, "Hop", 176.),
+        column(Field::Link, "Link", 96.),
         column(Field::Detail, "Detail", 240.),
+        column(Field::Time, "Time", 64.),
         column(Field::From, "Read from", 136.),
     ]
 }
@@ -132,7 +134,7 @@ impl TableSource for ChangePage {
             key: row.key.clone(),
             id: SharedString::from(format!("{PREFIX}-hop-{}", row.key)).into(),
             label: row.label.clone(),
-            tooltip: None,
+            tooltip: Some(row.name.clone()),
             marked: false,
             muted: false,
             data: row,
