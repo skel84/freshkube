@@ -166,13 +166,16 @@ impl ObservabilityPage {
                 .heading(self.revision_heading(row, cx))
                 .child(
                     part()
-                        // The title has the hash; Coroot's label adds the images.
-                        .child(
-                            mono(row.image.clone())
-                                .id("obs-revision-version")
-                                .test_support()
-                                .whitespace_normal(),
-                        )
+                        // The title has the hash; Coroot's label adds the
+                        // images, when it reported any.
+                        .when(row.has_image, |part| {
+                            part.child(
+                                mono(row.image.clone())
+                                    .id("obs-revision-version")
+                                    .test_support()
+                                    .whitespace_normal(),
+                            )
+                        })
                         .child(pair("Started", row.started.clone(), cx)),
                 )
                 .child(self.render_findings(revision, cx))

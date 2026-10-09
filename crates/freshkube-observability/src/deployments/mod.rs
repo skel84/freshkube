@@ -12,7 +12,11 @@ mod detail;
 mod table;
 #[cfg(test)]
 mod tests;
+mod wanted;
 pub(super) use table::RevisionCells;
+#[cfg(test)]
+pub(crate) use wanted::Outcome;
+pub use wanted::RevisionLink;
 
 /// The windows around a start the inspector offers: each side's seconds,
 /// and their name.
@@ -42,6 +46,8 @@ pub(super) struct Revisions {
     /// Example data's answer for the window, as Coroot's would be.
     example: Option<Result<api::RevisionView, api::ReadError>>,
     detail: Option<detail::Detail>,
+    /// A revision asked for by its hash, and what came of it.
+    wanted: Option<wanted::Wanted>,
 }
 
 struct Row {
@@ -54,6 +60,9 @@ struct Row {
     image: SharedString,
     /// Each image's last path segment and tag, for the list.
     short_image: SharedString,
+    /// Whether Coroot reported an image; without one the list shows "—"
+    /// and the inspector leaves the line out.
+    has_image: bool,
     started: SharedString,
     /// Coroot's first finding, or its note.
     finding: SharedString,
@@ -62,12 +71,13 @@ struct Row {
 }
 
 impl Revisions {
-    /// Nothing from the last connection or application but the window and
-    /// the report chosen.
+    /// Nothing from the last connection or application but the window,
+    /// the report chosen and the revision asked for.
     pub(super) fn cleared(&mut self) -> Self {
         Self {
             window: self.window,
             report: std::mem::take(&mut self.report),
+            wanted: self.wanted.take(),
             ..Default::default()
         }
     }
@@ -104,6 +114,7 @@ impl Revisions {
             Some(Err(error)) => Some(error.to_string()),
             _ => None,
         };
+        self.find_wanted(app, revisions);
         if !values
             .iter()
             .any(|r| self.selected.as_ref() == Some(&key(r)))
@@ -126,6 +137,11 @@ impl Revisions {
     /// The charts around the selected revision, as the inspector shows them.
     pub(crate) fn charts(&self) -> &[Rc<Charts>] {
         self.detail.as_ref().map_or(&[], |detail| detail.charts())
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn selected_hash(&self) -> Option<String> {
+        self.selected().map(|row| row.revision.hash.clone())
     }
 
     fn selected(&self) -> Option<&Row> {
@@ -193,6 +209,7 @@ fn row(revision: &api::DeploymentRevision) -> Row {
         status,
         hash: revision.hash.clone().into(),
         short_image: short_image(&image).into(),
+        has_image: image != "—",
         image: image.into(),
         started: started.into(),
         finding: finding.into(),
@@ -336,6 +353,7 @@ impl ObservabilityPage {
             return;
         }
         state.selected = Some(key);
+        state.wanted = None;
         state.clear_evidence();
         self.read_revision(cx);
         cx.notify();

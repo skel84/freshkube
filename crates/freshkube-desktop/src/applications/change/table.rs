@@ -281,7 +281,7 @@ impl TableSource for ChangePage {
         vec![freshkube_ui::menu::MenuAction::new("Open in Resources", OpenHop).enabled(opens)]
     }
 
-    /// `Showing 17 of 27` with Show all, while Stages fold.
+    /// `Showing 18 of 30` with Show all, while Stages fold.
     fn counts(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let total = self.rows.len();
         let shown = self.shown_rows();

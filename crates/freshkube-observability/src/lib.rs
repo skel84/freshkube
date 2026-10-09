@@ -63,6 +63,7 @@ mod testing;
 mod tests;
 mod traces;
 mod view;
+pub use deployments::RevisionLink;
 use model::Application;
 pub use model::Destination;
 use model::*;
@@ -481,6 +482,7 @@ impl ObservabilityPage {
         self.report_name = report.server_name().into();
         self.report_snapshot = None;
         self.app_page = None;
+        self.forget_wanted();
         self.open(Destination::Application, cx);
     }
     /// The report on screen: the one the application opened on while its

@@ -5,6 +5,9 @@ use std::collections::BTreeMap;
 
 pub(super) const WORKER: &str = "payments/worker";
 pub(super) const POD: &str = "worker-6c4f8da0-bbbbh";
+/// The Deployment the change page's example change runs, whose revisions
+/// Coroot's example keeps under the same hash.
+pub(super) const CHECKOUT: &str = "checkout/checkout-api";
 pub(super) fn id(key: &str) -> api::AppId {
     let (ns, name) = key.split_once('/').unwrap_or(("_", key));
     api::AppId::new(format!("fixture:{ns}:Deployment:{name}"))
@@ -170,6 +173,10 @@ pub(super) fn applications() -> Vec<api::Application> {
                 .collect(),
         });
     }
+    let mut checkout = apps.last().cloned().expect("a healthy application");
+    checkout.id = id(CHECKOUT);
+    checkout.category = "application".into();
+    apps.push(checkout);
     apps
 }
 

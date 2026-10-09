@@ -213,6 +213,7 @@ pub(crate) struct ApplicationsPage {
 /// A part to open in Resources, from the open application's page.
 impl EventEmitter<ResourceLink> for ApplicationsPage {}
 impl EventEmitter<SwitchLink> for ApplicationsPage {}
+impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
     pub(crate) fn new(
@@ -610,13 +611,16 @@ impl ApplicationsPage {
         ) else {
             return;
         };
-        let connections = read.connections.clone();
+        // As the application page's: in example data, the acme cluster the
+        // open entry is stands for the open example cluster.
+        let connections = self.connections(read);
         let visible = self.visible;
         let page = cx.new(|cx| ChangePage::new(fetch, stage, connections, visible, window, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ChangeEvent::Back => this.close_change(window, cx),
                 ChangeEvent::Open(link) => cx.emit(link.as_ref().clone()),
+                ChangeEvent::Revision(link) => cx.emit(link.clone()),
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.change = Some((page, subscription));

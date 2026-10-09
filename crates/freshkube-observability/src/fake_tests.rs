@@ -160,6 +160,15 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
         !observed.read(cx).live.connecting
     })
     .await;
+    // Connected, the page asks for a project, not for a connection.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("obs-integration-required").label(),
+            Some("Coroot project required")
+        );
+    })
+    .unwrap();
     cx.update(|cx| {
         page.update(cx, |page, cx| {
             assert!(page.live.provider.is_some(), "{:?}", page.live.error);
@@ -1866,4 +1875,138 @@ async fn a_refused_application_page_says_not_permitted_on_deployments(cx: &mut T
         assert!(window.try_find("obs-deployments-empty").is_none());
     })
     .unwrap();
+}
+
+/// Hidden, the page asks Coroot nothing for a revision asked for; showing
+/// it reads the application and finds the revision.
+#[gpui_kit::test]
+async fn a_revision_asked_for_while_hidden_is_read_once_the_page_shows(cx: &mut TestAppContext) {
+    use crate::deployments::Outcome;
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("conn-a".into()), cx)));
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.associate(Some("cluster-a".into()), cx);
+            page.set_visible(false, cx);
+        })
+    });
+    cx.run_until_parked();
+    let asked = |server: &Server| {
+        let paths = server.paths.lock().unwrap();
+        paths.iter().filter(|p| p.contains("/app/")).count()
+    };
+    let before = asked(&server);
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.open_revision(
+                crate::RevisionLink {
+                    access: "conn-a".into(),
+                    cluster: "dev".into(),
+                    namespace: "prod".into(),
+                    name: "api".into(),
+                    hash: "2b70aa".into(),
+                },
+                cx,
+            )
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(asked(&server), before, "nothing is read while hidden");
+    cx.read(|cx| {
+        assert_eq!(
+            page.read(cx).revision_observations.wanted_outcome(),
+            Some(Outcome::Seeking)
+        )
+    });
+    cx.update(|cx| page.update(cx, |page, cx| page.set_visible(true, cx)));
+    revision_read(cx, handle, &page).await;
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert_eq!(
+            page.revision_observations.wanted_outcome(),
+            Some(Outcome::Found)
+        );
+        assert_eq!(
+            page.revision_selected_key(),
+            Some(&crate::tables::TableKey::Revision(
+                "2b70aa:1789990000".into()
+            ))
+        );
+    });
+}
+
+#[gpui_kit::test]
+async fn a_revision_asked_for_needs_the_clusters_association_and_coroots_listing(
+    cx: &mut TestAppContext,
+) {
+    use crate::deployments::Outcome;
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("conn-a".into()), cx)));
+    connected(cx, handle, &page, server.url.clone()).await;
+    let link = |name: &str| crate::RevisionLink {
+        access: "conn-a".into(),
+        cluster: "dev".into(),
+        namespace: "prod".into(),
+        name: name.into(),
+        hash: "2b70aa".into(),
+    };
+    let outcome = |cx: &mut TestAppContext| {
+        cx.read(|cx| page.read(cx).revision_observations.wanted_outcome())
+    };
+
+    // No Coroot cluster is linked to the connection: nothing is chosen.
+    cx.update(|cx| page.update(cx, |page, cx| page.open_revision(link("api"), cx)));
+    assert_eq!(outcome(cx), Some(Outcome::NoAssociation));
+    cx.read(|cx| assert_eq!(page.read(cx).selected_app, None));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-wanted-revision").visible());
+    })
+    .unwrap();
+
+    // Linked, the Deployment's revision is found by its hash, without
+    // asking for it again.
+    cx.update(|cx| page.update(cx, |page, cx| page.associate(Some("cluster-a".into()), cx)));
+    revision_read(cx, handle, &page).await;
+    assert_eq!(outcome(cx), Some(Outcome::Found));
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert_eq!(
+            page.selected_app,
+            Some(freshkube_core::coroot::AppId::new(
+                "cluster-a:prod:Deployment:api"
+            ))
+        );
+        assert_eq!(
+            page.revision_selected_key(),
+            Some(&crate::tables::TableKey::Revision(
+                "2b70aa:1789990000".into()
+            )),
+            "the hash's revision, not the newest"
+        );
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-wanted-revision").visible());
+    })
+    .unwrap();
+
+    // One Coroot doesn't list stays unchosen, and nothing is read for it.
+    cx.update(|cx| page.update(cx, |page, cx| page.open_revision(link("cart"), cx)));
+    assert_eq!(outcome(cx), Some(Outcome::NotListed));
+    cx.read(|cx| {
+        assert_eq!(
+            page.read(cx).selected_app,
+            Some(freshkube_core::coroot::AppId::new(
+                "cluster-a:prod:Deployment:api"
+            ))
+        )
+    });
 }

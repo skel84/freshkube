@@ -294,6 +294,7 @@ impl ObservabilityPage {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
+        self.check_wanted_listed();
         if self
             .selected_app
             .as_ref()

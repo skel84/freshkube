@@ -5,6 +5,19 @@ use crate::resources::ResourceLink;
 use gpui_kit::component::WindowExt;
 
 impl Pilot {
+    /// A Deployment's revision on Observability's Deployments, which finds
+    /// it in what it reads for the open connection.
+    pub(super) fn open_revision(
+        &mut self,
+        link: crate::observability::RevisionLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.observability
+            .update(cx, |page, cx| page.open_revision(link, cx));
+        self.navigate_from_keyboard(Page::Observability, window, cx);
+    }
+
     pub(super) fn resource_link(
         &mut self,
         intent: ResourceLink,
