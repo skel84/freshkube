@@ -79,6 +79,7 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
         let cart = rows[2].row().unwrap();
         assert!(cart.tip().contains("Kargo Project · core-fra, dev-fra"));
         assert_eq!(window.find(ALL).selected(), Some(true));
+        assert_ne!(window.find(CART).selected(), Some(true));
         assert_eq!(window.find("nav-applications-kargo").selected(), None);
     })
     .unwrap();
@@ -120,6 +121,11 @@ fn a_row_opens_its_application_and_all_applications_the_list(cx: &mut TestAppCon
             "the list keeps the application that showed"
         );
         assert_eq!(window.find(ALL).selected(), Some(true));
+        assert_ne!(
+            window.find("nav-application-part-of:loyalty").selected(),
+            Some(true),
+            "the list's selection doesn't fill its row: one fill while the list shows"
+        );
     })
     .unwrap();
     // The page's breadcrumb back moves the fill too.
