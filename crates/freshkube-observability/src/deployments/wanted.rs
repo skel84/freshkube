@@ -174,16 +174,10 @@ impl ObservabilityPage {
         let link = &wanted.link;
         let app = format!("{}/{}", link.namespace, link.name);
         let (tone, lead, body) = match wanted.outcome {
-            Outcome::Seeking => (
-                Tone::Info,
-                format!("Looking for revision {}.", link.hash),
-                format!(
-                    "Coroot's revision of {app} on {} with that pod-template hash.",
-                    link.cluster
-                ),
-            ),
+            // The list's loading rows say it is being read.
+            Outcome::Seeking | Outcome::Unread => return None,
             Outcome::Found => (
-                Tone::Info,
+                Tone::Good,
                 format!("Revision {} of {app}.", link.hash),
                 format!(
                     "The revision {} runs, by its pod-template hash, as Coroot keeps it.",
@@ -220,7 +214,6 @@ impl ObservabilityPage {
                     link.hash
                 ),
             ),
-            Outcome::Unread => return None,
         };
         Some(
             div()
