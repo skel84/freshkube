@@ -174,13 +174,13 @@ The window's read has its own identity (application, revision and window) and ge
 
 ### From the change page
 
-A Deployment's hop on the change page shows its current ReplicaSet's pod-template hash and offers Compare in Observability (core's `Target::Revision`). Coroot names a revision by that hash, so the join is the hash alone; the change page reads nothing for it. The shell hands `RevisionLink` (the connection, the cluster's name, the Deployment and the hash) to `ObservabilityPage::open_revision`, which opens Deployments and finds the revision in what it reads anyway: Coroot's application is `<cluster>:<namespace>:Deployment:<name>`, where the cluster is the Coroot cluster linked to that connection. A banner over the list says what came of it, and goes when the user chooses another application or revision.
+A Deployment's hop on the change page shows its current ReplicaSet's pod-template hash and offers Compare in Observability (core's `Target::Revision`). Coroot names a revision by that hash, so the join is the hash alone; the change page reads nothing for it. The shell hands `RevisionLink` (the connection, the cluster's name, the Deployment and the hash) to `ObservabilityPage::open_revision`, which opens Deployments and finds the revision in what it reads anyway: Coroot's application is `<cluster>:<namespace>:Deployment:<name>`, where the cluster is the Coroot cluster linked to that connection. Nothing is decided while the page is hidden; it looks once it shows. A banner over the list says what came of it, in blue for a found revision, since finding one judges nothing; the row's glyph says how Coroot judges it. The banner shows only over the application it was decided for, so another one opened from the map or a report hides it, and it goes when the user chooses another application or revision. Another connection drops the link and whatever came of it. Anything but a found revision is looked for again when the page shows, on Refresh, when the window changes and when a Coroot cluster is linked, so linking the cluster the banner asks for finds the revision without another Compare.
 
 | Found | Shown |
 | --- | --- |
 | The revision, by its hash | It is selected, with its window, under "Revision ⟨hash⟩ of ⟨namespace/name⟩" |
-| The application, without that hash | "Coroot keeps no revision ⟨hash⟩", over the newest it keeps |
-| No such application in Coroot's list | "Coroot lists no application ⟨namespace/name⟩"; nothing is chosen or read for it |
+| The application, without that hash | "Coroot keeps no revision ⟨hash⟩", over another revision it keeps: the one already selected, else the newest |
+| No such application in Coroot's list | "Coroot lists no application ⟨namespace/name⟩". Asked for before the list answers, the application is chosen and read as any other until the list arrives without it |
 | No Coroot cluster linked to the connection | "No Coroot cluster is linked to ⟨cluster⟩", with where to link one |
 | The application's revisions couldn't be read | The list's own failure |
 
