@@ -190,6 +190,10 @@ fn live_mode_never_contains_example_applications(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.find("obs-integration-required").visible());
+            assert_eq!(
+                window.find("obs-integration-required").label(),
+                Some("Coroot connection required")
+            );
             assert!(window.try_find("obs-applications-table").is_none());
             assert!(page.read(cx).applications.is_empty());
         })

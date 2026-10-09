@@ -100,20 +100,41 @@ impl ObservabilityPage {
     /// The one empty state before Coroot answers: what it adds, then the
     /// form or project picker that gets there.
     pub(super) fn render_unavailable(&self, cx: &Context<Self>) -> AnyElement {
+        // Connected, Coroot waits only for one of its projects.
+        let (label, title, body) = if self.live.provider.is_some() {
+            (
+                "Coroot project required",
+                "Choose a project",
+                "Coroot answered. Choose one of its projects with the header's Project picker to read its applications, incidents and reports.",
+            )
+        } else {
+            (
+                "Coroot connection required",
+                "Connect Coroot",
+                "Application health, service dependencies and report evidence, read from your Coroot server.",
+            )
+        };
         v_flex()
             .id("obs-integration-required")
             .test_support()
             .role(Role::Status)
-            .aria_label("Coroot connection required")
+            .aria_label(label)
             .gap(dp(16.))
-            .child(ui::empty_state(IconName::Waypoints, "Connect Coroot",
-                "Application health, service dependencies and report evidence, read from your Coroot server.",
-                None, vec![], cx).h_auto())
+            .child(ui::empty_state(IconName::Waypoints, title, body, None, vec![], cx).h_auto())
             .child(self.render_connection(cx))
-            .child(line()
-                .child(muted("Prometheus dashboards work without Coroot.", cx))
-                .child(Button::new("obs-open-dashboards").ghost().small().label("Open dashboards")
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::Dashboards)))))
+            .child(
+                line()
+                    .child(muted("Prometheus dashboards work without Coroot.", cx))
+                    .child(
+                        Button::new("obs-open-dashboards")
+                            .ghost()
+                            .small()
+                            .label("Open dashboards")
+                            .on_click(
+                                cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::Dashboards)),
+                            ),
+                    ),
+            )
             .into_any_element()
     }
 }

@@ -60,6 +60,9 @@ struct Row {
     image: SharedString,
     /// Each image's last path segment and tag, for the list.
     short_image: SharedString,
+    /// Whether Coroot reported an image; without one the list shows "—"
+    /// and the inspector leaves the line out.
+    has_image: bool,
     started: SharedString,
     /// Coroot's first finding, or its note.
     finding: SharedString,
@@ -206,6 +209,7 @@ fn row(revision: &api::DeploymentRevision) -> Row {
         status,
         hash: revision.hash.clone().into(),
         short_image: short_image(&image).into(),
+        has_image: image != "—",
         image: image.into(),
         started: started.into(),
         finding: finding.into(),

@@ -611,7 +611,9 @@ impl ApplicationsPage {
         ) else {
             return;
         };
-        let connections = read.connections.clone();
+        // As the application page's: in example data, the acme cluster the
+        // open entry is stands for the open example cluster.
+        let connections = self.connections(read);
         let visible = self.visible;
         let page = cx.new(|cx| ChangePage::new(fetch, stage, connections, visible, window, cx));
         let subscription =

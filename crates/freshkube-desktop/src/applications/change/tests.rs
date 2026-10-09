@@ -1184,10 +1184,18 @@ fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
 fn open_on_dev(
     cx: &mut TestAppContext,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    open_switched(cx, false)
+}
+
+/// The same, with dev-fra's entry opened before the list reads or, with
+/// `after_read`, once it has read with no entry open.
+fn open_switched(
+    cx: &mut TestAppContext,
+    after_read: bool,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     let (runtime, handle, view) = fixture(cx, 1280., 880.);
-    cx.update_window(handle, |_, window, cx| {
-        list(&view, cx).update(cx, |page, cx| {
-            page.set_variant(Variant::Acme);
+    let switch = |view: &Entity<Pilot>, cx: &mut gpui_kit::App| {
+        list(view, cx).update(cx, |page, cx| {
             page.set_clusters(
                 super::super::Clusters {
                     entries: vec!["dev-fra".into()],
@@ -1196,8 +1204,22 @@ fn open_on_dev(
                 cx,
             );
         });
+    };
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, _| page.set_variant(Variant::Acme));
+        if !after_read {
+            switch(&view, cx);
+        }
         window.render_frame(cx);
         window.click("nav-applications", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        if after_read {
+            switch(&view, cx);
+        }
         window.render_frame(cx);
         window.click(CHECKOUT, cx);
         window.press("enter", cx);
@@ -1254,6 +1276,31 @@ fn a_deployments_revision_opens_in_observability_by_its_hash(cx: &mut TestAppCon
             )
         );
         assert!(window.find("obs-wanted-revision").visible());
+    })
+    .unwrap();
+}
+
+/// A switch after the list has read still makes dev-fra the open cluster
+/// on the change page, as on the application page.
+#[gpui_kit::test]
+fn a_switch_after_the_read_opens_the_entrys_cluster_on_the_change_page(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open_switched(cx, true);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("change-fold-2", cx);
+        window.render_frame(cx);
+        window.click(hop("dev-pods"), cx);
+        window.render_frame(cx);
+        let page = change(&view, cx).unwrap();
+        assert_eq!(
+            page.read(cx)
+                .action_why("Compare in Observability · dev-fra"),
+            None
+        );
+        assert_eq!(
+            page.read(cx)
+                .action_why("Open the Deployment in Resources · dev-fra"),
+            None
+        );
     })
     .unwrap();
 }

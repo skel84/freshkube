@@ -160,6 +160,15 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
         !observed.read(cx).live.connecting
     })
     .await;
+    // Connected, the page asks for a project, not for a connection.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("obs-integration-required").label(),
+            Some("Coroot project required")
+        );
+    })
+    .unwrap();
     cx.update(|cx| {
         page.update(cx, |page, cx| {
             assert!(page.live.provider.is_some(), "{:?}", page.live.error);

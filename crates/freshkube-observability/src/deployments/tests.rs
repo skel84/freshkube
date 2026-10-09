@@ -81,6 +81,7 @@ fn a_row_shows_coroots_images_and_its_first_finding() {
     );
     assert_eq!(state.rows[0].image, "—", "Coroot knew no image");
     assert_eq!(state.rows[0].short_image, "—");
+    assert!(!state.rows[0].has_image);
 }
 
 #[test]
