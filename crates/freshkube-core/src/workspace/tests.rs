@@ -338,7 +338,7 @@ fn a_workspace_the_next_launch_would_refuse_for_its_size_is_not_written() {
     // Compact, the file is well inside the limit; written with indentation it
     // is not.
     let many: Vec<_> = (0..12_000).map(|n| serde_json::json!({"a": n})).collect();
-    let source = text(serde_json::json!({"version": 1, "destinations": many}));
+    let source = text(serde_json::json!({"version": 1, "sources": many}));
     assert!(source.len() < MAX_BYTES as usize);
     let workspace = parse(&source).unwrap();
     assert_eq!(workspace.check_saveable(), Err(Invalid::TooLarge));
@@ -524,4 +524,146 @@ fn a_remembered_entry_that_is_gone_is_named_once_beside_the_one_opened() {
 fn an_empty_workspace_has_no_start_so_the_launch_is_today_s() {
     assert!(choose_start(&Workspace::default(), None).is_none());
     assert!(choose_start(&Workspace::default(), Some("retired")).is_none());
+}
+
+#[test]
+fn destinations_map_a_server_or_a_name_to_an_entry() {
+    let workspace = parse(&text(serde_json::json!({
+        "version": 1,
+        "clusters": [{"id": "prod", "role": "environment", "context": "acme-prod"}],
+        "destinations": [
+            {"server": "https://prod.example.test", "entry": "prod"},
+            {"name": "prod-lon", "entry": "lon", "note": "kept"},
+        ],
+    })))
+    .unwrap();
+    let keys: Vec<(Key, &str)> = workspace
+        .destinations
+        .iter()
+        .map(|row| (row.key(), row.entry.as_str()))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            (Key::Server("https://prod.example.test".into()), "prod"),
+            // An entry the workspace doesn't list is kept, to be pointed
+            // elsewhere.
+            (Key::Name("prod-lon".into()), "lon"),
+        ]
+    );
+    assert_eq!(workspace.unknown_keys(), vec!["destinations[1].note"]);
+    let written: serde_json::Value = serde_json::from_str(&to_text(&workspace)).unwrap();
+    assert_eq!(written["destinations"][1]["note"], "kept");
+    assert!(written["destinations"][0].get("name").is_none());
+    assert_eq!(parse(to_text(&workspace).as_bytes()), Ok(workspace));
+}
+
+#[test]
+fn a_workspace_without_destinations_writes_none() {
+    assert!(!to_text(&sample()).contains("destinations"));
+}
+
+#[test]
+fn a_destination_row_that_cannot_be_used_refuses_the_file_and_is_named() {
+    let refused = |row: serde_json::Value| {
+        parse(&text(serde_json::json!({
+            "version": 1,
+            "clusters": [{"id": "prod", "role": "environment", "context": "acme-prod"}],
+            "destinations": [{"name": "fine", "entry": "prod"}, row],
+        })))
+        .unwrap_err()
+    };
+    let cases = [
+        (
+            serde_json::json!({"server": "https://a.example.test", "name": "a", "entry": "prod"}),
+            "destinations[1] (server https://a.example.test) names both a server and a name",
+        ),
+        (
+            serde_json::json!({"entry": "prod"}),
+            "destinations[1] names no server or name",
+        ),
+        (
+            serde_json::json!({"server": " ", "entry": "prod"}),
+            "destinations[1] names an empty server",
+        ),
+        (
+            serde_json::json!({"name": "", "entry": "prod"}),
+            "destinations[1] names an empty name",
+        ),
+        (
+            serde_json::json!({"server": "prod.example.test", "entry": "prod"}),
+            "destinations[1] (server prod.example.test) names a server that isn’t an http or https address",
+        ),
+        (
+            serde_json::json!({"server": "https://Kubernetes.default.svc:443/", "entry": "prod"}),
+            "destinations[1] (server https://Kubernetes.default.svc:443/) names Argo CD’s own cluster, which is known already",
+        ),
+        (
+            serde_json::json!({"name": "in-cluster", "entry": "prod"}),
+            "destinations[1] (name in-cluster) names Argo CD’s own cluster, which is known already",
+        ),
+        (
+            serde_json::json!({"name": "a", "entry": " "}),
+            "destinations[1] (name a) names no workspace cluster",
+        ),
+        // The likeliest hand edit: a row whose entry was never typed.
+        (
+            serde_json::json!({"name": "a"}),
+            "destinations[1] (name a) names no workspace cluster",
+        ),
+        (
+            serde_json::json!({"name": "prod-lon ", "entry": "prod"}),
+            "destinations[1] (name prod-lon ) names a server or name with spaces around it",
+        ),
+        (
+            serde_json::json!({"server": 5, "entry": "prod"}),
+            "destinations[1] isn’t a server or name and an entry, each a string, so it can’t be read",
+        ),
+        (
+            serde_json::json!({"name": "a", "entry": ["prod"]}),
+            "destinations[1] (name a) isn’t a server or name and an entry, each a string, so it can’t be read",
+        ),
+        (
+            serde_json::json!("prod"),
+            "destinations[1] isn’t a server or name and an entry, each a string, so it can’t be read",
+        ),
+    ];
+    for (row, words) in cases {
+        assert_eq!(refused(row.clone()).to_string(), words, "{row}");
+    }
+}
+
+#[test]
+fn too_many_destinations_refuse_the_file() {
+    let mut workspace = sample();
+    workspace.destinations = (0..=MAX_DESTINATIONS)
+        .map(|n| Destination::new(Key::Name(format!("c{n}")), "prod"))
+        .collect();
+    assert_eq!(workspace.validate(), Err(Invalid::TooManyDestinations));
+}
+
+#[test]
+fn a_destination_changes_what_it_matches_and_keeps_the_rest() {
+    let mut workspace = parse(&text(serde_json::json!({
+        "version": 1,
+        "clusters": [],
+        "destinations": [{"name": "a", "entry": "prod", "note": "kept"}],
+    })))
+    .unwrap();
+    let row = &mut workspace.destinations[0];
+    row.set_key(Key::Server("https://a.example.test".into()));
+    assert_eq!(row.key(), Key::Server("https://a.example.test".into()));
+    assert_eq!(row.entry, "prod");
+    assert_eq!(workspace.unknown_keys(), vec!["destinations[0].note"]);
+    assert_eq!(workspace.validate(), Ok(()));
+}
+
+#[test]
+fn destinations_that_are_not_a_list_refuse_the_file() {
+    let refused = parse(&text(serde_json::json!({
+        "version": 1,
+        "clusters": [],
+        "destinations": {"name": "a", "entry": "prod"},
+    })));
+    assert!(matches!(refused, Err(Invalid::Malformed(_))), "{refused:?}");
 }

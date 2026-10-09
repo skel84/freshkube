@@ -11,7 +11,7 @@ use super::Place;
 use super::gates::{self, Row, instant};
 use super::links;
 use super::pages::Pages;
-use crate::delivery::argocd::DestinationMatch;
+use crate::delivery::argocd::{Application, DestinationMatch, ManagedObject};
 use crate::delivery::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, freight_links};
 use crate::delivery::kargo::{self, Freight, Stage as KargoStage};
 use crate::delivery::observation::{ObjectRef, Observation};
@@ -97,8 +97,20 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
             hops.push(gate_hop(place, &stage.name, group, ix, gate, row));
         }
         for (n, link) in runs.iter().skip(1).enumerate() {
+            // An Application mapped to another workspace cluster: in place
+            // of its links into that cluster, which nothing read, the
+            // workloads Argo CD reports there.
+            let reported = elsewhere(place, evidence, &link.subject)
+                .map(|(app, entry)| reported_hops(place, &stage.name, group, app, entry))
+                .unwrap_or_default();
+            if link.from == Joined::Application && !reported.is_empty() {
+                continue;
+            }
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
             hops.push(link_hop(place, evidence, freight, pages, key, group, link));
+            if link.to == Joined::Application {
+                hops.extend(reported);
+            }
         }
         model.push(Stage {
             name: stage.name.clone(),
@@ -210,10 +222,10 @@ fn stage_run<'a>(links: &'a [Link], stage_id: &str) -> Vec<&'a Link> {
 }
 
 /// Where a Stage deploys: its first Application's destination, by the
-/// cluster's name when it is this one. Unknown, with why, when its
-/// Application wasn't found or its destination isn't matched to a cluster;
-/// with no kubeconfig contexts to match, a server other than Argo CD's own
-/// is never known to be this cluster.
+/// cluster's name when it is this one, or the workspace cluster the person
+/// mapped it to. Unknown, with why, when its Application wasn't found or
+/// its destination isn't mapped; kubeconfig servers are never compared, so
+/// a server other than Argo CD's own is known only through the mapping.
 fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) -> Destination {
     use Destination::Unknown as Not;
     if run.is_empty() {
@@ -240,24 +252,48 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
         });
     };
     let shown = |context: &str| {
-        Destination::Cluster(if context == place.cluster {
-            place.label.clone()
+        if context == place.here() {
+            Destination::Cluster(place.label.clone())
+        } else if !place.mapping.lists(context) {
+            Not(format!(
+                "mapped to {context}, which the workspace no longer lists"
+            ))
         } else {
-            context.to_owned()
-        })
+            Destination::Entry {
+                entry: context.to_owned(),
+                via: match (&app.destination_server, &app.destination_name) {
+                    (Some(server), _) => format!("server {server}"),
+                    (None, Some(name)) => format!("name {name}"),
+                    (None, None) => String::new(),
+                },
+            }
+        }
     };
     match evidence.destinations.get(&link.subject) {
         Some(DestinationMatch::One(context) | DestinationMatch::ArgoCd(context)) => shown(context),
         Some(DestinationMatch::Named { context, .. }) => shown(context),
         Some(DestinationMatch::ByName(name)) => Not(format!(
-            "Argo CD's cluster {name}, not known to be this one"
+            "Argo CD's cluster {name} isn't mapped to a workspace cluster"
         )),
         Some(DestinationMatch::None) => Not(format!(
-            "server {}, not known to be this cluster",
+            "server {} isn't mapped to a workspace cluster",
             app.destination_server.as_deref().unwrap_or("?")
         )),
-        Some(DestinationMatch::Ambiguous(_)) => {
-            Not("its destination matches more than one cluster".into())
+        Some(DestinationMatch::Ambiguous(entries)) => {
+            let entries: Vec<&str> = entries
+                .iter()
+                .map(|entry| {
+                    if entry == place.here() {
+                        place.label.as_str()
+                    } else {
+                        entry.as_str()
+                    }
+                })
+                .collect();
+            Not(format!(
+                "its destination is mapped to more than one workspace cluster ({})",
+                entries.join(", ")
+            ))
         }
         Some(DestinationMatch::Unspecified) => {
             Not(format!("Application {} names no destination", app.name))
@@ -266,6 +302,181 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
             "Application {}'s destination wasn't matched",
             app.name
         )),
+    }
+}
+
+/// The Application `app_id` names and the workspace cluster it is mapped
+/// to, when that is a cluster the workspace lists other than this one.
+fn elsewhere<'a>(
+    place: &Place,
+    evidence: &'a Evidence,
+    app_id: &str,
+) -> Option<(&'a Application, &'a str)> {
+    let entry = evidence.destinations.get(app_id)?.context()?;
+    if entry == place.here() || !place.mapping.lists(entry) {
+        return None;
+    }
+    let app = evidence
+        .applications
+        .read()?
+        .iter()
+        .find(|app| format!("{}/{}", app.namespace, app.name) == app_id)?;
+    Some((app, entry))
+}
+
+/// The workload kinds Argo CD may report for an Application, by group.
+const WORKLOADS: [(&str, &str); 4] = [
+    ("argoproj.io", "Rollout"),
+    ("apps", "Deployment"),
+    ("apps", "StatefulSet"),
+    ("apps", "DaemonSet"),
+];
+
+/// The workloads Argo CD reports for an Application on another workspace
+/// cluster, from its `status.resources`: what Argo CD says, since that
+/// cluster isn't read, so each link is Argo CD's claim. Each opens on that
+/// cluster.
+fn reported_hops(
+    place: &Place,
+    stage: &str,
+    group: usize,
+    app: &Application,
+    entry: &str,
+) -> Vec<Hop> {
+    app.managed
+        .iter()
+        .filter(|object| {
+            WORKLOADS
+                .iter()
+                .any(|(g, kind)| object.group == *g && object.kind == *kind)
+        })
+        .enumerate()
+        .map(|(n, object)| {
+            reported_hop(
+                place,
+                format!("{stage}-reported-{}-{n}", app.name),
+                group,
+                app,
+                object,
+                entry,
+            )
+        })
+        .collect()
+}
+
+fn reported_hop(
+    place: &Place,
+    key: String,
+    group: usize,
+    app: &Application,
+    object: &ManagedObject,
+    entry: &str,
+) -> Hop {
+    let namespace = object
+        .namespace
+        .clone()
+        .or_else(|| app.destination_namespace.clone())
+        .unwrap_or_default();
+    let reports: Vec<&str> = [object.sync.as_deref(), object.health.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
+    let words = if reports.is_empty() {
+        "Argo CD reports no state".to_owned()
+    } else {
+        format!("Argo CD reports {}", reports.join(" · "))
+    };
+    // Argo CD's word for an object nobody read is never Healthy, so a Stage
+    // known only from it doesn't fold as fine.
+    let state = match object.health.as_deref() {
+        Some("Healthy") => Info,
+        Some("Degraded" | "Missing") => Warning,
+        Some("Progressing" | "Suspended") => Info,
+        _ => Unknown,
+    };
+    let mut fields = Vec::new();
+    if !namespace.is_empty() {
+        fields.push(Field {
+            label: "Namespace".into(),
+            value: Value::Mono(namespace.clone()),
+        });
+    }
+    fields.push(Field {
+        label: "Name".into(),
+        value: Value::Mono(object.name.clone()),
+    });
+    fields.push(Field {
+        label: "Cluster".into(),
+        value: Value::Mono(entry.to_owned()),
+    });
+    if let Some(message) = &object.health_message {
+        fields.push(Field {
+            label: "Argo CD says".into(),
+            value: Value::Text(message.clone()),
+        });
+    }
+    fields.push(Field {
+        label: "Read from".into(),
+        value: Value::Mono(format!("Argo CD on {}", place.label)),
+    });
+    let shown = if namespace.is_empty() {
+        object.name.clone()
+    } else {
+        format!("{namespace}/{}", object.name)
+    };
+    let target = Object {
+        cluster: String::new(),
+        group: object.group.clone(),
+        version: object.version.clone().unwrap_or_else(|| {
+            if object.group == "apps" {
+                "v1".into()
+            } else {
+                "v1alpha1".into()
+            }
+        }),
+        kind: object.kind.clone(),
+        plural: format!("{}s", object.kind.to_lowercase()),
+        namespace,
+        name: object.name.clone(),
+    };
+    Hop {
+        key,
+        group,
+        state,
+        name: format!("{} {}", object.kind, object.name),
+        detail: format!("Argo CD reports it on {entry}; not read there"),
+        from: place.label.clone(),
+        at: None,
+        link: Some(Confidence::Claimed),
+        shows: Shows::Hop(Box::new(HopDetail {
+            kind: object.kind.clone(),
+            title: object.name.clone(),
+            state: words,
+            notice: Some(Notice {
+                state: Info,
+                lead: "Not read.".into(),
+                body: format!(
+                    "{entry} isn't the open cluster, so this is what Argo CD reports, not what was read there."
+                ),
+            }),
+            fields,
+            link: Some(LinkDetail {
+                confidence: Confidence::Claimed,
+                by: "name".into(),
+                before: "Application".into(),
+                before_says: format!("status.resources lists {} {shown}", object.kind),
+                here_says: "not read".into(),
+                why: format!(
+                    "Only Argo CD's status says so: {entry} isn't read, so nothing there confirms it."
+                ),
+            }),
+            unlinked: None,
+            actions: vec![Action::new(Target::OnEntry {
+                what: format!("the {}", object.kind),
+                entry: entry.to_owned(),
+                object: target,
+            })],
+        })),
     }
 }
 

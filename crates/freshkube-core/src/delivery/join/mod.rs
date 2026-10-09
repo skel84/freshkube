@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use super::argocd::{Application, DestinationMatch, ManagedObject, StageNaming};
+use super::argocd::{Application, DestinationMatch, ManagedObject, MapHint, StageNaming};
 use super::deployments::{Deployment, DeploymentSet};
 use super::digest::Digest;
 use super::github::PullRequest;
@@ -180,6 +180,8 @@ pub struct Evidence {
     /// How Applications are tied to stages where they carry no annotation;
     /// `None` when the caller configured none.
     pub stage_naming: Option<StageNaming>,
+    /// How a destination no context matches says it could be matched.
+    pub map_hint: MapHint,
     pub builds: Source<Vec<Build>>,
     pub kargo: KargoRead,
     pub applications: Source<Vec<Application>>,

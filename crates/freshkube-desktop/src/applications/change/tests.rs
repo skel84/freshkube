@@ -197,6 +197,45 @@ fn hops_come_in_travel_order_with_fine_stages_folded(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// A Stage known only from what Argo CD reports on another workspace
+/// cluster stays open, however fine Argo CD says it is.
+#[gpui_kit::test]
+fn a_stage_mapped_to_another_cluster_never_folds(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, _, cx| {
+        let page = change(&view, cx).unwrap();
+        page.update(cx, |page, _| {
+            let mut change = page.change.clone();
+            let stage = change
+                .stages
+                .iter_mut()
+                .find(|stage| stage.name == "stage")
+                .expect("the Stage stage");
+            stage.cluster = freshkube_core::delivery::change::Destination::Entry {
+                entry: "stage-fra".into(),
+                via: "server https://stage-fra.example.test:6443".into(),
+            };
+            page.rows.clear();
+            page.show(change);
+        });
+        let lines = page.read(cx).lines_text();
+        let at = lines
+            .iter()
+            .position(|line| line == "# Stage stage")
+            .expect("its group");
+        assert!(
+            lines.get(at + 1).is_some_and(|line| !line.starts_with('#')),
+            "its rows show: {lines:#?}"
+        );
+        assert!(lines.contains(&"# Stage dev".to_owned()));
+        assert!(
+            !lines.iter().any(|line| line.starts_with("dev-")),
+            "dev still folds"
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_fold_opens_and_closes_its_stage(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880.);
@@ -1062,14 +1101,15 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
             page.fetch = Fetch::Live {
                 runtime: runtime.handle().clone(),
                 access: KubeAccess::Example,
-                place: Place {
+                place: Box::new(Place {
                     // The open example cluster's key, as live objects carry.
                     cluster: "core-fra".into(),
                     label: "home-lab".into(),
                     project: "checkout".into(),
                     freight: "f".into(),
                     argocd_namespace: "argocd".into(),
-                },
+                    mapping: Default::default(),
+                }),
             };
         });
         window.click(hop("freight"), cx);

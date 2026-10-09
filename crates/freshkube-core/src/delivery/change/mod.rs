@@ -168,6 +168,14 @@ pub enum Target {
         label: String,
         address: Option<Address>,
     },
+    /// An object on another workspace cluster, which only Argo CD on the
+    /// open one reports: `entry` is that cluster's workspace id, never a
+    /// connection, and `object.cluster` is left empty.
+    OnEntry {
+        what: String,
+        entry: String,
+        object: Object,
+    },
     /// The steps' logs of the pod a TaskRun ran in, in the dock, from the
     /// cluster that ran it: `what` names the task on the button, and
     /// `container` is its first step's.
@@ -294,6 +302,14 @@ pub enum Promotion {
 pub enum Destination {
     /// The environment cluster, by its name.
     Cluster(String),
+    /// Another workspace cluster, which the person mapped the Application's
+    /// destination to. It isn't read.
+    Entry {
+        /// The workspace entry's id.
+        entry: String,
+        /// What was mapped: `server https://…` or `name prod-lon`.
+        via: String,
+    },
     /// Not known, and why: its Application wasn't found, or its
     /// destination wasn't matched to a cluster.
     Unknown(String),
@@ -303,7 +319,7 @@ impl Destination {
     /// The cluster's name, when it is known.
     pub fn cluster(&self) -> Option<&str> {
         match self {
-            Self::Cluster(name) => Some(name),
+            Self::Cluster(name) | Self::Entry { entry: name, .. } => Some(name),
             Self::Unknown(_) => None,
         }
     }
@@ -312,6 +328,7 @@ impl Destination {
     pub fn words(&self) -> String {
         match self {
             Self::Cluster(name) => format!("deploys to {name}"),
+            Self::Entry { entry, .. } => format!("deploys to {entry} (mapped)"),
             Self::Unknown(why) => format!("destination unknown: {why}"),
         }
     }
