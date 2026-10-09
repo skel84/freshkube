@@ -194,6 +194,7 @@ impl Area {
             self,
             Self::Monitoring
                 | Self::Observability
+                | Self::Applications
                 | Self::Group(_)
                 | Self::Custom
                 | Self::ControlPlane

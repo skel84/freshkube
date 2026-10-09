@@ -5,6 +5,7 @@ use super::rail::RowTarget;
 use super::*;
 use crate::monitoring::page::EntryId;
 use crate::observability::Destination;
+use freshkube_core::applications::Rule;
 use freshkube_ui::source_list::{Line, Menu, Note, Prose, Row, Section, SourceListHost};
 
 /// What a row of the column opens.
@@ -27,6 +28,11 @@ pub(crate) enum ColumnKey {
     Dashboards,
     /// A namespace for Pods under Workloads, or every one.
     Namespace(Option<SharedString>),
+    /// The Applications list.
+    AllApplications,
+    /// An application's page, by its id.
+    Application(SharedString),
+    RetryApplications,
 }
 
 /// The column's lines, where a reveal lands among them, and whether
@@ -49,6 +55,10 @@ impl ColumnLines {
 
 /// How many namespaces Workloads lists; the rest are in Pods' menu.
 const COLUMN_NAMESPACES: usize = 20;
+
+/// How many applications the Applications column lists; a menu names
+/// every one past them.
+pub(in crate::desktop) const COLUMN_APPLICATIONS: usize = 30;
 
 /// Why discovery shows nothing, in a few words; the tooltip says more.
 fn failure_label(failure: &Failure) -> &'static str {
@@ -86,6 +96,7 @@ impl Pilot {
             Area::Monitoring => ColumnLines::new(self.monitoring_lines(cx)),
             Area::Observability => ColumnLines::new(self.observability_lines(cx)),
             Area::ControlPlane => ColumnLines::new(self.control_plane_lines(cx)),
+            Area::Applications => ColumnLines::new(self.applications_lines(cx)),
             _ => ColumnLines::new(Vec::new()),
         };
         self.column_list.set_lines(derived.lines);
@@ -444,6 +455,85 @@ impl Pilot {
         lines
     }
 
+    /// All applications, then each application under the rule that found
+    /// it, or why there are none; past [`COLUMN_APPLICATIONS`], a menu
+    /// names every one.
+    fn applications_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
+        let page = self.applications.read(cx);
+        let column = page.column();
+        let shown = page.shown_application(cx);
+        let listing = self.page == Page::Applications && shown.is_none();
+        let mut all = Row::new(
+            ColumnKey::AllApplications,
+            "nav-all-applications",
+            "All applications",
+        )
+        .icon(IconName::Layers)
+        .current(listing);
+        if column.note.is_none() {
+            all = all.count(column.total.to_string(), None);
+        }
+        let mut lines: Vec<Line<ColumnKey>> = vec![all.into()];
+        if let Some(note) = &column.note {
+            let mut line = Note::new("nav-applications-status", note.text.clone());
+            if let Some(tooltip) = &note.tooltip {
+                line = line.tooltip(tooltip.clone());
+            }
+            if note.retry {
+                line = line.retry(ColumnKey::RetryApplications);
+            }
+            lines.push(line.into());
+            return lines;
+        }
+        let shown = shown.filter(|_| self.page == Page::Applications);
+        let mut listed = 0;
+        for section in &column.sections {
+            if listed == COLUMN_APPLICATIONS {
+                break;
+            }
+            lines.push(
+                Section::new(
+                    format!("nav-applications-{}", applications_slug(section.rule)),
+                    section.label,
+                )
+                .into(),
+            );
+            for app in section.apps.iter().take(COLUMN_APPLICATIONS - listed) {
+                let mut row = Row::new(
+                    ColumnKey::Application(app.key.clone()),
+                    format!("nav-application-{}", app.key),
+                    app.name.clone(),
+                )
+                .icon(applications_icon(section.rule))
+                .current(shown.as_ref() == Some(&app.key))
+                .tooltip(app.detail.clone());
+                if let Some(why) = &app.incomplete {
+                    row = row.mark(Tone::Unknown, why.clone());
+                }
+                lines.push(row.into());
+                listed += 1;
+            }
+        }
+        if column.total > listed {
+            let entries = column
+                .sections
+                .iter()
+                .flat_map(|section| &section.apps)
+                .map(|app| (app.menu.clone(), ColumnKey::Application(app.key.clone())))
+                .collect();
+            lines.push(
+                Menu::new(
+                    "nav-applications-more",
+                    format!("{} more applications…", column.total - listed),
+                    entries,
+                )
+                .tooltip("Choose any application")
+                .into(),
+            );
+        }
+        lines
+    }
+
     /// The Talos pages, or without a talosconfig, how to add one.
     fn control_plane_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
         if self.kubernetes_only.is_some() {
@@ -474,6 +564,26 @@ impl Pilot {
             .into_iter()
             .filter(|item| self.fixture || *item != Destination::Deployments)
             .collect()
+    }
+}
+
+/// A rule's section id: `nav-applications-kargo`.
+fn applications_slug(rule: Rule) -> &'static str {
+    match rule {
+        Rule::Kargo => "kargo",
+        Rule::ArgoCd => "argocd",
+        Rule::PartOf => "part-of",
+        Rule::Manual => "overrides",
+    }
+}
+
+/// The icon of the applications a rule found.
+fn applications_icon(rule: Rule) -> IconName {
+    match rule {
+        Rule::Kargo => IconName::Waypoints,
+        Rule::ArgoCd => IconName::Boxes,
+        Rule::PartOf => IconName::Box,
+        Rule::Manual => IconName::SlidersHorizontal,
     }
 }
 
@@ -589,6 +699,19 @@ impl SourceListHost for Pilot {
             ColumnKey::Dashboards => self.navigate_from_keyboard(Page::Monitoring, window, cx),
             ColumnKey::Namespace(namespace) => {
                 self.choose_sidebar_namespace(namespace.map(String::from), window, cx)
+            }
+            ColumnKey::AllApplications => {
+                self.applications
+                    .update(cx, |page, cx| page.show_list(window, cx));
+                self.navigate_from_keyboard(Page::Applications, window, cx);
+            }
+            ColumnKey::Application(key) => {
+                self.applications
+                    .update(cx, |page, cx| page.open_key(&key, window, cx));
+                self.navigate_from_keyboard(Page::Applications, window, cx);
+            }
+            ColumnKey::RetryApplications => {
+                self.applications.update(cx, |page, cx| page.refresh(cx))
             }
         }
     }
