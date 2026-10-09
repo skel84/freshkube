@@ -29,13 +29,18 @@ use super::tekton::{CommitNames, EvidenceResult, read_builds};
 /// Which namespaces to read, all named by the caller.
 #[derive(Clone, Debug)]
 pub struct Plan {
+    /// The commit; empty when the change is followed from a Freight that
+    /// names none, and then no build is read.
     pub sha: String,
+    /// A Freight followed by name, whose Stages' workloads and pods are
+    /// read whether or not it matches the commit.
+    pub followed: Option<String>,
     /// The Kargo project namespace.
     pub kargo_project: String,
     /// The namespace Argo CD's Applications live in.
     pub argocd_namespace: String,
-    /// The namespace PaC runs the build in.
-    pub build_namespace: String,
+    /// The namespace PaC runs the build in; every namespace when `None`.
+    pub build_namespace: Option<String>,
     /// `owner/name` of the GitHub repository, when pull requests are read.
     pub github_repo: Option<String>,
     /// `(context name, server)` of the kubeconfig contexts a destination may
@@ -98,7 +103,11 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
     plan: &Plan,
     observed_at: DateTime<Utc>,
 ) -> Evidence {
-    let builds = read_builds(clusters.tekton, &plan.build_namespace, &plan.sha).await;
+    let builds = if plan.sha.is_empty() {
+        Source::Unreadable("the Freight names no commit to find its builds by".into())
+    } else {
+        read_builds(clusters.tekton, plan.build_namespace.as_deref(), &plan.sha).await
+    };
     let kargo = read_project(clusters.kargo, &plan.kargo_project).await;
     let applications = read_applications(clusters.argocd, &plan.argocd_namespace).await;
     let destinations: BTreeMap<String, DestinationMatch> = applications
@@ -123,6 +132,7 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         .unwrap_or_default();
     let mut evidence = Evidence {
         sha: plan.sha.clone(),
+        followed: plan.followed.clone(),
         observed_at,
         evidence_result: plan.evidence_result.clone(),
         commit_names: plan.commit_names.clone(),
@@ -261,7 +271,12 @@ async fn read_pull_requests<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHu
         {
             evidence.pr_builds.insert(
                 pr.number,
-                read_builds(clusters.tekton, &plan.build_namespace, &pr.head_sha).await,
+                read_builds(
+                    clusters.tekton,
+                    plan.build_namespace.as_deref(),
+                    &pr.head_sha,
+                )
+                .await,
             );
         }
     }

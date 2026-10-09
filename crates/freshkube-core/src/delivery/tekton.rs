@@ -437,7 +437,8 @@ async fn list_scoped<R: Reader, T>(
 }
 
 /// The builds PaC started for one commit, with their TaskRuns, in one
-/// namespace. The SHA is only ever sent as a label selector value. Capped
+/// namespace, or in every namespace when none is named; each build's
+/// TaskRuns are read from its own. The SHA is only ever sent as a label selector value. Capped
 /// when any of the listings was.
 ///
 /// Tekton's API is discovered once for the whole read: PipelineRuns and
@@ -448,10 +449,14 @@ async fn list_scoped<R: Reader, T>(
 /// A SHA-256 commit (64 digits) is longer than a label value may be, so no
 /// build is found by it: that read says so, and the commit joins Kargo
 /// Freight on the commit alone.
-pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> Source<Vec<Build>> {
+pub async fn read_builds<R: Reader>(
+    reader: &R,
+    namespace: Option<&str>,
+    sha: &str,
+) -> Source<Vec<Build>> {
     async fn run<R: Reader>(
         reader: &R,
-        namespace: &str,
+        namespace: Option<&str>,
         sha: &str,
     ) -> Result<(Vec<Build>, Option<Truncation>), Failure> {
         check_sha(sha)?;
@@ -474,7 +479,7 @@ pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> S
             reader,
             &pipeline_runs?,
             Scope::Labels {
-                namespace: Some(namespace.to_owned()),
+                namespace: namespace.map(str::to_owned),
                 selector,
             },
             parse_pipeline_run,
@@ -491,7 +496,7 @@ pub async fn read_builds<R: Reader>(reader: &R, namespace: &str, sha: &str) -> S
                             reader,
                             task_runs,
                             Scope::Labels {
-                                namespace: Some(namespace.to_owned()),
+                                namespace: Some(run.namespace.clone()),
                                 selector,
                             },
                             parse_task_run,

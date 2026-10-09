@@ -12,7 +12,8 @@
 use super::*;
 use crate::ui::{self, MONO_FONT, dp};
 use freshkube_core::delivery::change::{
-    Action, Check, Eligible, Field, HopDetail, LinkDetail, Promotion, Stage, Target, Value,
+    Action, Check, Eligible, Field, HopDetail, LinkDetail, Promotion, Stage, Target, Upstream,
+    Value,
 };
 use freshkube_ui::inspector::Inspector;
 use freshkube_ui::palette::palette;
@@ -166,9 +167,9 @@ impl ChangePage {
                     line("Freight", running, false),
                 ],
                 eligible: eligible(&stage.eligible),
-                approvers: stage.approvers.clone().into(),
+                approvers: not_read(&stage.approvers),
                 promotion: promotion(&stage.promotion),
-                promoters: stage.promoters.clone().into(),
+                promoters: not_read(&stage.promoters),
                 steps: stage.steps.iter().map(check_line).collect(),
                 analyses: stage.verification.iter().map(check_line).collect(),
             },
@@ -293,75 +294,128 @@ fn check_line(check: &Check) -> CheckLine {
     }
 }
 
-fn eligible(eligible: &Eligible) -> GateLine {
-    let gate = |tone, says: String, note: Option<String>| GateLine {
+/// ` at 10:12`, when Kargo recorded a time.
+fn at(at: Option<DateTime<Utc>>) -> String {
+    at.map(|at| format!(" at {}", clock(at)))
+        .unwrap_or_default()
+}
+
+fn gate_line(tone: Tone, says: String, note: Option<String>) -> GateLine {
+    GateLine {
         tone,
         says: says.into(),
         note: note.map(Into::into),
-    };
+    }
+}
+
+fn eligible(eligible: &Eligible) -> GateLine {
     match eligible {
-        Eligible::Warehouse { at } => gate(
+        Eligible::Warehouse { at: when } => gate_line(
             Tone::Good,
             format!(
-                "From the Warehouse at {}: the first Stage takes new Freight.",
-                clock(*at)
+                "From the Warehouse{}: the first Stage takes new Freight.",
+                at(*when)
             ),
             None,
         ),
         Eligible::Verified {
             upstream,
-            at,
+            at: when,
             checks,
-        } => gate(
+        } => gate_line(
             Tone::Good,
-            format!(
-                "Verified in {upstream} at {}: {checks} passed there.",
-                clock(*at)
-            ),
+            match checks {
+                Some(checks) => format!(
+                    "Verified in {upstream}{}: {checks} passed there.",
+                    at(*when)
+                ),
+                None => format!("Verified in {upstream}{}.", at(*when)),
+            },
             None,
         ),
         Eligible::Approved {
             by,
-            at,
+            at: when,
             past,
-            upstream_verified,
-        } => gate(
+            upstream,
+        } => gate_line(
             Tone::Info,
-            format!(
-                "Approved by {by} at {}, not verified in {past} at the time.",
-                clock(*at)
-            ),
-            Some(match upstream_verified {
-                Some(then) => format!(
-                    "Approved by hand for this Stage, past {past}; {past} verified it \
-                     later, at {}.",
-                    clock(*then)
+            match (by, when) {
+                (Some(by), Some(_)) => format!(
+                    "Approved by {by}{}, not verified in {past} at the time.",
+                    at(*when)
                 ),
-                None => format!(
+                (Some(by), None) => format!("Approved by {by}, past {past}."),
+                (None, _) => format!("Approved by hand{}, past {past}.", at(*when)),
+            },
+            Some(match upstream {
+                Upstream::Verified { at: then } => format!(
+                    "Approved by hand for this Stage, past {past}; {past} verified it \
+                     later{}.",
+                    at(*then)
+                ),
+                Upstream::NotVerified => format!(
                     "Approved by hand for this Stage, past {past}, which hasn't verified \
                      it."
                 ),
             }),
         ),
+        Eligible::NotYet { upstream } => gate_line(
+            Tone::Unknown,
+            match upstream.as_slice() {
+                [] => "Not eligible yet.".into(),
+                upstream => format!(
+                    "Not verified in {} yet, nor approved for this Stage.",
+                    upstream.join(" or ")
+                ),
+            },
+            None,
+        ),
+        Eligible::Unknown { why } => gate_line(Tone::Unknown, why.clone(), None),
     }
 }
 
 fn promotion(promotion: &Promotion) -> GateLine {
     match promotion {
-        Promotion::Automatic { at } => GateLine {
-            tone: Tone::Good,
-            says: format!(
-                "Automatic: auto-promotion is on. Promoted at {}.",
-                clock(*at)
-            )
-            .into(),
-            note: None,
-        },
-        Promotion::Waiting => GateLine {
-            tone: Tone::Unknown,
-            says: "Waiting for promotion: auto-promotion off.".into(),
-            note: Some("Nothing has failed: it waits for someone who may promote.".into()),
-        },
+        Promotion::Automatic { at: when } => gate_line(
+            Tone::Good,
+            format!("Automatic: auto-promotion is on. Promoted{}.", at(*when)),
+            None,
+        ),
+        Promotion::ByHand { at: when } => gate_line(
+            Tone::Good,
+            format!("By hand: a user promoted it{}.", at(*when)),
+            None,
+        ),
+        Promotion::Other { how, at: when } => gate_line(
+            Tone::Good,
+            match when {
+                Some(_) => format!("{how}. Promoted{}.", at(*when)),
+                None => format!("{how}."),
+            },
+            None,
+        ),
+        Promotion::Waiting => gate_line(
+            Tone::Unknown,
+            "Waiting for promotion: auto-promotion off.".into(),
+            Some("Nothing has failed: it waits for someone who may promote.".into()),
+        ),
+        Promotion::NotYet => gate_line(
+            Tone::Unknown,
+            "Not promoted to this Stage yet.".into(),
+            None,
+        ),
+        Promotion::Running { phase } => gate_line(
+            Tone::Info,
+            format!("Promoting: Kargo reports {phase}."),
+            None,
+        ),
+        Promotion::Failed { phase, message } => gate_line(
+            Tone::Crit,
+            format!("The promotion ended {phase}."),
+            message.clone(),
+        ),
+        Promotion::Unknown { why } => gate_line(Tone::Unknown, why.clone(), None),
     }
 }
 
@@ -428,7 +482,12 @@ fn render_stage(inspector: Inspector, body: &Body, cx: &App) -> Inspector {
                 .test_support()
                 .child(gate(promotion, cx))
                 .child(who("May promote", promoters, cx))
-                .child(checks("change-detail-steps", steps, cx)),
+                .child(checks(
+                    "change-detail-steps",
+                    steps,
+                    "Its steps aren't read.",
+                    cx,
+                )),
         )
         .child(
             section("Verification", cx)
@@ -439,7 +498,12 @@ fn render_stage(inspector: Inspector, body: &Body, cx: &App) -> Inspector {
                         .text_color(p.muted)
                         .child("Each AnalysisRun after the promotion."),
                 )
-                .child(checks("change-detail-analyses", analyses, cx)),
+                .child(checks(
+                    "change-detail-analyses",
+                    analyses,
+                    "None recorded for this Freight.",
+                    cx,
+                )),
         )
 }
 
@@ -563,18 +627,26 @@ fn gate(line: &GateLine, cx: &App) -> Div {
 }
 
 /// Who may act on the gate.
+/// Who may act, or that it wasn't read.
+fn not_read(who: &Option<String>) -> SharedString {
+    who.clone().unwrap_or_else(|| "Not read".into()).into()
+}
+
 fn who(label: &str, who: &SharedString, cx: &App) -> Div {
     field(label, div().font_family(MONO_FONT).child(who.clone()), cx)
 }
 
 /// Checks, one a line: a glyph, the name in monospace, what it found and
-/// when.
-fn checks(id: &'static str, checks: &[CheckLine], cx: &App) -> AnyElement {
+/// when; `empty` in muted ink when there are none.
+fn checks(id: &'static str, checks: &[CheckLine], empty: &'static str, cx: &App) -> AnyElement {
     let p = palette(cx);
     v_flex()
         .id(id)
         .test_support()
         .gap(dp(5.))
+        .when(checks.is_empty(), |list| {
+            list.child(div().text_color(p.muted).child(empty))
+        })
         .children(checks.iter().map(|check| {
             h_flex()
                 .gap(dp(8.))

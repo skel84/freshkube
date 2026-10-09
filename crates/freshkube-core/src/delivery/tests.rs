@@ -16,9 +16,10 @@ pub(super) fn observed_at() -> chrono::DateTime<chrono::Utc> {
 pub(super) fn plan(contexts: &[(&str, &str)]) -> Plan {
     Plan {
         sha: SHA.into(),
+        followed: None,
         kargo_project: "storefront".into(),
         argocd_namespace: "argocd".into(),
-        build_namespace: "acme-builds".into(),
+        build_namespace: Some("acme-builds".into()),
         github_repo: None,
         environment: "env-a".into(),
         argocd: "core".into(),
@@ -369,7 +370,7 @@ async fn every_request_is_a_get_in_a_namespace_or_with_a_selector() {
 async fn a_selector_cannot_be_injected_through_the_sha() {
     let world = healthy();
     for bad in ["abc,env=prod", "zzzzzzz", "a b", "abc"] {
-        let read = read_builds(&world.tekton, "acme-builds", bad).await;
+        let read = read_builds(&world.tekton, Some("acme-builds"), bad).await;
         assert!(matches!(read, Source::Unreadable(_)), "{bad}");
     }
     assert!(world.tekton.requests.borrow().is_empty());
@@ -381,7 +382,7 @@ async fn an_older_tekton_version_is_used_when_it_is_all_that_is_served() {
     let tekton = FixtureReader::default()
         .serves("tekton.dev", "v1beta1", &["pipelineruns", "taskruns"])
         .with("pipelineruns", vec![pipeline_run(SHA, true, Some(NEW))]);
-    let read = read_builds(&tekton, "acme-builds", SHA).await;
+    let read = read_builds(&tekton, Some("acme-builds"), SHA).await;
     assert_eq!(read.read().map(Vec::len), Some(1));
     assert!(
         tekton
@@ -419,6 +420,26 @@ fn freight_and_stage_are_read_in_both_kargo_shapes() {
         parse_stage(&serde_json::json!({"metadata": {"name": "s", "namespace": "n"}})).is_some()
     );
     assert!(parse_freight(&serde_json::json!({})).is_none());
+}
+
+#[test]
+fn a_stage_says_where_it_takes_freight_from() {
+    let stage = |sources| {
+        parse_stage(&serde_json::json!({
+            "metadata": {"name": "s", "namespace": "storefront"},
+            "spec": {"requestedFreight": [
+                {"origin": {"kind": "Warehouse", "name": "images"}, "sources": sources}
+            ]}
+        }))
+        .unwrap()
+    };
+    let first = stage(serde_json::json!({"direct": true}));
+    assert!(first.direct);
+    assert!(first.upstream.is_empty());
+    let later = stage(serde_json::json!({"stages": ["test", "uat"]}));
+    assert!(!later.direct);
+    assert_eq!(later.upstream, ["test", "uat"]);
+    assert_eq!(later.warehouses, ["images"]);
 }
 
 #[test]
@@ -737,7 +758,7 @@ async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
         .tekton
         .refusing_selector("taskruns", "tekton.dev/pipelineRun=storefront-push-y");
 
-    let read = read_builds(&world.tekton, "acme-builds", SHA).await;
+    let read = read_builds(&world.tekton, Some("acme-builds"), SHA).await;
     let Source::Read(builds) = &read else {
         panic!("the builds were read: {read:?}");
     };
@@ -797,7 +818,7 @@ async fn one_builds_refused_task_runs_leave_the_other_build_whole() {
 #[tokio::test]
 async fn tekton_is_discovered_once_for_every_build_it_reads() {
     let world = two_builds();
-    let read = read_builds(&world.tekton, "acme-builds", SHA).await;
+    let read = read_builds(&world.tekton, Some("acme-builds"), SHA).await;
     assert_eq!(read.read().map(Vec::len), Some(2));
     let requests = world.tekton.requests.borrow();
     let discovery: Vec<&str> = requests
@@ -817,7 +838,7 @@ async fn task_runs_that_are_not_served_leave_the_build_standing() {
         .serves("tekton.dev", "v1", &["pipelineruns"])
         .with("pipelineruns", vec![pipeline_run(SHA, true, Some(NEW))])
         .with("taskruns", vec![task_run()]);
-    let read = read_builds(&tekton, "acme-builds", SHA).await;
+    let read = read_builds(&tekton, Some("acme-builds"), SHA).await;
     let builds = read.read().expect("the builds were read");
     assert_eq!(builds.len(), 1);
     assert_eq!(

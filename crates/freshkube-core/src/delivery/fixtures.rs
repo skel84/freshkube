@@ -142,7 +142,26 @@ impl Reader for FixtureReader {
             "GET {}/{} {namespace:?} {name}",
             resource.group, resource.plural
         ));
-        Err(Failure::new(FailureKind::NotFound, "not in the fixture"))
+        let items = match self.lists.get(&resource.plural) {
+            Some(Ok(items)) => items,
+            Some(Err(failure)) => return Err(failure.clone()),
+            None => return Err(Failure::new(FailureKind::NotFound, "not in the fixture")),
+        };
+        items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.pointer("/metadata/name").and_then(Value::as_str) == Some(name)
+                    && namespace.is_none_or(|namespace| {
+                        item.pointer("/metadata/namespace").and_then(Value::as_str)
+                            == Some(namespace)
+                    })
+            })
+            .map(|(index, item)| match self.stamp_meta {
+                true => stamped(item.clone(), &resource.plural, index),
+                false => item.clone(),
+            })
+            .ok_or_else(|| Failure::new(FailureKind::NotFound, "not in the fixture"))
     }
 
     async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
@@ -527,6 +546,39 @@ pub struct World {
 }
 
 impl World {
+    /// The four readers as one cluster, as a change read from one cluster
+    /// sees them: every group and kind each serves.
+    pub fn one_cluster(self) -> FixtureReader {
+        let mut one = FixtureReader::default();
+        for reader in [self.kargo, self.argocd, self.tekton, self.environment] {
+            for group in reader.groups {
+                match one.groups.iter_mut().find(|g| g.name == group.name) {
+                    Some(existing) => {
+                        for version in group.versions {
+                            if !existing.versions.contains(&version) {
+                                existing.versions.push(version);
+                            }
+                        }
+                    }
+                    None => one.groups.push(group),
+                }
+            }
+            for (key, plurals) in reader.plurals {
+                let served = one.plurals.entry(key).or_default();
+                for plural in plurals {
+                    if !served.contains(&plural) {
+                        served.push(plural);
+                    }
+                }
+            }
+            one.lists.extend(reader.lists);
+            one.capped.extend(reader.capped);
+            one.refused_selectors.extend(reader.refused_selectors);
+            one.stamp_meta |= reader.stamp_meta;
+        }
+        one
+    }
+
     /// Every reader answers with a `uid` and `resourceVersion` for its items.
     pub fn with_meta(mut self) -> Self {
         self.kargo = self.kargo.with_meta();

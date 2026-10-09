@@ -180,10 +180,11 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
         running: None,
         eligible,
         promotion,
-        approvers: approvers.into(),
-        promoters: promoters.into(),
+        approvers: Some(approvers.into()),
+        promoters: Some(promoters.into()),
         steps,
         verification,
+        link: None,
         object: stage_object(name),
     };
     vec![
@@ -192,8 +193,12 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
             "dev-fra",
             Healthy,
             "Verified",
-            Eligible::Warehouse { at: at(now, 19) },
-            Promotion::Automatic { at: at(now, 20) },
+            Eligible::Warehouse {
+                at: Some(at(now, 19)),
+            },
+            Promotion::Automatic {
+                at: Some(at(now, 20)),
+            },
             steps(now, Healthy, Some([20, 20, 20, 21])),
             vec![
                 check(Healthy, "checkout-smoke", "passed", Some(at(now, 27))),
@@ -207,10 +212,12 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
             "Verified",
             Eligible::Verified {
                 upstream: "dev".into(),
-                at: at(now, 31),
-                checks: "2 of 2 analyses".into(),
+                at: Some(at(now, 31)),
+                checks: Some("2 of 2 analyses".into()),
             },
-            Promotion::Automatic { at: at(now, 40) },
+            Promotion::Automatic {
+                at: Some(at(now, 40)),
+            },
             steps(now, Healthy, Some([40, 40, 41, 41])),
             vec![
                 check(Healthy, "checkout-smoke", "passed", Some(at(now, 48))),
@@ -232,8 +239,8 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
                 "Waiting for promotion",
                 Eligible::Verified {
                     upstream: "stage".into(),
-                    at: at(now, 62),
-                    checks: "3 of 3 analyses".into(),
+                    at: Some(at(now, 62)),
+                    checks: Some("3 of 3 analyses".into()),
                 },
                 Promotion::Waiting,
                 steps(now, Pending, None),
@@ -249,12 +256,16 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
             Error,
             "Verification failed",
             Eligible::Approved {
-                by: "jon".into(),
-                at: at(now, 50),
+                by: Some("jon".into()),
+                at: Some(at(now, 50)),
                 past: "stage".into(),
-                upstream_verified: Some(at(now, 62)),
+                upstream: Upstream::Verified {
+                    at: Some(at(now, 62)),
+                },
             },
-            Promotion::Automatic { at: at(now, 51) },
+            Promotion::Automatic {
+                at: Some(at(now, 51)),
+            },
             steps(now, Healthy, Some([51, 51, 52, 52])),
             vec![
                 check(Healthy, "checkout-smoke", "passed", Some(at(now, 58))),
