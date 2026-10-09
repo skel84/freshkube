@@ -4,6 +4,107 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.11.0 (2026-10-09)
+
+### Coroot
+
+- The application page draws Coroot's charts from their histories: each sample sits at its own time across the whole window, a missing sample is a gap, and a line under a chart says when Coroot shortened the range, when a series covers only part of the window, or when it has no data. Deployments are marked from the application's revisions, labelled with their hash and image, such as `4f2a9c · worker:1.8.2`, and only on the charts whose window they started in; Coroot's annotation icons no longer stand in for them. When Coroot's histories can't be read, the page says so once, and the charts show no points rather than the layout's.
+- Coroot's application page is now read with coroot-rs's chart histories and deployment revisions, both decoded from the one answer the page's layout comes from. Each chart carries where its samples sit, its gaps and how much of its window Coroot covered, and the page carries the application's deployments with Coroot's own findings. If either one fails to decode, it fails alone and the rest of the page still loads.
+
+### Other changes
+
+- **Menus:** the app has menus: Freshkube, Edit, View, Go and Window in
+  macOS's menu bar, and on Windows and Linux a menu button first in the header
+  that F10 opens ([#244](https://github.com/skel84/freshkube/issues/244)). Each
+  entry runs what its key runs and shows the key, and is greyed where the
+  focused view can't run it. New entries: About Freshkube, Settings… (`⌘,`),
+  View ▸ Appearance, and on macOS Hide (`⌘H`), Hide others (`⌥⌘H`), Show all,
+  Minimize (`⌘M`) and Zoom. Shift-Escape now opens a minimized dock too.
+  `⌘Q` and Quit from the menus now ask before ending a running shell or port
+  forward, as closing the window does; `⌘Q` used to quit without asking.
+- **Edit menu:** Copy, Select all, Find, Find next and Find previous now work
+  from the menu in logs, YAML documents, the pod shell, Processes and Network,
+  as their keys do ([#244](https://github.com/skel84/freshkube/issues/244)).
+  Find opens a list's filter, a log's search or the YAML's find. Processes,
+  Network and Workloads open their filter with `⌘F` as well as `/`.
+  Typing `y`, `1`, `2` or `/` in Network's filter types it, instead of
+  copying a connection or sorting.
+- **Header:** the header is 44 dp instead of 52, one row of 28 dp controls,
+  and gives the 8 dp to the page. The context switcher names the context on
+  one line, with its connection and node count in the tooltip. On macOS the
+  window buttons stay centred in the header at every text size.
+- **Menus show their keys:** a control folded into a page's "…" menu shows
+  its key there, as the row menu does: ⌘R for Refresh, ⇧T for the process
+  Tree, L and O for a service's Logs and node, and Settings' A, E, ⌫, ⌥⌘↑,
+  ⌥⌘↓ and R. The dock tab menu's Close shows ⌘W. Refresh, as a button or
+  folded, now runs ⌘R's refresh on Resources, Nodes, Monitoring and
+  Observability, which also reads the cluster summary again, and its tooltip
+  names ⌘R. Closing a menu gives the keyboard back to what had it.
+- **Platforms:** what differs between macOS, Windows and Linux (the room the
+  header leaves the window's controls, shortcut labels, the terminal's own
+  keys, the dock's Close tab key and where preferences live) now comes from one
+  module ([#244](https://github.com/skel84/freshkube/issues/244)). Nothing
+  changes on macOS. On Windows and Linux, shortcut labels read `Ctrl+K`
+  instead of `Ctrl K`, and the header's leading inset is 12 dp, scaling with
+  the text size, instead of a fixed 12 px.
+- **Sidebar:** the column beside the rail is a source list: sentence-case
+  section labels and titles, rows of the table's height with a soft selection
+  fill, and counts and the rail's problem marks at the right of the row they
+  are about. Past the first 20 namespaces under Workloads, a menu row reaches
+  the rest. The keyboard moves through it as through a table (↑ ↓ Home End,
+  Enter opens, Escape returns to the page), and a column that folds hands the
+  keyboard back to the page.
+- **Split sizes:** every pane you can resize keeps the size you gave it
+  through one shared mechanism: each page's inspector, the Resources details
+  drawer and the dock's height. A drag is saved once, when it ends or pauses,
+  not on every frame. A smaller window shows a split narrower without
+  forgetting the size you chose, and sizes saved by earlier versions still
+  apply.
+- **Applications:** Enter or a double-click on an application opens its own page:
+  its parts grouped by kind, each with how sure its link to the application is
+  (Confirmed, By label, Claimed or Unknown), what was read on each side and why in the
+  Inspector, and any part a read may have missed as its own "May be missing" row
+  ([#521](https://github.com/skel84/freshkube/issues/521)).
+- **Applications:** a new rail area lists what Kargo Projects, Argo CD and the
+  `app.kubernetes.io/part-of` label say the cluster runs, grouped by the rule that
+  found each application, with its evidence and notes in the Inspector. Argo CD is
+  read in the namespaces its own workloads run in, and the page says which. A source
+  that was refused, failed or stopped short says applications may be missing; it is
+  never shown as "no applications" ([#521](https://github.com/skel84/freshkube/issues/521)).
+- **Applications:** a part of an application's page opens in Resources with O, its
+  row menu or the Inspector's Open in Resources, on the cluster it was read in; a
+  part in a cluster that isn't open says so instead
+  ([#521](https://github.com/skel84/freshkube/issues/521)).
+- **Inspector:** stacked under its table, the Inspector settles where it opens, rather
+  than jumping on the next scroll or hover
+  ([#521](https://github.com/skel84/freshkube/issues/521)).
+- **Settings › Workspace edits `workspace.json`:** Add opens a form, and Edit,
+  Remove (after a confirmation) and Move up and down act on the selected
+  cluster, each saved at once. A file the app couldn't use is set aside as
+  `workspace.json.bak` (or `workspace.<time>.bak`, never over an earlier
+  backup) before the first save writes a new one. A file changed by hand
+  since it was read is never overwritten (Reload reads it again), a file the
+  next launch would refuse for its size is not written, keys the app doesn't
+  know are kept and named, and example data is never saved.
+- **Links into another cluster:** an object link made in a cluster of
+  `workspace.json` you have since left now opens that cluster first (asking
+  before it ends a running shell) and then the object. A link from a session
+  that has since reconnected says so and opens nothing. The header names the
+  cluster you picked, with its failed state, when its kubeconfig can't be read,
+  instead of "No context".
+- **Settings › Workspace:** the gear's panel has a Workspace row that opens a
+  Settings page listing the clusters of `workspace.json`, which sits beside
+  the preferences file (cluster, role, context, talosconfig). With no file the
+  workspace is the one cluster the window opened and nothing is saved; a file
+  the app can't use is named with its reason and left where it is.
+- **The header switches between the clusters of `workspace.json`:** the
+  context switcher lists them under Clusters, and picking one opens it
+  through its talosconfig (and Talos context, a new field in the form) or its
+  kubeconfig context (never a file's current context). Switching asks before ending a running shell, keeps
+  nothing reading for the cluster left, and shows its last summary as last
+  known, with its age, when you come back (only if the cluster's files are unchanged). The app starts on the entry you used last (else
+  the first core cluster) when the command line names no source.
+
 ## 0.10.0 (2026-10-08)
 
 ### Other changes
