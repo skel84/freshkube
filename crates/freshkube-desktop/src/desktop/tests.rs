@@ -2185,7 +2185,7 @@ fn the_cached_rail_draws_the_marks_the_first_answer_brings(cx: &mut TestAppConte
 }
 
 /// Applies `change` and returns which parts of the chrome drew again.
-fn chrome_redrawn(
+pub(super) fn chrome_redrawn(
     cx: &mut TestAppContext,
     handle: AnyWindowHandle,
     change: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App),

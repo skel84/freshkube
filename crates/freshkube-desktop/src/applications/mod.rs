@@ -13,6 +13,7 @@
 //! comes back to the list with the selection kept. Each new read reaches the
 //! open page, and one without its application closes it. A part opens in
 //! Resources as any object link does (`links.rs`).
+mod column;
 mod display;
 mod example;
 mod links;
@@ -38,6 +39,9 @@ use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
+pub(crate) use column::Column;
+#[cfg(test)]
+pub(crate) use column::{ColumnApp, ColumnSection};
 use display::{Body, Display, Labels, MARKS, Mark};
 pub(crate) use example::Variant;
 use links::Connections;
@@ -164,6 +168,11 @@ pub(crate) struct ApplicationsPage {
     refocus: Option<FocusHandle>,
     /// `5 applications in 6 clusters`, in the status bar.
     pub(crate) status: Segment,
+    /// What the shell's column lists, derived with the display.
+    column: Column,
+    /// Changes with the column's lines and the application shown, so the
+    /// column draws again only then (`column.rs`).
+    column_revision: usize,
     _subscription: Subscription,
 }
 
@@ -218,6 +227,8 @@ impl ApplicationsPage {
             open: None,
             refocus: None,
             status: Segment::default(),
+            column: Column::new(&Display::default(), false, false),
+            column_revision: 0,
             _subscription: subscription,
         }
     }
@@ -408,6 +419,7 @@ impl ApplicationsPage {
         });
         (self.columns, self.width) = table::columns(&self.display.rows);
         self.status = self.segment();
+        self.derive_column();
         self.update_open(cx);
         self.rebuild(cx);
     }
@@ -434,6 +446,7 @@ impl ApplicationsPage {
     /// if the page had it.
     fn close_open(&mut self, cx: &App) {
         if let Some((page, _)) = self.open.take() {
+            self.column_revision += 1;
             self.refocus = Some(page.read(cx).focus_handle());
         }
     }
@@ -477,12 +490,14 @@ impl ApplicationsPage {
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.open = Some((page, subscription));
+        self.column_revision += 1;
         cx.notify();
     }
 
     /// Back to the list, with the selection it had.
     fn close_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.open.take().is_some() {
+            self.column_revision += 1;
             self.focus(window, cx);
             cx.notify();
         }

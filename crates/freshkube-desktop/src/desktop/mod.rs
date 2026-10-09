@@ -1,5 +1,7 @@
 mod access;
 mod app_menu;
+#[cfg(test)]
+mod applications_column_tests;
 mod connection;
 pub(crate) mod dock;
 #[cfg(test)]
