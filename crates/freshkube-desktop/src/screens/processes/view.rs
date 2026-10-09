@@ -1,6 +1,8 @@
 //! The Processes page: the toolbar with its filters, the table edge to edge
 //! and the selection's details.
 use super::*;
+use freshkube_ui::menu::Find;
+use gpui_kit::component::input;
 
 impl ProcessesScreen {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -382,7 +384,7 @@ impl Render for ProcessesScreen {
             .on_action(cx.listener(|view, _: &LastProcess, _, cx| view.step(isize::MAX, cx)))
             .on_action(cx.listener(|view, _: &NextPage, _, cx| view.step(PAGE_ROWS, cx)))
             .on_action(cx.listener(|view, _: &PreviousPage, _, cx| view.step(-PAGE_ROWS, cx)))
-            .on_action(cx.listener(|view, _: &CopyCommand, _, cx| view.copy_command(cx)))
+            .on_action(cx.listener(|view, _: &input::Copy, _, cx| view.copy_command(cx)))
             .on_action(cx.listener(|view, _: &ToggleSubtree, _, cx| view.toggle_subtree(cx)))
             .on_action(cx.listener(|view, _: &ToggleTree, _, cx| view.toggle_tree(cx)))
             .on_action(cx.listener(|view, _: &SortByCpu, _, cx| {
@@ -402,7 +404,7 @@ impl Render for ProcessesScreen {
             .on_action(cx.listener(|view, _: &ToggleDiskWait, _, cx| {
                 view.toggle_state_filter(StateFilter::DiskWait, cx)
             }))
-            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+            .on_action(cx.listener(|view, _: &Find, window, cx| {
                 let focus = view.query.read(cx).focus_handle(cx);
                 window.focus(&focus, cx);
             }))

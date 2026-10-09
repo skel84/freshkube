@@ -9,6 +9,8 @@
 mod capture;
 
 use freshkube_core::group_digits;
+use freshkube_ui::menu::Find;
+use gpui_kit::component::input;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -72,9 +74,7 @@ actions!(
         OpenConnections,
         SortPrimary,
         SortSecondary,
-        FocusFilter,
-        ClearFilter,
-        CopyConnection
+        ClearFilter
     ]
 );
 
@@ -327,10 +327,11 @@ impl ScreenPanel for NetworkScreen {
             KeyBinding::new("enter", OpenConnections, Some(CONTEXT)),
             KeyBinding::new("1", SortPrimary, Some(CONTEXT)),
             KeyBinding::new("2", SortSecondary, Some(CONTEXT)),
-            KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
+            KeyBinding::new("/", Find, Some(CONTEXT)),
+            KeyBinding::new("secondary-f", Find, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
-            KeyBinding::new("secondary-c", CopyConnection, Some(CONTEXT)),
-            KeyBinding::new("y", CopyConnection, Some(CONTEXT)),
+            KeyBinding::new("secondary-c", input::Copy, Some(CONTEXT)),
+            KeyBinding::new("y", input::Copy, Some(CONTEXT)),
         ]);
         let query = cx.new(|cx| {
             InputState::new(window, cx).placeholder("Filter by address, service, process or state")

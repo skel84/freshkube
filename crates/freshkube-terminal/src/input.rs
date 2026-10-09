@@ -15,12 +15,13 @@ use std::ops::Range;
 use alacritty_terminal::term::TermMode;
 use gpui_kit::{
     App, Bounds, ClipboardItem, Context, EntityInputHandler, Global, KeyBinding, Keystroke,
-    KeystrokeEvent, Pixels, Subscription, UTF16Selection, WeakEntity, Window, actions, point,
+    KeystrokeEvent, Pixels, Subscription, UTF16Selection, WeakEntity, Window, actions,
+    component::input as kit, point,
 };
 
 use super::{CONTEXT, TerminalView};
 
-actions!(terminal, [CopySelection, PasteClipboard, LeaveTerminal]);
+actions!(terminal, [LeaveTerminal]);
 
 /// Every terminal view, so a keystroke can find the focused one; and the
 /// interceptor that hands it the keys. Set once per App, which also marks
@@ -36,8 +37,8 @@ pub(super) fn register(view: WeakEntity<TerminalView>, cx: &mut App) {
     if !cx.has_global::<Terminals>() {
         let keys = freshkube_ui::platform::terminal_keys();
         cx.bind_keys([
-            KeyBinding::new(keys.copy, CopySelection, Some(CONTEXT)),
-            KeyBinding::new(keys.paste, PasteClipboard, Some(CONTEXT)),
+            KeyBinding::new(keys.copy, kit::Copy, Some(CONTEXT)),
+            KeyBinding::new(keys.paste, kit::Paste, Some(CONTEXT)),
             KeyBinding::new(keys.leave, LeaveTerminal, Some(CONTEXT)),
         ]);
         let interceptor = cx.intercept_keystrokes(intercept);

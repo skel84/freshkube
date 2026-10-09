@@ -2,6 +2,7 @@
 //! TUI's workload view. Namespaces come first with problems on top; each one
 //! expands to its deployments, statefulsets, daemonsets and the pods that need
 //! attention. Read-only: nothing here changes the cluster.
+use freshkube_ui::menu::Find;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -52,7 +53,6 @@ actions!(
         PreviousPage,
         ToggleExpanded,
         ToggleUnhealthy,
-        FocusFilter,
         ClearFilter
     ]
 );
@@ -279,7 +279,8 @@ impl ScreenPanel for WorkloadsScreen {
             KeyBinding::new("pageup", PreviousPage, Some(CONTEXT)),
             KeyBinding::new("enter", ToggleExpanded, Some(CONTEXT)),
             KeyBinding::new("u", ToggleUnhealthy, Some(CONTEXT)),
-            KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
+            KeyBinding::new("/", Find, Some(CONTEXT)),
+            KeyBinding::new("secondary-f", Find, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
         ]);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter  /"));

@@ -3,6 +3,7 @@
 //! and filtered locally, and selected by identity. Read-only: nothing here
 //! changes the cluster.
 
+use freshkube_ui::menu::Find;
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 
@@ -70,7 +71,6 @@ actions!(
         LastItem,
         NextPage,
         PreviousPage,
-        FocusFilter,
         ClearFilter,
         LeaveFilter,
         OpenSelected,
@@ -303,8 +303,8 @@ impl ResourcesScreen {
             KeyBinding::new("end", LastItem, Some(CONTEXT)),
             KeyBinding::new("pagedown", NextPage, Some(CONTEXT)),
             KeyBinding::new("pageup", PreviousPage, Some(CONTEXT)),
-            KeyBinding::new("/", FocusFilter, Some(CONTEXT)),
-            KeyBinding::new("secondary-f", FocusFilter, Some(CONTEXT)),
+            KeyBinding::new("/", Find, Some(CONTEXT)),
+            KeyBinding::new("secondary-f", Find, Some(CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(CONTEXT)),
             KeyBinding::new("enter", OpenSelected, Some(CONTEXT)),
             KeyBinding::new("n", ChooseNamespace, Some(CONTEXT)),
@@ -325,8 +325,8 @@ impl ResourcesScreen {
             KeyBinding::new("end", LastItem, Some(EMBEDDED_CONTEXT)),
             KeyBinding::new("pagedown", NextPage, Some(EMBEDDED_CONTEXT)),
             KeyBinding::new("pageup", PreviousPage, Some(EMBEDDED_CONTEXT)),
-            KeyBinding::new("/", FocusFilter, Some(EMBEDDED_CONTEXT)),
-            KeyBinding::new("secondary-f", FocusFilter, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("/", Find, Some(EMBEDDED_CONTEXT)),
+            KeyBinding::new("secondary-f", Find, Some(EMBEDDED_CONTEXT)),
             KeyBinding::new("escape", ClearFilter, Some(EMBEDDED_CONTEXT)),
             KeyBinding::new("enter", OpenSelected, Some(EMBEDDED_CONTEXT)),
         ]);

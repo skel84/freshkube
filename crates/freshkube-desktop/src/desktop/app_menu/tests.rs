@@ -270,12 +270,13 @@ fn live(action: impl Action, cx: &mut TestAppContext) -> bool {
 }
 
 /// Edit's entries are live only where the focused view handles them: on
-/// a table nothing pastes, cuts or selects all, and in its filter Kit's
-/// input does. The check sees the page's handlers through Kit's Root, not
+/// a table nothing pastes, cuts or selects all, and Find opens its filter;
+/// in the filter Kit's input does the rest; a log copies, selects all and
+/// finds. The check sees the page's handlers through Kit's Root, not
 /// only Root's own.
 #[gpui_kit::test]
 fn edit_greys_what_the_focused_view_does_not_handle(cx: &mut TestAppContext) {
-    let (_runtime, handle, _pilot) = on_pods(cx);
+    let (_runtime, handle, pilot) = on_pods(cx);
     let focused = |id: &'static str, cx: &mut TestAppContext| {
         cx.update_window(handle, |_, window, _| window.find(id).focused())
             .unwrap()
@@ -288,8 +289,10 @@ fn edit_greys_what_the_focused_view_does_not_handle(cx: &mut TestAppContext) {
     // Kit's Root answers Copy in every window, copying the window's
     // selected text, so it stays live on a table (DESIGN.md).
     assert!(live(Copy, cx));
-    // Find is the next step's.
-    assert!(!live(Find, cx));
+    // Find opens the list's filter; there is nothing to step through.
+    assert!(live(Find, cx));
+    assert!(!live(FindNext, cx));
+    assert!(!live(FindPrevious, cx));
     // The shell's own entries are live here.
     assert!(live(Refresh, cx));
     assert!(live(ToggleColumn, cx));
@@ -304,7 +307,35 @@ fn edit_greys_what_the_focused_view_does_not_handle(cx: &mut TestAppContext) {
     assert!(live(SelectAll, cx));
     assert!(live(Undo, cx));
     assert!(live(Copy, cx));
+    // The filter sits outside the list's context: it is what Find opens.
     assert!(!live(Find, cx));
+
+    // A log copies, selects all and finds with the same entries, and
+    // takes no text.
+    let pod = running_pod(&pilot, cx);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.open_object(builtin("pods").unwrap(), pod.into(), Tab::Logs, window, cx)
+        })
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.within("dock").click("logs-viewport", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert_eq!(focused("logs-viewport", cx), Some(true));
+    assert!(live(Copy, cx));
+    assert!(live(SelectAll, cx));
+    assert!(live(Find, cx));
+    assert!(live(FindNext, cx));
+    assert!(live(FindPrevious, cx));
+    assert!(!live(Paste, cx));
+    assert!(!live(Cut, cx));
+    assert!(!live(Undo, cx));
 }
 
 /// Where there is no menu bar, the header's menu button opens the menus
@@ -596,4 +627,39 @@ fn the_bar_shows_keys_appkit_reads(cx: &mut TestAppContext) {
             .collect()
     });
     assert!(unread.is_empty(), "AppKit can't read {unread:?}");
+}
+
+/// The resource pane answers Edit by its tab: on Details, Find opens the
+/// YAML's search and nothing else acts; on YAML its lines copy, select
+/// all and step through matches.
+#[gpui_kit::test]
+fn the_pane_answers_edit_by_its_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_pods(cx);
+    let pod = running_pod(&pilot, cx);
+    let show = |tab: Tab, cx: &mut TestAppContext| {
+        let pod = pod.clone();
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_object(builtin("pods").unwrap(), pod.into(), tab, window, cx)
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+        cx.update_window(handle, |_, window, cx| window.click("resource-detail", cx))
+            .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+    };
+    show(Tab::Overview, cx);
+    assert!(live(Find, cx));
+    assert!(!live(FindNext, cx));
+    assert!(!live(SelectAll, cx));
+    show(Tab::Yaml, cx);
+    assert!(live(Find, cx));
+    assert!(live(FindNext, cx));
+    assert!(live(FindPrevious, cx));
+    assert!(live(SelectAll, cx));
+    assert!(live(Copy, cx));
+    assert!(!live(Paste, cx));
 }

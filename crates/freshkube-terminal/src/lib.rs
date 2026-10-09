@@ -368,8 +368,12 @@ impl Render for TerminalView {
             .bg(rgb(colors.background))
             .p(dp(PADDING))
             .cursor_text()
-            .on_action(cx.listener(|this, _: &input::CopySelection, _, cx| this.copy(cx)))
-            .on_action(cx.listener(|this, _: &input::PasteClipboard, _, cx| this.paste(cx)))
+            .on_action(
+                cx.listener(|this, _: &gpui_kit::component::input::Copy, _, cx| this.copy(cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &gpui_kit::component::input::Paste, _, cx| this.paste(cx)),
+            )
             .on_action(
                 cx.listener(|_, _: &input::LeaveTerminal, _, cx| cx.emit(TerminalEvent::Leave)),
             )

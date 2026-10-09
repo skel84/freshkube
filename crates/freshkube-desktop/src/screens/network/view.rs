@@ -1,4 +1,6 @@
 use super::*;
+use freshkube_ui::menu::Find;
+use gpui_kit::component::input;
 
 impl NetworkScreen {
     fn render_header(
@@ -867,7 +869,7 @@ impl Render for NetworkScreen {
                 };
                 view.set_sort(sort, cx);
             }))
-            .on_action(cx.listener(|view, _: &FocusFilter, window, cx| {
+            .on_action(cx.listener(|view, _: &Find, window, cx| {
                 if matches!(view.view, View::Connections | View::Listeners) {
                     let focus = view.query.read(cx).focus_handle(cx);
                     window.focus(&focus, cx);
@@ -876,7 +878,7 @@ impl Render for NetworkScreen {
             .on_action(
                 cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
             )
-            .on_action(cx.listener(|view, _: &CopyConnection, _, cx| view.copy_connection(cx)))
+            .on_action(cx.listener(|view, _: &input::Copy, _, cx| view.copy_connection(cx)))
             .child(page)
     }
 }

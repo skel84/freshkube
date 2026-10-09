@@ -6,7 +6,7 @@ use gpui_kit::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
         button::{Button, ButtonVariants},
         h_flex,
-        input::Input,
+        input::{self, Input},
         menu::{DropdownMenu, PopupMenuItem},
         scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
         tooltip::Tooltip,
@@ -20,12 +20,12 @@ use gpui_kit::{
 use freshkube_core::types::LogLevel;
 
 use super::{
-    CONTEXT, ClearSelection, CopySelected, ExtendNext, ExtendPrevious, FindNext, FindPrevious,
-    FirstLine, FocusSearch, LIST_LEAST_REMS, LastLine, LeaveSearch, LogSource, LogView,
-    ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext, PagePrevious, PreviousLine,
-    SEARCH_CONTEXT, SelectAll, StayInSearch,
+    CONTEXT, ClearSelection, ExtendNext, ExtendPrevious, FirstLine, LIST_LEAST_REMS, LastLine,
+    LeaveSearch, LogSource, LogView, ManualReviewScroll, NextLine, PANEL_CONTEXT, PageNext,
+    PagePrevious, PreviousLine, SEARCH_CONTEXT, StayInSearch,
     review::{Mark, shown_message},
 };
+use freshkube_ui::menu::{Find, FindNext, FindPrevious};
 use freshkube_ui::palette::{Palette, palette};
 use freshkube_ui::tooltip::FollowTooltip as _;
 use freshkube_ui::ui::{self, dp};
@@ -648,7 +648,7 @@ impl<S: LogSource> Render for LogView<S> {
                 }
                 cx.stop_propagation();
             }))
-            .on_action(cx.listener(|this, _: &CopySelected, _, cx| this.copy(cx)))
+            .on_action(cx.listener(|this, _: &input::Copy, _, cx| this.copy(cx)))
             .on_action(cx.listener(|this, _: &NextLine, _, cx| this.navigate(1, false, cx)))
             .on_action(cx.listener(|this, _: &PreviousLine, _, cx| this.navigate(-1, false, cx)))
             .on_action(cx.listener(|this, _: &ExtendNext, _, cx| this.navigate(1, true, cx)))
@@ -657,7 +657,7 @@ impl<S: LogSource> Render for LogView<S> {
             .on_action(cx.listener(|this, _: &PagePrevious, _, cx| this.navigate(-20, false, cx)))
             .on_action(cx.listener(|this, _: &FirstLine, _, cx| this.navigate(isize::MIN, false, cx)))
             .on_action(cx.listener(|this, _: &LastLine, _, cx| this.navigate(isize::MAX, false, cx)))
-            .on_action(cx.listener(|this, _: &SelectAll, _, cx| this.select_all(cx)))
+            .on_action(cx.listener(|this, _: &input::SelectAll, _, cx| this.select_all(cx)))
             .on_action(cx.listener(|this, _: &ClearSelection, _, cx| this.clear_selection(cx)))
             .on_mouse_down(gpui_kit::MouseButton::Left, cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
             .on_prepaint(move |bounds, window, cx| {
@@ -696,9 +696,7 @@ impl<S: LogSource> Render for LogView<S> {
             .aria_label(S::panel_label(self))
             .test_support()
             .key_context(PANEL_CONTEXT)
-            .on_action(
-                cx.listener(|this, _: &FocusSearch, window, cx| this.focus_search(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &Find, window, cx| this.focus_search(window, cx)))
             .on_action(cx.listener(|this, _: &FindNext, _, cx| this.search(true, cx)))
             .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.search(false, cx)))
             .size_full()

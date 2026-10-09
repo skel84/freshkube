@@ -7,7 +7,7 @@ use gpui_kit::base::ObservedElement as Observed;
 use gpui_kit::component::{
     Disableable, Selectable, Sizable,
     button::{Button, ButtonVariants},
-    h_flex,
+    h_flex, input,
     menu::{DropdownMenu, PopupMenuItem},
     tooltip::Tooltip,
     v_flex,
@@ -16,14 +16,14 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{
-    CONTEXT, CopyLines, DetailEvent, DetailPane, Dismiss, FindInYaml, FindNextMatch,
-    FindPreviousMatch, NextTab, PreviousTab, Section, SelectAllLines, TABS_CONTEXT, Tab,
+    CONTEXT, DetailEvent, DetailPane, Dismiss, NextTab, PreviousTab, Section, TABS_CONTEXT, Tab,
 };
 use crate::logs::role_heading;
 use crate::palette::palette;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_ui::inspector::{self, Inspector};
+use freshkube_ui::menu::{Find, FindNext, FindPrevious};
 
 impl DetailPane {
     fn header(&self, detail: &Detail, cx: &mut Context<Self>) -> Div {
@@ -616,12 +616,24 @@ impl Render for DetailPane {
                 CONTEXT
             })
             .track_focus(&self.focus)
-            .on_action(cx.listener(|pane, _: &FindInYaml, window, cx| pane.focus_find(window, cx)))
-            .on_action(cx.listener(|pane, _: &SelectAllLines, _, cx| pane.select_all(cx)))
-            .on_action(cx.listener(|pane, _: &CopyLines, _, cx| pane.copy_lines(cx)))
             .on_action(cx.listener(|pane, _: &Dismiss, window, cx| pane.dismiss(window, cx)))
-            .on_action(cx.listener(|pane, _: &FindNextMatch, _, cx| pane.find_match(true, cx)))
-            .on_action(cx.listener(|pane, _: &FindPreviousMatch, _, cx| pane.find_match(false, cx)))
+            // Edit's entries are live only where they act: Find opens the
+            // YAML's search from Details too, the rest act on the YAML, and
+            // elsewhere Copy goes on to Root, which copies selected text.
+            .when(!matches!(self.tab, Tab::Logs | Tab::Ports), |frame| {
+                frame.on_action(
+                    cx.listener(|pane, _: &Find, window, cx| pane.focus_find(window, cx)),
+                )
+            })
+            .when(self.tab == Tab::Yaml, |frame| {
+                frame
+                    .on_action(cx.listener(|pane, _: &input::SelectAll, _, cx| pane.select_all(cx)))
+                    .on_action(cx.listener(|pane, _: &input::Copy, _, cx| pane.copy_lines(cx)))
+                    .on_action(cx.listener(|pane, _: &FindNext, _, cx| pane.find_match(true, cx)))
+                    .on_action(
+                        cx.listener(|pane, _: &FindPrevious, _, cx| pane.find_match(false, cx)),
+                    )
+            })
             .on_action(cx.listener(|pane, _: &NextTab, window, cx| pane.switch_tab(1, window, cx)))
             .on_action(
                 cx.listener(|pane, _: &PreviousTab, window, cx| pane.switch_tab(-1, window, cx)),
