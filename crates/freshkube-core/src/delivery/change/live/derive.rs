@@ -1011,10 +1011,10 @@ fn current_hash(evidence: &Evidence, link: &Link) -> Result<String, String> {
         .deployment_sets
         .read()
         .ok_or("the Deployment's ReplicaSets couldn't be read")?;
-    // current_set finds only a ReplicaSet that carries the hash, and says
-    // when the current one doesn't.
     let set = current_set(deployment, sets)?;
-    Ok(set.pod_hash.clone().unwrap_or_default())
+    set.pod_hash
+        .clone()
+        .ok_or_else(|| "its current ReplicaSet carries no pod-template-hash label".into())
 }
 
 /// The builds of the Freight's commit: every link the join made before it
