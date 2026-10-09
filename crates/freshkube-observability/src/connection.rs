@@ -23,6 +23,9 @@ pub(super) enum Subject {
     Profiling(api::AppId, api::ProfileQuery),
     /// An application's logs, by the query without its `since`.
     Logs(api::AppId, api::LogQuery),
+    /// The window around one of an application's revisions: its id and
+    /// each side's seconds.
+    Revision(api::AppId, String, u64),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct ReadIdentity {
@@ -51,6 +54,7 @@ pub(super) struct Live {
     pub trace_job: Option<ReadJob>,
     pub profile_job: Option<ReadJob>,
     pub logs_job: Option<ReadJob>,
+    pub revision_job: Option<ReadJob>,
     pub range: api::TimeRange,
     clock_origin: std::time::Instant,
     time_origin: chrono::DateTime<chrono::Utc>,
@@ -62,12 +66,15 @@ pub(super) struct Live {
     pub view: Snapshot<api::AppView, ReadIdentity>,
     /// The view's last read was refused, rather than failed.
     pub view_refused: bool,
+    /// Coroot refused the last window read around a revision.
+    pub revision_refused: bool,
     pub incidents: Snapshot<Vec<api::Incident>, ReadIdentity>,
     pub incident: Snapshot<api::IncidentView, ReadIdentity>,
     pub tracing: Snapshot<api::Tracing, ReadIdentity>,
     pub trace: Snapshot<api::Tracing, ReadIdentity>,
     pub profiling: Snapshot<api::Profiling, ReadIdentity>,
     pub logs: Snapshot<api::LogsView, ReadIdentity>,
+    pub revision: Snapshot<api::RevisionView, ReadIdentity>,
     /// What reading the applications and the service map showed of access.
     pub capabilities: [api::Capability; 2],
 }
@@ -99,6 +106,7 @@ impl Live {
             trace_job: None,
             profile_job: None,
             logs_job: None,
+            revision_job: None,
             range,
             clock_origin: now,
             time_origin,
@@ -109,12 +117,14 @@ impl Live {
             map: Snapshot::default(),
             view: Snapshot::default(),
             view_refused: false,
+            revision_refused: false,
             incidents: Snapshot::default(),
             incident: Snapshot::default(),
             tracing: Snapshot::default(),
             trace: Snapshot::default(),
             profiling: Snapshot::default(),
             logs: Snapshot::default(),
+            revision: Snapshot::default(),
             capabilities: [api::Capability::Unchecked; 2],
         }
     }
@@ -126,6 +136,7 @@ impl Live {
         self.trace_job = None;
         self.profile_job = None;
         self.logs_job = None;
+        self.revision_job = None;
         self.connecting = false;
     }
     fn clear(&mut self) {
@@ -140,6 +151,8 @@ impl Live {
         self.trace = Snapshot::default();
         self.profiling = Snapshot::default();
         self.logs = Snapshot::default();
+        self.revision = Snapshot::default();
+        self.revision_refused = false;
         self.capabilities = [api::Capability::Unchecked; 2];
     }
 }
@@ -203,6 +216,7 @@ impl ObservabilityPage {
     pub(super) fn clear_observations(&mut self) {
         self.live.clear();
         self.incident_observations = self.incident_observations.cleared();
+        self.revision_observations = self.revision_observations.cleared();
         self.live_traces = Default::default();
         // The headers stay known, so a first read shows them over its loading rows.
         self.prepare_trace_columns();
@@ -258,6 +272,7 @@ impl ObservabilityPage {
         self.live.range_label = range_label(self.live.range);
         self.live.clear();
         self.incident_observations.clear_evidence();
+        self.revision_observations.clear_evidence();
         self.live_traces.reset();
         if !self.fixture {
             self.applications.clear();
@@ -299,6 +314,7 @@ impl ObservabilityPage {
         ));
         self.live.clear();
         self.incident_observations.clear_evidence();
+        self.revision_observations.clear_evidence();
         self.live_traces.reset();
         self.report_snapshot = None;
         self.refresh(cx);
@@ -439,6 +455,9 @@ impl ObservabilityPage {
                 self.read_embedded(cx);
             }
             self.answer_example_incidents();
+            if self.destination == Destination::Deployments && !self.prepare_revisions(cx) {
+                self.read_revision(cx);
+            }
             if self.destination == Destination::Traces {
                 self.read_traces(cx);
             }
@@ -512,7 +531,20 @@ impl ObservabilityPage {
                 self.read_view(provider.clone(), source.clone(), cx);
                 self.read_embedded(cx);
             }
-            _ => {}
+            Destination::Deployments => {
+                if self.applications.is_empty() {
+                    self.read_applications(provider.clone(), source.clone(), identity, cx);
+                }
+                if self.selected_app.is_some() {
+                    // What the page already read shows while it's read
+                    // again: never an empty list it hasn't answered.
+                    let reading = self.prepare_revisions(cx);
+                    self.read_view(provider, source, cx);
+                    if !reading {
+                        self.read_revision(cx);
+                    }
+                }
+            }
         }
         cx.notify();
     }

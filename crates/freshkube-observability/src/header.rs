@@ -106,9 +106,14 @@ impl ObservabilityPage {
             freshkube_ui::menu::MenuAction::new("Refresh", page::Refresh).enabled(enabled),
             &self.focus,
         );
-        header
-            .foldable(time, range)
-            .foldable(button, folded_refresh)
+        // Coroot keeps an application's revisions whatever the range, and
+        // the inspector picks its own window around one.
+        let header = if self.destination == Destination::Deployments {
+            header
+        } else {
+            header.foldable(time, range)
+        };
+        header.foldable(button, folded_refresh)
     }
 
     /// The Coroot projects as checked items: the project picker's menu, and
