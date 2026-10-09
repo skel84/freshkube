@@ -167,7 +167,7 @@ mod ui_tests {
             window.render_frame(cx);
             assert!(window.find("obs-revision-no-data").visible());
             assert!(window.try_find("obs-revision-failed").is_none());
-            assert!(page.read(cx).revision_charts().is_empty());
+            assert!(page.read(cx).revision_observations.charts().is_empty());
         })
         .unwrap();
     }
@@ -209,7 +209,8 @@ mod ui_tests {
             let slug = format!("obs-chart-revision-{}-", other.to_lowercase());
             assert!(
                 page.read(cx)
-                    .revision_charts()
+                    .revision_observations
+                    .charts()
                     .iter()
                     .all(|c| c.id.starts_with(&slug))
             );
@@ -288,14 +289,24 @@ mod ui_tests {
     }
 
     #[gpui_kit::test]
-    fn a_narrow_window_stacks_the_inspector_under_the_table(cx: &mut TestAppContext) {
-        let (_runtime, handle, _page) = open_example(cx, 760., 560.);
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            let table = window.find("obs-deployments-table").bounds();
-            let detail = window.find("obs-revision-detail").bounds();
-            assert!(detail.top() >= table.bottom() - gpui_kit::px(1.));
-        })
-        .unwrap();
+    fn the_inspector_sits_beside_the_table_or_under_it_when_narrow(cx: &mut TestAppContext) {
+        use freshkube_ui::layout_check::assert_inspector;
+        for (width, height, beside) in [(1260., 900., true), (760., 560., false)] {
+            let (_runtime, handle, _page) = open_example(cx, width, height);
+            cx.update_window(handle, |_, window, cx| {
+                assert_inspector(
+                    window,
+                    cx,
+                    "obs-deployments-split",
+                    "obs-deployments-table",
+                    "obs-revision-detail",
+                    "obs-revision-title",
+                );
+                let table = window.find("obs-deployments-table").bounds();
+                let detail = window.find("obs-revision-detail").bounds();
+                assert_eq!(detail.left() > table.left(), beside, "{width}");
+            })
+            .unwrap();
+        }
     }
 }

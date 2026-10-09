@@ -66,6 +66,8 @@ pub(super) struct Live {
     pub view: Snapshot<api::AppView, ReadIdentity>,
     /// The view's last read was refused, rather than failed.
     pub view_refused: bool,
+    /// Coroot refused the last window read around a revision.
+    pub revision_refused: bool,
     pub incidents: Snapshot<Vec<api::Incident>, ReadIdentity>,
     pub incident: Snapshot<api::IncidentView, ReadIdentity>,
     pub tracing: Snapshot<api::Tracing, ReadIdentity>,
@@ -115,6 +117,7 @@ impl Live {
             map: Snapshot::default(),
             view: Snapshot::default(),
             view_refused: false,
+            revision_refused: false,
             incidents: Snapshot::default(),
             incident: Snapshot::default(),
             tracing: Snapshot::default(),
@@ -149,6 +152,7 @@ impl Live {
         self.profiling = Snapshot::default();
         self.logs = Snapshot::default();
         self.revision = Snapshot::default();
+        self.revision_refused = false;
         self.capabilities = [api::Capability::Unchecked; 2];
     }
 }
@@ -451,8 +455,7 @@ impl ObservabilityPage {
                 self.read_embedded(cx);
             }
             self.answer_example_incidents();
-            if self.destination == Destination::Deployments {
-                self.prepare_revisions(cx);
+            if self.destination == Destination::Deployments && !self.prepare_revisions(cx) {
                 self.read_revision(cx);
             }
             if self.destination == Destination::Traces {
@@ -533,8 +536,13 @@ impl ObservabilityPage {
                     self.read_applications(provider.clone(), source.clone(), identity, cx);
                 }
                 if self.selected_app.is_some() {
+                    // What the page already read shows while it's read
+                    // again: never an empty list it hasn't answered.
+                    let reading = self.prepare_revisions(cx);
                     self.read_view(provider, source, cx);
-                    self.read_revision(cx);
+                    if !reading {
+                        self.read_revision(cx);
+                    }
                 }
             }
         }

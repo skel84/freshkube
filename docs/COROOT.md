@@ -156,15 +156,18 @@ The Logs tab (`freshkube-observability`'s `logs/`) reads only while the page sho
 
 ## Deployments
 
-Deployments (`freshkube-observability`'s `deployments/`) lists the chosen application's revisions from its own page: Coroot's Deployments report, decoded by coroot-rs as `DeploymentRevision`s. Coroot keeps an application's last 100 and doesn't filter them by the time range, which the status bar's tooltip says. A revision is keyed by its id, `<hash>:<start seconds>`; its row shows the hash, the images Coroot names, its start in local time and Coroot's first finding or note.
+Deployments (`freshkube-observability`'s `deployments/`) lists the chosen application's revisions from its own page: Coroot's Deployments report, decoded by coroot-rs as `DeploymentRevision`s. Coroot keeps an application's last 100, which the status bar's tooltip says, and doesn't filter them by the time range, so the header has no range picker here: the Inspector picks its own window. A revision is keyed by its id, `<hash>:<start seconds>`; its row shows the hash, the images Coroot names and its start in local time, then Coroot's first finding or note, the last two cut at a word with the whole text in the tooltip. While the application's page is read again, the list keeps the revisions it already read; until a page answers, it claims none.
 
-The selected revision's Inspector shows Coroot's findings in Coroot's words, with no number of Freshkube's: Coroot compares a revision with an earlier one it kept metrics for and doesn't say which. Under them, the application's page is read again over a window around the start (core's `Provider::revision_view`, ±30 min, ±1 h or ±3 h), and the chosen report's charts draw split at the start, each saying how many samples fall on either side ("Before the start: all 30 samples · after: 12 of 31 samples") and never a value compared across it. When Coroot's data stops before the window's end, as for a rollout minutes ago, the Inspector says where.
+The selected revision's Inspector shows Coroot's findings in Coroot's words, with no number of Freshkube's: Coroot compares a revision with an earlier one it kept metrics for and doesn't say which. Under them, the application's page is read again over a window around the start (core's `Provider::revision_view`, ±30 min, ±1 h or ±3 h), and the chosen report's charts draw split at the start, each saying how many samples fall on either side, summed across its series ("Before the start: all 90 samples across 3 series · after: 80 of 93 samples across 3 series") and never a value compared across it. When Coroot's data stops before the window's end, as for a rollout minutes ago, the Inspector says where.
 
 | Answer | Shown |
 | --- | --- |
 | The page over the window | The report's charts, split at the start |
-| Coroot's own 404 "Application not found" for the window | "Coroot has no data for this window": the window is older than Coroot keeps, or the application sent nothing in it. Never a missing application: the revision came from the application's own page |
-| Any other 404, 403 or failure | Its message and Retry; a last answer for the same window stays under it as stale |
-| No revisions | Coroot records rollouts of Kubernetes Deployments only; another kind says so by name |
+| Coroot's own 404 "Application not found" for the window | "Coroot has no data for this window": the window is older than Coroot keeps, newer than its latest data, or the application sent nothing in it. Never a missing application: the revision came from the application's own page |
+| 403 for the window | "Not permitted to read this application's window", its message and Retry |
+| Any other 404 or failure | Its message and Retry; a last answer for the same window stays under it as stale |
+| 403 for the application's page | "Not permitted to read this application", in the list's place |
+| No revisions, a Deployment | "Coroot keeps no deployment of this application": Coroot records one when a Deployment's pods roll out |
+| No revisions, another kind | "Coroot records rollouts of Deployments only", naming the application's kind |
 
-The window's read has its own identity (application, revision and window) and generation; another revision or window drops the read in flight. Example data answers from the example hour: the newest revision's window reaches past now and ends early, and one older than seven days has no data.
+The window's read has its own identity (application, revision and window) and generation; another revision or window drops the read in flight, and so does hiding the page. Example data answers from the example hour: the newest revision's window reaches past now and ends early, and one older than seven days has no data.

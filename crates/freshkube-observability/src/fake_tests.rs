@@ -19,8 +19,11 @@ struct Server {
     /// The status the logs path answers with while the rest answer 200.
     logs_status: Arc<AtomicU16>,
     /// 1: the application's page lists two revisions; 2: also, the window
-    /// around one answers Coroot's 404; 3: the window answers 500.
+    /// around one answers Coroot's 404; 3: the window answers 500; 4: the
+    /// newest revision's ±30 min window waits for `window_gate`; 5: the
+    /// window answers 403.
     deploy_mode: Arc<AtomicUsize>,
+    window_gate: Arc<tokio::sync::Notify>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -46,10 +49,12 @@ impl Server {
         let logs_state = logs_status.clone();
         let deploy_mode = Arc::new(AtomicUsize::new(0));
         let deploys = deploy_mode.clone();
+        let window_gate = Arc::new(tokio::sync::Notify::new());
+        let held = window_gate.clone();
         let task=runtime.spawn(async move {
             loop {
                 let (mut socket,_)=listener.accept().await.unwrap();
-                let (state,reads,captured,mode,gate,logs_state,deploys)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone(),logs_state.clone(),deploys.clone());
+                let (state,reads,captured,mode,gate,logs_state,deploys,held)=(state.clone(),reads.clone(),captured.clone(),mode.clone(),gate.clone(),logs_state.clone(),deploys.clone(),held.clone());
                 tokio::spawn(async move {
                     let mut buf=vec![0;16384]; let Ok(n)=socket.read(&mut buf).await else{return;};
                     let request=String::from_utf8_lossy(&buf[..n]);
@@ -62,6 +67,7 @@ impl Server {
                     let status=if path.contains("/logs") && status==200 {logs_state.load(Ordering::SeqCst)} else {status};
                     let selected_mode=mode.load(Ordering::SeqCst);
                     if path.contains("/incident/k1") && selected_mode==5 {gate.notified().await;}
+                    if path.contains(NEWEST_WINDOW) && deploys.load(Ordering::SeqCst)==4 {held.notified().await;}
                     let body=if path.contains("/incidents") {
                         let a=incident_wire("k1"); let b=incident_wire("k2");
                         match selected_mode {
@@ -104,6 +110,7 @@ impl Server {
                     let (code,body,kind)=match deploys.load(Ordering::SeqCst) {
                         2 if window=>(404,"Application not found\n".to_owned(),"text/plain"),
                         3 if window=>(500,"internal error".to_owned(),"text/plain"),
+                        5 if window=>(403,"forbidden".to_owned(),"text/plain"),
                         _=>(code,body,"application/json"),
                     };
                     let response=format!("HTTP/1.1 {code} Test\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
@@ -120,6 +127,7 @@ impl Server {
             incident_gate,
             logs_status,
             deploy_mode,
+            window_gate,
             task,
         }
     }
@@ -1477,6 +1485,49 @@ async fn a_first_read_that_fails_says_so_with_retry(cx: &mut TestAppContext) {
     }
 }
 
+/// The newest revision's ±30 min window, as its request names it.
+const NEWEST_WINDOW: &str = "from=1789997200000";
+
+/// Waits until `count` requests named `part`, and the page read the
+/// application.
+async fn sent(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+    server: &Server,
+    part: &'static str,
+    count: usize,
+) {
+    let (observed, paths) = (page.clone(), server.paths.clone());
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        let paths = paths.lock().unwrap();
+        paths.iter().filter(|p| p.contains(part)).count() >= count
+            && !observed.read(cx).live.view.is_loading()
+    })
+    .await;
+}
+
+/// Opens Deployments on the fake's application.
+fn open_deployments(cx: &mut TestAppContext, page: &gpui_kit::Entity<ObservabilityPage>) {
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.selected_app = Some(page.applications[0].id.clone());
+            page.open(Destination::Deployments, cx);
+        })
+    });
+}
+
+/// The window the last answer covers, from its start in milliseconds.
+fn answered_from(
+    cx: &mut TestAppContext,
+    page: &gpui_kit::Entity<ObservabilityPage>,
+) -> Option<i64> {
+    cx.read(|cx| {
+        let answer = page.read(cx).live.revision.data();
+        answer.map(|answer| answer.from.timestamp_millis())
+    })
+}
+
 /// Coroot's Deployments report: two revisions, newest first.
 fn deployments_wire() -> serde_json::Value {
     let row = |id: &str, version: &str, summaries: serde_json::Value| {
@@ -1582,6 +1633,148 @@ async fn deployments_read_coroots_revisions_and_the_window_around_one(cx: &mut T
         window.render_frame(cx);
         assert!(window.try_find("obs-revision-failed").is_none());
         assert!(window.find("obs-revision-window").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn coming_from_the_application_page_keeps_its_revisions_while_it_is_read_again(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    connected(cx, handle, &page, server.url.clone()).await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.selected_app = Some(page.applications[0].id.clone());
+            page.open(Destination::Application, cx);
+        })
+    });
+    sent(cx, handle, &page, &server, "/app/", 1).await;
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| page.open(Destination::Deployments, cx));
+        assert!(
+            page.read(cx).live.view.is_loading(),
+            "the page is read again"
+        );
+        window.render_frame(cx);
+        assert!(window.find("obs-revision-9c41e7-1789999000").visible());
+        assert!(
+            window.try_find("obs-deployments-empty").is_none(),
+            "no empty state while the application is read again"
+        );
+    })
+    .unwrap();
+    revision_read(cx, handle, &page).await;
+    cx.read(|cx| {
+        assert!(
+            page.read(cx).app_page.is_some(),
+            "the Application page follows the read"
+        )
+    });
+}
+
+#[gpui_kit::test]
+async fn a_window_read_shows_loading_and_a_newer_choice_or_hiding_drops_its_answer(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(4, Ordering::SeqCst);
+    connected(cx, handle, &page, server.url.clone()).await;
+    open_deployments(cx, &page);
+    sent(cx, handle, &page, &server, NEWEST_WINDOW, 1).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.revision.is_loading());
+        window.render_frame(cx);
+        assert!(window.find("obs-revision-loading").visible());
+        assert!(window.find("obs-revision-read").visible(), "Reading");
+        // Another revision supersedes the read in flight.
+        window.click("obs-revision-2b70aa-1789990000", cx);
+    })
+    .unwrap();
+    revision_read(cx, handle, &page).await;
+    server.window_gate.notify_one();
+    cx.run_until_parked();
+    cx.read(|cx| {
+        let answer = page.read(cx).live.revision.data().unwrap();
+        assert_eq!(answer.revision.id, "2b70aa:1789990000");
+    });
+
+    // So does another window.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-revision-9c41e7-1789999000", cx);
+    })
+    .unwrap();
+    sent(cx, handle, &page, &server, NEWEST_WINDOW, 2).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-revision-window-1", cx);
+    })
+    .unwrap();
+    revision_read(cx, handle, &page).await;
+    server.window_gate.notify_one();
+    cx.run_until_parked();
+    assert_eq!(answered_from(cx, &page), Some(1_789_995_400_000));
+
+    // Hiding drops the read in flight, and its late answer never lands.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("obs-revision-window-0", cx);
+    })
+    .unwrap();
+    sent(cx, handle, &page, &server, NEWEST_WINDOW, 3).await;
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            assert!(page.live.revision_job.is_none());
+        })
+    });
+    server.window_gate.notify_one();
+    cx.run_until_parked();
+    assert_ne!(answered_from(cx, &page), Some(1_789_997_200_000));
+}
+
+#[gpui_kit::test]
+async fn a_refused_window_says_not_permitted(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(5, Ordering::SeqCst);
+    connected(cx, handle, &page, server.url.clone()).await;
+    open_deployments(cx, &page);
+    revision_read(cx, handle, &page).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.revision_refused);
+        window.render_frame(cx);
+        assert!(window.find("obs-revision-refused").visible());
+        assert!(window.try_find("obs-revision-failed").is_none());
+        // The list stays: only the window was refused.
+        assert!(window.find("obs-revision-9c41e7-1789999000").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn a_refused_application_page_says_not_permitted_on_deployments(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    connected(cx, handle, &page, server.url.clone()).await;
+    server.status.store(403, Ordering::SeqCst);
+    open_deployments(cx, &page);
+    sent(cx, handle, &page, &server, "/app/", 1).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.view_refused);
+        window.render_frame(cx);
+        assert!(window.find("obs-refused").visible());
+        assert!(window.try_find("obs-failed").is_none());
+        assert!(window.try_find("obs-deployments-empty").is_none());
     })
     .unwrap();
 }

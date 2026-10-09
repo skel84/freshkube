@@ -681,7 +681,13 @@ fn every_observability_destination_keeps_its_shared_header(cx: &mut TestAppConte
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.find("obs-title").visible());
-            assert!(window.find("obs-time").visible());
+            // Coroot keeps revisions whatever the range, and Deployments'
+            // inspector picks its own window around one.
+            if destination == Destination::Deployments {
+                assert!(window.try_find("obs-time").is_none());
+            } else {
+                assert!(window.find("obs-time").visible());
+            }
             assert!(window.find("obs-refresh").visible());
             let page_id = gpui_kit::ElementId::from("observability-page");
             let refreshes = gpui_kit::base::test_support::snapshots(window)

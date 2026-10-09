@@ -7,6 +7,8 @@ pub(super) struct Detail {
     /// The report whose charts show: the one chosen, else the first with
     /// charts.
     pub(super) report: String,
+    /// The window read, in local time.
+    window: SharedString,
     answer: Answer,
 }
 
@@ -54,9 +56,16 @@ fn histories(view: &api::AppView) -> impl Iterator<Item = &api::ChartHistory> {
 }
 
 pub(super) fn prepare(answer: &api::RevisionView, chosen: &str) -> Detail {
+    let window = format!(
+        "From {} to {}",
+        format::local_time(answer.from),
+        format::local_time(answer.to)
+    )
+    .into();
     let api::Around::View(view) = &answer.answer else {
         return Detail {
             report: chosen.to_owned(),
+            window,
             answer: Answer::NoData,
         };
     };
@@ -103,6 +112,7 @@ pub(super) fn prepare(answer: &api::RevisionView, chosen: &str) -> Detail {
         });
     Detail {
         report: report.map_or_else(|| chosen.to_owned(), |r| r.name.clone()),
+        window,
         answer: Answer::Page {
             tabs,
             charts,
@@ -156,8 +166,9 @@ impl ObservabilityPage {
                 .heading(self.revision_heading(row, cx))
                 .child(
                     part()
+                        // The title has the hash; Coroot's label adds the images.
                         .child(
-                            mono(revision.version.clone())
+                            mono(row.image.clone())
                                 .id("obs-revision-version")
                                 .test_support()
                                 .whitespace_normal(),
@@ -279,13 +290,21 @@ impl ObservabilityPage {
         // it, as stale.
         let error = self.revision_error();
         let failed = error.is_some();
+        let refused = self.revision_refused();
         let section = section("Around the start", cx)
             .child(picker)
             .children(error.map(|error| {
                 part()
-                    .id("obs-revision-failed")
+                    .id(if refused {
+                        "obs-revision-refused"
+                    } else {
+                        "obs-revision-failed"
+                    })
                     .test_support()
                     .role(Role::Status)
+                    .when(refused, |this| {
+                        this.child(text("Not permitted to read this application's window"))
+                    })
                     .child(
                         text(error)
                             .text_color(palette(cx).crit_ink)
@@ -313,25 +332,17 @@ impl ObservabilityPage {
                     .child(ui::skeleton(relative(0.7), dp(12.))),
             );
         };
-        let window = self.revision_answer().map(|answer| {
-            muted(
-                format!(
-                    "From {} to {}",
-                    format::local_time(answer.from),
-                    format::local_time(answer.to)
-                ),
-                cx,
-            )
-            .id("obs-revision-window")
-            .test_support()
-        });
-        let section = section.children(window);
+        let section = section.child(
+            muted(detail.window.clone(), cx)
+                .id("obs-revision-window")
+                .test_support(),
+        );
         match &detail.answer {
             Answer::NoData => section.child(
                 ui::empty_state(
                     IconName::Inbox,
                     "Coroot has no data for this window",
-                    "Coroot keeps no metrics of this application from then: the window is older than Coroot keeps, or the application sent none in it.",
+                    "Coroot keeps no metrics of this application from then: the window is older than Coroot keeps, newer than its latest data, or the application sent none in it.",
                     None,
                     Vec::new(),
                     cx,

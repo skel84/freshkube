@@ -28,6 +28,9 @@ pub(super) struct Revisions {
     rows: Vec<Row>,
     /// Why Coroot's revisions couldn't be read from the application's page.
     list_error: Option<String>,
+    /// The rows come from a page of the application that answered; until
+    /// one does, its having no revisions isn't known.
+    answered: bool,
     columns: Vec<PageColumn>,
     width: f32,
     /// What the status bar counts.
@@ -89,6 +92,7 @@ impl Revisions {
             Some(Ok(values)) => values.as_slice(),
             _ => &[],
         };
+        self.answered = revisions.is_some();
         self.list_error = match revisions {
             Some(Err(error)) => Some(error.to_string()),
             _ => None,
@@ -110,6 +114,11 @@ impl Revisions {
     #[cfg(test)]
     pub(crate) fn list_error(&self) -> Option<&String> {
         self.list_error.as_ref()
+    }
+
+    /// The charts around the selected revision, as the inspector shows them.
+    pub(crate) fn charts(&self) -> &[Rc<Charts>] {
+        self.detail.as_ref().map_or(&[], |detail| detail.charts())
     }
 
     fn selected(&self) -> Option<&Row> {
@@ -169,9 +178,10 @@ impl ObservabilityPage {
     /// Derives the rows from the chosen application's page, Coroot's or
     /// the example's, and reads the selected revision's window again when
     /// the selection changed.
-    pub(super) fn prepare_revisions(&mut self, cx: &mut Context<Self>) {
+    /// True when the selection changed and the window is being read again.
+    pub(super) fn prepare_revisions(&mut self, cx: &mut Context<Self>) -> bool {
         if self.fixture && self.hold {
-            return;
+            return false;
         }
         let app = self.selected_app.clone();
         let example;
@@ -192,6 +202,7 @@ impl ObservabilityPage {
             self.revision_observations.clear_evidence();
             self.read_revision(cx);
         }
+        changed
     }
 
     /// Reads the window around the selected revision: Coroot's page of the
@@ -234,11 +245,13 @@ impl ObservabilityPage {
                     .await
             },
             move |this, result, cx| {
+                let refused = matches!(result, Err(api::ReadError::Refused));
                 if this
                     .live
                     .revision
                     .apply(&request, result.map_err(|e| e.to_string()))
                 {
+                    this.live.revision_refused = refused;
                     this.prepare_revision_detail();
                     cx.notify();
                 }
@@ -269,6 +282,11 @@ impl ObservabilityPage {
         }
     }
 
+    /// Whether the window's failed read was Coroot refusing it.
+    fn revision_refused(&self) -> bool {
+        !self.fixture && self.live.revision_refused && self.live.revision.error().is_some()
+    }
+
     /// Derives the inspector from the window's answer and the report
     /// chosen.
     pub(super) fn prepare_revision_detail(&mut self) {
@@ -284,14 +302,6 @@ impl ObservabilityPage {
             state.report = detail.report.clone();
         }
         state.detail = detail;
-    }
-
-    /// The charts the inspector shows, for the panels kept beside them.
-    pub(super) fn revision_charts(&self) -> &[Rc<Charts>] {
-        self.revision_observations
-            .detail
-            .as_ref()
-            .map_or(&[], |detail| detail.charts())
     }
 
     pub(super) fn select_revision(&mut self, id: String, cx: &mut Context<Self>) {

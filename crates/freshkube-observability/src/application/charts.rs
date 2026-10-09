@@ -91,6 +91,8 @@ struct Side {
     places: bool,
     present: usize,
     expected: usize,
+    /// Series Coroot placed in the window, whose samples the counts sum.
+    series: usize,
     /// Series whose samples Coroot didn't place in the window.
     unplaced: usize,
 }
@@ -101,6 +103,14 @@ impl Side {
             return;
         };
         self.places = true;
+        if !matches!(
+            side,
+            api::SideCoverage::Full | api::SideCoverage::Gaps { .. } | api::SideCoverage::Empty
+        ) {
+            self.unplaced += 1;
+            return;
+        }
+        self.series += 1;
         match side {
             api::SideCoverage::Full => {
                 self.present += places;
@@ -111,7 +121,7 @@ impl Side {
                 self.expected += expected;
             }
             api::SideCoverage::Empty => self.expected += places,
-            _ => self.unplaced += 1,
+            _ => {}
         }
     }
 
@@ -125,6 +135,10 @@ impl Side {
             (present, expected) if present == expected => format!("all {expected} samples"),
             (present, expected) => format!("{present} of {expected} samples"),
         };
+        // The counts sum the series, so say how many there are.
+        if self.series > 1 && !words.is_empty() {
+            words.push_str(&format!(" across {} series", self.series));
+        }
         if self.unplaced > 0 {
             if !words.is_empty() {
                 words.push_str(", ");
@@ -314,17 +328,19 @@ impl ObservabilityPage {
     pub(crate) fn sync_app_charts(&mut self, cx: &mut Context<Self>) {
         // Deployments shows the charts around a revision; the other
         // destinations the application page's.
-        let shown: Vec<Rc<Charts>> = if self.destination == Destination::Deployments {
-            self.revision_charts().to_vec()
+        let deployments = self.destination == Destination::Deployments;
+        let revision = if deployments {
+            self.revision_observations.charts()
         } else {
-            match &self.app_page {
-                Some(page) => page.charts().cloned().collect(),
-                None => vec![],
-            }
+            &[]
         };
+        let page = self.app_page.as_ref().filter(|_| !deployments);
         let picks = &self.app_picks;
         let wanted = || {
-            shown.iter().filter_map(|charts| {
+            let shown = revision
+                .iter()
+                .chain(page.into_iter().flat_map(AppPage::charts));
+            shown.filter_map(|charts| {
                 let shown = charts.shown(picks);
                 charts.choices[shown]
                     .panel
@@ -450,5 +466,28 @@ impl ObservabilityPage {
 
     pub(super) fn render_heat_block(&self, block: &HeatBlock, cx: &Context<Self>) -> AnyElement {
         self.static_heatmap(block.id.clone(), block.title.clone(), &block.heat, cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Side;
+    use freshkube_core::coroot as api;
+
+    #[test]
+    fn a_side_says_how_many_series_its_samples_are_summed_across() {
+        let mut side = Side::default();
+        side.add(Some(api::SideCoverage::Full), 30);
+        assert_eq!(side.words(), "all 30 samples");
+        side.add(Some(api::SideCoverage::Full), 30);
+        side.add(
+            Some(api::SideCoverage::Gaps {
+                present: 20,
+                expected: 30,
+            }),
+            30,
+        );
+        assert_eq!(side.words(), "80 of 90 samples across 3 series");
+        assert_eq!(Side::default().words(), "no samples in the window");
     }
 }

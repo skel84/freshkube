@@ -419,7 +419,7 @@ Steps 1 to 5 are done. What remains here is checking them against the live clust
 
 ## Done: Fog and the observability prototype
 
-The user selected Fog and the canonical G7/G7c, G8 and H1–H7 PDF comps. [DESIGN.md](DESIGN.md) supersedes Console's tokens, typography, frame, meters and chart palette. That pass added interactive H1–H7 fixtures and an Integration required state for real connections. Threshold edits and incident muting stay in the example session; fixes and rollback are previews. The existing Prometheus dashboards retain their live provider.
+The user selected Fog and the canonical G7/G7c, G8 and H1–H7 PDF comps. [DESIGN.md](DESIGN.md) supersedes Console's tokens, typography, frame, meters and chart palette. That pass added interactive H1–H7 fixtures and an Integration required state for real connections. Threshold edits and incident muting stay in the example session. The fix and rollback previews were later removed, since Coroot offers neither ([#557](https://github.com/skel84/freshkube/pull/557)). The existing Prometheus dashboards retain their live provider.
 
 At that prototype checkpoint, `ObservabilityPage` owned selections and prepared display data without a runtime handle, credentials or provider. The [first live slice](COROOT.md) now adds the retained requests and connection controls, with a focused core provider, stable identities, explicit freshness/capabilities and guarded navigation. Empty healthy, empty unknown and absent signals stay distinct. Profiling and deployments have since landed. Diagnostics and Lifecycle rule extractions remain independent follow-ups.
 

@@ -65,14 +65,20 @@ impl ObservabilityPage {
                     .into_any_element(),
             );
         }
-        let refused = self.destination == Destination::Applications
-            && matches!(
+        let refused = match self.destination {
+            Destination::Applications => matches!(
                 self.live.capabilities[0],
                 freshkube_core::coroot::Capability::Unavailable(
                     freshkube_core::coroot::ReadError::Refused
                 )
-            );
-        let title = if refused {
+            ),
+            // The revisions come from the application's page.
+            Destination::Deployments => self.live.view_refused && self.live.view.error().is_some(),
+            _ => false,
+        };
+        let title = if refused && self.destination == Destination::Deployments {
+            "Not permitted to read this application".to_owned()
+        } else if refused {
             "Not permitted to list applications".to_owned()
         } else {
             format!("Couldn't read {}", self.destination.label().to_lowercase())

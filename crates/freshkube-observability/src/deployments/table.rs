@@ -6,8 +6,10 @@ use crate::tables::TableCells;
 use freshkube_ui::table::{self, DataTable, Line, RowStyle, TableRow};
 
 /// Coroot keeps the history; the status bar's tooltip says how much.
-const NOTE: &str =
-    "Coroot keeps an application's last 100 deployments.\nThe time range doesn't filter them.";
+const NOTE: &str = "Coroot keeps an application's last 100 deployments.";
+
+/// The list's accessibility label.
+const LIST_LABEL: &str = "Deployments of the chosen application; choose one to read around its start. Coroot keeps an application's last 100 deployments.";
 
 const COLUMNS: [ColumnKind; 5] = [
     ColumnKind::Glyph,
@@ -87,7 +89,9 @@ impl ObservabilityPage {
                     width: match kind {
                         ColumnKind::Glyph => table::GLYPH_WIDTH,
                         ColumnKind::Finding => 160.,
-                        ColumnKind::Image => measured.clamp(96., 320.),
+                        // Narrow enough beside the inspector for Coroot's
+                        // finding to show; the tooltip has every image.
+                        ColumnKind::Image => measured.clamp(96., 200.),
                         _ => measured.max(56.),
                     },
                 }
@@ -119,9 +123,7 @@ impl ObservabilityPage {
         self.revision_observations.width
     }
     pub(crate) fn revision_list_label(&self) -> String {
-        format!(
-            "Deployments of the chosen application; choose one to read around its start. {NOTE}"
-        )
+        LIST_LABEL.to_owned()
     }
     pub(crate) fn revision_selected_key(&self) -> Option<&TableKey> {
         self.revision_observations.selected.as_ref()
@@ -169,25 +171,46 @@ impl ObservabilityPage {
                 .child(text(value.clone()).truncate())
         };
         match column.kind {
-            ColumnKind::Glyph => {
-                table::glyph_cell(column).children(ui::status_glyph(row.status.tone(), cx))
+            ColumnKind::Glyph => table::glyph_cell(column)
+                .children(ui::status_glyph(row.status.tone(), cx))
+                .into_any_element(),
+            ColumnKind::Revision => mono(cell, &row.hash, 12.5).into_any_element(),
+            ColumnKind::Image => {
+                table::word_cell(column, format!("{}-image", row.id), row.image.clone())
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .font_family(MONO_FONT)
+                    .text_size(dp(12.5))
+                    .text_color(p.ink_2)
+                    .into_any_element()
             }
-            ColumnKind::Revision => mono(cell, &row.hash, 12.5),
-            ColumnKind::Image => mono(cell.text_color(p.ink_2), &row.image, 12.5),
-            ColumnKind::Started => mono(cell.text_color(p.ink_2), &row.started, 12.),
+            ColumnKind::Started => {
+                mono(cell.text_color(p.ink_2), &row.started, 12.).into_any_element()
+            }
             // Coroot's words, in the interface face.
-            ColumnKind::Finding => cell
-                .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
-                .child(text(row.finding.clone()).truncate()),
-            _ => cell,
+            ColumnKind::Finding => {
+                table::word_cell(column, format!("{}-finding", row.id), row.finding.clone())
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
+                    .into_any_element()
+            }
+            _ => cell.into_any_element(),
         }
-        .into_any_element()
     }
     pub(crate) fn revision_empty(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.revision_rows().is_empty() {
             return None;
         }
         let state = &self.revision_observations;
+        // Until the application's page answers, having no revisions isn't
+        // known: its loading rows or its failure show instead.
+        let known = state.answered && state.app == self.selected_app;
+        if self.selected_app.is_some() && !known {
+            return None;
+        }
         let empty = match (&self.selected_app, &state.list_error) {
             (None, _) => ui::empty_state(
                 IconName::LayoutGrid,

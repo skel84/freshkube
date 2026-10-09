@@ -285,10 +285,11 @@ impl ObservabilityPage {
                     .apply(&request, result.map_err(|e| e.to_string()))
                 {
                     this.live.view_refused = refused;
+                    // Both, so the Application page is never left stale.
+                    this.prepare_report();
                     if this.destination == Destination::Deployments {
                         this.prepare_revisions(cx);
                     } else {
-                        this.prepare_report();
                         this.read_embedded(cx);
                     }
                     cx.notify();
