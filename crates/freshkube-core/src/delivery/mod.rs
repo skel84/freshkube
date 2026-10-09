@@ -7,6 +7,7 @@
 //! [`read::ReadOnlyClient`], which can only GET; nothing here writes.
 
 pub mod argocd;
+pub mod change;
 pub mod collect;
 pub mod deployments;
 pub mod digest;

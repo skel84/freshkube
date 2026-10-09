@@ -568,7 +568,8 @@ fn build() -> Vec<Hop> {
             detail: "Tekton Chains, keyless · SLSA v1",
             from: "cicd-fra",
             time: "09:18",
-            link: Some(Confidence::Confirmed),
+            // Only Chains' annotation says it signed; no key is read.
+            link: Some(Confidence::Claimed),
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: "Tekton Chains",
                 title: "checkout-push-x7k2-build",
@@ -580,12 +581,13 @@ fn build() -> Vec<Hop> {
                     ("Subject", DIGEST, true),
                 ],
                 link: Some(Link {
-                    confidence: Confidence::Confirmed,
+                    confidence: Confidence::Claimed,
                     by: "digest",
                     before: "Run checkout-push-x7k2",
                     before_says: DIGEST,
-                    here_says: "the signed subject is the same digest",
-                    why: "The digest matches on both sides.",
+                    here_says: "Chains' annotation says it signed this digest",
+                    why: "Only Chains' annotation says signed: no key or transparency log \
+                          was read, so the signature isn't verified.",
                 }),
                 unlinked: None,
                 actions: vec![open(Opens::Resources {

@@ -88,7 +88,7 @@ impl ApplicationPage {
         Some(
             Inspector::new("application-detail")
                 .heading(heading)
-                .child(render_open(row, cx))
+                .child(render_open(row, cx).children(render_follow(row, cx)))
                 .children(fields(&row.fields, cx))
                 .child(link)
                 .render(cx)
@@ -155,6 +155,7 @@ impl Render for ApplicationPage {
             .on_action(cx.listener(|this, _: &PreviousPart, _, cx| this.step(-1, cx)))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))
             .on_action(cx.listener(|this, _: &OpenPart, _, cx| this.open_part(cx)))
+            .on_action(cx.listener(|this, _: &FollowFreight, _, cx| this.follow(cx)))
             .flex()
             .flex_col()
             .size_full()
@@ -184,9 +185,9 @@ impl Render for ApplicationPage {
 
 /// Open in Resources, greyed out with why for a part in a cluster that
 /// isn't open.
-fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> impl IntoElement {
+fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> Div {
     let tip = row.open_tip.clone();
-    h_flex().child(
+    h_flex().gap(dp(6.)).flex_wrap().child(
         Button::new("application-detail-open")
             .outline()
             .xsmall()
@@ -200,5 +201,20 @@ fn render_open(row: &PartRow, cx: &mut Context<ApplicationPage>) -> impl IntoEle
                 |button| button.tooltip_with_action(tip.clone(), &OpenPart, Some(CONTEXT)),
             )
             .on_click(cx.listener(|this, _, _, cx| this.open_part(cx))),
+    )
+}
+
+/// Follow, for a Kargo Stage whose change was read: the change page on
+/// that Stage.
+fn render_follow(row: &PartRow, cx: &mut Context<ApplicationPage>) -> Option<impl IntoElement> {
+    let freight = row.follows.clone()?;
+    let tip = format!("Follow Freight {freight} from its commit to the pods on each Stage");
+    Some(
+        Button::new("application-detail-follow")
+            .outline()
+            .xsmall()
+            .label(format!("Follow {freight}"))
+            .tooltip_with_action(tip, &FollowFreight, Some(CONTEXT))
+            .on_click(cx.listener(|this, _, _, cx| this.follow(cx))),
     )
 }

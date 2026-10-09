@@ -13,6 +13,10 @@
 //! which opens it as every object link opens. The button and the menu item
 //! are greyed out, with why, for a part in a cluster that isn't open; O
 //! sends its link anyway, and the shell says it can't open it.
+//!
+//! A Kargo Stage whose change was read leads to it: F, the row menu's
+//! Follow and the Inspector's button ask the list to show the change
+//! page on that Stage.
 mod table;
 #[cfg(test)]
 mod tests;
@@ -48,16 +52,19 @@ gpui_kit::actions!(
         /// Clears the selection; with none, goes back to the list.
         Back,
         /// Opens the selected part in Resources.
-        OpenPart
+        OpenPart,
+        /// Follows the change the selected Stage carries.
+        FollowFreight
     ]
 );
 
-pub(crate) fn key_bindings() -> [KeyBinding; 4] {
+pub(crate) fn key_bindings() -> [KeyBinding; 5] {
     [
         KeyBinding::new("down", NextPart, Some(CONTEXT)),
         KeyBinding::new("up", PreviousPart, Some(CONTEXT)),
         KeyBinding::new("escape", Back, Some(CONTEXT)),
         KeyBinding::new("o", OpenPart, Some(CONTEXT)),
+        KeyBinding::new("f", FollowFreight, Some(CONTEXT)),
     ]
 }
 
@@ -67,6 +74,8 @@ pub(crate) enum ApplicationEvent {
     Back,
     /// A part to open in Resources.
     Open(Box<ResourceLink>),
+    /// The change a Stage carries, by the Stage's name.
+    Follow(SharedString),
 }
 
 /// One part as the table and the Inspector show it.
@@ -100,6 +109,8 @@ pub(crate) struct PartRow {
     /// The Open in Resources button's tooltip: where it opens the part, or
     /// why it doesn't.
     pub(super) open_tip: SharedString,
+    /// The Freight a Kargo Stage carries, when its change was read.
+    pub(super) follows: Option<SharedString>,
 }
 
 /// A group row: a kind's, or a read's that may have left parts out.
@@ -177,6 +188,10 @@ impl ApplicationPage {
         &self.id
     }
 
+    pub(crate) fn name(&self) -> &SharedString {
+        &self.name
+    }
+
     /// A new read of the application, keeping the selection while its part
     /// is still there.
     pub(super) fn update(
@@ -198,7 +213,16 @@ impl ApplicationPage {
         let Claims { links, gaps } = claims(&read.derived, app);
         self.rows = links
             .iter()
-            .map(|claim| row(app, claim, &read.labels, &read.connections))
+            .map(|claim| {
+                let mut row = row(app, claim, &read.labels, &read.connections);
+                if claim.member.kind == MemberKind::KargoStage {
+                    row.follows = read
+                        .changes
+                        .freight_of(&app.name, &claim.member.name)
+                        .map(SharedString::from);
+                }
+                row
+            })
             .collect();
         (self.groups, self.lines) = lines(&self.rows, &gaps, &read.labels);
         (self.columns, self.width) = table::columns(&self.rows);
@@ -244,6 +268,13 @@ impl ApplicationPage {
     fn open_part(&mut self, cx: &mut Context<Self>) {
         if let Some(row) = self.selected_row() {
             cx.emit(ApplicationEvent::Open(Box::new(row.open.clone())));
+        }
+    }
+
+    /// F: the change the selected Stage carries, when one was read.
+    fn follow(&mut self, cx: &mut Context<Self>) {
+        if let Some(row) = self.selected_row().filter(|row| row.follows.is_some()) {
+            cx.emit(ApplicationEvent::Follow(row.name.clone()));
         }
     }
 
@@ -483,6 +514,7 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
             .clone()
             .unwrap_or_else(|| format!("Open {} on {cluster}, in Resources", member.name).into()),
         closed,
+        follows: None,
     }
 }
 

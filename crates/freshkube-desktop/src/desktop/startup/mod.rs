@@ -234,6 +234,20 @@ impl Pilot {
                 self.applications
                     .update(cx, |page, cx| page.open_named("checkout", window, cx));
             }
+            // checkout's change, on prod-ams's promotion gate: waiting for
+            // someone who may promote.
+            Some("change") if self.fixture => {
+                self.navigate(Page::Applications, window, cx);
+                self.applications.update(cx, |page, cx| {
+                    page.open_named("checkout", window, cx);
+                    page.follow_named("prod-ams", window, cx);
+                    if let Some(change) = page.change_page() {
+                        change.update(cx, |change, cx| {
+                            change.select("prod-ams-promotion", window, cx)
+                        });
+                    }
+                });
+            }
             Some("kubernetes-only") if self.fixture => self.fixture_kubernetes_only(window, cx),
             _ => {}
         }

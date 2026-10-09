@@ -13,6 +13,11 @@
 //! comes back to the list with the selection kept. Each new read reaches the
 //! open page, and one without its application closes it. A part opens in
 //! Resources as any object link does (`links.rs`).
+//!
+//! On a Kargo application's page, a Stage leads to the change it carries
+//! (`change/`), which shows in the application page's place; its
+//! breadcrumb comes back. Only example data has a change to follow yet.
+mod change;
 mod display;
 mod example;
 mod links;
@@ -24,9 +29,12 @@ mod view;
 
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
+
 use freshkube_core::applications::{
     Derived, Inputs, Override, SessionInputs, SessionKey, derive, read::read_session,
 };
+use freshkube_core::delivery::change::{self as delivery_change, Change};
 use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_ui::inspector::InspectorSplit;
@@ -38,6 +46,7 @@ use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
+use change::{ChangeEvent, ChangePage};
 use display::{Body, Display, Labels, MARKS, Mark};
 pub(crate) use example::Variant;
 use links::Connections;
@@ -74,6 +83,7 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("enter", OpenApplication, Some(CONTEXT)),
     ];
     bindings.extend(page::key_bindings());
+    bindings.extend(change::key_bindings());
     bindings
 }
 
@@ -84,6 +94,34 @@ struct Read {
     derived: Derived,
     labels: Labels,
     connections: Connections,
+    changes: Changes,
+}
+
+/// Where a Stage's change comes from.
+#[derive(Clone, Copy, Debug)]
+enum Changes {
+    /// Nothing reads a change yet.
+    None,
+    /// Example data's, its times counted from when it was read.
+    Example(DateTime<Utc>),
+}
+
+impl Changes {
+    /// The Freight a Kargo project's Stage carries, when a change was read.
+    fn freight_of(self, project: &str, stage: &str) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Example(_) => delivery_change::example::freight_of(project, stage),
+        }
+    }
+
+    /// The change a Kargo project's Stage carries, when one was read.
+    fn of_stage(self, project: &str, stage: &str) -> Option<Change> {
+        match self {
+            Self::None => None,
+            Self::Example(now) => delivery_change::example::for_stage(project, stage, now),
+        }
+    }
 }
 
 impl Read {
@@ -92,6 +130,7 @@ impl Read {
             derived: derive(inputs, &Override::default()),
             labels,
             connections,
+            changes: Changes::None,
         }
     }
 
@@ -159,6 +198,8 @@ pub(crate) struct ApplicationsPage {
     inspect: bool,
     /// The application whose page shows in the list's place.
     open: Option<(Entity<ApplicationPage>, Subscription)>,
+    /// The change shown in the application page's place.
+    change: Option<(Entity<ChangePage>, Subscription)>,
     /// The keyboard handle of a page that closed without a window at hand,
     /// kept until the next frame looks whether it had the keyboard.
     refocus: Option<FocusHandle>,
@@ -216,6 +257,7 @@ impl ApplicationsPage {
             selected: None,
             inspect: false,
             open: None,
+            change: None,
             refocus: None,
             status: Segment::default(),
             _subscription: subscription,
@@ -317,11 +359,14 @@ impl ApplicationsPage {
                     return;
                 }
                 let inputs = example::inputs(self.variant);
-                let read = Read::of(
-                    &inputs,
-                    example::labels(&inputs),
-                    example::connections(&source.id),
-                );
+                let read = Read {
+                    changes: Changes::Example(Utc::now()),
+                    ..Read::of(
+                        &inputs,
+                        example::labels(&inputs),
+                        example::connections(&source.id),
+                    )
+                };
                 if self.example_delay.is_zero() {
                     self.answer(&request, Ok(read), cx);
                 } else {
@@ -433,8 +478,12 @@ impl ApplicationsPage {
     /// connection does: the next frame gives the keyboard back to the list
     /// if the page had it.
     fn close_open(&mut self, cx: &App) {
+        let change = self
+            .change
+            .take()
+            .map(|(page, _)| page.read(cx).focus_handle());
         if let Some((page, _)) = self.open.take() {
-            self.refocus = Some(page.read(cx).focus_handle());
+            self.refocus = change.or(Some(page.read(cx).focus_handle()));
         }
     }
 
@@ -468,20 +517,73 @@ impl ApplicationsPage {
         else {
             return;
         };
+        // Its page shows, not a change followed from another.
+        self.change = None;
         let stale = self.stale.clone();
         let page = cx.new(|cx| ApplicationPage::new(app, read, stale, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ApplicationEvent::Back => this.close_application(window, cx),
                 ApplicationEvent::Open(link) => cx.emit(link.as_ref().clone()),
+                ApplicationEvent::Follow(stage) => this.follow(stage, window, cx),
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.open = Some((page, subscription));
         cx.notify();
     }
 
+    /// Shows the change a Stage of the open Kargo application carries, in
+    /// the application page's place, on the Stage's gates.
+    fn follow(&mut self, stage: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some((open, _)), Some(read)) = (&self.open, self.snapshot.data()) else {
+            return;
+        };
+        let project = open.read(cx).name().to_string();
+        let Some(change) = read.changes.of_stage(&project, stage) else {
+            return;
+        };
+        let connections = read.connections.clone();
+        let page = cx.new(|cx| {
+            let mut page = ChangePage::new(change, connections, cx);
+            page.select_stage(stage, window, cx);
+            page
+        });
+        let subscription =
+            cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
+                ChangeEvent::Back => this.close_change(window, cx),
+                ChangeEvent::Open(link) => cx.emit(link.as_ref().clone()),
+            });
+        window.focus(&page.read(cx).focus_handle(), cx);
+        self.change = Some((page, subscription));
+        cx.notify();
+    }
+
+    /// Back to the application's page, with the selection it had.
+    fn close_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.change.take().is_some() {
+            self.focus_shown(window, cx);
+            cx.notify();
+        }
+    }
+
+    /// The change shown, if one is.
+    pub(crate) fn change_page(&self) -> Option<&Entity<ChangePage>> {
+        self.change.as_ref().map(|(page, _)| page)
+    }
+
+    /// Follows a Stage of the open application, for `FRESHKUBE_PAGE=change`.
+    pub(crate) fn follow_named(
+        &mut self,
+        stage: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.follow(stage, window, cx);
+    }
+
     /// Back to the list, with the selection it had.
     fn close_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.change = None;
         if self.open.take().is_some() {
             self.focus(window, cx);
             cx.notify();
@@ -519,6 +621,11 @@ impl ApplicationsPage {
     /// Puts the keyboard on what shows: the open application's page, or
     /// the list.
     pub(crate) fn focus_shown(&self, window: &mut Window, cx: &mut App) {
+        if let Some(change) = self.change_page() {
+            let focus = change.read(cx).focus_handle();
+            window.focus(&focus, cx);
+            return;
+        }
         match self.open_page() {
             Some(page) => {
                 let focus = page.read(cx).focus_handle();
