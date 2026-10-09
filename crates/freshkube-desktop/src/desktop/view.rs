@@ -1,6 +1,7 @@
 use super::*;
 use crate::ui::dp;
 use freshkube_probe::first_frame::FirstFrame;
+use freshkube_ui::platform::{About, AppMenu, OpenAppMenu, OpenSettings};
 
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -117,29 +118,56 @@ impl Render for Pilot {
                 view.adjacent_context(true, window, cx)
             }))
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
+            // Each handler is there only while it can act, so the menus grey
+            // it otherwise and its key goes on to whatever else binds it.
+            .when(self.area.has_column(), |this| {
+                this.on_action(
+                    cx.listener(|view, _: &ToggleColumn, window, cx| {
+                        view.toggle_column(window, cx)
+                    }),
+                )
+            })
+            .when(self.dock.read(cx).has_tabs(), |this| {
+                this.on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
+                    view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
+                }))
+                .on_action(cx.listener(|view, _: &dock::PreviousDockTab, window, cx| {
+                    view.dock.update(cx, |dock, cx| dock.step(-1, window, cx))
+                }))
+                .on_action(cx.listener(
+                    |view, _: &dock::MinimizeDock, window, cx| {
+                        view.dock.update(cx, |dock, cx| {
+                            let open = dock.is_open();
+                            dock.set_open(!open, window, cx)
+                        })
+                    },
+                ))
+            })
+            .on_action(cx.listener(|view, _: &OpenSettings, _, cx| {
+                view.settings_open = true;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
             .on_action(
-                cx.listener(|view, _: &ToggleColumn, window, cx| view.toggle_column(window, cx)),
+                cx.listener(|view, _: &app_menu::UseSystemAppearance, window, cx| {
+                    view.set_appearance(Appearance::System, window, cx)
+                }),
             )
-            .on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
-                if !view.dock.read(cx).has_tabs() {
-                    return cx.propagate();
-                }
-                view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
-            }))
-            .on_action(cx.listener(|view, _: &dock::PreviousDockTab, window, cx| {
-                if !view.dock.read(cx).has_tabs() {
-                    return cx.propagate();
-                }
-                view.dock.update(cx, |dock, cx| dock.step(-1, window, cx))
-            }))
-            .on_action(cx.listener(|view, _: &dock::MinimizeDock, window, cx| {
-                // Without tabs there is no dock: the key goes on.
-                if !view.dock.read(cx).has_tabs() {
-                    return cx.propagate();
-                }
-                view.dock
-                    .update(cx, |dock, cx| dock.set_open(false, window, cx))
-            }))
+            .on_action(
+                cx.listener(|view, _: &app_menu::UseLightAppearance, window, cx| {
+                    view.set_appearance(Appearance::Light, window, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|view, _: &app_menu::UseDarkAppearance, window, cx| {
+                    view.set_appearance(Appearance::Dark, window, cx)
+                }),
+            )
+            .when(self.menu_platform.app_menu() == AppMenu::Button, |this| {
+                this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
+                    view.open_app_menu(false, window, cx)
+                }))
+            })
             .child(
                 self.chrome.header.clone().cached(
                     StyleRefinement::default()

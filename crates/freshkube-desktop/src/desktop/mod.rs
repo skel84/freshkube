@@ -1,4 +1,5 @@
 mod access;
+mod app_menu;
 mod connection;
 pub(crate) mod dock;
 #[cfg(test)]
@@ -80,6 +81,9 @@ pub(crate) use pages::Page;
 use pages::{Area, ColumnReveal, ScreenKind};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
+/// A key context no element draws: a binding in it only gives macOS's bar
+/// the key to show.
+const MENU_BAR_ONLY: &str = "MenuBarOnly";
 pub(crate) use freshkube_ui::page::{COLUMN_WIDTH, PAGE_PADDING, RAIL_WIDTH};
 // Desktop's screen tests measure pages at this old path.
 #[cfg(test)]
@@ -143,6 +147,32 @@ gpui_kit::actions!(
     ]
 );
 
+/// Quit answers: quitting mid-operation would abandon a half-done change,
+/// and quitting ends a shell, so it asks first. `quit` ends the app, once
+/// they agree; tests pass their own, since a test app can't quit.
+///
+/// Its key and the menus send Quit from inside the window's own update,
+/// where the window can't be updated again, so it asks once that update
+/// ends; asking inside it found no window and quit without a word.
+pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
+    cx.on_action(move |_: &Quit, cx| {
+        cx.defer(move |cx| {
+            let Some(window) = cx.windows().into_iter().next() else {
+                return quit(cx);
+            };
+            let may_quit = window
+                .update(cx, |_, window, cx| {
+                    mutation::may_close(window, cx)
+                        && pod_shell::may_close(window, cx, move |_, cx| quit(cx))
+                })
+                .unwrap_or(true);
+            if may_quit {
+                quit(cx);
+            }
+        });
+    });
+}
+
 pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
     let error = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_error = error.clone();
@@ -156,22 +186,14 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             // Tests never run this, so they keep the reduced motion they set.
             freshkube_ui::motion::follow_system(cx);
             cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
-            cx.on_action(|_: &Quit, cx| {
-                // Quitting mid-operation would abandon a half-done change,
-                // and quitting ends a shell, so it asks first.
-                let Some(window) = cx.windows().into_iter().next() else {
-                    return cx.quit();
-                };
-                let may_quit = window
-                    .update(cx, |_, window, cx| {
-                        mutation::may_close(window, cx)
-                            && pod_shell::may_close(window, cx, |_, cx| cx.quit())
-                    })
-                    .unwrap_or(true);
-                if may_quit {
-                    cx.quit();
-                }
-            });
+            freshkube_ui::platform::bind_keys(cx);
+            // Maintenance mode has the same menus; the shell sets them again
+            // as what they state changes.
+            cx.set_menus(app_menu::menus(
+                freshkube_ui::platform::Platform::current(),
+                &app_menu::MenuState::default(),
+            ));
+            on_quit(cx, |cx| cx.quit());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -434,6 +456,18 @@ pub(crate) struct Pilot {
     kubernetes_only: Option<kubernetes_only::KubernetesOnly>,
     /// Whether the settings popover is open; a page can open it too.
     settings_open: bool,
+    /// The platform whose menu the window has: the one it runs on, but a
+    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`,
+    /// and tests choose.
+    menu_platform: freshkube_ui::platform::Platform,
+    /// The menu button's menu while it's open, and its dismissal's
+    /// subscription.
+    app_menu_popup: Option<(Entity<gpui_kit::component::menu::PopupMenu>, Subscription)>,
+    /// What had the keyboard when the menu button was pressed, before its
+    /// popover took it: the view the menu's entries act on.
+    app_menu_focus: Option<FocusHandle>,
+    /// What the installed menus state, to set them again only on a change.
+    menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     page: Page,
     overview_display: crate::presentation::overview::Overview,
@@ -549,6 +583,13 @@ impl Pilot {
                 ShowLifecycle,
                 Some(freshkube_ui::page::SHELL_CONTEXT),
             ),
+            // macOS's bar shows and binds an action's first binding, and
+            // GPUI hands AppKit the name `tab`, of which AppKit keeps the
+            // T: ⌃T would switch screens. The Tab character itself, in a
+            // context nothing draws, binds nothing here, and AppKit shows
+            // no key for it, since Control-Tab moves its focus.
+            KeyBinding::new("ctrl-\t", NextScreen, Some(MENU_BAR_ONLY)),
+            KeyBinding::new("ctrl-shift-\t", PreviousScreen, Some(MENU_BAR_ONLY)),
             // Reaches the screens without a number of their own.
             KeyBinding::new(
                 "ctrl-tab",
@@ -1148,6 +1189,10 @@ impl Pilot {
             age_label: cx.new(|_| switch::AgeLabel::new()),
             switcher: Vec::new(),
             settings_open: false,
+            menu_platform: app_menu::menu_platform(),
+            app_menu_popup: None,
+            app_menu_focus: None,
+            menu_state: None,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
             overview_display: Default::default(),
@@ -1198,6 +1243,7 @@ impl Pilot {
         }
         view._subscriptions
             .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
+        view.watch_menus(window, cx);
         view._subscriptions.push(cx.subscribe_in(
             &view.system_services,
             window,
