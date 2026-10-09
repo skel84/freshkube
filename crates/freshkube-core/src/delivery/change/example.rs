@@ -158,6 +158,12 @@ pub fn kargo_page() -> Address {
         .join(["project", PROJECT, "freight", FREIGHT])
 }
 
+/// Where the release pipeline checks policy: on Kargo's cluster, the one
+/// the example opens, so its logs open there.
+pub const RELEASE_NAMESPACE: &str = "checkout-release";
+/// The release run's policy TaskRun.
+pub const VERIFY_TASK: &str = "checkout-release-wonky-otter-verify";
+
 /// The pod a TaskRun of the CI cluster ran its steps in.
 fn step_logs(task: &str, run: &str) -> Action {
     Action::new(Target::Logs {
@@ -597,7 +603,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         state: Healthy,
         name: "Policy acme-prod".into(),
         detail: "Conforma: 41 of 41 rules passed".into(),
-        from: CICD.into(),
+        from: CORE.into(),
         at: Some(at(now, 18)),
         link: Some(Confidence::Confirmed),
         shows: Shows::Hop(Box::new(HopDetail {
@@ -607,7 +613,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             notice: None,
             fields: vec![
                 text("Rules", "41 of 41 passed"),
-                mono("Task", "checkout-push-x7k2-verify"),
+                mono("Task", VERIFY_TASK),
                 mono("Image", DIGEST),
             ],
             link: link(
@@ -619,10 +625,29 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
                 "The digest matches on both sides.",
             ),
             unlinked: None,
-            actions: vec![resource(
-                "the TaskRun",
-                task_run("checkout-push-x7k2-verify"),
-            )],
+            actions: vec![
+                Action::new(Target::Logs {
+                    what: "verify".into(),
+                    pod: object(
+                        CORE,
+                        "",
+                        "Pod",
+                        RELEASE_NAMESPACE,
+                        &format!("{VERIFY_TASK}-pod"),
+                    ),
+                    container: Some("step-validate".into()),
+                }),
+                resource(
+                    "the TaskRun",
+                    object(
+                        CORE,
+                        "tekton.dev",
+                        "TaskRun",
+                        RELEASE_NAMESPACE,
+                        VERIFY_TASK,
+                    ),
+                ),
+            ],
         })),
     };
     let image = Hop {
@@ -804,7 +829,7 @@ pub fn change(now: DateTime<Utc>) -> Change {
     let mut groups = vec![
         Group {
             phase: Phase::Build,
-            detail: format!("{GIT} · {CICD} · {REGISTRY}"),
+            detail: format!("{GIT} · {CICD} · {CORE} · {REGISTRY}"),
         },
         Group {
             phase: Phase::Freight,

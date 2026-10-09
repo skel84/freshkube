@@ -580,6 +580,16 @@ fn config_map(namespace: &str, name: &str, key: &str, value: &str) -> Value {
 /// The run as Pipelines as Code annotates a pull request's, and its task
 /// as Tekton records the pod it ran in.
 fn annotated(world: &mut World, provider: &str, sha_url: &str) {
+    annotated_with(
+        world,
+        provider,
+        sha_url,
+        "https://console.example.test/runs/storefront-push-x",
+    );
+}
+
+/// [`annotated`], with the run's console page at `log_url`.
+fn annotated_with(world: &mut World, provider: &str, sha_url: &str, log_url: &str) {
     let mut run = pipeline_run(SHA, true, Some(NEW));
     let annotations = run["metadata"]["annotations"]
         .as_object_mut()
@@ -589,10 +599,7 @@ fn annotated(world: &mut World, provider: &str, sha_url: &str) {
         ("sha-url", sha_url),
         ("git-provider", provider),
         ("pull-request", "7"),
-        (
-            "log-url",
-            "https://console.example.test/runs/storefront-push-x",
-        ),
+        ("log-url", log_url),
     ] {
         annotations.insert(format!("pipelinesascode.tekton.dev/{key}"), json!(value));
     }
@@ -770,4 +777,162 @@ async fn only_http_and_https_addresses_open() {
         );
     }
     assert!(change.page.is_err());
+}
+
+/// One run's links, read from a cluster whose run Pipelines as Code
+/// annotated with `provider`, `sha_url` and `log_url`.
+async fn run_links(
+    provider: &str,
+    sha_url: &str,
+    log_url: &str,
+) -> Vec<(String, String, Option<String>, Option<String>)> {
+    let reader = one_cluster(|world| annotated_with(world, provider, sha_url, log_url));
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    links_out(&change)
+}
+
+#[tokio::test]
+async fn each_provider_has_its_own_pull_request_page() {
+    for (provider, page) in [
+        ("github", "https://git.example/acme/storefront/pull/7"),
+        ("gitea", "https://git.example/acme/storefront/pulls/7"),
+        ("forgejo", "https://git.example/acme/storefront/pulls/7"),
+        (
+            "gitlab",
+            "https://git.example/acme/storefront/-/merge_requests/7",
+        ),
+        (
+            "bitbucket-cloud",
+            "https://git.example/acme/storefront/pull-requests/7",
+        ),
+    ] {
+        let links = run_links(
+            provider,
+            "https://git.example/c",
+            "https://console.example.test/r",
+        )
+        .await;
+        let pull = link_out(&links, "Open the pull request");
+        assert_eq!(
+            (pull.2.as_deref(), &pull.3),
+            (Some(page), &None),
+            "{provider}"
+        );
+    }
+}
+
+/// Pipelines as Code names a fallback console when none is configured;
+/// it serves no page, so the run's link is greyed out.
+#[tokio::test]
+async fn pipelines_as_codes_fallback_console_is_no_page() {
+    let links = run_links(
+        "github",
+        "https://git.example/c",
+        "https://dashboard.url.is.not.configured/#/namespaces/acme-builds/pipelineruns/x",
+    )
+    .await;
+    let run = link_out(&links, "Open the run");
+    assert_eq!(
+        (run.2.as_deref(), run.3.as_deref()),
+        (None, Some("Pipelines as Code has no dashboard configured"))
+    );
+}
+
+/// The Tekton Dashboard's run page is a route in the fragment: it is kept,
+/// without its query, where every other link drops its fragment.
+#[tokio::test]
+async fn the_dashboards_run_route_is_kept() {
+    let links = run_links(
+        "github",
+        "https://git.example/c#L1",
+        "https://dashboard.example.test/#/namespaces/acme-builds/pipelineruns/x?pipelineTask=build",
+    )
+    .await;
+    assert_eq!(
+        link_out(&links, "Open the run").2.as_deref(),
+        Some("https://dashboard.example.test/#/namespaces/acme-builds/pipelineruns/x")
+    );
+    assert_eq!(
+        link_out(&links, "Open the commit").2.as_deref(),
+        Some("https://git.example/c")
+    );
+}
+
+/// A commit page on another host than the repository isn't taken for it.
+#[tokio::test]
+async fn a_commit_on_another_host_is_greyed_out() {
+    let links = run_links(
+        "github",
+        "https://elsewhere.example.test/acme/storefront/commit/abc",
+        "https://console.example.test/r",
+    )
+    .await;
+    let commit = link_out(&links, "Open the commit");
+    assert_eq!(
+        (commit.2.as_deref(), commit.3.as_deref()),
+        (
+            None,
+            Some("The run's sha-url names another host than its repo-url")
+        )
+    );
+}
+
+/// A ConfigMap GET that hangs greys its links out after its own deadline;
+/// the change is still read.
+#[tokio::test(start_paused = true)]
+async fn a_hanging_address_read_greys_its_links_out_not_the_change() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).hanging("configmaps");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("the change is read");
+    let why = change.page.as_ref().expect_err("no Kargo page");
+    assert_eq!(
+        why,
+        "Kargo's address isn't known: ConfigMap kargo-api in kargo didn't answer within 5 s"
+    );
+    let argocd = link_out(&links_out(&change), "Open in Argo CD").clone();
+    assert_eq!(
+        argocd.3.as_deref(),
+        Some(
+            "Argo CD's address isn't known: ConfigMap argocd-cm in argocd didn't answer within 5 s"
+        )
+    );
+    assert!(!change.groups.is_empty());
+}
+
+/// Without a failed task, the logs are the task's that ended last, by its
+/// completion time rather than the order the TaskRuns were listed in.
+#[tokio::test]
+async fn the_logs_are_the_task_that_ended_last() {
+    let reader = one_cluster(|world| {
+        annotated(world, "github", "https://git.example/c");
+        let mut tasks = Vec::new();
+        for (task, ended) in [
+            ("push", "2026-01-01T10:05:00Z"),
+            ("build", "2026-01-01T10:09:00Z"),
+            ("lint", "2026-01-01T10:01:00Z"),
+        ] {
+            let mut run = task_run();
+            run["metadata"]["name"] = json!(format!("storefront-push-x-{task}"));
+            run["metadata"]["labels"]["tekton.dev/pipelineTask"] = json!(task);
+            run["status"]["podName"] = json!(format!("storefront-push-x-{task}-pod"));
+            run["status"]["steps"] = json!([{"container": format!("step-{task}")}]);
+            run["status"]["conditions"] = json!([{"type": "Succeeded", "status": "True"}]);
+            run["status"]["completionTime"] = json!(ended);
+            tasks.push(run);
+        }
+        world.tekton = std::mem::take(&mut world.tekton).with("taskruns", tasks);
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+    assert_eq!(
+        link_out(&links, "Logs of build").2.as_deref(),
+        Some("cluster-key/acme-builds/storefront-push-x-build-pod Some(\"step-build\")")
+    );
 }

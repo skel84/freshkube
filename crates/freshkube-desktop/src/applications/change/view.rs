@@ -93,13 +93,22 @@ impl ChangePage {
     ) -> (Button, page::MenuItems) {
         let label = "Copy link";
         let copy = page::handler(cx, |this: &mut Self, _, cx| this.copy_link(cx));
+        let (icon, shown, said) = if self.copied {
+            (
+                IconName::Check,
+                "Copied",
+                "Copied the Freight's Kargo address",
+            )
+        } else {
+            (IconName::Copy, label, "Copy the Freight's Kargo address")
+        };
         let button = Button::new(header.id("copy-link"))
             .ghost()
             .small()
             .h(dp(ui::CONTROL_HEIGHT))
-            .icon(IconName::Copy)
-            .label(label)
-            .accessibility_label("Copy the Freight's Kargo address")
+            .icon(icon)
+            .label(shown)
+            .accessibility_label(said)
             .on_click({
                 let copy = copy.clone();
                 move |_, window, cx| copy(window, cx)

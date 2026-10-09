@@ -563,20 +563,20 @@ fn the_header_opens_and_copies_the_freights_kargo_page(cx: &mut TestAppContext) 
     assert_eq!(copied.as_deref(), Some(page.as_str()));
 }
 
-/// Before an answer the header has no address: both controls are greyed
-/// out, and Copy link copies nothing.
+/// A change read without Kargo's address greys out both header controls:
+/// they open and copy nothing.
 #[gpui_kit::test]
 fn without_kargos_address_the_header_neither_opens_nor_copies(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         let page = change(&view, cx).unwrap();
-        page.update(cx, |page, cx| page.fail_read("refused", window, cx));
-        window.render_frame(cx);
-    })
-    .unwrap();
-    cx.update_window(handle, |_, window, cx| {
-        let page = change(&view, cx).unwrap();
-        page.update(cx, |page, _| page.forget_link());
+        let mut answer = page.read(cx).shown().clone();
+        answer.page = Err(
+            "Kargo's address isn't known: ConfigMap kargo-api in kargo has no \
+             ADMIN_ACCOUNT_TOKEN_ISSUER"
+                .into(),
+        );
+        page.update(cx, |page, cx| page.read_answer(answer, window, cx));
         window.render_frame(cx);
         window.click("change-open-in-kargo", cx);
         window.click("change-copy-link", cx);
@@ -588,24 +588,79 @@ fn without_kargos_address_the_header_neither_opens_nor_copies(cx: &mut TestAppCo
     assert_eq!(cx.read_from_clipboard(), None);
 }
 
-/// A step's logs open in the dock for a pod on the open cluster, every
-/// step at once; on a cluster that isn't open the button is greyed out.
+/// The dock's log tabs, by title.
+fn dock_tabs(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
+    cx.update(|cx| {
+        view.read(cx)
+            .dock
+            .read(cx)
+            .tabs
+            .iter()
+            .map(|tab| tab.title.to_string())
+            .collect()
+    })
+}
+
+/// The release run's policy check ran on the open cluster: its Logs opens
+/// the step pod's log in the dock, every step at once, falling back to the
+/// container core named.
 #[gpui_kit::test]
-fn a_steps_logs_open_in_the_dock_only_on_the_open_cluster(cx: &mut TestAppContext) {
-    use freshkube_core::delivery::change::Object;
+fn a_steps_logs_open_in_the_dock_on_the_open_cluster(cx: &mut TestAppContext) {
+    use super::ChangeEvent;
+    use crate::resources::{LogsAt, ResourceLink};
+    use freshkube_core::delivery::change::example::{RELEASE_NAMESPACE, VERIFY_TASK};
+    use std::{cell::RefCell, rc::Rc};
 
     let (_runtime, handle, view) = open(cx, 1280., 880.);
-    let tabs = |view: &Entity<Pilot>, cx: &mut TestAppContext| {
-        cx.update(|cx| {
-            view.read(cx)
-                .dock
-                .read(cx)
-                .tabs
-                .iter()
-                .map(|tab| tab.title.to_string())
-                .collect::<Vec<_>>()
+    let asked: Rc<RefCell<Vec<ResourceLink>>> = Rc::default();
+    let page = cx.update(|cx| change(&view, cx).unwrap());
+    let _subscription = cx.update(|cx| {
+        let asked = asked.clone();
+        cx.subscribe(&page, move |_, event: &ChangeEvent, _| {
+            if let ChangeEvent::Open(link) = event {
+                asked.borrow_mut().push((**link).clone());
+            }
         })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.click(hop("policy"), cx);
+        window.render_frame(cx);
+        let logs = action(&view, "Logs of verify · core-fra", cx);
+        window.click(logs, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let asked = asked.borrow();
+    let [ResourceLink::Logs(request)] = asked.as_slice() else {
+        panic!("{asked:?}");
     };
+    let identity = &request.target.identity;
+    assert_eq!(
+        (
+            identity.resource.as_str(),
+            identity.namespace.as_str(),
+            identity.name.clone()
+        ),
+        ("pods", RELEASE_NAMESPACE, format!("{VERIFY_TASK}-pod"))
+    );
+    assert_eq!(
+        request.at,
+        Some(LogsAt {
+            container: "step-validate".into(),
+            previous: false,
+            all: true,
+        })
+    );
+    assert_eq!(dock_tabs(&view, cx), [format!("Pod {VERIFY_TASK}-pod")]);
+}
+
+/// The push run's steps ran on the CI cluster, which the example doesn't
+/// open: its Logs is greyed out and opens nothing.
+#[gpui_kit::test]
+fn a_steps_logs_on_a_cluster_that_is_not_open_do_not_open(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("push-run"), cx);
         window.render_frame(cx);
@@ -615,27 +670,28 @@ fn a_steps_logs_open_in_the_dock_only_on_the_open_cluster(cx: &mut TestAppContex
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(tabs(&view, cx).is_empty(), "{:?}", tabs(&view, cx));
+    assert!(dock_tabs(&view, cx).is_empty());
+}
 
+/// Copy link says Copied once it has copied.
+#[gpui_kit::test]
+fn copy_link_says_it_copied(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
-        let page = change(&view, cx).unwrap();
-        let pod = Object {
-            cluster: freshkube_core::applications::example::CORE.into(),
-            group: String::new(),
-            version: "v1".into(),
-            kind: "Pod".into(),
-            plural: "pods".into(),
-            namespace: "checkout-ci".into(),
-            name: "checkout-push-x7k2-build-pod".into(),
-        };
-        page.update(cx, |page, cx| {
-            page.open_logs(&pod, Some("step-build".into()), cx)
-        });
         window.render_frame(cx);
+        assert_eq!(
+            window.find("change-copy-link").label(),
+            Some("Copy the Freight's Kargo address")
+        );
+        window.click("change-copy-link", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("change-copy-link").label(),
+            Some("Copied the Freight's Kargo address")
+        );
+        assert!(change(&view, cx).is_some());
     })
     .unwrap();
-    cx.run_until_parked();
-    assert_eq!(tabs(&view, cx), ["Pod checkout-push-x7k2-build-pod"]);
 }
 
 /// Opening another application shows its page, not the change followed

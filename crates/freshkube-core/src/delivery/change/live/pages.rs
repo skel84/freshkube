@@ -3,11 +3,18 @@
 //! `ADMIN_ACCOUNT_TOKEN_ISSUER` in Kargo's, which its chart sets to the API's
 //! base address. Each is one GET of a ConfigMap, and only that key is kept;
 //! no Secret is ever read. An address that isn't there, or isn't http or
-//! https, is why its links are greyed out.
+//! https, is why its links are greyed out. Each GET has its own short
+//! deadline: one that hangs greys its links out, and never holds up the
+//! change.
+
+use std::time::Duration;
 
 use crate::delivery::address::Address;
 use crate::delivery::read::{Reader, Resource};
 use crate::delivery::source::Source;
+
+/// How long an address's GET may take before its links are greyed out.
+pub const DEADLINE: Duration = Duration::from_secs(5);
 
 /// Kargo's chart installs into its release's namespace, `kargo` by default.
 pub const KARGO_NAMESPACE: &str = "kargo";
@@ -53,7 +60,14 @@ async fn address<R: Reader>(
     key: &str,
 ) -> Result<Address, String> {
     let resource = Resource::new("", "v1", "configmaps", true);
-    let value = match reader.get(&resource, Some(namespace), name).await {
+    let read = tokio::time::timeout(DEADLINE, reader.get(&resource, Some(namespace), name)).await;
+    let Ok(read) = read else {
+        return Err(format!(
+            "ConfigMap {name} in {namespace} didn't answer within {} s",
+            DEADLINE.as_secs()
+        ));
+    };
+    let value = match read {
         Ok(value) => value,
         Err(failure) => {
             return Err(match Source::<()>::from_failure(failure) {

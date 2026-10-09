@@ -207,6 +207,9 @@ pub(crate) struct ChangePage {
     /// The Freight's Kargo address, which the header opens and copies, or
     /// why there's none; derived with the change.
     page_link: Result<SharedString, SharedString>,
+    /// Copy link has copied the address shown, so it says Copied until the
+    /// address changes.
+    copied: bool,
     connections: Connections,
     rows: Vec<HopRow>,
     groups: Vec<GroupLine>,
@@ -246,6 +249,7 @@ impl ChangePage {
         let change = fetch.unread();
         let mut page = Self {
             page_link: page_link(&change),
+            copied: false,
             change,
             fetch,
             snapshot: Snapshot::default(),
@@ -363,7 +367,9 @@ impl ChangePage {
                 counts[ix] += 1;
             }
         }
-        self.page_link = page_link(&change);
+        let link = page_link(&change);
+        self.copied &= link == self.page_link;
+        self.page_link = link;
         self.change = change;
         self.rows = rows;
         self.groups = groups;
@@ -489,6 +495,20 @@ impl ChangePage {
 
     /// The link that opens an object in Resources, on its cluster's
     /// connection, and why it doesn't open when that cluster isn't open.
+    /// Why a step pod's logs don't open: its cluster isn't the open one.
+    fn logs_closed(&self, pod: &Object) -> Option<SharedString> {
+        (!self
+            .connections
+            .opens(&SessionKey::new(pod.cluster.clone())))
+        .then(|| {
+            format!(
+                "{} isn't the open cluster, so its logs don't open",
+                self.cluster_name(&pod.cluster)
+            )
+            .into()
+        })
+    }
+
     fn object_link(&self, object: &Object) -> (ResourceLink, Option<SharedString>) {
         let session = SessionKey::new(object.cluster.clone());
         let link = ResourceLink::Object(
@@ -567,6 +587,8 @@ impl ChangePage {
     fn copy_link(&mut self, cx: &mut Context<Self>) {
         if let Ok(address) = &self.page_link {
             cx.write_to_clipboard(ClipboardItem::new_string(address.to_string()));
+            self.copied = true;
+            cx.notify();
         }
     }
 

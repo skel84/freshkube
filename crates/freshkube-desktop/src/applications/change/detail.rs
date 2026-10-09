@@ -222,7 +222,7 @@ impl ChangePage {
                     pod,
                     container,
                 } => {
-                    let (_, closed) = self.object_link(pod);
+                    let closed = self.logs_closed(pod);
                     ActionLine {
                         label: format!("Logs of {what} · {}", self.cluster_name(&pod.cluster))
                             .into(),

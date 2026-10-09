@@ -2,7 +2,7 @@
 //! the cluster records (Argo CD's and Kargo's ConfigMaps, the addresses
 //! Pipelines as Code annotates a run with), and a run's step logs. A link
 //! whose address isn't recorded, or isn't http or https, is greyed out with
-//! why.
+//! why; so is the console Pipelines as Code names when it has none.
 
 use super::Place;
 use super::pages::Pages;
@@ -11,6 +11,10 @@ use crate::delivery::change::{Action, Object, Target};
 use crate::delivery::join::{Evidence, Hop as Joined, Link};
 use crate::delivery::kargo::Freight;
 use crate::delivery::tekton::{Build, TaskRun};
+
+/// The host Pipelines as Code writes into `log-url` when no console is
+/// configured: its fallback console, which serves no page.
+const NO_CONSOLE: &str = "dashboard.url.is.not.configured";
 
 /// The Freight's page in Kargo, which the page's header opens and copies.
 pub(super) fn freight_page(pages: &Pages, freight: &Freight) -> Result<Address, String> {
@@ -65,7 +69,6 @@ pub(super) fn actions(
 /// A run's pull request, commit and own page, from what Pipelines as Code
 /// annotated it with, then its step logs.
 fn run_actions(place: &Place, build: &Build) -> Vec<Action> {
-    let pages = &build.run.pages;
     let mut actions = Vec::new();
     if let Some(number) = build.run.pull_request {
         actions.push(Action::browser(
@@ -73,14 +76,8 @@ fn run_actions(place: &Place, build: &Build) -> Vec<Action> {
             pull_request(build, number),
         ));
     }
-    actions.push(Action::browser(
-        "Open the commit",
-        recorded(pages.commit.as_deref(), "sha-url"),
-    ));
-    actions.push(Action::browser(
-        "Open the run",
-        recorded(pages.run.as_deref(), "log-url"),
-    ));
+    actions.push(Action::browser("Open the commit", commit(build)));
+    actions.push(Action::browser("Open the run", run_page(build)));
     actions.push(logs(place, build));
     actions
 }
@@ -91,6 +88,36 @@ fn recorded(raw: Option<&str>, key: &str) -> Result<Address, String> {
     Address::parse(raw).map_err(|why| format!("The run's {key}: {why}"))
 }
 
+/// The commit's page, on the repository's own host: a `sha-url` elsewhere
+/// isn't taken for it.
+fn commit(build: &Build) -> Result<Address, String> {
+    let pages = &build.run.pages;
+    let commit = recorded(pages.commit.as_deref(), "sha-url")?;
+    match recorded(pages.repository.as_deref(), "repo-url") {
+        Ok(repository) if repository.host() != commit.host() => {
+            Err("The run's sha-url names another host than its repo-url".into())
+        }
+        _ => Ok(commit),
+    }
+}
+
+/// The run's page in its console, keeping a route in the fragment, as the
+/// Tekton Dashboard's `#/namespaces/…` is. Pipelines as Code's fallback,
+/// when no console is configured, isn't one.
+fn run_page(build: &Build) -> Result<Address, String> {
+    let raw = build
+        .run
+        .pages
+        .run
+        .as_deref()
+        .ok_or("The run has no Pipelines as Code log-url")?;
+    let page = Address::parse_route(raw).map_err(|why| format!("The run's log-url: {why}"))?;
+    if page.host() == NO_CONSOLE {
+        return Err("Pipelines as Code has no dashboard configured".into());
+    }
+    Ok(page)
+}
+
 /// The pull request's page: the repository's, with the path its provider
 /// gives pull requests. A provider with none known is greyed out.
 fn pull_request(build: &Build, number: u64) -> Result<Address, String> {
@@ -98,7 +125,8 @@ fn pull_request(build: &Build, number: u64) -> Result<Address, String> {
     let repository = recorded(pages.repository.as_deref(), "repo-url")?;
     let number = number.to_string();
     let path: &[&str] = match pages.provider.as_deref() {
-        Some("github" | "gitea" | "forgejo") => &["pull", &number],
+        Some("github") => &["pull", &number],
+        Some("gitea" | "forgejo") => &["pulls", &number],
         Some("gitlab") => &["-", "merge_requests", &number],
         Some("bitbucket-cloud") => &["pull-requests", &number],
         Some(other) => {
@@ -111,15 +139,14 @@ fn pull_request(build: &Build, number: u64) -> Result<Address, String> {
     Ok(repository.join(path.iter().copied()))
 }
 
-/// The steps' logs of the task that failed, else the last one, in the pod
-/// it ran in on this cluster.
+/// The steps' logs of the task that failed, else the one that ended last
+/// (one still running before any that ended), in the pod it ran in on
+/// this cluster.
 fn logs(place: &Place, build: &Build) -> Action {
-    let task = build
-        .tasks
-        .iter()
-        .filter(|task| task.pod.is_some())
+    let with_pod = || build.tasks.iter().filter(|task| task.pod.is_some());
+    let task = with_pod()
         .find(|task| task.succeeded.as_deref() == Some("False"))
-        .or_else(|| build.tasks.iter().rev().find(|task| task.pod.is_some()));
+        .or_else(|| with_pod().max_by_key(|task| (task.completed.is_none(), task.completed)));
     let Some(task) = task else {
         let why = match &build.tasks_unread {
             Some(why) => format!("The run's TaskRuns weren't read: {why}"),

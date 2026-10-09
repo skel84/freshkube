@@ -1,6 +1,6 @@
 //! The objects of acme's `core-fra` (core's `applications::example`) in the
 //! example cluster: Kargo's Projects, Stages, Warehouses and the change
-//! page's Freight, Argo CD's
+//! page's Freight and policy TaskRun, Argo CD's
 //! Applications and ApplicationSet, and the `status/status-page`
 //! Deployment. The Applications page maps `core-fra` to the open example
 //! cluster, so a part it opens in Resources is listed here, the same object
@@ -18,13 +18,14 @@ use super::*;
 const FIRST: usize = 0xac00;
 
 /// The API groups acme's custom kinds are in, as discovery lists them.
-pub(super) const GROUPS: [(&str, &[&str]); 2] = [
+pub(super) const GROUPS: [(&str, &[&str]); 3] = [
     ("argoproj.io", &["v1alpha1"]),
     ("kargo.akuity.io", &["v1alpha1"]),
+    ("tekton.dev", &["v1"]),
 ];
 
 /// (group, version, kind, plural, namespaced) of acme's custom kinds.
-pub(super) const KINDS: [(&str, &str, &str, &str, bool); 6] = [
+pub(super) const KINDS: [(&str, &str, &str, &str, bool); 7] = [
     (
         "argoproj.io",
         "v1alpha1",
@@ -49,6 +50,7 @@ pub(super) const KINDS: [(&str, &str, &str, &str, bool); 6] = [
         true,
     ),
     ("kargo.akuity.io", "v1alpha1", "Freight", "freights", true),
+    ("tekton.dev", "v1", "TaskRun", "taskruns", true),
 ];
 
 /// Whether a row of this kind, at this position in its UID, is one of

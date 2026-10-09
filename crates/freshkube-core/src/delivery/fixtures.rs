@@ -33,6 +33,8 @@ pub struct FixtureReader {
     capped: HashSet<String>,
     /// Kinds refused for one label selector, by plural and selector.
     refused_selectors: HashSet<(String, String)>,
+    /// Kinds whose GET never answers, as a server that hangs.
+    hanging: HashSet<String>,
     /// Answers carry an invented `uid` and `resourceVersion` where an item
     /// has none; off, so a world can exercise objects without them.
     stamp_meta: bool,
@@ -90,6 +92,12 @@ impl FixtureReader {
         self
     }
 
+    /// A GET of the kind never answers.
+    pub fn hanging(mut self, plural: &str) -> Self {
+        self.hanging.insert(plural.into());
+        self
+    }
+
     pub fn unreachable(mut self, plural: &str) -> Self {
         self.lists.insert(
             plural.into(),
@@ -142,6 +150,9 @@ impl Reader for FixtureReader {
             "GET {}/{} {namespace:?} {name}",
             resource.group, resource.plural
         ));
+        if self.hanging.contains(&resource.plural) {
+            std::future::pending::<()>().await;
+        }
         let items = match self.lists.get(&resource.plural) {
             Some(Ok(items)) => items,
             Some(Err(failure)) => return Err(failure.clone()),
@@ -587,6 +598,7 @@ impl World {
             }
             one.capped.extend(reader.capped);
             one.refused_selectors.extend(reader.refused_selectors);
+            one.hanging.extend(reader.hanging);
             one.stamp_meta |= reader.stamp_meta;
         }
         one

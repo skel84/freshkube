@@ -48,6 +48,7 @@ const APPLICATION_SETS: (&str, &str, &str) =
     ("applicationsets.argoproj.io", ARGO, "ApplicationSet");
 const DEPLOYMENTS: (&str, &str, &str) = ("deployments.apps", "apps/v1", "Deployment");
 const FREIGHT: (&str, &str, &str) = ("freights.kargo.akuity.io", KARGO, "Freight");
+const TASK_RUNS: (&str, &str, &str) = ("taskruns.tekton.dev", "tekton.dev/v1", "TaskRun");
 const KARGO: &str = "kargo.akuity.io/v1alpha1";
 const ARGO: &str = "argoproj.io/v1alpha1";
 
@@ -124,7 +125,8 @@ pub struct CoreObject {
 /// Every object `core-fra` holds that the applications are read from:
 /// Kargo's Projects, Stages and Warehouses, Argo CD's Applications and
 /// ApplicationSet, and the labelled Deployment, in that order; then the
-/// Freight the example change follows (`delivery::change::example`). The
+/// Freight the example change follows (`delivery::change::example`) and
+/// its release run's policy TaskRun. The
 /// example Resources page lists them, so it shows what the Applications
 /// page read and where the change page leads.
 pub fn core_objects() -> Vec<CoreObject> {
@@ -183,6 +185,13 @@ pub fn core_objects() -> Vec<CoreObject> {
         json!({"metadata": {
             "namespace": crate::delivery::change::example::PROJECT,
             "name": crate::delivery::change::example::FREIGHT,
+        }}),
+    ));
+    objects.push(object(
+        TASK_RUNS,
+        json!({"metadata": {
+            "namespace": crate::delivery::change::example::RELEASE_NAMESPACE,
+            "name": crate::delivery::change::example::VERIFY_TASK,
         }}),
     ));
     objects

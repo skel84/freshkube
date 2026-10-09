@@ -4,6 +4,8 @@
 
 use std::collections::BTreeMap;
 
+use chrono::{DateTime, Utc};
+
 use serde_json::Value;
 
 use super::digest::{Digest, is_full_sha, text};
@@ -87,6 +89,8 @@ pub struct TaskRun {
     pub succeeded: Option<String>,
     /// `tekton.dev/pipelineTask`: the task's name in its pipeline.
     pub task: Option<String>,
+    /// `status.completionTime`, once it ended.
+    pub completed: Option<DateTime<Utc>>,
 }
 
 impl PipelineRun {
@@ -233,6 +237,9 @@ pub fn parse_task_run(value: &Value) -> Option<TaskRun> {
             .collect(),
         succeeded: succeeded(value).and_then(|condition| text(condition, "/status")),
         task: label(value, "tekton.dev/pipelineTask"),
+        completed: text(value, "/status/completionTime")
+            .and_then(|at| DateTime::parse_from_rfc3339(&at).ok())
+            .map(|at| at.with_timezone(&Utc)),
     })
 }
 

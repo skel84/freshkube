@@ -261,9 +261,16 @@ impl ChangePage {
             .unwrap_or_default()
     }
 
-    /// As a change whose cluster doesn't record Kargo's address.
-    pub(crate) fn forget_link(&mut self) {
-        self.page_link = Err("Kargo's address isn't known".into());
+    /// The change shown.
+    pub(crate) fn shown(&self) -> &Change {
+        &self.change
+    }
+
+    /// An answer, as a read brings it.
+    pub(crate) fn read_answer(&mut self, change: Change, window: &Window, cx: &mut Context<Self>) {
+        let request = self.snapshot.begin(self.fetch.identity());
+        self.pending = true;
+        self.answer(&request, Ok(change), window, cx);
     }
 
     /// A read that failed, as a refused or unreachable cluster answers.

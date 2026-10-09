@@ -4,8 +4,10 @@
 //! Only an http or https address with a host is one. Whatever else the
 //! cluster wrote, it never reaches the browser or the clipboard whole: the
 //! user info, the query and the fragment are dropped, since a token or a
-//! session may ride in any of them. Why an address isn't one never quotes
-//! it, for the same reason.
+//! session may ride in any of them. A page whose route is its fragment, as
+//! the Tekton Dashboard's are (`#/namespaces/…`), keeps that route alone
+//! ([`Address::parse_route`]), without anything from a `?` on. Why an
+//! address isn't one never quotes it, for the same reason.
 
 use url::Url;
 
@@ -31,6 +33,28 @@ impl Address {
         url.set_query(None);
         url.set_fragment(None);
         Ok(Self(url))
+    }
+
+    /// As [`parse`](Self::parse), keeping a fragment that is a route
+    /// (`#/…`), up to any `?` in it: a fragment never reaches the server, and
+    /// a single-page console finds its page there.
+    pub fn parse_route(raw: &str) -> Result<Self, String> {
+        let route = Url::parse(raw.trim())
+            .ok()
+            .and_then(|url| url.fragment().map(str::to_owned))
+            .filter(|fragment| fragment.starts_with('/'))
+            .map(|fragment| match fragment.split_once('?') {
+                Some((route, _)) => route.to_owned(),
+                None => fragment,
+            });
+        let mut address = Self::parse(raw)?;
+        address.0.set_fragment(route.as_deref());
+        Ok(address)
+    }
+
+    /// The host, as the parser wrote it: lower case, an IDN in punycode.
+    pub fn host(&self) -> &str {
+        self.0.host_str().unwrap_or_default()
     }
 
     /// This address with `segments` after its path, each one escaped, so a
@@ -99,6 +123,61 @@ mod tests {
         assert_eq!(address.as_str(), "https://git.example/acme/checkout");
         let address = Address::parse("http://user@argocd.test/").unwrap();
         assert_eq!(address.as_str(), "http://argocd.test/");
+    }
+
+    /// What the WHATWG parser makes of addresses written oddly: the scheme
+    /// and host lower-cased, a backslash taken for a slash, an IDN host in
+    /// punycode, and an escaped `@` still user info, so dropped.
+    #[test]
+    fn oddly_written_addresses_parse_as_a_browser_would() {
+        for (raw, parsed) in [
+            (
+                "HTTP://Kargo.Example/Project",
+                "http://kargo.example/Project",
+            ),
+            ("  https://kargo.example/x", "https://kargo.example/x"),
+            ("https:kargo.example/x", "https://kargo.example/x"),
+            ("https:\\\\kargo.example\\x", "https://kargo.example/x"),
+            (
+                "https://bot%40acme:pw@git.example/acme",
+                "https://git.example/acme",
+            ),
+            ("https://bücher.example/", "https://xn--bcher-kva.example/"),
+        ] {
+            assert_eq!(
+                Address::parse(raw).map(|a| a.to_string()),
+                Ok(parsed.into()),
+                "{raw}"
+            );
+        }
+        // An escaped `@` in the host is no host at all.
+        assert!(Address::parse("https://git.example%40evil.example/").is_err());
+        // Without a scheme there's no address, only a path.
+        assert_eq!(
+            Address::parse("//kargo.example/x").unwrap_err(),
+            "it isn't an address"
+        );
+    }
+
+    #[test]
+    fn a_route_fragment_is_kept_without_its_query() {
+        let raw =
+            "https://dashboard.example.test/#/namespaces/ci/pipelineruns/run-1?pipelineTask=build";
+        assert_eq!(
+            Address::parse_route(raw).unwrap().as_str(),
+            "https://dashboard.example.test/#/namespaces/ci/pipelineruns/run-1"
+        );
+        for raw in [
+            "https://dashboard.example.test/run#access_token=abc",
+            "https://bot:pw@dashboard.example.test/run?token=abc",
+        ] {
+            assert_eq!(
+                Address::parse_route(raw).unwrap().as_str(),
+                "https://dashboard.example.test/run",
+                "{raw}"
+            );
+        }
+        assert!(Address::parse_route("javascript:x#/a").is_err());
     }
 
     #[test]
