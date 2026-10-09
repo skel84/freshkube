@@ -14,6 +14,8 @@
 
 mod derive;
 mod gates;
+mod links;
+mod pages;
 #[cfg(test)]
 mod tests;
 
@@ -28,6 +30,7 @@ use crate::delivery::source::Source;
 use crate::resources::{Failure, FailureKind};
 
 pub use derive::derive;
+pub use pages::{KARGO_NAMESPACE, Pages};
 
 /// Where a change is read: one cluster, one Kargo project, one Freight.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +125,9 @@ pub async fn read<R: Reader>(
         environment: reader,
         github: &NoGitHub,
     };
-    let evidence = collect(&clusters, &plan, observed_at).await;
-    Ok(derive(place, &evidence, &freight))
+    let (evidence, pages) = futures::join!(
+        collect(&clusters, &plan, observed_at),
+        pages::read(reader, &place.argocd_namespace),
+    );
+    Ok(derive(place, &evidence, &freight, &pages))
 }

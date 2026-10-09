@@ -40,7 +40,9 @@ use gpui_kit::*;
 
 use super::links::Connections;
 use crate::backend::OwnedJob;
-use crate::resources::{ResourceLink, Tab, model::ObjectRef};
+use crate::resources::detail::DetailTarget;
+use crate::resources::model::ResourceIdentity;
+use crate::resources::{LogsAt, LogsRequest, ResourceLink, Tab, model::ObjectRef};
 pub(super) use changes::Changes;
 #[cfg(test)]
 pub(super) use changes::LiveChanges;
@@ -202,6 +204,12 @@ pub(crate) struct ChangePage {
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
     change: Change,
+    /// The Freight's Kargo address, which the header opens and copies, or
+    /// why there's none; derived with the change.
+    page_link: Result<SharedString, SharedString>,
+    /// Copy link has copied the address shown, so it says Copied until the
+    /// address changes.
+    copied: bool,
     connections: Connections,
     rows: Vec<HopRow>,
     groups: Vec<GroupLine>,
@@ -238,8 +246,11 @@ impl ChangePage {
     ) -> Self {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
+        let change = fetch.unread();
         let mut page = Self {
-            change: fetch.unread(),
+            page_link: page_link(&change),
+            copied: false,
+            change,
             fetch,
             snapshot: Snapshot::default(),
             pending: false,
@@ -356,6 +367,9 @@ impl ChangePage {
                 counts[ix] += 1;
             }
         }
+        let link = page_link(&change);
+        self.copied &= link == self.page_link;
+        self.page_link = link;
         self.change = change;
         self.rows = rows;
         self.groups = groups;
@@ -479,6 +493,20 @@ impl ChangePage {
         }
     }
 
+    /// Why a step pod's logs don't open: its cluster isn't the open one.
+    fn logs_closed(&self, pod: &Object) -> Option<SharedString> {
+        (!self
+            .connections
+            .opens(&SessionKey::new(pod.cluster.clone())))
+        .then(|| {
+            format!(
+                "{} isn't the open cluster, so its logs don't open",
+                self.cluster_name(&pod.cluster)
+            )
+            .into()
+        })
+    }
+
     /// The link that opens an object in Resources, on its cluster's
     /// connection, and why it doesn't open when that cluster isn't open.
     fn object_link(&self, object: &Object) -> (ResourceLink, Option<SharedString>) {
@@ -547,6 +575,48 @@ impl ChangePage {
         cx.emit(ChangeEvent::Open(Box::new(link)));
     }
 
+    /// The Freight's page in Kargo, in the browser.
+    fn open_page(&mut self, cx: &mut Context<Self>) {
+        if let Ok(address) = &self.page_link {
+            cx.open_url(address);
+        }
+    }
+
+    /// Copies the Freight's Kargo address: user info, query and fragment
+    /// were dropped when core read it.
+    fn copy_link(&mut self, cx: &mut Context<Self>) {
+        if let Ok(address) = &self.page_link {
+            cx.write_to_clipboard(ClipboardItem::new_string(address.to_string()));
+            self.copied = true;
+            cx.notify();
+        }
+    }
+
+    /// A step pod's logs in the dock, every step at once, as a pod's Logs
+    /// opens them; `container` is the one a single-step pod falls back to.
+    fn open_logs(&mut self, pod: &Object, container: Option<String>, cx: &mut Context<Self>) {
+        let session = SessionKey::new(pod.cluster.clone());
+        let kind = ResourceKind::new(&pod.group, &pod.version, &pod.kind, &pod.plural, true);
+        let link = ResourceLink::Logs(LogsRequest {
+            target: DetailTarget {
+                identity: ResourceIdentity {
+                    connection: self.connections.of(&session),
+                    resource: kind.key(),
+                    namespace: pod.namespace.clone(),
+                    name: pod.name.clone(),
+                    uid: String::new(),
+                },
+                kind,
+            },
+            at: container.map(|container| LogsAt {
+                container,
+                previous: false,
+                all: true,
+            }),
+        });
+        cx.emit(ChangeEvent::Open(Box::new(link)));
+    }
+
     /// How many rows the table shows, for the footer while Stages fold.
     fn shown_rows(&self) -> usize {
         self.lines
@@ -575,5 +645,13 @@ impl ChangePage {
 
     pub(crate) fn freight(&self) -> &str {
         &self.change.freight
+    }
+}
+
+/// The change's Kargo address as the header shows it, or why there's none.
+fn page_link(change: &Change) -> Result<SharedString, SharedString> {
+    match &change.page {
+        Ok(address) => Ok(address.to_string().into()),
+        Err(why) => Err(why.clone().into()),
     }
 }

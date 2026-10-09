@@ -9,6 +9,8 @@ use chrono::{DateTime, Utc};
 use super::super::*;
 use super::Place;
 use super::gates::{self, Row, instant};
+use super::links;
+use super::pages::Pages;
 use crate::delivery::argocd::DestinationMatch;
 use crate::delivery::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, freight_links};
 use crate::delivery::kargo::{self, Freight, Stage as KargoStage};
@@ -19,7 +21,7 @@ use crate::indicators::HealthIndicator::{self, *};
 /// The change `place` names, from what was read and the join's links.
 /// `freight` is the Freight as first read; the one the project's list
 /// holds wins, as the join used it.
-pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight) -> Change {
+pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pages) -> Change {
     let freight = evidence
         .kargo
         .freight
@@ -40,10 +42,18 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight) -> Change {
             detail: format!("Kargo on {}", place.label),
         },
     ];
-    let mut hops = build_hops(place, evidence, freight, trail.as_ref());
-    hops.push(freight_hop(place, evidence, freight, trail.as_ref()));
+    let mut hops = build_hops(place, evidence, freight, pages, trail.as_ref());
+    hops.push(freight_hop(place, evidence, freight, pages, trail.as_ref()));
     if let Some(warehouse) = links.iter().find(|link| link.to == Joined::Warehouse) {
-        let mut hop = link_hop(place, evidence, freight, "warehouse".into(), 1, warehouse);
+        let mut hop = link_hop(
+            place,
+            evidence,
+            freight,
+            pages,
+            "warehouse".into(),
+            1,
+            warehouse,
+        );
         // The link's subject is the Freight; the row names its Warehouse.
         if let Some(name) = &freight.warehouse {
             hop.name = format!("Warehouse {name}");
@@ -88,7 +98,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight) -> Change {
         }
         for (n, link) in runs.iter().skip(1).enumerate() {
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
-            hops.push(link_hop(place, evidence, freight, key, group, link));
+            hops.push(link_hop(place, evidence, freight, pages, key, group, link));
         }
         model.push(Stage {
             name: stage.name.clone(),
@@ -126,6 +136,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight) -> Change {
             .unwrap_or_else(|| freight.name.clone()),
         kargo_cluster: place.label.clone(),
         observed_at: evidence.observed_at,
+        page: links::freight_page(pages, freight),
         groups,
         stages: model,
         hops,
@@ -595,6 +606,7 @@ fn link_hop(
     place: &Place,
     evidence: &Evidence,
     freight: &Freight,
+    pages: &Pages,
     key: String,
     group: usize,
     link: &Link,
@@ -657,18 +669,18 @@ fn link_hop(
         label: "Read from".into(),
         value: Value::Mono(place.label.clone()),
     });
-    let actions = link
-        .evidence
-        .iter()
-        .find(|seen| Some(seen.object.kind.as_str()) == to_kind)
-        .map(|seen| {
-            Action::new(Target::Resource {
-                what: format!("the {}", seen.object.kind),
-                object: object(place, &seen.object),
-            })
-        })
-        .into_iter()
-        .collect();
+    let mut actions: Vec<Action> = links::actions(place, evidence, pages, link);
+    actions.extend(
+        link.evidence
+            .iter()
+            .find(|seen| Some(seen.object.kind.as_str()) == to_kind)
+            .map(|seen| {
+                Action::new(Target::Resource {
+                    what: format!("the {}", seen.object.kind),
+                    object: object(place, &seen.object),
+                })
+            }),
+    );
     let notice = (link.confidence == Confidence::Unknown).then(|| Notice {
         state: Warning,
         lead: "Not joined.".into(),
@@ -712,6 +724,7 @@ fn build_hops(
     place: &Place,
     evidence: &Evidence,
     freight: &Freight,
+    pages: &Pages,
     trail: Option<&join::Trail>,
 ) -> Vec<Hop> {
     let Some(trail) = trail else {
@@ -753,6 +766,7 @@ fn build_hops(
                 place,
                 evidence,
                 freight,
+                pages,
                 format!("build-{}-{n}", kind_key(link.to)),
                 0,
                 link,
@@ -767,6 +781,7 @@ fn freight_hop(
     place: &Place,
     evidence: &Evidence,
     freight: &Freight,
+    pages: &Pages,
     trail: Option<&join::Trail>,
 ) -> Hop {
     let subject = format!("{}/{}", freight.project, freight.name);
@@ -852,19 +867,22 @@ fn freight_hop(
                     unjoined(evidence, freight)
                 ))
             }),
-            actions: vec![Action::new(Target::Resource {
-                what: "the Freight".into(),
-                object: object(
-                    place,
-                    &ObjectRef::new(
-                        kargo::GROUP,
-                        "Freight",
-                        Some(&freight.project),
-                        &freight.name,
-                        &freight.meta,
+            actions: vec![
+                Action::new(Target::Resource {
+                    what: "the Freight".into(),
+                    object: object(
+                        place,
+                        &ObjectRef::new(
+                            kargo::GROUP,
+                            "Freight",
+                            Some(&freight.project),
+                            &freight.name,
+                            &freight.meta,
+                        ),
                     ),
-                ),
-            })],
+                }),
+                Action::browser("Open in Kargo", links::freight_page(pages, freight)),
+            ],
         })),
     }
 }

@@ -53,10 +53,84 @@ impl ChangePage {
             .disabled(reading)
             // The button and ⌘R are one action, which the shell runs.
             .on_click(page::dispatch(page::Refresh, &self.focus));
+        let (kargo, kargo_fold) = self.render_open_in_kargo(&header, cx);
+        let (copy, copy_fold) = self.render_copy_link(&header, cx);
         header
             .chips(Some(chips))
+            .foldable(kargo, kargo_fold)
+            .foldable(copy, copy_fold)
             .control(refresh)
             .render(window, cx)
+    }
+
+    /// Open in Kargo ↗: the Freight's page, at the address the cluster
+    /// records; greyed out with why without one.
+    fn render_open_in_kargo(
+        &self,
+        header: &PageHeader,
+        cx: &mut Context<Self>,
+    ) -> (Button, page::MenuItems) {
+        let label = "Open in Kargo ↗";
+        let open = page::handler(cx, |this: &mut Self, _, cx| this.open_page(cx));
+        let button = Button::new(header.id("open-in-kargo"))
+            .ghost()
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .label(label)
+            .accessibility_label("Open the Freight in Kargo")
+            .on_click({
+                let open = open.clone();
+                move |_, window, cx| open(window, cx)
+            });
+        self.linked(button, label, open)
+    }
+
+    /// Copy link: the same address, to the clipboard.
+    fn render_copy_link(
+        &self,
+        header: &PageHeader,
+        cx: &mut Context<Self>,
+    ) -> (Button, page::MenuItems) {
+        let label = "Copy link";
+        let copy = page::handler(cx, |this: &mut Self, _, cx| this.copy_link(cx));
+        let (icon, shown, said) = if self.copied {
+            (
+                IconName::Check,
+                "Copied",
+                "Copied the Freight's Kargo address",
+            )
+        } else {
+            (IconName::Copy, label, "Copy the Freight's Kargo address")
+        };
+        let button = Button::new(header.id("copy-link"))
+            .ghost()
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .icon(icon)
+            .label(shown)
+            .accessibility_label(said)
+            .on_click({
+                let copy = copy.clone();
+                move |_, window, cx| copy(window, cx)
+            });
+        self.linked(button, label, copy)
+    }
+
+    /// A header control on the Freight's Kargo address: its tooltip shows
+    /// the address, or, greyed out, why there's none; folded, the same.
+    fn linked(
+        &self,
+        button: Button,
+        label: &str,
+        handler: page::Handler,
+    ) -> (Button, page::MenuItems) {
+        match &self.page_link {
+            Ok(address) => (button.tooltip(address.clone()), page::item(label, handler)),
+            Err(why) => (
+                button.disabled(true).tooltip(why.clone()),
+                page::disabled_item(label),
+            ),
+        }
     }
 
     /// A refresh that failed over an earlier answer.

@@ -72,6 +72,7 @@ impl Fetch {
             freight,
             kargo_cluster: cluster,
             observed_at: DateTime::<Utc>::MIN_UTC,
+            page: Err("Nothing is read yet".into()),
             groups: Vec::new(),
             stages: Vec::new(),
             hops: Vec::new(),
@@ -258,6 +259,18 @@ impl ChangePage {
             .as_ref()
             .map(|detail| detail.action_labels())
             .unwrap_or_default()
+    }
+
+    /// The change shown.
+    pub(crate) fn shown(&self) -> &Change {
+        &self.change
+    }
+
+    /// An answer, as a read brings it.
+    pub(crate) fn read_answer(&mut self, change: Change, window: &Window, cx: &mut Context<Self>) {
+        let request = self.snapshot.begin(self.fetch.identity());
+        self.pending = true;
+        self.answer(&request, Ok(change), window, cx);
     }
 
     /// A read that failed, as a refused or unreachable cluster answers.
