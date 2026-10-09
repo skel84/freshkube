@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
 use freshkube_core::inspection::{InspectionSource, InspectionUnavailable};
+use freshkube_ui::menu::Find;
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Entity, InputEvent, MouseMoveEvent, Pixels, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TestAppContext, TouchPhase, Window,
+    AnyWindowHandle, App, AppContext, ClipboardItem, Entity, InputEvent, MouseMoveEvent, Pixels,
+    Point, ScrollDelta, ScrollWheelEvent, SharedString, Size, TestAppContext, TouchPhase, Window,
     WindowHandle, point, px, size,
 };
 use tokio::runtime::{Builder, Runtime};
@@ -949,4 +950,53 @@ fn the_folded_controls_act_as_their_controls(cx: &mut TestAppContext) {
     settle(handle, cx);
     pick(handle, 1, None, cx);
     assert!(screen.read_with(cx, |screen, _| screen.iface_filter.is_none()));
+}
+
+/// The filter types the list's keys (`y`, the digits and `/`) instead of
+/// copying a connection or sorting, and Find acts only on the socket views.
+#[gpui_kit::test]
+fn the_filter_types_the_lists_keys(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, "talos-wk-fra1-02");
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        let list = screen.read(cx).focus.clone();
+        window.focus(&list, cx);
+        assert!(
+            !window.is_action_available(&Find, cx),
+            "Interfaces has nothing to find"
+        );
+        window.click("network-view-connections", cx);
+        crate::desktop::tests::settle_header(window, cx);
+        window.click(row_ids(&screen, cx)[0].clone(), cx);
+        assert!(window.is_action_available(&Find, cx));
+
+        cx.write_to_clipboard(ClipboardItem::new_string("kept".into()));
+        window.press("/", cx);
+        window.render_frame(cx);
+        let field = gpui_kit::Focusable::focus_handle(screen.read(cx).query.read(cx), cx);
+        assert!(field.is_focused(window));
+        let sort = screen.read(cx).conn_sort;
+        for key in ["y", "1", "2", "/"] {
+            window.press(key, cx);
+        }
+        window.render_frame(cx);
+        let view = screen.read(cx);
+        assert_eq!(view.query.read(cx).value().as_ref(), "y12/");
+        assert_eq!(view.conn_sort, sort);
+        let clipboard = |cx: &mut App| cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(clipboard(cx).as_deref(), Some("kept"));
+
+        // Back on the list, y copies the selected connection.
+        screen.update(cx, |screen, cx| {
+            screen
+                .query
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        });
+        window.focus(&list, cx);
+        window.render_frame(cx);
+        window.press("y", cx);
+        let copied = clipboard(cx).expect("a connection");
+        assert_ne!(copied, "kept");
+    })
+    .unwrap();
 }

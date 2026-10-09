@@ -15,7 +15,7 @@ impl NetworkScreen {
                 let sockets = matches!(self.view, View::Connections | View::Listeners);
                 let header = if sockets {
                     header.filter(
-                        div().child(
+                        div().key_context(FILTER_CONTEXT).child(
                             Input::new(&self.query)
                                 .id("network-filter")
                                 .aria_label(
@@ -869,16 +869,24 @@ impl Render for NetworkScreen {
                 };
                 view.set_sort(sort, cx);
             }))
-            .on_action(cx.listener(|view, _: &Find, window, cx| {
-                if matches!(view.view, View::Connections | View::Listeners) {
-                    let focus = view.query.read(cx).focus_handle(cx);
-                    window.focus(&focus, cx);
-                }
-            }))
             .on_action(
                 cx.listener(|view, _: &ClearFilter, window, cx| view.clear_filter(window, cx)),
             )
-            .on_action(cx.listener(|view, _: &input::Copy, _, cx| view.copy_connection(cx)))
+            // Find and Copy act only on the socket views; elsewhere Edit
+            // greys Find, and Copy goes on to Root.
+            .when(
+                matches!(self.view, View::Connections | View::Listeners),
+                |frame| {
+                    frame
+                        .on_action(cx.listener(|view, _: &Find, window, cx| {
+                            let focus = view.query.read(cx).focus_handle(cx);
+                            window.focus(&focus, cx);
+                        }))
+                        .on_action(
+                            cx.listener(|view, _: &input::Copy, _, cx| view.copy_connection(cx)),
+                        )
+                },
+            )
             .child(page)
     }
 }

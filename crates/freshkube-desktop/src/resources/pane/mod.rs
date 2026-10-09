@@ -1103,10 +1103,6 @@ impl DetailPane {
 
     /// Command-F: the YAML search. The dock's logs have their own.
     fn focus_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.tab {
-            Tab::Logs | Tab::Ports => return,
-            _ => {}
-        }
         self.set_tab(Tab::Yaml, cx);
         let focus = self.find.read(cx).focus_handle(cx);
         window.focus(&focus, cx);

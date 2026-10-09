@@ -663,3 +663,70 @@ fn the_pane_answers_edit_by_its_tab(cx: &mut TestAppContext) {
     assert!(live(Copy, cx));
     assert!(!live(Paste, cx));
 }
+
+/// Edit's Copy and Select all act as the view's own keys do when the menu
+/// dispatches them: a log copies its selected lines as written, and the
+/// YAML its selected lines, all of them after Select all.
+#[gpui_kit::test]
+fn edit_copies_the_focused_views_selection(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = on_pods(cx);
+    let pod = running_pod(&pilot, cx);
+    let clipboard = |cx: &mut TestAppContext| {
+        cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .unwrap_or_default()
+    };
+
+    let open = |tab: Tab, cx: &mut TestAppContext| {
+        let pod = pod.clone();
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_object(builtin("pods").unwrap(), pod.into(), tab, window, cx)
+            })
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+    };
+    open(Tab::Logs, cx);
+    let log = cx.update(|cx| {
+        let dock = pilot.read(cx).dock.read(cx);
+        match &dock.tabs[0].kind {
+            dock::TabKind::Pod(view) => view.clone(),
+            _ => panic!("not a pod's log tab"),
+        }
+    });
+    let (row, last, every) = cx.update(|cx| {
+        let view = log.read(cx);
+        let lines: Vec<&str> = view
+            .visible_rows()
+            .iter()
+            .map(|&ix| view.retained()[ix].raw.as_str())
+            .collect();
+        let last = view.visible_rows().len() - 1;
+        let row = format!("log-line-{}-{}", view.generation(), view.row_id(last));
+        (row, lines[last].to_owned(), lines.join("\n"))
+    });
+    assert!(every.contains('\n'), "the example has several lines");
+    cx.update_window(handle, |_, window, cx| window.within("dock").click(row, cx))
+        .unwrap();
+    cx.run_until_parked();
+    dispatch(handle, Copy, cx);
+    assert_eq!(clipboard(cx), last);
+    dispatch(handle, SelectAll, cx);
+    dispatch(handle, Copy, cx);
+    assert_eq!(clipboard(cx), every);
+
+    open(Tab::Yaml, cx);
+    cx.update_window(handle, |_, window, cx| window.click("resource-detail", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    dispatch(handle, SelectAll, cx);
+    dispatch(handle, Copy, cx);
+    let lines = clipboard(cx);
+    cx.update_window(handle, |_, window, cx| window.click("detail-copy-yaml", cx))
+        .unwrap();
+    let document = clipboard(cx);
+    assert!(document.starts_with("apiVersion:"), "{document}");
+    assert_eq!(lines.trim_end(), document.trim_end());
+}

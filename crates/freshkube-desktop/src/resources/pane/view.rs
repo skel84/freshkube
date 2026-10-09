@@ -620,11 +620,7 @@ impl Render for DetailPane {
             // Edit's entries are live only where they act: Find opens the
             // YAML's search from Details too, the rest act on the YAML, and
             // elsewhere Copy goes on to Root, which copies selected text.
-            .when(!matches!(self.tab, Tab::Logs | Tab::Ports), |frame| {
-                frame.on_action(
-                    cx.listener(|pane, _: &Find, window, cx| pane.focus_find(window, cx)),
-                )
-            })
+            .on_action(cx.listener(|pane, _: &Find, window, cx| pane.focus_find(window, cx)))
             .when(self.tab == Tab::Yaml, |frame| {
                 frame
                     .on_action(cx.listener(|pane, _: &input::SelectAll, _, cx| pane.select_all(cx)))
