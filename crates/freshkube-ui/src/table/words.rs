@@ -34,7 +34,7 @@ pub struct WordCut {
 }
 
 /// Where a cut that ends at a character moves back to: the end of the
-/// last whole word in `cut`, a prefix of `whole`. A cut that already ends
+/// last whole word in `cut`, the untrimmed prefix of `whole` that fits. A cut that already ends
 /// a word stays, as does one that ends before punctuation that ends a
 /// word ("Not readable" of "Not readable: …"); one inside the first word
 /// keeps the characters it has.
@@ -74,7 +74,7 @@ pub struct Cut {
     shaped: Option<(Option<Pixels>, ShapedLine)>,
     /// The font, size and colour the line was shaped in.
     #[cfg(any(test, feature = "testing"))]
-    ran: Option<(SharedString, Pixels, gpui_kit::Hsla)>,
+    ran: Option<(gpui_kit::Font, Pixels, gpui_kit::Hsla)>,
 }
 
 impl WordCut {
@@ -91,17 +91,13 @@ impl WordCut {
         let run = |len| style.to_run(len);
         let mut text = self.text.clone();
         if let Some(width) = width {
+            // Where the text must end, before GPUI's own trim: `truncate_line`
+            // strips trailing punctuation, a `)` or `%` that ends a word too.
             let mut wrapper = cx.text_system().line_wrapper(style.font(), font_size);
-            let (chars, _) = wrapper.truncate_line(
-                self.text.clone(),
-                width,
-                ELLIPSIS,
-                &[run(self.text.len())],
-                TruncateFrom::End,
-            );
-            if chars != self.text {
-                let cut = chars.strip_suffix(ELLIPSIS).unwrap_or(&chars);
-                text = format!("{}{ELLIPSIS}", at_word(cut, &self.text)).into();
+            if let Some(ix) =
+                wrapper.should_truncate_line(&self.text, width, ELLIPSIS, TruncateFrom::End)
+            {
+                text = format!("{}{ELLIPSIS}", at_word(&self.text[..ix], &self.text)).into();
             }
         }
         let shaped =
@@ -110,7 +106,7 @@ impl WordCut {
                 .shape_line(text.clone(), font_size, &[run(text.len())], None);
         #[cfg(any(test, feature = "testing"))]
         {
-            cut.ran = Some((style.font().family, font_size, style.color));
+            cut.ran = Some((style.font(), font_size, style.color));
         }
         cut.shaped = Some((width, shaped));
     }
@@ -218,9 +214,10 @@ impl Element for WordCut {
                     self.id.clone(),
                     Shown {
                         text,
-                        font,
+                        font: font.family.clone(),
                         size,
                         color,
+                        run_font: font,
                     },
                 )
             });
@@ -244,6 +241,8 @@ pub struct Shown {
     pub font: SharedString,
     pub size: Pixels,
     pub color: gpui_kit::Hsla,
+    /// The whole font, for measuring what else would have fitted.
+    pub(crate) run_font: gpui_kit::Font,
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -266,7 +265,90 @@ pub fn shown_style(id: impl Into<ElementId>) -> Option<Shown> {
 
 #[cfg(test)]
 mod tests {
-    use super::at_word;
+    use super::{ELLIPSIS, at_word, shown_style, word_cut};
+    use gpui_kit::component::Root;
+    use gpui_kit::prelude::*;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{Context, Pixels, TestAppContext, Window, div, px, size};
+
+    struct Cell(Pixels, &'static str);
+
+    impl Render for Cell {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .w(self.0)
+                .overflow_hidden()
+                .child(word_cut("cell", self.1))
+        }
+    }
+
+    /// Every whole word that fits shows: at each width, swept a pixel at a
+    /// time, a cut cell ends at a word, and the next word with its
+    /// ellipsis wouldn't have fitted, a `)` or `%` that ends it included.
+    #[gpui_kit::test]
+    fn a_cut_keeps_every_word_that_fits(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+        });
+        for text in [
+            "0 critical, 3 high (2 fixable) · SBOM · immutable",
+            "Failed: error rate 2.4 %, above 1 %",
+        ] {
+            let mut cell = None;
+            let handle = cx.open_window(size(px(800.), px(100.)), |window, cx| {
+                let view = cx.new(|_| Cell(px(10.), text));
+                cell = Some(view.clone());
+                Root::new(view, window, cx)
+            });
+            let view = cell.unwrap();
+            // Where a word ends: before a space, without the separators
+            // left hanging before it.
+            let ends: Vec<&str> = text
+                .match_indices(' ')
+                .map(|(ix, _)| text[..ix].trim_end_matches([',', '·', ':', ' ']))
+                .filter(|end| !end.is_empty())
+                .collect();
+            let mut cuts = 0;
+            for width in 10..600 {
+                cx.update_window(handle.into(), |_, window, cx| {
+                    view.update(cx, |cell, cx| {
+                        cell.0 = px(width as f32);
+                        cx.notify();
+                    });
+                    window.render_frame(cx);
+                    let shown = shown_style("cell").unwrap();
+                    let Some(kept) = shown.text.strip_suffix(ELLIPSIS) else {
+                        assert_eq!(shown.text.as_ref(), text);
+                        return;
+                    };
+                    cuts += 1;
+                    let Some(next) = ends.iter().find(|end| end.len() > kept.len()) else {
+                        return;
+                    };
+                    let longer = format!("{next}{ELLIPSIS}");
+                    let run = gpui_kit::TextRun {
+                        len: longer.len(),
+                        font: shown.run_font.clone(),
+                        color: shown.color,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+                    let fits = window
+                        .text_system()
+                        .shape_line(longer.clone().into(), shown.size, &[run], None)
+                        .width()
+                        < px(width as f32);
+                    assert!(!fits, "at {width}: {:?} drawn, {longer:?} fits", shown.text);
+                })
+                .unwrap();
+            }
+            assert!(cuts > 0);
+        }
+    }
 
     #[test]
     fn a_cut_inside_a_word_moves_back_to_the_last_whole_one() {
@@ -302,6 +384,33 @@ mod tests {
         let whole = "CPU 92% (throttled) over the hour";
         assert_eq!(at_word("CPU 92% (throttled)", whole), "CPU 92% (throttled)");
         assert_eq!(at_word("CPU 92%", whole), "CPU 92%");
+    }
+
+    #[test]
+    fn a_cut_just_after_a_closing_bracket_or_percent_keeps_the_word() {
+        // The untrimmed prefixes that fit, as the measuring gives them.
+        let whole = "0 critical, 3 high (2 fixable) · SBOM · immutable";
+        assert_eq!(
+            at_word("0 critical, 3 high (2 fixable)", whole),
+            "0 critical, 3 high (2 fixable)"
+        );
+        assert_eq!(
+            at_word("0 critical, 3 high (2 fixable) ", whole),
+            "0 critical, 3 high (2 fixable)"
+        );
+        assert_eq!(
+            at_word("0 critical, 3 high (2 fix", whole),
+            "0 critical, 3 high (2"
+        );
+        let whole = "Failed: error rate 2.4 %, above 1 %";
+        assert_eq!(
+            at_word("Failed: error rate 2.4 %", whole),
+            "Failed: error rate 2.4 %"
+        );
+        assert_eq!(
+            at_word("Failed: error rate 2.4 %,", whole),
+            "Failed: error rate 2.4 %"
+        );
     }
 
     #[test]

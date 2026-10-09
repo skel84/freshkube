@@ -242,7 +242,9 @@ impl Pilot {
                     page.open_named("checkout", window, cx);
                     page.follow_named("prod-ams", window, cx);
                     if let Some(change) = page.change_page() {
-                        change.update(cx, |change, cx| change.select("prod-ams-promotion", cx));
+                        change.update(cx, |change, cx| {
+                            change.select("prod-ams-promotion", window, cx)
+                        });
                     }
                 });
             }

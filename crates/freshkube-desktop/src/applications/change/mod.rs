@@ -188,9 +188,6 @@ pub(crate) struct ChangePage {
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
     selected: Option<SharedString>,
-    /// A selection made since the last frame, revealed once a stacked
-    /// Inspector has settled the table's height.
-    reveal_settled: bool,
     /// What the Inspector says of the selection.
     detail: Option<detail::Detail>,
 }
@@ -286,7 +283,6 @@ impl ChangePage {
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
             page_scroll: ScrollHandle::new(),
             selected: None,
-            reveal_settled: false,
             detail: None,
         };
         page.derive();
@@ -326,7 +322,7 @@ impl ChangePage {
     }
 
     /// Selects a hop, unfolding its group so its row shows.
-    pub(crate) fn select(&mut self, key: &str, cx: &mut Context<Self>) {
+    pub(crate) fn select(&mut self, key: &str, window: &Window, cx: &mut Context<Self>) {
         let Some(row) = self.rows.iter().find(|row| row.key.as_ref() == key) else {
             return;
         };
@@ -337,12 +333,20 @@ impl ChangePage {
             self.derive();
         }
         kit::reveal(self, ScrollStrategy::Nearest);
-        self.reveal_settled = true;
+        // Stacked, the Inspector shrinks the table over a few frames: the
+        // selection is revealed again until its height holds.
+        if crate::screens::page_width(window) < inspector::SPLIT_WIDTH {
+            kit::reveal_when_settled(
+                cx.entity().downgrade(),
+                |page| page.selected.is_some(),
+                window,
+            );
+        }
         cx.notify();
     }
 
     /// Selects a Stage's first gate, which shows the Stage.
-    pub(crate) fn select_stage(&mut self, stage: &str, cx: &mut Context<Self>) {
+    pub(crate) fn select_stage(&mut self, stage: &str, window: &Window, cx: &mut Context<Self>) {
         let Some(ix) = self.change.stages.iter().position(|s| s.name == stage) else {
             return;
         };
@@ -353,13 +357,13 @@ impl ChangePage {
             .find(|hop| hop.shows == Shows::Stage(ix))
             .map(|hop| hop.key.clone());
         if let Some(key) = key {
-            self.select(&key, cx);
+            self.select(&key, window, cx);
         }
     }
 
-    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+    fn step(&mut self, delta: isize, window: &Window, cx: &mut Context<Self>) {
         if let Some(key) = kit::step(self, delta, cx) {
-            self.select(&key, cx);
+            self.select(&key, window, cx);
         }
     }
 

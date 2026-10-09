@@ -545,7 +545,7 @@ impl ApplicationsPage {
         let connections = read.connections.clone();
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(change, connections, cx);
-            page.select_stage(stage, cx);
+            page.select_stage(stage, window, cx);
             page
         });
         let subscription =

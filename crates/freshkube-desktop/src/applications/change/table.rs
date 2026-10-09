@@ -245,7 +245,7 @@ impl TableSource for ChangePage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select(&key.clone(), cx);
+        self.select(&key.clone(), window, cx);
         self.focus(window, cx);
     }
 
@@ -262,7 +262,7 @@ impl TableSource for ChangePage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<freshkube_ui::menu::MenuAction> {
-        self.select(&key.clone(), cx);
+        self.select(&key.clone(), window, cx);
         self.focus(window, cx);
         let opens = self
             .selected_object()
