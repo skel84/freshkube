@@ -7,7 +7,10 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::applications::{ArgoScope, Inputs};
-use freshkube_core::delivery::change::{self as delivery_change, live::Place};
+use freshkube_core::delivery::change::{
+    self as delivery_change,
+    live::{Mapping, Place},
+};
 
 use super::Fetch;
 use crate::resources::{KubeAccess, KubeSource};
@@ -83,13 +86,15 @@ impl Changes {
     }
 
     /// What reads the change a Kargo project's Stage carries, when it
-    /// carries one; a live one reads through `access`.
+    /// carries one; a live one reads through `access` and resolves its
+    /// Stages' destinations through the workspace's `mapping`.
     pub(in crate::applications) fn fetch(
         &self,
         project: &str,
         stage: &str,
         runtime: &tokio::runtime::Handle,
         access: &KubeAccess,
+        mapping: Mapping,
         delay: Duration,
     ) -> Option<Fetch> {
         let freight = self.freight_of(project, stage)?;
@@ -110,7 +115,7 @@ impl Changes {
                     project: project.to_owned(),
                     freight,
                     argocd_namespace: live.argocd_namespace.clone(),
-                    mapping: Default::default(),
+                    mapping,
                 }),
             }),
         }

@@ -235,6 +235,163 @@ fn a_stage_mapped_to_another_cluster_never_folds(cx: &mut TestAppContext) {
         );
     })
     .unwrap();
+    // Its chevron still folds it by hand. Group 3 is the Stage stage.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("change-fold-3", cx);
+        window.render_frame(cx);
+        let lines = change(&view, cx).unwrap().read(cx).lines_text();
+        let at = lines
+            .iter()
+            .position(|line| line == "# Stage stage")
+            .unwrap();
+        assert!(
+            lines.get(at + 1).is_none_or(|line| line.starts_with('#')),
+            "folded by hand: {lines:#?}"
+        );
+    })
+    .unwrap();
+}
+
+/// An entry the workspace gains while the change page shows reaches its
+/// links at once: prod-ams's Deployment goes from greyed out to Switch and
+/// open without the page being opened again.
+#[gpui_kit::test]
+fn a_workspace_change_reaches_the_change_page_at_once(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open_with(cx, &["dev-fra"], false);
+    let labels = |view: &Entity<Pilot>, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.click(hop("prod-ams-pods"), cx);
+            window.render_frame(cx);
+            change(view, cx).unwrap().read(cx).action_labels()
+        })
+        .unwrap()
+    };
+    let before = labels(&view, cx);
+    assert!(
+        before.iter().all(|label| !label.starts_with("Switch")),
+        "{before:?}"
+    );
+    cx.update(|cx| {
+        list(&view, cx).update(cx, |page, cx| {
+            page.set_clusters(
+                super::super::Clusters {
+                    entries: vec!["dev-fra".into(), "prod-ams".into()],
+                    active: Some("dev-fra".into()),
+                    mapping: Default::default(),
+                },
+                cx,
+            )
+        })
+    });
+    let after = labels(&view, cx);
+    assert!(
+        after.contains(&"Switch and open the Deployment · prod-ams".to_owned()),
+        "{after:?}"
+    );
+}
+
+/// In example data the workspace lists prod-ams, whose example cluster
+/// holds the checkout-api Deployment its Stage reports: Switch and open
+/// asks, switches there, and ends on the Deployment's Overview.
+#[gpui_kit::test]
+fn switch_and_open_lands_on_prod_amss_deployment_in_example_data(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click(hop("prod-ams-pods"), cx);
+        window.render_frame(cx);
+        let label = "Switch and open the Deployment · prod-ams";
+        assert_eq!(change(&view, cx).unwrap().read(cx).action_why(label), None);
+        window.click(action(&view, label, cx), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (question, _) = cx.pending_prompt().expect("asked before switching");
+    assert_eq!(
+        question,
+        "Switch to prod-ams to open Deployment checkout-api?"
+    );
+    cx.simulate_prompt_answer("Switch");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applications().1, Page::Resources);
+        let opened = pilot.opened_object(cx).expect("the Deployment opened");
+        assert_eq!(
+            (
+                opened.connection.as_str(),
+                opened.resource.as_str(),
+                opened.namespace.as_str(),
+                opened.name.as_str()
+            ),
+            (
+                crate::resources::example::connection("prod-ams").as_str(),
+                "deployments.apps",
+                "checkout",
+                "checkout-api"
+            )
+        );
+        assert_eq!(pilot.opened_tab(cx), crate::resources::Tab::Overview);
+        assert!(pilot.told.is_empty(), "nothing to say: {:?}", pilot.told);
+    })
+    .unwrap();
+}
+
+/// An object on another workspace entry's cluster offers Switch and open,
+/// in the Inspector and the row menu, and asks the shell to switch.
+#[gpui_kit::test]
+fn an_object_on_another_workspace_entry_switches_and_opens(cx: &mut TestAppContext) {
+    use super::ChangeEvent;
+    use crate::resources::ResourceLink;
+    use std::{cell::RefCell, rc::Rc};
+
+    let (_runtime, handle, view) = open_with(cx, &["dev-fra", "prod-ams"], false);
+    let asked: Rc<RefCell<Vec<(String, ResourceLink)>>> = Rc::default();
+    let page = cx.update(|cx| change(&view, cx).unwrap());
+    let _subscription = cx.update(|cx| {
+        let asked = asked.clone();
+        cx.subscribe(&page, move |_, event: &ChangeEvent, _| {
+            if let ChangeEvent::Switch(entry, link) = event {
+                asked
+                    .borrow_mut()
+                    .push((entry.to_string(), (**link).clone()));
+            }
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.click(hop("prod-ams-pods"), cx);
+        window.render_frame(cx);
+        let labels = page.read(cx).action_labels();
+        let label = labels
+            .iter()
+            .find(|label| label.starts_with("Switch and open"))
+            .unwrap_or_else(|| panic!("{labels:?}"))
+            .clone();
+        assert!(label.ends_with("· prod-ams"), "{label}");
+        assert_eq!(page.read(cx).action_why(&label), None);
+        window.click(action(&view, &label, cx), cx);
+        window.render_frame(cx);
+        window.right_click(hop("prod-ams-pods"), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let menu = window.within("popup-menu");
+        assert_eq!(
+            menu.find(0usize).label(),
+            Some("Switch to prod-ams and open")
+        );
+    })
+    .unwrap();
+    let asked = asked.borrow();
+    let [(entry, ResourceLink::Object(_, object, _))] = asked.as_slice() else {
+        panic!("{asked:?}");
+    };
+    assert_eq!(entry, "prod-ams");
+    assert!(!object.name.is_empty());
 }
 
 #[gpui_kit::test]
@@ -1234,13 +1391,24 @@ fn open_switched(
     cx: &mut TestAppContext,
     after_read: bool,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    open_with(cx, &["dev-fra"], after_read)
+}
+
+/// The same, with the workspace listing `entries`, dev-fra open.
+fn open_with(
+    cx: &mut TestAppContext,
+    entries: &[&str],
+    after_read: bool,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     let (runtime, handle, view) = fixture(cx, 1280., 880.);
-    let switch = |view: &Entity<Pilot>, cx: &mut gpui_kit::App| {
+    let entries: Vec<String> = entries.iter().map(|e| e.to_string()).collect();
+    let switch = move |view: &Entity<Pilot>, cx: &mut gpui_kit::App| {
         list(view, cx).update(cx, |page, cx| {
             page.set_clusters(
                 super::super::Clusters {
-                    entries: vec!["dev-fra".into()],
+                    entries: entries.clone(),
                     active: Some("dev-fra".into()),
+                    mapping: Default::default(),
                 },
                 cx,
             );

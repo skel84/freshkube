@@ -170,9 +170,11 @@ empty value, a value with spaces around it, a server that isn't http or
 https, Argo CD's own cluster or no entry, or one that isn't an object of
 strings, refuses the file, named by its index (`destinations[2] (server …)`),
 as do more than 256 rows. A row whose entry is gone is kept and resolves to
-nothing; one destination mapped to two entries is never guessed. The change page reads only the open connection:
-a destination mapped to the open entry is read there, and one mapped to
-another entry is named, with the workloads Argo CD reports there as its claim.
+nothing; one destination mapped to two entries is never guessed. The change
+page reads only the open connection: a destination mapped to the open entry
+is read there, and one mapped to another entry is named, with the workloads
+Argo CD reports there as its claim; its objects open there only after the
+switch the person confirms (`Pilot::open_on_entry`).
 
 This is the local configuration/session boundary from #2. Independent revisions
 for remotely rotated credentials, auth-plugin state and Prometheus/provider

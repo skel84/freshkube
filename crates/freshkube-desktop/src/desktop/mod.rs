@@ -529,6 +529,12 @@ impl Pilot {
         self.resources.read(cx).detail_identity(cx).cloned()
     }
 
+    /// The tab the Resources pane shows, for tests of the links that open it.
+    #[cfg(test)]
+    pub(crate) fn opened_tab(&self, cx: &App) -> resources::Tab {
+        self.resources.read(cx).detail_tab(cx)
+    }
+
     /// Chooses another context, as the header's switcher does.
     #[cfg(test)]
     pub(crate) fn choose_context(

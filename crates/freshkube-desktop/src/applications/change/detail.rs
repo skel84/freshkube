@@ -203,30 +203,43 @@ impl ChangePage {
         }
     }
 
+    /// Open in Resources, or Switch and open for an object on another
+    /// workspace entry's cluster, with the whole sentence in its tooltip.
+    fn resource_button(&self, what: &str, object: &Object, disabled: Option<&str>) -> ActionLine {
+        let (_, closed) = self.object_link(object);
+        let cluster = self.cluster_name(&object.cluster);
+        let switch = self.switch_of(object);
+        ActionLine {
+            label: match &switch {
+                Some(_) => format!("Switch and open {what} · {cluster}"),
+                None => format!("Open {what} in Resources · {cluster}"),
+            }
+            .into(),
+            why: disabled.map(|why| why.to_owned().into()).or(closed),
+            tooltip: switch.map(|entry| {
+                format!(
+                    "Switch to {entry} and open {} there, in Resources",
+                    object.name
+                )
+                .into()
+            }),
+            leads: Some(Leads::Resources(object.clone())),
+        }
+    }
+
     fn buttons(&self, actions: &[Action]) -> Vec<ActionLine> {
         actions
             .iter()
             .map(|action| match &action.target {
                 Target::Resource { what, object } => {
-                    let (_, closed) = self.object_link(object);
-                    ActionLine {
-                        label: format!(
-                            "Open {what} in Resources · {}",
-                            self.cluster_name(&object.cluster)
-                        )
-                        .into(),
-                        why: action.disabled.clone().map(SharedString::from).or(closed),
-                        tooltip: None,
-                        leads: Some(Leads::Resources(object.clone())),
-                    }
+                    self.resource_button(what, object, action.disabled.as_deref())
                 }
-                // Another workspace cluster: only the open one is read.
-                Target::OnEntry { what, entry, .. } => ActionLine {
-                    label: format!("Open {what} in Resources · {entry}").into(),
-                    why: Some(format!("{entry} isn’t the open cluster").into()),
-                    tooltip: None,
-                    leads: None,
-                },
+                // Another workspace cluster: it opens there after a switch.
+                Target::OnEntry {
+                    what,
+                    entry,
+                    object,
+                } => self.resource_button(what, &super::on_entry(entry, object), None),
                 Target::Browser { label, address } => ActionLine {
                     label: format!("{label} ↗").into(),
                     why: action.disabled.clone().map(SharedString::from),

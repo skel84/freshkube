@@ -30,6 +30,7 @@ mod table;
 mod tests;
 mod view;
 
+use freshkube_core::delivery::change::live::Mapping;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -139,6 +140,9 @@ enum Entry {
 pub(crate) struct Clusters {
     pub(crate) entries: Vec<String>,
     pub(crate) active: Option<String>,
+    /// What the workspace says about where Argo CD deploys
+    /// (`Mapping::of`), which a change's live read resolves Stages through.
+    pub(crate) mapping: Mapping,
 }
 
 /// A part to open once the window has switched to the workspace entry its
@@ -314,6 +318,17 @@ impl ApplicationsPage {
         }
         self.clusters = clusters;
         self.update_open(cx);
+        self.update_change(cx);
+    }
+
+    /// Tells the change page shown the entries and the mapping.
+    fn update_change(&mut self, cx: &mut Context<Self>) {
+        let (Some((change, _)), Some(read)) = (&self.change, self.snapshot.data()) else {
+            return;
+        };
+        let connections = self.connections(read);
+        let mapping = self.clusters.mapping.clone();
+        change.update(cx, |page, cx| page.set_clusters(mapping, connections, cx));
     }
 
     /// Which connection each cluster of a read is, and which workspace
@@ -607,6 +622,7 @@ impl ApplicationsPage {
             stage,
             &self.runtime,
             &source.access,
+            self.clusters.mapping.clone(),
             self.example_delay,
         ) else {
             return;
@@ -620,6 +636,10 @@ impl ApplicationsPage {
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ChangeEvent::Back => this.close_change(window, cx),
                 ChangeEvent::Open(link) => cx.emit(link.as_ref().clone()),
+                ChangeEvent::Switch(entry, link) => cx.emit(SwitchLink {
+                    entry: entry.clone(),
+                    link: link.as_ref().clone(),
+                }),
                 ChangeEvent::Revision(link) => cx.emit(link.clone()),
             });
         window.focus(&page.read(cx).focus_handle(), cx);

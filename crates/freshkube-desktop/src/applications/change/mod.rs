@@ -82,6 +82,9 @@ pub(crate) enum ChangeEvent {
     Back,
     /// An object to open in Resources.
     Open(Box<ResourceLink>),
+    /// An object on another workspace entry's cluster, to open there once
+    /// the window has switched to that entry; the shell asks first.
+    Switch(SharedString, Box<ResourceLink>),
     /// A Deployment's revision to show in Observability.
     Revision(crate::observability::RevisionLink),
 }
@@ -174,6 +177,10 @@ pub(crate) struct GroupLine {
     pub(super) tone: Tone,
     /// Only a Stage folds.
     pub(super) folds: bool,
+    /// Whether its rows were read: a Stage on another workspace entry is
+    /// known only from Argo CD's report, so it never folds itself as fine,
+    /// though its chevron still folds it.
+    pub(super) read_there: bool,
     pub(super) rows: usize,
 }
 
@@ -324,19 +331,21 @@ impl ChangePage {
                     .map(|row| status(row.tone))
                     .max_by_key(|tone| rank(*tone))
                     .unwrap_or(Tone::Good);
-                let (label, detail, folds) = match group.phase {
-                    Phase::Build => ("Build".to_owned(), vec![group.detail.clone()], false),
-                    Phase::Freight => ("Freight".to_owned(), vec![group.detail.clone()], false),
+                let (label, detail, folds, read_there) = match group.phase {
+                    Phase::Build => ("Build".to_owned(), vec![group.detail.clone()], false, true),
+                    Phase::Freight => (
+                        "Freight".to_owned(),
+                        vec![group.detail.clone()],
+                        false,
+                        true,
+                    ),
                     Phase::Stage(stage) => {
                         let stage = &change.stages[stage];
-                        // A Stage on another workspace cluster is known
-                        // only from Argo CD's report: nothing there was
-                        // read, so it never folds as fine.
-                        let read_there = !matches!(stage.cluster, Destination::Entry { .. });
                         (
                             format!("Stage {}", stage.name),
                             vec![group.detail.clone(), stage.words.to_lowercase()],
-                            read_there,
+                            true,
+                            !matches!(stage.cluster, Destination::Entry { .. }),
                         )
                     }
                 };
@@ -345,6 +354,7 @@ impl ChangePage {
                     detail,
                     tone,
                     folds,
+                    read_there,
                     rows: of.len(),
                 }
             })
@@ -357,7 +367,9 @@ impl ChangePage {
             self.folded = groups
                 .iter()
                 .enumerate()
-                .filter(|(_, group)| anything_wrong && group.folds && group.tone == Tone::Good)
+                .filter(|(_, group)| {
+                    anything_wrong && group.folds && group.read_there && group.tone == Tone::Good
+                })
                 .map(|(ix, _)| ix)
                 .collect();
         } else {
@@ -548,7 +560,9 @@ impl ChangePage {
             },
             Tab::Overview,
         );
-        let closed = (!self.connections.opens(&session)).then(|| {
+        let closed = (!self.connections.opens(&session)
+            && self.connections.switch_to(&session).is_none())
+        .then(|| {
             format!(
                 "{} isn't the open cluster, so its objects don't open in Resources",
                 self.cluster_name(&object.cluster)
@@ -556,6 +570,15 @@ impl ChangePage {
             .into()
         });
         (link, closed)
+    }
+
+    /// The workspace entry an object's cluster is, when it isn't the open
+    /// one: its objects open there after a switch.
+    pub(super) fn switch_of(&self, object: &Object) -> Option<SharedString> {
+        let session = SessionKey::new(object.cluster.clone());
+        self.connections
+            .switch_to(&session)
+            .map(|entry| entry.to_owned().into())
     }
 
     /// A cluster as the page names it: a live read's connection by its
@@ -569,15 +592,18 @@ impl ChangePage {
 
     /// What O opens: a gate's Stage, or the hop's first object that may
     /// be opened at all.
-    fn selected_object(&self) -> Option<&Object> {
+    fn selected_object(&self) -> Option<Object> {
         let hop = self.change.hop(self.selected.as_ref()?)?;
         match &hop.shows {
-            Shows::Stage(stage) => Some(&self.change.stages[*stage].object),
+            Shows::Stage(stage) => Some(self.change.stages[*stage].object.clone()),
             Shows::Hop(detail) => detail
                 .actions
                 .iter()
                 .find_map(|action| match &action.target {
-                    Target::Resource { object, .. } if action.disabled.is_none() => Some(object),
+                    Target::Resource { object, .. } if action.disabled.is_none() => {
+                        Some(object.clone())
+                    }
+                    Target::OnEntry { entry, object, .. } => Some(on_entry(entry, object)),
                     _ => None,
                 }),
         }
@@ -586,14 +612,19 @@ impl ChangePage {
     /// O: the selected hop's object in Resources, through the shell, which
     /// says so when its cluster isn't open.
     fn open_selected(&mut self, cx: &mut Context<Self>) {
-        if let Some(object) = self.selected_object().cloned() {
+        if let Some(object) = self.selected_object() {
             self.open(&object, cx);
         }
     }
 
-    fn open(&mut self, object: &Object, cx: &mut Context<Self>) {
+    /// Opens an object in Resources, or, on another workspace entry's
+    /// cluster, asks the shell to switch there first.
+    pub(super) fn open(&mut self, object: &Object, cx: &mut Context<Self>) {
         let (link, _) = self.object_link(object);
-        cx.emit(ChangeEvent::Open(Box::new(link)));
+        cx.emit(match self.switch_of(object) {
+            Some(entry) => ChangeEvent::Switch(entry, Box::new(link)),
+            None => ChangeEvent::Open(Box::new(link)),
+        });
     }
 
     /// The Freight's page in Kargo, in the browser.
@@ -687,5 +718,14 @@ fn page_link(change: &Change) -> Result<SharedString, SharedString> {
     match &change.page {
         Ok(address) => Ok(address.to_string().into()),
         Err(why) => Err(why.clone().into()),
+    }
+}
+
+/// An object Argo CD reports on another workspace entry, as one on that
+/// entry's cluster: its key is the entry's id, which is a switch away.
+pub(super) fn on_entry(entry: &str, object: &Object) -> Object {
+    Object {
+        cluster: entry.to_owned(),
+        ..object.clone()
     }
 }
