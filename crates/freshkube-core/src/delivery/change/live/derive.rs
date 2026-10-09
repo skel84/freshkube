@@ -13,6 +13,7 @@ use crate::delivery::argocd::DestinationMatch;
 use crate::delivery::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, freight_links};
 use crate::delivery::kargo::{self, Freight, Stage as KargoStage};
 use crate::delivery::observation::{ObjectRef, Observation};
+use crate::delivery::source::cap_note;
 use crate::indicators::HealthIndicator::{self, *};
 
 /// The change `place` names, from what was read and the join's links.
@@ -221,7 +222,10 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
     }) else {
         return Not(match evidence.applications.why_not_read() {
             Some(why) => format!("Argo CD Applications in {namespace} weren't read: {why}"),
-            None => format!("no Argo CD Application in {namespace} was found for it"),
+            None => format!(
+                "no Argo CD Application in {namespace} was found for it{}",
+                cap_note(evidence.applications.capped())
+            ),
         });
     };
     let shown = |context: &str| {
@@ -528,6 +532,9 @@ fn pods_state(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthInd
         .iter()
         .filter_map(|image| image.digest.as_ref().map(|digest| digest.as_str()))
         .collect();
+    if digests.is_empty() {
+        return (Unknown, "The Freight names no image digest".into());
+    }
     let named: BTreeSet<(Option<&str>, &str)> = link
         .evidence
         .iter()
@@ -595,7 +602,8 @@ fn link_hop(
     let (state, words) = state_of(evidence, freight, link);
     let to_kind = kind_of(link.to);
     // An Unknown link to an object it never found names the side it came
-    // from: the row says what wasn't found, and shows that side as context.
+    // from: the row says what wasn't found, or wasn't read when its list was
+    // refused or failed, and shows that side as context.
     let missing = link.confidence == Confidence::Unknown
         && link.subject != "-"
         && matches!(
@@ -606,6 +614,17 @@ fn link_hop(
             .evidence
             .iter()
             .any(|seen| Some(seen.object.kind.as_str()) == to_kind);
+    let listed = match link.to {
+        Joined::Application => evidence.applications.read().is_some(),
+        Joined::Rollout => evidence.rollouts.read().is_some(),
+        Joined::Deployment => evidence.deployments.read().is_some(),
+        _ => true,
+    };
+    let missing_words = format!(
+        "{} {}",
+        link.to.word(),
+        if listed { "not found" } else { "not read" }
+    );
     let mut fields = Vec::new();
     if missing {
         fields.push(Field {
@@ -660,7 +679,7 @@ fn link_hop(
         group,
         state,
         name: if missing {
-            format!("{} not found", link.to.word())
+            missing_words.clone()
         } else {
             row_name(link)
         },
@@ -671,7 +690,7 @@ fn link_hop(
         shows: Shows::Hop(Box::new(HopDetail {
             kind: caption(link.to).into(),
             title: if missing {
-                format!("{} not found", link.to.word())
+                missing_words
             } else if link.subject == "-" || link.to == Joined::Pod {
                 caption(link.to).into()
             } else {

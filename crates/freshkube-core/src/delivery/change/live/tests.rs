@@ -323,14 +323,15 @@ async fn refused_applications_leave_the_destination_unknown_and_say_where() {
     );
     assert!(change.groups[2].detail.starts_with("destination unknown: "));
 
-    // The join's Unknown link names the Stage: the row says what wasn't found.
+    // The join's Unknown link names the Stage: the row says what wasn't
+    // read, since the list was refused.
     let app = row(&change, "dev-argocd-0");
-    assert_eq!(app.name, "Application not found");
+    assert_eq!(app.name, "Application not read");
     assert_eq!(app.state, HealthIndicator::Unknown);
     let Shows::Hop(detail) = &app.shows else {
         panic!("a hop");
     };
-    assert_eq!(detail.title, "Application not found");
+    assert_eq!(detail.title, "Application not read");
     assert!(
         detail
             .fields
@@ -358,6 +359,63 @@ async fn no_application_for_the_stage_is_unknown_not_another_cluster() {
     assert_eq!(
         change.stages[0].cluster,
         Destination::Unknown("no Argo CD Application in argocd was found for it".into())
+    );
+    // The list was read, so the row says what wasn't found.
+    assert_eq!(row(&change, "dev-argocd-0").name, "Application not found");
+}
+
+#[tokio::test]
+async fn a_capped_application_list_says_the_application_may_be_past_the_cap() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd)
+            .with("applications", Vec::new())
+            .capped("applications");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    let Destination::Unknown(why) = &change.stages[0].cluster else {
+        panic!("{:?}", change.stages[0].cluster);
+    };
+    assert!(
+        why.starts_with(
+            "no Argo CD Application in argocd was found for it; the listing stopped at the page cap"
+        ),
+        "{why}"
+    );
+    assert_eq!(row(&change, "dev-argocd-0").name, "Application not found");
+}
+
+#[tokio::test]
+async fn pods_of_a_freight_without_a_digest_are_unknown_not_another_digest() {
+    let reader = one_cluster(|world| {
+        let mut tagged = freight("f-new", NEW, SHA);
+        tagged["images"][0]
+            .as_object_mut()
+            .expect("an image")
+            .remove("digest");
+        world.kargo = std::mem::take(&mut world.kargo).with("freights", vec![tagged]);
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+
+    let pods = change
+        .hops
+        .iter()
+        .find(|hop| hop.name == "Pods")
+        .expect("the pods are reached");
+    let Shows::Hop(detail) = &pods.shows else {
+        panic!("a hop");
+    };
+    assert_eq!(pods.link, Some(Confidence::Claimed));
+    assert_eq!(
+        (pods.state, detail.state.as_str()),
+        (
+            HealthIndicator::Unknown,
+            "The Freight names no image digest"
+        )
     );
 }
 
