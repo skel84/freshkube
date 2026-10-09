@@ -113,7 +113,9 @@ impl ApplicationPage {
         )
     }
 
-    fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// The parts' table with the Inspector beside or under it, and the
+    /// height the split keeps while a short page scrolls its frame.
+    fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> (AnyElement, f32) {
         let table = div()
             .id("application-table")
             .test_support()
@@ -126,14 +128,16 @@ impl ApplicationPage {
             .into_any_element();
         let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
-        inspector::split(
+        let least = self.split.short_height(beside, details.is_some());
+        let split = inspector::split(
             "application-split",
             &self.split,
             beside,
             table,
             details,
             window,
-        )
+        );
+        (split, least)
     }
 }
 
@@ -141,7 +145,7 @@ impl Render for ApplicationPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
-        let body = self.render_table(window, cx);
+        let (body, least) = self.render_table(window, cx);
         let short = page::is_short(window);
         // The keys live on a wrapper drawn in every state.
         div()
@@ -169,7 +173,9 @@ impl Render for ApplicationPage {
                             .flex_col()
                             .flex_1()
                             .min_h_0()
-                            .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
+                            // A short page scrolls its frame down to the
+                            // split's least heights, the Inspector's too.
+                            .when(short, |this| this.min_h(dp(least)))
                             .child(body),
                     ),
             )

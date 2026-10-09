@@ -3,7 +3,7 @@ use super::{ApplicationsPage, Variant};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 use std::time::Duration;
 
-use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, test::TestWindowExt};
+use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, test::TestWindowExt};
 
 const APPLICATIONS: layout_check::TablePage = layout_check::TablePage {
     page: "applications-page",
@@ -527,6 +527,60 @@ fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAp
         })
         .unwrap();
     }
+}
+
+/// At 760 by 560 and text size 20 the stacked split is at its least
+/// heights: the selected row is whole above the next, and the frame scrolls
+/// down to the end of the Inspector's least height.
+#[gpui_kit::test]
+fn a_short_page_scrolls_to_the_whole_stacked_inspector(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 760., 560., |_| {});
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(CART, cx);
+    })
+    .unwrap();
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        for _ in 0..8 {
+            window.render_frame(cx);
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        let bounds = |id: &'static str| window.find(id).bounds();
+        // The list has no footer: its legend is in the notes above the
+        // split, so the rows end where the list does.
+        let (list, group, row) = (
+            bounds("applications-list"),
+            bounds("applications-group-kargo-projects"),
+            bounds(CART),
+        );
+        assert!(
+            group.top() >= list.top() - px(0.5),
+            "the group row scrolled out: {group:?} in {list:?}"
+        );
+        assert!(
+            row.bottom() <= list.bottom() + px(0.5),
+            "cart is cut: {row:?} in {list:?}"
+        );
+        let (frame, detail) = (
+            window.find("applications-page").bounds(),
+            window.find("applications-detail").bounds(),
+        );
+        let reach = page(&view, cx).read(cx).page_scroll.max_offset().y;
+        assert!(
+            detail.size.height
+                >= crate::ui::dp_px(freshkube_ui::inspector::MIN_HEIGHT, window) - px(1.),
+            "the Inspector keeps its least: {detail:?}"
+        );
+        assert!(
+            detail.bottom() - frame.bottom() <= reach + px(1.),
+            "the frame scrolls {reach:?}, short of the Inspector's end: {detail:?} in {frame:?}"
+        );
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

@@ -268,8 +268,9 @@ impl ApplicationsPage {
     }
 
     /// The table in the list's key context, with the Inspector beside it
-    /// on a wide page and under it on a narrow one.
-    fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// on a wide page and under it on a narrow one, and the height the
+    /// split keeps while a short page scrolls its frame.
+    fn render_table(&mut self, window: &mut Window, cx: &mut Context<Self>) -> (AnyElement, f32) {
         let table = div()
             .id("applications-table")
             .test_support()
@@ -282,14 +283,16 @@ impl ApplicationsPage {
             .into_any_element();
         let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
-        inspector::split(
+        let least = self.split.short_height(beside, details.is_some());
+        let split = inspector::split(
             "applications-split",
             &self.split,
             beside,
             table,
             details,
             window,
-        )
+        );
+        (split, least)
     }
 }
 
@@ -307,8 +310,8 @@ impl Render for ApplicationsPage {
                 .child(open.clone());
         }
         let header = self.render_header(window, cx);
-        let body = match self.render_state(cx) {
-            Some(state) => state,
+        let (body, least) = match self.render_state(cx) {
+            Some(state) => (state, page::SHORT_LIST_HEIGHT),
             None => self.render_table(window, cx),
         };
         let short = page::is_short(window);
@@ -340,7 +343,9 @@ impl Render for ApplicationsPage {
                             .flex_col()
                             .flex_1()
                             .min_h_0()
-                            .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
+                            // A short page scrolls its frame down to the
+                            // split's least heights, the Inspector's too.
+                            .when(short, |this| this.min_h(dp(least)))
                             .child(body),
                     ),
             )
