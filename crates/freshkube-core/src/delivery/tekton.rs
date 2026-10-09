@@ -52,6 +52,22 @@ pub struct PipelineRun {
     pub task_runs: Vec<String>,
     /// `chains.tekton.dev/signed`: `true`, `failed`, …
     pub chains_state: Option<String>,
+    /// The pages PaC recorded for the run, as written: never opened until
+    /// [`Address`](super::address::Address) has read them.
+    pub pages: RunPages,
+}
+
+/// The addresses Pipelines as Code annotates a run with, as written.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunPages {
+    /// `repo-url`: the repository's page.
+    pub repository: Option<String>,
+    /// `sha-url`: the commit's page.
+    pub commit: Option<String>,
+    /// `git-provider`: `github`, `gitlab`, `bitbucket-cloud`, …
+    pub provider: Option<String>,
+    /// `log-url`: the run's page in the console PaC reports to.
+    pub run: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,6 +79,14 @@ pub struct TaskRun {
     pub pipeline_run: Option<String>,
     pub results: BTreeMap<String, String>,
     pub chains_state: Option<String>,
+    /// `status.podName`: the pod its steps ran in.
+    pub pod: Option<String>,
+    /// Its steps' containers, in order, from `status.steps`.
+    pub steps: Vec<String>,
+    /// `Succeeded` condition status.
+    pub succeeded: Option<String>,
+    /// `tekton.dev/pipelineTask`: the task's name in its pipeline.
+    pub task: Option<String>,
 }
 
 impl PipelineRun {
@@ -137,13 +161,18 @@ fn annotation(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
-    let condition = value
+/// The run's `Succeeded` condition, if it has one.
+fn succeeded(value: &Value) -> Option<&Value> {
+    value
         .pointer("/status/conditions")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .find(|condition| text(condition, "/type").as_deref() == Some("Succeeded"));
+        .find(|condition| text(condition, "/type").as_deref() == Some("Succeeded"))
+}
+
+pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
+    let condition = succeeded(value);
     let params = value
         .pointer("/spec/params")
         .and_then(Value::as_array)
@@ -176,6 +205,13 @@ pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
             .filter_map(|child| text(child, "/name"))
             .collect(),
         chains_state: chains_state(value),
+        pages: RunPages {
+            repository: annotation(value, "pipelinesascode.tekton.dev/repo-url"),
+            commit: annotation(value, "pipelinesascode.tekton.dev/sha-url"),
+            provider: annotation(value, "pipelinesascode.tekton.dev/git-provider")
+                .or_else(|| label(value, "pipelinesascode.tekton.dev/git-provider")),
+            run: annotation(value, "pipelinesascode.tekton.dev/log-url"),
+        },
     })
 }
 
@@ -187,6 +223,16 @@ pub fn parse_task_run(value: &Value) -> Option<TaskRun> {
         pipeline_run: label(value, PIPELINE_RUN_LABEL),
         results: results_of(value),
         chains_state: chains_state(value),
+        pod: text(value, "/status/podName"),
+        steps: value
+            .pointer("/status/steps")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|step| text(step, "/container"))
+            .collect(),
+        succeeded: succeeded(value).and_then(|condition| text(condition, "/status")),
+        task: label(value, "tekton.dev/pipelineTask"),
     })
 }
 

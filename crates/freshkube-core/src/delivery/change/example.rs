@@ -22,6 +22,9 @@ pub const FREIGHT: &str = "wonky-otter";
 /// The git and registry hosts the build read from.
 pub const GIT: &str = "git.example.test";
 pub const REGISTRY: &str = "registry.example.test";
+/// Where the invented Kargo and Argo CD serve their pages.
+pub const KARGO_PAGE: &str = "https://kargo.example.test";
+pub const ARGOCD_PAGE: &str = "https://argocd.example.test";
 
 const DIGEST: &str = "sha256:9c4e…b21a";
 const COMMIT: &str = "a1f3c9e";
@@ -110,6 +113,7 @@ fn object(cluster: &str, group: &str, kind: &str, namespace: &str, name: &str) -
         "Deployment" => ("v1", "deployments"),
         "PipelineRun" => ("v1", "pipelineruns"),
         "TaskRun" => ("v1", "taskruns"),
+        "Pod" => ("v1", "pods"),
         "Freight" => (VERSION, "freights"),
         "Stage" => (VERSION, "stages"),
         _ => (VERSION, "applications"),
@@ -132,9 +136,34 @@ fn resource(what: &str, object: Object) -> Action {
     })
 }
 
-fn browser(label: &str) -> Action {
-    Action::new(Target::Browser {
-        label: label.into(),
+/// `label`'s page, `segments` below `base`.
+fn browser(label: &str, base: &str, segments: &[&str]) -> Action {
+    let address = Address::parse(base).map(|base| base.join(segments.iter().copied()));
+    Action::browser(label, address)
+}
+
+/// An Application's page in Argo CD.
+fn argocd_page(app: &str) -> Action {
+    browser(
+        "Open in Argo CD",
+        ARGOCD_PAGE,
+        &["applications", "argocd", app],
+    )
+}
+
+/// The Freight's page in Kargo.
+pub fn kargo_page() -> Address {
+    Address::parse(KARGO_PAGE)
+        .expect("an address")
+        .join(["project", PROJECT, "freight", FREIGHT])
+}
+
+/// The pod a TaskRun of the CI cluster ran its steps in.
+fn step_logs(task: &str, run: &str) -> Action {
+    Action::new(Target::Logs {
+        what: task.into(),
+        pod: object(CICD, "", "Pod", "checkout-ci", &format!("{run}-{task}-pod")),
+        container: Some(format!("step-{task}")),
     })
 }
 
@@ -347,7 +376,7 @@ fn deployed(
                 ),
                 unlinked: None,
                 actions: vec![
-                    browser("Open diff in Argo CD"),
+                    argocd_page(&app),
                     resource("the Application", application_object(&app)),
                 ],
             })),
@@ -427,7 +456,11 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             unlinked: Some(
                 "Where the change starts: every later hop joins back to its merge commit.".into(),
             ),
-            actions: vec![browser("Open the pull request")],
+            actions: vec![browser(
+                "Open the pull request",
+                &format!("https://{GIT}"),
+                &["acme", "checkout", "pull", "418"],
+            )],
         })),
     };
     let pruned = Hop {
@@ -467,10 +500,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             ),
             unlinked: None,
             actions: vec![
-                Action::new(Target::Logs {
-                    cluster: CICD.into(),
-                })
-                .disabled("Run pruned, logs gone"),
+                step_logs("build", "checkout-pr-418-m2q8").disabled("Run pruned, logs gone"),
             ],
         })),
     };
@@ -509,9 +539,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             ),
             unlinked: None,
             actions: vec![
-                Action::new(Target::Logs {
-                    cluster: CICD.into(),
-                }),
+                step_logs("build", "checkout-push-x7k2"),
                 resource(
                     "the PipelineRun",
                     object(
@@ -627,7 +655,10 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
                 "The digest matches on both sides.",
             ),
             unlinked: None,
-            actions: vec![browser("Open in the registry")],
+            actions: vec![Action::browser(
+                "Open in the registry",
+                Err("The registry's page isn't recorded in the cluster".into()),
+            )],
         })),
     };
     let freight = Hop {
@@ -665,7 +696,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
                     "the Freight",
                     object(CORE, kargo::GROUP, "Freight", PROJECT, FREIGHT),
                 ),
-                browser("Open in Kargo"),
+                Action::browser("Open in Kargo", Ok(kargo_page())),
             ],
         })),
     };
@@ -712,7 +743,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
                         .into(),
                 ),
                 actions: vec![
-                    browser("Open diff in Argo CD"),
+                    argocd_page(app),
                     resource("the Application", application_object(app)),
                 ],
             })),
@@ -860,6 +891,7 @@ pub fn change(now: DateTime<Utc>) -> Change {
         freight: FREIGHT.into(),
         kargo_cluster: CORE.into(),
         observed_at: now,
+        page: Ok(kargo_page()),
         groups,
         stages,
         hops,

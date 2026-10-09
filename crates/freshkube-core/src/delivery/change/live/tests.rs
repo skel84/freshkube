@@ -525,3 +525,249 @@ async fn a_commit_from_an_image_revision_says_why_no_build_joined() {
         freight.detail
     );
 }
+
+/// Every link out of the change: the hop's key, the button, where it
+/// leads (an address, or the pod and container of a Logs), and why it's
+/// greyed out.
+fn links_out(change: &Change) -> Vec<(String, String, Option<String>, Option<String>)> {
+    use super::super::Target;
+    let mut out = Vec::new();
+    for hop in &change.hops {
+        let Shows::Hop(detail) = &hop.shows else {
+            continue;
+        };
+        for action in &detail.actions {
+            let (label, to) = match &action.target {
+                Target::Browser { label, address } => {
+                    (label.clone(), address.as_ref().map(|a| a.to_string()))
+                }
+                Target::Logs {
+                    what,
+                    pod,
+                    container,
+                } => (
+                    format!("Logs of {what}"),
+                    Some(format!(
+                        "{}/{}/{} {container:?}",
+                        pod.cluster, pod.namespace, pod.name
+                    )),
+                ),
+                Target::Resource { .. } => continue,
+            };
+            out.push((hop.key.clone(), label, to, action.disabled.clone()));
+        }
+    }
+    out
+}
+
+fn link_out<'a>(
+    links: &'a [(String, String, Option<String>, Option<String>)],
+    label: &str,
+) -> &'a (String, String, Option<String>, Option<String>) {
+    links
+        .iter()
+        .find(|(_, l, _, _)| l == label)
+        .unwrap_or_else(|| panic!("{label} in {links:#?}"))
+}
+
+fn config_map(namespace: &str, name: &str, key: &str, value: &str) -> Value {
+    json!({
+        "metadata": {"name": name, "namespace": namespace},
+        "data": {key: value, "other": "kept out"}
+    })
+}
+
+/// The run as Pipelines as Code annotates a pull request's, and its task
+/// as Tekton records the pod it ran in.
+fn annotated(world: &mut World, provider: &str, sha_url: &str) {
+    let mut run = pipeline_run(SHA, true, Some(NEW));
+    let annotations = run["metadata"]["annotations"]
+        .as_object_mut()
+        .expect("annotations");
+    for (key, value) in [
+        ("repo-url", "https://git.example/acme/storefront"),
+        ("sha-url", sha_url),
+        ("git-provider", provider),
+        ("pull-request", "7"),
+        (
+            "log-url",
+            "https://console.example.test/runs/storefront-push-x",
+        ),
+    ] {
+        annotations.insert(format!("pipelinesascode.tekton.dev/{key}"), json!(value));
+    }
+    let mut task = task_run();
+    task["metadata"]["name"] = json!("storefront-push-x-build");
+    task["metadata"]["labels"]["tekton.dev/pipelineTask"] = json!("build");
+    task["status"]["podName"] = json!("storefront-push-x-build-pod");
+    task["status"]["steps"] = json!([{"container": "step-build"}, {"container": "step-push"}]);
+    task["status"]["conditions"] = json!([{"type": "Succeeded", "status": "True"}]);
+    world.tekton = std::mem::take(&mut world.tekton)
+        .with("pipelineruns", vec![run])
+        .with("taskruns", vec![task]);
+}
+
+#[tokio::test]
+async fn links_out_are_made_from_what_the_cluster_records() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).with(
+            "configmaps",
+            vec![
+                // User info, a query and a fragment never leave the cluster.
+                config_map(
+                    "argocd",
+                    "argocd-cm",
+                    "url",
+                    "https://admin:pw@argocd.example.test/?token=abc#x",
+                ),
+                config_map(
+                    "kargo",
+                    "kargo-api",
+                    "ADMIN_ACCOUNT_TOKEN_ISSUER",
+                    "https://kargo.example.test",
+                ),
+            ],
+        );
+        annotated(
+            world,
+            "github",
+            "https://git.example/acme/storefront/commit/abc",
+        );
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+
+    let freight = "https://kargo.example.test/project/storefront/freight/f-new";
+    assert_eq!(
+        change.page.as_ref().map(|a| a.to_string()),
+        Ok(freight.into())
+    );
+    let kargo = link_out(&links, "Open in Kargo");
+    assert_eq!((kargo.2.as_deref(), &kargo.3), (Some(freight), &None));
+
+    let argocd = link_out(&links, "Open in Argo CD");
+    assert_eq!(
+        argocd.2.as_deref(),
+        Some("https://argocd.example.test/applications/argocd/storefront-dev")
+    );
+    assert_eq!(
+        link_out(&links, "Open the pull request").2.as_deref(),
+        Some("https://git.example/acme/storefront/pull/7")
+    );
+    assert_eq!(
+        link_out(&links, "Open the commit").2.as_deref(),
+        Some("https://git.example/acme/storefront/commit/abc")
+    );
+    assert_eq!(
+        link_out(&links, "Open the run").2.as_deref(),
+        Some("https://console.example.test/runs/storefront-push-x")
+    );
+    let logs = link_out(&links, "Logs of build");
+    assert_eq!(
+        (logs.2.as_deref(), &logs.3),
+        (
+            Some("cluster-key/acme-builds/storefront-push-x-build-pod Some(\"step-build\")"),
+            &None
+        )
+    );
+
+    // Only the two ConfigMaps were read beside the change: never a Secret.
+    let requests = reader.requests.borrow();
+    assert!(
+        !requests.iter().any(|r| r.contains("secrets")),
+        "{requests:#?}"
+    );
+    let maps: Vec<&String> = requests
+        .iter()
+        .filter(|r| r.contains("configmaps"))
+        .collect();
+    assert_eq!(
+        maps,
+        [
+            "GET /configmaps Some(\"argocd\") argocd-cm",
+            "GET /configmaps Some(\"kargo\") kargo-api"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn links_without_a_recorded_address_are_greyed_out_with_why() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).refusing("configmaps");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+
+    let why = change.page.as_ref().expect_err("no Kargo page");
+    assert!(
+        why.starts_with("Kargo's address isn't known: ConfigMap kargo-api in kargo is refused"),
+        "{why}"
+    );
+    let argocd = link_out(&links, "Open in Argo CD");
+    assert_eq!(argocd.2, None);
+    assert!(
+        argocd.3.as_deref().is_some_and(|why| why.starts_with(
+            "Argo CD's address isn't known: ConfigMap argocd-cm in argocd is refused"
+        )),
+        "{argocd:?}"
+    );
+    // The healthy run carries no Pipelines as Code addresses.
+    assert_eq!(
+        link_out(&links, "Open the commit").3.as_deref(),
+        Some("The run has no Pipelines as Code sha-url")
+    );
+}
+
+#[tokio::test]
+async fn only_http_and_https_addresses_open() {
+    let reader = one_cluster(|world| {
+        world.argocd = std::mem::take(&mut world.argocd).with(
+            "configmaps",
+            vec![
+                config_map("argocd", "argocd-cm", "url", "javascript:alert(1)"),
+                config_map(
+                    "kargo",
+                    "kargo-api",
+                    "ADMIN_ACCOUNT_TOKEN_ISSUER",
+                    "kargo.example.test",
+                ),
+            ],
+        );
+        annotated(world, "bitbucket-datacenter", "file:///etc/passwd");
+    });
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+
+    for (label, why) in [
+        (
+            "Open in Argo CD",
+            "Argo CD's address isn't known: url of ConfigMap argocd-cm in argocd: it isn't an http or https address",
+        ),
+        (
+            "Open in Kargo",
+            "Kargo's address isn't known: ADMIN_ACCOUNT_TOKEN_ISSUER of ConfigMap kargo-api in kargo: it isn't an address",
+        ),
+        (
+            "Open the commit",
+            "The run's sha-url: it isn't an http or https address",
+        ),
+        (
+            "Open the pull request",
+            "Pipelines as Code's provider bitbucket-datacenter has no known pull request page",
+        ),
+    ] {
+        let link = link_out(&links, label);
+        assert_eq!(
+            (link.2.as_deref(), link.3.as_deref()),
+            (None, Some(why)),
+            "{label}"
+        );
+    }
+    assert!(change.page.is_err());
+}

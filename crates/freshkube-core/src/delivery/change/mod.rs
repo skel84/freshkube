@@ -13,6 +13,7 @@ pub mod live;
 
 use chrono::{DateTime, Utc};
 
+use super::address::Address;
 use super::join::Confidence;
 use crate::indicators::HealthIndicator;
 
@@ -27,6 +28,9 @@ pub struct Change {
     pub kargo_cluster: String,
     /// When it was all read.
     pub observed_at: DateTime<Utc>,
+    /// The Freight's page in Kargo, which the header opens and copies; why
+    /// not, when the cluster doesn't record Kargo's address.
+    pub page: Result<Address, String>,
     pub groups: Vec<Group>,
     pub stages: Vec<Stage>,
     pub hops: Vec<Hop>,
@@ -158,9 +162,20 @@ pub enum Target {
     /// An object in Resources; `what` names it on the button.
     Resource { what: String, object: Object },
     /// The tool's own page, in the browser: `label` without its arrow.
-    Browser { label: String },
-    /// A step container's log in the dock, from the cluster that ran it.
-    Logs { cluster: String },
+    /// `None` when the cluster doesn't record where it is; the action says
+    /// why.
+    Browser {
+        label: String,
+        address: Option<Address>,
+    },
+    /// The steps' logs of the pod a TaskRun ran in, in the dock, from the
+    /// cluster that ran it: `what` names the task on the button, and
+    /// `container` is its first step's.
+    Logs {
+        what: String,
+        pod: Object,
+        container: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -181,6 +196,22 @@ impl Action {
     pub fn disabled(mut self, why: impl Into<String>) -> Self {
         self.disabled = Some(why.into());
         self
+    }
+
+    /// A tool's page at `address`, or greyed out with why there's none.
+    pub fn browser(label: impl Into<String>, address: Result<Address, String>) -> Self {
+        let label = label.into();
+        match address {
+            Ok(address) => Self::new(Target::Browser {
+                label,
+                address: Some(address),
+            }),
+            Err(why) => Self::new(Target::Browser {
+                label,
+                address: None,
+            })
+            .disabled(why),
+        }
     }
 }
 
