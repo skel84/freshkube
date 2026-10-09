@@ -4177,11 +4177,20 @@ fn quit_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
     start_shell(handle, &view, &pod, cx);
     cx.update(|cx| {
         super::on_quit(cx, |_| QUIT.set(true));
-        cx.bind_keys([gpui_kit::KeyBinding::new("secondary-q", super::Quit, None)]);
+        // Quit's key off macOS is Ctrl-Q, which the terminal keeps, as it
+        // keeps every plain Control key on every platform.
+        cx.bind_keys([
+            gpui_kit::KeyBinding::new("secondary-q", super::Quit, None),
+            gpui_kit::KeyBinding::new("ctrl-q", super::Quit, None),
+        ]);
     });
     QUIT.set(false);
     let running = |cx: &mut TestAppContext| cx.read(shell::running_anywhere).len();
 
+    // With the shell's terminal focused, Ctrl-Q is the shell's.
+    step(cx, &|window, cx| window.press("ctrl-q", cx));
+    assert_eq!(cx.pending_prompt(), None, "the terminal keeps Ctrl-Q");
+    assert!(!QUIT.get());
     let asked = format!("End the shell in {}?", pod.name);
     for (how, send) in [
         (
@@ -4190,8 +4199,19 @@ fn quit_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
                 window.dispatch_action(Box::new(super::Quit), cx)
             }) as &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App),
         ),
-        ("its key", &|window, cx| window.press("secondary-q", cx)),
+        ("its key", &|window, cx| window.press("ctrl-q", cx)),
     ] {
+        if how == "its key" {
+            // Off the terminal, as Ctrl-Q, Quit's key off macOS, needs.
+            step(cx, &|window, cx| {
+                window.press(freshkube_ui::platform::terminal_keys().leave, cx)
+            });
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(window.find("resource-body").focused(), Some(true));
+            })
+            .unwrap();
+        }
         step(cx, send);
         let message = cx.pending_prompt().map(|(message, _)| message);
         assert_eq!(message.as_deref(), Some(asked.as_str()), "from {how}");
@@ -4202,7 +4222,7 @@ fn quit_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
         assert_eq!(running(cx), 1, "from {how}");
     }
     // Agreeing ends the shell, then quits.
-    step(cx, &|window, cx| window.press("secondary-q", cx));
+    step(cx, &|window, cx| window.press("ctrl-q", cx));
     cx.simulate_prompt_answer("End the shell");
     cx.run_until_parked();
     assert!(QUIT.get());
