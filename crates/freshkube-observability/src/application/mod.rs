@@ -7,13 +7,13 @@ use connection::Subject;
 use freshkube_core::coroot as api;
 
 mod charts;
-mod example;
+pub(super) mod example;
 mod strip;
 mod table;
 #[cfg(test)]
 mod tests;
 
-pub(super) use charts::{ChartKey, ShownChart};
+pub(super) use charts::{ChartKey, Charts, ShownChart};
 pub(super) use table::ReportTable;
 
 /// The narrowest a chart is drawn before it takes a row of its own.
@@ -142,6 +142,7 @@ impl AppPage {
             },
             namespace: view.map.app.id.namespace(),
             no_history: view.history_error.is_some(),
+            split_at: None,
         };
         if let Some(report) = view.reports.iter().find(|r| r.name == report) {
             let slug = report.name.to_lowercase().replace(' ', "-");
@@ -190,6 +191,41 @@ impl AppPage {
             }
         }
         page
+    }
+
+    /// The charts of one report of the page around `revision`, each split
+    /// at its start, with the page's deployments marked.
+    pub(super) fn revision_charts(
+        view: &api::AppView,
+        report: &api::AppReport,
+        revision: &api::DeploymentRevision,
+    ) -> Vec<Rc<charts::Charts>> {
+        let marks = charts::Marks {
+            revisions: match &view.revisions {
+                Some(Ok(revisions)) => revisions,
+                _ => std::slice::from_ref(revision),
+            },
+            namespace: view.map.app.id.namespace(),
+            no_history: view.history_error.is_some(),
+            split_at: Some(revision.started_at),
+        };
+        let slug = format!("revision-{}", report.name.to_lowercase().replace(' ', "-"));
+        let key = |ix: usize| (view.map.app.id.clone(), report.name.clone(), ix);
+        report
+            .widgets
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, widget)| match &widget.kind {
+                api::WidgetKind::Chart(chart) => {
+                    Some(charts::Charts::chart(key(ix), &slug, chart, &marks))
+                }
+                api::WidgetKind::ChartGroup { title, charts } => {
+                    Some(charts::Charts::group(key(ix), &slug, title, charts, &marks))
+                }
+                _ => None,
+            })
+            .map(Rc::new)
+            .collect()
     }
 
     fn embeds(&self, embedded: fn(&BlockKind) -> bool) -> bool {
@@ -249,8 +285,13 @@ impl ObservabilityPage {
                     .apply(&request, result.map_err(|e| e.to_string()))
                 {
                     this.live.view_refused = refused;
+                    // Both, so the Application page is never left stale.
                     this.prepare_report();
-                    this.read_embedded(cx);
+                    if this.destination == Destination::Deployments {
+                        this.prepare_revisions(cx);
+                    } else {
+                        this.read_embedded(cx);
+                    }
                     cx.notify();
                 }
             },

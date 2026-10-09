@@ -1,5 +1,5 @@
 //! The page's segment of the status bar: the Coroot it reads, and on
-//! Applications, Incidents and Traces how much they list, whether it is
+//! Applications, Incidents, Traces and Deployments how much they list, whether it is
 //! stale and when it last changed.
 use super::*;
 use freshkube_ui::status::{Part, Segment};
@@ -52,6 +52,7 @@ impl ObservabilityPage {
             Destination::Applications => Some(self.applications_read()),
             Destination::Incidents => Some(self.incidents_read()),
             Destination::Traces => Some(self.traces_read()),
+            Destination::Deployments => Some(self.deployments_read()),
             _ => None,
         }
     }

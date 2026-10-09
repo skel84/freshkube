@@ -70,7 +70,7 @@ x509-parser = "0.16"
 # own), pinned by revision; Freshkube draws its own panels (docs/MONITORING.md).
 grafaui-model = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95" }
 grafaui-prometheus = { git = "https://github.com/skel84/grafaui", rev = "72038698db515ce37fe00636b6a964b4358fce95", default-features = false }
-coroot-rs = { git = "https://github.com/skel84/corust", rev = "59a4847e96d00e22ed93563d58d90822c83bcd5c" }
+coroot-rs = { git = "https://github.com/skel84/corust", rev = "5312f1efc4e68a286d42a0c5c1e58539ed2a243a" }
 
 # Internal crates
 talos-rs = { path = "crates/talos-rs" }

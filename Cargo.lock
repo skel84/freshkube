@@ -1582,7 +1582,7 @@ dependencies = [
 [[package]]
 name = "coroot-rs"
 version = "0.1.0"
-source = "git+https://github.com/skel84/corust?rev=59a4847e96d00e22ed93563d58d90822c83bcd5c#59a4847e96d00e22ed93563d58d90822c83bcd5c"
+source = "git+https://github.com/skel84/corust?rev=5312f1efc4e68a286d42a0c5c1e58539ed2a243a#5312f1efc4e68a286d42a0c5c1e58539ed2a243a"
 dependencies = [
  "chrono",
  "reqwest",
