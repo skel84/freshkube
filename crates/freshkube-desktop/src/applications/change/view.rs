@@ -61,13 +61,13 @@ impl ChangePage {
 
     /// A refresh that failed over an earlier answer.
     fn render_stale(&self, cx: &App) -> Option<AnyElement> {
-        let text = self.stale.clone()?;
+        let (text, label) = self.stale.clone()?;
         Some(
             page::inset()
                 .child(
-                    ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
+                    ui::warning_banner(Some("Couldn't read again".into()), text, None, cx)
                         .id("change-stale")
-                        .aria_label(SharedString::from(format!("Couldn't read again: {text}")))
+                        .aria_label(label)
                         .test_support()
                         .role(Role::Status),
                 )

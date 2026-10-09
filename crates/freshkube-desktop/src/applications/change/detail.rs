@@ -12,8 +12,8 @@
 use super::*;
 use crate::ui::{self, MONO_FONT, dp};
 use freshkube_core::delivery::change::{
-    Action, Check, Eligible, Field, HopDetail, LinkDetail, Promotion, Stage, Target, Upstream,
-    Value,
+    Action, Check, Destination, Eligible, Field, HopDetail, LinkDetail, Promotion, Stage, Target,
+    Upstream, Value,
 };
 use freshkube_ui::inspector::Inspector;
 use freshkube_ui::palette::palette;
@@ -134,10 +134,13 @@ impl ChangePage {
                 (
                     Tone::Crit,
                     "Verification failed.".into(),
-                    format!(
-                        "{}: {}. {freight} still runs on {}.",
-                        check.name, check.found, stage.cluster
-                    )
+                    match stage.cluster.cluster() {
+                        Some(cluster) => format!(
+                            "{}: {}. {freight} still runs on {cluster}.",
+                            check.name, check.found
+                        ),
+                        None => format!("{}: {}.", check.name, check.found),
+                    }
                     .into(),
                 )
             });
@@ -163,7 +166,12 @@ impl ChangePage {
             body: Body::Stage {
                 fields: vec![
                     line("Project", self.change.project.clone(), false),
-                    line("Deploys to", stage.cluster.clone(), true),
+                    match &stage.cluster {
+                        Destination::Cluster(cluster) => line("Deploys to", cluster.clone(), true),
+                        Destination::Unknown(why) => {
+                            line("Deploys to", format!("Unknown: {why}"), false)
+                        }
+                    },
                     line("Freight", running, false),
                 ],
                 eligible: eligible(&stage.eligible),
@@ -184,7 +192,11 @@ impl ChangePage {
                 Target::Resource { what, object } => {
                     let (_, closed) = self.object_link(object);
                     ActionLine {
-                        label: format!("Open {what} in Resources · {}", object.cluster).into(),
+                        label: format!(
+                            "Open {what} in Resources · {}",
+                            self.cluster_name(&object.cluster)
+                        )
+                        .into(),
                         why: action.disabled.clone().map(SharedString::from).or(closed),
                         opens: Some(object.clone()),
                     }
@@ -626,7 +638,16 @@ fn gate(line: &GateLine, cx: &App) -> Div {
         )
 }
 
-/// Who may act on the gate.
+#[cfg(test)]
+impl Detail {
+    pub(super) fn action_labels(&self) -> Vec<String> {
+        self.actions
+            .iter()
+            .map(|action| action.label.to_string())
+            .collect()
+    }
+}
+
 /// Who may act, or that it wasn't read.
 fn not_read(who: &Option<String>) -> SharedString {
     who.clone().unwrap_or_else(|| "Not read".into()).into()

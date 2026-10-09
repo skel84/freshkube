@@ -772,3 +772,133 @@ fn a_failed_refresh_keeps_the_trail_marked_stale(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// The shell's Refresh while a read is in flight supersedes it: the first read's
+/// answer never lands, and the page answers once, from the second.
+#[gpui_kit::test]
+fn a_read_superseded_by_refresh_never_lands(cx: &mut TestAppContext) {
+    let delay = std::time::Duration::from_secs(2);
+    let (_runtime, handle, view) = open_slow(cx, delay);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The button waits for the read; the shell's Refresh doesn't.
+        window.press("secondary-r", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // The first read would have answered now.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = change(&view, cx).unwrap();
+        assert!(page.read(cx).is_reading());
+        assert!(
+            !page.read(cx).answered(),
+            "the superseded answer never lands"
+        );
+        assert!(window.find("change-loading").visible());
+    })
+    .unwrap();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        let page = change(&view, cx).unwrap();
+        assert!(page.read(cx).answered());
+        assert!(!page.read(cx).is_reading());
+    })
+    .unwrap();
+}
+
+/// A read dropped on hiding never lands, even once its time has passed;
+/// showing the page again reads afresh.
+#[gpui_kit::test]
+fn hiding_drops_a_late_answer(cx: &mut TestAppContext) {
+    let delay = std::time::Duration::from_secs(1);
+    let (_runtime, handle, view) = open_slow(cx, delay);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-overview", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.executor().advance_clock(delay * 3);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let page = change(&view, cx).expect("kept while hidden");
+        assert!(
+            !page.read(cx).answered(),
+            "the dropped read's answer never lands"
+        );
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        assert!(change(&view, cx).unwrap().read(cx).is_reading());
+    })
+    .unwrap();
+}
+
+/// Another connection drops the change shown with the application page.
+#[gpui_kit::test]
+fn another_source_drops_the_change(cx: &mut TestAppContext) {
+    use crate::resources::{KubeAccess, KubeSource};
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        assert!(change(&view, cx).is_some());
+        list(&view, cx).update(cx, |page, cx| {
+            page.set_source(
+                Some(KubeSource {
+                    id: "connection-other".into(),
+                    context: "other".into(),
+                    access: KubeAccess::Example,
+                }),
+                cx,
+            )
+        });
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_none());
+        assert!(window.try_find("change-page").is_none());
+    })
+    .unwrap();
+}
+
+/// A live read's objects carry the connection's key; the footer names its
+/// context instead.
+#[gpui_kit::test]
+fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) {
+    use super::Fetch;
+    use crate::resources::KubeAccess;
+    use freshkube_core::delivery::change::live::Place;
+    let (runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        change(&view, cx).unwrap().update(cx, |page, _| {
+            page.fetch = Fetch::Live {
+                runtime: runtime.handle().clone(),
+                access: KubeAccess::Example,
+                place: Place {
+                    // The open example cluster's key, as live objects carry.
+                    cluster: "core-fra".into(),
+                    label: "home-lab".into(),
+                    project: "checkout".into(),
+                    freight: "f".into(),
+                    argocd_namespace: "argocd".into(),
+                },
+            };
+        });
+        window.click(hop("freight"), cx);
+        window.render_frame(cx);
+        let labels = change(&view, cx).unwrap().read(cx).action_labels();
+        assert!(
+            labels.iter().any(|label| label.ends_with("· home-lab")),
+            "{labels:?}"
+        );
+        assert!(
+            labels.iter().all(|label| !label.contains("core-fra")),
+            "{labels:?}"
+        );
+    })
+    .unwrap();
+}

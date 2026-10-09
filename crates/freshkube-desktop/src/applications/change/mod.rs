@@ -195,8 +195,9 @@ pub(crate) struct ChangePage {
     window: AnyWindowHandle,
     /// The Stage to select once the first answer arrives.
     stage: Option<String>,
-    /// A refresh that failed over an earlier answer, derived with it.
-    stale: Option<SharedString>,
+    /// A refresh that failed over an earlier answer, and its label for
+    /// assistive technology, derived with it.
+    stale: Option<(SharedString, SharedString)>,
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
@@ -225,11 +226,13 @@ pub(crate) struct ChangePage {
 impl EventEmitter<ChangeEvent> for ChangePage {}
 
 impl ChangePage {
-    /// The page on `stage`, reading the change `fetch` names at once.
+    /// The page on `stage`, reading the change `fetch` names at once
+    /// when it is `visible`, else once it shows.
     pub(super) fn new(
         fetch: Fetch,
         stage: &str,
         connections: Connections,
+        visible: bool,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -243,7 +246,7 @@ impl ChangePage {
             job: None,
             task: None,
             read_at: None,
-            visible: true,
+            visible,
             window: window.window_handle(),
             stage: Some(stage.to_owned()),
             stale: None,
@@ -264,7 +267,9 @@ impl ChangePage {
             selected: None,
             detail: None,
         };
-        page.read(Some(window), cx);
+        if visible {
+            page.read(Some(window), cx);
+        }
         page
     }
 
@@ -497,11 +502,20 @@ impl ChangePage {
         let closed = (!self.connections.opens(&session)).then(|| {
             format!(
                 "{} isn't the open cluster, so its objects don't open in Resources",
-                object.cluster
+                self.cluster_name(&object.cluster)
             )
             .into()
         });
         (link, closed)
+    }
+
+    /// A cluster as the page names it: a live read's connection by its
+    /// context, never by the key its objects carry.
+    fn cluster_name<'a>(&'a self, key: &'a str) -> &'a str {
+        match &self.fetch {
+            Fetch::Live { place, .. } if place.cluster == key => &place.label,
+            _ => key,
+        }
     }
 
     /// What O opens: a gate's Stage, or the hop's first object that may

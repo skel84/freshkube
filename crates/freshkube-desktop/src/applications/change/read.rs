@@ -153,11 +153,11 @@ impl ChangePage {
         if answered {
             self.read_at = Some(cx.background_executor().now());
         }
-        self.stale = self
-            .snapshot
-            .data()
-            .and(self.snapshot.error())
-            .map(|why| format!("Showing the last read. {why}").into());
+        self.stale = self.snapshot.data().and(self.snapshot.error()).map(|why| {
+            let text = format!("Showing the last read. {why}");
+            let label = format!("Couldn't read again: {text}");
+            (text.into(), label.into())
+        });
         if let Some(change) = self.snapshot.data().filter(|_| answered).cloned() {
             self.show(change);
             if let Some(stage) = self.stage.take() {
@@ -245,6 +245,19 @@ fn deliver(
 impl ChangePage {
     pub(crate) fn is_reading(&self) -> bool {
         self.pending
+    }
+
+    /// Whether an answer was shown.
+    pub(crate) fn answered(&self) -> bool {
+        self.snapshot.data().is_some()
+    }
+
+    /// The selection's actions, as the Inspector's footer labels them.
+    pub(crate) fn action_labels(&self) -> Vec<String> {
+        self.detail
+            .as_ref()
+            .map(|detail| detail.action_labels())
+            .unwrap_or_default()
     }
 
     /// A read that failed, as a refused or unreachable cluster answers.

@@ -537,7 +537,8 @@ impl ApplicationsPage {
             return;
         };
         let connections = read.connections.clone();
-        let page = cx.new(|cx| ChangePage::new(fetch, stage, connections, window, cx));
+        let visible = self.visible;
+        let page = cx.new(|cx| ChangePage::new(fetch, stage, connections, visible, window, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ChangeEvent::Back => this.close_change(window, cx),
