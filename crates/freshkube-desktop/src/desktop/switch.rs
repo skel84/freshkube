@@ -231,16 +231,15 @@ impl Pilot {
     /// Tells the Applications page the workspace's entries and the one the
     /// window is on, so a part in another entry's cluster offers a switch.
     pub(super) fn sync_application_clusters(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.settings_page.read(cx).workspace();
         let clusters = crate::applications::Clusters {
-            entries: self
-                .settings_page
-                .read(cx)
-                .workspace()
+            entries: workspace
                 .clusters
                 .iter()
                 .map(|entry| entry.id.clone())
                 .collect(),
             active: self.active_cluster().map(str::to_owned),
+            destinations: workspace.destinations.clone(),
         };
         self.applications
             .update(cx, |page, cx| page.set_clusters(clusters, cx));

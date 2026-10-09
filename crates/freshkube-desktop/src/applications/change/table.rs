@@ -275,10 +275,15 @@ impl TableSource for ChangePage {
     ) -> Vec<freshkube_ui::menu::MenuAction> {
         self.select(&key.clone(), window, cx);
         self.focus(window, cx);
-        let opens = self
-            .selected_object()
+        let object = self.selected_object();
+        let opens = object
+            .as_ref()
             .is_some_and(|object| self.object_link(object).1.is_none());
-        vec![freshkube_ui::menu::MenuAction::new("Open in Resources", OpenHop).enabled(opens)]
+        let label = match object.as_ref().and_then(|object| self.switch_of(object)) {
+            Some(entry) => format!("Switch to {entry} and open"),
+            None => "Open in Resources".to_owned(),
+        };
+        vec![freshkube_ui::menu::MenuAction::new(label, OpenHop).enabled(opens)]
     }
 
     /// `Showing 18 of 30` with Show all, while Stages fold.

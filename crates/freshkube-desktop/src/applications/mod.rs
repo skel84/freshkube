@@ -30,6 +30,7 @@ mod table;
 mod tests;
 mod view;
 
+use freshkube_core::delivery::change::live::Mapping;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -139,6 +140,9 @@ enum Entry {
 pub(crate) struct Clusters {
     pub(crate) entries: Vec<String>,
     pub(crate) active: Option<String>,
+    /// The Argo CD destinations the workspace maps to its entries, which
+    /// a change's live read resolves Stages through.
+    pub(crate) destinations: Vec<freshkube_core::workspace::Destination>,
 }
 
 /// A part to open once the window has switched to the workspace entry its
@@ -602,11 +606,18 @@ impl ApplicationsPage {
             return;
         };
         let project = open.read(cx).name().to_string();
+        let mapping = Mapping {
+            open: self.clusters.active.clone(),
+            entries: self.clusters.entries.clone(),
+            destinations: self.clusters.destinations.clone(),
+            settings: true,
+        };
         let Some(fetch) = read.changes.fetch(
             &project,
             stage,
             &self.runtime,
             &source.access,
+            mapping,
             self.example_delay,
         ) else {
             return;
@@ -620,6 +631,10 @@ impl ApplicationsPage {
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ChangeEvent::Back => this.close_change(window, cx),
                 ChangeEvent::Open(link) => cx.emit(link.as_ref().clone()),
+                ChangeEvent::Switch(entry, link) => cx.emit(SwitchLink {
+                    entry: entry.clone(),
+                    link: link.as_ref().clone(),
+                }),
                 ChangeEvent::Revision(link) => cx.emit(link.clone()),
             });
         window.focus(&page.read(cx).focus_handle(), cx);

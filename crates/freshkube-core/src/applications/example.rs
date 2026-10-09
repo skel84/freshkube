@@ -338,6 +338,52 @@ mod tests {
         assert_eq!(worker.basis, Basis::SameName);
     }
 
+    /// The example workspace's destinations are the servers acme's Argo CD
+    /// Applications name: each row maps one, and every other cluster an
+    /// Application names is prod-lon, which the workspace doesn't list.
+    #[test]
+    fn the_example_workspaces_destinations_resolve_its_applications() {
+        use crate::delivery::argocd::normalize_server;
+        use crate::workspace::{self, Key};
+
+        let workspace = workspace::example();
+        let rows: Vec<(String, String)> = workspace
+            .destinations
+            .iter()
+            .map(|row| match row.key() {
+                Key::Server(server) => (normalize_server(&server), row.entry.clone()),
+                Key::Name(name) => panic!("acme names no cluster: {name}"),
+            })
+            .collect();
+        let found = derive(&acme(), &Override::default());
+        let mut mapped = std::collections::BTreeSet::new();
+        let mut unmapped = std::collections::BTreeSet::new();
+        for member in found.applications.iter().flat_map(|app| &app.members) {
+            let Some(Destination::Other { server, name }) = &member.destination else {
+                continue;
+            };
+            assert_eq!(name, &None, "{}", member.at.name);
+            let server = normalize_server(server.as_deref().unwrap());
+            match rows.iter().find(|(row, _)| *row == server) {
+                Some((_, entry)) => {
+                    assert!(workspace.clusters.iter().any(|e| &e.id == entry));
+                    mapped.insert(entry.clone());
+                }
+                None => {
+                    unmapped.insert(server);
+                }
+            }
+        }
+        assert_eq!(
+            mapped.into_iter().collect::<Vec<_>>(),
+            ["dev-fra", "prod-ams", "stage-fra"]
+        );
+        assert_eq!(
+            unmapped.into_iter().collect::<Vec<_>>(),
+            [normalize_server(&server("prod-lon"))]
+        );
+    }
+
     #[test]
     fn core_fras_objects_are_what_its_session_was_read_from() {
         let objects = core_objects();
