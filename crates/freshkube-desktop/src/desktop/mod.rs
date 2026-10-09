@@ -79,6 +79,9 @@ pub(crate) use pages::Page;
 use pages::{Area, ColumnReveal, ScreenKind};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
+/// A key context no element draws: a binding in it only gives macOS's bar
+/// the key to show.
+const MENU_BAR_ONLY: &str = "MenuBarOnly";
 pub(crate) use freshkube_ui::page::{COLUMN_WIDTH, PAGE_PADDING, RAIL_WIDTH};
 // Desktop's screen tests measure pages at this old path.
 #[cfg(test)]
@@ -574,6 +577,13 @@ impl Pilot {
                 ShowLifecycle,
                 Some(freshkube_ui::page::SHELL_CONTEXT),
             ),
+            // macOS's bar shows and binds an action's first binding, and
+            // GPUI hands AppKit the name `tab`, of which AppKit keeps the
+            // T: ⌃T would switch screens. The Tab character itself, in a
+            // context nothing draws, binds nothing here, and AppKit shows
+            // no key for it, since Control-Tab moves its focus.
+            KeyBinding::new("ctrl-\t", NextScreen, Some(MENU_BAR_ONLY)),
+            KeyBinding::new("ctrl-shift-\t", PreviousScreen, Some(MENU_BAR_ONLY)),
             // Reaches the screens without a number of their own.
             KeyBinding::new(
                 "ctrl-tab",

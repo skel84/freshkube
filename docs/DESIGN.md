@@ -213,7 +213,7 @@ On Linux the desktop draws its own title bar over the window unless it asks for 
 | Freshkube | About Freshkube · Settings… `⌘,` · Services ▸ · Hide Freshkube `⌘H` · Hide others `⌥⌘H` · Show all · Quit Freshkube `⌘Q` |
 | Edit | Undo `⌘Z` · Redo `⇧⌘Z` · Cut `⌘X` · Copy `⌘C` · Paste `⌘V` · Select all `⌘A` · Find `⌘F` · Find next `⌘G` · Find previous `⇧⌘G` (no keys until the Copy and Find step) |
 | View | Show sidebar or Hide sidebar `⌘B` · Appearance ▸ System, Light, Dark · Bigger text `⌘+` · Smaller text `⌘−` · Default text size `⌘0` · Refresh `⌘R` |
-| Go | Search everything… `⌘K` · Overview `⌘1` … Lifecycle `⌘9` · Next screen `⌃Tab` · Previous screen `⌃⇧Tab` · Next context `⌥↓` · Previous context `⌥↑` |
+| Go | Search everything… `⌘K` · Overview `⌘1` … Lifecycle `⌘9` · Next screen `⌃Tab` · Previous screen `⌃⇧Tab` (no key in the bar, which can't show Tab) · Next context `⌥↓` · Previous context `⌥↑` |
 | Window | Minimize `⌘M` · Zoom · Next tab `⌃.` · Previous tab `⌃,` · Close tab `⌘W` · Minimize dock or Open dock `⇧⎋` |
 
 Off macOS, the menu button holds Edit, View, Go and Window, then Settings…, About Freshkube and Quit Freshkube `Ctrl+Q` at its end. Separators part each menu's groups: Edit's history, clipboard and find; View's sidebar, appearance, text size and Refresh; Go's search, pages, screens and contexts; Window's window and dock; and the Freshkube menu's as macOS has them. AppKit adds its own entries to menus with these names, and the app adds none of them itself: AutoFill, Start Dictation… and Emoji & Symbols at Edit's end; Enter Full Screen at View's; and Fill, Center, Move & Resize, Full Screen Tile and Remove Window from Set at Window's top, and the window list at its end.

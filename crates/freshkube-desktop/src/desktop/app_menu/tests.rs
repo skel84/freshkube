@@ -511,3 +511,74 @@ fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// macOS's bar shows, and binds, an entry's first binding that no context
+/// of its own picks out, and GPUI hands AppKit the key's name unless it
+/// maps it: AppKit keeps the first character, so `ctrl-tab` would show
+/// and bind ⌃T. Every entry's key is one character or a name GPUI maps.
+/// The screens' Tab is the character, which AppKit shows as no key.
+#[gpui_kit::test]
+fn the_bar_shows_keys_appkit_reads(cx: &mut TestAppContext) {
+    // As GPUI's macOS backend chooses (`gpui-pre-macos` `platform.rs`).
+    let mut defaults = gpui_kit::KeyContext::new_with_defaults();
+    for name in ["Workspace", "Pane", "Editor"] {
+        defaults.add(name);
+    }
+    // The names `key_to_native` maps; it passes any other on as it is.
+    const MAPPED: &[&str] = &[
+        "space",
+        "backspace",
+        "escape",
+        "up",
+        "down",
+        "left",
+        "right",
+        "pageup",
+        "pagedown",
+        "home",
+        "end",
+        "delete",
+        "insert",
+    ];
+    fn actions(items: &[OwnedMenuItem], out: &mut Vec<(String, Box<dyn Action>)>) {
+        for item in items {
+            match item {
+                OwnedMenuItem::Submenu(menu) => actions(&menu.items, out),
+                OwnedMenuItem::Action { name, action, .. } => {
+                    out.push((name.clone(), action.boxed_clone()))
+                }
+                _ => {}
+            }
+        }
+    }
+    let _app = on_pods(cx);
+    let mut entries = Vec::new();
+    for menu in owned(Platform::MacOs, &MenuState::default()) {
+        actions(&menu.items, &mut entries);
+    }
+    let unread: Vec<String> = cx.update(|cx| {
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        entries
+            .iter()
+            .filter_map(|(name, action)| {
+                let mut bindings = keymap.bindings_for_action(action.as_ref()).peekable();
+                let first = bindings.peek().copied()?;
+                let shown = bindings
+                    .find(|binding| {
+                        binding
+                            .predicate()
+                            .is_none_or(|predicate| predicate.eval(&[defaults.clone()]))
+                    })
+                    .unwrap_or(first);
+                let [stroke] = shown.keystrokes() else {
+                    return None;
+                };
+                let key = stroke.key();
+                (key.chars().count() > 1 && !MAPPED.contains(&key) && !key.starts_with('f'))
+                    .then(|| format!("{name}: {key}"))
+            })
+            .collect()
+    });
+    assert!(unread.is_empty(), "AppKit can't read {unread:?}");
+}
