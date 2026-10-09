@@ -164,9 +164,9 @@ impl Render for Pilot {
                 }),
             )
             .when(self.menu_platform.app_menu() == AppMenu::Button, |this| {
-                this.on_action(
-                    cx.listener(|view, _: &OpenAppMenu, window, cx| view.open_app_menu(window, cx)),
-                )
+                this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
+                    view.open_app_menu(false, window, cx)
+                }))
             })
             .child(
                 self.chrome.header.clone().cached(

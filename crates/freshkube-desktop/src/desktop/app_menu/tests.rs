@@ -411,3 +411,103 @@ fn settings_and_about_open_from_their_actions(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// Pods with the menu button, as on Windows and Linux.
+fn with_button(
+    cx: &mut TestAppContext,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, pilot) = on_pods(cx);
+    cx.update(|cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.menu_platform = Platform::Linux;
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    draw(handle, cx);
+    (runtime, handle, pilot)
+}
+
+/// Picks Edit ▸ `label` from the menu button's menu.
+fn pick_from_edit(handle: AnyWindowHandle, label: &str, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| window.click("app-menu", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.within("popup-menu").hover(0usize, cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        let mut edit = window.within("submenu");
+        let entry = (0usize..)
+            .map_while(|ix| edit.try_find(ix).map(|item| (ix, item)))
+            .find(|(_, item)| item.label() == Some(label))
+            .map(|(ix, _)| ix)
+            .unwrap_or_else(|| panic!("{label} in Edit"));
+        edit.click(entry, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+}
+
+/// The button's menu greys what the view that had the keyboard doesn't
+/// handle, as the bar does. A snapshot can't say an entry is grey, so pick
+/// Paste: grey over the table, it does nothing and the menu stays open;
+/// live over the filter, it pastes and the menu closes.
+#[gpui_kit::test]
+fn the_buttons_menu_greys_what_the_view_does_not_handle(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = with_button(cx);
+    cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("web".to_owned()));
+    let filter = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| {
+            window.find("resource-filter").value().map(str::to_owned)
+        })
+        .unwrap()
+    };
+    let open = |cx: &mut TestAppContext| cx.update(|cx| pilot.read(cx).app_menu_popup.is_some());
+
+    pick_from_edit(handle, "Paste", cx);
+    assert!(open(cx), "Paste is grey over the table");
+    assert_ne!(filter(cx).as_deref(), Some("web"));
+    for _ in 0..2 {
+        cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+            .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+    }
+    assert!(!open(cx));
+
+    cx.update_window(handle, |_, window, cx| window.click("resource-filter", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    pick_from_edit(handle, "Paste", cx);
+    assert!(!open(cx), "Paste is live over the filter");
+    assert_eq!(filter(cx).as_deref(), Some("web"));
+}
+
+/// F10 opens the menu with the keyboard on it, not on the button's
+/// popover, which would otherwise take it as it opens.
+#[gpui_kit::test]
+fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = with_button(cx);
+    dispatch(handle, freshkube_ui::platform::OpenAppMenu, cx);
+    cx.run_until_parked();
+    draw(handle, cx);
+    let popup = cx.update(|cx| {
+        pilot
+            .read(cx)
+            .app_menu_popup
+            .as_ref()
+            .map(|(popup, _)| popup.clone())
+    });
+    let popup = popup.expect("F10 opens the menu");
+    cx.update_window(handle, |_, window, cx| {
+        assert!(popup.focus_handle(cx).is_focused(window));
+    })
+    .unwrap();
+}

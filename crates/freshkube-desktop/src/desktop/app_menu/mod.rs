@@ -314,17 +314,24 @@ impl Pilot {
     /// Opens the menu button's menu on what has the keyboard, each entry
     /// greyed as macOS greys its bar: asked of the app once this action is
     /// done with the window, so the app's own handlers count too.
-    pub(super) fn open_app_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the menu: from the button, whose popover has the keyboard by
+    /// now, on the view its press recorded; from F10 on the view that has
+    /// the keyboard. Without either, on the shell.
+    pub(super) fn open_app_menu(
+        &mut self,
+        from_button: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.app_menu_popup.is_some() {
             return;
         }
-        // The button's popover has the keyboard by now, so the view is the one
-        // its press recorded; F10 opens the menu on the view itself.
-        let focus = self
-            .app_menu_focus
-            .take()
-            .or_else(|| window.focused(cx))
-            .unwrap_or_else(|| self.focus.clone());
+        let focus = if from_button {
+            self.app_menu_focus.take()
+        } else {
+            window.focused(cx)
+        }
+        .unwrap_or_else(|| self.focus.clone());
         let menus = menus(self.menu_platform, &self.menu_state.unwrap_or_default());
         // The window answers for that view; the app's `is_action_available`
         // can't see the window it is called from, so it adds only the global
@@ -348,6 +355,7 @@ impl Pilot {
         popup.focus_handle(cx).focus(window, cx);
         let closed = cx.subscribe_in(&popup, window, |view, _, _: &DismissEvent, _, cx| {
             view.app_menu_popup = None;
+            view.app_menu_focus = None;
             cx.notify();
         });
         self.app_menu_popup = Some((popup, closed));
@@ -366,11 +374,16 @@ impl Pilot {
                 .appearance(false)
                 .overlay_closable(false)
                 .open(popup.is_some())
+                // So opening from F10, which isn't the popover's own click,
+                // focuses the menu rather than the popover.
+                .when_some(popup.as_ref(), |popover, popup| {
+                    popover.track_focus(&popup.focus_handle(cx))
+                })
                 .on_open_change({
                     let popup = popup.clone();
                     move |open, window, cx| match (*open, &popup) {
                         (true, _) => {
-                            _ = shell.update(cx, |view, cx| view.open_app_menu(window, cx));
+                            _ = shell.update(cx, |view, cx| view.open_app_menu(true, window, cx));
                         }
                         (false, Some(popup)) => popup.update(cx, |_, cx| cx.emit(DismissEvent)),
                         (false, None) => {}
@@ -378,7 +391,13 @@ impl Pilot {
                 })
                 .trigger(platform::menu_button("app-menu").on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|view, _, window, cx| view.app_menu_focus = window.focused(cx)),
+                    // Only while it's closed: a press that closes the menu
+                    // finds the menu's own focus.
+                    cx.listener(|view, _, window, cx| {
+                        if view.app_menu_popup.is_none() {
+                            view.app_menu_focus = window.focused(cx);
+                        }
+                    }),
                 ))
                 .content(move |_, _, _| match &popup {
                     Some(popup) => popup.clone().into_any_element(),
