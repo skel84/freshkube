@@ -273,6 +273,7 @@ impl ObservabilityPage {
         self.live.clear();
         self.incident_observations.clear_evidence();
         self.revision_observations.clear_evidence();
+        self.revision_observations.seek_again();
         self.live_traces.reset();
         if !self.fixture {
             self.applications.clear();
@@ -315,6 +316,7 @@ impl ObservabilityPage {
         self.live.clear();
         self.incident_observations.clear_evidence();
         self.revision_observations.clear_evidence();
+        self.revision_observations.seek_again();
         self.live_traces.reset();
         self.report_snapshot = None;
         self.refresh(cx);

@@ -42,6 +42,17 @@ pub(super) struct Wanted {
     /// Coroot's application, once its cluster is known.
     pub(super) app: Option<api::AppId>,
     pub(super) outcome: Outcome,
+    /// The application shown when the outcome was decided; the banner
+    /// shows over its list only, so another application opened from the
+    /// map or a report doesn't carry it.
+    pub(super) shown: Option<api::AppId>,
+}
+
+impl Wanted {
+    fn decide(&mut self, outcome: Outcome, shown: Option<&api::AppId>) {
+        self.outcome = outcome;
+        self.shown = shown.cloned();
+    }
 }
 
 impl Revisions {
@@ -59,7 +70,7 @@ impl Revisions {
         else {
             return;
         };
-        wanted.outcome = match revisions {
+        let outcome = match revisions {
             None => return,
             Some(Err(_)) => Outcome::Unread,
             Some(Ok(values)) => match values.iter().find(|r| r.hash == wanted.link.hash) {
@@ -70,6 +81,18 @@ impl Revisions {
                 None => Outcome::NoRevision,
             },
         };
+        wanted.decide(outcome, app);
+    }
+
+    /// The window or Coroot's cluster link changed: what wasn't found is
+    /// looked for again, from Coroot's cluster on.
+    pub(crate) fn seek_again(&mut self) {
+        if let Some(wanted) = &mut self.wanted
+            && wanted.outcome != Outcome::Found
+        {
+            wanted.app = None;
+            wanted.decide(Outcome::Seeking, None);
+        }
     }
 
     #[cfg(test)]
@@ -87,6 +110,7 @@ impl ObservabilityPage {
             link,
             app: None,
             outcome: Outcome::Seeking,
+            shown: None,
         });
         self.seek_revision();
         self.open(Destination::Deployments, cx);
@@ -98,12 +122,26 @@ impl ObservabilityPage {
         let Some(wanted) = &self.revision_observations.wanted else {
             return;
         };
-        if wanted.outcome != Outcome::Seeking || wanted.app.is_some() {
-            return;
-        }
-        // Another connection since: the link was of the one before.
+        // Another connection since: the link, and whatever came of it,
+        // was of the one before.
         if self.live.access.as_deref() != Some(wanted.link.access.as_str()) {
             self.revision_observations.wanted = None;
+            return;
+        }
+        if wanted.outcome != Outcome::Seeking {
+            return;
+        }
+        if let Some(app) = &wanted.app {
+            // Another application opened since, from the map or a report:
+            // the revision asked for no longer shows.
+            if self.selected_app.as_ref() != Some(app) {
+                self.revision_observations.wanted = None;
+            }
+            return;
+        }
+        // Hidden, what Coroot answered may be old; the page looks once it
+        // shows and reads again.
+        if !self.fixture && !self.live.visible {
             return;
         }
         let cluster = if self.fixture {
@@ -120,7 +158,7 @@ impl ObservabilityPage {
         };
         let Some(cluster) = cluster else {
             if let Some(wanted) = &mut self.revision_observations.wanted {
-                wanted.outcome = Outcome::NoAssociation;
+                wanted.decide(Outcome::NoAssociation, self.selected_app.as_ref());
             }
             return;
         };
@@ -135,7 +173,7 @@ impl ObservabilityPage {
         if let Some(wanted) = &mut self.revision_observations.wanted {
             wanted.app = Some(app.clone());
             if !listed {
-                wanted.outcome = Outcome::NotListed;
+                wanted.decide(Outcome::NotListed, self.selected_app.as_ref());
                 return;
             }
         }
@@ -155,7 +193,7 @@ impl ObservabilityPage {
             && let Some(app) = &wanted.app
             && !applications.iter().any(|a| &a.id == app)
         {
-            wanted.outcome = Outcome::NotListed;
+            wanted.decide(Outcome::NotListed, self.selected_app.as_ref());
         }
     }
 
@@ -170,14 +208,20 @@ impl ObservabilityPage {
         if self.destination != Destination::Deployments {
             return None;
         }
-        let wanted = self.revision_observations.wanted.as_ref()?;
+        let wanted = self
+            .revision_observations
+            .wanted
+            .as_ref()
+            .filter(|wanted| wanted.shown == self.selected_app)?;
         let link = &wanted.link;
         let app = format!("{}/{}", link.namespace, link.name);
         let (tone, lead, body) = match wanted.outcome {
             // The list's loading rows say it is being read.
             Outcome::Seeking | Outcome::Unread => return None,
+            // Found is a lookup, not a verdict: the row's glyph says how
+            // Coroot judges the revision.
             Outcome::Found => (
-                Tone::Good,
+                Tone::Info,
                 format!("Revision {} of {app}.", link.hash),
                 format!(
                     "The revision {} runs, by its pod-template hash, as Coroot keeps it.",
@@ -193,7 +237,7 @@ impl ObservabilityPage {
                     if self.revision_observations.rows.is_empty() {
                         ""
                     } else {
-                        " The newest it keeps is selected instead."
+                        " Another revision it keeps is selected instead."
                     }
                 ),
             ),

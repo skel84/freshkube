@@ -465,6 +465,61 @@ mod wanted {
         .unwrap();
     }
 
+    fn banner_shows(cx: &mut TestAppContext, handle: AnyWindowHandle) -> bool {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.try_find("obs-wanted-revision").is_some()
+        })
+        .unwrap()
+    }
+
+    #[gpui_kit::test]
+    fn refresh_and_showing_again_keep_a_found_revision(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        cx.update(|cx| page.update(cx, |page, cx| page.refresh_current(cx)));
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        assert_eq!(selected_hash(cx, &page).as_deref(), Some("84c6d7f9b"));
+        assert!(banner_shows(cx, handle));
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.set_visible(false, cx);
+                page.set_visible(true, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        assert_eq!(selected_hash(cx, &page).as_deref(), Some("84c6d7f9b"));
+        assert!(banner_shows(cx, handle));
+    }
+
+    #[gpui_kit::test]
+    fn another_connection_drops_a_found_revision(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("another".into()), cx)));
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), None);
+        assert!(!banner_shows(cx, handle));
+    }
+
+    /// The map and a report's links open another application without the
+    /// picker: the banner, of checkout-api, doesn't show over its list.
+    #[gpui_kit::test]
+    fn another_application_opened_from_a_report_hides_the_banner(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        assert!(banner_shows(cx, handle));
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.open_linked_app(crate::example::id(crate::example::WORKER), cx);
+                page.open(Destination::Deployments, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(!banner_shows(cx, handle));
+    }
+
     #[gpui_kit::test]
     fn choosing_another_application_forgets_the_revision_asked_for(cx: &mut TestAppContext) {
         let (_runtime, _handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
