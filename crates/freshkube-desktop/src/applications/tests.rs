@@ -213,7 +213,7 @@ fn command_r_reads_the_applications_again_as_refresh_does(cx: &mut TestAppContex
         window.render_frame(cx);
         page.update(cx, |page, _| page.set_hold(true));
         assert!(!page.read(cx).is_reading());
-        window.press("cmd-r", cx);
+        window.press("secondary-r", cx);
         window.render_frame(cx);
         assert!(page.read(cx).is_reading());
         assert!(window.find(CART).visible());
