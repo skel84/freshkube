@@ -160,6 +160,16 @@ impl FakeApi {
             .count()
     }
 
+    /// Whether any request has been made twice: a read that was retried.
+    fn repeated(&self) -> bool {
+        let requests = self.requests.lock().unwrap();
+        requests.iter().enumerate().any(|(ix, request)| {
+            requests[..ix]
+                .iter()
+                .any(|earlier| earlier.line == request.line)
+        })
+    }
+
     fn watching(&self) -> usize {
         self.watching.load(Ordering::SeqCst)
     }
@@ -185,6 +195,29 @@ async fn within(
         if Instant::now() >= deadline {
             return false;
         }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+/// Waits until `count` has held steady for `quiet` of real time, within
+/// `limit`, and returns it: whatever was in flight has arrived.
+async fn steady(
+    cx: &mut TestAppContext,
+    limit: Duration,
+    quiet: Duration,
+    count: impl Fn() -> usize,
+) -> usize {
+    let deadline = Instant::now() + limit;
+    let (mut last, mut since) = (count(), Instant::now());
+    loop {
+        cx.run_until_parked();
+        let now = count();
+        if now != last {
+            (last, since) = (now, Instant::now());
+        } else if since.elapsed() >= quiet {
+            return now;
+        }
+        assert!(Instant::now() < deadline, "the count never settled");
         std::thread::sleep(Duration::from_millis(25));
     }
 }
@@ -285,23 +318,23 @@ async fn a_parked_session_stops_retrying_though_the_open_one_retries(cx: &mut Te
     let guard = folder(&one, &two);
     let (_runtime, handle, view) = launched(cx, &guard, &one).await;
     assert_eq!(two.hits(), 0, "an entry not opened is not contacted");
-    let first = {
-        assert!(within(cx, Duration::from_secs(10), |_| one.reads() > 0).await);
-        one.reads()
-    };
-    // The detector sees a retry while the entry is open: more than one
-    // round of reads arrives, 1 s and 2 s of backoff apart.
+    // The detector sees a retry while the entry is open: a read is made
+    // again, after the 1 s of backoff, which a first round cannot satisfy.
     assert!(
-        within(cx, Duration::from_secs(10), |_| one.reads() >= first * 2).await,
+        within(cx, Duration::from_secs(15), |_| one.repeated()).await,
         "the open session's retry was never seen, so the check below proves nothing"
     );
     open_entry(cx, handle, &view, "two");
     assert!(within(cx, Duration::from_secs(10), |_| two.hits() > 0).await);
     cx.read(|cx| assert_eq!(view.read(cx).registry.active_key(), &key("two")));
-    // A switch can land mid-round: let what was in flight arrive.
-    std::thread::sleep(Duration::from_millis(300));
-    cx.run_until_parked();
-    let parked = one.reads();
+    // A switch can land mid-round: wait for what was in flight to arrive.
+    let parked = steady(
+        cx,
+        Duration::from_secs(10),
+        Duration::from_millis(500),
+        || one.reads(),
+    )
+    .await;
     // Longer than the next backoff steps, so a retry still alive would show.
     assert!(
         throughout(cx, Duration::from_secs(5), |_| one.reads() == parked).await,
@@ -425,6 +458,14 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
     one.hold_lists.store(true, Ordering::SeqCst);
     open_entry(cx, handle, &view, "one");
     settled(cx, &view).await;
+    // The revision is what a restore is decided by: look only once known,
+    // or the quiet window below would pass before it could have mattered.
+    assert!(
+        within(cx, Duration::from_secs(10), |cx| view
+            .read_with(cx, |pilot, _| pilot.current_revision().is_some()))
+        .await,
+        "the kubeconfig's revision never became known"
+    );
     assert!(
         throughout(cx, Duration::from_secs(1), |cx| view
             .read_with(cx, |pilot, _| {
