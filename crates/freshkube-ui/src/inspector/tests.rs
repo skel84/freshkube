@@ -400,6 +400,115 @@ fn a_page_sets_the_stacked_heights(cx: &mut TestAppContext) {
     );
 }
 
+/// A short table page: a toolbar, then a table that leads with a group row
+/// and has a footer, over an inspector whose first field follows its
+/// heading, in a frame that scrolls.
+struct ShortPage(InspectorSplit);
+
+impl Render for ShortPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let line = |id: &'static str, height: f32| {
+            div()
+                .id(id)
+                .test_support()
+                .flex_none()
+                .w_full()
+                .h(dp(height))
+        };
+        // A bare table, with its hairlines above and below.
+        let table = v_flex()
+            .id("table-pane")
+            .test_support()
+            .size_full()
+            .min_h_0()
+            .border_t_1()
+            .border_b_1()
+            .child(line("header", crate::table::HEADER_HEIGHT))
+            .child(
+                v_flex()
+                    .id("rows")
+                    .test_support()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(line("group-row", crate::table::ROW_HEIGHT))
+                    .child(line("data-row", crate::table::ROW_HEIGHT))
+                    .child(line("next-row", crate::table::ROW_HEIGHT)),
+            )
+            .child(line("footer", crate::table::FOOTER_HEIGHT))
+            .into_any_element();
+        let inspector = Inspector::new("inspector")
+            .heading(div().id("inspector-title").test_support().child("checkout"))
+            .child(line("inspector-field", 20.))
+            .child(line("inspector-tall", 2000.))
+            .render(cx)
+            .into_any_element();
+        v_flex()
+            .id("frame")
+            .size_full()
+            .overflow_y_scroll()
+            .child(line("toolbar", 2. * crate::page::TOOLBAR_HEIGHT))
+            .child(split(
+                "split",
+                &self.0,
+                false,
+                table,
+                Some(inspector),
+                window,
+            ))
+    }
+}
+
+/// At 760 by 560 with text size 20 a stacked split is at its least
+/// heights: the table still shows its header, the group row that leads
+/// and one whole data row above its footer, and the inspector its heading
+/// and first field, while the frame scrolls for the rest.
+#[gpui_kit::test]
+fn a_short_stacked_split_keeps_a_whole_row_and_the_first_field(cx: &mut TestAppContext) {
+    install(cx);
+    cx.update(|cx| {
+        set_store(Rc::new(MemorySizes::default()), cx);
+        crate::text_size::set(20., cx);
+    });
+    let handle = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+        let view = cx.new(|cx| ShortPage(InspectorSplit::new(PAGE, cx)));
+        Root::new(view, window, cx)
+    });
+    cx.run_until_parked();
+    cx.update_window(handle.into(), |_, window, cx| {
+        settle(window, cx);
+        let bounds = |id: &'static str| window.find(id).bounds();
+        let split = bounds("split");
+        let pane = bounds("table-pane");
+        let (rows, row, footer) = (bounds("rows"), bounds("data-row"), bounds("footer"));
+        let (inspector, field) = (bounds("inspector"), bounds("inspector-field"));
+        assert!(
+            split.bottom() > window.viewport_size().height,
+            "the frame scrolls: the split ends at {:?}",
+            split.bottom()
+        );
+        close(
+            "the table at its least",
+            pane.size.height,
+            dp_px(LIST_MIN_HEIGHT, window),
+        );
+        assert!(
+            row.bottom() <= rows.bottom() + px(0.5),
+            "the first data row is whole: it ends at {:?}, the rows at {:?}",
+            row.bottom(),
+            rows.bottom()
+        );
+        assert!(row.bottom() <= footer.top() + px(0.5));
+        assert!(
+            field.bottom() <= inspector.bottom(),
+            "the first field shows: it ends at {:?}, the inspector at {:?}",
+            field.bottom(),
+            inspector.bottom()
+        );
+    })
+    .unwrap();
+}
+
 /// An inspector with tabs: a heading, a banner, the tab strip, content
 /// that lays itself out, and a footer.
 struct Tabbed(TabStrip);

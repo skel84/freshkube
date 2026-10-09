@@ -301,6 +301,67 @@ fn a_sideways_wheel_over_the_stacked_table_keeps_its_height(cx: &mut TestAppCont
     .unwrap();
 }
 
+/// At 760 by 560 and text size 20 the stacked split is at its least
+/// heights and the page scrolls its frame. The table still shows its header,
+/// the Kargo Stages group row and the whole of its first Stage above the
+/// legend, and the Inspector its heading and Open in Resources; scrolled to
+/// its end, the frame shows the whole Inspector.
+#[gpui_kit::test]
+fn a_short_stacked_table_keeps_its_first_part_whole(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 760., 560., Variant::Acme);
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(DEV_STAGE, cx);
+        for _ in 0..8 {
+            window.render_frame(cx);
+            if window.simulate_next_frame(cx) == 0 {
+                break;
+            }
+        }
+        let bounds = |id: &'static str| window.find(id).bounds();
+        let (table, row, footer) = (
+            bounds("application-table"),
+            bounds(DEV_STAGE),
+            bounds("application-footer"),
+        );
+        let (detail, title, button) = (
+            bounds("application-detail"),
+            bounds("application-detail-title"),
+            bounds("application-detail-open"),
+        );
+        assert!(
+            row.top() >= table.top() && row.bottom() <= footer.top() + px(0.5),
+            "dev is cut: {row:?} in {table:?}, the legend starts at {:?}",
+            footer.top()
+        );
+        assert!(
+            title.top() >= detail.top() && button.bottom() <= detail.bottom(),
+            "the Inspector's heading and button: {title:?}, {button:?} in {detail:?}"
+        );
+        // The frame scrolls down to the Inspector's least height, so none
+        // of it is cut off under the page.
+        let page = window.find("application-page").bounds();
+        let reach = shown(&view, cx)
+            .unwrap()
+            .read(cx)
+            .page_scroll
+            .max_offset()
+            .y;
+        assert!(
+            detail.size.height
+                >= crate::ui::dp_px(freshkube_ui::inspector::MIN_HEIGHT, window) - px(1.),
+            "the Inspector keeps its least: {detail:?}"
+        );
+        assert!(
+            detail.bottom() - page.bottom() <= reach + px(1.),
+            "the frame scrolls {reach:?}, short of the Inspector's end: {detail:?} in {page:?}"
+        );
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_part_whose_project_was_not_read_is_unknown(cx: &mut TestAppContext) {
     // Kargo refused: checkout-dev names a Project nobody read.
