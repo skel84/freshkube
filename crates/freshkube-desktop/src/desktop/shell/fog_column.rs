@@ -110,6 +110,25 @@ impl Pilot {
                     );
                 }
             }
+            Area::Applications => {
+                let listing = self.page == Page::Applications
+                    && self.applications.read(cx).open_page().is_none();
+                column = column.child(
+                    Button::new("nav-all-applications")
+                        .ghost()
+                        .size(dp(36.))
+                        .icon(IconName::Layers)
+                        .selected(listing)
+                        .toggled(listing)
+                        .tooltip("All applications")
+                        .tooltip_placement(Placement::Right)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.applications
+                                .update(cx, |page, cx| page.show_list(window, cx));
+                            this.navigate_from_keyboard(Page::Applications, window, cx)
+                        })),
+                )
+            }
             Area::Custom => {
                 column = column.child(
                     Button::new("nav-custom-expand")

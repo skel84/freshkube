@@ -18,6 +18,7 @@
 //! (`change/`), which shows in the application page's place; its
 //! breadcrumb comes back. Only example data has a change to follow yet.
 mod change;
+mod column;
 mod display;
 mod example;
 mod links;
@@ -47,6 +48,9 @@ use gpui_kit::*;
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
 use change::{ChangeEvent, ChangePage};
+pub(crate) use column::Column;
+#[cfg(test)]
+pub(crate) use column::{ColumnApp, ColumnSection};
 use display::{Body, Display, Labels, MARKS, Mark};
 pub(crate) use example::Variant;
 use links::Connections;
@@ -205,6 +209,11 @@ pub(crate) struct ApplicationsPage {
     refocus: Option<FocusHandle>,
     /// `5 applications in 6 clusters`, in the status bar.
     pub(crate) status: Segment,
+    /// What the shell's column lists, derived with the display.
+    column: Column,
+    /// Changes with the column's lines and the application shown, so the
+    /// column draws again only then (`column.rs`).
+    column_revision: usize,
     _subscription: Subscription,
 }
 
@@ -260,6 +269,8 @@ impl ApplicationsPage {
             change: None,
             refocus: None,
             status: Segment::default(),
+            column: Column::new(&Display::default(), false, false, false),
+            column_revision: 0,
             _subscription: subscription,
         }
     }
@@ -308,6 +319,7 @@ impl ApplicationsPage {
         self.visible = visible;
         if !visible {
             self.stop();
+            self.derive_column();
             cx.notify();
             return;
         }
@@ -355,6 +367,7 @@ impl ApplicationsPage {
                 // rows.
                 self.pending = true;
                 if self.hold {
+                    self.derive_column();
                     cx.notify();
                     return;
                 }
@@ -405,6 +418,7 @@ impl ApplicationsPage {
                 }));
             }
         }
+        self.derive_column();
         cx.notify();
     }
 
@@ -453,6 +467,7 @@ impl ApplicationsPage {
         });
         (self.columns, self.width) = table::columns(&self.display.rows);
         self.status = self.segment();
+        self.derive_column();
         self.update_open(cx);
         self.rebuild(cx);
     }
@@ -483,6 +498,7 @@ impl ApplicationsPage {
             .take()
             .map(|(page, _)| page.read(cx).focus_handle());
         if let Some((page, _)) = self.open.take() {
+            self.column_revision += 1;
             self.refocus = change.or(Some(page.read(cx).focus_handle()));
         }
     }
@@ -529,6 +545,7 @@ impl ApplicationsPage {
             });
         window.focus(&page.read(cx).focus_handle(), cx);
         self.open = Some((page, subscription));
+        self.column_revision += 1;
         cx.notify();
     }
 
@@ -559,7 +576,7 @@ impl ApplicationsPage {
     }
 
     /// Back to the application's page, with the selection it had.
-    fn close_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn close_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.change.take().is_some() {
             self.focus_shown(window, cx);
             cx.notify();
@@ -585,6 +602,7 @@ impl ApplicationsPage {
     fn close_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.change = None;
         if self.open.take().is_some() {
+            self.column_revision += 1;
             self.focus(window, cx);
             cx.notify();
         }
