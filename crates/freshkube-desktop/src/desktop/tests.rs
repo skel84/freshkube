@@ -4138,6 +4138,77 @@ fn the_resources_page_scales_with_the_text_size(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+thread_local! {
+    static QUIT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Quit asks to end a running shell however it arrives: the menus and its
+/// key both send it from inside the window's own update, where the window
+/// can't be updated again.
+#[gpui_kit::test]
+fn quit_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
+    use crate::resources::{example, live, shell};
+    let (_runtime, handle, view) = fixture(cx, 1280., 800.);
+    let context = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
+    let (_, rows) = example::read(&context, "pods", None, live::now()).unwrap();
+    let pod = rows
+        .iter()
+        .find(|row| row.cells[2] == "Running")
+        .unwrap()
+        .identity
+        .clone();
+    let row: SharedString =
+        format!("resource-row:{}/{}/{}", pod.namespace, pod.name, pod.uid).into();
+    let step = |cx: &mut TestAppContext,
+                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            act(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    step(cx, &|window, cx| {
+        let kind = example::kind("pods").unwrap();
+        view.update(cx, |view, cx| view.open_kind(kind, window, cx));
+    });
+    step(cx, &|window, cx| window.click("resource-view-all", cx));
+    step(cx, &|window, cx| window.click(row.clone(), cx));
+    start_shell(handle, &view, &pod, cx);
+    cx.update(|cx| {
+        super::on_quit(cx, |_| QUIT.set(true));
+        cx.bind_keys([gpui_kit::KeyBinding::new("secondary-q", super::Quit, None)]);
+    });
+    QUIT.set(false);
+    let running = |cx: &mut TestAppContext| cx.read(shell::running_anywhere).len();
+
+    let asked = format!("End the shell in {}?", pod.name);
+    for (how, send) in [
+        (
+            "a menu",
+            &(|window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
+                window.dispatch_action(Box::new(super::Quit), cx)
+            }) as &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App),
+        ),
+        ("its key", &|window, cx| window.press("secondary-q", cx)),
+    ] {
+        step(cx, send);
+        let message = cx.pending_prompt().map(|(message, _)| message);
+        assert_eq!(message.as_deref(), Some(asked.as_str()), "from {how}");
+        assert!(!QUIT.get(), "from {how}");
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        assert!(!QUIT.get(), "from {how}");
+        assert_eq!(running(cx), 1, "from {how}");
+    }
+    // Agreeing ends the shell, then quits.
+    step(cx, &|window, cx| window.press("secondary-q", cx));
+    cx.simulate_prompt_answer("End the shell");
+    cx.run_until_parked();
+    assert!(QUIT.get());
+    assert_eq!(running(cx), 0);
+}
+
 #[gpui_kit::test]
 fn another_connection_or_closing_the_window_asks_to_end_a_running_shell(cx: &mut TestAppContext) {
     use crate::resources::{example, live, shell};

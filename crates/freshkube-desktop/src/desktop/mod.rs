@@ -142,6 +142,32 @@ gpui_kit::actions!(
     ]
 );
 
+/// Quit answers: quitting mid-operation would abandon a half-done change,
+/// and quitting ends a shell, so it asks first. `quit` ends the app, once
+/// they agree; tests pass their own, since a test app can't quit.
+///
+/// Its key and the menus send Quit from inside the window's own update,
+/// where the window can't be updated again, so it asks once that update
+/// ends; asking inside it found no window and quit without a word.
+pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
+    cx.on_action(move |_: &Quit, cx| {
+        cx.defer(move |cx| {
+            let Some(window) = cx.windows().into_iter().next() else {
+                return quit(cx);
+            };
+            let may_quit = window
+                .update(cx, |_, window, cx| {
+                    mutation::may_close(window, cx)
+                        && pod_shell::may_close(window, cx, move |_, cx| quit(cx))
+                })
+                .unwrap_or(true);
+            if may_quit {
+                quit(cx);
+            }
+        });
+    });
+}
+
 pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
     let error = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_error = error.clone();
@@ -162,22 +188,7 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                 freshkube_ui::platform::Platform::current(),
                 &app_menu::MenuState::default(),
             ));
-            cx.on_action(|_: &Quit, cx| {
-                // Quitting mid-operation would abandon a half-done change,
-                // and quitting ends a shell, so it asks first.
-                let Some(window) = cx.windows().into_iter().next() else {
-                    return cx.quit();
-                };
-                let may_quit = window
-                    .update(cx, |_, window, cx| {
-                        mutation::may_close(window, cx)
-                            && pod_shell::may_close(window, cx, |_, cx| cx.quit())
-                    })
-                    .unwrap_or(true);
-                if may_quit {
-                    cx.quit();
-                }
-            });
+            on_quit(cx, |cx| cx.quit());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
