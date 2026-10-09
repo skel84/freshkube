@@ -15,6 +15,8 @@ pub(crate) mod nodes;
 mod object_links;
 mod overview;
 mod pages;
+#[cfg(test)]
+mod proof_tests;
 mod search;
 mod services;
 mod session;
@@ -347,6 +349,10 @@ pub(crate) struct Pilot {
     entry_open: Option<switch::EntryOpen>,
     /// A link into another entry, waiting for it to open.
     pending_link: Option<switch::PendingLink>,
+    /// What the notices about links and switches said, for tests: the
+    /// window offers no way to read a notice back.
+    #[cfg(test)]
+    told: Vec<String>,
     /// The read that finds the default kubeconfig file an entry's context is in.
     entry_locate: Option<(OwnedJob, Task<()>)>,
     entry_generation: u64,
@@ -1174,6 +1180,8 @@ impl Pilot {
             active_definition: Default::default(),
             entry_open: None,
             pending_link: None,
+            #[cfg(test)]
+            told: Vec::new(),
             entry_locate: None,
             entry_generation: 0,
             switcher_revision: 0,
