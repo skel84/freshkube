@@ -488,7 +488,7 @@ async fn an_empty_context_names_the_field_and_a_too_large_file_says_so(cx: &mut 
     // Compact this stays inside what a launch reads; written with
     // indentation it would not.
     let many: Vec<_> = (0..12_000).map(|n| serde_json::json!({"a": n})).collect();
-    let big = serde_json::json!({"version": 1, "destinations": many}).to_string();
+    let big = serde_json::json!({"version": 1, "sources": many}).to_string();
     assert!(big.len() < workspace::MAX_BYTES as usize);
     write(guard.path(), &big);
     let (_runtime, handle, view) = launch(cx, guard.path());

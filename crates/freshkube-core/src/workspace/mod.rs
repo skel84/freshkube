@@ -25,6 +25,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BoundedReadError, read_bounded_regular_file};
 
+mod destinations;
+
+pub use destinations::{Destination, Fault, Key, MAX_DESTINATIONS};
+
 /// The file format this version reads.
 pub const VERSION: u32 = 1;
 /// The largest file read; a larger one is refused.
@@ -100,14 +104,17 @@ pub struct Workspace {
     pub kubeconfig: Option<PathBuf>,
     #[serde(default)]
     pub clusters: Vec<Entry>,
-    /// Keys this version doesn't know (`destinations`, `sources` and later
-    /// ones), written back as they were read.
+    /// Which entry each Argo CD destination is, as the person mapped them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub destinations: Vec<Destination>,
+    /// Keys this version doesn't know (`sources` and later ones), written
+    /// back as they were read.
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Top-level keys reserved for later steps: kept on save, never warned about.
-const RESERVED: [&str; 2] = ["destinations", "sources"];
+const RESERVED: [&str; 1] = ["sources"];
 
 /// Why a file or a workspace is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +134,13 @@ pub enum Invalid {
     RelativePath(String),
     NotReadable(String),
     Malformed(String),
+    TooManyDestinations,
+    /// A destination row that can't be used: the row, by its index and what
+    /// it names, and why.
+    Destination {
+        row: String,
+        fault: Fault,
+    },
 }
 
 impl std::fmt::Display for Invalid {
@@ -156,6 +170,10 @@ impl std::fmt::Display for Invalid {
             Invalid::RelativePath(id) => write!(f, "a path for “{id}” isn’t absolute"),
             Invalid::NotReadable(reason) => write!(f, "it can’t be read: {reason}"),
             Invalid::Malformed(reason) => write!(f, "it isn’t a workspace: {reason}"),
+            Invalid::TooManyDestinations => {
+                write!(f, "it maps more than {MAX_DESTINATIONS} destinations")
+            }
+            Invalid::Destination { row, fault } => write!(f, "{row} {}", fault.words()),
         }
     }
 }
@@ -207,7 +225,7 @@ impl Workspace {
                 return Err(Invalid::RelativePath(entry.id.clone()));
             }
         }
-        Ok(())
+        destinations::validate(&self.destinations)
     }
 
     /// What [`validate`](Self::validate) checks, and that the written file
@@ -223,8 +241,8 @@ impl Workspace {
 
     /// Keys this version doesn't know, as `key` or `cluster-id.key`, sorted.
     /// They are kept when the file is saved; the page names them so a
-    /// misspelt key doesn't go unnoticed. The reserved `destinations` and
-    /// `sources` are not listed.
+    /// misspelt key doesn't go unnoticed. The reserved `sources` is not
+    /// listed.
     pub fn unknown_keys(&self) -> Vec<String> {
         let top = self
             .extra
@@ -235,7 +253,12 @@ impl Workspace {
             .clusters
             .iter()
             .flat_map(|entry| entry.extra.keys().map(|key| format!("{}.{key}", entry.id)));
-        let mut keys: Vec<String> = top.chain(entries).collect();
+        let destinations = self
+            .destinations
+            .iter()
+            .enumerate()
+            .flat_map(|(index, row)| row.unknown_keys(index));
+        let mut keys: Vec<String> = top.chain(entries).chain(destinations).collect();
         keys.sort();
         keys
     }
@@ -488,7 +511,8 @@ pub fn choose_start<'a>(workspace: &'a Workspace, remembered: Option<&str>) -> O
 }
 
 /// The acme workspace of `docs/platform/`'s mocks as a workspace: one core
-/// cluster, one for CI/CD and four environments. Names are invented, for
+/// cluster, one for CI/CD and four environments, and how Argo CD names
+/// three of them. Names are invented, for
 /// `--fixture` and for tests; it holds no paths, so it is valid wherever
 /// paths are absolute.
 pub fn example() -> Workspace {
@@ -502,6 +526,16 @@ pub fn example() -> Workspace {
             entry("stage-fra", Role::Environment),
             entry("prod-ams", Role::Environment),
             entry("prod-fra", Role::Environment),
+        ],
+        // How acme's Argo CD names its clusters: prod-ams behind an access
+        // proxy, by server, and the others by Argo CD's names.
+        destinations: vec![
+            Destination::new(
+                Key::Server("https://prod-ams.proxy.example.test".into()),
+                "prod-ams",
+            ),
+            Destination::new(Key::Name("prod-fra".into()), "prod-fra"),
+            Destination::new(Key::Name("stage-fra".into()), "stage-fra"),
         ],
         extra: Default::default(),
     }
