@@ -216,22 +216,10 @@ fn core() -> SessionInputs {
     }
 }
 
-fn labelled(items: &[(&str, &str, &str)]) -> Vec<super::LabelledWorkload> {
-    items
-        .iter()
-        .filter_map(|(namespace, name, part_of)| {
-            parse_labelled_workload(
-                &json!({"metadata": {
-                    "namespace": namespace, "name": name,
-                    "labels": {"app.kubernetes.io/part-of": part_of},
-                }}),
-                WorkloadKind::Deployment,
-            )
-        })
-        .collect()
-}
-
-fn environment(cluster: &str) -> SessionInputs {
+/// The Deployments an environment cluster holds with a `part-of` label.
+/// The example Resources page lists them for the cluster's context, so a
+/// part opened there is the one read.
+pub fn environment_objects(cluster: &str) -> Vec<CoreObject> {
     let items: &[(&str, &str, &str)] = match cluster {
         "dev-fra" => &[
             ("checkout", "checkout-api", "checkout"),
@@ -245,13 +233,33 @@ fn environment(cluster: &str) -> SessionInputs {
         ],
         _ => &[],
     };
+    items
+        .iter()
+        .map(|(namespace, name, part_of)| {
+            object(
+                DEPLOYMENTS,
+                json!({"metadata": {
+                    "namespace": namespace, "name": name,
+                    "labels": {"app.kubernetes.io/part-of": part_of},
+                }}),
+            )
+        })
+        .collect()
+}
+
+fn environment(cluster: &str) -> SessionInputs {
+    let objects = environment_objects(cluster);
     SessionInputs {
         key: SessionKey::new(cluster),
         kargo: Source::NotInstalled("API group kargo.akuity.io is not served".into()),
         argo_scope: ArgoScope::AllNamespaces,
         argo_applications: Source::NotInstalled("API group argoproj.io is not served".into()),
         argo_application_sets: Source::NotInstalled("API group argoproj.io is not served".into()),
-        workloads: Source::Read(labelled(items)),
+        workloads: Source::Read(
+            of(&objects, DEPLOYMENTS.0)
+                .filter_map(|value| parse_labelled_workload(value, WorkloadKind::Deployment))
+                .collect(),
+        ),
     }
 }
 

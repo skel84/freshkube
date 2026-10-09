@@ -4,18 +4,23 @@
 //! Applications and ApplicationSet, and the `status/status-page`
 //! Deployment. The Applications page maps `core-fra` to the open example
 //! cluster, so a part it opens in Resources is listed here, the same object
-//! the page read.
+//! the page read. An environment cluster's context also lists that
+//! cluster's labelled Deployments (`environment_objects`), so a part opened
+//! there after a switch is the one read too.
 //!
 //! Their positions start at [`FIRST`], clear of the example's own rows, so a
 //! Deployment's UID never names one of `WORKLOADS`.
 use serde_json::{Value, json};
 
-use freshkube_core::applications::example::{CoreObject, core_objects};
+use freshkube_core::applications::example::{CoreObject, core_objects, environment_objects};
 
 use super::*;
 
 /// The position, in a UID, of acme's first object.
 const FIRST: usize = 0xac00;
+/// The position of an environment cluster's first labelled Deployment,
+/// after core-fra's objects.
+const ENVIRONMENT: usize = FIRST + 0x80;
 
 /// The API groups acme's custom kinds are in, as discovery lists them.
 pub(super) const GROUPS: [(&str, &[&str]); 2] = [
@@ -63,13 +68,21 @@ fn is_kind(key: &str) -> bool {
         .any(|(group, _, _, plural, _)| format!("{plural}.{group}") == key)
 }
 
-/// acme's objects of one kind, each with its position.
-fn of(key: &str) -> impl Iterator<Item = (usize, CoreObject)> {
-    core_objects()
+/// acme's objects of one kind in the example cluster `context`, each with
+/// its position: core-fra's in every context, and an environment cluster's
+/// labelled Deployments in its own.
+fn of(context: &str, key: &str) -> Vec<(usize, CoreObject)> {
+    let core = core_objects()
         .into_iter()
         .enumerate()
-        .filter(move |(_, object)| object.key == key)
-        .map(|(ix, object)| (FIRST + ix, object))
+        .map(|(ix, object)| (FIRST + ix, object));
+    let environment = environment_objects(context)
+        .into_iter()
+        .enumerate()
+        .map(|(ix, object)| (ENVIRONMENT + ix, object));
+    core.chain(environment)
+        .filter(|(_, object)| object.key == key)
+        .collect()
 }
 
 fn text<'a>(value: &'a Value, pointer: &str) -> &'a str {
@@ -90,6 +103,7 @@ fn columns() -> Vec<ResourceColumn> {
 /// A custom kind's rows, as the server prints a kind without printer
 /// columns; `None` for a kind acme doesn't have.
 pub(super) fn read(
+    context: &str,
     connection: &str,
     key: &str,
     now: i64,
@@ -97,7 +111,8 @@ pub(super) fn read(
     if !is_kind(key) {
         return None;
     }
-    let rows = of(key)
+    let rows = of(context, key)
+        .into_iter()
         .map(|(ix, object)| {
             let name = text(&object.value, "/metadata/name");
             ResourceRow {
@@ -123,35 +138,41 @@ pub(super) fn read(
 
 /// acme's Deployments, in the Deployments list's columns, after the
 /// example's own.
-pub(super) fn deployments(connection: &str, now: i64) -> impl Iterator<Item = ResourceRow> {
-    of("deployments.apps").map(move |(ix, object)| {
-        let name = text(&object.value, "/metadata/name");
-        ResourceRow {
-            identity: identity(
-                connection,
-                "deployments.apps",
-                text(&object.value, "/metadata/namespace"),
-                name,
-                ix,
-            ),
-            cells: vec![
-                name.into(),
-                "1/1".into(),
-                "1".into(),
-                "1".into(),
-                String::new(),
-                name.into(),
-                image(name),
-                format!("app={name}"),
-            ],
-            created: Some(created(now, ix)),
-            terminating: false,
-            resource_version: EXAMPLE_VERSION.into(),
-            owner: None,
-            generated: None,
-            pod: None,
-        }
-    })
+pub(super) fn deployments(
+    context: &str,
+    connection: &str,
+    now: i64,
+) -> impl Iterator<Item = ResourceRow> {
+    of(context, "deployments.apps")
+        .into_iter()
+        .map(move |(ix, object)| {
+            let name = text(&object.value, "/metadata/name");
+            ResourceRow {
+                identity: identity(
+                    connection,
+                    "deployments.apps",
+                    text(&object.value, "/metadata/namespace"),
+                    name,
+                    ix,
+                ),
+                cells: vec![
+                    name.into(),
+                    "1/1".into(),
+                    "1".into(),
+                    "1".into(),
+                    String::new(),
+                    name.into(),
+                    image(name),
+                    format!("app={name}"),
+                ],
+                created: Some(created(now, ix)),
+                terminating: false,
+                resource_version: EXAMPLE_VERSION.into(),
+                owner: None,
+                generated: None,
+                pod: None,
+            }
+        })
 }
 
 fn image(name: &str) -> String {
@@ -162,7 +183,10 @@ fn image(name: &str) -> String {
 /// row's identity; a Deployment also gets the spec and status the list
 /// shows.
 pub(super) fn document(row: &ResourceRow, ix: usize) -> Option<String> {
-    let (_, object) = of(&row.identity.resource).find(|(at, _)| *at == ix)?;
+    let context = row.identity.connection.strip_prefix("example:")?;
+    let (_, object) = of(context, &row.identity.resource)
+        .into_iter()
+        .find(|(at, _)| *at == ix)?;
     let mut value = object.value;
     let metadata = value.get_mut("metadata")?.as_object_mut()?;
     metadata.insert("uid".into(), row.identity.uid.clone().into());

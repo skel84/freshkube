@@ -269,10 +269,14 @@ impl TableSource for ApplicationPage {
             cx.notify();
         }
         self.focus(window, cx);
-        let opens = self.selected_row().is_some_and(|row| row.closed.is_none());
-        let follows = self.selected_row().and_then(|row| row.follows.clone());
-        let mut menu =
-            vec![freshkube_ui::menu::MenuAction::new("Open in Resources", OpenPart).enabled(opens)];
+        let row = self.selected_row();
+        let opens = row.is_some_and(|row| row.closed.is_none());
+        let label: SharedString = match row.and_then(|row| row.switch.as_ref()) {
+            Some(entry) => format!("Switch to {entry} and open").into(),
+            None => "Open in Resources".into(),
+        };
+        let follows = row.and_then(|row| row.follows.clone());
+        let mut menu = vec![freshkube_ui::menu::MenuAction::new(label, OpenPart).enabled(opens)];
         if let Some(freight) = follows {
             menu.push(freshkube_ui::menu::MenuAction::new(
                 format!("Follow {freight}"),

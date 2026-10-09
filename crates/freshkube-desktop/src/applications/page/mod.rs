@@ -12,7 +12,9 @@
 //! Resources, on its Overview: the list passes its link on to the shell,
 //! which opens it as every object link opens. The button and the menu item
 //! are greyed out, with why, for a part in a cluster that isn't open; O
-//! sends its link anyway, and the shell says it can't open it.
+//! sends its link anyway, and the shell says it can't open it. A part in
+//! another cluster the workspace lists offers Switch and open instead: its
+//! link goes to the shell with that entry, which asks before switching.
 //!
 //! A Kargo Stage whose change was read leads to it: F, the row menu's
 //! Follow and the Inspector's button ask the list to show the change
@@ -76,6 +78,9 @@ pub(crate) enum ApplicationEvent {
     Open(Box<ResourceLink>),
     /// The change a Stage carries, by the Stage's name.
     Follow(SharedString),
+    /// A part to open in Resources once the window has switched to the
+    /// workspace entry its cluster is.
+    Switch(SharedString, Box<ResourceLink>),
 }
 
 /// One part as the table and the Inspector show it.
@@ -104,8 +109,12 @@ pub(crate) struct PartRow {
     pub(super) lower: Vec<SharedString>,
     /// The link that opens the part in Resources.
     pub(super) open: ResourceLink,
-    /// Why the part doesn't open here: its cluster isn't the open one.
+    /// Why the part doesn't open here: its cluster isn't the open one, and
+    /// no workspace entry is.
     pub(super) closed: Option<SharedString>,
+    /// The workspace entry its cluster is, when that isn't the open one: the
+    /// part opens there after a switch.
+    pub(super) switch: Option<SharedString>,
     /// The Open in Resources button's tooltip: where it opens the part, or
     /// why it doesn't.
     pub(super) open_tip: SharedString,
@@ -159,6 +168,7 @@ impl ApplicationPage {
     pub(super) fn new(
         app: &Application,
         read: &Read,
+        connections: &Connections,
         stale: Option<(SharedString, SharedString)>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -180,7 +190,7 @@ impl ApplicationPage {
             inspect: false,
             stale,
         };
-        page.show(app, read);
+        page.show(app, read, connections);
         page
     }
 
@@ -198,23 +208,24 @@ impl ApplicationPage {
         &mut self,
         app: &Application,
         read: &Read,
+        connections: &Connections,
         stale: Option<(SharedString, SharedString)>,
         cx: &mut Context<Self>,
     ) {
         self.stale = stale;
         self.name = app.name.clone().into();
         self.what = what_it_is(app).into();
-        self.show(app, read);
+        self.show(app, read, connections);
         cx.notify();
     }
 
     /// Derives the rows, groups and lines from the claims.
-    fn show(&mut self, app: &Application, read: &Read) {
+    fn show(&mut self, app: &Application, read: &Read, connections: &Connections) {
         let Claims { links, gaps } = claims(&read.derived, app);
         self.rows = links
             .iter()
             .map(|claim| {
-                let mut row = row(app, claim, &read.labels, &read.connections);
+                let mut row = row(app, claim, &read.labels, connections);
                 if claim.member.kind == MemberKind::KargoStage {
                     row.follows = read
                         .changes
@@ -264,11 +275,17 @@ impl ApplicationPage {
     }
 
     /// O: the selected part in Resources, through the shell, which says so
-    /// when its cluster isn't open.
+    /// when its cluster isn't open, or asks to switch to the workspace entry
+    /// it is.
     fn open_part(&mut self, cx: &mut Context<Self>) {
-        if let Some(row) = self.selected_row() {
-            cx.emit(ApplicationEvent::Open(Box::new(row.open.clone())));
-        }
+        let Some(row) = self.selected_row() else {
+            return;
+        };
+        let link = Box::new(row.open.clone());
+        cx.emit(match &row.switch {
+            Some(entry) => ApplicationEvent::Switch(entry.clone(), link),
+            None => ApplicationEvent::Open(link),
+        });
     }
 
     /// F: the change the selected Stage carries, when one was read.
@@ -467,9 +484,14 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
         tooltip.push(' ');
         tooltip.push_str(lower);
     }
-    let closed: Option<SharedString> = (!connections.opens(&member.session)).then(|| {
-        format!("{cluster} isn't the open cluster, so its objects don't open in Resources").into()
-    });
+    let switch: Option<SharedString> = connections
+        .switch_to(&member.session)
+        .map(|entry| entry.to_owned().into());
+    let closed: Option<SharedString> = (!connections.opens(&member.session) && switch.is_none())
+        .then(|| {
+            format!("{cluster} isn't the open cluster, so its objects don't open in Resources")
+                .into()
+        });
     PartRow {
         key: key.into(),
         rank: member.kind.rank(),
@@ -510,10 +532,17 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
             .then(|| format!("{}.", claim.why.trim_end_matches('.')).into()),
         lower,
         open: links::link(member, connections),
-        open_tip: closed
-            .clone()
-            .unwrap_or_else(|| format!("Open {} on {cluster}, in Resources", member.name).into()),
+        open_tip: match (&closed, &switch) {
+            (Some(closed), _) => closed.clone(),
+            (None, Some(entry)) => format!(
+                "Switch to {entry} and open {} there, in Resources",
+                member.name
+            )
+            .into(),
+            (None, None) => format!("Open {} on {cluster}, in Resources", member.name).into(),
+        },
         closed,
+        switch,
         follows: None,
     }
 }
