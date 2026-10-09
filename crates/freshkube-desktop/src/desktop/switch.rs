@@ -239,7 +239,10 @@ impl Pilot {
                 .map(|entry| entry.id.clone())
                 .collect(),
             active: self.active_cluster().map(str::to_owned),
-            destinations: workspace.destinations.clone(),
+            mapping: freshkube_core::delivery::change::live::Mapping::of(
+                workspace,
+                self.active_cluster(),
+            ),
         };
         self.applications
             .update(cx, |page, cx| page.set_clusters(clusters, cx));

@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use freshkube_core::delivery::change::live::{self, Place};
+use freshkube_core::delivery::change::live::{self, Mapping, Place};
 use freshkube_core::delivery::change::{self as delivery_change, Change};
 use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::snapshot::Request;
@@ -196,6 +196,28 @@ impl ChangePage {
         if !fresh {
             self.read(None, cx);
         }
+    }
+
+    /// The workspace's entries or destination mappings changed, as a save
+    /// in Settings › Workspace or a switch does: the links follow at once,
+    /// and a live change resolves its Stages again by the new mapping, now
+    /// while shown, else when it next shows.
+    pub(crate) fn set_clusters(
+        &mut self,
+        mapping: Mapping,
+        connections: Connections,
+        cx: &mut Context<Self>,
+    ) {
+        self.connections = connections;
+        self.detail = self.derive_detail();
+        if let Fetch::Live { place, .. } = &mut self.fetch
+            && place.mapping != mapping
+        {
+            place.mapping = mapping;
+            self.read_at = None;
+            self.refresh(cx);
+        }
+        cx.notify();
     }
 
     /// Refresh: reads again while shown.

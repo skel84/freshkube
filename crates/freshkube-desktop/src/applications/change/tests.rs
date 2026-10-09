@@ -253,6 +253,44 @@ fn a_stage_mapped_to_another_cluster_never_folds(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// An entry the workspace gains while the change page shows reaches its
+/// links at once: prod-ams's Deployment goes from greyed out to Switch and
+/// open without the page being opened again.
+#[gpui_kit::test]
+fn a_workspace_change_reaches_the_change_page_at_once(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open_with(cx, &["dev-fra"], false);
+    let labels = |view: &Entity<Pilot>, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.click(hop("prod-ams-pods"), cx);
+            window.render_frame(cx);
+            change(view, cx).unwrap().read(cx).action_labels()
+        })
+        .unwrap()
+    };
+    let before = labels(&view, cx);
+    assert!(
+        before.iter().all(|label| !label.starts_with("Switch")),
+        "{before:?}"
+    );
+    cx.update(|cx| {
+        list(&view, cx).update(cx, |page, cx| {
+            page.set_clusters(
+                super::super::Clusters {
+                    entries: vec!["dev-fra".into(), "prod-ams".into()],
+                    active: Some("dev-fra".into()),
+                    mapping: Default::default(),
+                },
+                cx,
+            )
+        })
+    });
+    let after = labels(&view, cx);
+    assert!(
+        after.contains(&"Switch and open the Deployment · prod-ams".to_owned()),
+        "{after:?}"
+    );
+}
+
 /// In example data the workspace lists prod-ams, whose example cluster
 /// holds the checkout-api Deployment its Stage reports: Switch and open
 /// asks, switches there, and ends on the Deployment's Overview.
@@ -1370,7 +1408,7 @@ fn open_with(
                 super::super::Clusters {
                     entries: entries.clone(),
                     active: Some("dev-fra".into()),
-                    destinations: Vec::new(),
+                    mapping: Default::default(),
                 },
                 cx,
             );

@@ -140,9 +140,9 @@ enum Entry {
 pub(crate) struct Clusters {
     pub(crate) entries: Vec<String>,
     pub(crate) active: Option<String>,
-    /// The Argo CD destinations the workspace maps to its entries, which
-    /// a change's live read resolves Stages through.
-    pub(crate) destinations: Vec<freshkube_core::workspace::Destination>,
+    /// What the workspace says about where Argo CD deploys
+    /// (`Mapping::of`), which a change's live read resolves Stages through.
+    pub(crate) mapping: Mapping,
 }
 
 /// A part to open once the window has switched to the workspace entry its
@@ -318,6 +318,17 @@ impl ApplicationsPage {
         }
         self.clusters = clusters;
         self.update_open(cx);
+        self.update_change(cx);
+    }
+
+    /// Tells the change page shown the entries and the mapping.
+    fn update_change(&mut self, cx: &mut Context<Self>) {
+        let (Some((change, _)), Some(read)) = (&self.change, self.snapshot.data()) else {
+            return;
+        };
+        let connections = self.connections(read);
+        let mapping = self.clusters.mapping.clone();
+        change.update(cx, |page, cx| page.set_clusters(mapping, connections, cx));
     }
 
     /// Which connection each cluster of a read is, and which workspace
@@ -606,18 +617,12 @@ impl ApplicationsPage {
             return;
         };
         let project = open.read(cx).name().to_string();
-        let mapping = Mapping {
-            open: self.clusters.active.clone(),
-            entries: self.clusters.entries.clone(),
-            destinations: self.clusters.destinations.clone(),
-            settings: true,
-        };
         let Some(fetch) = read.changes.fetch(
             &project,
             stage,
             &self.runtime,
             &source.access,
-            mapping,
+            self.clusters.mapping.clone(),
             self.example_delay,
         ) else {
             return;
