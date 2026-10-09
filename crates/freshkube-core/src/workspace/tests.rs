@@ -606,6 +606,27 @@ fn a_destination_row_that_cannot_be_used_refuses_the_file_and_is_named() {
             serde_json::json!({"name": "a", "entry": " "}),
             "destinations[1] (name a) names no workspace cluster",
         ),
+        // The likeliest hand edit: a row whose entry was never typed.
+        (
+            serde_json::json!({"name": "a"}),
+            "destinations[1] (name a) names no workspace cluster",
+        ),
+        (
+            serde_json::json!({"name": "prod-lon ", "entry": "prod"}),
+            "destinations[1] (name prod-lon ) names a server or name with spaces around it",
+        ),
+        (
+            serde_json::json!({"server": 5, "entry": "prod"}),
+            "destinations[1] isn’t a server or name and an entry, each a string, so it can’t be read",
+        ),
+        (
+            serde_json::json!({"name": "a", "entry": ["prod"]}),
+            "destinations[1] (name a) isn’t a server or name and an entry, each a string, so it can’t be read",
+        ),
+        (
+            serde_json::json!("prod"),
+            "destinations[1] isn’t a server or name and an entry, each a string, so it can’t be read",
+        ),
     ];
     for (row, words) in cases {
         assert_eq!(refused(row.clone()).to_string(), words, "{row}");
@@ -635,4 +656,14 @@ fn a_destination_changes_what_it_matches_and_keeps_the_rest() {
     assert_eq!(row.entry, "prod");
     assert_eq!(workspace.unknown_keys(), vec!["destinations[0].note"]);
     assert_eq!(workspace.validate(), Ok(()));
+}
+
+#[test]
+fn destinations_that_are_not_a_list_refuse_the_file() {
+    let refused = parse(&text(serde_json::json!({
+        "version": 1,
+        "clusters": [],
+        "destinations": {"name": "a", "entry": "prod"},
+    })));
+    assert!(matches!(refused, Err(Invalid::Malformed(_))), "{refused:?}");
 }

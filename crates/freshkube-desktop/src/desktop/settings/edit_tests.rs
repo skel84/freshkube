@@ -171,6 +171,42 @@ async fn removing_asks_first_and_takes_the_entry_out_of_the_file_only(cx: &mut T
     .unwrap();
 }
 
+/// A mapping to the removed cluster stays in the file, to be pointed
+/// elsewhere; it maps nothing meanwhile.
+#[gpui_kit::test]
+async fn removing_a_cluster_keeps_the_destinations_mapped_to_it(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(
+        guard.path(),
+        r#"{"version":1,"clusters":[
+            {"id":"mgmt","role":"core","context":"acme-mgmt"},
+            {"id":"prod","role":"environment","context":"acme-prod"}],
+          "destinations":[{"server":"https://prod.example.test","entry":"prod"}]}"#,
+    );
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-cluster-prod", cx);
+        window.press("backspace", cx);
+        window.render_frame(cx);
+        window.click("settings-remove-confirm", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    assert_eq!(ids(guard.path()), vec!["mgmt"]);
+    let Loaded::Workspace(file) = workspace::load(&guard.path().join("workspace.json")) else {
+        panic!("the file is used");
+    };
+    assert_eq!(
+        file.destinations,
+        vec![workspace::Destination::new(
+            workspace::Key::Server("https://prod.example.test".into()),
+            "prod"
+        )]
+    );
+}
+
 #[gpui_kit::test]
 async fn moving_a_cluster_saves_the_new_order(cx: &mut TestAppContext) {
     cx.executor().allow_parking();

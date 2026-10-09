@@ -166,10 +166,11 @@ person says: `{"server": …, "entry": …}` or `{"name": …, "entry": …}`, m
 as the Application records it (a server without case, a trailing slash or an
 explicit `:443`; a name exactly). Nothing is inferred from kubeconfig servers,
 and Argo CD's own `in-cluster` needs no row. A row naming both, neither, an
-empty value, a server that isn't http or https, or Argo CD's own cluster
-refuses the file, named by its index (`destinations[2] (server …)`). A row
-whose entry is gone is kept and resolves to nothing; one destination mapped to
-two entries is never guessed. The change page reads only the open connection:
+empty value, a value with spaces around it, a server that isn't http or
+https, Argo CD's own cluster or no entry, or one that isn't an object of
+strings, refuses the file, named by its index (`destinations[2] (server …)`),
+as do more than 256 rows. A row whose entry is gone is kept and resolves to
+nothing; one destination mapped to two entries is never guessed. The change page reads only the open connection:
 a destination mapped to the open entry is read there, and one mapped to
 another entry is named, with the workloads Argo CD reports there as its claim.
 

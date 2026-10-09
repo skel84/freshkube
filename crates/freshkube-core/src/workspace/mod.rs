@@ -311,8 +311,16 @@ pub fn parse(bytes: &[u8]) -> Result<Workspace, Invalid> {
             Some(_) => {}
         },
     }
+    let mut value = value;
+    // Read apart, so a row of the wrong shape is named by its index.
+    let destinations = value
+        .as_object_mut()
+        .and_then(|top| top.remove("destinations"));
     let mut workspace: Workspace =
         serde_json::from_value(value).map_err(|error| Invalid::Malformed(error.to_string()))?;
+    if let Some(destinations) = destinations {
+        workspace.destinations = destinations::read(destinations)?;
+    }
     // The version is written fresh each time; it isn't an unknown key.
     workspace.extra.remove("version");
     workspace.validate()?;
@@ -511,8 +519,8 @@ pub fn choose_start<'a>(workspace: &'a Workspace, remembered: Option<&str>) -> O
 }
 
 /// The acme workspace of `docs/platform/`'s mocks as a workspace: one core
-/// cluster, one for CI/CD and four environments, and how Argo CD names
-/// three of them. Names are invented, for
+/// cluster, one for CI/CD and four environments, and the servers Argo CD
+/// names three of them by. Names are invented, for
 /// `--fixture` and for tests; it holds no paths, so it is valid wherever
 /// paths are absolute.
 pub fn example() -> Workspace {
@@ -527,16 +535,13 @@ pub fn example() -> Workspace {
             entry("prod-ams", Role::Environment),
             entry("prod-fra", Role::Environment),
         ],
-        // How acme's Argo CD names its clusters: prod-ams behind an access
-        // proxy, by server, and the others by Argo CD's names.
-        destinations: vec![
-            Destination::new(
-                Key::Server("https://prod-ams.proxy.example.test".into()),
-                "prod-ams",
-            ),
-            Destination::new(Key::Name("prod-fra".into()), "prod-fra"),
-            Destination::new(Key::Name("stage-fra".into()), "stage-fra"),
-        ],
+        // The servers acme's Argo CD Applications name
+        // (`applications::example`); prod-lon isn't in the workspace, so
+        // its Applications stay Unknown.
+        destinations: ["dev-fra", "stage-fra", "prod-ams"]
+            .into_iter()
+            .map(|id| Destination::new(Key::Server(format!("https://{id}.example.test:6443")), id))
+            .collect(),
         extra: Default::default(),
     }
 }
