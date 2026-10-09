@@ -227,7 +227,7 @@ impl ApplicationsPage {
             open: None,
             refocus: None,
             status: Segment::default(),
-            column: Column::new(&Display::default(), false, false),
+            column: Column::new(&Display::default(), false, false, false),
             column_revision: 0,
             _subscription: subscription,
         }
@@ -277,6 +277,7 @@ impl ApplicationsPage {
         self.visible = visible;
         if !visible {
             self.stop();
+            self.derive_column();
             cx.notify();
             return;
         }
@@ -324,6 +325,7 @@ impl ApplicationsPage {
                 // rows.
                 self.pending = true;
                 if self.hold {
+                    self.derive_column();
                     cx.notify();
                     return;
                 }
@@ -371,6 +373,7 @@ impl ApplicationsPage {
                 }));
             }
         }
+        self.derive_column();
         cx.notify();
     }
 

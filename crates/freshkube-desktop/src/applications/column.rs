@@ -13,6 +13,9 @@ pub(crate) struct ColumnApp {
     pub(crate) name: SharedString,
     /// What it is and where, after its name in the row's tooltip.
     pub(crate) detail: SharedString,
+    /// Its entry in the menu past the cap: its name, with what it is when
+    /// another application shares the name.
+    pub(crate) menu: SharedString,
     /// Why it may be incomplete, for its mark.
     pub(crate) incomplete: Option<SharedString>,
 }
@@ -45,7 +48,9 @@ pub(crate) struct Column {
 
 impl Column {
     /// The column for what the page shows: its rows, or why it has none.
-    pub(super) fn new(display: &Display, connected: bool, read: bool) -> Self {
+    /// While a read is in flight, a page with no rows says so, and a failed
+    /// read's Retry waits for it.
+    pub(super) fn new(display: &Display, connected: bool, read: bool, reading: bool) -> Self {
         let note = |text: &str, tooltip: Option<String>, retry| ColumnNote {
             text: text.to_owned().into(),
             tooltip: tooltip.map(Into::into),
@@ -62,6 +67,7 @@ impl Column {
             _ if !connected => Some(note("Not connected", None, false)),
             Body::Table if !read => Some(note("Reading…", None, false)),
             Body::Table => None,
+            _ if reading => Some(note("Reading…", None, false)),
             Body::Empty { title, description } => Some(note(
                 "No applications found",
                 sentence(title, description, None),
@@ -99,7 +105,13 @@ impl Column {
             .collect();
         if note.is_none() {
             for row in &display.rows {
-                sections[rule_index(row.rule)].apps.push(app(row));
+                let shared = display
+                    .rows
+                    .iter()
+                    .filter(|other| other.name == row.name)
+                    .nth(1)
+                    .is_some();
+                sections[rule_index(row.rule)].apps.push(app(row, shared));
             }
         }
         sections.retain(|section| !section.apps.is_empty());
@@ -111,11 +123,16 @@ impl Column {
     }
 }
 
-fn app(row: &AppRow) -> ColumnApp {
+fn app(row: &AppRow, shared: bool) -> ColumnApp {
     ColumnApp {
         key: row.key.clone(),
         name: row.name.clone(),
         detail: format!("{} · {}", row.what, row.clusters).into(),
+        menu: if shared {
+            format!("{} · {}", row.name, row.what).into()
+        } else {
+            row.name.clone()
+        },
         incomplete: (row.mark == Mark::Incomplete).then(|| row.mark_words.clone()),
     }
 }
@@ -145,6 +162,7 @@ impl ApplicationsPage {
             &self.display,
             self.source.is_some(),
             self.snapshot.data().is_some() || self.snapshot.error().is_some(),
+            self.pending,
         );
         if column != self.column {
             self.column = column;
@@ -153,7 +171,8 @@ impl ApplicationsPage {
     }
 
     /// The column's row: that application's page, selected on the list
-    /// for when it comes back.
+    /// for when it comes back. A filter or chip that hides it is cleared,
+    /// so the list never comes back filtered against its selection.
     pub(crate) fn open_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(key) = self
             .display
@@ -167,8 +186,21 @@ impl ApplicationsPage {
         if self.shown_application(cx).as_ref() == Some(&key) {
             return;
         }
+        if !self.lists(&key) {
+            self.mark = None;
+            self.filter
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.refilter(cx);
+        }
         self.select(key.clone(), cx);
         self.open_application(&key, window, cx);
+    }
+
+    /// Whether the list's lines show the application, under its filters.
+    fn lists(&self, key: &SharedString) -> bool {
+        self.lines
+            .iter()
+            .any(|entry| matches!(entry, Entry::Row(ix) if &self.display.rows[*ix].key == key))
     }
 
     /// All applications: the list, with the application whose page showed
@@ -186,5 +218,60 @@ impl ApplicationsPage {
         self.column = column;
         self.column_revision += 1;
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Read, Variant, example};
+    use super::{Column, Display};
+
+    fn acme() -> Display {
+        let inputs = example::inputs(Variant::Acme);
+        let read = Read::of(
+            &inputs,
+            example::labels(&inputs),
+            example::connections("example:prod-fra"),
+        );
+        Display::new(&read.derived, &read.labels)
+    }
+
+    #[test]
+    fn a_name_two_applications_share_says_what_each_is_in_the_menu() {
+        let mut display = acme();
+        // status-page's Argo CD Application takes cart's name.
+        let ix = display
+            .rows
+            .iter()
+            .position(|row| row.name.as_ref() == "status-page")
+            .unwrap();
+        display.rows[ix].name = "cart".into();
+        let column = Column::new(&display, true, true, false);
+        let menus: Vec<&str> = column
+            .sections
+            .iter()
+            .flat_map(|section| &section.apps)
+            .map(|app| app.menu.as_ref())
+            .collect();
+        assert_eq!(
+            menus,
+            [
+                "cart · Kargo Project",
+                "checkout",
+                "catalog",
+                "cart · Argo CD Application",
+                "loyalty"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_read_in_flight_keeps_the_rows_and_hides_retry() {
+        let display = acme();
+        let reading = Column::new(&display, true, true, true);
+        assert_eq!(reading.note, None, "a refresh keeps the rows");
+        assert_eq!(reading.total, 5);
+        let first = Column::new(&Display::default(), true, false, true);
+        assert_eq!(first.note.map(|note| note.text), Some("Reading…".into()));
     }
 }

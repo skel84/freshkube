@@ -59,8 +59,7 @@ fn applications_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppContext) {
-    // Wide enough, beside the rail and the column, for the chips' words.
-    let (_runtime, handle, view) = open(cx, 1440., 880., |_| {});
+    let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let page = page(&view, cx);

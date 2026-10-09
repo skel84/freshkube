@@ -215,6 +215,21 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
             }
         })
         .unwrap();
+        if retry {
+            // Until it answers the note says so, and Retry waits.
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(
+                    window
+                        .find("nav-applications-status")
+                        .label()
+                        .is_some_and(|label| label.contains("Reading…"))
+                );
+                assert!(window.try_find("nav-applications-status-retry").is_none());
+            })
+            .unwrap();
+        }
     }
     // Held, the first read never answers.
     let (_runtime, _handle, view) = fixture(cx, 1280., 880.);
@@ -244,6 +259,7 @@ fn the_column_names_the_rest_in_a_menu(cx: &mut TestAppContext) {
         key: format!("part-of:app-{ix:02}").into(),
         name: format!("app-{ix:02}").into(),
         detail: "part-of label · core-fra".into(),
+        menu: format!("app-{ix:02}").into(),
         incomplete: (ix == 0).then(|| SharedString::from("may be incomplete: why")),
     };
     let column = Column {
@@ -312,4 +328,82 @@ fn the_column_redraws_only_for_what_it_shows(cx: &mut TestAppContext) {
         refresh.update(cx, |page, cx| page.refresh(cx))
     });
     assert!(redrawn.is_empty(), "the same read again: {redrawn:?}");
+}
+
+/// Opening from the column clears a filter that hides the application, so
+/// the list comes back showing what it has selected.
+#[gpui_kit::test]
+fn opening_from_the_column_never_leaves_the_list_filtered_against_it(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = applications(cx, Variant::Acme);
+    let page = cx.update(|cx| view.read(cx).applications.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.click("applications-tally-read", cx);
+        window.render_frame(cx);
+        assert!(!page.read(cx).names().contains(&"cart".to_owned()));
+        window.click(CART, cx);
+        window.render_frame(cx);
+        window.click(ALL, cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).names().contains(&"cart".to_owned()));
+        assert_eq!(
+            page.read(cx).selected_key().map(|key| key.as_ref()),
+            Some("kargo:cart")
+        );
+        assert!(window.find("applications-detail").visible());
+    })
+    .unwrap();
+}
+
+/// A read the open application isn't in closes its page, and the fill goes
+/// back to All applications.
+#[gpui_kit::test]
+fn a_read_without_the_open_application_moves_the_fill_back(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = applications(cx, Variant::Acme);
+    let page = cx.update(|cx| view.read(cx).applications.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.click(CART, cx);
+        window.render_frame(cx);
+        assert_eq!(window.find(CART).selected(), Some(true));
+        page.update(cx, |page, cx| {
+            page.set_variant(Variant::Refused);
+            page.refresh(cx);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(page.read(cx).open_page().is_none());
+        assert!(window.try_find(CART).is_none(), "Kargo wasn't read");
+        assert_eq!(window.find(ALL).selected(), Some(true));
+    })
+    .unwrap();
+}
+
+/// Another cluster drops what was read: the column says it is reading
+/// until that cluster answers, never the last cluster's applications.
+#[gpui_kit::test]
+fn another_cluster_shows_reading_until_it_answers(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = applications(cx, Variant::Acme);
+    let page = cx.update(|cx| view.read(cx).applications.clone());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, _| page.set_hold(true));
+        view.update(cx, |pilot, cx| {
+            pilot.switch_cluster("dev-fra".into(), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let ids: Vec<String> = lines(&view, cx).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(ids, [ALL, "nav-applications-status"]);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("nav-applications-status")
+                .label()
+                .is_some_and(|label| label.contains("Reading…"))
+        );
+    })
+    .unwrap();
 }

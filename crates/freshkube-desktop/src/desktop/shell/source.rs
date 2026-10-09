@@ -519,7 +519,7 @@ impl Pilot {
                 .sections
                 .iter()
                 .flat_map(|section| &section.apps)
-                .map(|app| (app.name.clone(), ColumnKey::Application(app.key.clone())))
+                .map(|app| (app.menu.clone(), ColumnKey::Application(app.key.clone())))
                 .collect();
             lines.push(
                 Menu::new(

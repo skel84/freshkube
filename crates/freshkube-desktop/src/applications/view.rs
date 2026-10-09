@@ -20,7 +20,7 @@ use gpui_kit::component::{
 
 /// The page width, in dp, from which the chips say their words beside
 /// their counts.
-const CHIP_WORDS_WIDTH: f32 = 1100.;
+const CHIP_WORDS_WIDTH: f32 = 960.;
 
 impl ApplicationsPage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {

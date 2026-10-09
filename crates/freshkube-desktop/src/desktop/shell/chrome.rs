@@ -135,14 +135,22 @@ impl ChromeParts {
             column.watch(&monitoring, |area| area == Area::Monitoring, cx);
             column.watch(&observability, |area| area == Area::Observability, cx);
             // The Applications page notifies with every hover; only a new
-            // read or another application shown draws.
+            // read or another application shown draws, and only while its
+            // column shows. Another area's column follows navigation.
             let mut revision = applications.read(cx).column_revision();
             column
                 ._subscriptions
                 .push(cx.observe(&applications, move |column, page, cx| {
                     let now = page.read(cx).column_revision();
-                    if now != revision {
-                        revision = now;
+                    if now == revision {
+                        return;
+                    }
+                    revision = now;
+                    let shows = column
+                        .pilot
+                        .upgrade()
+                        .is_some_and(|pilot| pilot.read(cx).area == Area::Applications);
+                    if shows {
                         column.redraw(cx);
                     }
                 }));
