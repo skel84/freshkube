@@ -596,11 +596,11 @@ fn a_destination_row_that_cannot_be_used_refuses_the_file_and_is_named() {
         ),
         (
             serde_json::json!({"server": "https://Kubernetes.default.svc:443/", "entry": "prod"}),
-            "destinations[1] (server https://Kubernetes.default.svc:443/) names Argo CD’s own cluster, which is known already",
+            "destinations[1] (server https://Kubernetes.default.svc:443/) names Argo CD's own cluster, which is known already",
         ),
         (
             serde_json::json!({"name": "in-cluster", "entry": "prod"}),
-            "destinations[1] (name in-cluster) names Argo CD’s own cluster, which is known already",
+            "destinations[1] (name in-cluster) names Argo CD's own cluster, which is known already",
         ),
         (
             serde_json::json!({"name": "a", "entry": " "}),
@@ -666,4 +666,15 @@ fn destinations_that_are_not_a_list_refuse_the_file() {
         "destinations": {"name": "a", "entry": "prod"},
     })));
     assert!(matches!(refused, Err(Invalid::Malformed(_))), "{refused:?}");
+}
+
+#[test]
+fn keys_name_the_same_destination_as_an_application_is_matched() {
+    let server = |s: &str| Key::Server(s.into());
+    let name = |s: &str| Key::Name(s.into());
+    assert!(server("https://A.example.test:443/").same(&server("https://a.example.test")));
+    assert!(!server("https://a.example.test:6443").same(&server("https://a.example.test")));
+    assert!(name("prod").same(&name("prod")));
+    assert!(!name("prod").same(&name("Prod")));
+    assert!(!name("https://a.example.test").same(&server("https://a.example.test")));
 }

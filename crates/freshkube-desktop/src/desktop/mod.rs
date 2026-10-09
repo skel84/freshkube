@@ -698,6 +698,7 @@ impl Pilot {
             ),
             KeyBinding::new("r", settings::ReloadWorkspace, Some(settings::CONTEXT)),
         ]);
+        cx.bind_keys(settings::destinations::key_bindings());
         cx.bind_keys(crate::applications::key_bindings());
         cx.bind_keys([
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
