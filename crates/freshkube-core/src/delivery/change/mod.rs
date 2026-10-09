@@ -1,0 +1,249 @@
+//! One change as the change page shows it (docs/DESIGN.md, "The change
+//! page"): its hops in the order the change travels, grouped by phase and
+//! by Stage, each with its state, how it joins the hop before, and what the
+//! Inspector says of it. A Stage keeps its three gates apart: whether the
+//! Freight is eligible, how it is promoted, and the verification after.
+//!
+//! This is the page's model, without presentation: states are
+//! [`HealthIndicator`]s and times are instants, which the page words. It
+//! reads nothing; [`example`] invents one change for example mode.
+
+pub mod example;
+
+use chrono::{DateTime, Utc};
+
+use super::join::Confidence;
+use crate::indicators::HealthIndicator;
+
+/// One change: a Freight of a Kargo project, and every hop it took.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Change {
+    /// The Kargo project, the page's breadcrumb.
+    pub project: String,
+    /// The Freight, the page's title.
+    pub freight: String,
+    /// The cluster Kargo runs in.
+    pub kargo_cluster: String,
+    /// When it was all read.
+    pub observed_at: DateTime<Utc>,
+    pub groups: Vec<Group>,
+    pub stages: Vec<Stage>,
+    pub hops: Vec<Hop>,
+}
+
+impl Change {
+    /// The hops of a group, in travel order.
+    pub fn hops_of(&self, group: usize) -> impl Iterator<Item = &Hop> {
+        self.hops.iter().filter(move |hop| hop.group == group)
+    }
+
+    pub fn hop(&self, key: &str) -> Option<&Hop> {
+        self.hops.iter().find(|hop| hop.key == key)
+    }
+}
+
+/// A group of the trail: a phase, or a Stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Phase {
+    /// The pull request, its pipeline runs, the supply chain and the image.
+    Build,
+    Freight,
+    /// A Stage, by index into [`Change::stages`].
+    Stage(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Group {
+    pub phase: Phase,
+    /// Where its hops were read, or where the Stage deploys.
+    pub detail: String,
+}
+
+/// One row of the trail.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hop {
+    /// Unique in the change; selects it.
+    pub key: String,
+    /// Its group, by index into [`Change::groups`].
+    pub group: usize,
+    pub state: HealthIndicator,
+    pub name: String,
+    pub detail: String,
+    /// The cluster or service it was read from.
+    pub from: String,
+    pub at: Option<DateTime<Utc>>,
+    /// How sure its link to the hop before is. Gates have none.
+    pub link: Option<Confidence>,
+    pub shows: Shows,
+}
+
+/// What the Inspector shows for a row.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Shows {
+    Hop(Box<HopDetail>),
+    /// A gate row shows its Stage's three gates, by index.
+    Stage(usize),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HopDetail {
+    /// Its kind, as the heading's caption.
+    pub kind: String,
+    /// Its name, in monospace.
+    pub title: String,
+    /// Its state in words.
+    pub state: String,
+    pub notice: Option<Notice>,
+    pub fields: Vec<Field>,
+    pub link: Option<LinkDetail>,
+    /// Said in the link's place for a hop that has none.
+    pub unlinked: Option<String>,
+    pub actions: Vec<Action>,
+}
+
+/// A banner under a hop's heading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Notice {
+    pub state: HealthIndicator,
+    pub lead: String,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Field {
+    pub label: String,
+    pub value: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Value {
+    Text(String),
+    /// A name, digest or commit, in monospace.
+    Mono(String),
+    /// An instant, which the page words in local time.
+    At(DateTime<Utc>),
+}
+
+/// How a hop joins the hop before it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkDetail {
+    pub confidence: Confidence,
+    /// What joins them: `commit`, `digest`, `revision`, `provenance`.
+    pub by: String,
+    /// The hop before, by name.
+    pub before: String,
+    pub before_says: String,
+    pub here_says: String,
+    /// Why the link has its confidence.
+    pub why: String,
+}
+
+/// An object to open in Resources, on the cluster that holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Object {
+    pub cluster: String,
+    pub group: String,
+    pub version: String,
+    pub kind: String,
+    /// The kind's plural, as the API serves it.
+    pub plural: String,
+    pub namespace: String,
+    pub name: String,
+}
+
+/// Where an action leads. None changes anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// An object in Resources; `what` names it on the button.
+    Resource { what: String, object: Object },
+    /// The tool's own page, in the browser: `label` without its arrow.
+    Browser { label: String },
+    /// A step container's log in the dock, from the cluster that ran it.
+    Logs { cluster: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Action {
+    pub target: Target,
+    /// Why it can't be pressed, when it can't.
+    pub disabled: Option<String>,
+}
+
+impl Action {
+    pub fn new(target: Target) -> Self {
+        Self {
+            target,
+            disabled: None,
+        }
+    }
+
+    pub fn disabled(mut self, why: impl Into<String>) -> Self {
+        self.disabled = Some(why.into());
+        self
+    }
+}
+
+/// One check of a gate: a promotion step or an AnalysisRun.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Check {
+    pub state: HealthIndicator,
+    pub name: String,
+    pub found: String,
+    pub at: Option<DateTime<Utc>>,
+}
+
+/// How the Freight became eligible for a Stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Eligible {
+    /// It passed verification in the upstream Stage.
+    Verified {
+        upstream: String,
+        at: DateTime<Utc>,
+        /// What passed there: `3 of 3 analyses`.
+        checks: String,
+    },
+    /// Someone approved it for this Stage by hand, past its upstream.
+    Approved {
+        by: String,
+        at: DateTime<Utc>,
+        past: String,
+        /// When the upstream verified it after, if it has.
+        upstream_verified: Option<DateTime<Utc>>,
+    },
+    /// The first Stage takes Freight from the Warehouse.
+    Warehouse { at: DateTime<Utc> },
+}
+
+/// How the Freight is promoted to a Stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Promotion {
+    /// Auto-promotion is on: Kargo promoted it.
+    Automatic { at: DateTime<Utc> },
+    /// Auto-promotion is off: it waits for someone who may promote.
+    Waiting,
+}
+
+/// A Stage and its three gates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stage {
+    pub name: String,
+    /// The environment cluster it deploys to.
+    pub cluster: String,
+    pub state: HealthIndicator,
+    /// Its state in words: `Verified`, `Waiting for promotion`.
+    pub words: String,
+    /// What runs there now, when it isn't this change.
+    pub running: Option<String>,
+    pub eligible: Eligible,
+    pub promotion: Promotion,
+    /// Who may approve Freight for the Stage, past its upstream.
+    pub approvers: String,
+    /// Who may promote Freight to it.
+    pub promoters: String,
+    /// The promotion's own steps.
+    pub steps: Vec<Check>,
+    /// Each AnalysisRun after the promotion.
+    pub verification: Vec<Check>,
+    /// The Stage itself, to open in Resources.
+    pub object: Object,
+}
