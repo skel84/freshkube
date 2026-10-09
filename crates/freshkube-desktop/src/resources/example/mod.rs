@@ -104,12 +104,16 @@ const CERTIFICATES: [(&str, &str, &str, bool); 5] = [
 /// Every example object has this version; none changes by itself.
 const EXAMPLE_VERSION: &str = "1";
 
-const NAMESPACES: [&str; 7] = [
+const NAMESPACES: [&str; 11] = [
+    "argocd",
     "batch",
+    "cart",
+    "checkout",
     "default",
     "kube-system",
     "monitoring",
     "payments",
+    "status",
     "web",
     "équipe-données",
 ];
@@ -143,13 +147,22 @@ pub(crate) fn namespaces() -> Vec<String> {
 /// namespace or all. `None` when example data doesn't include the kind.
 /// The custom API groups discovery lists, by name.
 pub(crate) fn custom_groups() -> Vec<ApiGroup> {
-    CUSTOM_GROUPS
+    let mut groups: Vec<ApiGroup> = CUSTOM_GROUPS
         .iter()
+        .chain(&acme::GROUPS)
         .map(|(name, versions)| ApiGroup {
             name: (*name).into(),
             versions: versions.iter().map(|version| (*version).into()).collect(),
         })
-        .collect()
+        .collect();
+    groups.sort_by(|a, b| a.name.cmp(&b.name));
+    groups
+}
+
+/// Every custom kind discovery finds: the example's own, then acme's.
+fn custom_kinds()
+-> impl Iterator<Item = &'static (&'static str, &'static str, &'static str, &'static str, bool)> {
+    CUSTOM_KINDS.iter().chain(&acme::KINDS)
 }
 
 /// What discovering one example group finds, failures included.
@@ -172,10 +185,15 @@ pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
             ..GroupKinds::default()
         }),
         "traefik.containo.us" => Err(missing()),
-        _ if !CUSTOM_GROUPS.iter().any(|(name, _)| *name == group) => Err(missing()),
+        _ if !CUSTOM_GROUPS
+            .iter()
+            .chain(&acme::GROUPS)
+            .any(|(name, _)| *name == group) =>
+        {
+            Err(missing())
+        }
         _ => Ok(GroupKinds {
-            kinds: CUSTOM_KINDS
-                .iter()
+            kinds: custom_kinds()
                 .filter(|(name, ..)| *name == group)
                 .map(|(group, version, kind, plural, namespaced)| {
                     ResourceKind::new(group, version, kind, plural, *namespaced)
@@ -203,8 +221,7 @@ pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
 /// An example kind by key: built in, or one discovery finds.
 pub(crate) fn kind(key: &str) -> Option<ResourceKind> {
     builtin(key).or_else(|| {
-        CUSTOM_KINDS
-            .iter()
+        custom_kinds()
             .map(|(group, version, kind, plural, namespaced)| {
                 ResourceKind::new(group, version, kind, plural, *namespaced)
             })
@@ -238,6 +255,7 @@ pub(crate) fn read(
                 .iter()
                 .enumerate()
                 .map(|(ix, _)| deployment(&connection, ix, now))
+                .chain(acme::deployments(&connection, now))
                 .collect(),
         ),
         "replicasets.apps" | "events" | "persistentvolumeclaims" | "persistentvolumes" => {
@@ -264,7 +282,7 @@ pub(crate) fn read(
                 })
                 .collect(),
         ),
-        _ => return None,
+        key => acme::read(&connection, key, now)?,
     };
     // Like the server, a namespace narrows only namespaced kinds.
     let namespaced = kind(key).is_some_and(|kind| kind.namespaced);
@@ -919,6 +937,7 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
         .collect()
 }
 
+mod acme;
 mod objects;
 mod summary;
 pub(crate) use objects::{document, events, pod_log, pod_log_line, secret_value};

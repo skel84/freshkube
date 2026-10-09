@@ -71,9 +71,14 @@ impl ApplicationsPage {
             .size(dp(ui::CONTROL_HEIGHT))
             .icon(ui::refresh_icon(reading, cx))
             .accessibility_label(label)
-            .tooltip(if reading { "Reading…" } else { label })
+            .tooltip_with_action(
+                if reading { "Reading…" } else { label },
+                &page::Refresh,
+                Some(page::SHELL_CONTEXT),
+            )
             .disabled(reading || self.source.is_none())
-            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)));
+            // The button and ⌘R are one action, which the shell runs.
+            .on_click(page::dispatch(page::Refresh, &self.focus));
         header
             .filter(filter)
             .chips(chips)

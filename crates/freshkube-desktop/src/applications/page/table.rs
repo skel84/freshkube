@@ -88,7 +88,13 @@ pub(super) fn columns(rows: &[PartRow]) -> (Vec<Column>, f32) {
             "Found by",
             fit("Found by", rows.iter().map(|row| &row.found_by)),
         ),
-        column(Field::ReadFrom, "Read from", 96.),
+        // Fitted to its words, so a narrow page scrolls sideways rather than
+        // cut them off.
+        column(
+            Field::ReadFrom,
+            "Read from",
+            fit("Read from", rows.iter().map(|row| &row.read_from)),
+        ),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
@@ -243,6 +249,29 @@ impl TableSource for ApplicationPage {
         self.focus(window, cx);
     }
 
+    fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
+        Some(self.focus.clone())
+    }
+
+    /// A right-click selects the part as an arrow does, but an Inspector
+    /// that was closed stays closed, so the table keeps its place under
+    /// the pointer. Open in Resources acts as O does, greyed out for a part
+    /// in a cluster that isn't open.
+    fn row_menu(
+        &mut self,
+        key: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<freshkube_ui::menu::MenuAction> {
+        if self.selected.as_ref() != Some(key) {
+            self.selected = Some(key.clone());
+            cx.notify();
+        }
+        self.focus(window, cx);
+        let opens = self.selected_row().is_some_and(|row| row.closed.is_none());
+        vec![freshkube_ui::menu::MenuAction::new("Open in Resources", OpenPart).enabled(opens)]
+    }
+
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         self.lines
             .is_empty()
@@ -305,7 +334,7 @@ impl ApplicationPage {
     /// The table's width: the page's, less the Inspector's beside it.
     fn table_width(&self, window: &Window) -> f32 {
         let page = crate::screens::page_width(window);
-        if self.selected.is_some() && page >= freshkube_ui::inspector::SPLIT_WIDTH {
+        if self.inspect && page >= freshkube_ui::inspector::SPLIT_WIDTH {
             page - self.split.width()
         } else {
             page
