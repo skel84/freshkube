@@ -318,11 +318,7 @@ use freshkube_terminal as terminal;
 /// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`
 /// on Linux and `%APPDATA%\Freshkube` on Windows.
 pub fn preferences_path() -> Option<PathBuf> {
-    let folder = if cfg!(any(target_os = "macos", windows)) {
-        "Freshkube"
-    } else {
-        "freshkube"
-    };
+    let folder = freshkube_ui::platform::Platform::current().preferences_folder();
     Some(dirs::config_dir()?.join(folder).join("preferences.json"))
 }
 

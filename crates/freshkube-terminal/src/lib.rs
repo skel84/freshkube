@@ -45,7 +45,6 @@ use gpui_kit::{
 use freshkube_probe::perf;
 use freshkube_ui::palette::terminal_colors;
 use freshkube_ui::ui::dp;
-pub use input::leave_shortcut_label;
 use listener::Listener;
 use snapshot::Snapshot;
 

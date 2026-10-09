@@ -413,7 +413,7 @@ impl<S: LogSource> LogView<S> {
                             .accessibility_label("Previous match")
                             .tooltip(format!(
                                 "Previous match (Shift Enter, {}⇧G)",
-                                ui::modifier()
+                                freshkube_ui::platform::primary_modifier()
                             ))
                             .disabled(self.review.query.is_empty())
                             .on_click(cx.listener(|this, _, _, cx| this.search(false, cx))),
@@ -424,7 +424,10 @@ impl<S: LogSource> LogView<S> {
                             .small()
                             .icon(IconName::ChevronDown)
                             .accessibility_label("Next match")
-                            .tooltip(format!("Next match (Enter, {}G)", ui::modifier()))
+                            .tooltip(format!(
+                                "Next match (Enter, {}G)",
+                                freshkube_ui::platform::primary_modifier()
+                            ))
                             .disabled(self.review.query.is_empty())
                             .on_click(cx.listener(|this, _, _, cx| this.search(true, cx))),
                     ),

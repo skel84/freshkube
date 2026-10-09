@@ -664,7 +664,7 @@ impl ShellView {
                 "Running",
                 format!(
                     "{container} · {} leaves the terminal",
-                    crate::terminal::leave_shortcut_label()
+                    freshkube_ui::platform::terminal_keys().leave_label
                 ),
             ),
             ShellState::Ended => (Tone::Unknown, "Ended", ended.unwrap_or_default()),

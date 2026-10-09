@@ -316,15 +316,6 @@ pub fn keycap(text: impl Into<SharedString>, cx: &App) -> Div {
         .child(text.into())
 }
 
-/// The platform's primary modifier glyph.
-pub fn modifier() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "⌘"
-    } else {
-        "Ctrl "
-    }
-}
-
 /// Load over time against the core count. The dashed line marks "all cores
 /// busy" when every sample fits beneath it.
 pub fn sparkline(samples: Vec<f64>, cores: Option<usize>, cx: &App) -> Canvas<()> {

@@ -113,7 +113,7 @@ impl Dock {
             });
         let open = self.open;
         let maximized = self.maximized;
-        let modifier = ui::modifier();
+        let modifier = freshkube_ui::platform::primary_modifier();
         vec![
             menu.into_any_element(),
             dock::chrome_button(
