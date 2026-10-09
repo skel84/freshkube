@@ -160,7 +160,13 @@ pub(crate) fn app_view(app: &api::AppId) -> api::AppView {
     let mut view = api::AppView {
         map: map(app, record, &apps, &pods),
         reports,
-        revisions: Some(Ok(if worker { revisions() } else { vec![] })),
+        revisions: Some(Ok(if worker {
+            revisions()
+        } else if *app == example::id(example::CHECKOUT) {
+            checkout_revisions()
+        } else {
+            vec![]
+        })),
         ..Default::default()
     };
     for report in &mut view.reports {
@@ -257,6 +263,37 @@ pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
             note: Some("No notable changes".into()),
             ..revision("9e0d57", oldest, "worker:1.7.4")
         },
+    ]
+}
+
+/// checkout-api's rollouts, newest first: 1.43.0, under the hash of the
+/// ReplicaSet the change page's example change runs on dev-fra and
+/// stage-fra, an hour into the charts, and 1.42.3 the week before.
+pub(crate) fn checkout_revisions() -> Vec<api::DeploymentRevision> {
+    use freshkube_core::delivery::change::example::POD_HASH;
+    let (from_ms, to_ms) = hour();
+    let revision = |hash: &str, at_ms: i64, image: &str, note: &str| api::DeploymentRevision {
+        id: format!("{hash}:{}", at_ms / 1000),
+        hash: hash.into(),
+        started_at: chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_default(),
+        version: format!("{hash}: example.test/checkout/{image}"),
+        status: api::Status::Ok,
+        findings: vec![],
+        note: Some(note.into()),
+    };
+    vec![
+        revision(
+            POD_HASH,
+            (from_ms + to_ms) / 2,
+            "checkout-api:1.43.0",
+            "No notable changes",
+        ),
+        revision(
+            "84c6d7f9b",
+            to_ms - 6 * 24 * 3_600_000,
+            "checkout-api:1.42.3",
+            "No notable changes",
+        ),
     ]
 }
 

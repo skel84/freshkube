@@ -516,6 +516,12 @@ impl Pilot {
         (self.applications.clone(), self.page)
     }
 
+    /// The Observability page, for tests of the links that open it.
+    #[cfg(test)]
+    pub(crate) fn observability(&self) -> Entity<crate::observability::ObservabilityPage> {
+        self.observability.clone()
+    }
+
     /// The object Resources shows in its drawer, for tests of the links
     /// that open one.
     #[cfg(test)]
@@ -729,6 +735,14 @@ impl Pilot {
             window,
             |this, _, link: &resources::ResourceLink, window, cx| {
                 this.resource_link(link.clone(), window, cx)
+            },
+        ));
+        // A change's Deployment revision, in Observability.
+        subscriptions.push(cx.subscribe_in(
+            applications,
+            window,
+            |this, _, link: &crate::observability::RevisionLink, window, cx| {
+                this.open_revision(link.clone(), window, cx)
             },
         ));
         // One in another workspace entry's cluster, after a switch.

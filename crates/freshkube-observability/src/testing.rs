@@ -4,6 +4,17 @@
 use crate::{ObservabilityEvent, ObservabilityPage, Report};
 
 impl ObservabilityPage {
+    /// The application Deployments shows and its selected revision's
+    /// hash, as Coroot names them.
+    pub fn shown_revision(&self) -> (Option<String>, Option<String>) {
+        (
+            self.selected_app
+                .as_ref()
+                .map(|app| app.as_str().to_owned()),
+            self.revision_observations.selected_hash(),
+        )
+    }
+
     /// Configure a sanitized Coroot subject for the shell's navigation regression.
     pub fn fixture_link(
         &mut self,

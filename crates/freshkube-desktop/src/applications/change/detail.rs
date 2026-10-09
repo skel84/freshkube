@@ -97,6 +97,8 @@ pub(super) enum Leads {
     Resources(Object),
     Browser(SharedString),
     Logs(Object, Option<String>),
+    /// A Deployment's revision in Observability, by its pod-template hash.
+    Revision(Object, String),
 }
 
 impl ChangePage {
@@ -247,6 +249,27 @@ impl ChangePage {
                         leads: Some(Leads::Logs(pod.clone(), container.clone())),
                     }
                 }
+                Target::Revision { deployment, hash } => {
+                    let closed = self.revision_closed(deployment);
+                    ActionLine {
+                        label: format!(
+                            "Compare in Observability · {}",
+                            self.cluster_name(&deployment.cluster)
+                        )
+                        .into(),
+                        why: action.disabled.clone().map(SharedString::from).or(closed),
+                        tooltip: hash.as_ref().map(|hash| {
+                            format!(
+                                "Coroot's revision {hash} of {}/{}",
+                                deployment.namespace, deployment.name
+                            )
+                            .into()
+                        }),
+                        leads: hash
+                            .as_ref()
+                            .map(|hash| Leads::Revision(deployment.clone(), hash.clone())),
+                    }
+                }
             })
             .collect()
     }
@@ -288,6 +311,7 @@ impl ChangePage {
                     Leads::Resources(object) => this.open(object, cx),
                     Leads::Browser(address) => cx.open_url(address),
                     Leads::Logs(pod, container) => this.open_logs(pod, container.clone(), cx),
+                    Leads::Revision(deployment, hash) => this.open_revision(deployment, hash, cx),
                 })),
                 None => button,
             };
@@ -684,6 +708,14 @@ impl Detail {
             .iter()
             .map(|action| action.label.to_string())
             .collect()
+    }
+
+    /// Why the action labelled `label` is greyed out, if it is.
+    pub(super) fn action_why(&self, label: &str) -> Option<String> {
+        self.actions
+            .iter()
+            .find(|action| action.label == label)
+            .and_then(|action| action.why.as_ref().map(ToString::to_string))
     }
 }
 

@@ -176,8 +176,9 @@ pub fn parse_deployment_set(value: &Value) -> Option<DeploymentSet> {
 }
 
 /// The ReplicaSet the controller reports as `deployment`'s current one: that
-/// the Deployment owns by UID, and that carries the Deployment's revision.
-/// Why there is none otherwise.
+/// the Deployment owns by UID, and that carries the Deployment's revision and
+/// a pod-template hash, which its pods carry too. Why there is none
+/// otherwise.
 pub fn current_set<'a>(
     deployment: &Deployment,
     sets: &'a [DeploymentSet],
@@ -197,9 +198,12 @@ pub fn current_set<'a>(
             && set.owner_uid.as_deref() == Some(uid)
             && set.meta.uid.is_some()
             && set.revision.as_deref() == Some(revision)
-            && set.pod_hash.is_some()
     });
     match (found.next(), found.next()) {
+        (Some(set), None) if set.pod_hash.is_none() => Err(format!(
+            "its current ReplicaSet {} carries no {TEMPLATE_HASH_LABEL} label, so its pods can't be told from older ones",
+            set.name
+        )),
         (Some(set), None) => Ok(set),
         (None, _) => Err(format!(
             "no ReplicaSet the Deployment owns carries its current revision {revision}"

@@ -367,7 +367,7 @@ The change page (5.4, with [#522](https://github.com/skel84/freshkube/issues/522
 
 The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histories and deployment comparisons through typed APIs. Then link Coroot to the chain: this deploy, and what its metrics did after it.
 
-Deployments has begun: Observability's Deployments lists an application's revisions with Coroot's findings and reads its charts around the selected one's start, split there with the samples counted on each side and nothing compared across it ([COROOT.md](COROOT.md#deployments)); the example preview's invented diff, comparison, rollback and sync are gone. Next, the change page's Coroot revision and Compare in Observability, joined by the ReplicaSet's hash.
+Deployments has begun: Observability's Deployments lists an application's revisions with Coroot's findings and reads its charts around the selected one's start, split there with the samples counted on each side and nothing compared across it ([COROOT.md](COROOT.md#deployments)); the example preview's invented diff, comparison, rollback and sync are gone. The change page links to it: a Deployment's hop shows its current ReplicaSet's pod-template hash and Compare in Observability opens Deployments on Coroot's revision with that hash, or says why not: no such revision, no such application, or no Coroot cluster linked to the connection; a Rollout's is greyed out, since Coroot keeps Deployments' revisions only ([COROOT.md](COROOT.md#from-the-change-page)).
 
 ### 7. Small daily wins
 

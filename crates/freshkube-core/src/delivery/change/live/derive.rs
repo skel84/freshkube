@@ -12,6 +12,7 @@ use super::gates::{self, Row, instant};
 use super::links;
 use super::pages::Pages;
 use crate::delivery::argocd::{Application, DestinationMatch, ManagedObject};
+use crate::delivery::deployments::current_set;
 use crate::delivery::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, freight_links};
 use crate::delivery::kargo::{self, Freight, Stage as KargoStage};
 use crate::delivery::observation::{ObjectRef, Observation};
@@ -53,6 +54,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
             "warehouse".into(),
             1,
             warehouse,
+            &[],
         );
         // The link's subject is the Freight; the row names its Warehouse.
         if let Some(name) = &freight.warehouse {
@@ -107,7 +109,9 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
                 continue;
             }
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
-            hops.push(link_hop(place, evidence, freight, pages, key, group, link));
+            hops.push(link_hop(
+                place, evidence, freight, pages, key, group, link, &runs,
+            ));
             if link.to == Joined::Application {
                 hops.extend(reported);
             }
@@ -813,6 +817,9 @@ fn time_of(evidence: &Evidence, link: &Link) -> Option<DateTime<Utc>> {
     })
 }
 
+/// The row of `link`, one of `run`: the links of its Stage, or none for a
+/// build's or the Warehouse's.
+#[allow(clippy::too_many_arguments)]
 fn link_hop(
     place: &Place,
     evidence: &Evidence,
@@ -821,6 +828,7 @@ fn link_hop(
     key: String,
     group: usize,
     link: &Link,
+    run: &[&Link],
 ) -> Hop {
     let (state, words) = state_of(evidence, freight, link);
     let to_kind = kind_of(link.to);
@@ -870,6 +878,21 @@ fn link_hop(
             value: Value::Mono(name.into()),
         });
     }
+    let revision = (!missing)
+        .then(|| revision(place, evidence, link, run))
+        .flatten();
+    if let Some(Action {
+        target: Target::Revision {
+            hash: Some(hash), ..
+        },
+        ..
+    }) = &revision
+    {
+        fields.push(Field {
+            label: "Pod template hash".into(),
+            value: Value::Mono(hash.clone()),
+        });
+    }
     if link.key != Key::None {
         fields.push(Field {
             label: "Joined on".into(),
@@ -892,6 +915,7 @@ fn link_hop(
                 })
             }),
     );
+    actions.extend(revision);
     let notice = (link.confidence == Confidence::Unknown).then(|| Notice {
         state: Warning,
         lead: "Not joined.".into(),
@@ -927,6 +951,70 @@ fn link_hop(
             actions,
         })),
     }
+}
+
+/// Coroot's revision of the workload a link leads to: a Deployment's is
+/// the one its current ReplicaSet's pod-template hash names. It is offered
+/// only when the pods link in `run` confirms that revision runs the
+/// Freight, since otherwise it may be another change. Coroot keeps
+/// revisions of Deployments only, so a Rollout's says so.
+fn revision(place: &Place, evidence: &Evidence, link: &Link, run: &[&Link]) -> Option<Action> {
+    let seen = link
+        .evidence
+        .iter()
+        .find(|seen| Some(seen.object.kind.as_str()) == kind_of(link.to))?;
+    let workload = object(place, &seen.object);
+    match link.to {
+        Joined::Deployment => {
+            let hash = current_hash(evidence, link)
+                .map_err(|why| sentence(&format!("{why}, so Coroot's revision of it isn't known")));
+            let runs_it = hash.is_err()
+                || run.iter().any(|pods| {
+                    pods.from == Joined::Deployment
+                        && pods.to == Joined::Pod
+                        && pods.subject == link.subject
+                        && pods.confidence == Confidence::Confirmed
+                });
+            let action = Action::revision(workload, hash);
+            Some(if runs_it {
+                action
+            } else {
+                action.disabled(
+                    "Its current revision isn't confirmed to run this Freight: see its Pods row. \
+                     Coroot's revision of it may be another change.",
+                )
+            })
+        }
+        Joined::Rollout => Some(
+            Action::new(Target::Revision {
+                deployment: workload,
+                hash: None,
+            })
+            .disabled("Coroot keeps revisions of Deployments only, and this is an Argo Rollout."),
+        ),
+        _ => None,
+    }
+}
+
+/// The pod-template hash of the current ReplicaSet of the Deployment a
+/// link leads to, or why it isn't known.
+fn current_hash(evidence: &Evidence, link: &Link) -> Result<String, String> {
+    let deployment = evidence
+        .deployments
+        .read()
+        .and_then(|all| {
+            all.iter()
+                .find(|d| format!("{}/{}", d.namespace, d.name) == link.subject)
+        })
+        .ok_or("the Deployment wasn't read")?;
+    let sets = evidence
+        .deployment_sets
+        .read()
+        .ok_or("the Deployment's ReplicaSets couldn't be read")?;
+    let set = current_set(deployment, sets)?;
+    set.pod_hash
+        .clone()
+        .ok_or_else(|| "its current ReplicaSet carries no pod-template-hash label".into())
 }
 
 /// The builds of the Freight's commit: every link the join made before it
@@ -981,6 +1069,7 @@ fn build_hops(
                 format!("build-{}-{n}", kind_key(link.to)),
                 0,
                 link,
+                &[],
             )
         })
         .collect()

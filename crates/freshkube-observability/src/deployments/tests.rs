@@ -81,6 +81,7 @@ fn a_row_shows_coroots_images_and_its_first_finding() {
     );
     assert_eq!(state.rows[0].image, "—", "Coroot knew no image");
     assert_eq!(state.rows[0].short_image, "—");
+    assert!(!state.rows[0].has_image);
 }
 
 #[test]
@@ -336,5 +337,218 @@ mod ui_tests {
             })
             .unwrap();
         }
+    }
+}
+
+mod wanted {
+    use super::super::{Outcome, RevisionLink};
+    use crate::tests::mount;
+    use crate::{Destination, ObservabilityPage};
+    use freshkube_core::coroot as api;
+    use freshkube_core::delivery::change::example::POD_HASH;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
+
+    const ACCESS: &str = "example-connection";
+
+    fn link(name: &str, hash: &str) -> RevisionLink {
+        RevisionLink {
+            access: ACCESS.into(),
+            cluster: "dev-fra".into(),
+            namespace: "checkout".into(),
+            name: name.into(),
+            hash: hash.into(),
+        }
+    }
+
+    /// The example page on the shell's connection, asked for `link`.
+    fn asked(
+        cx: &mut TestAppContext,
+        link: RevisionLink,
+    ) -> (
+        tokio::runtime::Runtime,
+        AnyWindowHandle,
+        Entity<ObservabilityPage>,
+    ) {
+        let (runtime, handle, page) = mount(cx, true);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.set_source(Some(ACCESS.into()), cx);
+                page.open_revision(link, cx);
+            })
+        });
+        cx.run_until_parked();
+        (runtime, handle, page)
+    }
+
+    fn outcome(cx: &mut TestAppContext, page: &Entity<ObservabilityPage>) -> Option<Outcome> {
+        cx.read(|cx| page.read(cx).revision_observations.wanted_outcome())
+    }
+
+    fn selected_hash(cx: &mut TestAppContext, page: &Entity<ObservabilityPage>) -> Option<String> {
+        cx.read(|cx| {
+            let state = &page.read(cx).revision_observations;
+            state.selected().map(|row| row.revision.hash.clone())
+        })
+    }
+
+    #[gpui_kit::test]
+    fn the_change_pages_revision_opens_on_deployments_by_its_hash(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        cx.read(|cx| {
+            let page = page.read(cx);
+            assert_eq!(page.destination, Destination::Deployments);
+            assert_eq!(
+                page.selected_app,
+                Some(api::AppId::new("fixture:checkout:Deployment:checkout-api"))
+            );
+        });
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        assert_eq!(
+            selected_hash(cx, &page).as_deref(),
+            Some("84c6d7f9b"),
+            "the hash's revision, not the newest"
+        );
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("obs-wanted-revision").visible());
+            assert!(window.find("obs-revision-detail").visible());
+            // Choosing another revision is the user's; the banner goes.
+            let newest = page.read(cx).revision_observations.rows[0].id.clone();
+            window.click(newest, cx);
+            window.render_frame(cx);
+            assert!(window.try_find("obs-wanted-revision").is_none());
+        })
+        .unwrap();
+        assert_eq!(selected_hash(cx, &page).as_deref(), Some(POD_HASH));
+    }
+
+    #[gpui_kit::test]
+    fn a_hash_coroot_doesnt_keep_says_so_over_the_newest(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "0a1b2c3d4"));
+        assert_eq!(outcome(cx, &page), Some(Outcome::NoRevision));
+        assert_eq!(selected_hash(cx, &page).as_deref(), Some(POD_HASH));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("obs-wanted-revision").visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn an_application_coroot_doesnt_list_is_not_chosen(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-web", POD_HASH));
+        assert_eq!(outcome(cx, &page), Some(Outcome::NotListed));
+        cx.read(|cx| {
+            assert_ne!(
+                page.read(cx).selected_app,
+                Some(api::AppId::new("fixture:checkout:Deployment:checkout-web"))
+            );
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("obs-wanted-revision").visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_link_of_another_connection_is_dropped(cx: &mut TestAppContext) {
+        let mut other = link("checkout-api", POD_HASH);
+        other.access = "another-connection".into();
+        let (_runtime, handle, page) = asked(cx, other);
+        assert_eq!(outcome(cx, &page), None);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("obs-wanted-revision").is_none());
+        })
+        .unwrap();
+    }
+
+    fn banner_shows(cx: &mut TestAppContext, handle: AnyWindowHandle) -> bool {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.try_find("obs-wanted-revision").is_some()
+        })
+        .unwrap()
+    }
+
+    #[gpui_kit::test]
+    fn refresh_and_showing_again_keep_a_found_revision(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        cx.update(|cx| page.update(cx, |page, cx| page.refresh_current(cx)));
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        assert_eq!(selected_hash(cx, &page).as_deref(), Some("84c6d7f9b"));
+        assert!(banner_shows(cx, handle));
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.set_visible(false, cx);
+                page.set_visible(true, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        assert_eq!(selected_hash(cx, &page).as_deref(), Some("84c6d7f9b"));
+        assert!(banner_shows(cx, handle));
+    }
+
+    #[gpui_kit::test]
+    fn another_connection_drops_a_found_revision(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        assert_eq!(outcome(cx, &page), Some(Outcome::Found));
+        cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("another".into()), cx)));
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), None);
+        assert!(!banner_shows(cx, handle));
+    }
+
+    /// The map and a report's links open another application without the
+    /// picker: the banner, of checkout-api, doesn't show over its list.
+    #[gpui_kit::test]
+    fn another_application_opened_from_a_report_hides_the_banner(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        assert!(banner_shows(cx, handle));
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.open_linked_app(crate::example::id(crate::example::WORKER), cx);
+                page.open(Destination::Deployments, cx);
+            })
+        });
+        cx.run_until_parked();
+        assert!(!banner_shows(cx, handle));
+    }
+
+    #[gpui_kit::test]
+    fn a_revision_not_found_does_not_take_back_an_application_opened_since(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, _handle, page) = asked(cx, link("checkout-api", "0a1b2c3d4"));
+        assert_eq!(outcome(cx, &page), Some(Outcome::NoRevision));
+        let worker = crate::example::id(crate::example::WORKER);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.open_linked_app(worker.clone(), cx);
+                page.refresh_current(cx);
+            })
+        });
+        cx.run_until_parked();
+        assert_eq!(outcome(cx, &page), None);
+        assert_eq!(
+            page.read_with(cx, |page, _| page.selected_app.clone()),
+            Some(worker)
+        );
+    }
+
+    #[gpui_kit::test]
+    fn choosing_another_application_forgets_the_revision_asked_for(cx: &mut TestAppContext) {
+        let (_runtime, _handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.choose_app(crate::example::id(crate::example::WORKER), cx)
+            })
+        });
+        assert_eq!(outcome(cx, &page), None);
     }
 }

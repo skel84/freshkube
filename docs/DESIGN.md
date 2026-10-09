@@ -426,6 +426,8 @@ A virtualised grid of cards draws on `freshkube_ui::grid`: Nodes' Cards view, an
 | Refused | 403 | An empty state with the shield icon: `Not permitted to list pods`, that this says nothing about whether any exist, and the server's reason in a monospace `crit_soft` box. |
 | Failed | Nothing known yet | An empty state: `Couldn't list pods`, that nothing is shown as missing, the reason, and Retry. In a card: one centred 12 line with the critical glyph. |
 
+A banner's tone picks its icon and colours (`ui::banner`): Crit and Died show the cross in the critical colours, Good the check in green, Info and Accent the info icon in the accent blue, and any other tone the warning triangle in the warning colours. Use Info for a note that judges nothing, such as a revision found where it was asked for; a verdict belongs to the row's glyph.
+
 Each state's element has role status and an id `<page>-<state>`.
 
 ### Tooltips

@@ -520,7 +520,8 @@ pub fn warning_banner(
 
 /// An inline banner with an optional action: Crit for a fault the page
 /// exists to show, such as a lost quorum, Good for something that worked,
-/// such as a save, Warn for everything else.
+/// such as a save, Info for something found that judges nothing, Warn for
+/// everything else.
 pub fn banner(
     tone: Tone,
     lead: Option<SharedString>,
@@ -555,11 +556,13 @@ pub fn banner(
 }
 
 /// A banner's icon, and its ink, fill and border: critical for Crit and
-/// Died, warning for any other tone.
+/// Died, a check for Good, blue for Info and Accent, warning for any other
+/// tone.
 fn banner_look(tone: Tone, p: &Palette) -> (IconName, Hsla, Hsla, Hsla) {
     match tone {
         Tone::Crit | Tone::Died => (IconName::CircleX, p.crit_ink, p.crit_soft, p.crit_line),
         Tone::Good => (IconName::CircleCheck, p.good_ink, p.good_soft, p.good),
+        Tone::Info | Tone::Accent => (IconName::Info, p.accent, p.accent_soft, p.accent_line),
         _ => (
             IconName::TriangleAlert,
             p.warn_ink,
