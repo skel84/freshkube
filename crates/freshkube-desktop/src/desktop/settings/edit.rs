@@ -5,7 +5,7 @@
 //! were. The first save after a refused file sets that file aside.
 use super::*;
 use chrono::Utc;
-use freshkube_core::workspace::Entry;
+use freshkube_core::workspace::{Destination, Entry, Fault, Key};
 
 impl SettingsPage {
     /// Whether a change can be saved now: not example data, not without a
@@ -170,6 +170,107 @@ impl SettingsPage {
         self.commit(next, format!("Removed {id}."), cx);
     }
 
+    /// Applies the destination form: maps a destination to a workspace
+    /// cluster, or changes the mapping at `editing`, which must still match
+    /// `was`. Returns the row's index once the save has started, or why not,
+    /// for the form to show; the file is untouched then.
+    pub(super) fn map_destination(
+        &mut self,
+        editing: Option<(usize, &Key)>,
+        key: Key,
+        entry: &str,
+        cx: &mut Context<Self>,
+    ) -> Result<usize, SharedString> {
+        if !self.editable() {
+            return Err(self.why_not_editable().into());
+        }
+        let key = match key {
+            Key::Server(server) => Key::Server(server.trim().to_owned()),
+            Key::Name(name) => Key::Name(name.trim().to_owned()),
+        };
+        match &key {
+            Key::Server(server) if server.is_empty() => {
+                return Err("Enter the server URL the Application names".into());
+            }
+            Key::Name(name) if name.is_empty() => {
+                return Err("Enter Argo CD’s name for the cluster".into());
+            }
+            _ => {}
+        }
+        if !self.workspace.clusters.iter().any(|e| e.id == entry) {
+            return Err("Pick a workspace cluster".into());
+        }
+        let mut next = self.workspace.clone();
+        let at = match editing {
+            Some((at, was)) => {
+                let row = next
+                    .destinations
+                    .get_mut(at)
+                    .filter(|row| row.key() == *was)
+                    .ok_or_else(|| SharedString::from("That mapping is no longer listed"))?;
+                row.set_key(key.clone());
+                row.entry = entry.to_owned();
+                at
+            }
+            None => {
+                next.destinations
+                    .push(Destination::new(key.clone(), entry.to_owned()));
+                next.destinations.len() - 1
+            }
+        };
+        if let Some(fault) = next.destinations[at].fault() {
+            return Err(match fault {
+                Fault::NotHttp => "The server must be an http or https address".into(),
+                Fault::ArgoCdOwn => {
+                    "Argo CD knows its own cluster already; it needs no mapping".into()
+                }
+                fault => capitalized(&format!("the mapping {}", fault.words())).into(),
+            });
+        }
+        if let Some(other) = next
+            .destinations
+            .iter()
+            .enumerate()
+            .find(|(ix, row)| *ix != at && row.key().same(&key))
+        {
+            return Err(format!(
+                "{} is already mapped to {}",
+                capitalized(&key.describe()),
+                other.1.entry
+            )
+            .into());
+        }
+        next.check_saveable()
+            .map_err(|why| SharedString::from(capitalized(&why.to_string())))?;
+        let what = match editing {
+            Some(_) => format!("Changed the mapping for {}.", key.describe()),
+            None => format!("Mapped {} to {entry}.", key.describe()),
+        };
+        self.commit(next, what, cx);
+        Ok(at)
+    }
+
+    /// Removes the mapping at `at`, if it still matches `was`.
+    pub(super) fn remove_destination(&mut self, at: usize, was: &Key, cx: &mut Context<Self>) {
+        if !self.editable() {
+            return;
+        }
+        let mut next = self.workspace.clone();
+        if next
+            .destinations
+            .get(at)
+            .is_none_or(|row| row.key() != *was)
+        {
+            return;
+        }
+        next.destinations.remove(at);
+        self.commit(
+            next,
+            format!("Removed the mapping for {}.", was.describe()),
+            cx,
+        );
+    }
+
     /// Moves the selected cluster one place; the first and last stay put.
     pub(super) fn move_selected(&mut self, delta: isize, cx: &mut Context<Self>) {
         if !self.editable() {
@@ -305,7 +406,7 @@ impl SettingsPage {
     }
 }
 
-fn capitalized(text: &str) -> String {
+pub(super) fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),

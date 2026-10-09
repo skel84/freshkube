@@ -7,7 +7,10 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::applications::{ArgoScope, Inputs};
-use freshkube_core::delivery::change::{self as delivery_change, live::Place};
+use freshkube_core::delivery::change::{
+    self as delivery_change,
+    live::{Mapping, Place},
+};
 
 use super::Fetch;
 use crate::resources::{KubeAccess, KubeSource};
@@ -110,7 +113,12 @@ impl Changes {
                     project: project.to_owned(),
                     freight,
                     argocd_namespace: live.argocd_namespace.clone(),
-                    mapping: Default::default(),
+                    // Settings › Workspace maps destinations, so an
+                    // unmatched one says to map it there.
+                    mapping: Mapping {
+                        settings: true,
+                        ..Default::default()
+                    },
                 }),
             }),
         }

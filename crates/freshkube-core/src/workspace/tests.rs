@@ -667,3 +667,14 @@ fn destinations_that_are_not_a_list_refuse_the_file() {
     })));
     assert!(matches!(refused, Err(Invalid::Malformed(_))), "{refused:?}");
 }
+
+#[test]
+fn keys_name_the_same_destination_as_an_application_is_matched() {
+    let server = |s: &str| Key::Server(s.into());
+    let name = |s: &str| Key::Name(s.into());
+    assert!(server("https://A.example.test:443/").same(&server("https://a.example.test")));
+    assert!(!server("https://a.example.test:6443").same(&server("https://a.example.test")));
+    assert!(name("prod").same(&name("prod")));
+    assert!(!name("prod").same(&name("Prod")));
+    assert!(!name("https://a.example.test").same(&server("https://a.example.test")));
+}

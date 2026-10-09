@@ -40,6 +40,17 @@ impl Key {
             Key::Server(value) | Key::Name(value) => value,
         }
     }
+
+    /// Whether both match the same destination, as an Application is
+    /// matched: servers without case, a trailing slash or an explicit
+    /// `:443`, names exactly.
+    pub fn same(&self, other: &Key) -> bool {
+        match (self, other) {
+            (Key::Server(a), Key::Server(b)) => normalize_server(a) == normalize_server(b),
+            (Key::Name(a), Key::Name(b)) => a.trim() == b.trim(),
+            _ => false,
+        }
+    }
 }
 
 /// One mapping: an Argo CD destination, and the workspace entry it is.

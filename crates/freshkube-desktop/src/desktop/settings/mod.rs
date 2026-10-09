@@ -2,8 +2,10 @@
 //! Workspace lists the clusters of the workspace file (`workspace.json`,
 //! `freshkube_core::workspace`) and edits them: the shell hands it what the
 //! file held at launch, and every change is saved at once, off the UI thread
-//! (`edit.rs`). Example data and a window without a preferences folder show
-//! the list and change nothing.
+//! (`edit.rs`). Under the clusters, its Argo CD destinations map what an
+//! Application names to one of them (`destinations/`). Example data and a
+//! window without a preferences folder show the lists and change nothing.
+pub(super) mod destinations;
 mod edit;
 #[cfg(test)]
 mod edit_tests;
@@ -124,6 +126,8 @@ pub(crate) struct SettingsPage {
     selected: Option<SharedString>,
     page_scroll: ScrollHandle,
     focus: FocusHandle,
+    /// The second list: the Argo CD destinations.
+    destinations: Entity<destinations::Destinations>,
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
 }
@@ -195,6 +199,10 @@ impl SettingsPage {
             selected: None,
             page_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
+            destinations: {
+                let page = cx.entity();
+                cx.new(|cx| destinations::Destinations::new(&page, cx))
+            },
             status: Segment::default(),
         }
     }
@@ -297,12 +305,21 @@ impl SettingsPage {
             ),
             Origin::Example | Origin::File => {
                 let count = self.rows.len();
+                let mapped = workspace.destinations.len();
                 Segment::new(
                     None::<SharedString>,
                     [
                         Part::new(format!(
                             "{count} {}",
                             if count == 1 { "cluster" } else { "clusters" }
+                        )),
+                        Part::new(format!(
+                            "{mapped} {} mapped",
+                            if mapped == 1 {
+                                "destination"
+                            } else {
+                                "destinations"
+                            }
                         )),
                         Part::new(if self.origin == Origin::Example {
                             "Example workspace".to_owned()
@@ -571,6 +588,7 @@ impl Render for SettingsPage {
                     .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
                     .child(table::data_table(self, window, cx).flex_1().min_h_0()),
             )
+            .child(self.destinations.clone())
     }
 }
 
