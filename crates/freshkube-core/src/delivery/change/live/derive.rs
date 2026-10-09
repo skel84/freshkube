@@ -54,6 +54,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
             "warehouse".into(),
             1,
             warehouse,
+            &[],
         );
         // The link's subject is the Freight; the row names its Warehouse.
         if let Some(name) = &freight.warehouse {
@@ -108,7 +109,9 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
                 continue;
             }
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
-            hops.push(link_hop(place, evidence, freight, pages, key, group, link));
+            hops.push(link_hop(
+                place, evidence, freight, pages, key, group, link, &runs,
+            ));
             if link.to == Joined::Application {
                 hops.extend(reported);
             }
@@ -814,6 +817,9 @@ fn time_of(evidence: &Evidence, link: &Link) -> Option<DateTime<Utc>> {
     })
 }
 
+/// The row of `link`, one of `run`: the links of its Stage, or none for a
+/// build's or the Warehouse's.
+#[allow(clippy::too_many_arguments)]
 fn link_hop(
     place: &Place,
     evidence: &Evidence,
@@ -822,6 +828,7 @@ fn link_hop(
     key: String,
     group: usize,
     link: &Link,
+    run: &[&Link],
 ) -> Hop {
     let (state, words) = state_of(evidence, freight, link);
     let to_kind = kind_of(link.to);
@@ -872,7 +879,7 @@ fn link_hop(
         });
     }
     let revision = (!missing)
-        .then(|| revision(place, evidence, link))
+        .then(|| revision(place, evidence, link, run))
         .flatten();
     if let Some(Action {
         target: Target::Revision {
@@ -947,20 +954,37 @@ fn link_hop(
 }
 
 /// Coroot's revision of the workload a link leads to: a Deployment's is
-/// the one its current ReplicaSet's pod-template hash names. Coroot keeps
+/// the one its current ReplicaSet's pod-template hash names. It is offered
+/// only when the pods link in `run` confirms that revision runs the
+/// Freight, since otherwise it may be another change. Coroot keeps
 /// revisions of Deployments only, so a Rollout's says so.
-fn revision(place: &Place, evidence: &Evidence, link: &Link) -> Option<Action> {
+fn revision(place: &Place, evidence: &Evidence, link: &Link, run: &[&Link]) -> Option<Action> {
     let seen = link
         .evidence
         .iter()
         .find(|seen| Some(seen.object.kind.as_str()) == kind_of(link.to))?;
     let workload = object(place, &seen.object);
     match link.to {
-        Joined::Deployment => Some(Action::revision(
-            workload,
-            current_hash(evidence, link)
-                .map_err(|why| sentence(&format!("{why}, so Coroot's revision of it isn't known"))),
-        )),
+        Joined::Deployment => {
+            let hash = current_hash(evidence, link)
+                .map_err(|why| sentence(&format!("{why}, so Coroot's revision of it isn't known")));
+            let runs_it = hash.is_err()
+                || run.iter().any(|pods| {
+                    pods.from == Joined::Deployment
+                        && pods.to == Joined::Pod
+                        && pods.subject == link.subject
+                        && pods.confidence == Confidence::Confirmed
+                });
+            let action = Action::revision(workload, hash);
+            Some(if runs_it {
+                action
+            } else {
+                action.disabled(
+                    "Its current revision isn't confirmed to run this Freight: see its Pods row. \
+                     Coroot's revision of it may be another change.",
+                )
+            })
+        }
         Joined::Rollout => Some(
             Action::new(Target::Revision {
                 deployment: workload,
@@ -987,10 +1011,10 @@ fn current_hash(evidence: &Evidence, link: &Link) -> Result<String, String> {
         .deployment_sets
         .read()
         .ok_or("the Deployment's ReplicaSets couldn't be read")?;
+    // current_set finds only a ReplicaSet that carries the hash, and says
+    // when the current one doesn't.
     let set = current_set(deployment, sets)?;
-    set.pod_hash
-        .clone()
-        .ok_or_else(|| "its current ReplicaSet carries no pod-template hash".into())
+    Ok(set.pod_hash.clone().unwrap_or_default())
 }
 
 /// The builds of the Freight's commit: every link the join made before it
@@ -1045,6 +1069,7 @@ fn build_hops(
                 format!("build-{}-{n}", kind_key(link.to)),
                 0,
                 link,
+                &[],
             )
         })
         .collect()

@@ -1261,7 +1261,13 @@ fn a_mapping_is_the_workspace_with_the_open_entry() {
 /// [`one_cluster`] with its Application deploying the storefront
 /// Deployment, whose current ReplicaSet is `sets`' revision `2`.
 fn deployed(sets: Vec<Value>) -> FixtureReader {
+    deployed_running(sets, NEW)
+}
+
+/// [`deployed`], its pod reporting `running` as its image's digest.
+fn deployed_running(sets: Vec<Value>, running: &str) -> FixtureReader {
     let image = format!("{REPO}@{NEW}");
+    let id = format!("docker-pullable://{REPO}@{running}");
     one_cluster(|world| {
         let mut app = application(Some(IN_CLUSTER_SERVER));
         app["status"]["resources"] = json!([
@@ -1276,7 +1282,7 @@ fn deployed(sets: Vec<Value>) -> FixtureReader {
                     "storefront-6fdf-x",
                     "6fdf",
                     &image,
-                    &format!("docker-pullable://{image}"),
+                    &id,
                     true,
                 )],
             );
@@ -1315,6 +1321,34 @@ async fn a_deployment_names_coroots_revision_by_its_current_replica_sets_hash() 
     assert_eq!(disabled, &None);
     let hop = change.hop(key).expect("the Deployment's hop");
     assert!(hop.name.starts_with("Deployment"), "{}", hop.name);
+    assert_eq!(
+        field(hop, "Pod template hash"),
+        Some(&Shown::Mono("6fdf".into()))
+    );
+}
+
+#[tokio::test]
+async fn a_deployment_whose_pods_run_another_digest_does_not_offer_its_revision() {
+    let image = format!("{REPO}@{NEW}");
+    let reader = deployed_running(vec![deployment_set("6fdf", "2", &image, 1, 1)], OLD);
+    let change = read(&reader, &place("f-new"), observed_at())
+        .await
+        .expect("read");
+    let links = links_out(&change);
+    let (key, _, to, disabled) = link_out(&links, "Coroot revision");
+    assert_eq!(
+        to.as_deref(),
+        Some("cluster-key/shop/storefront Some(\"6fdf\")")
+    );
+    assert_eq!(
+        disabled.as_deref(),
+        Some(
+            "Its current revision isn't confirmed to run this Freight: see its Pods row. \
+             Coroot's revision of it may be another change."
+        ),
+        "the spec pins the digest, but the pods say otherwise"
+    );
+    let hop = change.hop(key).expect("the Deployment's hop");
     assert_eq!(
         field(hop, "Pod template hash"),
         Some(&Shown::Mono("6fdf".into()))
