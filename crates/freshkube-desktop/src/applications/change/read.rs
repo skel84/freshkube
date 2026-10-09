@@ -261,6 +261,11 @@ impl ChangePage {
             .unwrap_or_default()
     }
 
+    /// Why the selection's action labelled `label` is greyed out, if it is.
+    pub(crate) fn action_why(&self, label: &str) -> Option<String> {
+        self.detail.as_ref()?.action_why(label)
+    }
+
     /// The change shown.
     pub(crate) fn shown(&self) -> &Change {
         &self.change

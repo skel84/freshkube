@@ -156,7 +156,7 @@ The Logs tab (`freshkube-observability`'s `logs/`) reads only while the page sho
 
 ## Deployments
 
-Deployments (`freshkube-observability`'s `deployments/`) lists the chosen application's revisions from its own page: Coroot's Deployments report, decoded by coroot-rs as `DeploymentRevision`s. Coroot keeps an application's last 100, which the status bar's tooltip says, and doesn't filter them by the time range, so the header has no range picker here: the Inspector picks its own window. A revision is keyed by its id, `<hash>:<start seconds>`; its row shows the hash, each image Coroot names by its last path segment and tag (`worker:1.8.2`, the whole reference in the tooltip and the Inspector), its start in local time, then Coroot's first finding or note, the images and the finding cut at a word with the whole text in the tooltip. While the application's page is read again, the list keeps the revisions it already read, and Refresh or coming back keeps the chosen one; until a page answers, it claims none.
+Deployments (`freshkube-observability`'s `deployments/`) lists the chosen application's revisions from its own page: Coroot's Deployments report, decoded by coroot-rs as `DeploymentRevision`s. Coroot keeps an application's last 100, which the status bar's tooltip says, and doesn't filter them by the time range, so the header has no range picker here: the Inspector picks its own window. A revision is keyed by its id, `<hash>:<start seconds>`; its row shows the hash, each image Coroot names by its last path segment and tag (`worker:1.8.2`; Coroot already sends them so, and example data's whole references show in the tooltip and the Inspector), its start in local time, then Coroot's first finding or note, the images and the finding cut at a word with the whole text in the tooltip. While the application's page is read again, the list keeps the revisions it already read, and Refresh or coming back keeps the chosen one; until a page answers, it claims none.
 
 The selected revision's Inspector shows Coroot's findings in Coroot's words, with no number of Freshkube's: Coroot compares a revision with an earlier one it kept metrics for and doesn't say which. Under them, the application's page is read again over a window around the start (core's `Provider::revision_view`, ±30 min, ±1 h or ±3 h), and the chosen report's charts draw split at the start, each saying how many samples fall on either side, summed across its series ("Before the start: all 90 samples across 3 series · after: 80 of 93 samples across 3 series") and never a value compared across it. When Coroot's data stops before the window's end, as for a rollout minutes ago, the Inspector says where.
 
@@ -171,3 +171,17 @@ The selected revision's Inspector shows Coroot's findings in Coroot's words, wit
 | No revisions, another kind | "Coroot records rollouts of Deployments only", naming the application's kind |
 
 The window's read has its own identity (application, revision and window) and generation; another revision or window drops the read in flight, and so does hiding the page. Example data answers from the example hour: the newest revision's window reaches past now and ends early, and one older than seven days has no data.
+
+### From the change page
+
+A Deployment's hop on the change page shows its current ReplicaSet's pod-template hash and offers Compare in Observability (core's `Target::Revision`). Coroot names a revision by that hash, so the join is the hash alone; the change page reads nothing for it. The shell hands `RevisionLink` (the connection, the cluster's name, the Deployment and the hash) to `ObservabilityPage::open_revision`, which opens Deployments and finds the revision in what it reads anyway: Coroot's application is `<cluster>:<namespace>:Deployment:<name>`, where the cluster is the Coroot cluster linked to that connection. A banner over the list says what came of it, and goes when the user chooses another application or revision.
+
+| Found | Shown |
+| --- | --- |
+| The revision, by its hash | It is selected, with its window, under "Revision ⟨hash⟩ of ⟨namespace/name⟩" |
+| The application, without that hash | "Coroot keeps no revision ⟨hash⟩", over the newest it keeps |
+| No such application in Coroot's list | "Coroot lists no application ⟨namespace/name⟩"; nothing is chosen or read for it |
+| No Coroot cluster linked to the connection | "No Coroot cluster is linked to ⟨cluster⟩", with where to link one |
+| The application's revisions couldn't be read | The list's own failure |
+
+The button is greyed out with why for a cluster that isn't the open one, for a Deployment whose current ReplicaSet isn't known (core's `current_set` says why), and for an Argo Rollout, since Coroot keeps revisions of Deployments only. A link that arrives after the connection changed is dropped. Example data: Coroot's example lists `checkout/checkout-api`, whose newest revision has the hash of the ReplicaSet the example change runs on dev-fra and stage-fra (core's `change::example::POD_HASH`); Compare is enabled once dev-fra's workspace entry is the open one.

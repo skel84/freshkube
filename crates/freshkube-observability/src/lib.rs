@@ -63,6 +63,7 @@ mod testing;
 mod tests;
 mod traces;
 mod view;
+pub use deployments::RevisionLink;
 use model::Application;
 pub use model::Destination;
 use model::*;

@@ -449,6 +449,7 @@ impl ObservabilityPage {
     }
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         self.live.cancel();
+        self.seek_revision();
         if self.fixture {
             if self.destination == Destination::Application {
                 self.prepare_report();

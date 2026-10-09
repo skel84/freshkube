@@ -82,6 +82,8 @@ pub(crate) enum ChangeEvent {
     Back,
     /// An object to open in Resources.
     Open(Box<ResourceLink>),
+    /// A Deployment's revision to show in Observability.
+    Revision(crate::observability::RevisionLink),
 }
 
 /// Stacked, the trail and the Inspector share the height evenly: the
@@ -507,6 +509,21 @@ impl ChangePage {
         })
     }
 
+    /// Why a Deployment's revision doesn't open in Observability: Coroot is
+    /// read for the open cluster only.
+    fn revision_closed(&self, deployment: &Object) -> Option<SharedString> {
+        (!self
+            .connections
+            .opens(&SessionKey::new(deployment.cluster.clone())))
+        .then(|| {
+            format!(
+                "{} isn't the open cluster, so Observability doesn't read its revisions",
+                self.cluster_name(&deployment.cluster)
+            )
+            .into()
+        })
+    }
+
     /// The link that opens an object in Resources, on its cluster's
     /// connection, and why it doesn't open when that cluster isn't open.
     fn object_link(&self, object: &Object) -> (ResourceLink, Option<SharedString>) {
@@ -615,6 +632,19 @@ impl ChangePage {
             }),
         });
         cx.emit(ChangeEvent::Open(Box::new(link)));
+    }
+
+    /// A Deployment's revision in Observability, through the shell, which
+    /// finds it by its hash in Coroot's revisions of the Deployment.
+    fn open_revision(&mut self, deployment: &Object, hash: &str, cx: &mut Context<Self>) {
+        let session = SessionKey::new(deployment.cluster.clone());
+        cx.emit(ChangeEvent::Revision(crate::observability::RevisionLink {
+            access: self.connections.of(&session),
+            cluster: self.cluster_name(&deployment.cluster).to_owned(),
+            namespace: deployment.namespace.clone(),
+            name: deployment.name.clone(),
+            hash: hash.to_owned(),
+        }));
     }
 
     /// How many rows the table shows, for the footer while Stages fold.

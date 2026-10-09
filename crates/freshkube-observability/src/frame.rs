@@ -113,6 +113,7 @@ impl Render for ObservabilityPage {
                                 })
                                 .children(self.render_read_state(cx).map(inset))
                             })
+                            .children(self.render_wanted(cx).map(inset))
                             .child(content),
                     ),
             )

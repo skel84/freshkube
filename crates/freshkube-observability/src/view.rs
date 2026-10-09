@@ -202,6 +202,7 @@ impl ObservabilityPage {
         self.selected_app = Some(id);
         self.report_snapshot = None;
         self.app_page = None;
+        self.forget_wanted();
         self.refresh(cx);
     }
 }

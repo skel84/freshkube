@@ -91,7 +91,7 @@ impl ObservabilityPage {
                         ColumnKind::Glyph => table::GLYPH_WIDTH,
                         ColumnKind::Finding => 160.,
                         // Narrow enough beside the inspector for Coroot's
-                        // finding to show; the tooltip has every reference.
+                        // finding to show; the tooltip has every image.
                         ColumnKind::Image => measured.clamp(96., 200.),
                         _ => measured.max(56.),
                     },
@@ -176,8 +176,9 @@ impl ObservabilityPage {
                 .children(ui::status_glyph(row.status.tone(), cx))
                 .into_any_element(),
             ColumnKind::Revision => mono(cell, &row.hash, 12.5).into_any_element(),
-            // Each image's name and tag; the tooltip and the inspector have
-            // the whole reference.
+            // Each image's name and tag, as Coroot already sends them;
+            // example data's whole references show in the tooltip and the
+            // inspector.
             ColumnKind::Image => table::cell(column)
                 .id(SharedString::from(format!("{}-image-cell", row.id)))
                 .follow_tooltip(row.image.clone())

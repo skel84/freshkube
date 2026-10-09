@@ -1867,3 +1867,79 @@ async fn a_refused_application_page_says_not_permitted_on_deployments(cx: &mut T
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn a_revision_asked_for_needs_the_clusters_association_and_coroots_listing(
+    cx: &mut TestAppContext,
+) {
+    use crate::deployments::Outcome;
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    server.deploy_mode.store(1, Ordering::SeqCst);
+    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("conn-a".into()), cx)));
+    connected(cx, handle, &page, server.url.clone()).await;
+    let link = |name: &str| crate::RevisionLink {
+        access: "conn-a".into(),
+        cluster: "dev".into(),
+        namespace: "prod".into(),
+        name: name.into(),
+        hash: "2b70aa".into(),
+    };
+    let outcome = |cx: &mut TestAppContext| {
+        cx.read(|cx| page.read(cx).revision_observations.wanted_outcome())
+    };
+
+    // No Coroot cluster is linked to the connection: nothing is chosen.
+    cx.update(|cx| page.update(cx, |page, cx| page.open_revision(link("api"), cx)));
+    assert_eq!(outcome(cx), Some(Outcome::NoAssociation));
+    cx.read(|cx| assert_eq!(page.read(cx).selected_app, None));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-wanted-revision").visible());
+    })
+    .unwrap();
+
+    // Linked, the Deployment's revision is found by its hash.
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.associate(Some("cluster-a".into()), cx);
+            page.open_revision(link("api"), cx);
+        })
+    });
+    revision_read(cx, handle, &page).await;
+    assert_eq!(outcome(cx), Some(Outcome::Found));
+    cx.read(|cx| {
+        let page = page.read(cx);
+        assert_eq!(
+            page.selected_app,
+            Some(freshkube_core::coroot::AppId::new(
+                "cluster-a:prod:Deployment:api"
+            ))
+        );
+        assert_eq!(
+            page.revision_selected_key(),
+            Some(&crate::tables::TableKey::Revision(
+                "2b70aa:1789990000".into()
+            )),
+            "the hash's revision, not the newest"
+        );
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("obs-wanted-revision").visible());
+    })
+    .unwrap();
+
+    // One Coroot doesn't list stays unchosen, and nothing is read for it.
+    cx.update(|cx| page.update(cx, |page, cx| page.open_revision(link("cart"), cx)));
+    assert_eq!(outcome(cx), Some(Outcome::NotListed));
+    cx.read(|cx| {
+        assert_eq!(
+            page.read(cx).selected_app,
+            Some(freshkube_core::coroot::AppId::new(
+                "cluster-a:prod:Deployment:api"
+            ))
+        )
+    });
+}
