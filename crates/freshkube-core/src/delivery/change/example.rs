@@ -356,8 +356,9 @@ fn gates(
         .collect()
 }
 
-/// Argo CD's Application and the pods for a Stage that runs this change,
-/// both Confirmed.
+/// Argo CD's Application, its Deployment and the pods for a Stage that
+/// runs this change, each Confirmed. As a live read has it, the Deployment
+/// names Coroot's revision by its current ReplicaSet's hash.
 fn deployed(
     group: usize,
     stage: &str,
@@ -405,6 +406,41 @@ fn deployed(
             })),
         },
         Hop {
+            key: format!("{stage}-deployment"),
+            group,
+            state: Healthy,
+            name: format!("Deployment {DEPLOYMENT}"),
+            detail: "Pins the digest · 3 of 3 replicas updated".into(),
+            from: cluster.into(),
+            at: Some(synced),
+            link: Some(Confidence::Confirmed),
+            shows: Shows::Hop(Box::new(HopDetail {
+                kind: "Deployment".into(),
+                title: DEPLOYMENT.into(),
+                state: "Available".into(),
+                notice: None,
+                fields: vec![
+                    mono("Namespace", PROJECT),
+                    mono("Name", DEPLOYMENT),
+                    mono("Pod template hash", POD_HASH),
+                    mono("Read from", cluster),
+                ],
+                link: link(
+                    Confidence::Confirmed,
+                    "digest",
+                    "Freight wonky-otter",
+                    DIGEST,
+                    "its spec pins it",
+                    "Managed by the Application, and its pod template pins the Freight's digest.",
+                ),
+                unlinked: None,
+                actions: vec![
+                    resource("the Deployment", deployment(cluster)),
+                    Action::revision(deployment(cluster), Ok(POD_HASH.into())),
+                ],
+            })),
+        },
+        Hop {
             key: format!("{stage}-pods"),
             group,
             state: Healthy,
@@ -425,7 +461,6 @@ fn deployed(
                     text("Running", pods),
                     mono("Image", "checkout-api:1.43.0 (tag, shown only)"),
                     mono("Image ID", DIGEST),
-                    mono("Pod template hash", POD_HASH),
                 ],
                 link: link(
                     Confidence::Confirmed,
@@ -436,10 +471,7 @@ fn deployed(
                     "What runs is read from the pods, not from the plan, and the digest matches.",
                 ),
                 unlinked: None,
-                actions: vec![
-                    resource("the Deployment", deployment(cluster)),
-                    Action::revision(deployment(cluster), Ok(POD_HASH.into())),
-                ],
+                actions: vec![resource("the Deployment", deployment(cluster))],
             })),
         },
     ]

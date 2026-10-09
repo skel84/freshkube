@@ -167,6 +167,7 @@ fn hops_come_in_travel_order_with_fine_stages_folded(cx: &mut TestAppContext) {
                 "prod-lon-promotion",
                 "prod-lon-verification",
                 "prod-lon-argocd",
+                "prod-lon-deployment",
                 "prod-lon-pods",
             ]
         );
@@ -190,7 +191,7 @@ fn hops_come_in_travel_order_with_fine_stages_folded(cx: &mut TestAppContext) {
         let lines = page.read(cx).lines_text();
         assert_eq!(
             lines.iter().filter(|line| !line.starts_with('#')).count(),
-            27
+            30
         );
         assert!(window.try_find("change-showing").is_none());
     })
@@ -1245,7 +1246,7 @@ fn a_deployments_revision_opens_in_observability_by_its_hash(cx: &mut TestAppCon
         // dev is fine, so it folds while prod needs a look.
         window.click("change-fold-2", cx);
         window.render_frame(cx);
-        window.click(hop("dev-pods"), cx);
+        window.click(hop("dev-deployment"), cx);
         window.render_frame(cx);
         let compare = action(&view, "Compare in Observability · dev-fra", cx);
         let page = change(&view, cx).unwrap();
@@ -1288,7 +1289,7 @@ fn a_switch_after_the_read_opens_the_entrys_cluster_on_the_change_page(cx: &mut 
     cx.update_window(handle, |_, window, cx| {
         window.click("change-fold-2", cx);
         window.render_frame(cx);
-        window.click(hop("dev-pods"), cx);
+        window.click(hop("dev-deployment"), cx);
         window.render_frame(cx);
         let page = change(&view, cx).unwrap();
         assert_eq!(
@@ -1314,7 +1315,7 @@ fn a_revision_on_a_cluster_that_is_not_open_does_not_open(cx: &mut TestAppContex
         // dev is fine, so it folds while prod needs a look.
         window.click("change-fold-2", cx);
         window.render_frame(cx);
-        window.click(hop("dev-pods"), cx);
+        window.click(hop("dev-deployment"), cx);
         window.render_frame(cx);
         let label = "Compare in Observability · dev-fra";
         let compare = action(&view, label, cx);
