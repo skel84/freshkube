@@ -11,6 +11,7 @@
 //! window is then no entry's, or the one that matches what was chosen.
 use super::*;
 use crate::navigation_file::NavigationFile;
+use crate::resources::shell;
 use freshkube_core::{
     ConfigurationRevision,
     resources::{discover_contexts, kubeconfig_sources},
@@ -48,6 +49,9 @@ pub(super) struct PendingLink {
     generation: u64,
     pub(super) object: resources::model::ObjectRef,
     work: LinkWork,
+    /// Made by the cluster's name, not by a connection of the entry's: it
+    /// opens on whichever connection the entry opens with.
+    by_name: bool,
 }
 
 #[cfg(test)]
@@ -63,6 +67,7 @@ impl PendingLink {
             generation,
             object,
             work,
+            by_name: false,
         }
     }
 }
@@ -220,6 +225,25 @@ impl Pilot {
             self.switcher = items;
             cx.notify();
         }
+        self.sync_application_clusters(cx);
+    }
+
+    /// Tells the Applications page the workspace's entries and the one the
+    /// window is on, so a part in another entry's cluster offers a switch.
+    pub(super) fn sync_application_clusters(&mut self, cx: &mut Context<Self>) {
+        let clusters = crate::applications::Clusters {
+            entries: self
+                .settings_page
+                .read(cx)
+                .workspace()
+                .clusters
+                .iter()
+                .map(|entry| entry.id.clone())
+                .collect(),
+            active: self.active_cluster().map(str::to_owned),
+        };
+        self.applications
+            .update(cx, |page, cx| page.set_clusters(clusters, cx));
     }
 
     /// Says `message` in a notice, and remembers it for tests.
@@ -256,6 +280,7 @@ impl Pilot {
         self.restored_taken = None;
         self.age_label.update(cx, |label, cx| label.set(None, cx));
         NavigationFile::global(cx).clear_active_cluster(cx);
+        self.sync_application_clusters(cx);
         cx.notify();
     }
 
@@ -291,16 +316,100 @@ impl Pilot {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
-            this.activate_entry(&id, window, cx);
-            // Held after the switch, under the generation it started, so
-            // anything that changes the entry afterwards drops it.
-            this.pending_link = link.map(|(object, work)| PendingLink {
+            this.switch_now(
+                id,
+                link.map(|(object, work)| (object, work, false)),
+                window,
+                cx,
+            )
+        });
+    }
+
+    /// Switches to the entry once the user has agreed, holding `link`
+    /// (object, work, and whether it names the cluster rather than a
+    /// connection) until the entry opens.
+    fn switch_now(
+        &mut self,
+        id: String,
+        link: Option<(resources::model::ObjectRef, LinkWork, bool)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.activate_entry(&id, window, cx);
+        // Held after the switch, under the generation it started, so
+        // anything that changes the entry afterwards drops it, and only
+        // when the switch took: an entry that is gone holds nothing.
+        self.pending_link = link
+            .filter(|_| self.active_cluster() == Some(id.as_str()))
+            .map(|(object, work, by_name)| PendingLink {
                 entry: id.clone(),
-                generation: this.entry_generation,
+                generation: self.entry_generation,
                 object,
                 work,
+                by_name,
             });
-            this.open_pending_link(window, cx);
+        self.open_pending_link(window, cx);
+    }
+
+    /// A part of an application read in another workspace entry's cluster:
+    /// asks to switch to that entry, folding any running shell into the one
+    /// question, then opens the part there. Cancel changes nothing. Port
+    /// forwards run on their own connection, so the question never names
+    /// them. An entry the workspace no longer lists is refused.
+    pub(super) fn open_on_entry(
+        &mut self,
+        entry: String,
+        link: resources::ResourceLink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let resources::ResourceLink::Object(kind, object, tab) = link else {
+            return self.resource_link(link, window, cx);
+        };
+        // Already there, as after a switch the page hasn't heard of yet:
+        // held like any switch's link, so it waits for the entry's own
+        // connection rather than opening on an interim one.
+        if self.active_cluster() == Some(entry.as_str()) {
+            let work = LinkWork::Open { kind, tab };
+            return self.switch_now(entry, Some((object, work, true)), window, cx);
+        }
+        let listed = self
+            .settings_page
+            .read(cx)
+            .workspace()
+            .clusters
+            .iter()
+            .any(|listed| listed.id == entry);
+        if !listed {
+            let message = format!(
+                "Can’t open {}: it belongs to a cluster that isn’t open",
+                object.name
+            );
+            return self.tell(message, window, cx);
+        }
+        if self.config_loading {
+            self.tell(
+                "Still reading the configuration; open it again in a moment".into(),
+                window,
+                cx,
+            );
+            return;
+        }
+        let what = format!("{} {}", kind.kind, object.name);
+        let leaving = shell::Leaving {
+            question: format!("Switch to {entry} to open {what}?"),
+            detail: format!(
+                "{entry} opens as it does from the cluster list, then {what} opens in \
+                 Resources. Port forwards keep running."
+            ),
+            answer: "Switch".into(),
+        };
+        // Cancel keeps a link held from an earlier switch; Switch replaces
+        // it.
+        let pods = shell::running_anywhere(cx);
+        shell::asking(leaving, pods, window, cx, move |this, window, cx| {
+            let work = LinkWork::Open { kind, tab };
+            this.switch_now(entry, Some((object, work, true)), window, cx);
         });
     }
 
@@ -350,6 +459,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        // Another link replaces one still waiting for its entry.
+        self.pending_link = None;
         match self.route_link(object, cx) {
             LinkRoute::Here => false,
             LinkRoute::Refuse(message) => {
@@ -357,7 +468,6 @@ impl Pilot {
                 true
             }
             LinkRoute::Activate(id) => {
-                self.pending_link = None;
                 self.switch_cluster_for(id, Some((object.clone(), work)), window, cx);
                 true
             }
@@ -392,12 +502,16 @@ impl Pilot {
         };
         // The same id is the same access; another means the entry's access
         // changed since the link was made, and the object may be another's.
-        if pending.object.connection.as_deref() != Some(source.id.as_str()) {
+        // A link made by the cluster's name takes the entry's connection.
+        if !pending.by_name && pending.object.connection.as_deref() != Some(source.id.as_str()) {
             self.tell(reconnected_notice(&pending.entry), window, cx);
             return;
         }
         self.cancel_object_open();
-        let object = pending.object;
+        let object = resources::model::ObjectRef {
+            connection: Some(source.id.clone()),
+            ..pending.object
+        };
         match pending.work {
             LinkWork::Open { kind, tab } => self.open_object(kind, object, tab, window, cx),
             LinkWork::Owner { api_version, kind } => {
@@ -455,6 +569,7 @@ impl Pilot {
         self.settings_page
             .update(cx, |page, cx| page.set_note(&entry.id, None, cx));
         self.open_entry(&entry, &workspace, window, cx);
+        self.sync_application_clusters(cx);
         // Names the entry now, even if its kubeconfig never answers.
         self.prepare_context_display(window, cx);
         cx.notify();

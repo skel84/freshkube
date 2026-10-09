@@ -8,7 +8,11 @@
 //! acme's `core-fra` to the example cluster that is open, whose Resources
 //! list its objects; acme's other clusters are no connection, so their
 //! links name their bare key and are refused.
-use std::collections::BTreeMap;
+//!
+//! A cluster that isn't open but that the workspace file lists by name is
+//! one switch away: its part's link goes to the shell with that entry, which
+//! asks before switching to it and then opens the part there.
+use std::collections::{BTreeMap, BTreeSet};
 
 use freshkube_core::applications::{MemberKind, MemberRef, SessionKey};
 use freshkube_core::delivery::{argocd, kargo};
@@ -26,6 +30,8 @@ const VERSION: &str = "v1alpha1";
 pub(crate) struct Connections {
     open: String,
     ids: BTreeMap<SessionKey, String>,
+    /// The workspace's entries other than the open one, by id.
+    entries: BTreeSet<String>,
 }
 
 impl Connections {
@@ -36,7 +42,14 @@ impl Connections {
         Self {
             open: open.into(),
             ids: ids.into_iter().collect(),
+            entries: BTreeSet::new(),
         }
+    }
+
+    /// The same, knowing the workspace's entries other than the open one.
+    pub(crate) fn with_entries(mut self, entries: impl IntoIterator<Item = String>) -> Self {
+        self.entries = entries.into_iter().collect();
+        self
     }
 
     /// The connection a cluster is: its own, else its key, which no
@@ -51,6 +64,18 @@ impl Connections {
     /// Whether the cluster is the one open, so its parts open in Resources.
     pub(crate) fn opens(&self, session: &SessionKey) -> bool {
         self.of(session) == self.open
+    }
+
+    /// The workspace entry a cluster that isn't open is, by its name: its
+    /// parts open there once the window switches to it. A read's cluster
+    /// key matches an entry's id only in example data, whose acme clusters
+    /// are the fixture workspace's entries; a live read is the open
+    /// connection alone until reads span clusters.
+    pub(crate) fn switch_to(&self, session: &SessionKey) -> Option<&str> {
+        if self.opens(session) {
+            return None;
+        }
+        self.entries.get(&session.0).map(String::as_str)
     }
 }
 
@@ -106,6 +131,22 @@ mod tests {
         assert!(connections.opens(&core));
         assert_eq!(connections.of(&prod), "prod-fra");
         assert!(!connections.opens(&prod));
+        assert_eq!(connections.switch_to(&prod), None);
+    }
+
+    #[test]
+    fn a_cluster_the_workspace_lists_is_a_switch_away_and_the_open_one_is_not() {
+        let core = SessionKey::new("core-fra");
+        let dev = SessionKey::new("dev-fra");
+        let lon = SessionKey::new("prod-lon");
+        let connections = Connections::new(
+            "example:prod-fra",
+            [(core.clone(), "example:prod-fra".into())],
+        )
+        .with_entries(["core-fra".to_owned(), "dev-fra".to_owned()]);
+        assert_eq!(connections.switch_to(&core), None, "it is open");
+        assert_eq!(connections.switch_to(&dev), Some("dev-fra"));
+        assert_eq!(connections.switch_to(&lon), None, "not in the workspace");
     }
 
     #[test]

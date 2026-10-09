@@ -255,7 +255,7 @@ pub(crate) fn read(
                 .iter()
                 .enumerate()
                 .map(|(ix, _)| deployment(&connection, ix, now))
-                .chain(acme::deployments(&connection, now))
+                .chain(acme::deployments(context, &connection, now))
                 .collect(),
         ),
         "replicasets.apps" | "events" | "persistentvolumeclaims" | "persistentvolumes" => {
@@ -282,7 +282,7 @@ pub(crate) fn read(
                 })
                 .collect(),
         ),
-        key => acme::read(&connection, key, now)?,
+        key => acme::read(context, &connection, key, now)?,
     };
     // Like the server, a namespace narrows only namespaced kinds.
     let namespaced = kind(key).is_some_and(|kind| kind.namespaced);

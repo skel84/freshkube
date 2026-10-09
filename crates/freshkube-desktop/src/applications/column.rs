@@ -233,7 +233,7 @@ mod tests {
         let read = Read::of(
             &inputs,
             example::labels(&inputs),
-            example::connections("example:prod-fra"),
+            example::connections("example:prod-fra", None),
         );
         Display::new(&read.derived, &read.labels)
     }

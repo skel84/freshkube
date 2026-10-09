@@ -163,11 +163,14 @@ pub(crate) fn labels(inputs: &Inputs) -> Labels {
     )
 }
 
-/// `core-fra` is the example cluster that is open, whose Resources list its
-/// objects; acme's other clusters are no connection, so their parts don't
-/// open.
-pub(crate) fn connections(open: &str) -> Connections {
-    Connections::new(open, [(SessionKey::new(acme::CORE), open.to_owned())])
+/// The acme cluster the open workspace entry is, else `core-fra`, is the
+/// example cluster that is open, whose Resources list its objects; acme's
+/// other clusters are no connection, so their parts don't open here.
+pub(crate) fn connections(open: &str, active: Option<&str>) -> Connections {
+    let cluster = active
+        .filter(|active| acme::acme().sessions.iter().any(|s| s.key.0 == *active))
+        .unwrap_or(acme::CORE);
+    Connections::new(open, [(SessionKey::new(cluster), open.to_owned())])
 }
 
 #[cfg(test)]
