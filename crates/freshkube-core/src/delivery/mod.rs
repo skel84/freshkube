@@ -6,6 +6,7 @@
 //! is confirmed, claimed or unknown. Every cluster call goes through
 //! [`read::ReadOnlyClient`], which can only GET; nothing here writes.
 
+pub mod address;
 pub mod argocd;
 pub mod change;
 pub mod collect;
