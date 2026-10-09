@@ -17,7 +17,8 @@ use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
     Action, AnyElement, App, Context, DismissEvent, FocusHandle, Focusable as _, FontWeight, Image,
-    ImageFormat, Menu, MenuItem, OsAction, Role, TestSupportExt as _, Window, div, img,
+    ImageFormat, Menu, MenuItem, MouseButton, OsAction, Role, TestSupportExt as _, Window, div,
+    img,
 };
 
 use super::{
@@ -317,18 +318,21 @@ impl Pilot {
         if self.app_menu_popup.is_some() {
             return;
         }
-        let focus = window.focused(cx).unwrap_or_else(|| self.focus.clone());
+        // The button's popover has the keyboard by now, so the view is the one
+        // its press recorded; F10 opens the menu on the view itself.
+        let focus = self
+            .app_menu_focus
+            .take()
+            .or_else(|| window.focused(cx))
+            .unwrap_or_else(|| self.focus.clone());
         let menus = menus(self.menu_platform, &self.menu_state.unwrap_or_default());
-        let shell = cx.entity().downgrade();
-        let handle = window.window_handle();
-        App::defer(cx, move |cx| {
-            let entries = button_entries(menus, &mut |action| cx.is_action_available(action));
-            _ = handle.update(cx, |_, window, cx| {
-                _ = shell.update(cx, |view, cx| {
-                    view.show_app_menu(entries, focus, window, cx)
-                });
-            });
+        // The window answers for that view; the app's `is_action_available`
+        // can't see the window it is called from, so it adds only the global
+        // actions.
+        let entries = button_entries(menus, &mut |action| {
+            window.is_action_available_in(action, &focus) || cx.is_action_available(action)
         });
+        self.show_app_menu(entries, focus, window, cx);
     }
 
     fn show_app_menu(
@@ -351,7 +355,7 @@ impl Pilot {
     }
 
     /// The menu button and its menu, where there is no menu bar.
-    pub(super) fn render_menu_button(&self, cx: &Context<Self>) -> Option<AnyElement> {
+    pub(super) fn render_menu_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.menu_platform.app_menu() != AppMenu::Button {
             return None;
         }
@@ -372,7 +376,10 @@ impl Pilot {
                         (false, None) => {}
                     }
                 })
-                .trigger(platform::menu_button("app-menu"))
+                .trigger(platform::menu_button("app-menu").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|view, _, window, cx| view.app_menu_focus = window.focused(cx)),
+                ))
                 .content(move |_, _, _| match &popup {
                     Some(popup) => popup.clone().into_any_element(),
                     None => div().into_any_element(),

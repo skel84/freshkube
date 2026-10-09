@@ -371,6 +371,27 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
     })
     .unwrap();
 
+    // An entry the shell answers is live: a snapshot can't say so, so pick
+    // it and see Settings open.
+    cx.update_window(handle, |_, window, cx| window.click("app-menu", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    cx.update_window(handle, |_, window, cx| {
+        let mut menu = window.within("popup-menu");
+        let settings = (0usize..)
+            .map_while(|ix| menu.try_find(ix).map(|item| (ix, item)))
+            .find(|(_, item)| item.label() == Some("Settings…"))
+            .map(|(ix, _)| ix)
+            .expect("Settings… in the menu");
+        menu.click(settings, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(cx.update(|cx| pilot.read(cx).settings_open));
+    draw(handle, cx);
+    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_none()));
+
     dispatch(handle, freshkube_ui::platform::OpenAppMenu, cx);
     assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_some()));
 }

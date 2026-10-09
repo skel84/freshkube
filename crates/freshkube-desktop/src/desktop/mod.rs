@@ -443,6 +443,9 @@ pub(crate) struct Pilot {
     /// The menu button's menu while it's open, and its dismissal's
     /// subscription.
     app_menu_popup: Option<(Entity<gpui_kit::component::menu::PopupMenu>, Subscription)>,
+    /// What had the keyboard when the menu button was pressed, before its
+    /// popover took it: the view the menu's entries act on.
+    app_menu_focus: Option<FocusHandle>,
     /// What the installed menus state, to set them again only on a change.
     menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
@@ -1159,6 +1162,7 @@ impl Pilot {
             settings_open: false,
             menu_platform: app_menu::menu_platform(),
             app_menu_popup: None,
+            app_menu_focus: None,
             menu_state: None,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
