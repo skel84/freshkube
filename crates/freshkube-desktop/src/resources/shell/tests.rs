@@ -427,3 +427,36 @@ fn the_closing_question_names_the_shell_and_the_forwards() {
     let (_, detail, _) = closing_question(&["web-1".into()], 2);
     assert!(detail.contains("Control-C") && detail.contains("every connection"));
 }
+
+#[test]
+fn another_question_folds_in_the_shells_it_ends() {
+    let leaving = || super::Leaving {
+        question: "Switch to dev-fra to open Deployment checkout-api?".into(),
+        detail: "Port forwards keep running.".into(),
+        answer: "Switch".into(),
+    };
+    let alone = super::leaving_question(leaving(), &[]);
+    assert_eq!(
+        (alone.0.as_str(), alone.2.as_str()),
+        (
+            "Switch to dev-fra to open Deployment checkout-api?",
+            "Switch"
+        )
+    );
+    let one = super::leaving_question(leaving(), &["web-0".into()]);
+    assert_eq!(
+        one.0,
+        "Switch to dev-fra to open Deployment checkout-api and end the shell in web-0?"
+    );
+    assert_eq!(one.2, "Switch and end the shell");
+    assert!(
+        one.1
+            .starts_with("Port forwards keep running. Freshkube sends")
+    );
+    let two = super::leaving_question(leaving(), &["web-0".into(), "web-1".into()]);
+    assert_eq!(
+        two.0,
+        "Switch to dev-fra to open Deployment checkout-api and end 2 shells?"
+    );
+    assert_eq!(two.2, "Switch and end the shells");
+}
