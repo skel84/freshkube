@@ -135,6 +135,15 @@ pub trait Reader {
     ) -> impl Future<Output = Result<Value, Failure>>;
     /// One scoped collection, up to [`MAX_PAGES`] pages.
     fn list(&self, request: &ListRequest) -> impl Future<Output = Result<Listing, Failure>>;
+    /// Whether one scoped collection can be listed: one item at most, and
+    /// a refused, missing or unreachable collection fails as [`list`] does.
+    /// A source checks it can be read with it. Unless overridden, it lists
+    /// the collection.
+    ///
+    /// [`list`]: Reader::list
+    fn probe(&self, request: &ListRequest) -> impl Future<Output = Result<(), Failure>> {
+        async move { self.list(request).await.map(|_| ()) }
+    }
     /// `/apis`: every group and its served versions.
     fn groups(&self) -> impl Future<Output = Result<Vec<ServedGroup>, Failure>>;
     /// `/apis/<group>/<version>`: the plurals that version serves.
@@ -328,6 +337,14 @@ fn refuse_secret(resource: &Resource) -> Result<(), Failure> {
 }
 
 fn page_path(request: &ListRequest, continue_token: Option<&str>) -> Result<String, Failure> {
+    sized_page_path(request, continue_token, PAGE_LIMIT)
+}
+
+fn sized_page_path(
+    request: &ListRequest,
+    continue_token: Option<&str>,
+    limit: u32,
+) -> Result<String, Failure> {
     let (namespace, selector) = match &request.scope {
         Scope::Cluster if request.resource.namespaced => {
             return Err(Failure::new(
@@ -345,7 +362,7 @@ fn page_path(request: &ListRequest, continue_token: Option<&str>) -> Result<Stri
     check_resource(&request.resource)?;
     check_namespace(namespace)?;
     let mut query = url::form_urlencoded::Serializer::new(String::new());
-    query.append_pair("limit", &PAGE_LIMIT.to_string());
+    query.append_pair("limit", &limit.to_string());
     if let Some(selector) = selector {
         query.append_pair("labelSelector", selector);
     }
@@ -395,6 +412,13 @@ impl Reader for ReadOnlyClient {
             }
         }
         Ok(listing)
+    }
+
+    /// One page of one item: `limit=1`.
+    async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
+        self.get_value(sized_page_path(request, None, 1)?)
+            .await
+            .map(|_| ())
     }
 
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
@@ -644,6 +668,18 @@ mod tests {
         assert_eq!(
             page_path(&namespaced, None).unwrap(),
             "/apis/argoproj.io/v1alpha1/namespaces/argocd/applications?limit=200"
+        );
+    }
+
+    #[test]
+    fn a_probe_asks_for_one_item() {
+        let projects = ListRequest {
+            resource: Resource::new("kargo.akuity.io", "v1alpha1", "projects", false),
+            scope: Scope::Cluster,
+        };
+        assert_eq!(
+            sized_page_path(&projects, None, 1).unwrap(),
+            "/apis/kargo.akuity.io/v1alpha1/projects?limit=1"
         );
     }
 

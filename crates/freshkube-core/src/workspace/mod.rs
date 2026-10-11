@@ -26,8 +26,10 @@ use serde::{Deserialize, Serialize};
 use crate::{BoundedReadError, read_bounded_regular_file};
 
 mod destinations;
+mod sources;
 
 pub use destinations::{Destination, Fault, Key, MAX_DESTINATIONS};
+pub use sources::{Chosen, Part, Pins, Sources, Why};
 
 /// The file format this version reads.
 pub const VERSION: u32 = 1;
@@ -107,14 +109,13 @@ pub struct Workspace {
     /// Which entry each Argo CD destination is, as the person mapped them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub destinations: Vec<Destination>,
-    /// Keys this version doesn't know (`sources` and later ones), written
-    /// back as they were read.
+    /// Parts of the delivery chain pinned to an entry, over the roles.
+    #[serde(default, skip_serializing_if = "Pins::is_empty")]
+    pub sources: Pins,
+    /// Keys this version doesn't know, written back as they were read.
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
 }
-
-/// Top-level keys reserved for later steps: kept on save, never warned about.
-const RESERVED: [&str; 1] = ["sources"];
 
 /// Why a file or a workspace is refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,6 +136,8 @@ pub enum Invalid {
     NotReadable(String),
     Malformed(String),
     TooManyDestinations,
+    /// `sources` pins this part to an empty id.
+    EmptySource(&'static str),
     /// A destination row that can't be used: the row, by its index and what
     /// it names, and why.
     Destination {
@@ -173,6 +176,7 @@ impl std::fmt::Display for Invalid {
             Invalid::TooManyDestinations => {
                 write!(f, "it maps more than {MAX_DESTINATIONS} destinations")
             }
+            Invalid::EmptySource(part) => write!(f, "sources.{part} names no cluster"),
             Invalid::Destination { row, fault } => write!(f, "{row} {}", fault.words()),
         }
     }
@@ -225,6 +229,7 @@ impl Workspace {
                 return Err(Invalid::RelativePath(entry.id.clone()));
             }
         }
+        self.sources.validate()?;
         destinations::validate(&self.destinations)
     }
 
@@ -241,14 +246,10 @@ impl Workspace {
 
     /// Keys this version doesn't know, as `key` or `cluster-id.key`, sorted.
     /// They are kept when the file is saved; the page names them so a
-    /// misspelt key doesn't go unnoticed. The reserved `sources` is not
-    /// listed.
+    /// misspelt key doesn't go unnoticed.
     pub fn unknown_keys(&self) -> Vec<String> {
-        let top = self
-            .extra
-            .keys()
-            .filter(|key| !RESERVED.contains(&key.as_str()))
-            .cloned();
+        let top = self.extra.keys().cloned();
+        let sources = self.sources.extra.keys().map(|key| format!("sources.{key}"));
         let entries = self
             .clusters
             .iter()
@@ -258,7 +259,11 @@ impl Workspace {
             .iter()
             .enumerate()
             .flat_map(|(index, row)| row.unknown_keys(index));
-        let mut keys: Vec<String> = top.chain(entries).chain(destinations).collect();
+        let mut keys: Vec<String> = top
+            .chain(sources)
+            .chain(entries)
+            .chain(destinations)
+            .collect();
         keys.sort();
         keys
     }
@@ -542,6 +547,7 @@ pub fn example() -> Workspace {
             .into_iter()
             .map(|id| Destination::new(Key::Server(format!("https://{id}.example.test:6443")), id))
             .collect(),
+        sources: Pins::default(),
         extra: Default::default(),
     }
 }

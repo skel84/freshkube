@@ -45,6 +45,12 @@ pub(crate) struct ClientError {
 }
 
 impl ClientError {
+    /// Whether the context's exec plugin, or another credential source,
+    /// failed while the client was made.
+    pub(crate) fn is_exec(&self) -> bool {
+        matches!(self.error, kube::Error::Auth(_))
+    }
+
     /// `fallback`, with the proxy that failed the client when one did.
     pub(crate) fn message(&self, fallback: &str) -> String {
         let proxy = match &self.error {

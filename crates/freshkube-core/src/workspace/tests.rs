@@ -208,7 +208,7 @@ fn keys_this_version_does_not_know_survive_a_save() {
         "version": 1,
         "clusters": [{"id": "mgmt", "role": "core", "context": "acme-mgmt", "note": "kept"}],
         "destinations": [{"server": "https://prod.example.test", "entry": "mgmt"}],
-        "sources": {"a": 1},
+        "sources": {"kargo": "mgmt", "later": 1},
         "talosconfg": "misspelt",
     });
     let workspace = parse(&text(source)).unwrap();
@@ -217,7 +217,8 @@ fn keys_this_version_does_not_know_survive_a_save() {
         written["destinations"][0]["server"],
         "https://prod.example.test"
     );
-    assert_eq!(written["sources"]["a"], 1);
+    assert_eq!(written["sources"]["kargo"], "mgmt");
+    assert_eq!(written["sources"]["later"], 1);
     assert_eq!(written["talosconfg"], "misspelt");
     assert_eq!(written["clusters"][0]["note"], "kept");
     assert_eq!(written["version"], 1);
@@ -225,7 +226,7 @@ fn keys_this_version_does_not_know_survive_a_save() {
 }
 
 #[test]
-fn an_unknown_key_is_named_but_a_reserved_one_is_not() {
+fn an_unknown_key_is_named_wherever_it_is() {
     let workspace = parse(&text(serde_json::json!({
         "version": 1,
         "clusters": [
@@ -233,13 +234,13 @@ fn an_unknown_key_is_named_but_a_reserved_one_is_not() {
             {"id": "ci", "role": "cicd", "context": "y"},
         ],
         "destinations": [],
-        "sources": {},
+        "sources": {"argocd": "mgmt", "kargoo": "ci"},
         "kubeconfg": "/b",
     })))
     .unwrap();
     assert_eq!(
         workspace.unknown_keys(),
-        vec!["kubeconfg", "mgmt.talosconfg"]
+        vec!["kubeconfg", "mgmt.talosconfg", "sources.kargoo"]
     );
     assert!(sample().unknown_keys().is_empty());
 }
@@ -338,7 +339,7 @@ fn a_workspace_the_next_launch_would_refuse_for_its_size_is_not_written() {
     // Compact, the file is well inside the limit; written with indentation it
     // is not.
     let many: Vec<_> = (0..12_000).map(|n| serde_json::json!({"a": n})).collect();
-    let source = text(serde_json::json!({"version": 1, "sources": many}));
+    let source = text(serde_json::json!({"version": 1, "later": many}));
     assert!(source.len() < MAX_BYTES as usize);
     let workspace = parse(&source).unwrap();
     assert_eq!(workspace.check_saveable(), Err(Invalid::TooLarge));
@@ -677,4 +678,170 @@ fn keys_name_the_same_destination_as_an_application_is_matched() {
     assert!(name("prod").same(&name("prod")));
     assert!(!name("prod").same(&name("Prod")));
     assert!(!name("https://a.example.test").same(&server("https://a.example.test")));
+}
+
+mod sources {
+    use super::*;
+
+    fn entry(id: &str, role: Role) -> Entry {
+        Entry::new(id, role, format!("{id}-context"))
+    }
+
+    fn chosen(sources: &Sources, part: Part) -> Option<(&str, Why)> {
+        match sources.get(part) {
+            Chosen::Entry { entry, why } => Some((entry.id.as_str(), *why)),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn roles_choose_where_each_part_is_read() {
+        let workspace = Workspace::new(vec![
+            entry("cluster-c", Role::Environment),
+            entry("cluster-a", Role::Core),
+            entry("cluster-b", Role::Cicd),
+        ]);
+        let sources = Sources::of(&workspace);
+        let cicd = Some(("cluster-b", Why::Role(Role::Cicd)));
+        assert_eq!(chosen(&sources, Part::Kargo), cicd);
+        assert_eq!(chosen(&sources, Part::Builds), cicd);
+        assert_eq!(
+            chosen(&sources, Part::ArgoCd),
+            Some(("cluster-a", Why::Role(Role::Core)))
+        );
+    }
+
+    #[test]
+    fn without_a_cicd_entry_kargo_and_builds_come_from_core() {
+        let workspace = Workspace::new(vec![
+            entry("cluster-c", Role::Environment),
+            entry("cluster-a", Role::Core),
+        ]);
+        let sources = Sources::of(&workspace);
+        for part in Part::ALL {
+            assert_eq!(
+                chosen(&sources, part),
+                Some(("cluster-a", Why::Role(Role::Core))),
+                "{part:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_first_entry_listed_wins_a_tie() {
+        let mut workspace = Workspace::new(vec![
+            entry("cluster-a", Role::Core),
+            entry("cluster-b", Role::Cicd),
+            entry("cluster-d", Role::Core),
+            entry("cluster-e", Role::Cicd),
+        ]);
+        let sources = Sources::of(&workspace);
+        assert_eq!(chosen(&sources, Part::Kargo).unwrap().0, "cluster-b");
+        assert_eq!(chosen(&sources, Part::ArgoCd).unwrap().0, "cluster-a");
+        // Reordering the entries changes the choice.
+        workspace.clusters.reverse();
+        let sources = Sources::of(&workspace);
+        assert_eq!(chosen(&sources, Part::Kargo).unwrap().0, "cluster-e");
+        assert_eq!(chosen(&sources, Part::ArgoCd).unwrap().0, "cluster-d");
+    }
+
+    #[test]
+    fn a_missing_role_is_said_never_guessed() {
+        let workspace = Workspace::new(vec![
+            entry("cluster-b", Role::Cicd),
+            entry("cluster-c", Role::Environment),
+        ]);
+        let sources = Sources::of(&workspace);
+        assert_eq!(chosen(&sources, Part::Kargo).unwrap().0, "cluster-b");
+        let argocd = sources.get(Part::ArgoCd);
+        assert_eq!(argocd, &Chosen::NoEntry(&[Role::Core]));
+        assert_eq!(
+            argocd.missing().as_deref(),
+            Some("No Core entry in the workspace")
+        );
+
+        let environments = Workspace::new(vec![entry("cluster-c", Role::Environment)]);
+        let sources = Sources::of(&environments);
+        assert_eq!(
+            sources.get(Part::Builds).missing().as_deref(),
+            Some("No CI/CD or Core entry in the workspace")
+        );
+    }
+
+    #[test]
+    fn a_pinned_part_is_read_from_its_entry_and_a_gone_one_says_so() {
+        let mut workspace = Workspace::new(vec![
+            entry("cluster-a", Role::Core),
+            entry("cluster-b", Role::Cicd),
+            entry("cluster-c", Role::Environment),
+        ]);
+        workspace
+            .sources
+            .set(Part::Builds, Some("cluster-c".into()));
+        workspace
+            .sources
+            .set(Part::ArgoCd, Some("cluster-x".into()));
+        let sources = Sources::of(&workspace);
+        assert_eq!(
+            chosen(&sources, Part::Builds),
+            Some(("cluster-c", Why::Pinned))
+        );
+        assert_eq!(
+            chosen(&sources, Part::Kargo),
+            Some(("cluster-b", Why::Role(Role::Cicd)))
+        );
+        // A pin to an entry that is gone never falls back to a role.
+        assert_eq!(
+            sources.get(Part::ArgoCd),
+            &Chosen::Gone("cluster-x".into())
+        );
+        assert_eq!(
+            sources.get(Part::ArgoCd).missing().as_deref(),
+            Some("cluster-x is no longer in the workspace")
+        );
+    }
+
+    #[test]
+    fn a_workspace_of_one_reads_everything_from_the_open_connection() {
+        let sources = Sources::of(&Workspace::default());
+        for part in Part::ALL {
+            assert_eq!(sources.get(part), &Chosen::Open, "{part:?}");
+        }
+        // A pin means nothing without entries.
+        let mut pinned = Workspace::default();
+        pinned.sources.set(Part::Kargo, Some("cluster-b".into()));
+        assert_eq!(Sources::of(&pinned).get(Part::Kargo), &Chosen::Open);
+    }
+
+    #[test]
+    fn the_example_reads_kargo_from_cicd_and_argo_cd_from_core() {
+        let sources = Sources::of(&example());
+        assert_eq!(chosen(&sources, Part::Kargo).unwrap().0, "cicd-fra");
+        assert_eq!(chosen(&sources, Part::Builds).unwrap().0, "cicd-fra");
+        assert_eq!(chosen(&sources, Part::ArgoCd).unwrap().0, "core-fra");
+    }
+
+    #[test]
+    fn pins_round_trip_and_an_empty_one_is_refused() {
+        let source = serde_json::json!({
+            "version": 1,
+            "clusters": [{"id": "cluster-a", "role": "core", "context": "a"}],
+            "sources": {"builds": "cluster-a"},
+        });
+        let workspace = parse(&text(source)).unwrap();
+        assert_eq!(workspace.sources.pin(Part::Builds), Some("cluster-a"));
+        assert_eq!(parse(to_text(&workspace).as_bytes()), Ok(workspace));
+        // No pins write no `sources`.
+        let plain = Workspace::new(vec![entry("cluster-a", Role::Core)]);
+        assert!(!to_text(&plain).contains("sources"));
+
+        let empty = serde_json::json!({
+            "version": 1,
+            "clusters": [{"id": "cluster-a", "role": "core", "context": "a"}],
+            "sources": {"kargo": " "},
+        });
+        assert_eq!(parse(&text(empty)), Err(Invalid::EmptySource("kargo")));
+        let wrong = serde_json::json!({"version": 1, "sources": {"kargo": 3}});
+        assert!(matches!(parse(&text(wrong)), Err(Invalid::Malformed(_))));
+    }
 }
