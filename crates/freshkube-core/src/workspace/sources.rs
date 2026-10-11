@@ -13,6 +13,9 @@
 //! implicit workspace of one, with no entries, reads every part from the
 //! open connection. Nothing is guessed: no part comes from a kubeconfig's
 //! current context or from matching servers.
+//!
+//! The workloads aren't one part: each Argo CD destination's mapped entry
+//! (`destinations`) holds its own ([`Sources::workloads`]).
 
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +77,8 @@ pub enum Why {
     Role(Role),
     /// `sources` pins the part to it.
     Pinned,
+    /// An Argo CD destination maps to it, for the workloads.
+    Destination,
 }
 
 impl Why {
@@ -82,6 +87,7 @@ impl Why {
         match self {
             Why::Role(role) => format!("{} role", role.label()),
             Why::Pinned => "pinned in workspace.json".to_owned(),
+            Why::Destination => "an Argo CD destination".to_owned(),
         }
     }
 }
@@ -128,6 +134,7 @@ pub struct Sources {
     kargo: Chosen,
     builds: Chosen,
     argocd: Chosen,
+    workloads: Vec<Chosen>,
 }
 
 impl Sources {
@@ -137,7 +144,16 @@ impl Sources {
             kargo: choose(Part::Kargo),
             builds: choose(Part::Builds),
             argocd: choose(Part::ArgoCd),
+            workloads: workloads(workspace),
         }
+    }
+
+    /// Where the workloads are read: each entry an Argo CD destination maps
+    /// to, once, in the destinations' order, an entry the workspace no
+    /// longer lists as [`Chosen::Gone`]; the open connection for the
+    /// workspace of one. Empty when no destination is mapped.
+    pub fn workloads(&self) -> &[Chosen] {
+        &self.workloads
     }
 
     pub fn get(&self, part: Part) -> &Chosen {
@@ -152,6 +168,34 @@ impl Sources {
     pub fn iter(&self) -> impl Iterator<Item = (Part, &Chosen)> {
         Part::ALL.into_iter().map(|part| (part, self.get(part)))
     }
+}
+
+fn workloads(workspace: &Workspace) -> Vec<Chosen> {
+    if workspace.clusters.is_empty() {
+        return vec![Chosen::Open];
+    }
+    let mut chosen: Vec<Chosen> = Vec::new();
+    for destination in &workspace.destinations {
+        let id = destination.entry.trim();
+        let seen = chosen.iter().any(|chosen| match chosen {
+            Chosen::Entry { entry, .. } => entry.id == id,
+            Chosen::Gone(gone) => gone == id,
+            _ => false,
+        });
+        if id.is_empty() || seen {
+            continue;
+        }
+        chosen.push(
+            match workspace.clusters.iter().find(|entry| entry.id == id) {
+                Some(entry) => Chosen::Entry {
+                    entry: entry.clone(),
+                    why: Why::Destination,
+                },
+                None => Chosen::Gone(id.to_owned()),
+            },
+        );
+    }
+    chosen
 }
 
 fn choose(workspace: &Workspace, part: Part) -> Chosen {

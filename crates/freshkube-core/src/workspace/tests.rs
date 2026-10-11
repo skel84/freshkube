@@ -841,4 +841,48 @@ mod sources {
         let wrong = serde_json::json!({"version": 1, "sources": {"kargo": 3}});
         assert!(matches!(parse(&text(wrong)), Err(Invalid::Malformed(_))));
     }
+
+    fn ids(chosen: &[Chosen]) -> Vec<String> {
+        chosen
+            .iter()
+            .map(|chosen| match chosen {
+                Chosen::Entry { entry, why } => {
+                    assert_eq!(*why, Why::Destination);
+                    entry.id.clone()
+                }
+                Chosen::Gone(id) => format!("gone {id}"),
+                Chosen::Open => "open".into(),
+                Chosen::NoEntry(_) => "none".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn workloads_are_read_from_each_mapped_entry_once() {
+        let mut workspace = Workspace::new(vec![
+            entry("cluster-a", Role::Core),
+            entry("cluster-c", Role::Environment),
+            entry("cluster-d", Role::Environment),
+        ]);
+        assert!(Sources::of(&workspace).workloads().is_empty());
+        let server = |host: &str| Key::Server(format!("https://{host}.example.test"));
+        workspace.destinations = vec![
+            Destination::new(server("d"), "cluster-d"),
+            Destination::new(Key::Name("c".into()), "cluster-c"),
+            Destination::new(server("c"), "cluster-c"),
+            Destination::new(server("x"), "cluster-x"),
+        ];
+        assert_eq!(
+            ids(Sources::of(&workspace).workloads()),
+            vec!["cluster-d", "cluster-c", "gone cluster-x"]
+        );
+        assert_eq!(
+            ids(Sources::of(&Workspace::default()).workloads()),
+            vec!["open"]
+        );
+        assert_eq!(
+            ids(Sources::of(&crate::workspace::example()).workloads()),
+            vec!["dev-fra", "stage-fra", "prod-ams"]
+        );
+    }
 }

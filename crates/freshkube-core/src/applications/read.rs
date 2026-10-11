@@ -181,8 +181,19 @@ fn entry(value: &Value, map: &str, key: &str) -> Option<String> {
 /// namespace. One kind failing fails the source: the applications they would
 /// have grouped are unknown, and a partial list would read as complete.
 async fn read_workloads<R: Reader>(reader: &R) -> Source<Vec<LabelledWorkload>> {
+    read_workloads_by(reader, PART_OF).await
+}
+
+/// Argo CD's own workloads, `app.kubernetes.io/part-of=argocd`, which say
+/// where it runs ([`argo_namespaces`]) without listing every labelled one.
+pub(crate) async fn read_argo_workloads<R: Reader>(reader: &R) -> Source<Vec<LabelledWorkload>> {
+    read_workloads_by(reader, &format!("{PART_OF}={ARGOCD}")).await
+}
+
+async fn read_workloads_by<R: Reader>(reader: &R, selector: &str) -> Source<Vec<LabelledWorkload>> {
     async fn run<R: Reader>(
         reader: &R,
+        selector: &str,
     ) -> Result<(Vec<LabelledWorkload>, Option<Truncation>), Failure> {
         let mut found = Vec::new();
         let mut truncated: Option<Truncation> = None;
@@ -192,7 +203,7 @@ async fn read_workloads<R: Reader>(reader: &R) -> Source<Vec<LabelledWorkload>> 
                     resource: Resource::new("apps", "v1", plural, true),
                     scope: Scope::Labels {
                         namespace: None,
-                        selector: PART_OF.to_owned(),
+                        selector: selector.to_owned(),
                     },
                 })
                 .await?;
@@ -210,8 +221,12 @@ async fn read_workloads<R: Reader>(reader: &R) -> Source<Vec<LabelledWorkload>> 
         }
         Ok((found, truncated))
     }
-    Source::from_listing(run(reader).await.map_err(|failure| match failure.kind {
-        FailureKind::NotFound => Failure::new(FailureKind::Other, failure.message),
-        _ => failure,
-    }))
+    Source::from_listing(
+        run(reader, selector)
+            .await
+            .map_err(|failure| match failure.kind {
+                FailureKind::NotFound => Failure::new(FailureKind::Other, failure.message),
+                _ => failure,
+            }),
+    )
 }

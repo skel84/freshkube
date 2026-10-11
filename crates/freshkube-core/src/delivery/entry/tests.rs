@@ -29,9 +29,17 @@ async fn an_answer_is_readable_even_when_empty() {
         ),
         "{requests:?}"
     );
+    // With nothing labelled part-of=argocd, Argo CD is read in `argocd`.
     assert!(
         requests.contains(
             &"LIST argoproj.io/v1alpha1/applications ns=Some(\"argocd\") selector=None".into()
+        ),
+        "{requests:?}"
+    );
+    assert!(
+        requests.contains(
+            &"LIST apps/v1/deployments ns=None selector=Some(\"app.kubernetes.io/part-of=argocd\")"
+                .into()
         ),
         "{requests:?}"
     );
@@ -43,7 +51,7 @@ async fn a_refusal_is_refused_never_none_found() {
     assert_eq!(reach, Reach::Refused("forbidden by RBAC".into()));
     assert_eq!(reach.label(), "Refused");
     assert_eq!(
-        reach.words(Part::Builds, "cluster-b"),
+        reach.words(Part::Builds.label(), "cluster-b"),
         "Builds refused on cluster-b: forbidden by RBAC"
     );
 }
@@ -53,7 +61,7 @@ async fn a_kind_the_cluster_does_not_serve_is_not_served() {
     let reach = check(&FixtureReader::default(), Part::Kargo).await;
     assert!(matches!(reach, Reach::NotServed(_)), "{reach:?}");
     assert_eq!(
-        reach.words(Part::Kargo, "cluster-a"),
+        reach.words(Part::Kargo.label(), "cluster-a"),
         "Kargo isn't served on cluster-a"
     );
     // The group served without the kind is the same.
@@ -69,7 +77,7 @@ async fn a_kind_the_cluster_does_not_serve_is_not_served() {
 async fn a_connection_that_fails_is_unreachable() {
     let reach = check(&serving().unreachable("applications"), Part::ArgoCd).await;
     assert_eq!(
-        reach.words(Part::ArgoCd, "cluster-a"),
+        reach.words(Part::ArgoCd.label(), "cluster-a"),
         "Couldn't reach cluster-a: the server could not be reached"
     );
 }
@@ -104,7 +112,12 @@ async fn every_part_is_checked_and_a_missing_entry_reads_nothing() {
         entry("cluster-b", Role::Cicd),
         entry("cluster-c", Role::Environment),
     ]);
-    let checked = check_all(&Sources::of(&workspace), &[], None::<&FixtureReader>).await;
+    let checked = check_all(
+        &Sources::of(&workspace),
+        &[],
+        None::<Result<&FixtureReader, _>>,
+    )
+    .await;
     let [
         (kargo, kargo_reach),
         (builds, builds_reach),
@@ -130,7 +143,7 @@ async fn every_part_is_checked_and_a_missing_entry_reads_nothing() {
 async fn a_workspace_of_one_checks_the_open_connection() {
     let sources = Sources::of(&Workspace::default());
     let open = serving().refusing("applications");
-    let checked = check_all(&sources, &[], Some(&open)).await;
+    let checked = check_all(&sources, &[], Some(Ok(&open))).await;
     assert_eq!(
         checked.parts,
         vec![
@@ -139,7 +152,9 @@ async fn a_workspace_of_one_checks_the_open_connection() {
             (Part::ArgoCd, Reach::Refused("forbidden by RBAC".into())),
         ]
     );
-    let none = check_all(&sources, &[], None::<&FixtureReader>).await;
+    assert_eq!(checked.argocd_in, vec!["argocd"]);
+    assert_eq!(checked.workloads, vec![(OPEN.to_owned(), Reach::Readable)]);
+    let none = check_all(&sources, &[], None::<Result<&FixtureReader, _>>).await;
     assert!(
         none.parts
             .iter()
@@ -216,4 +231,105 @@ async fn a_context_no_kubeconfig_has_is_said() {
         .err()
         .expect("no such context");
     assert_eq!(error, "the kubeconfig has no context cluster-z");
+}
+
+#[tokio::test]
+async fn an_open_connection_that_failed_says_why() {
+    let sources = Sources::of(&Workspace::default());
+    let checked = check_all(
+        &sources,
+        &[],
+        Some(Err::<&FixtureReader, _>(
+            "its credential plugin failed".into(),
+        )),
+    )
+    .await;
+    let failed = Reach::Unreachable("its credential plugin failed".into());
+    assert!(
+        checked.parts.iter().all(|(_, reach)| reach == &failed),
+        "{checked:?}"
+    );
+    assert_eq!(checked.workloads, vec![(OPEN.to_owned(), failed.clone())]);
+    assert_eq!(
+        failed.words("Kargo", OPEN),
+        "Couldn't reach the open cluster: its credential plugin failed"
+    );
+}
+
+fn argo_server(namespace: &str) -> serde_json::Value {
+    serde_json::json!({"metadata": {
+        "name": "argocd-server",
+        "namespace": namespace,
+        "labels": {"app.kubernetes.io/part-of": "argocd"},
+    }})
+}
+
+#[tokio::test]
+async fn argo_cd_is_checked_where_it_runs() {
+    // Argo CD runs in `gitops`, and its Applications are read there only.
+    let reader = serving().with("deployments", vec![argo_server("gitops")]);
+    let (reach, namespaces) = check_argo(&reader).await;
+    assert_eq!(
+        (reach, namespaces),
+        (Reach::Readable, vec!["gitops".to_owned()])
+    );
+    let requests = reader.requests.borrow();
+    assert!(
+        requests.contains(
+            &"LIST argoproj.io/v1alpha1/applications ns=Some(\"gitops\") selector=None".into()
+        ),
+        "{requests:?}"
+    );
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.contains("ns=Some(\"argocd\")")),
+        "{requests:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_workload_read_falls_back_to_argocd_as_the_read_does() {
+    let reader = serving().refusing("deployments");
+    assert_eq!(
+        check_argo(&reader).await,
+        (Reach::Readable, vec!["argocd".to_owned()])
+    );
+}
+
+#[tokio::test]
+async fn workloads_are_checked_on_each_mapped_entry() {
+    use crate::workspace::{Destination, Key};
+    let mut workspace = Workspace::new(vec![
+        entry("cluster-a", Role::Core),
+        entry("cluster-c", Role::Environment),
+    ]);
+    workspace.destinations = vec![
+        Destination::new(Key::Name("c".into()), "cluster-c"),
+        Destination::new(Key::Name("x".into()), "cluster-x"),
+    ];
+    let checked = check_all(
+        &Sources::of(&workspace),
+        &[],
+        None::<Result<&FixtureReader, _>>,
+    )
+    .await;
+    assert_eq!(
+        checked.workloads,
+        vec![
+            (
+                "cluster-c".to_owned(),
+                Reach::Unreachable("the kubeconfig has no context cluster-c-context".into())
+            ),
+            (
+                "cluster-x".to_owned(),
+                Reach::Missing("cluster-x is no longer in the workspace".into())
+            ),
+        ]
+    );
+    assert_eq!(check_workloads(&serving()).await, Reach::Readable);
+    assert!(matches!(
+        check_workloads(&serving().refusing("deployments")).await,
+        Reach::Refused(_)
+    ));
 }
