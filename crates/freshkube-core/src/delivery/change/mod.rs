@@ -34,6 +34,10 @@ pub struct Change {
     /// What the change is: its pull request, commit and title, as far as
     /// they were read.
     pub origin: Origin,
+    /// What may be missing, one sentence each that names the entry: a
+    /// part's entry or a destination that couldn't be read, a kind refused
+    /// or not served. The page's banner; empty when everything was read.
+    pub missing: Vec<String>,
     pub groups: Vec<Group>,
     pub stages: Vec<Stage>,
     pub hops: Vec<Hop>,

@@ -209,6 +209,9 @@ pub(crate) struct ChangePage {
     /// A refresh that failed over an earlier answer, and its label for
     /// assistive technology, derived with it.
     stale: Option<(SharedString, SharedString)>,
+    /// What the change may be missing, one sentence each that names the
+    /// entry, derived with the change.
+    missing: Option<SharedString>,
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
@@ -272,6 +275,7 @@ impl ChangePage {
             window: window.window_handle(),
             stage: stage.map(str::to_owned),
             stale: None,
+            missing: None,
             loading,
             loading_motion,
             connections,
@@ -301,6 +305,15 @@ impl ChangePage {
     /// filter and the selection where their rows still are.
     fn show(&mut self, change: Change) {
         let first = self.rows.is_empty();
+        self.missing = (!change.missing.is_empty()).then(|| {
+            change
+                .missing
+                .iter()
+                .map(|line| line.trim_end_matches('.'))
+                .collect::<Vec<_>>()
+                .join(". ")
+                .into()
+        });
         let rows: Vec<HopRow> = change
             .hops
             .iter()

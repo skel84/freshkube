@@ -14,8 +14,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
 
 use super::{Project, Read};
-use crate::applications::example::CORE;
-use crate::delivery::change::example::{self as change_example, GIT, PREVIOUS, STAGES};
+use crate::applications::example::{CICD, CORE};
+use crate::delivery::change::example::{self as change_example, GIT, PREVIOUS, STAGES, Shape};
 use crate::delivery::change::{
     Action, Change, Check, Destination, Eligible, Field, Group, Hop, HopDetail, LinkDetail, Object,
     Origin, Phase, Promotion, Reach, Shows, Stage, Target, Value as Shown,
@@ -170,6 +170,21 @@ fn stages(project: &str) -> Vec<Value> {
 
 /// What the list reads in example mode.
 pub fn read(now: DateTime<Utc>) -> Read {
+    read_shaped(now, Shape::Whole)
+}
+
+/// The example list as `shape` reads it: nothing when Kargo's entry
+/// couldn't be reached, else each change followed as the change page
+/// shows it.
+pub fn read_shaped(now: DateTime<Utc>, shape: Shape) -> Read {
+    if let Some(why) = shape.unreached() {
+        return Read {
+            cluster: CICD.to_owned(),
+            projects: Source::Unreadable(why.clone()),
+            late: 0,
+            unreached: Some(why),
+        };
+    }
     let projects = [CART, CHECKOUT]
         .into_iter()
         .map(|project| {
@@ -182,7 +197,7 @@ pub fn read(now: DateTime<Utc>) -> Read {
             let mut followed = BTreeMap::new();
             for name in STAGES.iter().filter_map(|stage| current(project, stage)) {
                 if let Some(change) = change_of(project, name, now) {
-                    followed.insert(name.to_owned(), Ok(Arc::new(change)));
+                    followed.insert(name.to_owned(), shape.apply(change).map(Arc::new));
                 }
             }
             Project {
@@ -194,9 +209,10 @@ pub fn read(now: DateTime<Utc>) -> Read {
         })
         .collect();
     Read {
-        cluster: CORE.to_owned(),
+        cluster: CICD.to_owned(),
         projects: Source::Read(projects),
         late: 0,
+        unreached: None,
     }
 }
 
@@ -443,11 +459,11 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
     let mut groups = vec![
         Group {
             phase: Phase::Build,
-            detail: format!("{GIT} · cicd-fra"),
+            detail: format!("{GIT} · {CICD}"),
         },
         Group {
             phase: Phase::Freight,
-            detail: format!("Kargo on {CORE}"),
+            detail: format!("Kargo on {CICD}"),
         },
     ];
     let mut hops = vec![
@@ -475,7 +491,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             kind: "Kargo Freight",
             name: format!("Freight {freight}"),
             detail: "From the Warehouse",
-            from: CORE,
+            from: CICD,
             confidence: Confidence::Confirmed,
             by: "commit",
             before: "Commit".into(),
@@ -526,7 +542,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
                 state,
                 name: gate.into(),
                 detail: detail.into(),
-                from: CORE.into(),
+                from: CICD.into(),
                 at: None,
                 link: None,
                 shows: Shows::Stage(ix),
@@ -555,13 +571,13 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             verification: Vec::new(),
             link: None,
             reach: reach.clone(),
-            object: object(CORE, GROUP, "Stage", "stages", project, name),
+            object: object(CICD, GROUP, "Stage", "stages", project, name),
         });
     }
     Change {
         project: project.into(),
         freight: freight.into(),
-        kargo_cluster: CORE.into(),
+        kargo_cluster: CICD.into(),
         observed_at: now,
         page: Err("Example data has no Kargo page for this Freight".into()),
         origin: Origin {
@@ -569,6 +585,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             commit: Some(invented.commit.into()),
             title: Some(invented.title()),
         },
+        missing: Vec::new(),
         groups,
         stages,
         hops,

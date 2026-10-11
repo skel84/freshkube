@@ -1,5 +1,6 @@
 //! The page's read: example data's change, or the live one core's
-//! `delivery::change::live` reads on the open connection. It reads while
+//! `delivery::change::live` reads across the workspace, each part from its
+//! entry, through a pool of clients made for the read alone. It reads while
 //! the page shows: on opening, on showing again once what it has is older
 //! than [`FRESH_FOR`], and on Refresh. Hiding drops the read in flight; an
 //! answer for another change, or a superseded one, never lands. A failed
@@ -8,19 +9,22 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::delivery::change::Change;
-use freshkube_core::delivery::change::live::{self, Mapping, Place};
+use freshkube_core::delivery::change::example::Shape;
+use freshkube_core::delivery::change::live::{self, Place};
 use freshkube_core::delivery::changes::example as changes_example;
-use freshkube_core::delivery::read::ReadOnlyClient;
+use freshkube_core::delivery::entry::{self, pool};
 use freshkube_core::snapshot::Request;
 
 use super::*;
+use crate::applications::across::Across;
 use crate::backend;
 use crate::resources::KubeAccess;
 
 /// A change read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
-/// How long one change's read may take: a few dozen lists.
-const DEADLINE: Duration = Duration::from_secs(60);
+/// How long one change's read may take before it fails whole: past
+/// core's budget, at which it answers with what was read in time.
+const DEADLINE: Duration = Duration::from_secs(live::BUDGET.as_secs() + 15);
 
 /// Where the page's change comes from.
 #[derive(Clone)]
@@ -31,13 +35,17 @@ pub(in crate::applications) enum Fetch {
         project: String,
         freight: String,
         now: DateTime<Utc>,
+        /// What the example couldn't read.
+        shape: Shape,
         delay: Duration,
     },
-    /// The open connection's.
+    /// A live read's, across the workspace from the open connection.
     Live {
         runtime: tokio::runtime::Handle,
         access: KubeAccess,
         place: Box<Place>,
+        /// The workspace's kubeconfig, `None` for the automatic one.
+        kubeconfig: Option<std::path::PathBuf>,
     },
 }
 
@@ -73,6 +81,7 @@ impl Fetch {
             observed_at: DateTime::<Utc>::MIN_UTC,
             page: Err("Nothing is read yet".into()),
             origin: Default::default(),
+            missing: Vec::new(),
             groups: Vec::new(),
             stages: Vec::new(),
             hops: Vec::new(),
@@ -92,10 +101,12 @@ impl ChangePage {
                 project,
                 freight,
                 now,
+                shape,
                 delay,
             } => {
                 let result = changes_example::change_of(&project, &freight, now)
-                    .ok_or_else(|| format!("Example data has no change for Freight {freight}"));
+                    .ok_or_else(|| format!("Example data has no change for Freight {freight}"))
+                    .and_then(|change| shape.apply(change));
                 match window {
                     Some(window) if delay.is_zero() => self.answer(&request, result, window, cx),
                     _ => {
@@ -111,15 +122,30 @@ impl ChangePage {
                 runtime,
                 access,
                 place,
+                kubeconfig,
             } => {
+                let across = Across {
+                    mapping: place.mapping.clone(),
+                    sources: place.sources.clone(),
+                    kubeconfig,
+                };
                 let (job, receiver) = backend::spawn_job(
                     &runtime,
                     DEADLINE,
                     "Reading the change timed out".into(),
                     async move {
-                        let client = access.client().await?;
-                        let reader = ReadOnlyClient::new(client);
-                        live::read(&reader, &place, Utc::now()).await
+                        let open = across.open(&access).await?;
+                        let kubeconfigs = across.kubeconfigs();
+                        let pool = pool::Pool::new(
+                            &place.sources,
+                            Some(pool::Open {
+                                entry: place.mapping.open.as_deref(),
+                                reader: open.as_ref().map_err(Clone::clone),
+                            }),
+                            |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
+                            live::BUDGET,
+                        );
+                        live::read_in(&pool, &place, Utc::now()).await
                     },
                 );
                 self.job = Some(job);
@@ -204,16 +230,21 @@ impl ChangePage {
     /// while shown, else when it next shows.
     pub(crate) fn set_clusters(
         &mut self,
-        mapping: Mapping,
+        across: Across,
         connections: Connections,
         cx: &mut Context<Self>,
     ) {
         self.connections = connections;
         self.detail = self.derive_detail();
-        if let Fetch::Live { place, .. } = &mut self.fetch
-            && place.mapping != mapping
+        if let Fetch::Live {
+            place, kubeconfig, ..
+        } = &mut self.fetch
+            && (&place.mapping, &place.sources, &*kubeconfig)
+                != (&across.mapping, &across.sources, &across.kubeconfig)
         {
-            place.mapping = mapping;
+            place.mapping = across.mapping;
+            place.sources = across.sources;
+            *kubeconfig = across.kubeconfig;
             self.read_at = None;
             self.refresh(cx);
         }

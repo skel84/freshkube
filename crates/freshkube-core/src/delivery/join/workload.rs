@@ -6,7 +6,7 @@ use crate::delivery::pods::RunningImage;
 use crate::delivery::rollouts::{AnalysisRun, Container, ReplicaSet, Rollout};
 use crate::delivery::source::{Truncation, cap_note};
 
-use super::argo::{not_the_environment, rollout_namespace};
+use super::argo::{rollout_namespace, workloads};
 use super::deployment::{deployment_links, speaks_for};
 use super::observe::{
     freight_side, manages, pods_running, pods_running_other, revision_tie, rollout_hash,
@@ -39,25 +39,27 @@ pub(super) fn rollout_links(
 fn rollout_chain(evidence: &Evidence, freight: &Freight, app: &Application) -> Vec<Link> {
     let app_id = id(&app.namespace, &app.name);
     let managed: Vec<_> = app.managed.iter().filter(|m| m.kind == "Rollout").collect();
-    if !evidence.deploys_to_environment(&app_id) {
-        let why = not_the_environment(evidence, &app_id);
+    let read = match workloads(evidence, &app_id) {
+        Ok(read) => read,
+        Err(why) => {
+            return vec![Link::new(
+                Hop::Application,
+                Hop::Rollout,
+                app_id,
+                Key::None,
+                Confidence::Unknown,
+                why,
+            )];
+        }
+    };
+    let Some(rollouts) = read.rollouts.read() else {
         return vec![Link::new(
             Hop::Application,
             Hop::Rollout,
             app_id,
             Key::None,
             Confidence::Unknown,
-            why,
-        )];
-    }
-    let Some(rollouts) = evidence.rollouts.read() else {
-        return vec![Link::new(
-            Hop::Application,
-            Hop::Rollout,
-            app_id,
-            Key::None,
-            Confidence::Unknown,
-            evidence.rollouts.why_not_read().unwrap_or_default(),
+            read.rollouts.why_not_read().unwrap_or_default(),
         )];
     };
     let mut links = Vec::new();
@@ -86,7 +88,7 @@ fn rollout_chain(evidence: &Evidence, freight: &Freight, app: &Application) -> V
                 Confidence::Unknown,
                 format!(
                     "the Application lists it but it was not found in the environment cluster{}",
-                    cap_note(evidence.rollouts.capped())
+                    cap_note(read.rollouts.capped())
                 ),
             ));
             continue;
@@ -101,13 +103,13 @@ fn rollout_chain(evidence: &Evidence, freight: &Freight, app: &Application) -> V
                     .iter()
                     .any(|image| image.digest.as_ref() == Some(digest))
             });
-        let state = rollout_state(rollout, evidence.analysis_runs.read());
+        let state = rollout_state(rollout, read.analysis_runs.read());
         let mut seen = vec![manages(app, "Rollout", &rollout.name)];
         seen.extend(rollout_seen(rollout, pinned.as_ref()));
         if let Some(digest) = &pinned {
             seen.extend(freight_side(freight, &Key::Digest(digest.clone())));
         }
-        let pods = pod_link(evidence, freight, rollout, &rollout_id);
+        let pods = pod_link(read, freight, rollout, &rollout_id);
         links.push(match pinned {
             Some(digest) => pinned_link(
                 app,
@@ -268,7 +270,7 @@ fn rollout_state(rollout: &Rollout, analysis: Option<&Vec<AnalysisRun>>) -> Stri
     parts.join(", ")
 }
 
-fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_id: &str) -> Link {
+fn pod_link(workloads: &Workloads, freight: &Freight, rollout: &Rollout, rollout_id: &str) -> Link {
     let subject = rollout_id.to_owned();
     let unknown = |why: String| {
         Link::new(
@@ -280,7 +282,7 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
             why,
         )
     };
-    let Some(read) = evidence.pods.get(rollout_id) else {
+    let Some(read) = workloads.pods.get(rollout_id) else {
         return unknown(if rollout.current_pod_hash.is_none() {
             "the Rollout reports no current pod hash".into()
         } else {
@@ -290,7 +292,7 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
     let Some(pods) = read.pods.read() else {
         return unknown(read.pods.why_not_read().unwrap_or_default());
     };
-    let tie = current_set(evidence, rollout, &read.hash);
+    let tie = current_set(workloads, rollout, &read.hash);
     // Tied by owner UIDs, only the current ReplicaSet's own pods count; a pod
     // that carries the hash label but another owner is not the Rollout's.
     let tied: Vec<&RunningImage> = pods
@@ -309,7 +311,13 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
         read.pods.capped(),
         freight,
     );
-    let which = which_pods(evidence, rollout, &read.hash, &tie, pods.len() - tied.len());
+    let which = which_pods(
+        workloads,
+        rollout,
+        &read.hash,
+        &tie,
+        pods.len() - tied.len(),
+    );
     match &tie {
         Ok(set) if link.confidence == Confidence::Confirmed => {
             let mut seen = revision_tie(rollout, set, &running(&containers, freight));
@@ -335,13 +343,13 @@ fn pod_link(evidence: &Evidence, freight: &Freight, rollout: &Rollout, rollout_i
 /// The ReplicaSet the Rollout owns, by UID, with its current pod hash: the
 /// tie from the Rollout to its current pods. Why there is none otherwise.
 fn current_set<'a>(
-    evidence: &'a Evidence,
+    workloads: &'a Workloads,
     rollout: &'a Rollout,
     hash: &str,
 ) -> Result<&'a ReplicaSet, String> {
     let untied = "so no owner reference ties the pods to the Rollout";
-    let Some(sets) = evidence.replica_sets.read() else {
-        let why = evidence.replica_sets.why_not_read().unwrap_or_default();
+    let Some(sets) = workloads.replica_sets.read() else {
+        let why = workloads.replica_sets.why_not_read().unwrap_or_default();
         return Err(format!("its ReplicaSets were not read ({why}), {untied}"));
     };
     if rollout.meta.uid.is_none() {
@@ -352,7 +360,7 @@ fn current_set<'a>(
         .ok_or_else(|| {
             format!(
                 "no ReplicaSet the Rollout owns has its current pod hash {hash}{}, {untied}",
-                cap_note(evidence.replica_sets.capped())
+                cap_note(workloads.replica_sets.capped())
             )
         })
 }
@@ -515,7 +523,7 @@ pub(super) fn judge_revision(
 /// Which pods were judged, and which of the Rollout's other ReplicaSets with
 /// pods were not.
 fn which_pods(
-    evidence: &Evidence,
+    workloads: &Workloads,
     rollout: &Rollout,
     hash: &str,
     tie: &Result<&ReplicaSet, String>,
@@ -537,7 +545,7 @@ fn which_pods(
         ));
     }
     let others: Vec<&str> =
-        owned_replica_sets(rollout, evidence.replica_sets.read().map(Vec::as_slice))
+        owned_replica_sets(rollout, workloads.replica_sets.read().map(Vec::as_slice))
             .filter(|other| other.replicas > 0 && other.pod_hash.as_deref() != Some(hash))
             .map(|other| other.name.as_str())
             .collect();
@@ -570,10 +578,11 @@ fn workload_pod_link(
             reason,
         )
     };
-    if !evidence.deploys_to_environment(app_id) {
-        return unknown(not_the_environment(evidence, app_id));
-    }
-    match evidence.namespace_pods.get(app_id) {
+    let read = match workloads(evidence, app_id) {
+        Ok(read) => read,
+        Err(why) => return unknown(why),
+    };
+    match read.namespace_pods.get(app_id) {
         Some(source) if source.read().is_some() => {
             let pods = source.read().unwrap();
             let summary = if app

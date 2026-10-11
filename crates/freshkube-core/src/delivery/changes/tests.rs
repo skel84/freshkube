@@ -197,6 +197,7 @@ fn read(projects: Vec<Project>) -> Read {
         cluster: "core-fra".into(),
         projects: Source::Read(projects),
         late: 0,
+        unreached: None,
     }
 }
 
@@ -235,6 +236,7 @@ fn a_capped_listing_says_so() {
         cluster: "core-fra".into(),
         projects: Source::Capped(vec![shop], Truncation { read: 1 }),
         late: 0,
+        unreached: None,
     });
     assert_eq!(changes.rows.len(), 1);
     let gaps: Vec<Gap> = changes.notes.iter().map(|note| note.gap).collect();
@@ -247,6 +249,7 @@ fn refused_kargo_is_a_note_never_an_empty_list() {
         cluster: "core-fra".into(),
         projects: Source::Refused("projects is forbidden".into()),
         late: 0,
+        unreached: None,
     });
     assert!(changes.rows.is_empty());
     assert_eq!(changes.notes.len(), 1);
@@ -262,6 +265,7 @@ fn refused_kargo_is_a_note_never_an_empty_list() {
         cluster: "core-fra".into(),
         projects: Source::NotInstalled("404".into()),
         late: 0,
+        unreached: None,
     });
     assert_eq!(missing.notes[0].gap, Gap::NotServed);
     assert_eq!(
@@ -370,6 +374,7 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
         label: "core-fra".into(),
         argocd_namespace: "argocd".into(),
         mapping: Default::default(),
+        sources: Default::default(),
     };
     let unserved = live::read(&FixtureReader::default(), &at, now(), live::BUDGET).await;
     assert!(matches!(unserved.projects, Source::NotInstalled(_)));
@@ -388,6 +393,7 @@ async fn a_live_read_lists_freight_and_follows_only_what_runs() {
         label: "core-fra".into(),
         argocd_namespace: "argocd".into(),
         mapping: Default::default(),
+        sources: Default::default(),
     };
     let freight = |name: &str| {
         json!({
@@ -517,6 +523,7 @@ fn at() -> live::Where {
         label: "core-fra".into(),
         argocd_namespace: "argocd".into(),
         mapping: Default::default(),
+        sources: Default::default(),
     }
 }
 
@@ -655,7 +662,7 @@ fn changes_not_followed_in_time_are_a_note() {
     assert_eq!(note.gap, Gap::Unreadable);
     assert_eq!(
         note.text,
-        "2 changes on core-fra weren't followed in the time a read may take, so their Stages show \
+        "2 changes on cicd-fra weren't followed in the time a read may take, so their Stages show \
          Unknown"
     );
 }
@@ -681,4 +688,109 @@ fn a_title_with_a_body_shows_its_first_line() {
             .unwrap_or_default()
             .contains(['\n', '\r'])
     }));
+}
+
+/// Argo CD on `core-a`, Kargo and the builds on `cicd-b`.
+fn across() -> live::Where {
+    use crate::workspace::{Entry, Role, Sources, Workspace};
+    let workspace = Workspace::new(vec![
+        Entry::new("core-a", Role::Core, "core-a-context"),
+        Entry::new("cicd-b", Role::Cicd, "cicd-b-context"),
+    ]);
+    live::Where {
+        sources: Sources::of(&workspace),
+        ..at()
+    }
+}
+
+/// The list read across `at`, with `unreachable` refusing to connect.
+async fn read_across(at: &live::Where, unreachable: &'static str) -> Read {
+    use crate::delivery::entry::pool::{Open, Pool};
+    use crate::workspace::Entry;
+    let pool = Pool::new(
+        &at.sources,
+        None::<Open<'_, FixtureReader>>,
+        |entry: Entry| async move {
+            match entry.id == unreachable {
+                true => Err("connection refused".to_owned()),
+                false => Ok(two_projects(None)),
+            }
+        },
+        live::BUDGET,
+    );
+    live::read_in(&pool, at, now(), live::BUDGET).await
+}
+
+#[tokio::test]
+async fn kargo_is_listed_on_its_own_entry() {
+    let read = read_across(&across(), "").await;
+    assert_eq!(read.cluster, "cicd-b");
+    assert_eq!(read.unreached, None);
+    let Source::Read(projects) = &read.projects else {
+        panic!("read: {:?}", read.projects)
+    };
+    assert_eq!(projects.len(), 2);
+}
+
+#[tokio::test]
+async fn kargos_entry_unreached_is_a_note_in_its_name() {
+    let read = read_across(&across(), "cicd-b").await;
+    assert_eq!(read.cluster, "cicd-b");
+    let changes = derive(&read);
+    assert!(changes.rows.is_empty());
+    assert_eq!(
+        changes.notes,
+        [Note {
+            gap: Gap::Unreadable,
+            project: None,
+            text: "Couldn't reach cicd-b: connection refused".into(),
+        }]
+    );
+}
+
+#[test]
+fn every_example_shape_says_what_it_couldnt_read() {
+    use crate::delivery::change::example::Shape;
+    let notes = |shape| derive(&example::read_shaped(now(), shape)).notes;
+    assert!(
+        notes(Shape::Whole)
+            .iter()
+            .all(|note| note.gap != Gap::Refused)
+    );
+    let unreached = derive(&example::read_shaped(now(), Shape::KargoUnreachable));
+    assert!(unreached.rows.is_empty());
+    assert_eq!(
+        unreached.notes[0].text,
+        "Couldn't reach cicd-fra: no answer within 5 s; a credential plugin may be waiting for a sign-in"
+    );
+    let refused = notes(Shape::ArgoRefused);
+    assert!(
+        refused
+            .iter()
+            .any(|note| note.gap == Gap::Refused && note.text.contains("refused on core-fra")),
+        "{refused:#?}"
+    );
+    // A Stage whose Application wasn't read deploys to an unknown cluster.
+    let change = example::change_of("checkout", "wonky-otter", now())
+        .map(|change| Shape::ArgoRefused.apply(change))
+        .expect("checkout's change")
+        .expect("read");
+    let stages: Vec<&str> = change
+        .groups
+        .iter()
+        .filter(|group| matches!(group.phase, Phase::Stage(_)))
+        .map(|group| group.detail.as_str())
+        .collect();
+    assert!(
+        stages
+            .iter()
+            .all(|detail| detail.starts_with("destination unknown: ")),
+        "{stages:?}"
+    );
+    let destination = notes(Shape::DestinationUnreachable);
+    assert!(
+        destination.iter().any(|note| note.text
+            == "Couldn't reach dev-fra: connection refused by dev-fra.example.test:6443"),
+        "{destination:#?}"
+    );
 }

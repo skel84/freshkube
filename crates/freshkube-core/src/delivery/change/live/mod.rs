@@ -1,20 +1,28 @@
-//! A change read from one cluster: the Freight a Kargo Stage runs, followed
-//! through what Kargo, Argo CD, Tekton and the workloads report there.
+//! A change read across the workspace: the Freight a Kargo Stage runs,
+//! followed through what Kargo, Argo CD, Tekton and the workloads report,
+//! each part where [`Place::sources`] says it is.
 //!
-//! [`read`] reads the Freight first, for the commit it names, then hands
-//! everything else to [`collect`](crate::delivery::collect()) with the one
-//! cluster in every role, and [`derive`] turns what was read into the
-//! page's [`Change`]. Every link's confidence is the join's
-//! ([`join`](crate::delivery::join::join) and
+//! [`read_in`] reads the Freight first, from Kargo's entry, for the commit
+//! it names; then the builds from the builds' entry, Argo CD's
+//! Applications from its entry, and each Stage's workloads and pods from
+//! the entry its Application's destination maps to ([`Mapping`]), through
+//! a [`Pool`] that connects to each entry once ([`delivery::entry::pool`]).
+//! [`derive`] turns what was read into the page's [`Change`]. Every link's
+//! confidence is the join's ([`join`](crate::delivery::join::join) and
 //! [`freight_links`](crate::delivery::join::freight_links)); the gates
 //! word what Kargo's Stages, Freight and Promotions record.
 //!
-//! A cluster Argo CD deploys to that isn't this one isn't read: its
-//! Application's workloads and pods are Unknown, never missing. Where the
-//! person mapped the destination to another workspace cluster
-//! ([`Mapping`]), the Stage names it, and the workloads Argo CD reports
-//! there are listed as Argo CD's claim, to open on that cluster.
+//! The workspace of one ([`read`]) reads everything from the open
+//! connection, as before. A destination that wasn't read, because its entry
+//! couldn't be reached or, in the workspace of one, isn't the open cluster,
+//! leaves its Application's workloads and pods Unknown, never missing: the
+//! Stage names it, and the workloads Argo CD reports there are listed as
+//! Argo CD's claim, to open on that cluster.
+//!
+//! [`delivery::entry::pool`]: crate::delivery::entry::pool
 
+#[cfg(test)]
+mod across_tests;
 mod derive;
 mod gates;
 mod links;
@@ -22,17 +30,24 @@ pub(crate) mod pages;
 #[cfg(test)]
 mod tests;
 
+use std::future::Future;
+use std::time::Duration;
+
 use chrono::{DateTime, Utc};
 
 use super::Change;
 use crate::delivery::argocd::MapHint;
-use crate::delivery::collect::{Clusters, Plan, collect};
+use crate::delivery::collect::{Plan, Upstream, read_environment, upstream};
+use crate::delivery::entry::pool::{Open, Pool, Unread};
 use crate::delivery::github::{GitHub, PullRequest};
+use crate::delivery::join::{
+    Evidence, candidate_applications, candidate_deployments, candidate_rollouts,
+};
 use crate::delivery::kargo::{Freight, read_freight};
-use crate::delivery::read::Reader;
+use crate::delivery::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use crate::delivery::source::Source;
 use crate::resources::{Failure, FailureKind};
-use crate::workspace::{self, Key};
+use crate::workspace::{self, Chosen, Entry, Key, Part, Sources};
 
 pub use derive::derive;
 pub use pages::{KARGO_NAMESPACE, Pages};
@@ -51,6 +66,9 @@ pub struct Place {
     pub argocd_namespace: String,
     /// Which workspace cluster each Argo CD destination is.
     pub mapping: Mapping,
+    /// Where Kargo, the builds and Argo CD are read; the workspace of one's
+    /// reads everything from this cluster.
+    pub sources: Sources,
 }
 
 impl Place {
@@ -60,6 +78,91 @@ impl Place {
     fn here(&self) -> &str {
         self.mapping.open.as_deref().unwrap_or(&self.cluster)
     }
+
+    /// The open cluster, as its objects open and the page names it.
+    fn open(&self) -> At {
+        At {
+            cluster: self.cluster.clone(),
+            label: self.label.clone(),
+            missing: None,
+        }
+    }
+
+    /// Where `part` is read: this cluster for the workspace of one and the
+    /// open entry, else its entry, by id.
+    fn at(&self, part: Part) -> At {
+        let chosen = self.sources.get(part);
+        match chosen {
+            Chosen::Entry { entry, .. } if !self.is_here(&entry.id) => At {
+                cluster: entry.id.clone(),
+                label: entry.id.clone(),
+                missing: None,
+            },
+            Chosen::Entry { .. } | Chosen::Open => self.open(),
+            Chosen::NoEntry(_) | Chosen::Gone(_) => At {
+                cluster: String::new(),
+                label: crate::applications::across::WORKSPACE.into(),
+                missing: chosen.missing(),
+            },
+        }
+    }
+
+    /// Where the environment `context`, a workspace entry or this
+    /// cluster's key, is.
+    fn at_context(&self, context: &str) -> At {
+        match self.is_here(context) {
+            true => self.open(),
+            false => At {
+                cluster: context.to_owned(),
+                label: context.to_owned(),
+                missing: None,
+            },
+        }
+    }
+
+    fn is_here(&self, context: &str) -> bool {
+        context == self.here() || context == self.cluster
+    }
+
+    /// Argo CD's own cluster, which it calls `in-cluster`: its entry, else
+    /// this one.
+    fn argocd(&self) -> String {
+        match self.sources.get(Part::ArgoCd) {
+            Chosen::Entry { entry, .. } => entry.id.clone(),
+            _ => self.here().to_owned(),
+        }
+    }
+}
+
+/// Where one part of a change was read: the cluster its objects open on,
+/// and its name on the page, or why no entry holds it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct At {
+    /// The open connection's key, or the workspace entry's id.
+    pub cluster: String,
+    pub label: String,
+    /// Why no entry holds the part, when none does.
+    pub missing: Option<String>,
+}
+
+impl At {
+    /// A group's words: `Tekton on cicd-fra`, or why the part has no entry.
+    fn on(&self, what: &str) -> String {
+        match &self.missing {
+            Some(why) => format!("{what}: {why}"),
+            None => format!("{what} on {}", self.label),
+        }
+    }
+}
+
+/// The parts whose entry couldn't be read at all, by the words that say
+/// why in its name. A destination's are in
+/// [`Evidence::environments`](crate::delivery::join::Evidence::environments).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reached {
+    pub kargo: Option<Unread>,
+    pub builds: Option<Unread>,
+    pub argocd: Option<Unread>,
 }
 
 /// `(entry, server or name)`, as [`Plan`] takes contexts.
@@ -147,49 +250,307 @@ pub fn commit_of(freight: &Freight) -> Option<&str> {
         })
 }
 
-/// The change `place` names, read through `reader` alone. An error says why
-/// the Freight itself couldn't be read; anything after it that couldn't be
-/// read is part of the change, as Unknown.
+/// How long a change's read may take across the workspace, past which an
+/// entry not yet read is left out with why.
+pub const BUDGET: Duration = Duration::from_secs(45);
+
+/// The change `place` names, read through `reader` alone: the workspace of
+/// one, whatever [`Place::sources`] says. An error says why the Freight
+/// itself couldn't be read; anything after it that couldn't be read is part
+/// of the change, as Unknown.
 pub async fn read<R: Reader>(
     reader: &R,
     place: &Place,
     observed_at: DateTime<Utc>,
 ) -> Result<Change, String> {
-    let freight = match read_freight(reader, &place.project, &place.freight).await {
-        Ok(freight) => freight,
-        Err(failure) => {
-            let why = match Source::<()>::from_failure(failure) {
-                Source::NotInstalled(_) => "it wasn't found".to_owned(),
-                Source::Refused(why) => format!("refused: {why}"),
-                Source::Unreadable(why) => why,
-                Source::Read(()) | Source::Capped(..) => String::new(),
-            };
-            return Err(format!(
-                "Freight {} of {} couldn't be read: {why}",
-                place.freight, place.project
-            ));
-        }
+    let alone = Place {
+        sources: Sources::default(),
+        ..place.clone()
     };
-    Ok(follow(reader, place, &freight, observed_at).await)
+    let pool = alone_pool(reader, &alone);
+    read_in(&pool, &alone, observed_at).await
 }
 
-/// The change of `freight`, already read, through `reader` alone: what the
-/// Changes list follows for each Freight from the project's own listing.
+/// The change of `freight`, already read, through `reader` alone.
 pub async fn follow<R: Reader>(
     reader: &R,
     place: &Place,
     freight: &Freight,
     observed_at: DateTime<Utc>,
 ) -> Change {
-    let (clusters, plan) = (clusters(reader), plan(place, freight));
-    let (evidence, pages) = futures::join!(
-        collect(&clusters, &plan, observed_at),
-        pages::read(reader, &place.argocd_namespace),
-    );
-    derive(place, &evidence, freight, &pages)
+    let alone = Place {
+        sources: Sources::default(),
+        ..place.clone()
+    };
+    let pool = alone_pool(reader, &alone);
+    follow_in(&pool, &alone, freight, observed_at).await
 }
 
-/// What [`collect`] reads for `freight` at `place`.
+/// A pool of the open connection alone.
+type Alone<'a, R> = Pool<'a, R, Never, fn(Entry) -> std::future::Ready<Result<Never, String>>>;
+
+fn alone_pool<'a, R: Reader>(reader: &'a R, place: &'a Place) -> Alone<'a, R> {
+    Pool::new(
+        &place.sources,
+        Some(Open {
+            entry: place.mapping.open.as_deref(),
+            reader: Ok(reader),
+        }),
+        |_| {
+            std::future::ready(Err(
+                "the workspace of one reads the open cluster alone".into()
+            ))
+        },
+        BUDGET,
+    )
+}
+
+/// The change `place` names, each part read from its entry through `pool`.
+/// An error says why the Freight itself couldn't be read, its entry's
+/// name in it; anything after it that couldn't be read is part of the
+/// change, as Unknown, in its entry's name.
+pub async fn read_in<R, C, F, Fut>(
+    pool: &Pool<'_, R, C, F>,
+    place: &Place,
+    observed_at: DateTime<Utc>,
+) -> Result<Change, String>
+where
+    R: Reader,
+    C: Reader,
+    F: Fn(Entry) -> Fut,
+    Fut: Future<Output = Result<C, String>>,
+{
+    let couldnt = |why: String| {
+        format!(
+            "Freight {} of {} couldn't be read: {why}",
+            place.freight, place.project
+        )
+    };
+    let kargo = match pool.part(Part::Kargo).await {
+        Ok((kargo, _)) => kargo,
+        Err(unread) => return Err(couldnt(unread.words())),
+    };
+    let freight = match read_freight(&kargo, &place.project, &place.freight).await {
+        Ok(freight) => freight,
+        Err(failure) => {
+            let at = place.at(Part::Kargo);
+            return Err(couldnt(match Source::<()>::from_failure(failure) {
+                Source::NotInstalled(_) => format!("it wasn't found on {}", at.label),
+                Source::Refused(why) => format!("refused on {}: {why}", at.label),
+                Source::Unreadable(why) => why,
+                Source::Read(()) | Source::Capped(..) => String::new(),
+            }));
+        }
+    };
+    Ok(follow_in(pool, place, &freight, observed_at).await)
+}
+
+/// The change of `freight`, already read, each part read from its entry
+/// through `pool`: what the Changes list follows for each Freight from the
+/// project's own listing.
+pub async fn follow_in<R, C, F, Fut>(
+    pool: &Pool<'_, R, C, F>,
+    place: &Place,
+    freight: &Freight,
+    observed_at: DateTime<Utc>,
+) -> Change
+where
+    R: Reader,
+    C: Reader,
+    F: Fn(Entry) -> Fut,
+    Fut: Future<Output = Result<C, String>>,
+{
+    let (kargo, builds, argocd) = futures::join!(
+        pool.part(Part::Kargo),
+        pool.part(Part::Builds),
+        pool.part(Part::ArgoCd),
+    );
+    let reached = Reached {
+        kargo: kargo.as_ref().err().cloned(),
+        builds: builds.as_ref().err().cloned(),
+        argocd: argocd.as_ref().err().cloned(),
+    };
+    let (kargo, builds, argocd) = (
+        Reaching::of(kargo),
+        Reaching::of(builds),
+        Reaching::of(argocd),
+    );
+    let plan = plan(place, freight);
+    let upstream_readers = Upstream {
+        kargo: &kargo,
+        argocd: &argocd,
+        tekton: &builds,
+        github: &NoGitHub,
+    };
+    let (mut evidence, pages) = futures::join!(
+        upstream(&upstream_readers, &plan, observed_at),
+        pages::read(&kargo, &argocd, &place.argocd_namespace),
+    );
+    read_environments(pool, place, &mut evidence).await;
+    derive(place, &evidence, freight, &pages, &reached)
+}
+
+/// Each environment the change's Stages deploy to, read from its entry
+/// under a destination's deadline, all at once: the pool connects at most
+/// a few at a time. A destination no entry the pool reaches holds, as
+/// another entry in the workspace of one, isn't asked: it is named, never
+/// read.
+async fn read_environments<R, C, F, Fut>(
+    pool: &Pool<'_, R, C, F>,
+    place: &Place,
+    evidence: &mut Evidence,
+) where
+    R: Reader,
+    C: Reader,
+    F: Fn(Entry) -> Fut,
+    Fut: Future<Output = Result<C, String>>,
+{
+    let mut contexts: Vec<&str> = evidence
+        .destinations
+        .values()
+        .filter_map(|destination| destination.context())
+        .filter(|context| place.is_here(context) || pool.sources().entry(context).is_some())
+        .filter(|context| {
+            !candidate_rollouts(evidence, context).is_empty()
+                || !candidate_deployments(evidence, context).is_empty()
+                || !candidate_applications(evidence, context, None).is_empty()
+        })
+        .collect();
+    contexts.sort_unstable();
+    contexts.dedup();
+    let read = futures::future::join_all(contexts.into_iter().map(|context| {
+        let evidence = &*evidence;
+        async move {
+            let until = pool.destination();
+            let reader = match place.is_here(context) {
+                true => pool.open(&until).await,
+                false => pool.entry(context, &until).await,
+            };
+            let workloads = match reader {
+                Ok((reader, _)) => until
+                    .bound(read_environment(&reader, evidence, context))
+                    .await
+                    .ok_or_else(|| {
+                        let entry = place.at_context(context).label;
+                        Unread::Unfinished {
+                            entry,
+                            why: until.unfinished(),
+                        }
+                        .words()
+                    }),
+                Err(unread) => Err(match unread {
+                    // The open cluster is named as the page names it.
+                    Unread::Unreachable { why, .. } if place.is_here(context) => {
+                        Unread::Unreachable {
+                            entry: place.label.clone(),
+                            why,
+                        }
+                        .words()
+                    }
+                    unread => unread.words(),
+                }),
+            };
+            (context.to_owned(), workloads)
+        }
+    }))
+    .await;
+    evidence.environments.extend(read);
+}
+
+/// A part's reader, or the words why its entry wasn't read, which every
+/// request then fails with, so each of its rows says so.
+enum Reaching<R> {
+    Read(R),
+    Unread(String),
+}
+
+impl<R> Reaching<R> {
+    fn of<W>(reached: Result<(R, W), Unread>) -> Self {
+        match reached {
+            Ok((reader, _)) => Reaching::Read(reader),
+            Err(unread) => Reaching::Unread(unread.words()),
+        }
+    }
+
+    fn failure(why: &str) -> Failure {
+        Failure::new(FailureKind::Other, why)
+    }
+}
+
+impl<R: Reader> Reader for Reaching<R> {
+    async fn get(
+        &self,
+        resource: &Resource,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<serde_json::Value, Failure> {
+        match self {
+            Reaching::Read(reader) => reader.get(resource, namespace, name).await,
+            Reaching::Unread(why) => Err(Self::failure(why)),
+        }
+    }
+    async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
+        match self {
+            Reaching::Read(reader) => reader.list(request).await,
+            Reaching::Unread(why) => Err(Self::failure(why)),
+        }
+    }
+    async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
+        match self {
+            Reaching::Read(reader) => reader.probe(request).await,
+            Reaching::Unread(why) => Err(Self::failure(why)),
+        }
+    }
+    async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
+        match self {
+            Reaching::Read(reader) => reader.groups().await,
+            Reaching::Unread(why) => Err(Self::failure(why)),
+        }
+    }
+    async fn plurals(&self, group: &str, version: &str) -> Result<Vec<String>, Failure> {
+        match self {
+            Reaching::Read(reader) => reader.plurals(group, version).await,
+            Reaching::Unread(why) => Err(Self::failure(why)),
+        }
+    }
+}
+
+/// A client never made: the workspace of one connects to nothing.
+pub enum Never {}
+
+impl Reader for Never {
+    async fn get(
+        &self,
+        _: &Resource,
+        _: Option<&str>,
+        _: &str,
+    ) -> Result<serde_json::Value, Failure> {
+        match *self {}
+    }
+    async fn list(&self, _: &ListRequest) -> Result<Listing, Failure> {
+        match *self {}
+    }
+    async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
+        match *self {}
+    }
+    async fn plurals(&self, _: &str, _: &str) -> Result<Vec<String>, Failure> {
+        match *self {}
+    }
+}
+
+/// `reader` in every role, without GitHub.
+#[cfg(test)]
+fn clusters<R: Reader>(reader: &R) -> crate::delivery::collect::Clusters<'_, R, R, R, R, NoGitHub> {
+    crate::delivery::collect::Clusters {
+        kargo: reader,
+        argocd: reader,
+        tekton: reader,
+        environment: reader,
+        github: &NoGitHub,
+    }
+}
+
+/// What [`upstream`] reads for `freight` at `place`.
 fn plan(place: &Place, freight: &Freight) -> Plan {
     let (contexts, cluster_names) = place.mapping.pairs();
     Plan {
@@ -201,7 +562,7 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         github_repo: None,
         contexts,
         cluster_names,
-        argocd: place.here().to_owned(),
+        argocd: place.argocd(),
         environment: place.here().to_owned(),
         evidence_result: None,
         commit_names: Default::default(),
@@ -213,21 +574,15 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
             false => MapHint::Flags,
         },
         // This cluster is the open entry, else the connection's key, which
-        // nobody reads: its words are the name the page shows.
+        // nobody reads: its words are the name the page shows. Every other
+        // entry is named by its id.
         names: (place.here() != place.label)
             .then(|| (place.here().to_owned(), place.label.clone()))
             .into_iter()
+            .chain(
+                (place.cluster != place.label)
+                    .then(|| (place.cluster.clone(), place.label.clone())),
+            )
             .collect(),
-    }
-}
-
-/// `reader` in every role, without GitHub.
-fn clusters<R: Reader>(reader: &R) -> Clusters<'_, R, R, R, R, NoGitHub> {
-    Clusters {
-        kargo: reader,
-        argocd: reader,
-        tekton: reader,
-        environment: reader,
-        github: &NoGitHub,
     }
 }

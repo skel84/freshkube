@@ -2,6 +2,13 @@
 //! [`join`](super::join::join). Each cluster has its own [`Reader`], so the
 //! Kargo, Argo CD, CI/CD and environment clusters may be four contexts or
 //! fewer; the caller says which is which.
+//!
+//! [`upstream`] reads the builds, the Kargo project, Argo CD's
+//! Applications and the pull requests; [`read_environment`] then reads what
+//! one environment cluster holds of the change, for the Applications whose
+//! destination it is. [`collect`] does both for one environment cluster; a
+//! caller with several reads each where it is and keeps each one's
+//! [`Workloads`] in [`Evidence::environments`].
 
 use std::collections::BTreeMap;
 
@@ -15,7 +22,8 @@ use super::deployments::{
 };
 use super::github::GitHub;
 use super::join::{
-    Evidence, RolloutPods, candidate_applications, candidate_deployments, candidate_rollouts,
+    Evidence, RolloutPods, Workloads, candidate_applications, candidate_deployments,
+    candidate_rollouts,
 };
 use super::kargo::read_project;
 use super::pods::{read_deployment_pods, read_namespace_pods, read_rollout_pods};
@@ -82,6 +90,27 @@ pub struct Clusters<'a, K, A, T, E, G> {
     pub github: &'a G,
 }
 
+impl<'a, K, A, T, E, G> Clusters<'a, K, A, T, E, G> {
+    /// The readers of everything before the environment clusters.
+    pub fn upstream(&self) -> Upstream<'a, K, A, T, G> {
+        Upstream {
+            kargo: self.kargo,
+            argocd: self.argocd,
+            tekton: self.tekton,
+            github: self.github,
+        }
+    }
+}
+
+/// The readers of everything before the environment clusters: one per
+/// role.
+pub struct Upstream<'a, K, A, T, G> {
+    pub kargo: &'a K,
+    pub argocd: &'a A,
+    pub tekton: &'a T,
+    pub github: &'a G,
+}
+
 /// The first part that couldn't be read, else every part's items together,
 /// capped when any part was.
 fn merge<T>(parts: Vec<Source<Vec<T>>>) -> Source<Vec<T>> {
@@ -103,18 +132,40 @@ fn merge<T>(parts: Vec<Source<Vec<T>>>) -> Source<Vec<T>> {
     }
 }
 
+/// Everything one change needs, its workloads read from the one
+/// environment cluster, `plan.environment`.
 pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
     clusters: &Clusters<'_, K, A, T, E, G>,
     plan: &Plan,
     observed_at: DateTime<Utc>,
 ) -> Evidence {
-    let builds = if plan.sha.is_empty() {
-        Source::Unreadable("the Freight names no commit to find its builds by".into())
-    } else {
-        read_builds(clusters.tekton, plan.build_namespace.as_deref(), &plan.sha).await
+    let mut evidence = upstream(&clusters.upstream(), plan, observed_at).await;
+    let workloads = read_environment(clusters.environment, &evidence, &plan.environment).await;
+    evidence
+        .environments
+        .insert(plan.environment.clone(), Ok(workloads));
+    evidence
+}
+
+/// Everything before the environment clusters: the builds, the Kargo
+/// project, Argo CD's Applications and where each deploys, and the pull
+/// requests. No environment is read yet.
+pub async fn upstream<K: Reader, A: Reader, T: Reader, G: GitHub>(
+    clusters: &Upstream<'_, K, A, T, G>,
+    plan: &Plan,
+    observed_at: DateTime<Utc>,
+) -> Evidence {
+    let builds = async {
+        if plan.sha.is_empty() {
+            Source::Unreadable("the Freight names no commit to find its builds by".into())
+        } else {
+            read_builds(clusters.tekton, plan.build_namespace.as_deref(), &plan.sha).await
+        }
     };
-    let kargo = read_project(clusters.kargo, &plan.kargo_project).await;
-    let applications = read_applications(clusters.argocd, &plan.argocd_namespace).await;
+    let kargo = read_project(clusters.kargo, &plan.kargo_project);
+    let applications = read_applications(clusters.argocd, &plan.argocd_namespace);
+    // Each part is asked of its own cluster, so none waits on another's.
+    let (builds, kargo, applications) = futures::join!(builds, kargo, applications);
     let destinations: BTreeMap<String, DestinationMatch> = applications
         .read()
         .map(|apps| {
@@ -148,22 +199,25 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         kargo,
         applications,
         destinations,
-        environment: plan.environment.clone(),
-        rollouts: Source::Read(Vec::new()),
-        analysis_runs: Source::Read(Vec::new()),
-        replica_sets: Source::Read(Vec::new()),
-        pods: BTreeMap::new(),
-        deployments: Source::Read(Vec::new()),
-        deployment_sets: Source::Read(Vec::new()),
-        deployment_pods: BTreeMap::new(),
-        namespace_pods: BTreeMap::new(),
+        environments: BTreeMap::new(),
         pull_requests: None,
         pr_builds: BTreeMap::new(),
     };
     read_pull_requests(clusters, plan, &mut evidence).await;
+    evidence
+}
 
+/// What the environment cluster `context`, read through `environment`,
+/// holds of the change: only for the Applications whose destination it
+/// is, and only what they reach.
+pub async fn read_environment<E: Reader>(
+    environment: &E,
+    evidence: &Evidence,
+    context: &str,
+) -> Workloads {
+    let mut workloads = Workloads::default();
     // Only the Rollouts this change can reach are read, in their namespaces.
-    let wanted = candidate_rollouts(&evidence);
+    let wanted = candidate_rollouts(evidence, context);
     let mut namespaces: Vec<&str> = wanted.iter().map(|w| w.namespace.as_str()).collect();
     namespaces.sort_unstable();
     namespaces.dedup();
@@ -171,16 +225,16 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
     let mut analysis: Vec<Source<Vec<AnalysisRun>>> = Vec::new();
     let mut replica_sets: Vec<Source<Vec<ReplicaSet>>> = Vec::new();
     for namespace in &namespaces {
-        rollouts.push(read_rollouts(clusters.environment, namespace).await);
-        analysis.push(read_analysis_runs(clusters.environment, namespace).await);
-        replica_sets.push(read_replica_sets(clusters.environment, namespace).await);
+        rollouts.push(read_rollouts(environment, namespace).await);
+        analysis.push(read_analysis_runs(environment, namespace).await);
+        replica_sets.push(read_replica_sets(environment, namespace).await);
     }
     if !namespaces.is_empty() {
-        evidence.rollouts = merge(rollouts);
-        evidence.analysis_runs = merge(analysis);
-        evidence.replica_sets = merge(replica_sets);
+        workloads.rollouts = merge(rollouts);
+        workloads.analysis_runs = merge(analysis);
+        workloads.replica_sets = merge(replica_sets);
     }
-    if let Some(found) = evidence.rollouts.read() {
+    if let Some(found) = workloads.rollouts.read() {
         // A Rollout's pods are those of its current revision; the stable
         // ReplicaSet's, during a canary, run the previous one and are not read.
         let mut pods = BTreeMap::new();
@@ -192,31 +246,36 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
             else {
                 continue;
             };
-            let read = read_rollout_pods(clusters.environment, &wanted.namespace, &hash).await;
+            let read = read_rollout_pods(environment, &wanted.namespace, &hash).await;
             pods.insert(
                 format!("{}/{}", wanted.namespace, wanted.name),
                 RolloutPods { hash, pods: read },
             );
         }
-        evidence.pods = pods;
+        workloads.pods = pods;
     }
 
-    read_deployment_chain(clusters.environment, &mut evidence).await;
+    read_deployment_chain(environment, evidence, context, &mut workloads).await;
 
     // Applications that manage no Rollout: read the pods of their namespace.
-    // Both candidate lists hold only Applications whose destination is the
+    // Both candidate lists hold only Applications whose destination is this
     // environment cluster.
-    for (app_id, namespace) in candidate_applications(&evidence) {
-        let pods = read_namespace_pods(clusters.environment, &namespace).await;
-        evidence.namespace_pods.insert(app_id, pods);
+    for (app_id, namespace) in candidate_applications(evidence, context, Some(&workloads)) {
+        let pods = read_namespace_pods(environment, &namespace).await;
+        workloads.namespace_pods.insert(app_id, pods);
     }
-    evidence
+    workloads
 }
 
 /// The Deployments this change can reach, in their namespaces, the
 /// ReplicaSets they own, and the pods of each one's current ReplicaSet.
-async fn read_deployment_chain<E: Reader>(environment: &E, evidence: &mut Evidence) {
-    let wanted = candidate_deployments(evidence);
+async fn read_deployment_chain<E: Reader>(
+    environment: &E,
+    evidence: &Evidence,
+    context: &str,
+    workloads: &mut Workloads,
+) {
+    let wanted = candidate_deployments(evidence, context);
     let mut namespaces: Vec<&str> = wanted.iter().map(|w| w.namespace.as_str()).collect();
     namespaces.sort_unstable();
     namespaces.dedup();
@@ -229,10 +288,12 @@ async fn read_deployment_chain<E: Reader>(environment: &E, evidence: &mut Eviden
         deployments.push(read_deployments(environment, namespace).await);
         sets.push(read_deployment_sets(environment, namespace).await);
     }
-    evidence.deployments = merge(deployments);
-    evidence.deployment_sets = merge(sets);
-    let (Some(found), Some(owned)) = (evidence.deployments.read(), evidence.deployment_sets.read())
-    else {
+    workloads.deployments = merge(deployments);
+    workloads.deployment_sets = merge(sets);
+    let (Some(found), Some(owned)) = (
+        workloads.deployments.read(),
+        workloads.deployment_sets.read(),
+    ) else {
         return;
     };
     // Only the current ReplicaSet's pods are read: the controller names it by
@@ -257,13 +318,13 @@ async fn read_deployment_chain<E: Reader>(environment: &E, evidence: &mut Eviden
             RolloutPods { hash, pods: read },
         );
     }
-    evidence.deployment_pods = pods;
+    workloads.deployment_pods = pods;
 }
 
 /// Pull requests for the commit, and the builds of each one's head commit
 /// when that is a different commit.
-async fn read_pull_requests<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
-    clusters: &Clusters<'_, K, A, T, E, G>,
+async fn read_pull_requests<K: Reader, A: Reader, T: Reader, G: GitHub>(
+    clusters: &Upstream<'_, K, A, T, G>,
     plan: &Plan,
     evidence: &mut Evidence,
 ) {

@@ -8,6 +8,7 @@ use freshkube_core::applications::read::{ARGOCD, argo_namespaces};
 use freshkube_core::applications::{
     Absent, ArgoFound, ArgoScope, Asked, Inputs, SessionInputs, SessionKey, example as acme,
 };
+use freshkube_core::delivery::change::example::Shape;
 use freshkube_core::delivery::source::{Source, Truncation};
 
 use super::display::Labels;
@@ -82,6 +83,19 @@ impl Variant {
             Ok("argo-refused") => Self::ArgoRefused,
             Ok("destination") => Self::Destination,
             _ => Self::Acme,
+        }
+    }
+}
+
+impl Variant {
+    /// What the change page and the Changes list couldn't read in this
+    /// shape: Kargo's entry, Argo CD's Applications, or a destination.
+    pub(crate) fn shape(self) -> Shape {
+        match self {
+            Self::Unreachable => Shape::KargoUnreachable,
+            Self::ArgoRefused => Shape::ArgoRefused,
+            Self::Destination => Shape::DestinationUnreachable,
+            _ => Shape::Whole,
         }
     }
 }

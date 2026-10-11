@@ -618,6 +618,7 @@ enum Target<'a, R> {
     Entry(&'a EntryReader),
 }
 
+pub mod pool;
 mod served;
 #[cfg(test)]
 mod tests;

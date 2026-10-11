@@ -189,9 +189,61 @@ pub struct Evidence {
     pub applications: Source<Vec<Application>>,
     /// Where each Application's destination points, by `namespace/name`.
     pub destinations: BTreeMap<String, DestinationMatch>,
-    /// The context name of the environment cluster, the only cluster
-    /// Rollouts and pods are read from.
-    pub environment: String,
+    /// Each environment cluster asked, by context: its Rollouts,
+    /// Deployments and pods, or why it couldn't be read. An Application's
+    /// workloads are read, and judged, only in its own destination's.
+    pub environments: BTreeMap<String, Result<Workloads, String>>,
+    /// Pull requests GitHub associates with the commit; `None` when GitHub
+    /// wasn't asked.
+    pub pull_requests: Option<Source<Vec<PullRequest>>>,
+    /// Builds on a pull request's head commit, by PR number, for the PRs whose
+    /// head is not the commit itself (a squash or rebase merge).
+    pub pr_builds: BTreeMap<u64, Source<Vec<Build>>>,
+}
+
+impl Evidence {
+    /// How a context is named in words: the name given for its key, else
+    /// the key itself, which a kubeconfig context or a workspace entry is.
+    pub fn name<'a>(&'a self, context: &'a str) -> &'a str {
+        self.names.get(context).map_or(context, String::as_str)
+    }
+
+    /// The context the Application's destination is, when it is one.
+    pub fn destination_of(&self, app_id: &str) -> Option<&str> {
+        self.destinations
+            .get(app_id)
+            .and_then(DestinationMatch::context)
+    }
+
+    /// What the Application's destination holds: `None` when it is no
+    /// environment cluster asked, so nothing was read there for it; the
+    /// why when it was asked but couldn't be read. A workload of the same
+    /// name in another cluster says nothing about this one.
+    pub fn workloads_of(&self, app_id: &str) -> Option<Result<&Workloads, &str>> {
+        let context = self.destination_of(app_id)?;
+        let read = self.environments.get(context)?;
+        Some(read.as_ref().map_err(String::as_str))
+    }
+
+    /// Whether the Application's destination is an environment cluster
+    /// that was read.
+    pub fn deploys_to_environment(&self, app_id: &str) -> bool {
+        matches!(self.workloads_of(app_id), Some(Ok(_)))
+    }
+
+    /// The environment cluster, when exactly one was asked: the
+    /// command-line read's, whose words name it.
+    pub fn environment(&self) -> Option<&str> {
+        match self.environments.len() {
+            1 => self.environments.keys().next().map(String::as_str),
+            _ => None,
+        }
+    }
+}
+
+/// What one environment cluster holds of a change.
+#[derive(Clone, Debug)]
+pub struct Workloads {
     pub rollouts: Source<Vec<Rollout>>,
     pub analysis_runs: Source<Vec<AnalysisRun>>,
     /// The ReplicaSets of the Rollouts' namespaces.
@@ -208,29 +260,21 @@ pub struct Evidence {
     /// Pods read in an Application's destination namespace, by the
     /// Application's `namespace/name`, for workloads that aren't Rollouts.
     pub namespace_pods: BTreeMap<String, Source<Vec<RunningImage>>>,
-    /// Pull requests GitHub associates with the commit; `None` when GitHub
-    /// wasn't asked.
-    pub pull_requests: Option<Source<Vec<PullRequest>>>,
-    /// Builds on a pull request's head commit, by PR number, for the PRs whose
-    /// head is not the commit itself (a squash or rebase merge).
-    pub pr_builds: BTreeMap<u64, Source<Vec<Build>>>,
 }
 
-impl Evidence {
-    /// How a context is named in words: the name given for its key, else
-    /// the key itself, which a kubeconfig context or a workspace entry is.
-    pub fn name<'a>(&'a self, context: &'a str) -> &'a str {
-        self.names.get(context).map_or(context, String::as_str)
-    }
-
-    /// Whether the Application's destination is the environment cluster.
-    /// Its Rollouts and pods are read, and judged, only then: a workload of
-    /// the same name in another cluster says nothing about this one.
-    pub fn deploys_to_environment(&self, app_id: &str) -> bool {
-        self.destinations
-            .get(app_id)
-            .and_then(DestinationMatch::context)
-            .is_some_and(|context| context == self.environment)
+/// Nothing asked yet: every kind read and empty.
+impl Default for Workloads {
+    fn default() -> Self {
+        Self {
+            rollouts: Source::Read(Vec::new()),
+            analysis_runs: Source::Read(Vec::new()),
+            replica_sets: Source::Read(Vec::new()),
+            pods: BTreeMap::new(),
+            deployments: Source::Read(Vec::new()),
+            deployment_sets: Source::Read(Vec::new()),
+            deployment_pods: BTreeMap::new(),
+            namespace_pods: BTreeMap::new(),
+        }
     }
 }
 
@@ -482,18 +526,18 @@ fn build_freight(
     }
 }
 
-/// The Rollouts whose pods should be read: those an Application managed by a
-/// Stage that reports one of `freight` as current points at, when the
-/// Application deploys to the environment cluster. Used by the collector so
-/// pods are read only for the change in question.
-pub fn candidate_rollouts(evidence: &Evidence) -> Vec<WantedRollout> {
-    candidate_workloads(evidence, ControllerKind::Rollout)
+/// The Rollouts whose pods should be read in the environment `context`:
+/// those an Application managed by a Stage that reports one of `freight` as
+/// current points at, when the Application deploys there. Used by the
+/// collector so pods are read only for the change in question.
+pub fn candidate_rollouts(evidence: &Evidence, context: &str) -> Vec<WantedRollout> {
+    candidate_workloads(evidence, context, ControllerKind::Rollout)
 }
 
 /// The Deployments whose pods should be read, as [`candidate_rollouts`] finds
 /// Rollouts.
-pub fn candidate_deployments(evidence: &Evidence) -> Vec<WantedRollout> {
-    candidate_workloads(evidence, ControllerKind::Deployment)
+pub fn candidate_deployments(evidence: &Evidence, context: &str) -> Vec<WantedRollout> {
+    candidate_workloads(evidence, context, ControllerKind::Deployment)
 }
 
 /// The workload controllers an Application manages that join pods by owner.
@@ -518,7 +562,11 @@ fn manages_rollout(app: &Application) -> bool {
     app.managed.iter().any(|m| ControllerKind::Rollout.is(m))
 }
 
-fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<WantedRollout> {
+fn candidate_workloads(
+    evidence: &Evidence,
+    context: &str,
+    controller: ControllerKind,
+) -> Vec<WantedRollout> {
     // Builds that couldn't be read leave the Freight joined on the commit
     // alone, as `join` joins it.
     let builds = evidence.builds.read().map_or(&[][..], Vec::as_slice);
@@ -538,7 +586,7 @@ fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<W
             for app in apps.iter().filter(|app| {
                 app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
                     .is_some()
-                    && evidence.deploys_to_environment(&id(&app.namespace, &app.name))
+                    && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
             }) {
                 for managed in app.managed.iter().filter(|m| controller.is(m)) {
                     let Some(namespace) = rollout_namespace(app, managed) else {
@@ -559,9 +607,24 @@ fn candidate_workloads(evidence: &Evidence, controller: ControllerKind) -> Vec<W
 }
 
 /// The Applications of a stage that holds the change's Freight and manage no
-/// Rollout, nor a Deployment of the Freight's repository, with the namespace their workload runs in: the pods there are
-/// read instead, when the destination is the environment cluster.
-pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
+/// Rollout, nor a Deployment of the Freight's repository, with the
+/// namespace their workload runs in: the pods there are read instead, when
+/// the destination is the environment `context`.
+///
+/// `read` is what was read in `context` so far, whose Deployments say
+/// whether the Deployment chain speaks for an Application; without it,
+/// what `evidence` holds for `context`.
+pub fn candidate_applications(
+    evidence: &Evidence,
+    context: &str,
+    read: Option<&Workloads>,
+) -> Vec<(String, String)> {
+    let read = read.or_else(|| {
+        evidence
+            .environments
+            .get(context)
+            .and_then(|read| read.as_ref().ok())
+    });
     // Builds that couldn't be read leave the Freight joined on the commit
     // alone, as `join` joins it.
     let builds = evidence.builds.read().map_or(&[][..], Vec::as_slice);
@@ -582,8 +645,8 @@ pub fn candidate_applications(evidence: &Evidence) -> Vec<(String, String)> {
                 app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
                     .is_some()
                     && !manages_rollout(app)
-                    && !deployment::speaks_for(evidence, item, app)
-                    && evidence.deploys_to_environment(&id(&app.namespace, &app.name))
+                    && !deployment::speaks_for_in(read, item, app)
+                    && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
             }) {
                 let Some(namespace) = app.destination_namespace.clone() else {
                     continue;
