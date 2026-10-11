@@ -126,22 +126,57 @@ freshkube --debug
 
 The change page follows one Kargo Freight from its pull request to the pods that run it. It only reads: it never approves, promotes or syncs.
 
-1. Open the cluster that runs Kargo and Argo CD, for example `freshkube --kubernetes-only --kubeconfig /path/to/kubeconfig --kube-context admin@lab`.
-2. Choose **Applications** on the rail, then a Kargo application.
-3. Select a Stage and choose **Follow ⟨Freight⟩** (or press F). The page lists the hops in travel order: Build, Freight, then each Stage with its gates, the Argo CD Application, the workload and its pods. Each link says how sure it is: Confirmed, Claimed or Unknown.
+There are two ways in, both under **Applications** on the rail:
+
+- **Changes**, at the top of the column, lists one row per Freight with each Stage's state. Select a row and press Enter.
+- Open a Kargo application, select a Stage and choose **Follow ⟨Freight⟩** (or press F).
+
+The page lists the hops in travel order: Build, Freight, then each Stage with its gates, the Argo CD Application, the workload and its pods. Each link says how sure it is:
+
+- **Confirmed:** both sides were read and agree.
+- **Claimed:** only one side says so, for example Argo CD's status for workloads on a cluster that wasn't read.
+- **Unknown:** a side couldn't be read, and the hop says which cluster and why.
+
+With one cluster, there is nothing to set up. Open the cluster that runs Kargo and Argo CD, for example `freshkube --kubernetes-only --kubeconfig /path/to/kubeconfig --kube-context admin@lab`. Without a workspace file, every part is read from the open connection.
+
+#### Several clusters
+
+When Kargo, Argo CD and your workloads run on different clusters, list them in **Settings › Workspace**. Each entry has a role, and the role says what is read there:
+
+- `cicd`: Kargo and the builds (Pipelines as Code's PipelineRuns).
+- `core`: Argo CD. Kargo and the builds too, when no entry is `cicd`.
+- `environment`: a cluster your workloads run on.
+
+The first entry with a role wins. Under **Argo CD destinations**, map each destination, by its server URL or its cluster name, to one of the entries. Freshkube never guesses from your kubeconfig. A Stage that deploys to Argo CD's own cluster (`in-cluster`) needs no mapping. **Delivery sources** shows which entry each part is read from and why; **Check sources** reads one item of each to prove it.
+
+The page saves `workspace.json` beside the app's preferences: `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube` on Linux and `%APPDATA%\Freshkube` on Windows. It looks like this:
+
+```json
+{
+  "version": 1,
+  "clusters": [
+    { "id": "cicd-fra", "role": "cicd", "context": "admin@cicd-fra" },
+    { "id": "core-fra", "role": "core", "context": "admin@core-fra" },
+    { "id": "dev-fra", "role": "environment", "context": "admin@dev-fra" },
+    { "id": "prod-ams", "role": "environment", "context": "admin@prod-ams" }
+  ],
+  "destinations": [
+    { "name": "dev-fra", "entry": "dev-fra" },
+    { "server": "https://prod-ams.example.com:6443", "entry": "prod-ams" }
+  ]
+}
+```
+
+Each part is then read from its own entry, whichever cluster is open. A destination that was read can be Confirmed to its pods. An entry that is refused or can't be reached is named on its hop and in a May be missing banner, never shown as none found. Each read has a deadline, so one slow cluster never holds up the others: the change page has 45 s, and a destination's entry 30 s of it; the Changes list keeps what answered within 90 s. An unmapped destination stays Unknown and says so.
 
 Some buttons are greyed out, with the reason in their tooltip:
 
 - **Open in Argo CD** and **Open in Kargo** need the address the cluster records: `url` in the `argocd-cm` ConfigMap, and `ADMIN_ACCOUNT_TOKEN_ISSUER` in the `kargo-api` ConfigMap in the `kargo` namespace.
 - A build's pull request, commit and run links need the Pipelines as Code annotations on its PipelineRun.
 - **Compare in Observability** needs Coroot connected, with a Coroot cluster linked to the open one, and a Deployment whose pods are confirmed to run the Freight.
+- **Open**, a run's **Logs** and **Compare in Observability** act on the open cluster only.
 
-A Stage whose Argo CD Application deploys to Argo CD's own cluster (`in-cluster`) needs no setup. For a Stage that deploys to another cluster, tell Freshkube which cluster that is. It never guesses from your kubeconfig:
-
-1. In **Settings › Workspace**, add an entry for each cluster.
-2. Under **Argo CD destinations**, map each destination, by its server URL or its cluster name, to one of those entries.
-
-An unmapped destination stays Unknown and says so. A Stage on another entry lists the workloads Argo CD reports there, and **Switch and open** asks before it switches the window to that cluster and opens the object in Resources.
+An object on another workspace entry offers **Switch and open** instead. It asks before it switches the window to that entry, then opens the object in Resources once the entry answers.
 
 ### Keyboard
 
