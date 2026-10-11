@@ -19,7 +19,13 @@
 //! breadcrumb comes back. The change page reads the change itself, on the
 //! open connection, while it shows; a live read records each Stage's
 //! current Freight, which is what it follows.
+//!
+//! The column's Changes row shows the Changes list (`changes/`) in the
+//! list's place: every Freight of the open cluster's Kargo projects, with
+//! how sure it is that each Stage's pods run it. It reads itself, while it
+//! shows, and opens the change page in its own place.
 mod change;
+mod changes;
 mod column;
 mod display;
 mod example;
@@ -50,6 +56,8 @@ use gpui_kit::*;
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
 use change::{ChangeEvent, ChangePage, Changes};
+use changes::ChangesEvent;
+pub(crate) use changes::ChangesPage;
 pub(crate) use column::Column;
 #[cfg(test)]
 pub(crate) use column::{ColumnApp, ColumnSection};
@@ -90,6 +98,7 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
     ];
     bindings.extend(page::key_bindings());
     bindings.extend(change::key_bindings());
+    bindings.extend(changes::key_bindings());
     bindings
 }
 
@@ -201,6 +210,9 @@ pub(crate) struct ApplicationsPage {
     open: Option<(Entity<ApplicationPage>, Subscription)>,
     /// The change shown in the application page's place.
     change: Option<(Entity<ChangePage>, Subscription)>,
+    /// The Changes list, which shows in the list's place while `changes_shown`.
+    changes: Entity<ChangesPage>,
+    changes_shown: bool,
     /// The keyboard handle of a page that closed without a window at hand,
     /// kept until the next frame looks whether it had the keyboard.
     refocus: Option<FocusHandle>,
@@ -211,7 +223,7 @@ pub(crate) struct ApplicationsPage {
     /// Changes with the column's lines and the application shown, so the
     /// column draws again only then (`column.rs`).
     column_revision: usize,
-    _subscription: Subscription,
+    _subscriptions: [Subscription; 2],
 }
 
 /// A part to open in Resources, from the open application's page.
@@ -235,6 +247,16 @@ impl ApplicationsPage {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let split = InspectorSplit::new(PREFIX, cx);
+        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), cx));
+        // The change page's links, from a change the list opened.
+        let links = cx.subscribe(&changes, |_, _, event, cx| match event {
+            ChangesEvent::Open(link) => cx.emit(link.as_ref().clone()),
+            ChangesEvent::Switch(entry, link) => cx.emit(SwitchLink {
+                entry: entry.clone(),
+                link: link.as_ref().clone(),
+            }),
+            ChangesEvent::Revision(link) => cx.emit(link.clone()),
+        });
         Self {
             runtime,
             source: None,
@@ -267,11 +289,13 @@ impl ApplicationsPage {
             inspect: false,
             open: None,
             change: None,
+            changes,
+            changes_shown: false,
             refocus: None,
             status: Segment::default(),
             column: Column::new(&Display::default(), false, false, false),
             column_revision: 0,
-            _subscription: subscription,
+            _subscriptions: [subscription, links],
         }
     }
 
@@ -294,10 +318,13 @@ impl ApplicationsPage {
     /// read and what is in flight; the page reads it again if shown.
     pub(crate) fn set_source(&mut self, source: Option<KubeSource>, cx: &mut Context<Self>) {
         let same = self.source.as_ref().map(|s| &s.id) == source.as_ref().map(|s| &s.id);
-        self.source = source;
+        self.source = source.clone();
         if same {
             return;
         }
+        self.changes
+            .update(cx, |changes, cx| changes.set_source(source, cx));
+        self.update_changes(cx);
         self.stop();
         self.snapshot = Snapshot::default();
         self.read_at = None;
@@ -319,6 +346,43 @@ impl ApplicationsPage {
         self.clusters = clusters;
         self.update_open(cx);
         self.update_change(cx);
+        self.update_changes(cx);
+    }
+
+    /// Tells the Changes list which connection each cluster is and how the
+    /// workspace maps Argo CD's destinations.
+    fn update_changes(&mut self, cx: &mut Context<Self>) {
+        let connections = self.base_connections();
+        let mapping = self.clusters.mapping.clone();
+        self.changes.update(cx, |changes, cx| {
+            changes.set_clusters(connections, mapping, cx)
+        });
+    }
+
+    /// Which connection each cluster is, without a read: the open
+    /// connection's own, or in example data the acme cluster the open
+    /// entry is; and the workspace's other entries.
+    fn base_connections(&self) -> Connections {
+        let Some(source) = &self.source else {
+            return Connections::default();
+        };
+        let connections = match &source.access {
+            KubeAccess::Example => {
+                example::connections(&source.id, self.clusters.active.as_deref())
+            }
+            _ => Connections::new(
+                source.id.clone(),
+                [(SessionKey::new(source.id.clone()), source.id.clone())],
+            ),
+        };
+        let active = self.clusters.active.as_ref();
+        connections.with_entries(
+            self.clusters
+                .entries
+                .iter()
+                .filter(|entry| Some(*entry) != active)
+                .cloned(),
+        )
     }
 
     /// Tells the change page shown the entries and the mapping.
@@ -362,6 +426,9 @@ impl ApplicationsPage {
         if let Some((change, _)) = &self.change {
             change.update(cx, |change, cx| change.set_visible(visible, cx));
         }
+        let changes = visible && self.changes_shown;
+        self.changes
+            .update(cx, |page, cx| page.set_visible(changes, cx));
         if !visible {
             self.stop();
             self.derive_column();
@@ -384,6 +451,10 @@ impl ApplicationsPage {
     /// Refresh: reads again, whatever is in flight, while shown.
     pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
         if !self.visible {
+            return;
+        }
+        if self.changes_shown {
+            self.changes.update(cx, |changes, cx| changes.refresh(cx));
             return;
         }
         // A change shown reads itself; the applications read on below it.
@@ -506,6 +577,16 @@ impl ApplicationsPage {
             };
             Some(Read::live(&inputs, source))
         };
+        if let Some(Read {
+            changes: Changes::Live(live),
+            ..
+        }) = self.snapshot.data()
+        {
+            let namespace = live.argocd_namespace.clone();
+            self.changes.update(cx, |changes, cx| {
+                changes.set_argocd_namespace(namespace, cx)
+            });
+        }
         self.display = match self.snapshot.data().cloned().or_else(unread) {
             Some(read) => Display::new(&read.derived, &read.labels),
             None => Display::default(),
@@ -631,7 +712,8 @@ impl ApplicationsPage {
         // open entry is stands for the open example cluster.
         let connections = self.connections(read);
         let visible = self.visible;
-        let page = cx.new(|cx| ChangePage::new(fetch, stage, connections, visible, window, cx));
+        let page =
+            cx.new(|cx| ChangePage::new(fetch, Some(stage), connections, visible, window, cx));
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ChangeEvent::Back => this.close_change(window, cx),
@@ -711,6 +793,11 @@ impl ApplicationsPage {
     /// Puts the keyboard on what shows: the open application's page, or
     /// the list.
     pub(crate) fn focus_shown(&self, window: &mut Window, cx: &mut App) {
+        if self.changes_shown {
+            let focus = self.changes.read(cx).shown_focus(cx);
+            window.focus(&focus, cx);
+            return;
+        }
         if let Some(change) = self.change_page() {
             let focus = change.read(cx).focus_handle();
             window.focus(&focus, cx);
@@ -723,6 +810,14 @@ impl ApplicationsPage {
             }
             None => self.focus(window, cx),
         }
+    }
+
+    /// The status bar's segment: the Changes list's while it shows.
+    pub(crate) fn status(&self, cx: &App) -> Segment {
+        if self.changes_shown {
+            return self.changes.read(cx).status.clone();
+        }
+        self.status.clone()
     }
 
     fn segment(&self) -> Segment {
@@ -771,6 +866,9 @@ impl ApplicationsPage {
     /// The motion over the table's loading rows, which the shell mounts
     /// beside the cached page.
     pub(crate) fn loading_motion(&self, cx: &App) -> Option<Entity<kit::LoadingMotion>> {
+        if self.changes_shown {
+            return self.changes.read(cx).loading_motion(cx);
+        }
         if let Some(change) = self.change_page() {
             return change.read(cx).loading_motion();
         }

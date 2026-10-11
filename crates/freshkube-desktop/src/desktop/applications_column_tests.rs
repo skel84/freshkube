@@ -14,6 +14,8 @@ use gpui_kit::{AnyWindowHandle, Entity, SharedString, TestAppContext};
 
 const CART: &str = "nav-application-kargo:cart";
 const ALL: &str = "nav-all-applications";
+/// The Changes list, which leads the column.
+const CHANGES: &str = "nav-changes";
 
 /// The shell on the Applications area, its example read in.
 fn applications(
@@ -59,6 +61,7 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
     assert_eq!(
         ids,
         [
+            CHANGES,
             ALL,
             "nav-applications-kargo",
             CART,
@@ -73,10 +76,11 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
     );
     cx.update_window(handle, |_, window, cx| {
         let rows = view.read(cx).column_list.lines();
-        let all = rows[0].row().unwrap();
+        assert!(!rows[0].row().unwrap().is_current(), "Changes doesn't show");
+        let all = rows[1].row().unwrap();
         assert_eq!(all.counted().map(|c| c.as_ref()), Some("5"));
         assert!(all.is_current(), "the list shows");
-        let cart = rows[2].row().unwrap();
+        let cart = rows[3].row().unwrap();
         assert!(cart.tip().contains("Kargo Project · core-fra, dev-fra"));
         assert_eq!(window.find(ALL).selected(), Some(true));
         assert_ne!(window.find(CART).selected(), Some(true));
@@ -194,7 +198,11 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
     ] {
         let (_runtime, handle, view) = applications(cx, variant);
         let ids: Vec<String> = lines(&view, cx).into_iter().map(|(id, _)| id).collect();
-        assert_eq!(ids, [ALL, "nav-applications-status"], "{variant:?}");
+        assert_eq!(
+            ids,
+            [CHANGES, ALL, "nav-applications-status"],
+            "{variant:?}"
+        );
         cx.update_window(handle, |_, window, cx| {
             let note = window.find("nav-applications-status");
             assert!(
@@ -300,7 +308,7 @@ fn the_column_names_the_rest_in_a_menu(cx: &mut TestAppContext) {
         };
         assert_eq!(menu.entries().len(), 35);
         assert_eq!(
-            list[2].row().unwrap().marked(),
+            list[3].row().unwrap().marked(),
             Some(freshkube_ui::ui::Tone::Unknown),
             "an incomplete application is marked"
         );
@@ -401,7 +409,7 @@ fn another_cluster_shows_reading_until_it_answers(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     let ids: Vec<String> = lines(&view, cx).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(ids, [ALL, "nav-applications-status"]);
+    assert_eq!(ids, [CHANGES, ALL, "nav-applications-status"]);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(

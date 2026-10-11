@@ -35,6 +35,11 @@ pub struct FixtureReader {
     refused_selectors: HashSet<(String, String)>,
     /// Kinds whose GET or listing never answers, as a server that hangs.
     hanging: HashSet<String>,
+    /// Kinds whose listing in a namespace never answers, by plural and
+    /// namespace.
+    hanging_lists: HashSet<(String, String)>,
+    /// How long every listing takes to answer, on Tokio's clock.
+    slow: Option<std::time::Duration>,
     /// Answers carry an invented `uid` and `resourceVersion` where an item
     /// has none; off, so a world can exercise objects without them.
     stamp_meta: bool,
@@ -89,6 +94,18 @@ impl FixtureReader {
     pub fn refusing_selector(mut self, plural: &str, selector: &str) -> Self {
         self.refused_selectors
             .insert((plural.into(), selector.into()));
+        self
+    }
+
+    /// A listing of the kind in `namespace` never answers.
+    pub fn hanging_list(mut self, plural: &str, namespace: &str) -> Self {
+        self.hanging_lists.insert((plural.into(), namespace.into()));
+        self
+    }
+
+    /// Every listing answers only after `by`, as a slow server does.
+    pub fn slow(mut self, by: std::time::Duration) -> Self {
+        self.slow = Some(by);
         self
     }
 
@@ -188,8 +205,17 @@ impl Reader for FixtureReader {
             "LIST {}/{}/{} ns={namespace:?} selector={selector:?}",
             request.resource.group, request.resource.version, request.resource.plural
         ));
-        if self.hanging.contains(&request.resource.plural) {
+        let hangs_in = |namespace: &String| {
+            self.hanging_lists
+                .contains(&(request.resource.plural.clone(), namespace.clone()))
+        };
+        if self.hanging.contains(&request.resource.plural)
+            || namespace.as_ref().is_some_and(hangs_in)
+        {
             std::future::pending::<()>().await;
+        }
+        if let Some(by) = self.slow {
+            tokio::time::sleep(by).await;
         }
         if let Some(selector) = &selector
             && self
@@ -602,6 +628,8 @@ impl World {
             one.capped.extend(reader.capped);
             one.refused_selectors.extend(reader.refused_selectors);
             one.hanging.extend(reader.hanging);
+            one.hanging_lists.extend(reader.hanging_lists);
+            one.slow = one.slow.max(reader.slow);
             one.stamp_meta |= reader.stamp_meta;
         }
         one

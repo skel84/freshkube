@@ -269,7 +269,7 @@ impl Pilot {
             Page::Nodes => Some(("nodes-scope".into(), self.node_workspace.status.clone())),
             Page::Applications => Some((
                 "applications-scope".into(),
-                self.applications.read(cx).status.clone(),
+                self.applications.read(cx).status(cx),
             )),
             Page::Settings => Some((
                 "settings-scope".into(),

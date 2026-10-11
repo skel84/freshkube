@@ -21,10 +21,16 @@ use gpui_kit::{
 const ELLIPSIS: &str = "…";
 
 /// `text` in the cell's font and colour, cut at a word when it doesn't fit.
+/// A cell is one line: a line break in `text` draws as a space.
 pub fn word_cut(id: impl Into<ElementId>, text: impl Into<SharedString>) -> WordCut {
+    let text: SharedString = text.into();
+    let text = match text.contains(['\n', '\r']) {
+        true => text.replace(['\n', '\r'], " ").into(),
+        false => text,
+    };
     WordCut {
         id: id.into(),
-        text: text.into(),
+        text,
     }
 }
 
@@ -347,6 +353,33 @@ mod tests {
                 .unwrap();
             }
             assert!(cuts > 0);
+        }
+    }
+
+    /// A line break, as a commit message carries one, draws as a space
+    /// rather than stopping the frame: GPUI shapes one line only.
+    #[gpui_kit::test]
+    fn a_line_break_draws_as_a_space(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+        });
+        let text = "Keep the basket\r\n\nwhen signing in";
+        for width in [800., 60.] {
+            let handle = cx.open_window(size(px(800.), px(100.)), |window, cx| {
+                let view = cx.new(|_| Cell(px(width), text));
+                Root::new(view, window, cx)
+            });
+            cx.update_window(handle.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let shown = shown_style("cell").unwrap().text;
+                assert!(!shown.contains(['\n', '\r']), "{shown:?}");
+                if width > 100. {
+                    assert_eq!(shown.as_ref(), "Keep the basket   when signing in");
+                }
+            })
+            .unwrap();
         }
     }
 

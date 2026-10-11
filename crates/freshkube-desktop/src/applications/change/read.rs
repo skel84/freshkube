@@ -7,8 +7,9 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
+use freshkube_core::delivery::change::Change;
 use freshkube_core::delivery::change::live::{self, Mapping, Place};
-use freshkube_core::delivery::change::{self as delivery_change, Change};
+use freshkube_core::delivery::changes::example as changes_example;
 use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::snapshot::Request;
 
@@ -28,7 +29,7 @@ pub(in crate::applications) enum Fetch {
     /// `delay`, which only tests set, so a read stays in flight.
     Example {
         project: String,
-        stage: String,
+        freight: String,
         now: DateTime<Utc>,
         delay: Duration,
     },
@@ -44,7 +45,9 @@ impl Fetch {
     /// Which change this is: an answer for another is never shown as its.
     fn identity(&self) -> String {
         match self {
-            Self::Example { project, stage, .. } => format!("example/{project}/{stage}"),
+            Self::Example {
+                project, freight, ..
+            } => format!("example/{project}/{freight}"),
             Self::Live { place, .. } => {
                 format!("{}/{}/{}", place.cluster, place.project, place.freight)
             }
@@ -54,13 +57,9 @@ impl Fetch {
     /// The change before anything was read: its project and Freight alone.
     pub(super) fn unread(&self) -> Change {
         let (project, freight, cluster) = match self {
-            Self::Example { project, stage, .. } => (
-                project.clone(),
-                delivery_change::example::freight_of(project, stage)
-                    .unwrap_or_default()
-                    .to_owned(),
-                String::new(),
-            ),
+            Self::Example {
+                project, freight, ..
+            } => (project.clone(), freight.clone(), String::new()),
             Self::Live { place, .. } => (
                 place.project.clone(),
                 place.freight.clone(),
@@ -73,6 +72,7 @@ impl Fetch {
             kargo_cluster: cluster,
             observed_at: DateTime::<Utc>::MIN_UTC,
             page: Err("Nothing is read yet".into()),
+            origin: Default::default(),
             groups: Vec::new(),
             stages: Vec::new(),
             hops: Vec::new(),
@@ -90,12 +90,12 @@ impl ChangePage {
         match self.fetch.clone() {
             Fetch::Example {
                 project,
-                stage,
+                freight,
                 now,
                 delay,
             } => {
-                let result = delivery_change::example::for_stage(&project, &stage, now)
-                    .ok_or_else(|| format!("Example data has no change for Stage {stage}"));
+                let result = changes_example::change_of(&project, &freight, now)
+                    .ok_or_else(|| format!("Example data has no change for Freight {freight}"));
                 match window {
                     Some(window) if delay.is_zero() => self.answer(&request, result, window, cx),
                     _ => {

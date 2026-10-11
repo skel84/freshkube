@@ -31,6 +31,9 @@ pub struct Change {
     /// The Freight's page in Kargo, which the header opens and copies; why
     /// not, when the cluster doesn't record Kargo's address.
     pub page: Result<Address, String>,
+    /// What the change is: its pull request, commit and title, as far as
+    /// they were read.
+    pub origin: Origin,
     pub groups: Vec<Group>,
     pub stages: Vec<Stage>,
     pub hops: Vec<Hop>,
@@ -44,6 +47,47 @@ impl Change {
 
     pub fn hop(&self, key: &str) -> Option<&Hop> {
         self.hops.iter().find(|hop| hop.key == key)
+    }
+}
+
+/// What a change is, as the Changes list names it: the pull request its
+/// build's Pipelines as Code annotations name, else its commit, and the
+/// commit's title.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Origin {
+    pub pull_request: Option<u64>,
+    /// The commit the Freight names.
+    pub commit: Option<String>,
+    /// The commit's title: Pipelines as Code's, else the message Kargo
+    /// copied onto the Freight.
+    pub title: Option<String>,
+}
+
+/// How sure it is that a Stage's pods run the change: the Changes list's
+/// cell for the Stage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// The Stage doesn't run the Freight now.
+    NotReached,
+    /// It runs it, and this is the weakest link from the Stage's record to
+    /// its pods: Confirmed only when the pods were joined to it by digest.
+    Linked(Confidence),
+    /// It runs it, but what would say how far was refused: the kinds
+    /// refused, in words.
+    Refused(String),
+}
+
+impl Reach {
+    /// How sure, for the weakest of several: Refused is the least, a Stage
+    /// not reached has none.
+    pub fn rank(&self) -> Option<u8> {
+        match self {
+            Self::NotReached => None,
+            Self::Refused(_) => Some(0),
+            Self::Linked(Confidence::Unknown) => Some(1),
+            Self::Linked(Confidence::Claimed) => Some(2),
+            Self::Linked(Confidence::Confirmed) => Some(3),
+        }
     }
 }
 
@@ -383,6 +427,8 @@ pub struct Stage {
     /// How the Stage's record joins the Freight, when it runs it and the
     /// join read it.
     pub link: Option<LinkDetail>,
+    /// How sure it is that its pods run the change.
+    pub reach: Reach,
     /// The Stage itself, to open in Resources.
     pub object: Object,
 }

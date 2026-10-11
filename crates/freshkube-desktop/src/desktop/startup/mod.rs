@@ -248,6 +248,12 @@ impl Pilot {
                     }
                 });
             }
+            // The Changes list, with every state in example data.
+            Some("changes") => {
+                self.navigate(Page::Applications, window, cx);
+                self.applications
+                    .update(cx, |page, cx| page.show_changes(window, cx));
+            }
             Some("kubernetes-only") if self.fixture => self.fixture_kubernetes_only(window, cx),
             _ => {}
         }

@@ -300,8 +300,17 @@ impl Render for ApplicationsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         self.refocus(window, cx);
-        // A change shows in its application page's place, and an open
-        // application's page in the list's.
+        // The Changes list shows in the list's place, a change in its
+        // application page's place, and an open application's page in the
+        // list's.
+        if self.changes_shown {
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .min_h_0()
+                .child(self.changes.clone());
+        }
         if let Some((change, _)) = &self.change {
             return div()
                 .flex()
