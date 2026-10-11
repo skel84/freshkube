@@ -126,6 +126,8 @@ where
     let reader = match pool.part(Part::Kargo).await {
         Ok((reader, _)) => reader,
         Err(unread) => {
+            // The open cluster is named by its context, as the notes do.
+            let unread = unread.named(at.kargo());
             return Read {
                 cluster: at.kargo(),
                 projects: Source::Unreadable(unread.words()),

@@ -91,6 +91,16 @@ impl Unread {
         }
     }
 
+    /// The same, its entry named `entry`: as a page names the open
+    /// cluster, by its context.
+    pub fn named(self, entry: String) -> Unread {
+        match self {
+            Unread::Missing(why) => Unread::Missing(why),
+            Unread::Unreachable { why, .. } => Unread::Unreachable { entry, why },
+            Unread::Unfinished { why, .. } => Unread::Unfinished { entry, why },
+        }
+    }
+
     /// The short reason alone, without the entry's name, as Applications
     /// keeps it beside the entry.
     pub fn why(&self) -> &str {

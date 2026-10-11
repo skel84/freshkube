@@ -335,14 +335,10 @@ async fn argo_cds_entry_hanging_ends_with_the_budget() {
     .await
     .expect("read");
     let unfinished = format!(
-        "core-a didn't finish reading within the read's {} s",
+        "Argo CD Applications couldn't be read on core-a: not finished within the read's {} s",
         BUDGET.as_secs()
     );
-    let missing = missing(&change);
-    assert!(
-        missing.iter().any(|(_, line)| line.contains(&unfinished)),
-        "{missing:?}"
-    );
+    assert_eq!(missing(&change), [(Gap::Unreadable, unfinished.as_str())]);
     assert_eq!(hop(&change, "Freight wonky-otter").from, "cicd-b");
 }
 
@@ -443,6 +439,32 @@ async fn the_open_entry_is_read_through_the_open_connection() {
     assert!(change.missing.is_empty(), "{:?}", change.missing);
 }
 
+/// With a part's entry open and its connection unread, the page names it
+/// by its context, as it names the open cluster everywhere else.
+#[tokio::test]
+async fn the_open_entry_unreached_is_named_by_its_context() {
+    let workspace = workspace();
+    let mut place = place(&workspace);
+    place.mapping = Mapping::of(&workspace, Some("core-a"));
+    let pool = Pool::new(
+        &place.sources,
+        Some(Open::<'_, FixtureReader> {
+            entry: Some("core-a"),
+            reader: Err("no answer within 5 s".into()),
+        }),
+        |entry: Entry| {
+            let reader = entry_reader(&entry.id, world(|_| {}));
+            async move { Ok::<_, String>(reader) }
+        },
+        BUDGET,
+    );
+    let change = read_in(&pool, &place, observed_at()).await.expect("read");
+    assert_eq!(
+        missing(&change),
+        [(Gap::Unreadable, "Couldn't reach home: no answer within 5 s")]
+    );
+}
+
 /// The Changes list reads Kargo on its entry and each Stage's destination
 /// on its own, so a digest that reaches the pods there is Confirmed.
 #[tokio::test]
@@ -522,4 +544,42 @@ async fn a_destination_with_nothing_to_read_says_what_wasnt_there() {
     let said = format!("{:?}", change.hops);
     assert!(!said.contains("isn't the open cluster"), "{said}");
     assert!(!said.contains("nothing was read there"), "{said}");
+}
+
+/// A destination where Argo CD reports only a workload the read doesn't
+/// look for, a StatefulSet, is never asked: it stays unread, and its Stage
+/// is Claimed with Argo CD's report as its row.
+#[tokio::test]
+async fn a_destination_reporting_only_a_statefulset_is_claimed_unread() {
+    let change = read_across(
+        &workspace(),
+        |world| {
+            let mut app = application(Some(ENV));
+            app["spec"]["destination"]
+                .as_object_mut()
+                .expect("a destination")
+                .remove("namespace");
+            app["status"]["resources"] = json!([
+                {"group": "apps", "kind": "StatefulSet", "namespace": "shop", "name": "db"}
+            ]);
+            world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
+        },
+        &[],
+    )
+    .await
+    .expect("read");
+    let stage = &change.stages[0];
+    assert!(
+        matches!(&stage.cluster, Destination::Entry { entry, .. } if entry == "env-c"),
+        "{:?}",
+        stage.cluster
+    );
+    assert_eq!(stage.reach, Reach::Linked(Confidence::Claimed));
+    let reported = change
+        .hops
+        .iter()
+        .find(|hop| hop.name == "StatefulSet db")
+        .expect("Argo CD's StatefulSet");
+    assert_eq!(reported.link, Some(Confidence::Claimed));
+    assert!(change.missing.is_empty(), "{:?}", change.missing);
 }

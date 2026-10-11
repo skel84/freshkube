@@ -525,6 +525,18 @@ fn elsewhere<'a>(place: &Place, evidence: &'a Evidence, app_id: &str) -> Option<
     Some(Away { app, entry, why })
 }
 
+/// Whether Argo CD reports a workload for an Application that deploys to
+/// `context`.
+pub(super) fn reported_on(evidence: &Evidence, context: &str) -> bool {
+    evidence.applications.read().is_some_and(|apps| {
+        apps.iter().any(|app| {
+            reports(app)
+                && evidence.destination_of(&format!("{}/{}", app.namespace, app.name))
+                    == Some(context)
+        })
+    })
+}
+
 /// The workload kinds Argo CD may report for an Application, by group.
 const WORKLOADS: [(&str, &str); 4] = [
     ("argoproj.io", "Rollout"),

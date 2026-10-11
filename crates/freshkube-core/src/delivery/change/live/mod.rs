@@ -38,7 +38,7 @@ use chrono::{DateTime, Utc};
 use super::Change;
 use crate::delivery::argocd::MapHint;
 use crate::delivery::collect::{Plan, Upstream, read_environment, upstream};
-use crate::delivery::entry::pool::{Open, Pool, Unread, Until};
+use crate::delivery::entry::pool::{Open, Pool, PoolReader, Read, Unread, Until};
 use crate::delivery::github::{GitHub, PullRequest};
 use crate::delivery::join::{
     Evidence, candidate_applications, candidate_deployments, candidate_rollouts,
@@ -326,7 +326,7 @@ where
             place.freight, place.project
         )
     };
-    let kargo = match pool.part(Part::Kargo).await {
+    let kargo = match part(pool, place, Part::Kargo).await {
         Ok((kargo, _)) => kargo,
         Err(unread) => return Err(couldnt(unread.words())),
     };
@@ -376,22 +376,22 @@ where
     Fut: Future<Output = Result<C, String>>,
 {
     let (kargo, builds, argocd) = futures::join!(
-        pool.part(Part::Kargo),
-        pool.part(Part::Builds),
-        pool.part(Part::ArgoCd),
+        part(pool, place, Part::Kargo),
+        part(pool, place, Part::Builds),
+        part(pool, place, Part::ArgoCd),
     );
     let reached = Reached {
         kargo: kargo.as_ref().err().cloned(),
         builds: builds.as_ref().err().cloned(),
         argocd: argocd.as_ref().err().cloned(),
     };
-    // Every request of the first round ends with the budget, and says
-    // which entry didn't finish.
+    // Every request of the first round ends with the budget; what it
+    // was reading names the entry.
     let until = pool.first();
     let (kargo, builds, argocd) = (
-        Reaching::of(kargo, until, place.at(Part::Kargo).label),
-        Reaching::of(builds, until, place.at(Part::Builds).label),
-        Reaching::of(argocd, until, place.at(Part::ArgoCd).label),
+        Reaching::of(kargo, until),
+        Reaching::of(builds, until),
+        Reaching::of(argocd, until),
     );
     let plan = plan(place, freight);
     let upstream_readers = Upstream {
@@ -406,6 +406,23 @@ where
     );
     read_environments(pool, place, &mut evidence).await;
     derive(place, &evidence, freight, &pages, &reached)
+}
+
+/// The reader of `part`, an entry it couldn't read named as the page
+/// names its place: the open cluster by its context.
+async fn part<'p, R, C, F, Fut>(
+    pool: &'p Pool<'_, R, C, F>,
+    place: &Place,
+    part: Part,
+) -> Result<(PoolReader<'p, R, C>, Read), Unread>
+where
+    R: Reader,
+    C: Reader,
+    F: Fn(Entry) -> Fut,
+    Fut: Future<Output = Result<C, String>>,
+{
+    let label = place.at(part).label;
+    pool.part(part).await.map_err(|unread| unread.named(label))
 }
 
 /// Each environment the change's Stages deploy to, read from its entry
@@ -433,16 +450,23 @@ async fn read_environments<R, C, F, Fut>(
     contexts.dedup();
     // One with nothing to read for the change is read, empty, with no
     // request: so the join says what wasn't there, never that it is
-    // another cluster.
+    // another cluster. Another entry where Argo CD reports a workload this
+    // read doesn't look for stays unread, so its Stage shows what Argo CD
+    // reports, Claimed.
     let (contexts, empty): (Vec<&str>, Vec<&str>) = contexts.into_iter().partition(|context| {
         !candidate_rollouts(evidence, context).is_empty()
             || !candidate_deployments(evidence, context).is_empty()
             || !candidate_applications(evidence, context, None).is_empty()
     });
+    let empty: Vec<String> = empty
+        .into_iter()
+        .filter(|context| place.is_here(context) || !derive::reported_on(evidence, context))
+        .map(str::to_owned)
+        .collect();
     evidence.environments.extend(
         empty
             .into_iter()
-            .map(|context| (context.to_owned(), Ok(Default::default()))),
+            .map(|context| (context, Ok(Default::default()))),
     );
     let read = futures::future::join_all(contexts.into_iter().map(|context| {
         let evidence = &*evidence;
@@ -487,23 +511,14 @@ async fn read_environments<R, C, F, Fut>(
 /// or the words why its entry wasn't read, which every request then fails
 /// with, so each of its rows says so.
 enum Reaching<R> {
-    Read {
-        reader: R,
-        until: Until,
-        /// Its entry, as a request that didn't finish names it.
-        entry: String,
-    },
+    Read { reader: R, until: Until },
     Unread(String),
 }
 
 impl<R: Reader> Reaching<R> {
-    fn of<W>(reached: Result<(R, W), Unread>, until: Until, entry: String) -> Self {
+    fn of<W>(reached: Result<(R, W), Unread>, until: Until) -> Self {
         match reached {
-            Ok((reader, _)) => Reaching::Read {
-                reader,
-                until,
-                entry,
-            },
+            Ok((reader, _)) => Reaching::Read { reader, until },
             Err(unread) => Reaching::Unread(unread.words()),
         }
     }
@@ -512,23 +527,21 @@ impl<R: Reader> Reaching<R> {
         Failure::new(FailureKind::Other, why)
     }
 
-    /// `ask` of the reader by the deadline, or why not.
+    /// `ask` of the reader by the deadline, or why not. A request that
+    /// didn't finish doesn't name its entry: what it was reading does.
     async fn ask<'r, T, Fut>(&'r self, ask: impl FnOnce(&'r R) -> Fut) -> Result<T, Failure>
     where
         Fut: Future<Output = Result<T, Failure>>,
     {
         match self {
-            Reaching::Read {
-                reader,
-                until,
-                entry,
-            } => until.bound(ask(reader)).await.unwrap_or_else(|| {
-                let unread = Unread::Unfinished {
-                    entry: entry.clone(),
-                    why: until.unfinished(),
-                };
-                Err(Self::failure(&unread.words()))
-            }),
+            Reaching::Read { reader, until } => {
+                until.bound(ask(reader)).await.unwrap_or_else(|| {
+                    Err(Self::failure(&format!(
+                        "not finished within {}",
+                        until.within()
+                    )))
+                })
+            }
             Reaching::Unread(why) => Err(Self::failure(why)),
         }
     }
