@@ -5,7 +5,8 @@
 //!
 //! Six clusters, each read for what the example workspace
 //! (`workspace::example`) reads from it: Argo CD in `core-fra`, with its
-//! own labelled workload; Kargo in `cicd-fra`; the four environment
+//! own labelled workload and its own Deployments, labelled `part-of=argocd`
+//! so a read finds it in `argocd`; Kargo in `cicd-fra`; the four environment
 //! clusters' labelled workloads. `prod-lon` isn't a workspace entry, so
 //! its parts don't open after a switch; it stays to show a cluster the
 //! workspace doesn't list.
@@ -16,13 +17,14 @@
 //! - `status-page` is a plain Application that deploys to its own cluster and
 //!   manages a workload labelled `part-of=public-status`, whose instance
 //!   label names it back.
-//! - `loyalty` is found only by its label.
+//! - `loyalty` is found only by its label, as is `argocd`, Argo CD's own
+//!   Deployments, as a live cluster's Argo CD is.
 //! - `checkout-worker`, labelled `part-of=checkout` in `prod-lon`, joins the
 //!   Kargo application by its name.
 
 use serde_json::{Value, json};
 
-use super::read::parse_labelled_workload;
+use super::read::{ARGOCD, parse_labelled_workload};
 use super::{ArgoScope, Asked, Inputs, KargoProjectRead, SessionInputs, SessionKey};
 use crate::delivery::argocd::{parse_application, parse_application_set};
 use crate::delivery::kargo::{parse_stage, parse_warehouse};
@@ -37,6 +39,8 @@ const ENVIRONMENTS: [(&str, &str); 4] = [
     ("prod-ams", "prod-ams"),
     ("prod-lon", "prod-lon"),
 ];
+/// Argo CD's own Deployments in `core-fra`, labelled `part-of=argocd`.
+pub const ARGOCD_WORKLOADS: [&str; 2] = ["argocd-server", "argocd-repo-server"];
 const AUTHORIZED_STAGE: &str = "kargo.akuity.io/authorized-stage";
 
 fn server(cluster: &str) -> String {
@@ -200,6 +204,17 @@ pub fn core_objects() -> Vec<CoreObject> {
             },
         }}),
     ));
+    // Argo CD's own, labelled as its manifests label them, which say it
+    // runs in `argocd`.
+    for name in ARGOCD_WORKLOADS {
+        objects.push(object(
+            DEPLOYMENTS,
+            json!({"metadata": {
+                "namespace": ARGOCD, "name": name,
+                "labels": {"app.kubernetes.io/part-of": ARGOCD},
+            }}),
+        ));
+    }
     objects.push(object(
         FREIGHT,
         json!({"metadata": {
@@ -369,7 +384,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_acme_workspace_has_five_applications_found_by_three_rules() {
+    fn the_acme_workspace_has_six_applications_found_by_three_rules() {
         let found = derive(&acme(), &Override::default());
         let rules: Vec<_> = found
             .applications
@@ -379,6 +394,7 @@ mod tests {
         assert_eq!(
             rules,
             [
+                ("argocd", Rule::PartOf),
                 ("cart", Rule::Kargo),
                 ("catalog", Rule::ArgoCd),
                 ("checkout", Rule::Kargo),
@@ -492,7 +508,7 @@ mod tests {
             panic!("Argo CD read")
         };
         assert_eq!(count("applications.argoproj.io"), applications.len());
-        assert_eq!(count("deployments.apps"), 1);
+        assert_eq!(count("deployments.apps"), 1 + ARGOCD_WORKLOADS.len());
     }
 
     #[test]

@@ -1,10 +1,10 @@
 //! The page's example data: core's acme workspace, six clusters each read
 //! for what the example workspace reads there: Kargo in `cicd-fra`, Argo
-//! CD in `core-fra`, read where a live read would look (nothing is
-//! labelled as Argo CD's, so in `argocd`), and the environments' labelled
-//! workloads.
+//! CD in `core-fra`, read where a live read would look (where the
+//! workloads labelled as Argo CD's run, `argocd`), and the environments'
+//! labelled workloads.
 //! Debug builds reshape it for captures with `FRESHKUBE_APPLICATIONS`.
-use freshkube_core::applications::read::argo_namespaces;
+use freshkube_core::applications::read::{ARGOCD, argo_namespaces};
 use freshkube_core::applications::{
     Absent, ArgoFound, ArgoScope, Asked, Inputs, SessionInputs, SessionKey, example as acme,
 };
@@ -38,6 +38,9 @@ pub(crate) enum Variant {
     /// Nothing marks Argo CD in `core-fra`, and `argocd` holds no
     /// Applications.
     NotFound,
+    /// Nothing marks Argo CD in `core-fra`, so it is read in `argocd`, its
+    /// default, where its Applications are.
+    Unlabelled,
     /// `checkout`'s Stages didn't answer in `cicd-fra`: its page shows
     /// what may be missing as a group row.
     Stages,
@@ -55,8 +58,8 @@ pub(crate) enum Variant {
 
 impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
-    /// `spread`, `not-found`, `stages`, `workloads`, `unreachable`,
-    /// `argo-refused` or `destination` from
+    /// `spread`, `not-found`, `unlabelled`, `stages`, `workloads`,
+    /// `unreachable`, `argo-refused` or `destination` from
     /// `FRESHKUBE_APPLICATIONS`;
     /// debug and stress builds only.
     pub(crate) fn from_env() -> Self {
@@ -72,6 +75,7 @@ impl Variant {
             Ok("capped") => Self::Capped,
             Ok("spread") => Self::Spread,
             Ok("not-found") => Self::NotFound,
+            Ok("unlabelled") => Self::Unlabelled,
             Ok("stages") => Self::Stages,
             Ok("workloads") => Self::Workloads,
             Ok("unreachable") => Self::Unreachable,
@@ -162,9 +166,11 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
         }
         Variant::NotFound => {
             let core = core(&mut inputs);
+            unlabel(core);
             core.argo_applications = Source::Read(Vec::new());
             core.argo_application_sets = Source::Read(Vec::new());
         }
+        Variant::Unlabelled => unlabel(core(&mut inputs)),
         Variant::Stages => {
             if let Source::Read(projects) = &mut cicd(&mut inputs).kargo
                 && let Some(checkout) = projects.iter_mut().find(|p| p.name == "checkout")
@@ -194,6 +200,17 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
         ),
     }
     inputs
+}
+
+/// Argo CD's cluster with nothing labelled as Argo CD's: its own workloads
+/// gone from what was read, and its Applications read in its default
+/// namespace, as a live read would.
+fn unlabel(core: &mut SessionInputs) {
+    if let Source::Read(workloads) = &mut core.workloads {
+        workloads.retain(|workload| workload.part_of != ARGOCD);
+    }
+    let (namespaces, found) = argo_namespaces(&core.workloads);
+    core.argo_scope = ArgoScope::Namespace { namespaces, found };
 }
 
 /// A cluster whose entry couldn't be reached, for `why`.

@@ -310,6 +310,7 @@ mod tests {
                 "checkout",
                 "catalog",
                 "cart · Argo CD Application",
+                "argocd",
                 "loyalty"
             ]
         );
@@ -320,7 +321,7 @@ mod tests {
         let display = acme();
         let reading = Column::new(&display, true, true, true);
         assert_eq!(reading.note, None, "a refresh keeps the rows");
-        assert_eq!(reading.total, 5);
+        assert_eq!(reading.total, 6);
         let first = Column::new(&Display::default(), true, false, true);
         assert_eq!(first.note.map(|note| note.text), Some("Reading…".into()));
     }

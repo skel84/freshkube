@@ -68,7 +68,14 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
         let page = page(&view, cx);
         assert_eq!(
             page.read(cx).names(),
-            ["cart", "checkout", "catalog", "status-page", "loyalty"]
+            [
+                "cart",
+                "checkout",
+                "catalog",
+                "status-page",
+                "argocd",
+                "loyalty"
+            ]
         );
         for group in [
             "applications-group-kargo-projects",
@@ -79,7 +86,8 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
         }
         assert!(window.find(CART).visible());
         assert!(window.find(LOYALTY).visible());
-        // argocd is read alone: a fact under the header, not a warning.
+        // Argo CD is read where its workloads run, as live: a fact under
+        // the header, not a warning.
         // Each cluster is read only for what the workspace reads there, so
         // none says it doesn't serve the rest.
         let legend = window
@@ -90,7 +98,7 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
         assert!(!legend.contains("isn't served"), "{legend}");
         assert!(
             legend.contains(
-                "Argo CD on core-fra was read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
+                "Argo CD on core-fra was read in argocd only, where Argo CD's workloads run"
             ),
             "{legend}"
         );
@@ -104,9 +112,7 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
         let mark = gpui_kit::SharedString::from(format!("{STATUS}-mark"));
         assert_eq!(
             window.find(mark).label(),
-            Some(
-                "Argo CD on core-fra was read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
-            )
+            Some("Argo CD on core-fra was read in argocd only, where Argo CD's workloads run")
         );
         // catalog deploys to prod-lon, which no destination maps: its
         // labelled part there may be managed by an Application not matched
@@ -119,7 +125,7 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
         assert!(window.try_find("applications-missing").is_none());
         let status = page.read(cx).status.clone();
         assert!(
-            format!("{status:?}").contains("5 applications in 6 clusters"),
+            format!("{status:?}").contains("6 applications in 6 clusters"),
             "{status:?}"
         );
     })
@@ -648,7 +654,7 @@ fn the_same_applications_show_whichever_entry_is_open(cx: &mut TestAppContext) {
             page(&view, cx).read(cx).names()
         })
         .unwrap();
-    assert_eq!(first.len(), 5, "{first:?}");
+    assert_eq!(first.len(), 6, "{first:?}");
     for active in ["core-fra", "cicd-fra", "prod-fra", "dev-fra"] {
         cx.update_window(handle, |_, window, cx| {
             page(&view, cx).update(cx, |page, cx| {
@@ -999,4 +1005,31 @@ fn no_mapped_destination_says_where_labels_were_read() {
     display.add_legend("first".into());
     display.add_legend("second".into());
     assert_eq!(display.legend_text.as_deref(), Some("first · second"));
+}
+
+/// With nothing labelled as Argo CD's, it is read in its default namespace,
+/// and the legend says why there.
+#[gpui_kit::test]
+fn unlabelled_argo_cd_is_read_in_its_default_namespace(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |page| {
+        page.set_variant(Variant::Unlabelled)
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let names = page(&view, cx).read(cx).names();
+        assert!(!names.iter().any(|name| name == "argocd"), "{names:?}");
+        let legend = window
+            .find("applications-legend")
+            .label()
+            .unwrap()
+            .to_owned();
+        assert!(
+            legend.contains(
+                "Argo CD on core-fra was read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
+            ),
+            "{legend}"
+        );
+        assert!(window.find("applications-tally-scoped").visible());
+    })
+    .unwrap();
 }

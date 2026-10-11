@@ -479,7 +479,31 @@ async fn the_same_applications_are_read_whichever_entry_is_open() {
     let names: Vec<&str> = alone.applications.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
         names,
-        ["cart", "catalog", "checkout", "loyalty", "status-page"]
+        [
+            "argocd",
+            "cart",
+            "catalog",
+            "checkout",
+            "loyalty",
+            "status-page"
+        ]
+    );
+    // Argo CD is found where its own labelled workloads run, as live.
+    let argo = alone
+        .coverage
+        .iter()
+        .find(|c| {
+            c.session == SessionKey::new("core-fra") && c.source == SourceKind::ArgoApplications
+        })
+        .expect("Argo CD's coverage");
+    assert_eq!(
+        argo.state,
+        CoverageState::NamespaceOnly {
+            namespaces: vec!["argocd".into()],
+            found: crate::applications::ArgoFound::Labelled {
+                skipped: Vec::new()
+            },
+        }
     );
     // Argo CD's own cluster's labelled workloads are read with it: the
     // Deployment its local Application lists and names back is Tracked.
