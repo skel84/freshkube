@@ -2,9 +2,13 @@
 //! and what Check sources finds, in each state.
 use super::super::edit_tests::{open_settings, write};
 use super::super::tests::launch;
-use super::{Check, Read};
+#[cfg(unix)]
+use super::Check;
+use super::Read;
 use crate::desktop::{Page, layout_check, tests::fixture};
-use freshkube_core::delivery::entry::{Checked, Reach};
+#[cfg(unix)]
+use freshkube_core::delivery::entry::Checked;
+use freshkube_core::delivery::entry::Reach;
 use freshkube_core::workspace::{self, Destination, Entry, Key, Loaded, Part, Role, Workspace};
 use gpui_kit::{
     AppContext, TestAppContext,
@@ -352,6 +356,7 @@ fn twenty_destinations_leave_the_clusters_their_rows(cx: &mut TestAppContext) {
 
 /// A live workspace whose entries' credential plugin sleeps, so a check
 /// stays in flight for as long as a test needs.
+#[cfg(unix)]
 fn waiting_workspace(directory: &std::path::Path) {
     let kubeconfig = directory.join("kubeconfig");
     let user = serde_json::json!({"exec": {
