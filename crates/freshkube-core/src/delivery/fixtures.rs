@@ -80,6 +80,12 @@ impl FixtureReader {
         self
     }
 
+    /// The kind's listing fails with `failure`.
+    pub fn failing(mut self, plural: &str, failure: Failure) -> Self {
+        self.lists.insert(plural.into(), Err(failure));
+        self
+    }
+
     pub fn refusing(mut self, plural: &str) -> Self {
         self.lists.insert(
             plural.into(),

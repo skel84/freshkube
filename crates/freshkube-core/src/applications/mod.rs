@@ -510,8 +510,14 @@ impl SessionInputs {
     /// A session asked for `asked` that couldn't be read at all, and why.
     pub fn absent(key: SessionKey, asked: Asked, absent: Absent) -> Self {
         let why = match &absent {
-            Absent::Unreachable(why) | Absent::NotInWorkspace(why) => why.as_str(),
+            Absent::Unreachable(why) | Absent::NotInWorkspace(why) => why.clone(),
         };
+        Self::unfinished(key, asked, &why).with_absent(absent)
+    }
+
+    /// A session asked for `asked` whose cluster answered but whose read
+    /// didn't finish: every source asked is unreadable for `why`.
+    pub fn unfinished(key: SessionKey, asked: Asked, why: &str) -> Self {
         fn source<T>(asked: bool, why: &str) -> Source<Vec<T>> {
             match asked {
                 true => Source::Unreadable(why.to_owned()),
@@ -525,7 +531,6 @@ impl SessionInputs {
             workloads: source(asked.workloads, why),
             ..Self::asking(key, asked)
         }
-        .with_absent(absent)
     }
 
     /// A session asked for `asked`, with nothing read yet: every source

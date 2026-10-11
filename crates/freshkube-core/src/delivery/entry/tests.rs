@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::*;
 use crate::delivery::fixtures::FixtureReader;
 use crate::resources::FailureKind;
@@ -131,9 +133,7 @@ async fn an_entry_readers_listing_has_the_deadline_once_for_each_page_it_may_rea
         scope: Scope::Cluster,
     };
     // Longer than one request, as several pages that each answer take.
-    let entry = |slow| {
-        Deadline::new(Slow(slow), REQUEST_DEADLINE).with_list_limit(REQUEST_DEADLINE * MAX_PAGES)
-    };
+    let entry = |slow| bounded(Slow(slow));
     assert!(entry(REQUEST_DEADLINE * 3).list(&request).await.is_ok());
     let failure = entry(REQUEST_DEADLINE * (MAX_PAGES + 1))
         .list(&request)
@@ -147,6 +147,64 @@ async fn an_entry_readers_listing_has_the_deadline_once_for_each_page_it_may_rea
     let failure = other.list(&request).await.unwrap_err();
     assert_eq!(failure.kind, FailureKind::Timeout);
     assert_eq!(started.elapsed(), REQUEST_DEADLINE);
+}
+
+/// Credentials the cluster rejects are said to whoever asked, so a served
+/// kubeconfig is asked for again; any other failure isn't.
+#[tokio::test]
+async fn rejected_credentials_are_said() {
+    let rejected = Arc::new(AtomicUsize::new(0));
+    let told = rejected.clone();
+    let reader = Deadline::new(
+        serving()
+            .failing(
+                "projects",
+                Failure::new(FailureKind::Unauthorized, "Unauthorized"),
+            )
+            .failing("stages", Failure::new(FailureKind::Forbidden, "forbidden")),
+        REQUEST_DEADLINE,
+    )
+    .on_rejected(move || {
+        told.fetch_add(1, Ordering::SeqCst);
+    });
+    let list = |plural: &str| ListRequest {
+        resource: Resource::new("kargo.akuity.io", "v1alpha1", plural, false),
+        scope: Scope::Cluster,
+    };
+    assert!(reader.list(&list("stages")).await.is_err());
+    assert_eq!(rejected.load(Ordering::SeqCst), 0, "refused, not rejected");
+    assert!(reader.list(&list("projects")).await.is_err());
+    assert_eq!(rejected.load(Ordering::SeqCst), 1);
+}
+
+/// Entries connect a few at a time in whatever order they answer, and come
+/// back in the order given; one that never connects keeps none waiting.
+#[tokio::test(start_paused = true)]
+async fn entries_connect_without_waiting_on_each_other() {
+    let entries: Vec<Entry> = (1..=6)
+        .map(|n| entry(&format!("env-{n}"), Role::Environment))
+        .collect();
+    let started = tokio::time::Instant::now();
+    let connected = connect_each(entries, |entry| async move {
+        match entry.id.as_str() {
+            // The first never answers within its deadline.
+            "env-1" => {
+                tokio::time::sleep(CONNECT_DEADLINE).await;
+                Err("no answer".to_owned())
+            }
+            _ => Ok(entry.id),
+        }
+    })
+    .await;
+    assert_eq!(
+        started.elapsed(),
+        CONNECT_DEADLINE,
+        "the others didn't wait"
+    );
+    let ids: Vec<&str> = connected.iter().map(|(id, _)| id.as_str()).collect();
+    assert_eq!(ids, ["env-1", "env-2", "env-3", "env-4", "env-5", "env-6"]);
+    assert_eq!(connected[0].1, Err("no answer".to_owned()));
+    assert_eq!(connected[5].1, Ok("env-6".to_owned()));
 }
 
 fn entry(id: &str, role: Role) -> Entry {

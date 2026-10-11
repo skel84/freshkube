@@ -375,11 +375,13 @@ fn a_part_the_override_placed_is_claimed() {
     let workers = of_with(&acme(), &wishes, "workers");
     let claim = &workers.links[0];
     assert_eq!(claim.confidence, Confidence::Claimed);
-    // prod-lon's Argo CD Applications were read on core-fra, and aren't
+    // prod-lon's Argo CD Applications were read on core-fra, and none is
     // matched to its workloads: the override says where, and the caveat
     // stays.
     assert!(
-        claim.why.starts_with("Placed by your override. Argo CD's"),
+        claim
+            .why
+            .starts_with("Placed by your override. No Argo CD Application mapped"),
         "{}",
         claim.why
     );
@@ -532,6 +534,13 @@ fn a_label_on_another_entry_says_how_argo_cd_was_read_on_its_own() {
     // Read in full on core-fra, its inventories still aren't matched to
     // dev-fra.
     assert_eq!(api.unchecked, Some(Unchecked::NotMatched));
+    assert!(
+        api.why
+            .contains("No Argo CD Application mapped to its cluster lists it")
+            && !api.why.contains("weren't all read"),
+        "{}",
+        api.why
+    );
 
     // Read in argocd only there, it says so.
     let mut inputs = acme();
@@ -644,8 +653,108 @@ fn an_inventory_is_matched_on_the_entry_its_destination_maps_to() {
     );
     assert_eq!(api.via.map(|via| via.session), Some(SessionKey::new(CORE)));
     assert!(!caveat, "its manager was found");
+    // Through an Application that only names its Project, it is no surer
+    // than that Application, whichever entry it runs on.
+    let api = link(&of(&acme(), "cart"), "cart-api").clone();
+    assert_eq!(api.member.session, SessionKey::new("dev-fra"));
+    assert_eq!(api.confidence, Confidence::Claimed);
+    assert!(
+        api.why
+            .contains("but that Application's own link is claimed"),
+        "{}",
+        api.why
+    );
     let (_, caveat) = part("catalog", "prod-lon", "catalog-api");
     assert!(caveat, "prod-lon isn't mapped");
     let (_, caveat) = part("loyalty", "dev-fra", "loyalty-api");
     assert!(caveat, "no inventory lists it");
+}
+
+/// Argo CD on `core`, its Application `storefront` deploying to `dev`'s
+/// server and listing Deployment shop/web; `dev` read for its labelled
+/// workloads alone, with `web` there carrying `labels`.
+fn storefront_across(labels: Value, mapped: bool) -> Inputs {
+    const DEV: &str = "https://dev.example.test:6443";
+    let mut core = session("core");
+    core.argo_applications = Source::Read(vec![
+        parse_application(&json!({
+            "metadata": {"namespace": "argocd", "name": "storefront"},
+            "spec": {"destination": {"server": DEV}},
+            "status": {"resources": [
+                {"group": "apps", "kind": "Deployment", "namespace": "shop", "name": "web"}
+            ]},
+        }))
+        .unwrap(),
+    ]);
+    let mut dev = SessionInputs::asking(
+        SessionKey::new("dev"),
+        Asked {
+            workloads: true,
+            ..Asked::NONE
+        },
+    );
+    dev.workloads = Source::Read(vec![
+        parse_labelled_workload(
+            &json!({"metadata": {"namespace": "shop", "name": "web", "labels": labels}}),
+            WorkloadKind::Deployment,
+        )
+        .unwrap(),
+    ]);
+    Inputs {
+        destinations: match mapped {
+            true => vec![crate::workspace::Destination::new(
+                crate::workspace::Key::Server(DEV.into()),
+                "dev",
+            )],
+            false => Vec::new(),
+        },
+        ..inputs(vec![core, dev])
+    }
+}
+
+/// A workload matched to an Argo CD Application on another entry has the
+/// confidence it would have beside it: Confirmed when it names the
+/// Application back, Claimed when only the inventory lists it, and nothing
+/// from the inventory when the destination isn't mapped to its entry.
+#[test]
+fn a_workload_matched_across_entries_is_as_sure_as_beside_its_application() {
+    let web = |labels: Value, mapped: bool| {
+        let inputs = storefront_across(labels, mapped);
+        let derived = derive(&inputs, &Override::default());
+        let app = derived
+            .applications
+            .iter()
+            .find(|app| app.name == "storefront")
+            .expect("storefront");
+        let basis = app
+            .members
+            .iter()
+            .find(|member| member.at.name == "web")
+            .map(|member| member.basis);
+        let claim = claims(&derived, app)
+            .links
+            .into_iter()
+            .find(|claim| claim.member.name == "web");
+        (basis, claim)
+    };
+    let named_back = json!({
+        "app.kubernetes.io/part-of": "storefront",
+        "app.kubernetes.io/instance": "storefront",
+    });
+    let (basis, claim) = web(named_back.clone(), true);
+    assert_eq!(basis, Some(Basis::Tracked));
+    let claim = claim.expect("web's link");
+    assert_eq!(claim.member.session, SessionKey::new("dev"));
+    assert_eq!(claim.confidence, Confidence::Confirmed, "{}", claim.why);
+    assert_eq!(claim.app_side.session, Some(SessionKey::new("core")));
+
+    let (basis, claim) = web(json!({"app.kubernetes.io/part-of": "storefront"}), true);
+    assert_eq!(basis, Some(Basis::ManagedBy));
+    assert_eq!(claim.expect("web's link").confidence, Confidence::Claimed);
+
+    let (basis, _) = web(named_back, false);
+    assert!(
+        !matches!(basis, Some(Basis::Tracked | Basis::ManagedBy)),
+        "{basis:?}"
+    );
 }

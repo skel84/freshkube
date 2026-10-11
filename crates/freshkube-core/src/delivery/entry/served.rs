@@ -3,7 +3,8 @@
 //! every one it serves, so each talosconfig and context asks it once.
 //!
 //! A key holds the talosconfig's content fingerprint too, so a changed file
-//! asks again. Nothing here is logged, shown or written to disk.
+//! asks again, and a key whose credentials the cluster rejects is
+//! forgotten, so the next read asks again, as after a rotated CA. Nothing here is logged, shown or written to disk.
 
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex, PoisonError};
@@ -48,4 +49,12 @@ pub(super) fn store(key: Key, kubeconfig: Kubeconfig) {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(key, kubeconfig, Instant::now());
+}
+
+/// Forgets what Talos served for `key`.
+pub(super) fn forget(key: &Key) {
+    SERVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(key);
 }

@@ -647,7 +647,20 @@ impl ApplicationsPage {
                         // does; beside other entries, the open one has
                         // their deadlines.
                         let alone = matches!(sources.get(PartKind::Kargo), Chosen::Open);
-                        let open = access.client().await.map(|client| match alone {
+                        let client = match alone {
+                            true => access.client().await,
+                            // Its setup ends in time too, so a client
+                            // being made again holds up no other entry.
+                            false => tokio::time::timeout(entry::CONNECT_DEADLINE, access.client())
+                                .await
+                                .unwrap_or_else(|_| {
+                                    Err(format!(
+                                        "no answer within {} s",
+                                        entry::CONNECT_DEADLINE.as_secs()
+                                    ))
+                                }),
+                        };
+                        let open = client.map(|client| match alone {
                             true => Deadline::new(ReadOnlyClient::new(client), DEADLINE),
                             false => entry::reader(client),
                         });

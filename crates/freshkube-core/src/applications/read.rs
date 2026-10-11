@@ -7,15 +7,17 @@
 
 use std::collections::BTreeSet;
 
+use futures::StreamExt;
 use serde_json::Value;
 
 use super::{
     ArgoFound, ArgoScope, Asked, KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey,
 };
 use crate::delivery::argocd::{read_application_sets, read_applications};
-use crate::delivery::kargo::{parse_stage, parse_warehouse, read_kind, read_project_names};
+use crate::delivery::kargo::{self, parse_stage, parse_warehouse, read_project_names};
 use crate::delivery::read::{ListRequest, Reader, Resource, Scope};
 use crate::delivery::source::{Source, Truncation};
+use crate::delivery::versions::resolve_each;
 use crate::resources::{Failure, FailureKind};
 use crate::workloads::WorkloadKind;
 
@@ -30,6 +32,8 @@ pub const INSTANCE: &str = "app.kubernetes.io/instance";
 /// The most Kargo Projects whose Stages and Warehouses are read; two lists
 /// each, so this bounds the requests. The rest are reported as capped.
 pub const MAX_PROJECTS: usize = 50;
+/// How many Kargo Projects are read at once, each its two lists together.
+pub const PROJECTS_AT_ONCE: usize = 4;
 
 /// The `part-of` value Argo CD's own workloads carry, and the namespace it
 /// installs into by default.
@@ -130,6 +134,22 @@ fn merge<T>(reads: Vec<Source<Vec<T>>>) -> Source<Vec<T>> {
     }
 }
 
+/// One kind of a Kargo project, by the resource discovery found for it.
+async fn list_in<R: Reader, T>(
+    reader: &R,
+    resource: &Result<Resource, Failure>,
+    project: &str,
+    parse: fn(&Value) -> Option<T>,
+) -> Result<(Vec<T>, Option<Truncation>), Failure> {
+    let listing = reader
+        .list(&ListRequest {
+            resource: resource.clone()?,
+            scope: Scope::Namespace(project.to_owned()),
+        })
+        .await?;
+    Ok(listing.parse(parse))
+}
+
 async fn read_kargo<R: Reader>(reader: &R) -> Source<Vec<KargoProjectRead>> {
     let (names, capped) = match read_project_names(reader).await {
         Source::Read(names) => (names, None),
@@ -143,16 +163,37 @@ async fn read_kargo<R: Reader>(reader: &R) -> Source<Vec<KargoProjectRead>> {
     } else {
         capped
     };
-    let mut projects = Vec::new();
-    for name in names.into_iter().take(MAX_PROJECTS) {
-        projects.push(KargoProjectRead {
-            stages: Source::from_listing(read_kind(reader, "stages", &name, parse_stage).await),
-            warehouses: Source::from_listing(
-                read_kind(reader, "warehouses", &name, parse_warehouse).await,
-            ),
-            name,
-        });
-    }
+    // Discovered once for every project, then each project's two lists
+    // together, a few projects at a time, in their order.
+    let [stages, warehouses] = match resolve_each(
+        reader,
+        kargo::GROUP,
+        ["stages", "warehouses"],
+        kargo::VERSIONS,
+        true,
+    )
+    .await
+    {
+        Ok(found) => found,
+        Err(failure) => [Err(failure.clone()), Err(failure)],
+    };
+    let (stages, warehouses) = (&stages, &warehouses);
+    let projects: Vec<KargoProjectRead> =
+        futures::stream::iter(names.into_iter().take(MAX_PROJECTS))
+            .map(|name| async move {
+                let (stages, warehouses) = futures::join!(
+                    list_in(reader, stages, &name, parse_stage),
+                    list_in(reader, warehouses, &name, parse_warehouse),
+                );
+                KargoProjectRead {
+                    stages: Source::from_listing(stages),
+                    warehouses: Source::from_listing(warehouses),
+                    name,
+                }
+            })
+            .buffered(PROJECTS_AT_ONCE)
+            .collect()
+            .await;
     match capped {
         Some(truncation) => Source::Capped(projects, truncation),
         None => Source::Read(projects),

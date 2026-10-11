@@ -25,6 +25,7 @@
 //! connect deadline.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -37,7 +38,7 @@ use super::source::Source;
 use super::versions::resolve;
 use super::{argocd, kargo, tekton};
 use crate::applications::read::{PART_OF, argo_namespaces, read_argo_workloads};
-use crate::resources::Failure;
+use crate::resources::{Failure, FailureKind};
 use crate::workspace::{Chosen, Entry, Part, Sources};
 
 /// How long reading the kubeconfig, loading the credentials, running an
@@ -57,6 +58,8 @@ pub struct Deadline<R> {
     /// A whole listing's, which may read several pages; `limit` unless
     /// [`with_list_limit`](Self::with_list_limit) says otherwise.
     list_limit: Duration,
+    /// Called when the cluster rejects the credentials.
+    rejected: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl<R: Reader> Deadline<R> {
@@ -65,7 +68,28 @@ impl<R: Reader> Deadline<R> {
             reader,
             limit,
             list_limit: limit,
+            rejected: None,
         }
+    }
+
+    /// The same, calling `rejected` whenever the cluster rejects the
+    /// credentials (401).
+    fn on_rejected(self, rejected: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            rejected: Some(Arc::new(rejected)),
+            ..self
+        }
+    }
+
+    /// `answer`, after telling whoever asked that the credentials were
+    /// rejected.
+    fn noticed<T>(&self, answer: Result<T, Failure>) -> Result<T, Failure> {
+        if let (Err(failure), Some(rejected)) = (&answer, &self.rejected)
+            && failure.kind == FailureKind::Unauthorized
+        {
+            rejected();
+        }
+        answer
     }
 
     /// The same, with a whole listing allowed `limit`.
@@ -81,9 +105,10 @@ impl<R: Reader> Deadline<R> {
         what: &str,
         request: impl Future<Output = Result<T, Failure>>,
     ) -> Result<T, Failure> {
-        tokio::time::timeout(self.limit, request)
+        let answer = tokio::time::timeout(self.limit, request)
             .await
-            .unwrap_or_else(|_| Err(Failure::timeout(what)))
+            .unwrap_or_else(|_| Err(Failure::timeout(what)));
+        self.noticed(answer)
     }
 }
 
@@ -105,14 +130,15 @@ impl<R: Reader> Reader for Deadline<R> {
     /// otherwise; [`reader`]'s is the deadline once for every page it may
     /// read ([`MAX_PAGES`]), and its client bounds each page by it.
     async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
-        tokio::time::timeout(self.list_limit, self.reader.list(request))
+        let answer = tokio::time::timeout(self.list_limit, self.reader.list(request))
             .await
             .unwrap_or_else(|_| {
                 Err(Failure::timeout(&format!(
                     "Listing {}",
                     request.resource.plural
                 )))
-            })
+            });
+        self.noticed(answer)
     }
 
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
@@ -144,11 +170,12 @@ pub type EntryReader = Deadline<ReadOnlyClient>;
 
 /// The reader for a client: [`EntryReader`]'s deadlines on it.
 pub fn reader(client: kube::Client) -> EntryReader {
-    Deadline::new(
-        ReadOnlyClient::new(client).with_page_deadline(REQUEST_DEADLINE),
-        REQUEST_DEADLINE,
-    )
-    .with_list_limit(REQUEST_DEADLINE * MAX_PAGES)
+    bounded(ReadOnlyClient::new(client).with_page_deadline(REQUEST_DEADLINE))
+}
+
+/// [`EntryReader`]'s deadlines on `reader`, whose own pages are bounded.
+fn bounded<R: Reader>(reader: R) -> Deadline<R> {
+    Deadline::new(reader, REQUEST_DEADLINE).with_list_limit(REQUEST_DEADLINE * MAX_PAGES)
 }
 
 /// A client for the context `context` of the merged `kubeconfigs`, within
@@ -246,7 +273,8 @@ pub async fn connect_entry(kubeconfigs: Vec<PathBuf>, entry: Entry) -> Result<En
             within(CONNECT_DEADLINE)
         )),
         Ok(Err(why)) => Err(why),
-        Ok(Ok(client)) => Ok(reader(client)),
+        // Credentials the cluster rejects are asked for again next time.
+        Ok(Ok((client, key))) => Ok(reader(client).on_rejected(move || served::forget(&key))),
     }
 }
 
@@ -256,7 +284,7 @@ async fn through_talos(
     talosconfig: PathBuf,
     context: String,
     limit: Duration,
-) -> Result<kube::Client, String> {
+) -> Result<(kube::Client, served::Key), String> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let shown = talosconfig.display().to_string();
     let (talos_context, key) = tokio::task::spawn_blocking(move || {
@@ -284,7 +312,7 @@ async fn through_talos(
                 .map_err(|_| "its control plane gave no kubeconfig through Talos".to_owned())?;
             let kubeconfig: kube::config::Kubeconfig = serde_yaml::from_str(&served)
                 .map_err(|_| "the kubeconfig its control plane gave couldn't be read".to_owned())?;
-            served::store(key, kubeconfig.clone());
+            served::store(key.clone(), kubeconfig.clone());
             kubeconfig
         }
     };
@@ -299,7 +327,9 @@ async fn through_talos(
         .map_err(|_| "the kubeconfig its control plane gave couldn't be loaded".to_owned())?;
     config.connect_timeout = Some(limit);
     config.read_timeout = Some(REQUEST_DEADLINE);
-    crate::kube_client::client(config).map_err(|error| error.message("its client couldn't be made"))
+    crate::kube_client::client(config)
+        .map(|client| (client, key))
+        .map_err(|error| error.message("its client couldn't be made"))
 }
 
 /// An entry's id, and its client or why there is none.
@@ -309,14 +339,21 @@ pub type Connected = (String, Result<EntryReader, String>);
 /// the order given, each with its entry's id. Each connects within its own
 /// deadline, and a slow one never keeps the next from starting.
 pub async fn connect_all(kubeconfigs: &[PathBuf], entries: Vec<Entry>) -> Vec<Connected> {
-    let mut connected: Vec<(usize, Connected)> =
+    connect_each(entries, |entry| connect_entry(kubeconfigs.to_vec(), entry)).await
+}
+
+/// [`connect_all`] through `connect`.
+async fn connect_each<C, F, Fut>(entries: Vec<Entry>, connect: F) -> Vec<(String, C)>
+where
+    F: Fn(Entry) -> Fut,
+    Fut: Future<Output = C>,
+{
+    let mut connected: Vec<(usize, (String, C))> =
         futures::stream::iter(entries.into_iter().enumerate())
             .map(|(number, entry)| {
-                let kubeconfigs = kubeconfigs.to_vec();
-                async move {
-                    let id = entry.id.clone();
-                    (number, (id, connect_entry(kubeconfigs, entry).await))
-                }
+                let id = entry.id.clone();
+                let connecting = connect(entry);
+                async move { (number, (id, connecting.await)) }
             })
             .buffer_unordered(MAX_AT_ONCE)
             .collect()

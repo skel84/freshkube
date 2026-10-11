@@ -210,11 +210,17 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
         .map_or((None, None), |(unchecked, on)| (Some(unchecked), on));
     let claim = |confidence, app_side, member_side, why: &str| {
         let mut why = why.to_owned();
-        if unchecked.is_some() {
-            why.push_str(
+        match &unchecked {
+            Some(Unchecked::NotMatched) => why.push_str(
+                ". No Argo CD Application mapped to its cluster lists it, but one deploying \
+                 there under a destination the workspace doesn't map may manage it, so its \
+                 label may not be the last word",
+            ),
+            Some(_) => why.push_str(
                 ". Argo CD's Applications there weren't all read, so one may manage it and its \
                  label may not be the last word",
-            );
+            ),
+            None => {}
         }
         Claim {
             member: at.clone(),

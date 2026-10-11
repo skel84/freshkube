@@ -10,6 +10,7 @@ use crate::applications::read::read_session;
 use crate::applications::{CoverageState, Inputs, Override, SourceKind, derive, example};
 use crate::delivery::fixtures::FixtureReader;
 use crate::delivery::read::{ListRequest, Listing, Resource, ServedGroup};
+use crate::delivery::source::Source;
 use crate::resources::Failure;
 use crate::workspace::{Destination, Key, Role, Workspace};
 
@@ -502,8 +503,12 @@ async fn one_entry_that_hangs_keeps_no_other_waiting() {
     let sources = Sources::of(&workspace(&environments));
     let started = tokio::time::Instant::now();
     let connect = |entry: Entry| async move {
+        // The second destination never connects.
+        if entry.id == "env-2" {
+            std::future::pending::<()>().await;
+        }
         Ok::<_, String>(match entry.id.as_str() {
-            // The first destination never answers its listing.
+            // The first connects, then never answers its listing.
             "env-1" => everything().hanging("deployments"),
             _ => everything(),
         })
@@ -512,17 +517,24 @@ async fn one_entry_that_hangs_keeps_no_other_waiting() {
     assert_eq!(
         started.elapsed(),
         ENTRY_DEADLINE,
-        "ends with the one that hung"
+        "ends with the ones that hung"
     );
     let covered = coverage(sessions);
+    let seconds = ENTRY_DEADLINE.as_secs();
     assert_eq!(
         state(&covered, "env-1", SourceKind::Workloads),
+        Some(CoverageState::Unreadable(format!(
+            "didn't finish reading within {seconds} s"
+        ))),
+        "it answered, so it was reached"
+    );
+    assert_eq!(
+        state(&covered, "env-2", SourceKind::Workloads),
         Some(CoverageState::Unreachable(format!(
-            "no answer within {} s",
-            ENTRY_DEADLINE.as_secs()
+            "no answer within {seconds} s"
         )))
     );
-    for id in &environments[1..] {
+    for id in &environments[2..] {
         assert_eq!(
             state(&covered, id, SourceKind::Workloads),
             Some(CoverageState::Read),
@@ -585,5 +597,137 @@ async fn a_source_its_entry_doesnt_serve_says_so_in_its_name() {
             Some(CoverageState::NotInstalled(_))
         ),
         "{covered:?}"
+    );
+}
+
+/// A reader whose every request, discovery too, takes a round trip, and
+/// which counts them.
+struct Distant {
+    reader: FixtureReader,
+    requests: Rc<Cell<usize>>,
+}
+
+impl Distant {
+    const ROUND_TRIP: Duration = Duration::from_millis(100);
+
+    async fn trip(&self) {
+        self.requests.set(self.requests.get() + 1);
+        tokio::time::sleep(Self::ROUND_TRIP).await;
+    }
+}
+
+impl Reader for Distant {
+    async fn get(
+        &self,
+        resource: &Resource,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<Value, Failure> {
+        self.trip().await;
+        self.reader.get(resource, namespace, name).await
+    }
+    async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
+        self.trip().await;
+        self.reader.list(request).await
+    }
+    async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
+        self.trip().await;
+        self.reader.groups().await
+    }
+    async fn plurals(&self, group: &str, version: &str) -> Result<Vec<String>, Failure> {
+        self.trip().await;
+        self.reader.plurals(group, version).await
+    }
+}
+
+/// A Kargo of the most projects read, behind a slow link, is read in full:
+/// discovered once, a few projects at a time.
+#[tokio::test(start_paused = true)]
+async fn a_large_kargo_far_away_is_read_in_full() {
+    use crate::applications::read::{MAX_PROJECTS, PROJECTS_AT_ONCE};
+
+    let sources = Sources::of(&workspace(&["cluster-c"]));
+    let names: Vec<String> = (1..=MAX_PROJECTS).map(|n| format!("shop-{n:02}")).collect();
+    let kargo = everything()
+        .with(
+            "projects",
+            names
+                .iter()
+                .map(|name| json!({"metadata": {"name": name}}))
+                .collect(),
+        )
+        .with(
+            "stages",
+            names
+                .iter()
+                .map(|name| namespaced(name, "dev", json!({})))
+                .collect(),
+        );
+    let asked_of_kargo = Rc::new(Cell::new(0));
+    let kargo = RefCell::new(Some(kargo));
+    let connect = |entry: Entry| {
+        let (reader, requests) = match entry.id.as_str() {
+            "cluster-b" => (
+                kargo.borrow_mut().take().expect("one connection"),
+                asked_of_kargo.clone(),
+            ),
+            _ => (everything(), Rc::new(Cell::new(0))),
+        };
+        async move { Ok::<_, String>(Distant { reader, requests }) }
+    };
+    let started = tokio::time::Instant::now();
+    let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
+    let session = sessions
+        .iter()
+        .find(|session| session.key == SessionKey::new("cluster-b"))
+        .expect("Kargo's entry");
+    let Source::Read(projects) = &session.kargo else {
+        panic!("Kargo read in full: {:?}", session.kargo);
+    };
+    assert_eq!(projects.len(), MAX_PROJECTS);
+    assert!(projects.iter().all(|project| matches!(
+        &project.stages,
+        Source::Read(stages) if stages.len() == 1
+    )));
+    let rounds = MAX_PROJECTS.div_ceil(PROJECTS_AT_ONCE) as u32;
+    assert!(
+        started.elapsed() <= Distant::ROUND_TRIP * (rounds + 10),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        started.elapsed() < ENTRY_DEADLINE,
+        "within even a destination's deadline"
+    );
+    // The projects' discovery and listing, then Stages' and Warehouses'
+    // discovery once, then each project's two lists.
+    assert_eq!(asked_of_kargo.get(), 3 + 2 + 2 * MAX_PROJECTS);
+}
+
+/// Kargo's entry has the rest of the budget; a destination its own
+/// deadline, and one that answered but ran out says it didn't finish.
+#[tokio::test(start_paused = true)]
+async fn kargo_has_the_budget_and_a_destination_its_deadline() {
+    let sources = Sources::of(&workspace(&["env-1"]));
+    // Two listings one after another: past a destination's deadline.
+    let slow = Duration::from_secs(ENTRY_DEADLINE.as_secs() / 2 + 1);
+    let connect = |entry: Entry| async move {
+        Ok::<_, String>(match entry.id.as_str() {
+            "cluster-b" | "env-1" => everything().slow(slow),
+            _ => everything(),
+        })
+    };
+    let covered =
+        coverage(read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await);
+    assert_eq!(
+        state(&covered, "cluster-b", SourceKind::KargoProjects),
+        Some(CoverageState::Read)
+    );
+    assert_eq!(
+        state(&covered, "env-1", SourceKind::Workloads),
+        Some(CoverageState::Unreadable(format!(
+            "didn't finish reading within {} s",
+            ENTRY_DEADLINE.as_secs()
+        )))
     );
 }
