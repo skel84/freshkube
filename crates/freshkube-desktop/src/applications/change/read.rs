@@ -299,17 +299,6 @@ fn deliver(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{ALONE, Alone, DEADLINE, entry};
-
-    #[test]
-    fn the_workspace_of_one_reads_under_the_pages_deadline() {
-        assert_eq!(ALONE, Alone::Within(DEADLINE));
-        assert!(DEADLINE > entry::REQUEST_DEADLINE);
-    }
-}
-
-#[cfg(test)]
 impl ChangePage {
     pub(crate) fn is_reading(&self) -> bool {
         self.pending
@@ -350,5 +339,16 @@ impl ChangePage {
         let request = self.snapshot.begin(self.fetch.identity());
         self.pending = true;
         self.answer(&request, Err(why.into()), window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ALONE, Alone, DEADLINE, entry};
+
+    #[test]
+    fn the_workspace_of_one_reads_under_the_pages_deadline() {
+        assert_eq!(ALONE, Alone::Within(DEADLINE));
+        assert!(DEADLINE > entry::REQUEST_DEADLINE);
     }
 }

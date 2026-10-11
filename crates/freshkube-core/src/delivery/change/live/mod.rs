@@ -38,7 +38,7 @@ use chrono::{DateTime, Utc};
 use super::Change;
 use crate::delivery::argocd::MapHint;
 use crate::delivery::collect::{Plan, Upstream, read_environment, upstream};
-use crate::delivery::entry::pool::{Open, Pool, Unread};
+use crate::delivery::entry::pool::{Open, Pool, Unread, Until};
 use crate::delivery::github::{GitHub, PullRequest};
 use crate::delivery::join::{
     Evidence, candidate_applications, candidate_deployments, candidate_rollouts,
@@ -330,16 +330,31 @@ where
         Ok((kargo, _)) => kargo,
         Err(unread) => return Err(couldnt(unread.words())),
     };
-    let freight = match read_freight(&kargo, &place.project, &place.freight).await {
-        Ok(freight) => freight,
-        Err(failure) => {
-            let at = place.at(Part::Kargo);
+    let at = place.at(Part::Kargo);
+    // The Freight is the first round's too, so it ends with the budget.
+    let until = pool.first();
+    let read = until.bound(read_freight(&kargo, &place.project, &place.freight));
+    let freight = match read.await {
+        Some(Ok(freight)) => freight,
+        Some(Err(failure)) => {
             return Err(couldnt(match Source::<()>::from_failure(failure) {
                 Source::NotInstalled(_) => format!("it wasn't found on {}", at.label),
                 Source::Refused(why) => format!("refused on {}: {why}", at.label),
-                Source::Unreadable(why) => why,
+                Source::Unreadable(why) => {
+                    return Err(format!(
+                        "Freight {} of {} couldn't be read on {}: {why}",
+                        place.freight, place.project, at.label
+                    ));
+                }
                 Source::Read(()) | Source::Capped(..) => String::new(),
             }));
+        }
+        None => {
+            let unread = Unread::Unfinished {
+                entry: at.label,
+                why: until.unfinished(),
+            };
+            return Err(couldnt(unread.words()));
         }
     };
     Ok(follow_in(pool, place, &freight, observed_at).await)
@@ -370,10 +385,13 @@ where
         builds: builds.as_ref().err().cloned(),
         argocd: argocd.as_ref().err().cloned(),
     };
+    // Every request of the first round ends with the budget, and says
+    // which entry didn't finish.
+    let until = pool.first();
     let (kargo, builds, argocd) = (
-        Reaching::of(kargo),
-        Reaching::of(builds),
-        Reaching::of(argocd),
+        Reaching::of(kargo, until, place.at(Part::Kargo).label),
+        Reaching::of(builds, until, place.at(Part::Builds).label),
+        Reaching::of(argocd, until, place.at(Part::ArgoCd).label),
     );
     let plan = plan(place, freight);
     let upstream_readers = Upstream {
@@ -410,14 +428,22 @@ async fn read_environments<R, C, F, Fut>(
         .values()
         .filter_map(|destination| destination.context())
         .filter(|context| place.is_here(context) || pool.sources().entry(context).is_some())
-        .filter(|context| {
-            !candidate_rollouts(evidence, context).is_empty()
-                || !candidate_deployments(evidence, context).is_empty()
-                || !candidate_applications(evidence, context, None).is_empty()
-        })
         .collect();
     contexts.sort_unstable();
     contexts.dedup();
+    // One with nothing to read for the change is read, empty, with no
+    // request: so the join says what wasn't there, never that it is
+    // another cluster.
+    let (contexts, empty): (Vec<&str>, Vec<&str>) = contexts.into_iter().partition(|context| {
+        !candidate_rollouts(evidence, context).is_empty()
+            || !candidate_deployments(evidence, context).is_empty()
+            || !candidate_applications(evidence, context, None).is_empty()
+    });
+    evidence.environments.extend(
+        empty
+            .into_iter()
+            .map(|context| (context.to_owned(), Ok(Default::default()))),
+    );
     let read = futures::future::join_all(contexts.into_iter().map(|context| {
         let evidence = &*evidence;
         async move {
@@ -457,23 +483,54 @@ async fn read_environments<R, C, F, Fut>(
     evidence.environments.extend(read);
 }
 
-/// A part's reader, or the words why its entry wasn't read, which every
-/// request then fails with, so each of its rows says so.
+/// A part's reader, each request ending by the first round's deadline,
+/// or the words why its entry wasn't read, which every request then fails
+/// with, so each of its rows says so.
 enum Reaching<R> {
-    Read(R),
+    Read {
+        reader: R,
+        until: Until,
+        /// Its entry, as a request that didn't finish names it.
+        entry: String,
+    },
     Unread(String),
 }
 
-impl<R> Reaching<R> {
-    fn of<W>(reached: Result<(R, W), Unread>) -> Self {
+impl<R: Reader> Reaching<R> {
+    fn of<W>(reached: Result<(R, W), Unread>, until: Until, entry: String) -> Self {
         match reached {
-            Ok((reader, _)) => Reaching::Read(reader),
+            Ok((reader, _)) => Reaching::Read {
+                reader,
+                until,
+                entry,
+            },
             Err(unread) => Reaching::Unread(unread.words()),
         }
     }
 
     fn failure(why: &str) -> Failure {
         Failure::new(FailureKind::Other, why)
+    }
+
+    /// `ask` of the reader by the deadline, or why not.
+    async fn ask<'r, T, Fut>(&'r self, ask: impl FnOnce(&'r R) -> Fut) -> Result<T, Failure>
+    where
+        Fut: Future<Output = Result<T, Failure>>,
+    {
+        match self {
+            Reaching::Read {
+                reader,
+                until,
+                entry,
+            } => until.bound(ask(reader)).await.unwrap_or_else(|| {
+                let unread = Unread::Unfinished {
+                    entry: entry.clone(),
+                    why: until.unfinished(),
+                };
+                Err(Self::failure(&unread.words()))
+            }),
+            Reaching::Unread(why) => Err(Self::failure(why)),
+        }
     }
 }
 
@@ -484,34 +541,20 @@ impl<R: Reader> Reader for Reaching<R> {
         namespace: Option<&str>,
         name: &str,
     ) -> Result<serde_json::Value, Failure> {
-        match self {
-            Reaching::Read(reader) => reader.get(resource, namespace, name).await,
-            Reaching::Unread(why) => Err(Self::failure(why)),
-        }
+        self.ask(|reader| reader.get(resource, namespace, name))
+            .await
     }
     async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
-        match self {
-            Reaching::Read(reader) => reader.list(request).await,
-            Reaching::Unread(why) => Err(Self::failure(why)),
-        }
+        self.ask(|reader| reader.list(request)).await
     }
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
-        match self {
-            Reaching::Read(reader) => reader.probe(request).await,
-            Reaching::Unread(why) => Err(Self::failure(why)),
-        }
+        self.ask(|reader| reader.probe(request)).await
     }
     async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
-        match self {
-            Reaching::Read(reader) => reader.groups().await,
-            Reaching::Unread(why) => Err(Self::failure(why)),
-        }
+        self.ask(|reader| reader.groups()).await
     }
     async fn plurals(&self, group: &str, version: &str) -> Result<Vec<String>, Failure> {
-        match self {
-            Reaching::Read(reader) => reader.plurals(group, version).await,
-            Reaching::Unread(why) => Err(Self::failure(why)),
-        }
+        self.ask(|reader| reader.plurals(group, version)).await
     }
 }
 

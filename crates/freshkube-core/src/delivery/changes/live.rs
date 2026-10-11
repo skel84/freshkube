@@ -68,12 +68,9 @@ impl Where {
     }
 }
 
-/// Why a part wasn't read: the budget ran out first.
+/// Why a part wasn't read: the budget ran out first, as the pool says it.
 fn late(budget: Duration) -> String {
-    format!(
-        "no answer within the {} s a read may take",
-        budget.as_secs()
-    )
+    format!("no answer within the read's {} s", budget.as_secs())
 }
 
 /// Reads the list through `reader` alone, within `budget`: the workspace

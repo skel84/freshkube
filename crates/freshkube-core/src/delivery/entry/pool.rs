@@ -8,15 +8,18 @@
 //!   read alone ([`Place`]).
 //! - Kargo's, the builds' and Argo CD's entries are the first round, with
 //!   the rest of the read's budget; a destination's entry has
-//!   [`ENTRY_DEADLINE`], connecting included ([`Until`]). The workspace of
-//!   one has neither: the read's own deadline bounds it.
+//!   [`ENTRY_DEADLINE`] from when it is asked for, its wait for a turn to
+//!   connect and connecting included, and never past the read's end
+//!   ([`Until`]). The workspace of one has neither: the read's own deadline
+//!   bounds it.
 //! - An entry that didn't connect by its deadline is unreachable in its own
 //!   name; one that connected but didn't finish says so; a part no entry
 //!   holds is missing ([`Unread`]). None of them reads as none found.
 //!
 //! [`Pool`] keeps the clients of one read that follows many changes: each
 //! entry is connected to once, at most [`MAX_AT_ONCE`] connecting at a
-//! time, and each entry's questions are asked once through its own
+//! time (the limit covers connecting only; entries already connected read
+//! at once), and each entry's questions are asked once through its own
 //! [`SharedReader`]. Every client is dropped with the pool, when the read
 //! ends.
 
@@ -419,7 +422,17 @@ where
                 .as_ref()
                 .map(|open| open.as_ref().map_err(|why| why.as_str()));
             let no_entry = |_| async { Err::<C, _>(String::new()) };
-            return match reach(place, open, no_entry, until).await? {
+            // The open cluster is named by its entry when it is one.
+            let named = |unread| match (unread, self.open_entry) {
+                (Unread::Unreachable { entry, why }, Some(open)) if entry == OPEN => {
+                    Unread::Unreachable {
+                        entry: open.to_owned(),
+                        why,
+                    }
+                }
+                (unread, _) => unread,
+            };
+            return match reach(place, open, no_entry, until).await.map_err(named)? {
                 Via::Open(reader) => Ok((Via::Open(reader), Read::Open)),
                 Via::Entry(_) => unreachable!("the open connection is never connected to"),
             };
@@ -503,6 +516,26 @@ mod tests {
             [(); 3].map(|_| Read::Entry("cicd".into()))
         );
         assert_eq!(connects.get(), 1);
+    }
+
+    /// A part on the open entry whose client couldn't be made says so in
+    /// the entry's name, not as "the open cluster".
+    #[tokio::test]
+    async fn the_open_entry_unreached_is_named_by_its_entry() {
+        let sources = sources(&[]);
+        let pool = Pool::new(
+            &sources,
+            Some(Open::<'_, FixtureReader> {
+                entry: Some("core"),
+                reader: Err("no answer within 5 s".into()),
+            }),
+            |_: Entry| async { Ok::<_, String>(FixtureReader::default()) },
+            BUDGET,
+        );
+        let Err(unread) = pool.part(Part::ArgoCd).await else {
+            panic!("Argo CD is read on the open entry, which has no client");
+        };
+        assert_eq!(unread.words(), "Couldn't reach core: no answer within 5 s");
     }
 
     /// Clients are made at most [`MAX_AT_ONCE`] at a time.

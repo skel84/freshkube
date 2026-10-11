@@ -1072,8 +1072,10 @@ impl Shape {
                     && let Some(group) = stage_group(&change, ix)
                 {
                     let stage = &mut change.stages[ix];
-                    if stage.reach != Reach::NotReached {
-                        stage.reach = Reach::Linked(Confidence::Claimed);
+                    // A side couldn't be read: Unknown, unless it was less.
+                    let unread = Reach::Linked(Confidence::Unknown);
+                    if stage.reach.rank() > unread.rank() {
+                        stage.reach = unread;
                     }
                     stage.cluster = Destination::Entry {
                         entry: cluster.into(),
@@ -1089,7 +1091,11 @@ impl Shape {
                 }
             }
         }
-        change.missing.push(why);
+        let gap = match self {
+            Self::ArgoRefused => Gap::Refused,
+            _ => Gap::Unreadable,
+        };
+        change.missing.push(Missing::new(gap, why));
         Ok(change)
     }
 }
@@ -1180,10 +1186,7 @@ fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
                 before: "Application".into(),
                 before_says: format!("status.resources lists Deployment {PROJECT}/{DEPLOYMENT}"),
                 here_says: "not read".into(),
-                why: format!(
-                    "Only Argo CD's status says so: {cluster} isn't read, so nothing there \
-                     confirms it."
-                ),
+                why: format!("Only Argo CD's status says so: {why}, so nothing there confirms it."),
             }),
             unlinked: None,
             actions: vec![Action::new(Target::OnEntry {

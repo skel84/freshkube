@@ -586,7 +586,7 @@ async fn a_read_past_its_budget_keeps_what_answered() {
         .expect("shop says why it isn't listed");
     assert_eq!(note.gap, Gap::Unreadable);
     assert!(
-        note.text.contains("no answer within the 90 s"),
+        note.text.contains("no answer within the read's 90 s"),
         "{}",
         note.text
     );

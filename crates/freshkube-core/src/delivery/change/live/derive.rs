@@ -291,9 +291,10 @@ fn sureness(confidence: Confidence) -> u8 {
 /// How sure it is that a Stage's pods run the Freight: the weakest link of
 /// its run, and Unknown when no link reaches its pods. An Application on
 /// another workspace entry, whose workloads Argo CD reports, stands for its
-/// links into that cluster, as the page shows it: Claimed at most, since
-/// nothing there was read. Unknown because a source the run needed was
-/// refused is Refused, naming what.
+/// links into that cluster, as the page shows it: Claimed at most when
+/// nothing asked its entry, and Unknown when its entry was asked and
+/// couldn't be read, since a side is unread. Unknown because a source the
+/// run needed was refused is Refused, naming what.
 pub(super) fn reach(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) -> Reach {
     if !holds {
         return Reach::NotReached;
@@ -305,6 +306,12 @@ pub(super) fn reach(place: &Place, evidence: &Evidence, holds: bool, run: &[&Lin
     };
     let kept: Vec<&Link> = run.iter().copied().filter(|link| !reported(link)).collect();
     let away = kept.len() < run.len();
+    // An entry asked that couldn't be read leaves a side unread: Unknown,
+    // as the claims say, though what Argo CD reports stays Claimed.
+    let unread = run.iter().any(|link| {
+        link.from == Joined::Application
+            && elsewhere(place, evidence, &link.subject).is_some_and(|away| away.why.is_some())
+    });
     let pods = kept.iter().any(|link| link.to == Joined::Pod);
     // An Application read here still needs its pods, beside one elsewhere.
     let local = kept.iter().any(|link| {
@@ -316,6 +323,7 @@ pub(super) fn reach(place: &Place, evidence: &Evidence, holds: bool, run: &[&Lin
         .map(|link| link.confidence)
         .min_by_key(|confidence| sureness(*confidence));
     let confidence = match weakest {
+        _ if unread => Confidence::Unknown,
         Some(weakest) if away && (pods || !local) => [weakest, Confidence::Claimed]
             .into_iter()
             .min_by_key(|confidence| sureness(*confidence))
@@ -491,8 +499,8 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
 struct Away<'a> {
     app: &'a Application,
     entry: &'a str,
-    /// Why it wasn't read, when its entry was asked; else it isn't the open
-    /// cluster, and only the open cluster is read.
+    /// Why it wasn't read, when its entry was asked; else nothing asked it,
+    /// as the workspace of one asks no other entry.
     why: Option<&'a str>,
 }
 
@@ -647,7 +655,7 @@ fn reported_hop(
                         "{why}, so this is what Argo CD reports, not what was read there"
                     )),
                     None => format!(
-                        "{entry} isn't the open cluster, so this is what Argo CD reports, not what was read there."
+                        "{entry} wasn't read for this change, so this is what Argo CD reports, not what was read there."
                     ),
                 },
             }),
@@ -658,9 +666,14 @@ fn reported_hop(
                 before: "Application".into(),
                 before_says: format!("status.resources lists {} {shown}", object.kind),
                 here_says: "not read".into(),
-                why: format!(
-                    "Only Argo CD's status says so: {entry} isn't read, so nothing there confirms it."
-                ),
+                why: match away.why {
+                    Some(why) => format!(
+                        "Only Argo CD's status says so: {why}, so nothing there confirms it."
+                    ),
+                    None => format!(
+                        "Only Argo CD's status says so: {entry} isn't read, so nothing there confirms it."
+                    ),
+                },
             }),
             unlinked: None,
             actions: vec![Action::new(Target::OnEntry {
@@ -1460,17 +1473,26 @@ fn gate_hop(sides: &Sides, stage: &str, group: usize, ix: usize, gate: &str, row
 /// that name the entry: a part whose entry couldn't be read at all, a
 /// destination that couldn't be, and a kind refused or not served where it
 /// was asked.
-fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached) -> Vec<String> {
-    fn kind<T>(source: &Source<T>, what: &str, at: &At) -> Option<String> {
+fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached) -> Vec<Missing> {
+    fn kind<T>(source: &Source<T>, what: &str, at: &At) -> Option<Missing> {
         let entry = &at.label;
         match source {
-            Source::Refused(why) => Some(format!("{what} were refused on {entry}: {why}")),
-            Source::NotInstalled(_) => Some(format!("{what} aren't served on {entry}")),
-            Source::Unreadable(why) => Some(format!("{what} couldn't be read on {entry}: {why}")),
+            Source::Refused(why) => Some(Missing::new(
+                Gap::Refused,
+                format!("{what} were refused on {entry}: {why}"),
+            )),
+            Source::NotInstalled(_) => Some(Missing::new(
+                Gap::NotServed,
+                format!("{what} aren't served on {entry}"),
+            )),
+            Source::Unreadable(why) => Some(Missing::new(
+                Gap::Unreadable,
+                format!("{what} couldn't be read on {entry}: {why}"),
+            )),
             Source::Read(_) | Source::Capped(..) => None,
         }
     }
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<Missing> = Vec::new();
     for (unread, kinds) in [
         (
             &reached.builds,
@@ -1498,14 +1520,14 @@ fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached)
         ),
     ] {
         match unread {
-            Some(unread) => lines.push(unread.words()),
+            Some(unread) => lines.push(Missing::new(Gap::Unreadable, unread.words())),
             None => lines.extend(kinds.into_iter().flatten()),
         }
     }
     for (context, read) in &evidence.environments {
         let at = place.at_context(context);
         match read {
-            Err(why) => lines.push(why.clone()),
+            Err(why) => lines.push(Missing::new(Gap::Unreadable, why.clone())),
             Ok(workloads) => {
                 let pods = workloads
                     .pods
@@ -1514,15 +1536,17 @@ fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached)
                     .map(|read| &read.pods)
                     .chain(workloads.namespace_pods.values())
                     .find(|pods| matches!(pods, Source::Refused(_) | Source::NotInstalled(_)));
+                // Rollouts not served are only Argo Rollouts not installed.
+                let rollouts = kind(&workloads.rollouts, "Rollouts", &at)
+                    .filter(|line| line.gap != Gap::NotServed);
                 lines.extend(
                     [
-                        kind(&workloads.rollouts, "Rollouts", &at),
+                        rollouts,
                         kind(&workloads.deployments, "Deployments", &at),
                         pods.and_then(|pods| kind(pods, "Pods", &at)),
                     ]
                     .into_iter()
-                    .flatten()
-                    .filter(|line| !line.starts_with("Rollouts aren't served")),
+                    .flatten(),
                 );
             }
         }

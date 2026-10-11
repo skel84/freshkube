@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
-use super::change::{Change, Reach};
+use super::change::{self, Change, Reach};
 use super::join::Confidence;
 use super::kargo::{Freight, Stage, promotion_order};
 use super::source::Source;
@@ -230,15 +230,15 @@ fn followed_missing(rows: &[Row]) -> Vec<Note> {
     rows.iter()
         .filter_map(|row| row.trail.as_ref().ok())
         .flat_map(|change| &change.missing)
-        .filter(|line| seen.insert(line.as_str()))
+        .filter(|line| seen.insert(line.text.as_str()))
         .map(|line| Note {
-            gap: if line.contains(" refused on ") {
-                Gap::Refused
-            } else {
-                Gap::Unreadable
+            gap: match line.gap {
+                change::Gap::NotServed => Gap::NotServed,
+                change::Gap::Refused => Gap::Refused,
+                change::Gap::Unreadable => Gap::Unreadable,
             },
             project: None,
-            text: line.clone(),
+            text: line.text.clone(),
         })
         .collect()
 }

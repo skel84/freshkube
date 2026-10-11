@@ -2,14 +2,16 @@
 //! what an entry that couldn't be read says, in its name.
 use serde_json::json;
 
-use super::super::{Change, Destination, Reach};
-use super::tests::stage_of;
+use super::super::{Change, Destination, Gap, Reach};
+use super::tests::{on_deployment_at, stage_of};
 use super::{BUDGET, Mapping, Place, read_in};
+use crate::delivery::argocd::IN_CLUSTER_SERVER;
 use crate::delivery::entry::pool::{Open, Pool};
 use crate::delivery::fixtures::*;
 use crate::delivery::join::Confidence;
 use crate::delivery::tests::observed_at;
 use crate::indicators::HealthIndicator;
+use crate::resources::{Failure, FailureKind};
 use crate::workspace::{Destination as Mapped, Entry, Key, Role, Sources, Workspace};
 
 const ENV: &str = "https://env-c.example:6443";
@@ -96,6 +98,15 @@ async fn read_across(
         BUDGET,
     );
     read_in(&pool, &place, observed_at()).await
+}
+
+/// What `change` may be missing, each line with what kept it out.
+fn missing(change: &Change) -> Vec<(Gap, &str)> {
+    change
+        .missing
+        .iter()
+        .map(|line| (line.gap, line.text.as_str()))
+        .collect()
 }
 
 fn hop<'a>(change: &'a Change, name: &str) -> &'a super::super::Hop {
@@ -191,7 +202,10 @@ async fn builds_unreachable_keep_the_rest_and_say_so() {
         BUDGET,
     );
     let change = read_in(&pool, &place, observed_at()).await.expect("read");
-    assert_eq!(change.missing, ["Couldn't reach ci-d: connection refused"]);
+    assert_eq!(
+        missing(&change),
+        [(Gap::Unreadable, "Couldn't reach ci-d: connection refused")]
+    );
     assert_eq!(change.groups[0].detail, "Tekton on ci-d");
     assert_eq!(hop(&change, "Pods").link, Some(Confidence::Confirmed));
 }
@@ -212,11 +226,14 @@ async fn argo_cd_refused_on_its_entry_says_so() {
     )
     .await
     .expect("read");
-    assert_eq!(change.missing.len(), 1, "{:?}", change.missing);
+    let missing = missing(&change);
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert_eq!(missing[0].0, Gap::Refused);
     assert!(
-        change.missing[0].starts_with("Argo CD Applications were refused on core-a: "),
-        "{:?}",
-        change.missing
+        missing[0]
+            .1
+            .starts_with("Argo CD Applications were refused on core-a: "),
+        "{missing:?}"
     );
     assert!(matches!(change.stages[0].reach, Reach::Refused(_)));
 }
@@ -226,14 +243,18 @@ async fn a_destination_unreachable_reports_what_argo_cd_says() {
     let change = read_across(&workspace(), |_| {}, &["env-c"])
         .await
         .expect("read");
-    assert_eq!(change.missing, ["Couldn't reach env-c: connection refused"]);
+    assert_eq!(
+        missing(&change),
+        [(Gap::Unreadable, "Couldn't reach env-c: connection refused")]
+    );
     let dev = &change.stages[0];
     assert!(
         matches!(&dev.cluster, Destination::Entry { entry, .. } if entry == "env-c"),
         "{:?}",
         dev.cluster
     );
-    assert_eq!(dev.reach, Reach::Linked(Confidence::Claimed));
+    // Its entry was asked and couldn't be read: a side is unread.
+    assert_eq!(dev.reach, Reach::Linked(Confidence::Unknown));
     let reported = change
         .hops
         .iter()
@@ -242,6 +263,13 @@ async fn a_destination_unreachable_reports_what_argo_cd_says() {
     let super::super::Shows::Hop(detail) = &reported.shows else {
         panic!("{reported:?}");
     };
+    // What Argo CD reports stays its claim, saying why it isn't more.
+    assert_eq!(reported.link, Some(Confidence::Claimed));
+    assert_eq!(
+        detail.link.as_ref().expect("its link").why,
+        "Only Argo CD's status says so: Couldn't reach env-c: connection refused, so nothing \
+         there confirms it."
+    );
     let notice = detail.notice.as_ref().expect("a notice");
     assert_eq!(
         notice.body,
@@ -261,11 +289,237 @@ async fn a_hanging_destination_ends_with_the_budget() {
     )
     .await
     .expect("read");
-    assert_eq!(change.missing.len(), 1, "{:?}", change.missing);
-    assert!(
-        change.missing[0].starts_with("env-c didn't finish reading within"),
-        "{:?}",
-        change.missing
+    // It started at once, so its own deadline cut it short.
+    assert_eq!(
+        missing(&change),
+        [(Gap::Unreadable, "env-c didn't finish reading within 30 s")]
     );
     assert_eq!(hop(&change, "Freight wonky-otter").from, "cicd-b");
+}
+
+/// A destination started late has only what the budget leaves: the read's
+/// end, not its own deadline, cuts it short, and it says so.
+#[tokio::test(start_paused = true)]
+async fn a_destination_started_late_ends_with_the_reads_budget() {
+    let change = read_across(
+        &workspace(),
+        |world| {
+            world.argocd = std::mem::take(&mut world.argocd).slow(LATE);
+            world.environment = std::mem::take(&mut world.environment).hanging("rollouts");
+        },
+        &[],
+    )
+    .await
+    .expect("read");
+    let late = format!(
+        "env-c didn't finish reading within the read's {} s",
+        BUDGET.as_secs()
+    );
+    assert_eq!(missing(&change), [(Gap::Unreadable, late.as_str())]);
+}
+
+/// How long Argo CD's slow entry takes a listing: the first round ends
+/// past 15 s and within 45 s, so a destination's own 30 s would pass the
+/// read's end.
+const LATE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// The first round's reads end with the budget too: an entry that answers
+/// but never finishes says so in its name, and the rest shows.
+#[tokio::test(start_paused = true)]
+async fn argo_cds_entry_hanging_ends_with_the_budget() {
+    let change = read_across(
+        &workspace(),
+        |world| world.argocd = std::mem::take(&mut world.argocd).hanging("applications"),
+        &[],
+    )
+    .await
+    .expect("read");
+    let unfinished = format!(
+        "core-a didn't finish reading within the read's {} s",
+        BUDGET.as_secs()
+    );
+    let missing = missing(&change);
+    assert!(
+        missing.iter().any(|(_, line)| line.contains(&unfinished)),
+        "{missing:?}"
+    );
+    assert_eq!(hop(&change, "Freight wonky-otter").from, "cicd-b");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_freight_that_never_answers_ends_with_the_budget() {
+    let why = read_across(
+        &workspace(),
+        |world| world.kargo = std::mem::take(&mut world.kargo).hanging("freights"),
+        &[],
+    )
+    .await
+    .expect_err("no Freight");
+    assert_eq!(
+        why,
+        format!(
+            "Freight f-new of storefront couldn't be read: cicd-b didn't finish reading within \
+             the read's {} s",
+            BUDGET.as_secs()
+        )
+    );
+}
+
+#[tokio::test]
+async fn an_unreadable_freight_names_kargos_entry() {
+    let why = read_across(
+        &workspace(),
+        |world| {
+            world.kargo = std::mem::take(&mut world.kargo)
+                .failing("freights", Failure::new(FailureKind::Other, "bad gateway"))
+        },
+        &[],
+    )
+    .await
+    .expect_err("no Freight");
+    assert!(
+        why.starts_with("Freight f-new of storefront couldn't be read on cicd-b: "),
+        "{why}"
+    );
+}
+
+#[tokio::test]
+async fn kargo_not_served_on_its_entry_says_so_in_its_name() {
+    let why = read_across(
+        &workspace(),
+        |world| world.kargo = FixtureReader::default(),
+        &[],
+    )
+    .await
+    .expect_err("no Freight");
+    assert_eq!(
+        why,
+        "Freight f-new of storefront couldn't be read: it wasn't found on cicd-b"
+    );
+}
+
+/// With a part's entry open, it is read through the open connection, never
+/// connected to again, and Argo CD's own cluster is read there.
+#[tokio::test]
+async fn the_open_entry_is_read_through_the_open_connection() {
+    let workspace = workspace();
+    let mut place = place(&workspace);
+    place.mapping = Mapping::of(&workspace, Some("core-a"));
+    let edit = |world: &mut World| {
+        world.argocd = std::mem::take(&mut world.argocd)
+            .with("applications", vec![application(Some(IN_CLUSTER_SERVER))]);
+    };
+    let open = {
+        let world = world(edit);
+        World {
+            argocd: world.argocd,
+            environment: world.environment,
+            kargo: FixtureReader::default(),
+            tekton: FixtureReader::default(),
+        }
+        .one_cluster()
+    };
+    let connected = std::cell::RefCell::new(Vec::new());
+    let pool = Pool::new(
+        &place.sources,
+        Some(Open {
+            entry: Some("core-a"),
+            reader: Ok(&open),
+        }),
+        |entry: Entry| {
+            connected.borrow_mut().push(entry.id.clone());
+            let reader = entry_reader(&entry.id, world(edit));
+            async move { Ok::<_, String>(reader) }
+        },
+        BUDGET,
+    );
+    let change = read_in(&pool, &place, observed_at()).await.expect("read");
+    assert_eq!(*connected.borrow(), ["cicd-b"]);
+    let dev = &change.stages[0];
+    assert_eq!(dev.cluster, Destination::Cluster("home".into()));
+    let pods = hop(&change, "Pods");
+    assert_eq!(pods.from, "home");
+    assert_eq!(pods.link, Some(Confidence::Confirmed));
+    assert!(change.missing.is_empty(), "{:?}", change.missing);
+}
+
+/// The Changes list reads Kargo on its entry and each Stage's destination
+/// on its own, so a digest that reaches the pods there is Confirmed.
+#[tokio::test]
+async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
+    use crate::delivery::changes::{self, live as list};
+    let workspace = workspace();
+    let at = list::Where {
+        cluster: "open-key".into(),
+        label: "home".into(),
+        argocd_namespace: "argocd".into(),
+        mapping: Mapping::of(&workspace, None),
+        sources: Sources::of(&workspace),
+    };
+    let world = || {
+        let mut world = on_deployment_at(ENV, |_| {});
+        world.kargo = std::mem::take(&mut world.kargo)
+            .serves(
+                "kargo.akuity.io",
+                "v1alpha1",
+                &["projects", "freights", "stages", "warehouses", "promotions"],
+            )
+            .with(
+                "projects",
+                vec![json!({"metadata": {"name": "storefront"}})],
+            );
+        world
+    };
+    let pool = Pool::new(
+        &at.sources,
+        None::<Open<'_, FixtureReader>>,
+        |entry: Entry| {
+            let reader = entry_reader(&entry.id, world());
+            async move { Ok::<_, String>(reader) }
+        },
+        list::BUDGET,
+    );
+    let read = list::read_in(&pool, &at, observed_at(), list::BUDGET).await;
+    assert_eq!(read.cluster, "cicd-b");
+    let listed = changes::derive(&read);
+    assert!(listed.notes.is_empty(), "{:?}", listed.notes);
+    let row = listed
+        .rows
+        .iter()
+        .find(|row| row.freight == "f-new")
+        .expect("f-new's row");
+    let stages: Vec<(&str, &Reach)> = row
+        .stages
+        .iter()
+        .map(|stage| (stage.name.as_str(), &stage.reach))
+        .collect();
+    assert_eq!(stages, [("dev", &Reach::Linked(Confidence::Confirmed))]);
+}
+
+/// A destination with nothing to read for the change is read, empty, so
+/// it says what wasn't there, never that it isn't the open cluster.
+#[tokio::test]
+async fn a_destination_with_nothing_to_read_says_what_wasnt_there() {
+    let change = read_across(
+        &workspace(),
+        |world| {
+            let mut app = application(Some(ENV));
+            app["spec"]["destination"]
+                .as_object_mut()
+                .expect("a destination")
+                .remove("namespace");
+            app["status"]["resources"] = json!([]);
+            world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
+        },
+        &[],
+    )
+    .await
+    .expect("read");
+    assert_eq!(
+        change.stages[0].cluster,
+        Destination::Cluster("env-c".into())
+    );
+    let said = format!("{:?}", change.hops);
+    assert!(!said.contains("isn't the open cluster"), "{said}");
+    assert!(!said.contains("nothing was read there"), "{said}");
 }

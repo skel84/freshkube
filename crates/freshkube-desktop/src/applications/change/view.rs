@@ -145,10 +145,10 @@ impl ChangePage {
                 .test_support()
                 .role(Role::Status)
         });
-        let missing = self.missing.as_ref().map(|text| {
+        let missing = self.missing.as_ref().map(|(text, label)| {
             ui::warning_banner(Some("May be missing".into()), text.clone(), None, cx)
                 .id("change-missing")
-                .aria_label(format!("May be missing: {text}"))
+                .aria_label(label.clone())
                 .test_support()
                 .role(Role::Status)
         });
