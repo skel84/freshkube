@@ -9,7 +9,7 @@ use freshkube_core::delivery::join::Confidence;
 use freshkube_ui::ui::Tone;
 use gpui_kit::SharedString;
 
-use super::super::change::tone as hop_tone;
+use super::super::change::{reach_tone, tone as hop_tone};
 
 /// One Stage of a row.
 #[derive(Clone, Debug, PartialEq)]
@@ -214,15 +214,6 @@ fn uninstalled(changes: &Changes) -> bool {
         .notes
         .iter()
         .any(|note| note.gap == Gap::NotServed && note.project.is_none())
-}
-
-pub(crate) fn reach_tone(reach: &Reach) -> Tone {
-    match reach {
-        Reach::NotReached => Tone::Outline,
-        Reach::Linked(Confidence::Confirmed) => Tone::Good,
-        Reach::Linked(Confidence::Claimed) => Tone::Info,
-        Reach::Linked(Confidence::Unknown) | Reach::Refused(_) => Tone::Unknown,
-    }
 }
 
 fn reach_word(reach: &Reach) -> &'static str {

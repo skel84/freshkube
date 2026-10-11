@@ -1658,3 +1658,162 @@ fn with_cicd_fra_open_its_freight_opens_and_argo_cds_offer_a_switch(cx: &mut Tes
     })
     .unwrap();
 }
+
+/// The example's Stage `dev`, deploying to `cluster`, with `reach`.
+fn dev_with(
+    reach: freshkube_core::delivery::change::Reach,
+    cluster: freshkube_core::delivery::change::Destination,
+) -> freshkube_core::delivery::change::Stage {
+    let change = freshkube_core::delivery::change::example::change(chrono::Utc::now());
+    let mut dev = change
+        .stages
+        .into_iter()
+        .find(|stage| stage.name == "dev")
+        .expect("the Stage dev");
+    dev.reach = reach;
+    dev.cluster = cluster;
+    dev
+}
+
+/// A Stage's group row says how sure it is that its pods run the change
+/// when that is less than Confirmed, with the weaker glyph.
+#[test]
+fn a_stage_group_row_names_a_reach_weaker_than_confirmed() {
+    use freshkube_core::delivery::change::{Destination, Reach};
+    use freshkube_core::delivery::join::Confidence;
+    use freshkube_ui::ui::Tone;
+    let cluster = || Destination::Cluster("dev-fra".into());
+    let entry = || Destination::Entry {
+        entry: "dev-fra".into(),
+        via: "server https://dev-fra.example.test:6443".into(),
+    };
+    let line = |reach, cluster, rows| {
+        super::stage_line("deploys to dev-fra", &dev_with(reach, cluster), rows)
+    };
+    let words = |extra: Option<&str>| {
+        let mut words = vec!["deploys to dev-fra".to_owned(), "verified".to_owned()];
+        words.extend(extra.map(str::to_owned));
+        words
+    };
+
+    // Confirmed changes nothing.
+    assert_eq!(
+        line(Reach::Linked(Confidence::Confirmed), cluster(), Tone::Good),
+        (words(None), Tone::Good)
+    );
+    // Claimed is the blue dot over Good, and never hides a warning.
+    assert_eq!(
+        line(Reach::Linked(Confidence::Claimed), cluster(), Tone::Good),
+        (words(Some("pods on dev-fra claimed")), Tone::Info)
+    );
+    assert_eq!(
+        line(Reach::Linked(Confidence::Claimed), cluster(), Tone::Warn),
+        (words(Some("pods on dev-fra claimed")), Tone::Warn)
+    );
+    // Unknown names the entry its destination is mapped to.
+    assert_eq!(
+        line(Reach::Linked(Confidence::Unknown), entry(), Tone::Good),
+        (words(Some("pods on dev-fra unknown")), Tone::Unknown)
+    );
+    assert_eq!(
+        line(Reach::Linked(Confidence::Unknown), entry(), Tone::Crit),
+        (words(Some("pods on dev-fra unknown")), Tone::Crit)
+    );
+    // Without a destination there's no cluster to name.
+    assert_eq!(
+        line(
+            Reach::Linked(Confidence::Unknown),
+            Destination::Unknown("no Application found".into()),
+            Tone::Good,
+        )
+        .0
+        .last()
+        .map(String::as_str),
+        Some("pods unknown")
+    );
+    // Refused names what was refused.
+    assert_eq!(
+        line(
+            Reach::Refused("Argo CD Applications".into()),
+            cluster(),
+            Tone::Good,
+        ),
+        (words(Some("Argo CD Applications refused")), Tone::Unknown)
+    );
+    // A Stage that runs other Freight keeps its rows' words and glyph.
+    assert_eq!(
+        line(Reach::NotReached, cluster(), Tone::Unknown),
+        (words(None), Tone::Unknown)
+    );
+}
+
+/// With dev-fra unreachable, dev's group row says its pods there are
+/// unknown, with the Unknown ring, as the Changes list's cell does.
+#[gpui_kit::test]
+fn an_unreachable_destinations_stage_row_says_its_pods_are_unknown(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = on_stage_of(cx, 1280., 880., Variant::Destination);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = change(&view, cx).expect("the change opens");
+        let ix = page
+            .read(cx)
+            .groups
+            .iter()
+            .position(|group| group.label.as_ref() == "Stage dev")
+            .expect("dev's group");
+        assert_eq!(
+            page.read(cx).groups[ix].tone,
+            freshkube_ui::ui::Tone::Unknown
+        );
+        assert_eq!(
+            window
+                .find(SharedString::from(format!("change-group-{ix}")))
+                .label(),
+            Some("Stage dev · deploys to dev-fra (mapped) · verified · pods on dev-fra unknown")
+        );
+    })
+    .unwrap();
+}
+
+/// A Stage whose rows are fine but whose pods are only claimed to run the
+/// change doesn't fold as fine.
+#[gpui_kit::test]
+fn a_stage_whose_pods_are_only_claimed_never_folds(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, _, cx| {
+        let page = change(&view, cx).unwrap();
+        page.update(cx, |page, _| {
+            let mut change = page.change.clone();
+            change
+                .stages
+                .iter_mut()
+                .find(|stage| stage.name == "stage")
+                .expect("the Stage stage")
+                .reach = freshkube_core::delivery::change::Reach::Linked(
+                freshkube_core::delivery::join::Confidence::Claimed,
+            );
+            page.rows.clear();
+            page.show(change);
+        });
+        let lines = page.read(cx).lines_text();
+        let at = lines
+            .iter()
+            .position(|line| line == "# Stage stage")
+            .expect("its group");
+        assert!(
+            lines.get(at + 1).is_some_and(|line| !line.starts_with('#')),
+            "its rows show: {lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.starts_with("dev-")),
+            "dev still folds"
+        );
+    })
+    .unwrap();
+}

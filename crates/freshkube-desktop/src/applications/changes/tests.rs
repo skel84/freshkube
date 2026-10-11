@@ -754,7 +754,7 @@ fn argo_cd_refused_keeps_the_rows_with_a_banner(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn an_unreachable_destination_keeps_the_rows_with_a_banner(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = open_shaped(cx, super::super::Variant::Destination);
+    let (_runtime, handle, view) = open_shaped(cx, super::super::Variant::Destination);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let missing = window.find("changes-missing").label().unwrap().to_owned();
@@ -765,6 +765,23 @@ fn an_unreachable_destination_keeps_the_rows_with_a_banner(cx: &mut TestAppConte
             "{missing}"
         );
         assert!(window.find(LYNX).visible());
+        // dev's cell is Unknown, as its group row on the change page is.
+        let page = changes(&view, cx);
+        let row = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|row| row.key.as_ref() == "checkout/wonky-otter")
+            .cloned()
+            .expect("wonky-otter's row");
+        let dev = row
+            .stages
+            .iter()
+            .find(|cell| cell.stage.as_ref() == "dev")
+            .expect("dev's cell");
+        assert_eq!(dev.tone, Some(freshkube_ui::ui::Tone::Unknown));
+        assert_eq!(dev.word.as_ref(), "Unknown");
     })
     .unwrap();
 }

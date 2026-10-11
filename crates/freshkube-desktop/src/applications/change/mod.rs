@@ -2,10 +2,11 @@
 //! its pull request to the pods that run it, as a trail page. Its rows are
 //! hops in the order the change travels, grouped by phase and by Stage,
 //! never problems first; the chips count the hops by state and show only
-//! theirs, and a Stage whose every row is fine folds while anything else
-//! needs a look. Link confidence has its own column, beside the hop's
-//! state. The selection's Inspector shows the hop, or for a gate row its
-//! Stage with the three gates apart.
+//! theirs, and a Stage whose every row is fine, and whose pods are
+//! confirmed to run it, folds while anything else needs a look. Link
+//! confidence has its own column, beside the hop's state. The selection's
+//! Inspector shows the hop, or for a gate row its Stage with the three
+//! gates apart.
 //!
 //! It is opened from a Kargo application's page, on a Stage, and reads the
 //! change itself (`read.rs`): live, through core's `delivery::change::live`
@@ -27,7 +28,9 @@ use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
 use freshkube_core::applications::SessionKey;
-use freshkube_core::delivery::change::{Change, Destination, Object, Phase, Shows, Target};
+use freshkube_core::delivery::change::{
+    Change, Destination, Object, Phase, Reach, Shows, Stage, Target,
+};
 use freshkube_core::delivery::join::Confidence;
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
@@ -117,7 +120,9 @@ pub(super) fn tone(state: HealthIndicator) -> Tone {
 }
 
 /// The tone a row counts as: the blue dot is something to know, not a
-/// fault, so it counts as ok in the chips, the filter and its group.
+/// fault, so it counts as ok in the chips, the filter and its group. A
+/// Stage's group row takes the blue dot from its reach ([`stage_line`]),
+/// where Claimed needs a look.
 fn status(tone: Tone) -> Tone {
     match tone {
         Tone::Info => Tone::Good,
@@ -132,6 +137,46 @@ fn rank(tone: Tone) -> u8 {
         Tone::Warn => 3,
         Tone::Unknown => 2,
         _ => 1,
+    }
+}
+
+/// A Stage's group row, after where it deploys and its words: how sure it
+/// is that its pods run the change, when that is less than Confirmed, as
+/// the Changes list's cell says, and a glyph the weaker of its rows' and
+/// that. A Stage that runs other Freight keeps its rows' words and glyph.
+pub(super) fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone) {
+    let mut words = vec![detail.to_owned(), stage.words.to_lowercase()];
+    let on = stage
+        .cluster
+        .cluster()
+        .map(|cluster| format!(" on {cluster}"))
+        .unwrap_or_default();
+    let reach = match &stage.reach {
+        Reach::NotReached | Reach::Linked(Confidence::Confirmed) => return (words, rows),
+        Reach::Linked(confidence) => {
+            format!("pods{on} {}", link_word(*confidence).to_lowercase())
+        }
+        Reach::Refused(kinds) => format!("{kinds} refused"),
+    };
+    words.push(reach);
+    let tone = reach_tone(&stage.reach);
+    // The blue dot is weaker than Good, though both count as ok.
+    let tone = match (rows, tone) {
+        (Tone::Good, Tone::Info) => Tone::Info,
+        _ if rank(tone) > rank(rows) => tone,
+        _ => rows,
+    };
+    (words, tone)
+}
+
+/// How sure it is that a Stage's pods run the change, as a glyph's tone:
+/// the Changes list's cell and a Stage's group row on the change page.
+pub(super) fn reach_tone(reach: &Reach) -> Tone {
+    match reach {
+        Reach::NotReached => Tone::Outline,
+        Reach::Linked(Confidence::Confirmed) => Tone::Good,
+        Reach::Linked(Confidence::Claimed) => Tone::Info,
+        Reach::Linked(Confidence::Unknown) | Reach::Refused(_) => Tone::Unknown,
     }
 }
 
@@ -349,19 +394,28 @@ impl ChangePage {
                     .map(|row| status(row.tone))
                     .max_by_key(|tone| rank(*tone))
                     .unwrap_or(Tone::Good);
-                let (label, detail, folds, read_there) = match group.phase {
-                    Phase::Build => ("Build".to_owned(), vec![group.detail.clone()], false, true),
+                let (label, detail, tone, folds, read_there) = match group.phase {
+                    Phase::Build => (
+                        "Build".to_owned(),
+                        vec![group.detail.clone()],
+                        tone,
+                        false,
+                        true,
+                    ),
                     Phase::Freight => (
                         "Freight".to_owned(),
                         vec![group.detail.clone()],
+                        tone,
                         false,
                         true,
                     ),
                     Phase::Stage(stage) => {
                         let stage = &change.stages[stage];
+                        let (detail, tone) = stage_line(&group.detail, stage, tone);
                         (
                             format!("Stage {}", stage.name),
-                            vec![group.detail.clone(), stage.words.to_lowercase()],
+                            detail,
+                            tone,
                             true,
                             !matches!(stage.cluster, Destination::Entry { .. }),
                         )
@@ -379,8 +433,8 @@ impl ChangePage {
             .collect();
         if first {
             // A Stage whose every row is fine folds while anything else on
-            // the page needs a look; a waiting or failing one never folds
-            // itself.
+            // the page needs a look; a waiting or failing one, or one whose
+            // pods aren't confirmed to run it, never folds itself.
             let anything_wrong = groups.iter().any(|group| group.tone != Tone::Good);
             self.folded = groups
                 .iter()
