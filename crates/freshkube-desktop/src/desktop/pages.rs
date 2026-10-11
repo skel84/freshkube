@@ -469,6 +469,10 @@ impl Pilot {
         self.applications.update(cx, |applications, cx| {
             applications.set_visible(page == Page::Applications, cx)
         });
+        let sources = self.settings_page.read(cx).sources.clone();
+        sources.update(cx, |sources, cx| {
+            sources.set_visible(page == Page::Settings, cx)
+        });
         self.resources.update(cx, |resources, cx| {
             resources.set_visible(page == Page::Resources, window, cx);
             if page == Page::Resources {

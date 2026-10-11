@@ -16,7 +16,7 @@ use super::versions::resolve_each;
 use crate::resources::Failure;
 
 pub const TEKTON_GROUP: &str = "tekton.dev";
-const TEKTON_VERSIONS: &[&str] = &["v1", "v1beta1"];
+pub(crate) const TEKTON_VERSIONS: &[&str] = &["v1", "v1beta1"];
 
 /// How many of a commit's builds have their TaskRuns listed, one list each,
 /// so a busy commit can't run the read past its deadline.
@@ -24,7 +24,7 @@ pub const MOST_TASK_READS: usize = 10;
 
 /// The label PaC puts on every PipelineRun it starts.
 pub const SHA_LABEL: &str = "pipelinesascode.tekton.dev/sha";
-const REPOSITORY_LABEL: &str = "pipelinesascode.tekton.dev/repository";
+pub(crate) const REPOSITORY_LABEL: &str = "pipelinesascode.tekton.dev/repository";
 const PIPELINE_RUN_LABEL: &str = "tekton.dev/pipelineRun";
 /// Chains writes `"true"` here once it has signed a run.
 pub const CHAINS_SIGNED: &str = "chains.tekton.dev/signed";

@@ -12,7 +12,7 @@ use super::versions::resolve;
 use crate::resources::Failure;
 
 pub const GROUP: &str = "kargo.akuity.io";
-const VERSIONS: &[&str] = &["v1alpha1"];
+pub(crate) const VERSIONS: &[&str] = &["v1alpha1"];
 /// The annotation Kargo puts on a Promotion a user created, naming who. The
 /// Stage controller's auto-promotions carry none; other controllers write
 /// `controller:<name>`.

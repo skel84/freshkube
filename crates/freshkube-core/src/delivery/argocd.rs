@@ -13,7 +13,7 @@ use super::versions::resolve;
 use crate::resources::Failure;
 
 pub const GROUP: &str = "argoproj.io";
-const VERSIONS: &[&str] = &["v1alpha1"];
+pub(crate) const VERSIONS: &[&str] = &["v1alpha1"];
 /// The annotation Kargo reads to know which Stage may sync an Application:
 /// `<project>:<stage>`.
 pub const AUTHORIZED_STAGE: &str = "kargo.akuity.io/authorized-stage";

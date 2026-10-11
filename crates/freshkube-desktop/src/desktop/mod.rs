@@ -705,6 +705,7 @@ impl Pilot {
             KeyBinding::new("r", settings::ReloadWorkspace, Some(settings::CONTEXT)),
         ]);
         cx.bind_keys(settings::destinations::key_bindings());
+        cx.bind_keys(settings::sources::key_bindings());
         cx.bind_keys(crate::applications::key_bindings());
         cx.bind_keys([
             KeyBinding::new("escape", nodes::BackNode, Some("NodeWorkspace")),
@@ -1195,7 +1196,7 @@ impl Pilot {
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
-            settings_page: cx.new(settings::SettingsPage::new),
+            settings_page: cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx)),
             applications,
             workspace_file: options
                 .preferences
@@ -1715,6 +1716,8 @@ impl Pilot {
             .update(cx, |page, cx| page.set_source(id, cx));
         self.applications
             .update(cx, |page, cx| page.set_source(source.clone(), cx));
+        let sources = self.settings_page.read(cx).sources.clone();
+        sources.update(cx, |list, cx| list.set_source(source.clone(), cx));
         let identity = self.kube_identity();
         self.dock.update(cx, |dock, cx| {
             dock.set_source(source.clone(), identity.as_deref(), window, cx)

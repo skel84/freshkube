@@ -12,6 +12,7 @@ pub mod change;
 pub mod collect;
 pub mod deployments;
 pub mod digest;
+pub mod entry;
 pub mod github;
 pub mod join;
 pub mod kargo;

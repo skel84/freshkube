@@ -18,7 +18,7 @@
 mod derive;
 mod gates;
 mod links;
-mod pages;
+pub(crate) mod pages;
 #[cfg(test)]
 mod tests;
 
