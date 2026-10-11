@@ -24,7 +24,7 @@ pub mod rollouts;
 pub mod shared;
 pub mod source;
 pub mod tekton;
-mod versions;
+pub(crate) mod versions;
 
 #[cfg(test)]
 mod deployment_tests;

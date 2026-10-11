@@ -158,11 +158,33 @@ pub trait Reader {
 #[derive(Clone)]
 pub struct ReadOnlyClient {
     client: Client,
+    /// How long one page of a listing may take, when bounded.
+    page_deadline: Option<std::time::Duration>,
 }
 
 impl ReadOnlyClient {
     pub fn new(client: Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            page_deadline: None,
+        }
+    }
+
+    /// Bounds each page of a listing by `limit`, so a listing of many
+    /// pages that each answer in time is read whole, and one page that
+    /// hangs fails as timed out.
+    pub fn with_page_deadline(mut self, limit: std::time::Duration) -> Self {
+        self.page_deadline = Some(limit);
+        self
+    }
+
+    async fn page(&self, path: String, what: impl FnOnce() -> String) -> Result<Value, Failure> {
+        match self.page_deadline {
+            Some(limit) => tokio::time::timeout(limit, self.get_value(path))
+                .await
+                .unwrap_or_else(|_| Err(Failure::timeout(&what()))),
+            None => self.get_value(path).await,
+        }
     }
 
     async fn get_value(&self, path: String) -> Result<Value, Failure> {
@@ -392,7 +414,9 @@ impl Reader for ReadOnlyClient {
         let mut token: Option<String> = None;
         for page in 1..=MAX_PAGES {
             let mut body = self
-                .get_value(page_path(request, token.as_deref())?)
+                .page(page_path(request, token.as_deref())?, || {
+                    format!("Listing {} (page {page})", request.resource.plural)
+                })
                 .await?;
             if let Some(items) = body.get_mut("items").and_then(Value::as_array_mut) {
                 listing.items.append(items);

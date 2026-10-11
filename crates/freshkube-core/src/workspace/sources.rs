@@ -137,6 +137,13 @@ pub struct Sources {
     workloads: Vec<Chosen>,
 }
 
+/// The workspace of one's: everything from the open connection.
+impl Default for Sources {
+    fn default() -> Self {
+        Self::of(&Workspace::default())
+    }
+}
+
 impl Sources {
     pub fn of(workspace: &Workspace) -> Self {
         let choose = |part| choose(workspace, part);

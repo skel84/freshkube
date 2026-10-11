@@ -161,7 +161,7 @@ fn fingerprint(value: impl Hash) -> u64 {
     HASHER.hash_one(value)
 }
 
-fn file_revision(path: &Path) -> Option<ConfigIdentity> {
+pub(crate) fn file_revision(path: &Path) -> Option<ConfigIdentity> {
     crate::kubeconfig_selection::read_bounded_regular_file(path, 4 * 1024 * 1024)
         .ok()
         .map(|bytes| ConfigIdentity::from_bytes(&bytes))

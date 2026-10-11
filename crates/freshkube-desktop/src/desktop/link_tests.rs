@@ -544,7 +544,7 @@ fn a_part_in_another_workspace_entry_switches_there_and_opens(cx: &mut TestAppCo
         assert!(pilot.pending_link.is_none(), "spent once opened");
     });
     // Another context closed the page. Back on it, dev-fra is the open
-    // cluster: its part opens at once, and core-fra's is the switch away.
+    // cluster: its part opens at once, and cicd-fra's Stage is the switch away.
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-applications", cx);
         window.render_frame(cx);
@@ -560,11 +560,11 @@ fn a_part_in_another_workspace_entry_switches_there_and_opens(cx: &mut TestAppCo
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("application-part-core-fra/0/checkout/dev", cx);
+        window.click("application-part-cicd-fra/0/checkout/dev", cx);
         window.render_frame(cx);
         assert_eq!(
             window.find("application-detail-open").label(),
-            Some("Switch to core-fra and open dev there, in Resources")
+            Some("Switch to cicd-fra and open dev there, in Resources")
         );
         window.click(DEV_API, cx);
         window.render_frame(cx);

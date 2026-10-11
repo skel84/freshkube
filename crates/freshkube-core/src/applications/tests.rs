@@ -75,6 +75,8 @@ fn session(name: &str) -> SessionInputs {
         argo_applications: Source::Read(Vec::new()),
         argo_application_sets: Source::Read(Vec::new()),
         workloads: Source::Read(Vec::new()),
+        asked: crate::applications::Asked::ALL,
+        absent: None,
     }
 }
 
@@ -83,6 +85,7 @@ fn derived(sessions: Vec<SessionInputs>) -> Derived {
         &Inputs {
             sessions,
             stage_naming: None,
+            destinations: Vec::new(),
         },
         &Override::default(),
     )
@@ -432,6 +435,7 @@ fn with_override(over: Override) -> Derived {
         &Inputs {
             sessions: vec![core],
             stage_naming: None,
+            destinations: Vec::new(),
         },
         &over,
     )
@@ -634,6 +638,7 @@ mod reading {
             &Inputs {
                 sessions: vec![read],
                 stage_naming: None,
+                destinations: Vec::new(),
             },
             &Override::default(),
         );
@@ -687,6 +692,7 @@ mod reading {
             &Inputs {
                 sessions: vec![read],
                 stage_naming: None,
+                destinations: Vec::new(),
             },
             &Override::default(),
         );
@@ -832,6 +838,7 @@ mod reading {
             &Inputs {
                 sessions: vec![read],
                 stage_naming: None,
+                destinations: Vec::new(),
             },
             &Override::default(),
         );
@@ -856,6 +863,7 @@ mod reading {
             &Inputs {
                 sessions: vec![read],
                 stage_naming: None,
+                destinations: Vec::new(),
             },
             &Override::default(),
         );
@@ -1083,6 +1091,7 @@ fn a_split_member_takes_its_notes_along_and_members_stay_in_order() {
         &Inputs {
             sessions: vec![core],
             stage_naming: None,
+            destinations: Vec::new(),
         },
         &over,
     );
@@ -1150,6 +1159,7 @@ fn kargo_world(over: Override) -> Derived {
         &Inputs {
             sessions: vec![core],
             stage_naming: None,
+            destinations: Vec::new(),
         },
         &over,
     )
@@ -1322,6 +1332,7 @@ fn splitting_off_the_member_that_crossed_clusters_drops_the_join_note() {
     let inputs = Inputs {
         sessions: vec![dev, prod],
         stage_naming: None,
+        destinations: Vec::new(),
     };
     let found = derive(&inputs, &split("prod-fra"));
     let left = found.find(&id(Rule::PartOf, "storefront")).unwrap();

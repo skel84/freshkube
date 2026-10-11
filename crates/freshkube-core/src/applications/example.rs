@@ -3,8 +3,12 @@
 //! `example.test`. It goes through the real parsers, so it holds what a
 //! cluster would answer, not what the model is told.
 //!
-//! Six clusters: Argo CD and Kargo run in `core-fra`; `cicd-fra` serves
-//! neither; the four environment clusters hold the workloads.
+//! Six clusters, each read for what the example workspace
+//! (`workspace::example`) reads from it: Argo CD in `core-fra`, with its
+//! own labelled workload; Kargo in `cicd-fra`; the four environment
+//! clusters' labelled workloads. `prod-lon` isn't a workspace entry, so
+//! its parts don't open after a switch; it stays to show a cluster the
+//! workspace doesn't list.
 //!
 //! - `checkout` and `cart` are Kargo Projects with four Stages each; their
 //!   Argo CD Applications name them, and deploy to the environment clusters.
@@ -19,7 +23,7 @@
 use serde_json::{Value, json};
 
 use super::read::parse_labelled_workload;
-use super::{ArgoScope, Inputs, KargoProjectRead, SessionInputs, SessionKey};
+use super::{ArgoScope, Asked, Inputs, KargoProjectRead, SessionInputs, SessionKey};
 use crate::delivery::argocd::{parse_application, parse_application_set};
 use crate::delivery::kargo::{parse_stage, parse_warehouse};
 use crate::delivery::source::Source;
@@ -94,12 +98,28 @@ fn argo_app(name: &str, destination: Value, metadata: Value, status: Value) -> C
     )
 }
 
+/// What an Application deployed to `cluster`, as its inventory lists it:
+/// the Deployments there in its own namespace that it manages.
+fn inventory(namespace: &str, cluster: &str) -> Value {
+    let resources: Vec<Value> = environment_items(cluster)
+        .iter()
+        .filter(|item| item.managed && item.namespace == namespace)
+        .map(|item| {
+            json!({
+                "group": "apps", "kind": "Deployment",
+                "namespace": item.namespace, "name": item.name,
+            })
+        })
+        .collect();
+    json!({"resources": resources})
+}
+
 fn pinned_to(project: &str, stage: &str, cluster: &str) -> CoreObject {
     argo_app(
         &format!("{project}-{stage}"),
         json!({"server": server(cluster), "namespace": project}),
         json!({"annotations": {AUTHORIZED_STAGE: format!("{project}:{stage}")}}),
-        json!({}),
+        inventory(project, cluster),
     )
 }
 
@@ -110,7 +130,7 @@ fn generated(set: &str, stage: &str, cluster: &str) -> CoreObject {
         json!({"ownerReferences": [{
             "kind": "ApplicationSet", "apiVersion": "argoproj.io/v1alpha1", "name": set,
         }]}),
-        json!({}),
+        inventory(set, cluster),
     )
 }
 
@@ -197,15 +217,38 @@ pub fn core_objects() -> Vec<CoreObject> {
     objects
 }
 
-fn core() -> SessionInputs {
+/// `cicd-fra`: Kargo, read there. Its objects are among
+/// [`core_objects`], which the example lists in every context.
+fn cicd() -> SessionInputs {
     let objects = core_objects();
     let projects = of(&objects, PROJECTS.0)
         .filter_map(|value| value.pointer("/metadata/name")?.as_str())
         .map(|name| kargo_project(&objects, name))
         .collect();
     SessionInputs {
-        key: SessionKey::new(CORE),
         kargo: Source::Read(projects),
+        ..SessionInputs::asking(
+            SessionKey::new(CICD),
+            Asked {
+                kargo: true,
+                ..Asked::NONE
+            },
+        )
+    }
+}
+
+/// `core-fra`: Argo CD, and the workloads it deploys to its own cluster.
+fn core() -> SessionInputs {
+    let objects = core_objects();
+    SessionInputs {
+        key: SessionKey::new(CORE),
+        kargo: Source::Read(Vec::new()),
+        asked: Asked {
+            argo_cd: true,
+            workloads: true,
+            ..Asked::NONE
+        },
+        absent: None,
         argo_scope: ArgoScope::AllNamespaces,
         argo_applications: Source::Read(
             of(&objects, APPLICATIONS.0)
@@ -225,63 +268,98 @@ fn core() -> SessionInputs {
     }
 }
 
+/// One labelled Deployment an environment cluster holds.
+struct EnvironmentItem {
+    namespace: &'static str,
+    name: &'static str,
+    part_of: &'static str,
+    /// Deployed by its namespace's Application for the cluster's stage,
+    /// whose inventory lists it and whose name its instance label carries,
+    /// as Argo CD's label tracking writes it. One that isn't was put there
+    /// by hand, and only its label says whose it is.
+    managed: bool,
+}
+
+fn environment_items(cluster: &str) -> Vec<EnvironmentItem> {
+    let item = |namespace, name, part_of, managed| EnvironmentItem {
+        namespace,
+        name,
+        part_of,
+        managed,
+    };
+    match cluster {
+        "dev-fra" => vec![
+            item("checkout", "checkout-api", "checkout", true),
+            item("cart", "cart-api", "cart", true),
+            item("loyalty", "loyalty-api", "loyalty", false),
+        ],
+        // The Deployment the change page's prod-ams Stage reports, so
+        // Switch and open lands on it.
+        "prod-ams" => vec![item("checkout", "checkout-api", "checkout", true)],
+        "prod-lon" => vec![
+            item("checkout", "checkout-api", "checkout", true),
+            item("checkout", "checkout-worker", "checkout", true),
+            item("catalog", "catalog-api", "catalog", true),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// The Deployments an environment cluster holds with a `part-of` label.
 /// The example Resources page lists them for the cluster's context, so a
 /// part opened there is the one read.
 pub fn environment_objects(cluster: &str) -> Vec<CoreObject> {
-    let items: &[(&str, &str, &str)] = match cluster {
-        "dev-fra" => &[
-            ("checkout", "checkout-api", "checkout"),
-            ("cart", "cart-api", "cart"),
-            ("loyalty", "loyalty-api", "loyalty"),
-        ],
-        // The Deployment the change page's prod-ams Stage reports, so
-        // Switch and open lands on it.
-        "prod-ams" => &[("checkout", "checkout-api", "checkout")],
-        "prod-lon" => &[
-            ("checkout", "checkout-api", "checkout"),
-            ("checkout", "checkout-worker", "checkout"),
-            ("catalog", "catalog-api", "catalog"),
-        ],
-        _ => &[],
-    };
-    items
+    let stage = ENVIRONMENTS
         .iter()
-        .map(|(namespace, name, part_of)| {
+        .find(|(_, at)| *at == cluster)
+        .map(|(stage, _)| *stage);
+    environment_items(cluster)
+        .into_iter()
+        .map(|item| {
+            let mut labels = json!({"app.kubernetes.io/part-of": item.part_of});
+            if let (true, Some(stage)) = (item.managed, stage) {
+                labels["app.kubernetes.io/instance"] = json!(format!("{}-{stage}", item.namespace));
+            }
             object(
                 DEPLOYMENTS,
                 json!({"metadata": {
-                    "namespace": namespace, "name": name,
-                    "labels": {"app.kubernetes.io/part-of": part_of},
+                    "namespace": item.namespace, "name": item.name, "labels": labels,
                 }}),
             )
         })
         .collect()
 }
 
+/// An environment cluster: its labelled workloads, which is all it is
+/// asked for.
 fn environment(cluster: &str) -> SessionInputs {
     let objects = environment_objects(cluster);
     SessionInputs {
-        key: SessionKey::new(cluster),
-        kargo: Source::NotInstalled("API group kargo.akuity.io is not served".into()),
-        argo_scope: ArgoScope::AllNamespaces,
-        argo_applications: Source::NotInstalled("API group argoproj.io is not served".into()),
-        argo_application_sets: Source::NotInstalled("API group argoproj.io is not served".into()),
         workloads: Source::Read(
             of(&objects, DEPLOYMENTS.0)
                 .filter_map(|value| parse_labelled_workload(value, WorkloadKind::Deployment))
                 .collect(),
         ),
+        ..SessionInputs::asking(
+            SessionKey::new(cluster),
+            Asked {
+                workloads: true,
+                ..Asked::NONE
+            },
+        )
     }
 }
 
 /// What reading the acme workspace's six clusters gives.
 pub fn acme() -> Inputs {
-    let mut sessions = vec![core(), environment(CICD)];
+    let mut sessions = vec![core(), cicd()];
     sessions.extend(ENVIRONMENTS.iter().map(|(_, cluster)| environment(cluster)));
     Inputs {
         sessions,
         stage_naming: None,
+        // The example workspace's rows, which map each server acme's
+        // Applications name but prod-lon's.
+        destinations: crate::workspace::example().destinations,
     }
 }
 
@@ -397,7 +475,7 @@ mod tests {
             assert!(object.value["apiVersion"].is_string() && object.value["kind"].is_string());
         }
         let session = core();
-        let Source::Read(projects) = &session.kargo else {
+        let Source::Read(projects) = &cicd().kargo else {
             panic!("Kargo read")
         };
         let stages: usize = projects

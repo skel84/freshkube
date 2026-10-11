@@ -1,10 +1,12 @@
-//! The page's example data: core's acme workspace, six clusters with Argo
-//! CD and Kargo in `core-fra`, its Argo CD read where a live read would
-//! look: nothing is labelled as Argo CD's, so in `argocd`.
+//! The page's example data: core's acme workspace, six clusters each read
+//! for what the example workspace reads there: Kargo in `cicd-fra`, Argo
+//! CD in `core-fra`, read where a live read would look (nothing is
+//! labelled as Argo CD's, so in `argocd`), and the environments' labelled
+//! workloads.
 //! Debug builds reshape it for captures with `FRESHKUBE_APPLICATIONS`.
 use freshkube_core::applications::read::argo_namespaces;
 use freshkube_core::applications::{
-    ArgoFound, ArgoScope, Inputs, SessionInputs, SessionKey, example as acme,
+    Absent, ArgoFound, ArgoScope, Asked, Inputs, SessionInputs, SessionKey, example as acme,
 };
 use freshkube_core::delivery::source::{Source, Truncation};
 
@@ -17,9 +19,10 @@ pub(crate) enum Variant {
     /// All six clusters.
     #[default]
     Acme,
-    /// `core-fra` alone, as with one connection open.
+    /// One cluster read for everything, as the workspace of one is:
+    /// `core-fra` holding Kargo too.
     Single,
-    /// Kargo refused in `core-fra`: its applications may be missing.
+    /// Kargo refused in `cicd-fra`: its applications may be missing.
     Partial,
     /// Every source refused everywhere.
     Refused,
@@ -35,17 +38,25 @@ pub(crate) enum Variant {
     /// Nothing marks Argo CD in `core-fra`, and `argocd` holds no
     /// Applications.
     NotFound,
-    /// `checkout`'s Stages didn't answer in `core-fra`: its page shows
+    /// `checkout`'s Stages didn't answer in `cicd-fra`: its page shows
     /// what may be missing as a group row.
     Stages,
     /// Deployments refused in `prod-lon`: labelled parts there may be
     /// missing, as `checkout`'s page says in a group row.
     Workloads,
+    /// `cicd-fra` couldn't be reached: Kargo's applications may be missing.
+    Unreachable,
+    /// Argo CD refused in `core-fra`: its applications may be missing.
+    ArgoRefused,
+    /// `dev-fra`, an Argo CD destination, couldn't be reached: labelled
+    /// parts there may be missing.
+    Destination,
 }
 
 impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
-    /// `spread`, `not-found`, `stages` or `workloads` from
+    /// `spread`, `not-found`, `stages`, `workloads`, `unreachable`,
+    /// `argo-refused` or `destination` from
     /// `FRESHKUBE_APPLICATIONS`;
     /// debug and stress builds only.
     pub(crate) fn from_env() -> Self {
@@ -63,6 +74,9 @@ impl Variant {
             Ok("not-found") => Self::NotFound,
             Ok("stages") => Self::Stages,
             Ok("workloads") => Self::Workloads,
+            Ok("unreachable") => Self::Unreachable,
+            Ok("argo-refused") => Self::ArgoRefused,
+            Ok("destination") => Self::Destination,
             _ => Self::Acme,
         }
     }
@@ -72,12 +86,22 @@ fn refused<T>(what: &str) -> Source<T> {
     Source::Refused(format!("{what} is forbidden for this identity"))
 }
 
-fn core(inputs: &mut Inputs) -> &mut SessionInputs {
+fn session<'a>(inputs: &'a mut Inputs, cluster: &str) -> &'a mut SessionInputs {
     inputs
         .sessions
         .iter_mut()
-        .find(|s| s.key.0 == acme::CORE)
-        .expect("acme has core-fra")
+        .find(|s| s.key.0 == cluster)
+        .expect("an acme cluster")
+}
+
+/// Argo CD's cluster.
+fn core(inputs: &mut Inputs) -> &mut SessionInputs {
+    session(inputs, acme::CORE)
+}
+
+/// Kargo's cluster.
+fn cicd(inputs: &mut Inputs) -> &mut SessionInputs {
+    session(inputs, acme::CICD)
 }
 
 pub(crate) fn inputs(variant: Variant) -> Inputs {
@@ -90,8 +114,14 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
     }
     match variant {
         Variant::Acme => {}
-        Variant::Single => inputs.sessions.retain(|s| s.key.0 == acme::CORE),
-        Variant::Partial => core(&mut inputs).kargo = refused("projects.kargo.akuity.io"),
+        Variant::Single => {
+            let kargo = cicd(&mut inputs).kargo.clone();
+            inputs.sessions.retain(|s| s.key.0 == acme::CORE);
+            let core = core(&mut inputs);
+            core.kargo = kargo;
+            core.asked = Asked::ALL;
+        }
+        Variant::Partial => cicd(&mut inputs).kargo = refused("projects.kargo.akuity.io"),
         Variant::Refused => {
             for session in &mut inputs.sessions {
                 session.kargo = refused("projects.kargo.akuity.io");
@@ -113,7 +143,7 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
         Variant::Failed => {
             for session in &mut inputs.sessions {
                 let why = format!("connection refused by {}.example.test:6443", session.key.0);
-                *session = SessionInputs::unread(session.key.clone(), &why);
+                unreachable(session, &why);
             }
         }
         Variant::Capped => {
@@ -136,7 +166,7 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
             core.argo_application_sets = Source::Read(Vec::new());
         }
         Variant::Stages => {
-            if let Source::Read(projects) = &mut core(&mut inputs).kargo
+            if let Source::Read(projects) = &mut cicd(&mut inputs).kargo
                 && let Some(checkout) = projects.iter_mut().find(|p| p.name == "checkout")
             {
                 checkout.stages = Source::Unreadable(
@@ -149,8 +179,30 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
                 prod.workloads = refused("deployments.apps");
             }
         }
+        Variant::Unreachable => unreachable(
+            cicd(&mut inputs),
+            "no answer within 5 s; a credential plugin may be waiting for a sign-in",
+        ),
+        Variant::ArgoRefused => {
+            let core = core(&mut inputs);
+            core.argo_applications = refused("applications.argoproj.io");
+            core.argo_application_sets = refused("applicationsets.argoproj.io");
+        }
+        Variant::Destination => unreachable(
+            session(&mut inputs, "dev-fra"),
+            "connection refused by dev-fra.example.test:6443",
+        ),
     }
     inputs
+}
+
+/// A cluster whose entry couldn't be reached, for `why`.
+fn unreachable(session: &mut SessionInputs, why: &str) {
+    *session = SessionInputs::absent(
+        session.key.clone(),
+        session.asked,
+        Absent::Unreachable(why.into()),
+    );
 }
 
 /// The acme clusters are named as the workspace names them.

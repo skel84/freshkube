@@ -18,7 +18,10 @@ const APPLICATION: layout_check::TablePage = layout_check::TablePage {
 
 const CHECKOUT: &str = "application-kargo:checkout";
 /// checkout's first Stage, `dev` in `core-fra`.
-const DEV_STAGE: &str = "application-part-core-fra/0/checkout/dev";
+const DEV_STAGE: &str = "application-part-cicd-fra/0/checkout/dev";
+/// The row's mark, at its left: a click at a wide row's middle may land on
+/// its Link, which takes the click.
+const DEV_STAGE_MARK: &str = "application-part-cicd-fra/0/checkout/dev-mark";
 const WORKER: &str = "application-part-prod-lon/3/checkout/checkout-worker";
 
 fn list(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<ApplicationsPage> {
@@ -96,9 +99,11 @@ fn parts_come_in_kind_order_with_their_links(cx: &mut TestAppContext) {
                 // Applications checkout's Stages promote to may be missing.
                 "# May be missing on core-fra",
                 "# Deployments",
-                // dev-fra's, prod-ams's and prod-lon's.
-                "checkout-api By label",
-                "checkout-api By label",
+                // dev-fra's and prod-ams's, which the Applications their
+                // Stages promote to list: no surer than those. prod-lon's,
+                // which no destination maps, only by their labels.
+                "checkout-api Claimed",
+                "checkout-api Claimed",
                 "checkout-api By label",
                 "checkout-worker By label",
             ]
@@ -221,6 +226,9 @@ fn read_from_fits_what_was_not_checked(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, _, cx| {
         let page = shown(&view, cx).unwrap();
         let mut rows = page.read(cx).rows.clone();
+        for row in &mut rows {
+            row.read_from = "label".into();
+        }
         let words = |rows: &[super::PartRow]| {
             let (columns, _) = super::table::columns(rows);
             let read_from = columns.last().unwrap();
@@ -263,7 +271,7 @@ fn a_sideways_wheel_over_the_stacked_table_keeps_its_height(cx: &mut TestAppCont
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         settle(window, cx);
-        window.click(DEV_STAGE, cx);
+        window.click(DEV_STAGE_MARK, cx);
         settle(window, cx);
         assert!(window.try_find("application-detail").is_some(), "stacked");
         let settled = table(window);
@@ -315,7 +323,7 @@ fn a_short_stacked_table_keeps_its_first_part_whole(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(DEV_STAGE, cx);
+        window.click(DEV_STAGE_MARK, cx);
         for _ in 0..8 {
             window.render_frame(cx);
             if window.simulate_next_frame(cx) == 0 {
@@ -386,7 +394,16 @@ fn a_part_whose_project_was_not_read_is_unknown(cx: &mut TestAppContext) {
         window.double_click("application-argocd:application/argocd/checkout-dev", cx);
         window.render_frame(cx);
         let lines = shown(&view, cx).unwrap().read(cx).lines_text();
-        assert_eq!(lines, ["# Argo CD Applications", "checkout-dev Unknown"]);
+        // Its inventory lists dev-fra's Deployment, as unknown as it is.
+        assert_eq!(
+            lines,
+            [
+                "# Argo CD Applications",
+                "checkout-dev Unknown",
+                "# Deployments",
+                "checkout-api Unknown",
+            ]
+        );
     })
     .unwrap();
 }
@@ -397,13 +414,13 @@ fn stages_that_did_not_answer_are_a_group_row_not_an_empty_group(cx: &mut TestAp
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let lines = shown(&view, cx).unwrap().read(cx).lines_text();
-        assert_eq!(lines[0], "# May be missing on core-fra");
+        assert_eq!(lines[0], "# May be missing on cicd-fra");
         assert_eq!(lines[1], "# Kargo Warehouses");
         assert!(
             !lines.iter().any(|line| line == "# Kargo Stages"),
             "{lines:?}"
         );
-        let group = window.find("application-group-missing-0-core-fra");
+        let group = window.find("application-group-missing-0-cicd-fra");
         assert!(group.visible());
     })
     .unwrap();
@@ -494,7 +511,7 @@ fn the_inspector_sits_beside_a_wide_table_and_under_a_narrow_one(cx: &mut TestAp
                     crate::text_size::set(size, cx);
                 }
                 window.render_frame(cx);
-                window.click(DEV_STAGE, cx);
+                window.click(DEV_STAGE_MARK, cx);
                 layout_check::assert_inspector(
                     window,
                     cx,
@@ -542,7 +559,7 @@ fn the_page_and_the_inspector_say_what_the_application_is(cx: &mut TestAppContex
 #[test]
 fn what_was_not_checked_names_its_cluster_and_namespaces() {
     use freshkube_core::applications::claims::Unchecked;
-    let words = |unchecked| super::unchecked_words(&unchecked, "core-fra");
+    let words = |unchecked| super::unchecked_words(&unchecked, "core-fra", "core-fra");
     assert_eq!(
         words(Unchecked::Namespaces(vec!["gitops".into()])),
         "Argo CD read in gitops only on core-fra"
@@ -555,6 +572,16 @@ fn what_was_not_checked_names_its_cluster_and_namespaces() {
     assert_eq!(
         words(Unchecked::Capped(500)),
         "Argo CD read in part on core-fra: stopped after 500"
+    );
+    // A part on another entry names the cluster Argo CD was read on.
+    let elsewhere = |unchecked| super::unchecked_words(&unchecked, "dev-fra", "core-fra");
+    assert_eq!(
+        elsewhere(Unchecked::NotRead),
+        "Argo CD not read on core-fra"
+    );
+    assert_eq!(
+        elsewhere(Unchecked::NotMatched),
+        "no Argo CD Application on core-fra mapped to dev-fra lists it"
     );
 }
 
@@ -608,7 +635,7 @@ fn a_read_without_the_application_closes_its_page_and_gives_the_list_the_keys(
 #[gpui_kit::test]
 fn a_new_read_updates_the_open_page_and_keeps_its_selection(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
-    let warehouse = "application-part-core-fra/1/checkout/checkout-images";
+    let warehouse = "application-part-cicd-fra/1/checkout/checkout-images";
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click(warehouse, cx);
@@ -621,7 +648,7 @@ fn a_new_read_updates_the_open_page_and_keeps_its_selection(cx: &mut TestAppCont
         window.render_frame(cx);
         let page = shown(&view, cx).expect("checkout is still there");
         let lines = page.read(cx).lines_text();
-        assert_eq!(lines[0], "# May be missing on core-fra", "{lines:?}");
+        assert_eq!(lines[0], "# May be missing on cicd-fra", "{lines:?}");
         assert_eq!(
             page.read(cx).selected().map(|key| key.as_ref()),
             Some(warehouse.trim_start_matches("application-part-"))
@@ -737,7 +764,7 @@ fn a_workload_naming_its_application_back_is_confirmed(cx: &mut TestAppContext) 
 /// checkout's Argo CD Application for `dev`, in `core-fra`.
 const DEV_APPLICATION: &str = "application-part-core-fra/2/argocd/checkout-dev";
 /// checkout's Warehouse, in `core-fra`.
-const WAREHOUSE: &str = "application-part-core-fra/1/checkout/checkout-images";
+const WAREHOUSE: &str = "application-part-cicd-fra/1/checkout/checkout-images";
 
 /// What Resources shows: its kind's key, the object's address and the
 /// connection it was read through, once the shell opened a part.
@@ -776,15 +803,17 @@ fn act_on(
 #[gpui_kit::test]
 fn o_opens_a_core_fra_part_in_resources_and_back_keeps_the_page(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
-    act_on(cx, handle, DEV_STAGE, |window, cx| window.press("o", cx));
+    act_on(cx, handle, DEV_APPLICATION, |window, cx| {
+        window.press("o", cx)
+    });
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(view.read(cx).applications().1, Page::Resources);
         assert_eq!(
             opened(&view, cx),
             Some((
-                "stages.kargo.akuity.io".into(),
-                "checkout/dev".into(),
+                "applications.argoproj.io".into(),
+                "argocd/checkout-dev".into(),
                 "example:prod-fra".into()
             ))
         );
@@ -794,7 +823,11 @@ fn o_opens_a_core_fra_part_in_resources_and_back_keeps_the_page(cx: &mut TestApp
         let page = shown(&view, cx).expect("the page stays open");
         assert_eq!(
             page.read(cx).selected().map(|key| key.to_string()),
-            Some(DEV_STAGE.trim_start_matches("application-part-").into())
+            Some(
+                DEV_APPLICATION
+                    .trim_start_matches("application-part-")
+                    .into()
+            )
         );
     })
     .unwrap();
@@ -826,7 +859,7 @@ fn the_row_menu_opens_a_part_without_opening_the_inspector(cx: &mut TestAppConte
     let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.right_click(WAREHOUSE, cx);
+        window.right_click(DEV_APPLICATION, cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -847,10 +880,33 @@ fn the_row_menu_opens_a_part_without_opening_the_inspector(cx: &mut TestAppConte
         assert_eq!(
             opened(&view, cx),
             Some((
-                "warehouses.kargo.akuity.io".into(),
-                "checkout/checkout-images".into(),
+                "applications.argoproj.io".into(),
+                "argocd/checkout-dev".into(),
                 "example:prod-fra".into()
             ))
+        );
+    })
+    .unwrap();
+}
+
+/// Kargo is read from `cicd-fra`, a workspace entry that isn't open: its
+/// parts are a switch away.
+#[gpui_kit::test]
+fn a_kargo_part_is_a_switch_to_its_cicd_entry_away(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.right_click(WAREHOUSE, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(shown(&view, cx).is_some());
+        let menu = window.within("popup-menu");
+        assert_eq!(
+            menu.find(0usize).label(),
+            Some("Switch to cicd-fra and open")
         );
     })
     .unwrap();
@@ -948,13 +1004,15 @@ fn core_fra_follows_the_open_context(cx: &mut TestAppContext) {
         window.render_frame(cx);
     })
     .unwrap();
-    act_on(cx, handle, DEV_STAGE, |window, cx| window.press("o", cx));
+    act_on(cx, handle, DEV_APPLICATION, |window, cx| {
+        window.press("o", cx)
+    });
     cx.update_window(handle, |_, _, cx| {
         assert_eq!(
             opened(&view, cx),
             Some((
-                "stages.kargo.akuity.io".into(),
-                "checkout/dev".into(),
+                "applications.argoproj.io".into(),
+                "argocd/checkout-dev".into(),
                 "example:staging-eu".into()
             ))
         );

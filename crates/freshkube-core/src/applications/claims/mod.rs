@@ -64,13 +64,17 @@ pub struct Claim {
     /// What wasn't checked that could still say otherwise: Argo CD's
     /// Applications in the part's cluster, for a labelled part there.
     pub unchecked: Option<Unchecked>,
+    /// Where that Argo CD is, when it isn't the part's cluster: read on its
+    /// own entry, for every entry it deploys to.
+    pub argo_on: Option<SessionKey>,
     /// Lower rules that also found the part, with what each would have
     /// called its application.
     pub lower: Vec<(Rule, String)>,
 }
 
 /// How Argo CD's Applications in a labelled part's cluster were read,
-/// when not in full: the cluster is the part's.
+/// when not in full: the cluster is the part's, or Argo CD's own entry
+/// ([`Claim::argo_on`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unchecked {
     /// Refused or failed: none were read.
@@ -81,6 +85,10 @@ pub enum Unchecked {
     NotFound(String),
     /// Stopped at the page cap after this many.
     Capped(usize),
+    /// Read in full on Argo CD's own entry, where no Application whose
+    /// destination the workspace maps to the part's cluster lists it; one
+    /// deploying there under an unmapped destination still may.
+    NotMatched,
 }
 
 /// A read in one cluster that may have left parts of this application out.
@@ -192,17 +200,27 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
             _ => None,
         })
         .collect();
-    let unchecked = app.notes.iter().find_map(|note| match note {
-        Note::ManagerUnknown { member } if member == at => Some(argo_unchecked(derived, at)),
-        _ => None,
-    });
+    let (unchecked, argo_on) = app
+        .notes
+        .iter()
+        .find_map(|note| match note {
+            Note::ManagerUnknown { member } if member == at => Some(argo_unchecked(derived, at)),
+            _ => None,
+        })
+        .map_or((None, None), |(unchecked, on)| (Some(unchecked), on));
     let claim = |confidence, app_side, member_side, why: &str| {
         let mut why = why.to_owned();
-        if unchecked.is_some() {
-            why.push_str(
+        match &unchecked {
+            Some(Unchecked::NotMatched) => why.push_str(
+                ". No Argo CD Application mapped to its cluster lists it, but one deploying \
+                 there under a destination the workspace doesn't map may manage it, so its \
+                 label may not be the last word",
+            ),
+            Some(_) => why.push_str(
                 ". Argo CD's Applications there weren't all read, so one may manage it and its \
                  label may not be the last word",
-            );
+            ),
+            None => {}
         }
         Claim {
             member: at.clone(),
@@ -211,6 +229,7 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
             member_side,
             why,
             unchecked: unchecked.clone(),
+            argo_on: argo_on.clone(),
             lower,
         }
     };
@@ -414,21 +433,35 @@ fn part_of(at: &MemberRef, name: &str) -> Side {
     .at(&at.session)
 }
 
-/// What wasn't checked in the part's cluster: Argo CD's Applications,
-/// none of them or only some.
-fn argo_unchecked(derived: &Derived, at: &MemberRef) -> Unchecked {
-    let state = derived
+/// What wasn't checked of Argo CD's Applications for the part's cluster,
+/// none of them or only some, and where Argo CD is when it was read on
+/// another entry.
+fn argo_unchecked(derived: &Derived, at: &MemberRef) -> (Unchecked, Option<SessionKey>) {
+    let argo = |c: &&super::Coverage| c.source == SourceKind::ArgoApplications;
+    let (state, on) = match derived
         .coverage
         .iter()
-        .find(|c| c.session == at.session && c.source == SourceKind::ArgoApplications);
-    match state.map(|c| &c.state) {
+        .filter(argo)
+        .find(|c| c.session == at.session)
+    {
+        Some(own) => (Some(&own.state), None),
+        // Argo CD wasn't asked of the part's cluster: it was read on its
+        // own entry, if anywhere.
+        None => match derived.coverage.iter().find(argo) {
+            Some(elsewhere) => (Some(&elsewhere.state), Some(elsewhere.session.clone())),
+            None => (None, None),
+        },
+    };
+    let unchecked = match state {
         Some(CoverageState::NamespaceOnly { namespaces, .. }) => {
             Unchecked::Namespaces(namespaces.clone())
         }
         Some(CoverageState::NamespaceNotFound(namespace)) => Unchecked::NotFound(namespace.clone()),
         Some(CoverageState::Capped(read)) => Unchecked::Capped(*read),
+        Some(CoverageState::Read) if on.is_some() => Unchecked::NotMatched,
         _ => Unchecked::NotRead,
-    }
+    };
+    (unchecked, on)
 }
 
 /// Why Argo CD's Applications in a cluster may not all have been read:
@@ -459,6 +492,8 @@ fn blind(state: &CoverageState) -> Option<String> {
         CoverageState::Capped(read) => Some(format!("stopped at the page cap after {read}")),
         CoverageState::Refused(why) => Some(format!("refused: {why}")),
         CoverageState::Unreadable(why) => Some(format!("couldn't be read: {why}")),
+        CoverageState::Unreachable(why) => Some(format!("couldn't be reached: {why}")),
+        CoverageState::NotInWorkspace(why) => Some(format!("not read: {why}")),
         CoverageState::NamespaceNotFound(namespace) => Some(format!(
             "Argo CD's namespace wasn't found, and {namespace} holds no Applications"
         )),
@@ -500,6 +535,14 @@ fn gaps(derived: &Derived, app: &Application) -> Vec<Gap> {
             _ => None,
         })
         .collect();
+    // Where Kargo wasn't read, Argo CD was read for the workspace, beside
+    // it: the Applications a Project's Stages promote to are there.
+    let kargo_read: Vec<&SessionKey> = derived
+        .coverage
+        .iter()
+        .filter(|c| c.source == SourceKind::KargoProjects)
+        .map(|c| &c.session)
+        .collect();
     for coverage in &derived.coverage {
         let session = &coverage.session;
         let ((kinds, what), why) = match coverage.source {
@@ -509,14 +552,15 @@ fn gaps(derived: &Derived, app: &Application) -> Vec<Gap> {
             ),
             // A Project's Stages promote to Argo CD Applications, in any
             // cluster, since an Application names its Project by name. Where
-            // the Project is, a read of only some namespaces may have left
-            // them out; anywhere else, a refused, failed or capped read.
+            // the Project is, or where Argo CD is read beside it for the
+            // workspace, a read of only some namespaces may have left them
+            // out; anywhere else, a refused, failed or capped read.
             SourceKind::ArgoApplications if app.rule == Rule::Kargo => (
                 (
                     vec![MemberKind::ArgoApplication],
                     "Argo CD Applications its Stages promote to",
                 ),
-                if own.contains(&session) {
+                if own.contains(&session) || !kargo_read.contains(&session) {
                     partial(&coverage.state)
                 } else {
                     blind(&coverage.state)
