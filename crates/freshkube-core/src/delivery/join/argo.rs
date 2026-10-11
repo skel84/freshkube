@@ -51,7 +51,7 @@ pub(super) fn application_links(
         let destination = evidence
             .destinations
             .get(&app_id)
-            .map(describe_destination)
+            .map(|destination| describe_destination(evidence, destination))
             .unwrap_or_else(|| "destination not matched".to_owned());
         let (confidence, key, proof, mut seen) =
             stage_application_proof(evidence, freight, stage, app, apps);
@@ -214,19 +214,32 @@ pub(super) fn short_commit(commit: &str) -> String {
     commit.chars().take(12).collect()
 }
 
-fn describe_destination(destination: &DestinationMatch) -> String {
+/// The contexts, each by its name ([`Evidence::name`]), joined.
+fn names(evidence: &Evidence, contexts: &[String]) -> String {
+    contexts
+        .iter()
+        .map(|context| evidence.name(context))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn describe_destination(evidence: &Evidence, destination: &DestinationMatch) -> String {
     match destination {
-        DestinationMatch::One(context) => format!("destination is context {context}"),
+        DestinationMatch::One(context) => {
+            format!("destination is context {}", evidence.name(context))
+        }
         DestinationMatch::Ambiguous(contexts) => format!(
             "destination matches several contexts ({}); the user must choose",
-            contexts.join(", ")
+            names(evidence, contexts)
         ),
-        DestinationMatch::ArgoCd(context) => {
-            format!("destination is Argo CD's own cluster ({IN_CLUSTER_NAME}), context {context}")
-        }
-        DestinationMatch::Named { context, .. } => {
-            format!("destination by a cluster name, mapped to context {context}")
-        }
+        DestinationMatch::ArgoCd(context) => format!(
+            "destination is Argo CD's own cluster ({IN_CLUSTER_NAME}), context {}",
+            evidence.name(context)
+        ),
+        DestinationMatch::Named { context, .. } => format!(
+            "destination by a cluster name, mapped to context {}",
+            evidence.name(context)
+        ),
         DestinationMatch::None => "destination matches no known context".to_owned(),
         DestinationMatch::ByName(_) => {
             "destination by a cluster name no context is mapped to".to_owned()
@@ -262,12 +275,15 @@ pub(super) fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
         ),
         Some(DestinationMatch::Ambiguous(contexts)) => format!(
             "it matches several contexts ({}); the user must choose",
-            contexts.join(", ")
+            names(evidence, contexts)
         ),
         Some(DestinationMatch::Unspecified) => "the Application names no destination".to_owned(),
         Some(matched) => format!(
-            "it is context {}, and the environment is {env}",
-            matched.context().unwrap_or("?")
+            "it is context {}, and the environment is {}",
+            matched
+                .context()
+                .map_or("?", |context| evidence.name(context)),
+            evidence.name(env)
         ),
         None => "its destination was not matched".to_owned(),
     };
@@ -289,7 +305,7 @@ fn not_the_open_cluster(evidence: &Evidence, app_id: &str, listed: &[String]) ->
         }
         Some(DestinationMatch::Ambiguous(entries)) => format!(
             "it is mapped to more than one workspace cluster ({})",
-            entries.join(", ")
+            names(evidence, entries)
         ),
         Some(DestinationMatch::Unspecified) => "the Application names no destination".to_owned(),
         Some(matched) => match matched.context() {
@@ -298,7 +314,7 @@ fn not_the_open_cluster(evidence: &Evidence, app_id: &str, listed: &[String]) ->
             }
             entry => format!(
                 "it is {}, which isn't the open cluster",
-                entry.unwrap_or("?")
+                entry.map_or("?", |entry| evidence.name(entry))
             ),
         },
         None => "its destination was not matched".to_owned(),

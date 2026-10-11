@@ -212,6 +212,12 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
             },
             false => MapHint::Flags,
         },
+        // This cluster is the open entry, else the connection's key, which
+        // nobody reads: its words are the name the page shows.
+        names: (place.here() != place.label)
+            .then(|| (place.here().to_owned(), place.label.clone()))
+            .into_iter()
+            .collect(),
     }
 }
 

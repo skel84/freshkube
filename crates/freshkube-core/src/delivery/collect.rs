@@ -68,6 +68,9 @@ pub struct Plan {
     pub stage_naming: Option<StageNaming>,
     /// How a destination no context matches says it could be matched.
     pub map_hint: MapHint,
+    /// The words for a context whose key isn't one a person reads, as the
+    /// app's connection key: its kubeconfig context. Others show as they are.
+    pub names: BTreeMap<String, String>,
 }
 
 /// One reader per role.
@@ -140,6 +143,7 @@ pub async fn collect<K: Reader, A: Reader, T: Reader, E: Reader, G: GitHub>(
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
         map_hint: plan.map_hint.clone(),
+        names: plan.names.clone(),
         builds,
         kargo,
         applications,

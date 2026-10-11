@@ -14,8 +14,9 @@ use std::rc::Rc;
 
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId,
-    Pixels, ShapedLine, SharedString, Style, TextAlign, TextStyle, TruncateFrom, Window, px, size,
+    App, AvailableSpace, Bounds, Element, ElementId, GlobalElementId, Hsla, InspectorElementId,
+    LayoutId, Pixels, ShapedLine, SharedString, Style, TextAlign, TextStyle, TruncateFrom, Window,
+    px, size,
 };
 
 const ELLIPSIS: &str = "…";
@@ -31,12 +32,37 @@ pub fn word_cut(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Word
     WordCut {
         id: id.into(),
         text,
+        dim: None,
     }
 }
 
 pub struct WordCut {
     id: ElementId,
     text: SharedString,
+    /// Where the text turns `color`, a second, dimmer part; a cut takes it
+    /// first, then the first part at a word.
+    dim: Option<(usize, Hsla)>,
+}
+
+impl WordCut {
+    /// The text from byte `ix` on in `color`: a second part, such as an
+    /// application after a title, that gives way before the first.
+    pub fn dim_from(mut self, ix: usize, color: Hsla) -> Self {
+        self.dim = Some((ix, color));
+        self
+    }
+
+    /// The runs for `len` bytes of the text, shaped or cut, in `style`.
+    fn runs(&self, style: &TextStyle, len: usize) -> Vec<gpui_kit::TextRun> {
+        match self.dim {
+            Some((ix, color)) if ix < len => {
+                let mut dim = style.to_run(len - ix);
+                dim.color = color;
+                vec![style.to_run(ix), dim]
+            }
+            _ => vec![style.to_run(len)],
+        }
+    }
 }
 
 /// Where a cut that ends at a character moves back to: the end of the
@@ -94,7 +120,6 @@ impl WordCut {
         }
         let style = cut.style.clone();
         let font_size = style.font_size.to_pixels(window.rem_size());
-        let run = |len| style.to_run(len);
         let mut text = self.text.clone();
         if let Some(width) = width {
             // Where the text must end, before GPUI's own trim: `truncate_line`
@@ -106,10 +131,12 @@ impl WordCut {
                 text = format!("{}{ELLIPSIS}", at_word(&self.text[..ix], &self.text)).into();
             }
         }
-        let shaped =
-            window
-                .text_system()
-                .shape_line(text.clone(), font_size, &[run(text.len())], None);
+        let shaped = window.text_system().shape_line(
+            text.clone(),
+            font_size,
+            &self.runs(&style, text.len()),
+            None,
+        );
         #[cfg(any(test, feature = "testing"))]
         {
             cut.ran = Some((style.font(), font_size, style.color));
@@ -162,6 +189,7 @@ impl Element for WordCut {
         let this = WordCut {
             id: self.id.clone(),
             text: self.text.clone(),
+            dim: self.dim,
         };
         let layout = window.request_measured_layout(layout, move |known, available, window, cx| {
             let width = known.width.or(match available.width {
@@ -449,5 +477,23 @@ mod tests {
     #[test]
     fn a_first_word_too_long_alone_keeps_the_characters_that_fit() {
         assert_eq!(at_word("sha256:9c4e", "sha256:9c4eb21a run"), "sha256:9c4e");
+    }
+
+    /// The dimmer part runs from its byte on, and a cut that ends before it
+    /// is one run.
+    #[test]
+    fn the_dim_part_is_its_own_run_until_a_cut_drops_it() {
+        let dim = gpui_kit::hsla(0., 0., 0.5, 1.);
+        let text = "Keep the basket · cart";
+        let cut = word_cut("cell", text).dim_from(15, dim);
+        let style = gpui_kit::TextStyle::default();
+        let runs = cut.runs(&style, text.len());
+        assert_eq!(
+            runs.iter().map(|run| run.len).collect::<Vec<_>>(),
+            [15, text.len() - 15]
+        );
+        assert_eq!(runs[1].color, dim);
+        assert_ne!(runs[0].color, dim);
+        assert_eq!(cut.runs(&style, "Keep the…".len()).len(), 1);
     }
 }

@@ -1649,3 +1649,38 @@ async fn a_local_application_without_pods_stays_unknown_beside_one_elsewhere() {
         Reach::Linked(Confidence::Unknown)
     );
 }
+
+/// The why names this cluster as the page does, never by the connection's
+/// key, which nobody reads; objects still open by the key.
+#[tokio::test]
+async fn a_stage_names_this_cluster_by_its_context_not_its_key() {
+    const KEY: &str = "access:4f1e9c0d2b7a";
+    let reader = one_cluster(|_| {});
+    let mut place = place("f-new");
+    place.cluster = KEY.into();
+    let change = read(&reader, &place, observed_at()).await.expect("read");
+    let argocd = change
+        .hops
+        .iter()
+        .find(|hop| hop.key == "dev-argocd-0")
+        .expect("the Stage's Application");
+    assert!(
+        argocd
+            .detail
+            .contains("destination is Argo CD's own cluster (in-cluster), context core"),
+        "{}",
+        argocd.detail
+    );
+    let texts = format!("{change:?}");
+    let words: Vec<&str> = change
+        .hops
+        .iter()
+        .map(|hop| hop.detail.as_str())
+        .chain(change.groups.iter().map(|group| group.detail.as_str()))
+        .collect();
+    assert!(words.iter().all(|text| !text.contains(KEY)), "{words:#?}");
+    assert!(
+        texts.contains(&format!("cluster: \"{KEY}\"")),
+        "objects open by the key"
+    );
+}

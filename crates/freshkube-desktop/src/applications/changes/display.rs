@@ -53,6 +53,9 @@ pub(crate) struct ChangeRow {
     pub(crate) named: SharedString,
     pub(crate) by_commit: bool,
     pub(crate) title: SharedString,
+    /// The Change cell's line, `title · project`; the project, from the
+    /// title's end on, is dimmer and gives way first.
+    pub(crate) change: SharedString,
     /// Its project's Stages in promotion order.
     pub(crate) stages: Vec<Cell>,
     /// Every Stage with its word, `dev Confirmed · prod –`: the Stages
@@ -396,6 +399,7 @@ fn row(row: &Row, now: DateTime<Utc>) -> ChangeRow {
         named: named.into(),
         by_commit,
         title: title.clone().into(),
+        change: format!("{title} · {}", row.project).into(),
         stages_shown: cells.len(),
         stages: cells,
         stages_more: None,
