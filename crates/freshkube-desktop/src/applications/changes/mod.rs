@@ -35,7 +35,7 @@ use freshkube_ui::ui::Tone;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::across::Across;
+use super::across::{Across, Alone};
 use super::change::{ChangeEvent, ChangePage, Fetch};
 use super::links::Connections;
 use crate::backend::{self, OwnedJob};
@@ -383,7 +383,9 @@ impl ChangesPage {
                     DEADLINE,
                     "Reading the changes timed out".into(),
                     async move {
-                        let open = across.open(&access).await?;
+                        // The list has read with entries' deadlines since before there
+                        // was a workspace.
+                        let open = across.open(&access, Alone::AsEntry).await?;
                         let kubeconfigs = across.kubeconfigs();
                         let pool = pool::Pool::new(
                             &at.sources,

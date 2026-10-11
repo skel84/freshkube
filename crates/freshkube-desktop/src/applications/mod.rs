@@ -46,8 +46,7 @@ use freshkube_core::applications::across::{Open, read_workspace};
 use freshkube_core::applications::{
     ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
 };
-use freshkube_core::delivery::entry::{self, Deadline};
-use freshkube_core::delivery::read::ReadOnlyClient;
+use freshkube_core::delivery::entry;
 use freshkube_core::resources::kubeconfig_sources;
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_core::workspace::{Chosen, Part as PartKind, Sources};
@@ -60,7 +59,7 @@ use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
-use across::Across;
+use across::{Across, Alone};
 use change::{ChangeEvent, ChangePage, Changes};
 use changes::ChangesEvent;
 pub(crate) use changes::ChangesPage;
@@ -652,26 +651,9 @@ impl ApplicationsPage {
                         // does; beside other entries, the open one has
                         // their deadlines.
                         let alone = matches!(sources.get(PartKind::Kargo), Chosen::Open);
-                        let client = match alone {
-                            true => access.client().await,
-                            // Its setup ends in time too, so a client
-                            // being made again holds up no other entry.
-                            false => tokio::time::timeout(entry::CONNECT_DEADLINE, access.client())
-                                .await
-                                .unwrap_or_else(|_| {
-                                    Err(format!(
-                                        "no answer within {} s",
-                                        entry::CONNECT_DEADLINE.as_secs()
-                                    ))
-                                }),
-                        };
-                        let open = client.map(|client| match alone {
-                            true => Deadline::new(ReadOnlyClient::new(client), DEADLINE),
-                            false => entry::reader(client),
-                        });
-                        if alone {
-                            open.as_ref().map_err(Clone::clone)?;
-                        }
+                        let open =
+                            across::open_reader(&access, alone.then_some(Alone::Within(DEADLINE)))
+                                .await?;
                         let kubeconfigs = kubeconfig_sources(kubeconfig.as_deref());
                         let sessions = read_workspace(
                             &sources,

@@ -4,9 +4,11 @@
 //! read through a pool core's `delivery::entry::pool` keeps for the one
 //! read, dropped with it.
 use std::path::PathBuf;
+use std::time::Duration;
 
 use freshkube_core::delivery::change::live::Mapping;
-use freshkube_core::delivery::entry::{self, EntryReader};
+use freshkube_core::delivery::entry::{self, Deadline, EntryReader};
+use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::workspace::{Chosen, Sources};
 
 use crate::resources::KubeAccess;
@@ -30,32 +32,80 @@ impl Across {
             .all(|(_, chosen)| matches!(chosen, Chosen::Open))
     }
 
-    /// The open connection's reader. The workspace of one fails whole when
-    /// it can't connect; beside other entries, the open one is made within
-    /// their deadline, and why it couldn't be is its own entry's.
+    /// The open connection's reader: the workspace of one reads it as
+    /// `alone` says; beside other entries, it has theirs.
     pub(crate) async fn open(
         &self,
         access: &KubeAccess,
+        alone: Alone,
     ) -> Result<Result<EntryReader, String>, String> {
-        if self.alone() {
-            return access
-                .client()
-                .await
-                .map(|client| Ok(entry::reader(client)));
-        }
-        let client = tokio::time::timeout(entry::CONNECT_DEADLINE, access.client())
-            .await
-            .unwrap_or_else(|_| {
-                Err(format!(
-                    "no answer within {} s",
-                    entry::CONNECT_DEADLINE.as_secs()
-                ))
-            });
-        Ok(client.map(entry::reader))
+        open_reader(access, self.alone().then_some(alone)).await
     }
 
     /// Where the other entries' kubeconfigs are found.
     pub(crate) fn kubeconfigs(&self) -> Vec<PathBuf> {
         freshkube_core::resources::kubeconfig_sources(self.kubeconfig.as_deref())
+    }
+}
+
+/// How the workspace of one reads its open connection.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Alone {
+    /// Under the read's own deadline, each request too, as before there
+    /// was a workspace: the change page and Applications.
+    Within(Duration),
+    /// With an entry's deadlines: the Changes list.
+    AsEntry,
+}
+
+/// The open connection's reader. The workspace of one (`alone` given)
+/// fails whole when it can't connect; beside other entries, the open one
+/// is made within their deadline, so a client being made again holds up
+/// no other entry, and why it couldn't be is its own entry's.
+pub(crate) async fn open_reader(
+    access: &KubeAccess,
+    alone: Option<Alone>,
+) -> Result<Result<EntryReader, String>, String> {
+    if alone.is_some() {
+        return access.client().await.map(|client| Ok(wrap(client, alone)));
+    }
+    let client = tokio::time::timeout(entry::CONNECT_DEADLINE, access.client())
+        .await
+        .unwrap_or_else(|_| {
+            Err(format!(
+                "no answer within {} s",
+                entry::CONNECT_DEADLINE.as_secs()
+            ))
+        });
+    Ok(client.map(|client| wrap(client, None)))
+}
+
+/// The reader over the open connection's client.
+fn wrap(client: kube::Client, alone: Option<Alone>) -> EntryReader {
+    match alone {
+        Some(Alone::Within(limit)) => Deadline::new(ReadOnlyClient::new(client), limit),
+        Some(Alone::AsEntry) | None => entry::reader(client),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_workspace_of_one_reads_as_it_is_told() {
+        // Construction only: this test never sends a network request.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = || {
+            kube::Client::try_from(kube::Config::new("http://127.0.0.1:1".parse().unwrap()))
+                .unwrap()
+        };
+        let page = Duration::from_secs(60);
+        assert_eq!(wrap(client(), Some(Alone::Within(page))).limit(), page);
+        assert_eq!(
+            wrap(client(), Some(Alone::AsEntry)).limit(),
+            entry::REQUEST_DEADLINE
+        );
+        assert_eq!(wrap(client(), None).limit(), entry::REQUEST_DEADLINE);
     }
 }

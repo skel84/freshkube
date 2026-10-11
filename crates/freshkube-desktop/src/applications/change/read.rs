@@ -16,7 +16,7 @@ use freshkube_core::delivery::entry::{self, pool};
 use freshkube_core::snapshot::Request;
 
 use super::*;
-use crate::applications::across::Across;
+use crate::applications::across::{Across, Alone};
 use crate::backend;
 use crate::resources::KubeAccess;
 
@@ -25,6 +25,9 @@ const FRESH_FOR: Duration = Duration::from_secs(30);
 /// How long one change's read may take before it fails whole: past
 /// core's budget, at which it answers with what was read in time.
 const DEADLINE: Duration = Duration::from_secs(live::BUDGET.as_secs() + 15);
+/// The workspace of one reads the open connection as before there was a
+/// workspace: each request under the read's deadline alone.
+pub(super) const ALONE: Alone = Alone::Within(DEADLINE);
 
 /// Where the page's change comes from.
 #[derive(Clone)]
@@ -134,7 +137,7 @@ impl ChangePage {
                     DEADLINE,
                     "Reading the change timed out".into(),
                     async move {
-                        let open = across.open(&access).await?;
+                        let open = across.open(&access, ALONE).await?;
                         let kubeconfigs = across.kubeconfigs();
                         let pool = pool::Pool::new(
                             &place.sources,
@@ -293,6 +296,17 @@ fn deliver(
     _ = cx.update_window(handle, |_, window, cx| {
         _ = this.update(cx, |page, cx| page.answer(&request, result, window, cx));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ALONE, Alone, DEADLINE, entry};
+
+    #[test]
+    fn the_workspace_of_one_reads_under_the_pages_deadline() {
+        assert_eq!(ALONE, Alone::Within(DEADLINE));
+        assert!(DEADLINE > entry::REQUEST_DEADLINE);
+    }
 }
 
 #[cfg(test)]

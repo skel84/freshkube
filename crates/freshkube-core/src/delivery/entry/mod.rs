@@ -92,6 +92,11 @@ impl<R: Reader> Deadline<R> {
         answer
     }
 
+    /// How long each request may take.
+    pub fn limit(&self) -> Duration {
+        self.limit
+    }
+
     /// The same, with a whole listing allowed `limit`.
     pub fn with_list_limit(self, limit: Duration) -> Self {
         Self {
