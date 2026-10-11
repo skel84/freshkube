@@ -18,7 +18,7 @@ const CHANGE: layout_check::TablePage = layout_check::TablePage {
 
 const CHECKOUT: &str = "application-kargo:checkout";
 /// checkout's Stage `prod-ams`, on its application page.
-const PROD_AMS: &str = "application-part-core-fra/0/checkout/prod-ams";
+const PROD_AMS: &str = "application-part-cicd-fra/0/checkout/prod-ams";
 
 fn list(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<ApplicationsPage> {
     view.read(cx).applications().0
@@ -106,7 +106,7 @@ fn a_stage_offers_its_freight_and_follows_it_onto_its_gates(cx: &mut TestAppCont
 fn a_warehouse_offers_nothing_to_follow(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = on_stage(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
-        window.click("application-part-core-fra/1/checkout/checkout-images", cx);
+        window.click("application-part-cicd-fra/1/checkout/checkout-images", cx);
         window.render_frame(cx);
         assert!(window.try_find("application-detail-follow").is_none());
         window.press("f", cx);
@@ -279,6 +279,7 @@ fn a_workspace_change_reaches_the_change_page_at_once(cx: &mut TestAppContext) {
                     entries: vec!["dev-fra".into(), "prod-ams".into()],
                     active: Some("dev-fra".into()),
                     mapping: Default::default(),
+                    ..Default::default()
                 },
                 cx,
             )
@@ -1409,6 +1410,7 @@ fn open_with(
                     entries: entries.clone(),
                     active: Some("dev-fra".into()),
                     mapping: Default::default(),
+                    ..Default::default()
                 },
                 cx,
             );

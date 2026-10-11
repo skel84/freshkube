@@ -27,7 +27,6 @@ use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource};
 use crate::ui::{self, dp};
 use freshkube_core::delivery::entry::{self, Checked, Reach};
-use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::workspace::{Chosen, Part, Sources};
 use freshkube_ui::{menu, page, table};
 use gpui_kit::component::{Disableable, Sizable, button::Button, v_flex};
@@ -238,9 +237,7 @@ impl SourcesList {
                     freshkube_core::resources::kubeconfig_sources(explicit.as_deref());
                 // The open connection's own error, so a failed one says why.
                 let open = match open {
-                    Some(access) => Some(access.client().await.map(|client| {
-                        entry::Deadline::new(ReadOnlyClient::new(client), entry::REQUEST_DEADLINE)
-                    })),
+                    Some(access) => Some(access.client().await.map(entry::reader)),
                     None => None,
                 };
                 let open = open

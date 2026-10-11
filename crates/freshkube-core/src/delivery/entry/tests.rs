@@ -100,6 +100,44 @@ async fn a_read_past_its_deadline_is_unreachable() {
     assert_eq!(failure.kind, FailureKind::Timeout);
 }
 
+/// A reader whose every listing takes `slow`.
+struct Slow(Duration);
+
+impl Reader for Slow {
+    async fn get(
+        &self,
+        _: &Resource,
+        _: Option<&str>,
+        _: &str,
+    ) -> Result<serde_json::Value, Failure> {
+        unreachable!()
+    }
+    async fn list(&self, _: &ListRequest) -> Result<Listing, Failure> {
+        tokio::time::sleep(self.0).await;
+        Ok(Listing::default())
+    }
+    async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
+        Ok(Vec::new())
+    }
+    async fn plurals(&self, _: &str, _: &str) -> Result<Vec<String>, Failure> {
+        Ok(Vec::new())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_listing_has_the_deadline_once_for_each_page_it_may_read() {
+    let request = ListRequest {
+        resource: Resource::new("apps", "v1", "deployments", true),
+        scope: Scope::Cluster,
+    };
+    // Longer than one request, as several pages that each answer take.
+    let several = Deadline::new(Slow(REQUEST_DEADLINE * 3), REQUEST_DEADLINE);
+    assert!(several.list(&request).await.is_ok());
+    let past = Deadline::new(Slow(REQUEST_DEADLINE * (MAX_PAGES + 1)), REQUEST_DEADLINE);
+    let failure = past.list(&request).await.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Timeout);
+}
+
 fn entry(id: &str, role: Role) -> Entry {
     Entry::new(id, role, format!("{id}-context"))
 }
@@ -332,4 +370,55 @@ async fn workloads_are_checked_on_each_mapped_entry() {
         check_workloads(&serving().refusing("deployments")).await,
         Reach::Refused(_)
     ));
+}
+
+/// A Talos entry whose context `cluster-t` names `talos_context`.
+fn talos_entry(talosconfig: PathBuf, talos_context: Option<&str>) -> Entry {
+    let mut entry = entry("cluster-t", Role::Core);
+    entry.context = "cluster-t".into();
+    entry.talosconfig = Some(talosconfig);
+    entry.talos_context = talos_context.map(str::to_owned);
+    entry
+}
+
+#[tokio::test]
+async fn a_talos_entry_outside_the_kubeconfigs_is_opened_through_its_talosconfig() {
+    let directory = tempfile::tempdir().unwrap();
+    let missing = directory.path().join("talosconfig");
+    let error = connect_entry(vec![], talos_entry(missing.clone(), None))
+        .await
+        .err()
+        .expect("no talosconfig");
+    assert_eq!(
+        error,
+        format!("its talosconfig {} couldn't be read", missing.display())
+    );
+    // Its Talos context, else its context; never the file's current one.
+    let talosconfig = directory.path().join("talosconfig");
+    std::fs::write(
+        &talosconfig,
+        "context: other\ncontexts:\n  other:\n    endpoints: [127.0.0.1]\n    ca: ''\n    crt: ''\n    key: ''\n",
+    )
+    .unwrap();
+    for (talos_context, named) in [(None, "cluster-t"), (Some("lab"), "lab")] {
+        let error = connect_entry(vec![], talos_entry(talosconfig.clone(), talos_context))
+            .await
+            .err()
+            .expect("no such Talos context");
+        assert_eq!(error, format!("its talosconfig has no context {named}"));
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_talos_entry_in_the_kubeconfigs_is_opened_with_its_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let kubeconfig = exec_kubeconfig(directory.path(), "false", &[]);
+    let mut entry = talos_entry(directory.path().join("talosconfig"), None);
+    entry.context = "cluster-a".into();
+    let error = connect_entry(vec![kubeconfig], entry)
+        .await
+        .err()
+        .expect("the plugin fails");
+    assert_eq!(error, "its credential plugin failed");
 }

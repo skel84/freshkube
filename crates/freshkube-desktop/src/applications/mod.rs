@@ -41,11 +41,13 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
-use freshkube_core::applications::{
-    Derived, Inputs, Override, SessionInputs, SessionKey, derive, read::read_session,
-};
+use freshkube_core::applications::across::{Open, read_workspace};
+use freshkube_core::applications::{Derived, Inputs, Override, SessionInputs, SessionKey, derive};
+use freshkube_core::delivery::entry;
 use freshkube_core::delivery::read::ReadOnlyClient;
+use freshkube_core::resources::kubeconfig_sources;
 use freshkube_core::snapshot::{Request, Snapshot};
+use freshkube_core::workspace::{Chosen, Part as PartKind, Sources};
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self as kit, TableState};
@@ -122,15 +124,46 @@ impl Read {
         }
     }
 
-    /// A live read of one connection: its cluster is that connection.
-    fn live(inputs: &Inputs, source: &KubeSource) -> Self {
+    /// A live read: each cluster is a workspace entry, named by its id,
+    /// except the open connection, which the workspace of one keys by its
+    /// id and names by its context; `entry` is the workspace entry it is.
+    fn live(inputs: &Inputs, source: &KubeSource, entry: Option<&str>) -> Self {
         let key = SessionKey::new(source.id.clone());
+        let open: Vec<SessionKey> = [Some(key.clone()), entry.map(SessionKey::new)]
+            .into_iter()
+            .flatten()
+            .collect();
+        let labels = Labels::new(inputs.sessions.iter().map(|session| {
+            let label = match session.key == key {
+                true => source.context.clone(),
+                false => session.key.0.clone(),
+            };
+            (session.key.clone(), label)
+        }));
+        // The change page reads the open connection: it follows a change
+        // only when Kargo was read there.
+        let here = Inputs {
+            sessions: inputs
+                .sessions
+                .iter()
+                .filter(|session| open.contains(&session.key))
+                .cloned()
+                .collect(),
+            stage_naming: inputs.stage_naming.clone(),
+        };
+        let changes = match here.sessions.iter().any(|session| session.asked.kargo) {
+            true => Changes::live(&here, source),
+            false => Changes::None,
+        };
         Self {
-            changes: Changes::live(inputs, source),
+            changes,
             ..Self::of(
                 inputs,
-                Labels::new([(key.clone(), source.context.clone())]),
-                Connections::new(source.id.clone(), [(key, source.id.clone())]),
+                labels,
+                Connections::new(
+                    source.id.clone(),
+                    open.into_iter().map(|key| (key, source.id.clone())),
+                ),
             )
         }
     }
@@ -152,6 +185,11 @@ pub(crate) struct Clusters {
     /// What the workspace says about where Argo CD deploys
     /// (`Mapping::of`), which a change's live read resolves Stages through.
     pub(crate) mapping: Mapping,
+    /// Where each part is read: a live read reads each from its entry.
+    pub(crate) sources: Sources,
+    /// The workspace's kubeconfig, `None` for the automatic one, which
+    /// entries other than the open one are connected through.
+    pub(crate) kubeconfig: Option<std::path::PathBuf>,
 }
 
 /// A part to open once the window has switched to the workspace entry its
@@ -343,10 +381,24 @@ impl ApplicationsPage {
         if clusters == self.clusters {
             return;
         }
+        let reads_elsewhere = (&clusters.sources, &clusters.kubeconfig)
+            != (&self.clusters.sources, &self.clusters.kubeconfig);
         self.clusters = clusters;
         self.update_open(cx);
         self.update_change(cx);
         self.update_changes(cx);
+        // A live read follows where the parts are read: shown, it reads
+        // again; hidden, it reads again when next shown.
+        let live = self
+            .source
+            .as_ref()
+            .is_some_and(|source| !matches!(source.access, KubeAccess::Example));
+        if reads_elsewhere && live {
+            self.read_at = None;
+            if self.visible {
+                self.read(cx);
+            }
+        }
     }
 
     /// Tells the Changes list which connection each cluster is and how the
@@ -513,20 +565,36 @@ impl ApplicationsPage {
             }
             access => {
                 let access = access.clone();
-                let key = SessionKey::new(source.id.clone());
+                let sources = self.clusters.sources.clone();
+                let kubeconfig = self.clusters.kubeconfig.clone();
+                let entry = self.clusters.active.clone();
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
                     DEADLINE,
                     "Reading the applications timed out".into(),
                     async move {
-                        let client = access.client().await?;
-                        let reader = ReadOnlyClient::new(client);
-                        let session = read_session(&reader, key).await;
+                        let open = access.client().await.map(ReadOnlyClient::new);
+                        // The workspace of one reads the open connection
+                        // alone, and fails as it does.
+                        if matches!(sources.get(PartKind::Kargo), Chosen::Open) {
+                            open.as_ref().map_err(Clone::clone)?;
+                        }
+                        let kubeconfigs = kubeconfig_sources(kubeconfig.as_deref());
+                        let sessions = read_workspace(
+                            &sources,
+                            Some(Open {
+                                entry: entry.as_deref(),
+                                key: SessionKey::new(source.id.clone()),
+                                reader: open.as_ref().map_err(Clone::clone),
+                            }),
+                            |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
+                        )
+                        .await;
                         let inputs = Inputs {
-                            sessions: vec![session],
+                            sessions,
                             stage_naming: None,
                         };
-                        Ok(Read::live(&inputs, &source))
+                        Ok(Read::live(&inputs, &source, entry.as_deref()))
                     },
                 );
                 self.job = Some(job);
@@ -575,7 +643,7 @@ impl ApplicationsPage {
                 sessions: vec![SessionInputs::unread(key.clone(), why)],
                 stage_naming: None,
             };
-            Some(Read::live(&inputs, source))
+            Some(Read::live(&inputs, source, None))
         };
         if let Some(Read {
             changes: Changes::Live(live),

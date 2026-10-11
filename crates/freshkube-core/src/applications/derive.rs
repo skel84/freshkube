@@ -19,7 +19,7 @@ pub fn derive(inputs: &Inputs, over: &Override) -> Derived {
     let projects = kargo(&mut builder, inputs);
     let home = argo(&mut builder, inputs, &projects);
     part_of(&mut builder, inputs, &home);
-    infer_across_sessions(&mut builder);
+    infer_across_sessions(&mut builder, inputs);
     let applied = apply(builder.apps, over);
     let by_name = |apps: &mut Vec<super::Application>| {
         apps.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));

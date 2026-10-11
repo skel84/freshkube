@@ -76,17 +76,15 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
         }
         assert!(window.find(CART).visible());
         assert!(window.find(LOYALTY).visible());
-        // Five clusters serve neither Kargo nor Argo CD; argocd is read
-        // alone: facts under the header, not warnings.
+        // argocd is read alone: a fact under the header, not a warning.
+        // Each cluster is read only for what the workspace reads there, so
+        // none says it doesn't serve the rest.
         let legend = window
             .find("applications-legend")
             .label()
             .unwrap()
             .to_owned();
-        assert!(
-            legend.contains("Kargo isn't served on 5 clusters"),
-            "{legend}"
-        );
+        assert!(!legend.contains("isn't served"), "{legend}");
         assert!(
             legend.contains(
                 "Argo CD on core-fra was read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
@@ -409,7 +407,7 @@ fn a_refused_source_beside_found_applications_says_they_may_be_missing(cx: &mut 
             .unwrap()
             .to_owned();
         assert!(
-            missing.contains("Kargo Projects were refused on core-fra"),
+            missing.contains("Kargo Projects were refused on cicd-fra"),
             "{missing}"
         );
         assert!(window.try_find(CART).is_none());
@@ -611,6 +609,148 @@ fn a_scoped_application_keeps_its_name_in_the_inspector(cx: &mut TestAppContext)
             words.starts_with("Argo CD on core-fra was read in delivery, gitops, platform only"),
             "{words}"
         );
+    })
+    .unwrap();
+}
+
+/// The workspace's entries, as the example workspace lists them.
+fn example_entries() -> Vec<String> {
+    freshkube_core::workspace::example()
+        .clusters
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect()
+}
+
+/// Each part is read from its own entry, so the list is the same whichever
+/// entry is open; only where each part opens follows the open one.
+#[gpui_kit::test]
+fn the_same_applications_show_whichever_entry_is_open(cx: &mut TestAppContext) {
+    use freshkube_core::applications::SessionKey;
+    let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
+    let first = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            page(&view, cx).read(cx).names()
+        })
+        .unwrap();
+    assert_eq!(first.len(), 5, "{first:?}");
+    for active in ["core-fra", "cicd-fra", "prod-fra", "dev-fra"] {
+        cx.update_window(handle, |_, window, cx| {
+            page(&view, cx).update(cx, |page, cx| {
+                page.set_clusters(
+                    super::Clusters {
+                        entries: example_entries(),
+                        active: Some(active.into()),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+                page.refresh(cx);
+            });
+            window.render_frame(cx);
+            let page = page(&view, cx);
+            let page = page.read(cx);
+            assert_eq!(page.names(), first, "with {active} open");
+            let read = page.snapshot.data().expect("read");
+            let connections = page.connections(read);
+            // Kargo's parts open where Kargo is read: here once cicd-fra
+            // is open, else a switch away.
+            let cicd = SessionKey::new("cicd-fra");
+            assert_eq!(connections.opens(&cicd), active == "cicd-fra", "{active}");
+            assert_eq!(
+                connections.switch_to(&cicd),
+                (active != "cicd-fra").then_some("cicd-fra"),
+                "{active}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// The banner's whole text.
+fn missing(window: &mut gpui_kit::Window) -> String {
+    window
+        .find("applications-missing")
+        .label()
+        .unwrap()
+        .to_owned()
+}
+
+#[gpui_kit::test]
+fn an_unreachable_cicd_entry_says_so_by_name_never_none_found(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |page| {
+        page.set_variant(Variant::Unreachable)
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let missing = missing(window);
+        assert!(
+            missing.contains(
+                "Couldn't reach cicd-fra: no answer within 5 s; a credential plugin may be \
+                 waiting for a sign-in; Kargo applications may be missing"
+            ),
+            "{missing}"
+        );
+        // Kargo's applications aren't there; Argo CD's and the labels' are.
+        assert!(window.try_find(CART).is_none());
+        assert!(window.find(CATALOG).visible());
+        assert!(window.find(LOYALTY).visible());
+        assert!(window.try_find("applications-none").is_none());
+        // cart is still found by its label, never as none found.
+        let names = page(&view, cx).read(cx).names();
+        assert!(names.contains(&"cart".to_owned()), "{names:?}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn argo_cd_refused_on_its_entry_says_so_and_keeps_the_rest(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |page| {
+        page.set_variant(Variant::ArgoRefused)
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let missing = missing(window);
+        assert!(
+            missing.contains("Argo CD Applications were refused on core-fra"),
+            "{missing}"
+        );
+        assert!(window.try_find(CATALOG).is_none());
+        assert!(window.find(CART).visible());
+        // Kargo's Stages promote to the Applications Argo CD refused, on
+        // another entry: Kargo's applications aren't read in full.
+        let page = page(&view, cx);
+        let cart = page
+            .read(cx)
+            .display
+            .rows
+            .iter()
+            .find(|row| row.name == "cart");
+        assert_ne!(cart.expect("cart").mark, super::Mark::Read);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn an_unreachable_destination_says_so_by_name(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |page| {
+        page.set_variant(Variant::Destination)
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let missing = missing(window);
+        assert!(
+            missing.contains(
+                "Couldn't reach dev-fra: connection refused by dev-fra.example.test:6443; \
+                 part-of applications may be missing"
+            ),
+            "{missing}"
+        );
+        // loyalty is labelled in dev-fra alone.
+        let names = page(&view, cx).read(cx).names();
+        assert!(!names.contains(&"loyalty".to_owned()), "{names:?}");
+        assert!(names.contains(&"checkout".to_owned()), "{names:?}");
     })
     .unwrap();
 }

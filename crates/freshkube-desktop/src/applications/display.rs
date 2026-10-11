@@ -440,6 +440,8 @@ fn argo_short_words(state: &CoverageState) -> Option<String> {
         CoverageState::Capped(read) => format!("stopped after {read}"),
         CoverageState::Refused(why) => format!("refused ({why})"),
         CoverageState::Unreadable(why) => format!("couldn't be read ({why})"),
+        CoverageState::Unreachable(why) => format!("couldn't be reached ({why})"),
+        CoverageState::NotInWorkspace(why) => format!("not read ({why})"),
         CoverageState::Read | CoverageState::NotInstalled(_) => return None,
     })
 }
@@ -454,12 +456,18 @@ struct Short {
     namespace_only: BTreeMap<SessionKey, String>,
     /// Argo CD Applications not all known, and why, in words.
     argo_partial: BTreeMap<SessionKey, String>,
+    /// Where Kargo was read: Argo CD read anywhere else is read beside it,
+    /// for the whole workspace.
+    kargo_read: BTreeSet<SessionKey>,
 }
 
 impl Short {
     fn new(coverage: &[Coverage]) -> Self {
         let mut short = Self::default();
         for c in coverage {
+            if c.source == SourceKind::KargoProjects {
+                short.kargo_read.insert(c.session.clone());
+            }
             if c.source == SourceKind::ArgoApplications
                 && let Some(words) = argo_short_words(&c.state)
             {
@@ -574,10 +582,11 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
         }
     }
     // Kargo's Stages promote to Argo CD Applications, so a Project in a
-    // cluster whose Applications aren't all known is never read in full.
+    // cluster whose Applications aren't all known, or beside an Argo CD
+    // read on another entry whose aren't, is never read in full.
     if app.rule == Rule::Kargo {
         for (session, words) in &short.argo_partial {
-            if sessions.contains(session) {
+            if sessions.contains(session) || !short.kargo_read.contains(session) {
                 scope.push(format!(
                     "Argo CD on {} was {words}; Applications its Stages promote to may not all \
                      be listed",
@@ -666,9 +675,28 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
     }
 }
 
-/// One line per cluster and source that may have left applications out.
+/// One line per cluster and source that may have left applications out; a
+/// cluster that couldn't be reached, or a source no entry holds, once, with
+/// every rule it leaves short.
 fn missing_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     let mut lines = Vec::new();
+    // Said once each, in the order first met: the head, and its rules.
+    let mut absent: Vec<(String, Vec<&'static str>)> = Vec::new();
+    for c in coverage {
+        let head = match &c.state {
+            CoverageState::Unreachable(why) => {
+                format!("Couldn't reach {}: {why}", labels.of(&c.session))
+            }
+            CoverageState::NotInWorkspace(why) => why.clone(),
+            _ => continue,
+        };
+        let rule = rule_words(c.source.rule());
+        match absent.iter_mut().find(|(seen, _)| *seen == head) {
+            Some((_, rules)) if rules.contains(&rule) => {}
+            Some((_, rules)) => rules.push(rule),
+            None => absent.push((head, vec![rule])),
+        }
+    }
     for c in coverage {
         let source = source_words(c.source);
         let cluster = labels.of(&c.session);
@@ -701,9 +729,20 @@ fn missing_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
             CoverageState::Read
             | CoverageState::NamespaceOnly { .. }
             | CoverageState::NamespaceNotFound(_)
-            | CoverageState::NotInstalled(_) => continue,
+            | CoverageState::NotInstalled(_)
+            | CoverageState::Unreachable(_)
+            | CoverageState::NotInWorkspace(_) => continue,
         };
         lines.push(line.into());
+    }
+    for (head, rules) in absent {
+        lines.push(
+            format!(
+                "{head}; {} applications may be missing",
+                rules.join(" and ")
+            )
+            .into(),
+        );
     }
     lines
 }
@@ -765,6 +804,14 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
         .iter()
         .filter(|c| matches!(c.state, CoverageState::Unreadable(_)))
         .collect();
+    let unreachable: Vec<&Coverage> = coverage
+        .iter()
+        .filter(|c| matches!(c.state, CoverageState::Unreachable(_)))
+        .collect();
+    let not_read: Vec<&Coverage> = coverage
+        .iter()
+        .filter(|c| matches!(c.state, CoverageState::NotInWorkspace(_)))
+        .collect();
     let sources = |list: &[&Coverage]| {
         let words: BTreeSet<&str> = list.iter().map(|c| source_words(c.source)).collect();
         words.into_iter().collect::<Vec<_>>().join(", ")
@@ -772,7 +819,10 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
     let clusters = |list: &[&Coverage]| labels.all(list.iter().map(|c| &c.session));
     let reason = |list: &[&Coverage]| -> SharedString {
         match &list[0].state {
-            CoverageState::Refused(why) | CoverageState::Unreadable(why) => why.clone().into(),
+            CoverageState::Refused(why)
+            | CoverageState::Unreadable(why)
+            | CoverageState::Unreachable(why)
+            | CoverageState::NotInWorkspace(why) => why.clone().into(),
             _ => SharedString::default(),
         }
     };
@@ -786,6 +836,27 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
             )
             .into(),
             reason: reason(&refused),
+        };
+    }
+    if !unreachable.is_empty() {
+        let clusters = clusters(&unreachable);
+        return Body::Failed {
+            title: format!("Couldn't reach {clusters}").into(),
+            description: format!(
+                "{} weren't read, so no application is shown as missing. Refresh starts over.",
+                capital(&sources(&unreachable))
+            )
+            .into(),
+            reason: reason(&unreachable),
+        };
+    }
+    if !not_read.is_empty() {
+        return Body::Failed {
+            title: format!("{} aren't read", capital(&sources(&not_read))).into(),
+            description: "No workspace entry holds them, so no application is shown as missing. \
+                 Settings › Workspace says where each is read."
+                .into(),
+            reason: reason(&not_read),
         };
     }
     if !failed.is_empty() {
@@ -910,6 +981,8 @@ mod tests {
             argo_applications: Source::NotInstalled("argoproj.io is not served".into()),
             argo_application_sets: Source::NotInstalled("argoproj.io is not served".into()),
             workloads: Source::Read(Vec::new()),
+            asked: freshkube_core::applications::Asked::ALL,
+            absent: None,
         }
     }
 
@@ -933,10 +1006,9 @@ mod tests {
         );
         assert_eq!(display.body, Body::Table);
         assert!(display.missing_text.is_none());
-        assert_eq!(
-            display.legend_text.as_ref().map(|t| t.as_ref()),
-            Some("Kargo isn't served on 5 clusters · Argo CD isn't served on 5 clusters")
-        );
+        // Each cluster is read only for what the workspace reads there, so
+        // none says it doesn't serve the rest.
+        assert_eq!(display.legend_text, None);
     }
 
     #[test]
@@ -965,6 +1037,67 @@ mod tests {
         assert!(display.missing_text.is_none(), "the state says it already");
     }
 
+    /// A session asked only for Kargo, on `cicd-fra`.
+    fn kargo_only(absent: freshkube_core::applications::Absent) -> Inputs {
+        use freshkube_core::applications::Asked;
+        let asked = Asked {
+            kargo: true,
+            ..Asked::NONE
+        };
+        one(SessionInputs::absent(
+            SessionKey::new("cicd-fra"),
+            asked,
+            absent,
+        ))
+    }
+
+    #[test]
+    fn an_unreachable_entry_with_nothing_found_names_it() {
+        use freshkube_core::applications::Absent;
+        let display = shown(&kargo_only(Absent::Unreachable(
+            "no answer within 5 s".into(),
+        )));
+        let Body::Failed {
+            title,
+            description,
+            reason,
+        } = &display.body
+        else {
+            panic!("{:?}", display.body);
+        };
+        assert_eq!(title.as_ref(), "Couldn't reach cicd-fra");
+        assert_eq!(reason.as_ref(), "no answer within 5 s");
+        assert!(
+            description.starts_with("Kargo Projects weren't read"),
+            "{description}"
+        );
+    }
+
+    #[test]
+    fn a_source_no_entry_holds_is_never_none_found() {
+        use freshkube_core::applications::Absent;
+        let why = "No CI/CD or Core entry in the workspace";
+        let display = shown(&kargo_only(Absent::NotInWorkspace(why.into())));
+        let Body::Failed { title, reason, .. } = &display.body else {
+            panic!("{:?}", display.body);
+        };
+        assert_eq!(title.as_ref(), "Kargo Projects aren't read");
+        assert_eq!(reason.as_ref(), why);
+        // Beside found applications, it is a line of the banner.
+        let mut inputs = example::acme();
+        inputs.sessions.push(
+            kargo_only(Absent::NotInWorkspace(why.into()))
+                .sessions
+                .remove(0),
+        );
+        let display = shown(&inputs);
+        let (text, _) = display.missing_text.expect("a banner");
+        assert!(
+            text.contains(&format!("{why}; Kargo applications may be missing")),
+            "{text}"
+        );
+    }
+
     #[test]
     fn a_failed_read_with_nothing_found_is_the_failed_state() {
         let mut session = empty_session();
@@ -980,12 +1113,17 @@ mod tests {
     #[test]
     fn a_refused_source_beside_found_applications_is_a_missing_line() {
         let mut inputs = example::acme();
-        inputs.sessions[0].kargo = Source::Refused("projects is forbidden".into());
+        let cicd = inputs
+            .sessions
+            .iter_mut()
+            .find(|s| s.key.0 == "cicd-fra")
+            .unwrap();
+        cicd.kargo = Source::Refused("projects is forbidden".into());
         let display = shown(&inputs);
         assert_eq!(display.body, Body::Table);
         let (text, label) = display.missing_text.clone().unwrap();
         assert!(
-            text.starts_with("Kargo Projects were refused on core-fra") && !text.contains(". "),
+            text.starts_with("Kargo Projects were refused on cicd-fra") && !text.contains(". "),
             "one line: {text}"
         );
         assert_eq!(label.as_ref(), format!("May be missing: {text}"));

@@ -19,9 +19,10 @@
 //! checks every part of [`Sources`] and each workloads entry at once,
 //! connecting to each entry once, at most [`MAX_AT_ONCE`] at a time.
 //!
-//! Only the kubeconfig files given are read: a Talos entry whose context
-//! is in none of them, which the app opens through its control plane's
-//! kubeconfig, is unreachable here.
+//! A Talos entry whose context is in none of the kubeconfig files given is
+//! opened as the app opens it ([`connect_entry`]): through its talosconfig's
+//! context, with the kubeconfig its control plane serves, under the same
+//! connect deadline.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -29,7 +30,9 @@ use std::time::Duration;
 use futures::StreamExt;
 use kube::config::{Config, KubeConfigOptions};
 
-use super::read::{ListRequest, Listing, ReadOnlyClient, Reader, Resource, Scope, ServedGroup};
+use super::read::{
+    ListRequest, Listing, MAX_PAGES, ReadOnlyClient, Reader, Resource, Scope, ServedGroup,
+};
 use super::source::Source;
 use super::versions::resolve;
 use super::{argocd, kargo, tekton};
@@ -83,13 +86,19 @@ impl<R: Reader> Reader for Deadline<R> {
         .await
     }
 
-    /// The deadline is the whole listing's, every page of it.
+    /// The whole listing has the deadline once for every page it may read
+    /// ([`MAX_PAGES`]); [`reader`]'s client also bounds each page by it, so
+    /// a page that hangs fails at the deadline and a long listing of pages
+    /// that each answer is read whole.
     async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
-        self.within(
-            &format!("Listing {}", request.resource.plural),
-            self.reader.list(request),
-        )
-        .await
+        tokio::time::timeout(self.limit * MAX_PAGES, self.reader.list(request))
+            .await
+            .unwrap_or_else(|_| {
+                Err(Failure::timeout(&format!(
+                    "Listing {}",
+                    request.resource.plural
+                )))
+            })
     }
 
     async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
@@ -114,8 +123,17 @@ impl<R: Reader> Reader for Deadline<R> {
     }
 }
 
-/// A client for one entry, every request under [`REQUEST_DEADLINE`].
+/// A client for one entry, every request and every page of a listing under
+/// [`REQUEST_DEADLINE`].
 pub type EntryReader = Deadline<ReadOnlyClient>;
+
+/// The reader for a client: [`EntryReader`]'s deadlines on it.
+pub fn reader(client: kube::Client) -> EntryReader {
+    Deadline::new(
+        ReadOnlyClient::new(client).with_page_deadline(REQUEST_DEADLINE),
+        REQUEST_DEADLINE,
+    )
+}
 
 /// A client for the context `context` of the merged `kubeconfigs`, within
 /// [`CONNECT_DEADLINE`]. The error is a short reason, without credentials.
@@ -161,15 +179,94 @@ pub async fn connect_within(
     match tokio::time::timeout(limit, setup).await {
         Err(_) => Err(format!(
             "no answer within {}; a credential plugin may be waiting for a sign-in",
-            match limit.subsec_millis() {
-                0 => format!("{} s", limit.as_secs()),
-                _ => format!("{} ms", limit.as_millis()),
-            }
+            within(limit)
         )),
         Ok(Err(_)) => Err("the connection worker stopped".into()),
         Ok(Ok(Err(why))) => Err(why),
-        Ok(Ok(Ok(client))) => Ok(Deadline::new(ReadOnlyClient::new(client), REQUEST_DEADLINE)),
+        Ok(Ok(Ok(client))) => Ok(reader(client)),
     }
+}
+
+/// `5 s`, `200 ms`.
+fn within(limit: Duration) -> String {
+    match limit.subsec_millis() {
+        0 => format!("{} s", limit.as_secs()),
+        _ => format!("{} ms", limit.as_millis()),
+    }
+}
+
+/// A client for `entry`, as the app opens it: its context in the merged
+/// `kubeconfigs`; for a Talos entry whose context none of them has, the
+/// kubeconfig its control plane serves, through its talosconfig's context
+/// (`talos_context`, else `context`; never the file's current one). Within
+/// [`CONNECT_DEADLINE`] either way.
+pub async fn connect_entry(kubeconfigs: Vec<PathBuf>, entry: Entry) -> Result<EntryReader, String> {
+    let Some(talosconfig) = entry.talosconfig.clone() else {
+        return connect(kubeconfigs, entry.context).await;
+    };
+    let listed = {
+        let (kubeconfigs, context) = (kubeconfigs.clone(), entry.context.clone());
+        tokio::task::spawn_blocking(move || {
+            let (report, _) = crate::resources::contexts::load(&kubeconfigs);
+            report.context(&context).is_some()
+        })
+        .await
+        .unwrap_or(false)
+    };
+    if listed {
+        return connect(kubeconfigs, entry.context).await;
+    }
+    let context = entry.talos_context.unwrap_or(entry.context);
+    match tokio::time::timeout(
+        CONNECT_DEADLINE,
+        through_talos(talosconfig, context, CONNECT_DEADLINE),
+    )
+    .await
+    {
+        Err(_) => Err(format!(
+            "Talos gave no kubeconfig within {}",
+            within(CONNECT_DEADLINE)
+        )),
+        Ok(Err(why)) => Err(why),
+        Ok(Ok(client)) => Ok(reader(client)),
+    }
+}
+
+/// The client for the kubeconfig a Talos context's control plane serves.
+/// The errors name the file and context, never what they hold.
+async fn through_talos(
+    talosconfig: PathBuf,
+    context: String,
+    limit: Duration,
+) -> Result<kube::Client, String> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let shown = talosconfig.display().to_string();
+    let talos_context = tokio::task::spawn_blocking(move || {
+        let config = talos_rs::config::TalosConfig::load_from(&talosconfig)
+            .map_err(|_| format!("its talosconfig {shown} couldn't be read"))?;
+        config
+            .get_context(&context)
+            .cloned()
+            .map_err(|_| format!("its talosconfig has no context {context}"))
+    })
+    .await
+    .map_err(|_| "the connection worker stopped".to_owned())??;
+    let talos = talos_rs::client::TalosClient::from_context(&talos_context)
+        .await
+        .map_err(|_| "its Talos endpoints couldn't be reached".to_owned())?;
+    let served = talos
+        .kubeconfig()
+        .await
+        .map_err(|_| "its control plane gave no kubeconfig through Talos".to_owned())?;
+    let kubeconfig: kube::config::Kubeconfig = serde_yaml::from_str(&served)
+        .map_err(|_| "the kubeconfig its control plane gave couldn't be read".to_owned())?;
+    // The control plane's kubeconfig names one context, its own.
+    let mut config = Config::from_custom_kubeconfig(kubeconfig, &KubeConfigOptions::default())
+        .await
+        .map_err(|_| "the kubeconfig its control plane gave couldn't be loaded".to_owned())?;
+    config.connect_timeout = Some(limit);
+    config.read_timeout = Some(REQUEST_DEADLINE);
+    crate::kube_client::client(config).map_err(|error| error.message("its client couldn't be made"))
 }
 
 /// Clients for `entries`, at most [`MAX_AT_ONCE`] connecting at a time, in
@@ -182,8 +279,8 @@ pub async fn connect_all(
         .map(|entry| {
             let kubeconfigs = kubeconfigs.to_vec();
             async move {
-                let reader = connect(kubeconfigs, entry.context).await;
-                (entry.id, reader)
+                let id = entry.id.clone();
+                (id, connect_entry(kubeconfigs, entry).await)
             }
         })
         .buffered(MAX_AT_ONCE)

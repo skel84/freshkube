@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use super::super::example::{CORE, acme};
+use super::super::example::{CICD, CORE, acme};
 use super::super::read::parse_labelled_workload;
 use super::super::*;
 use super::*;
@@ -18,6 +18,8 @@ fn session(name: &str) -> SessionInputs {
         argo_applications: Source::Read(Vec::new()),
         argo_application_sets: Source::Read(Vec::new()),
         workloads: Source::Read(Vec::new()),
+        asked: crate::applications::Asked::ALL,
+        absent: None,
     }
 }
 
@@ -115,7 +117,8 @@ fn acme_checkouts_stages_and_warehouse_are_confirmed_and_its_labels_claimed() {
     assert!(ranks.is_sorted());
     let project = &checkout.links[0].app_side;
     assert_eq!(project.text, "Project checkout, read");
-    assert_eq!(project.session, Some(SessionKey::new(CORE)));
+    // Kargo is read from the CI/CD entry.
+    assert_eq!(project.session, Some(SessionKey::new(CICD)));
 }
 
 #[test]

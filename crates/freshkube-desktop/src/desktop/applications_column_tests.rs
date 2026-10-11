@@ -81,7 +81,11 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
         assert_eq!(all.counted().map(|c| c.as_ref()), Some("5"));
         assert!(all.is_current(), "the list shows");
         let cart = rows[3].row().unwrap();
-        assert!(cart.tip().contains("Kargo Project · core-fra, dev-fra"));
+        assert!(
+            cart.tip().contains("Kargo Project · cicd-fra, core-fra +1"),
+            "{}",
+            cart.tip()
+        );
         assert_eq!(window.find(ALL).selected(), Some(true));
         assert_ne!(window.find(CART).selected(), Some(true));
         assert_eq!(window.find("nav-applications-kargo").selected(), None);
@@ -428,7 +432,7 @@ fn another_cluster_shows_reading_until_it_answers(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_shown_applications_row_closes_a_change_followed_from_it(cx: &mut TestAppContext) {
     const CHECKOUT: &str = "nav-application-kargo:checkout";
-    const PROD_AMS: &str = "application-part-core-fra/0/checkout/prod-ams";
+    const PROD_AMS: &str = "application-part-cicd-fra/0/checkout/prod-ams";
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
     let page = cx.update(|cx| view.read(cx).applications.clone());
     cx.update_window(handle, |_, window, cx| {

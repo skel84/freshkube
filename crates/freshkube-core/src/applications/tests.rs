@@ -75,6 +75,8 @@ fn session(name: &str) -> SessionInputs {
         argo_applications: Source::Read(Vec::new()),
         argo_application_sets: Source::Read(Vec::new()),
         workloads: Source::Read(Vec::new()),
+        asked: crate::applications::Asked::ALL,
+        absent: None,
     }
 }
 

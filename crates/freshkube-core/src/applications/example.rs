@@ -3,8 +3,12 @@
 //! `example.test`. It goes through the real parsers, so it holds what a
 //! cluster would answer, not what the model is told.
 //!
-//! Six clusters: Argo CD and Kargo run in `core-fra`; `cicd-fra` serves
-//! neither; the four environment clusters hold the workloads.
+//! Six clusters, each read for what the example workspace
+//! (`workspace::example`) reads from it: Argo CD in `core-fra`, with its
+//! own labelled workload; Kargo in `cicd-fra`; the four environment
+//! clusters' labelled workloads. `prod-lon` isn't a workspace entry, so
+//! its parts don't open after a switch; it stays to show a cluster the
+//! workspace doesn't list.
 //!
 //! - `checkout` and `cart` are Kargo Projects with four Stages each; their
 //!   Argo CD Applications name them, and deploy to the environment clusters.
@@ -19,7 +23,7 @@
 use serde_json::{Value, json};
 
 use super::read::parse_labelled_workload;
-use super::{ArgoScope, Inputs, KargoProjectRead, SessionInputs, SessionKey};
+use super::{ArgoScope, Asked, Inputs, KargoProjectRead, SessionInputs, SessionKey};
 use crate::delivery::argocd::{parse_application, parse_application_set};
 use crate::delivery::kargo::{parse_stage, parse_warehouse};
 use crate::delivery::source::Source;
@@ -197,15 +201,38 @@ pub fn core_objects() -> Vec<CoreObject> {
     objects
 }
 
-fn core() -> SessionInputs {
+/// `cicd-fra`: Kargo, read there. Its objects are among
+/// [`core_objects`], which the example lists in every context.
+fn cicd() -> SessionInputs {
     let objects = core_objects();
     let projects = of(&objects, PROJECTS.0)
         .filter_map(|value| value.pointer("/metadata/name")?.as_str())
         .map(|name| kargo_project(&objects, name))
         .collect();
     SessionInputs {
-        key: SessionKey::new(CORE),
         kargo: Source::Read(projects),
+        ..SessionInputs::asking(
+            SessionKey::new(CICD),
+            Asked {
+                kargo: true,
+                ..Asked::NONE
+            },
+        )
+    }
+}
+
+/// `core-fra`: Argo CD, and the workloads it deploys to its own cluster.
+fn core() -> SessionInputs {
+    let objects = core_objects();
+    SessionInputs {
+        key: SessionKey::new(CORE),
+        kargo: Source::Read(Vec::new()),
+        asked: Asked {
+            argo_cd: true,
+            workloads: true,
+            ..Asked::NONE
+        },
+        absent: None,
         argo_scope: ArgoScope::AllNamespaces,
         argo_applications: Source::Read(
             of(&objects, APPLICATIONS.0)
@@ -259,25 +286,29 @@ pub fn environment_objects(cluster: &str) -> Vec<CoreObject> {
         .collect()
 }
 
+/// An environment cluster: its labelled workloads, which is all it is
+/// asked for.
 fn environment(cluster: &str) -> SessionInputs {
     let objects = environment_objects(cluster);
     SessionInputs {
-        key: SessionKey::new(cluster),
-        kargo: Source::NotInstalled("API group kargo.akuity.io is not served".into()),
-        argo_scope: ArgoScope::AllNamespaces,
-        argo_applications: Source::NotInstalled("API group argoproj.io is not served".into()),
-        argo_application_sets: Source::NotInstalled("API group argoproj.io is not served".into()),
         workloads: Source::Read(
             of(&objects, DEPLOYMENTS.0)
                 .filter_map(|value| parse_labelled_workload(value, WorkloadKind::Deployment))
                 .collect(),
         ),
+        ..SessionInputs::asking(
+            SessionKey::new(cluster),
+            Asked {
+                workloads: true,
+                ..Asked::NONE
+            },
+        )
     }
 }
 
 /// What reading the acme workspace's six clusters gives.
 pub fn acme() -> Inputs {
-    let mut sessions = vec![core(), environment(CICD)];
+    let mut sessions = vec![core(), cicd()];
     sessions.extend(ENVIRONMENTS.iter().map(|(_, cluster)| environment(cluster)));
     Inputs {
         sessions,
@@ -397,7 +428,7 @@ mod tests {
             assert!(object.value["apiVersion"].is_string() && object.value["kind"].is_string());
         }
         let session = core();
-        let Source::Read(projects) = &session.kargo else {
+        let Source::Read(projects) = &cicd().kargo else {
             panic!("Kargo read")
         };
         let stages: usize = projects

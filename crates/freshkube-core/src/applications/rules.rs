@@ -5,9 +5,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::{
-    Application, ApplicationId, ArgoFound, ArgoScope, Basis, Coverage, CoverageState, Destination,
-    Evidence, Inputs, Member, MemberKind, MemberRef, Note, Rule, SessionInputs, SessionKey,
-    SourceKind,
+    Absent, Application, ApplicationId, ArgoFound, ArgoScope, Basis, Coverage, CoverageState,
+    Destination, Evidence, Inputs, Member, MemberKind, MemberRef, Note, Rule, SessionInputs,
+    SessionKey, SourceKind,
 };
 use crate::delivery::argocd::{
     Application as ArgoApplication, IN_CLUSTER_NAME, IN_CLUSTER_SERVER, normalize_server,
@@ -62,7 +62,17 @@ impl Builder {
 pub(super) fn coverage(inputs: &Inputs) -> Vec<Coverage> {
     let mut out = Vec::new();
     for session in &inputs.sessions {
-        let mut push = |source, project: Option<&str>, state| {
+        // A source asked of another cluster says nothing of this one, and
+        // one that couldn't be read at all says why, whatever it held.
+        let absent = session.absent.as_ref().map(|absent| match absent {
+            Absent::Unreachable(why) => CoverageState::Unreachable(why.clone()),
+            Absent::NotInWorkspace(why) => CoverageState::NotInWorkspace(why.clone()),
+        });
+        let mut push = |source: SourceKind, project: Option<&str>, state| {
+            if !session.asked.asks(source) {
+                return;
+            }
+            let state = absent.clone().unwrap_or(state);
             out.push(Coverage {
                 session: session.key.clone(),
                 source,
@@ -580,8 +590,12 @@ pub(super) fn part_of(
 
 /// Whether the cluster's Argo CD Applications are all known: read in every
 /// namespace they may be in, or not served at all (then there is nothing
-/// they could have held).
+/// they could have held). Not asked, Argo CD is read on its own entry,
+/// whose Applications manage only what they deploy to it.
 fn argo_whole(session: &SessionInputs) -> bool {
+    if !session.asked.argo_cd {
+        return true;
+    }
     match &session.argo_applications {
         Source::NotInstalled(_) => true,
         Source::Read(_) => session.argo_scope == ArgoScope::AllNamespaces,
@@ -611,7 +625,16 @@ fn same_name_target(builder: &Builder, value: &str) -> Option<ApplicationId> {
 /// direct; where the rule's own objects sit in several clusters, or a member
 /// sits in a cluster the rule's own objects do not, the member is inferred
 /// and a note names the clusters.
-pub(super) fn infer_across_sessions(builder: &mut Builder) {
+pub(super) fn infer_across_sessions(builder: &mut Builder, inputs: &Inputs) {
+    // A cluster not asked for Kargo is read beside the workspace's one
+    // Kargo, so an Application there that names a Project names that one:
+    // its annotation says so, not a name found twice.
+    let beside_kargo: BTreeSet<&SessionKey> = inputs
+        .sessions
+        .iter()
+        .filter(|session| !session.asked.kargo)
+        .map(|session| &session.key)
+        .collect();
     for app in builder.apps.values_mut() {
         let own: BTreeSet<SessionKey> = match app.rule {
             Rule::PartOf => app
@@ -638,8 +661,12 @@ pub(super) fn infer_across_sessions(builder: &mut Builder) {
         }
         let several = own.len() > 1;
         for member in &mut app.members {
+            let named = member.basis == Basis::NamesProject
+                && beside_kargo.contains(&member.at.session)
+                && !several;
             if matches!(member.basis, Basis::Direct | Basis::NamesProject)
                 && (several || !own.contains(&member.at.session))
+                && !named
             {
                 member.basis = Basis::Inferred;
             }

@@ -21,6 +21,7 @@ use crate::delivery::kargo::{Stage, Warehouse};
 use crate::delivery::source::{Source, Truncation};
 use crate::workloads::WorkloadKind;
 
+pub mod across;
 pub mod claims;
 mod derive;
 pub mod example;
@@ -298,6 +299,11 @@ pub enum CoverageState {
     NotInstalled(String),
     Refused(String),
     Unreadable(String),
+    /// The cluster's entry couldn't be reached at all: why.
+    Unreachable(String),
+    /// No workspace entry holds the source, or the one pinned is gone: the
+    /// words say which.
+    NotInWorkspace(String),
 }
 
 impl CoverageState {
@@ -320,6 +326,8 @@ impl CoverageState {
                 | Self::NamespaceNotFound(_)
                 | Self::Refused(_)
                 | Self::Unreadable(_)
+                | Self::Unreachable(_)
+                | Self::NotInWorkspace(_)
         )
     }
 }
@@ -404,6 +412,60 @@ pub struct KargoProjectRead {
     pub warehouses: Source<Vec<Warehouse>>,
 }
 
+/// Which sources a read asked one cluster for. Across a workspace each
+/// source is read from its own entry (`workspace::Sources`), so a cluster is
+/// asked only for some; one not asked is read elsewhere, which is neither a
+/// gap nor a fact about this cluster, and nothing says it of this one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Asked {
+    pub kargo: bool,
+    /// Applications and ApplicationSets.
+    pub argo_cd: bool,
+    /// The `part-of` labelled workloads.
+    pub workloads: bool,
+}
+
+impl Asked {
+    /// One connection read for everything, as the workspace of one is.
+    pub const ALL: Self = Self {
+        kargo: true,
+        argo_cd: true,
+        workloads: true,
+    };
+    pub const NONE: Self = Self {
+        kargo: false,
+        argo_cd: false,
+        workloads: false,
+    };
+
+    /// Both: what either asked.
+    pub fn and(self, other: Self) -> Self {
+        Self {
+            kargo: self.kargo || other.kargo,
+            argo_cd: self.argo_cd || other.argo_cd,
+            workloads: self.workloads || other.workloads,
+        }
+    }
+
+    /// Whether `source` was asked for.
+    pub fn asks(self, source: SourceKind) -> bool {
+        match source.rule() {
+            Rule::Kargo => self.kargo,
+            Rule::ArgoCd => self.argo_cd,
+            Rule::PartOf | Rule::Manual => self.workloads,
+        }
+    }
+}
+
+/// Why a cluster's asked sources weren't read at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Absent {
+    /// Its entry couldn't be reached: why.
+    Unreachable(String),
+    /// No workspace entry holds them, or the one pinned is gone.
+    NotInWorkspace(String),
+}
+
 /// Everything read from one cluster.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionInputs {
@@ -413,6 +475,10 @@ pub struct SessionInputs {
     pub argo_applications: Source<Vec<ArgoApplication>>,
     pub argo_application_sets: Source<Vec<ApplicationSet>>,
     pub workloads: Source<Vec<LabelledWorkload>>,
+    /// What it was asked for; the rest is empty and says nothing.
+    pub asked: Asked,
+    /// Why nothing was read, when nothing could be.
+    pub absent: Option<Absent>,
 }
 
 impl SessionInputs {
@@ -428,7 +494,50 @@ impl SessionInputs {
             argo_applications: unreadable(why),
             argo_application_sets: unreadable(why),
             workloads: unreadable(why),
+            asked: Asked::ALL,
+            absent: None,
         }
+    }
+
+    /// A session asked for `asked` that couldn't be read at all, and why.
+    pub fn absent(key: SessionKey, asked: Asked, absent: Absent) -> Self {
+        let why = match &absent {
+            Absent::Unreachable(why) | Absent::NotInWorkspace(why) => why.as_str(),
+        };
+        fn source<T>(asked: bool, why: &str) -> Source<Vec<T>> {
+            match asked {
+                true => Source::Unreadable(why.to_owned()),
+                false => Source::Read(Vec::new()),
+            }
+        }
+        Self {
+            kargo: source(asked.kargo, why),
+            argo_applications: source(asked.argo_cd, why),
+            argo_application_sets: source(asked.argo_cd, why),
+            workloads: source(asked.workloads, why),
+            ..Self::asking(key, asked)
+        }
+        .with_absent(absent)
+    }
+
+    /// A session asked for `asked`, with nothing read yet: every source
+    /// read and empty.
+    pub fn asking(key: SessionKey, asked: Asked) -> Self {
+        Self {
+            key,
+            kargo: Source::Read(Vec::new()),
+            argo_scope: ArgoScope::AllNamespaces,
+            argo_applications: Source::Read(Vec::new()),
+            argo_application_sets: Source::Read(Vec::new()),
+            workloads: Source::Read(Vec::new()),
+            asked,
+            absent: None,
+        }
+    }
+
+    fn with_absent(mut self, absent: Absent) -> Self {
+        self.absent = Some(absent);
+        self
     }
 }
 

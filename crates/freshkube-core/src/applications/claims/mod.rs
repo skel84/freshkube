@@ -459,6 +459,8 @@ fn blind(state: &CoverageState) -> Option<String> {
         CoverageState::Capped(read) => Some(format!("stopped at the page cap after {read}")),
         CoverageState::Refused(why) => Some(format!("refused: {why}")),
         CoverageState::Unreadable(why) => Some(format!("couldn't be read: {why}")),
+        CoverageState::Unreachable(why) => Some(format!("couldn't be reached: {why}")),
+        CoverageState::NotInWorkspace(why) => Some(format!("not read: {why}")),
         CoverageState::NamespaceNotFound(namespace) => Some(format!(
             "Argo CD's namespace wasn't found, and {namespace} holds no Applications"
         )),
@@ -500,6 +502,14 @@ fn gaps(derived: &Derived, app: &Application) -> Vec<Gap> {
             _ => None,
         })
         .collect();
+    // Where Kargo wasn't read, Argo CD was read for the workspace, beside
+    // it: the Applications a Project's Stages promote to are there.
+    let kargo_read: Vec<&SessionKey> = derived
+        .coverage
+        .iter()
+        .filter(|c| c.source == SourceKind::KargoProjects)
+        .map(|c| &c.session)
+        .collect();
     for coverage in &derived.coverage {
         let session = &coverage.session;
         let ((kinds, what), why) = match coverage.source {
@@ -509,14 +519,15 @@ fn gaps(derived: &Derived, app: &Application) -> Vec<Gap> {
             ),
             // A Project's Stages promote to Argo CD Applications, in any
             // cluster, since an Application names its Project by name. Where
-            // the Project is, a read of only some namespaces may have left
-            // them out; anywhere else, a refused, failed or capped read.
+            // the Project is, or where Argo CD is read beside it for the
+            // workspace, a read of only some namespaces may have left them
+            // out; anywhere else, a refused, failed or capped read.
             SourceKind::ArgoApplications if app.rule == Rule::Kargo => (
                 (
                     vec![MemberKind::ArgoApplication],
                     "Argo CD Applications its Stages promote to",
                 ),
-                if own.contains(&session) {
+                if own.contains(&session) || !kargo_read.contains(&session) {
                     partial(&coverage.state)
                 } else {
                     blind(&coverage.state)

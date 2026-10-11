@@ -9,7 +9,9 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use super::{ArgoFound, ArgoScope, KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey};
+use super::{
+    ArgoFound, ArgoScope, Asked, KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey,
+};
 use crate::delivery::argocd::{read_application_sets, read_applications};
 use crate::delivery::kargo::{parse_stage, parse_warehouse, read_kind, read_project_names};
 use crate::delivery::read::{ListRequest, Reader, Resource, Scope};
@@ -45,22 +47,38 @@ pub const MAX_ARGO_NAMESPACES: usize = 3;
 /// never counts as whole: Applications elsewhere, where Argo CD allows them,
 /// are not known to be absent.
 pub async fn read_session<R: Reader>(reader: &R, key: SessionKey) -> SessionInputs {
-    let workloads = read_workloads(reader).await;
-    let (namespaces, found) = argo_namespaces(&workloads);
-    let mut applications = Vec::new();
-    let mut sets = Vec::new();
-    for namespace in &namespaces {
-        applications.push(read_applications(reader, namespace).await);
-        sets.push(read_application_sets(reader, namespace).await);
+    read_asked(reader, key, Asked::ALL).await
+}
+
+/// Reads one cluster for what `asked` asks, as [`read_session`] reads it
+/// all; the rest stays empty. Argo CD alone still lists the workloads
+/// labelled `part-of=argocd`, to find where it runs, but keeps none of them.
+pub async fn read_asked<R: Reader>(reader: &R, key: SessionKey, asked: Asked) -> SessionInputs {
+    let mut session = SessionInputs::asking(key, asked);
+    let workloads = match (asked.workloads, asked.argo_cd) {
+        (true, _) => Some(read_workloads(reader).await),
+        (false, true) => Some(read_argo_workloads(reader).await),
+        (false, false) => None,
+    };
+    if asked.argo_cd {
+        let (namespaces, found) = argo_namespaces(workloads.as_ref().expect("read for Argo CD"));
+        let mut applications = Vec::new();
+        let mut sets = Vec::new();
+        for namespace in &namespaces {
+            applications.push(read_applications(reader, namespace).await);
+            sets.push(read_application_sets(reader, namespace).await);
+        }
+        session.argo_applications = merge(applications);
+        session.argo_application_sets = merge(sets);
+        session.argo_scope = ArgoScope::Namespace { namespaces, found };
     }
-    SessionInputs {
-        key,
-        kargo: read_kargo(reader).await,
-        argo_applications: merge(applications),
-        argo_application_sets: merge(sets),
-        argo_scope: ArgoScope::Namespace { namespaces, found },
-        workloads,
+    if asked.kargo {
+        session.kargo = read_kargo(reader).await;
     }
+    if let Some(workloads) = workloads.filter(|_| asked.workloads) {
+        session.workloads = workloads;
+    }
+    session
 }
 
 /// Where Argo CD runs, from its labelled workloads: their namespaces by
