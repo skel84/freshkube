@@ -1,5 +1,6 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
+use freshkube_core::applications::example::ARGOCD_WORKLOADS;
 use std::collections::HashSet;
 
 #[test]
@@ -246,7 +247,7 @@ fn acme_core_objects_list_and_read_in_full_on_every_context() {
 #[test]
 fn acme_status_page_is_a_deployment_of_its_own_beside_the_examples() {
     let (_, rows) = read("homelab", "deployments.apps", None, TEST_NOW).unwrap();
-    assert_eq!(rows.len(), WORKLOADS.len() + 1);
+    assert_eq!(rows.len(), WORKLOADS.len() + 1 + ARGOCD_WORKLOADS.len());
     assert_eq!(
         rows[..WORKLOADS.len()]
             .iter()
@@ -257,8 +258,14 @@ fn acme_status_page_is_a_deployment_of_its_own_beside_the_examples() {
             .collect::<Vec<_>>(),
         "the example's own Deployments keep their identities"
     );
-    let status = rows.last().unwrap();
+    let status = &rows[WORKLOADS.len()];
     assert_eq!(status.identity.address(), "status/status-page");
+    // Argo CD's own Deployments, which say where it runs, follow.
+    let argo: Vec<String> = rows[WORKLOADS.len() + 1..]
+        .iter()
+        .map(|row| row.identity.address())
+        .collect();
+    assert_eq!(argo, ARGOCD_WORKLOADS.map(|name| format!("argocd/{name}")));
     let document = document(&status.identity, TEST_NOW).unwrap();
     assert_eq!(document.name, "status-page");
     assert!(events(&status.identity, TEST_NOW).is_empty());
@@ -274,8 +281,11 @@ fn the_summary_reads_status_page_as_its_own_deployment() {
     use k8s_openapi::api::apps::v1::Deployment;
     let deployments: Vec<Deployment> =
         super::summary::summary_objects("homelab", "deployments.apps", TEST_NOW);
-    assert_eq!(deployments.len(), WORKLOADS.len() + 1);
-    let status = deployments.last().unwrap();
+    assert_eq!(
+        deployments.len(),
+        WORKLOADS.len() + 1 + ARGOCD_WORKLOADS.len()
+    );
+    let status = &deployments[WORKLOADS.len()];
     assert_eq!(status.metadata.name.as_deref(), Some("status-page"));
     assert_eq!(status.metadata.namespace.as_deref(), Some("status"));
     let labels = status.metadata.labels.clone().unwrap_or_default();

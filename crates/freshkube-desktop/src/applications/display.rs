@@ -1058,6 +1058,7 @@ mod tests {
                 ("checkout", Rule::Kargo),
                 ("catalog", Rule::ArgoCd),
                 ("status-page", Rule::ArgoCd),
+                ("argocd", Rule::PartOf),
                 ("loyalty", Rule::PartOf),
             ]
         );

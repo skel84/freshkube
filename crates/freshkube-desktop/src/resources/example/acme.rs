@@ -1,8 +1,8 @@
 //! The objects of acme's `core-fra` (core's `applications::example`) in the
 //! example cluster: Kargo's Projects, Stages, Warehouses and the change
 //! page's Freight and policy TaskRun, Argo CD's
-//! Applications and ApplicationSet, and the `status/status-page`
-//! Deployment. The Applications page maps `core-fra` to the open example
+//! Applications and ApplicationSet, the `status/status-page` Deployment
+//! and Argo CD's own Deployments in `argocd`. The Applications page maps `core-fra` to the open example
 //! cluster, so a part it opens in Resources is listed here, the same object
 //! the page read. An environment cluster's context also lists that
 //! cluster's labelled Deployments (`environment_objects`), so a part opened

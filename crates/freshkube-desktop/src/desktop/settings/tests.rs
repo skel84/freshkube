@@ -242,3 +242,40 @@ fn the_gear_panels_dividers_keep_their_pixel_in_a_short_window(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+/// A `destinations` row for Argo CD's own cluster refuses the file, and
+/// Settings › Workspace names the row and why, over the workspace of one.
+#[gpui_kit::test]
+fn a_destination_for_argo_cds_own_cluster_says_why_the_file_isnt_used(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    std::fs::write(
+        guard.path().join("workspace.json"),
+        r#"{"version":1,"clusters":[
+            {"id":"core-fra","role":"core","context":"core-fra"}],
+            "destinations":[{"server":"https://kubernetes.default.svc","entry":"core-fra"}]}"#,
+    )
+    .unwrap();
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.navigate_from_keyboard(Page::Settings, window, cx)
+        });
+        window.render_frame(cx);
+        assert!(matches!(
+            view.read(cx).settings_page.read(cx).origin(),
+            Origin::Refused(_)
+        ));
+        let banner = window.find("settings-banner");
+        assert!(banner.visible());
+        let words = banner.label().unwrap().to_owned();
+        assert!(
+            words.contains(
+                "workspace.json isn’t used: destinations[0] (server https://kubernetes.default.svc) \
+                 names Argo CD's own cluster, which is known already"
+            ),
+            "{words}"
+        );
+    })
+    .unwrap();
+}

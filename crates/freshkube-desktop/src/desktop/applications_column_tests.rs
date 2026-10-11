@@ -70,6 +70,7 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
             "nav-application-argocd:applicationset/argocd/catalog",
             "nav-application-argocd:application/argocd/status-page",
             "nav-applications-part-of",
+            "nav-application-part-of:argocd",
             "nav-application-part-of:loyalty",
         ],
         "in the table's order, and no overrides section without one"
@@ -78,7 +79,7 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
         let rows = view.read(cx).column_list.lines();
         assert!(!rows[0].row().unwrap().is_current(), "Changes doesn't show");
         let all = rows[1].row().unwrap();
-        assert_eq!(all.counted().map(|c| c.as_ref()), Some("5"));
+        assert_eq!(all.counted().map(|c| c.as_ref()), Some("6"));
         assert!(all.is_current(), "the list shows");
         let cart = rows[3].row().unwrap();
         assert!(
