@@ -1,5 +1,6 @@
 //! The delivery sources table as a `TableSource`.
 use super::*;
+use table::fit;
 use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,16 +37,6 @@ impl TableColumn for Column {
     }
 }
 
-/// DESIGN.md's widths: 7.5 a character plus 24, between 64 and `most`.
-fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>, most: f32) -> f32 {
-    let chars = texts
-        .map(|text| text.chars().count())
-        .chain([label.len()])
-        .max()
-        .unwrap_or_default();
-    (chars as f32 * 7.5 + 24.).clamp(64., most)
-}
-
 pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
     let column = |field, label: &str, width| Column {
         field,
@@ -58,7 +49,7 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
         column(
             Field::Entry,
             "Entry",
-            fit("Entry", rows.iter().map(|row| &row.entry), 200.),
+            fit("Entry", rows.iter().map(|row| &row.entry), 240.),
         ),
         column(
             Field::Why,
@@ -77,7 +68,7 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
 }
 
 impl TableSource for SourcesList {
-    type Key = Part;
+    type Key = Read;
     type Sort = ();
     type Column = Column;
     type Row<'a> = &'a SourceRow;
@@ -108,10 +99,10 @@ impl TableSource for SourcesList {
         self.rows.len()
     }
 
-    fn line(&self, line: usize, _: &App) -> Option<Line<Part, &SourceRow>> {
+    fn line(&self, line: usize, _: &App) -> Option<Line<Read, &SourceRow>> {
         let row = self.rows.get(line)?;
         Some(Line::Row(TableRow {
-            key: row.part,
+            key: row.read,
             id: row.id.clone().into(),
             label: format!(
                 "{} · {} · {} · {}",
@@ -127,7 +118,7 @@ impl TableSource for SourcesList {
 
     fn cell(
         &self,
-        line: &TableRow<Part, &SourceRow>,
+        line: &TableRow<Read, &SourceRow>,
         style: &RowStyle,
         column: &Column,
         cx: &mut Context<Self>,
@@ -146,19 +137,23 @@ impl TableSource for SourcesList {
                 })
                 .into_any_element(),
             Field::Part => cell.child(row.label.clone()).into_any_element(),
-            Field::Entry => cell
-                .when(!row.listed, |this| this.text_color(style.p.muted))
-                .child(row.entry.clone())
-                .into_any_element(),
+            // Workloads name several entries, cut at a word with all of
+            // them in the tooltip.
+            Field::Entry => {
+                table::word_cell(column, format!("{}-entry", row.id), row.entry.clone())
+                    .when(!row.listed, |this| this.text_color(style.p.muted))
+                    .into_any_element()
+            }
             Field::Why => cell.child(row.why.clone()).into_any_element(),
             Field::State => cell
                 .when(row.tone.is_none(), |this| this.text_color(style.p.muted))
                 .child(row.state.clone())
                 .into_any_element(),
-            Field::Reads => cell
-                .text_color(style.p.muted)
-                .child(row.reads.clone())
-                .into_any_element(),
+            Field::Reads => {
+                table::word_cell(column, format!("{}-reads", row.id), row.reads.clone())
+                    .text_color(style.p.muted)
+                    .into_any_element()
+            }
         }
     }
 
@@ -167,15 +162,15 @@ impl TableSource for SourcesList {
     }
 
     /// The rows are read, not selected.
-    fn selected_key(&self) -> Option<&Part> {
+    fn selected_key(&self) -> Option<&Read> {
         None
     }
 
-    fn line_of(&self, key: &Part) -> Option<usize> {
-        self.rows.iter().position(|row| &row.part == key)
+    fn line_of(&self, key: &Read) -> Option<usize> {
+        self.rows.iter().position(|row| &row.read == key)
     }
 
-    fn click(&mut self, _: &Part, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn click(&mut self, _: &Read, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus(window, cx);
     }
 
@@ -186,7 +181,7 @@ impl TableSource for SourcesList {
     /// A right-click offers the toolbar's one action.
     fn row_menu(
         &mut self,
-        _: &Part,
+        _: &Read,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<menu::MenuAction> {

@@ -589,7 +589,6 @@ impl SettingsPage {
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
-        let short = page::is_short(window);
         let header = self.render_header(window, cx);
         // Three lists stack here, so the frame scrolls whenever they don't
         // fit, not only in a short window.
@@ -631,8 +630,9 @@ impl Render for SettingsPage {
                     .flex()
                     .flex_col()
                     .flex_1()
-                    .min_h_0()
-                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
+                    // Whatever the lists under it take, the clusters keep
+                    // room for a few rows; the frame scrolls instead.
+                    .min_h(dp(page::SHORT_LIST_HEIGHT))
                     .child(table::data_table(self, window, cx).flex_1().min_h_0()),
             )
             .child(self.destinations.clone())

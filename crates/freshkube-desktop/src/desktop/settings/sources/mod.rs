@@ -1,15 +1,24 @@
 //! Settings › Workspace's third list: where each part of the delivery chain
 //! is read (core's `workspace::Sources`), and whether that entry answers.
 //! One row per part: the part, the entry it is read from and why (its role,
-//! or pinned in `workspace.json`), its state, and what it reads.
+//! or pinned in `workspace.json`), its state, and what it reads. A last row,
+//! Workloads, names every entry an Argo CD destination maps to and counts
+//! their states.
 //!
 //! It reads nothing until Check sources is pressed: a part with no entry
 //! says so at once, and every other part says Not checked. A check reads
-//! one item of each part's kind (`delivery::entry::check_all`), all three at
-//! once, each entry under its connect deadline and every request under its
-//! own. The check belongs to this list: a new workspace, another source or
-//! another check drops it, and a late answer never lands. Example data
-//! answers at once, from the example's answers.
+//! one item of each part's kind and each workloads entry's
+//! (`delivery::entry::check_all`), all at once, each entry under its connect
+//! deadline and every request under its own. The check belongs to this
+//! list: a new workspace, another source, or the page hiding drops it, and a
+//! late answer never lands; while one runs, another isn't started. Example
+//! data answers at once, from the example's answers.
+//!
+//! Only the workspace's kubeconfig files are read, as `kubeconfig_sources`
+//! finds them: a Talos entry the app opens through its control plane's
+//! kubeconfig, its context in none of those files, reads as unreachable
+//! here (#564 PR 2).
+mod rows;
 mod source;
 #[cfg(test)]
 mod tests;
@@ -19,11 +28,12 @@ use crate::resources::{KubeAccess, KubeSource};
 use crate::ui::{self, dp};
 use freshkube_core::delivery::entry::{self, Checked, Reach};
 use freshkube_core::delivery::read::ReadOnlyClient;
-use freshkube_core::workspace::{Chosen, Part, Sources, Why};
+use freshkube_core::workspace::{Chosen, Part, Sources};
 use freshkube_ui::{menu, page, table};
 use gpui_kit::component::{Disableable, Sizable, button::Button, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use rows::SourceRow;
 use source::Column;
 #[cfg(test)]
 use std::collections::HashMap;
@@ -45,22 +55,27 @@ gpui_kit::actions!(
     ]
 );
 
-/// One part, as the table shows it.
-pub(crate) struct SourceRow {
-    part: Part,
-    label: SharedString,
-    entry: SharedString,
-    why: SharedString,
-    state: SharedString,
-    reads: SharedString,
-    /// The state's glyph, once there is one to show.
-    tone: Option<ui::Tone>,
-    /// Whether the entry is one to read: not missing or gone.
-    listed: bool,
-    tooltip: SharedString,
-    /// `settings-source-kargo`, and its mark's.
-    id: SharedString,
-    mark_id: SharedString,
+/// What a row reads: one part, or the workloads on every mapped entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Read {
+    Part(Part),
+    Workloads,
+}
+
+impl Read {
+    fn key(self) -> &'static str {
+        match self {
+            Read::Part(part) => part.key(),
+            Read::Workloads => "workloads",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Read::Part(part) => part.label(),
+            Read::Workloads => "Workloads",
+        }
+    }
 }
 
 /// Where a check stands.
@@ -90,10 +105,12 @@ pub(crate) struct SourcesList {
     generation: u64,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
+    /// How long a check may take; shorter in tests.
+    deadline: Duration,
     focus: FocusHandle,
-    /// What example entries answer, by entry and part; any other answers.
+    /// What example entries answer, by entry and read; any other answers.
     #[cfg(test)]
-    example_answers: HashMap<(String, Part), Reach>,
+    example_answers: HashMap<(String, Read), Reach>,
 }
 
 impl SourcesList {
@@ -113,6 +130,7 @@ impl SourcesList {
             generation: 0,
             job: None,
             task: None,
+            deadline: DEADLINE,
             focus: cx.focus_handle(),
             #[cfg(test)]
             example_answers: HashMap::new(),
@@ -155,11 +173,22 @@ impl SourcesList {
         }
     }
 
-    /// Whether any part is read from the open connection.
+    /// The page shows or hides. Hiding drops a check in flight, which says
+    /// Not checked when the page shows again; a finished one is kept.
+    pub(in crate::desktop) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if !visible && self.check == Check::Running {
+            self.forget();
+            self.derive_rows();
+            cx.notify();
+        }
+    }
+
+    /// Whether anything is read from the open connection.
     fn reads_open(&self) -> bool {
-        self.sources
-            .iter()
-            .any(|(_, chosen)| matches!(chosen, Chosen::Open))
+        let parts = self.sources.iter().map(|(_, chosen)| chosen);
+        parts
+            .chain(self.sources.workloads())
+            .any(|chosen| matches!(chosen, Chosen::Open))
     }
 
     /// Drops the check in flight and what the last one found.
@@ -170,9 +199,13 @@ impl SourcesList {
         self.check = Check::Never;
     }
 
-    /// Check sources: one small read per part, at once. Pressed again, it
-    /// starts over.
+    /// Check sources: one small read per part and per workloads entry, at
+    /// once. While one runs, another press does nothing: a credential
+    /// plugin waiting for a sign-in shouldn't be started again.
     fn check(&mut self, cx: &mut Context<Self>) {
+        if self.check == Check::Running {
+            return;
+        }
         self.forget();
         let generation = self.generation;
         let example = self.example
@@ -195,21 +228,25 @@ impl SourcesList {
             .flatten();
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
-            DEADLINE,
+            self.deadline,
             format!(
                 "Checking the sources took longer than {} s",
-                DEADLINE.as_secs()
+                self.deadline.as_secs()
             ),
             async move {
                 let kubeconfigs =
                     freshkube_core::resources::kubeconfig_sources(explicit.as_deref());
+                // The open connection's own error, so a failed one says why.
                 let open = match open {
-                    Some(access) => access.client().await.ok().map(|client| {
+                    Some(access) => Some(access.client().await.map(|client| {
                         entry::Deadline::new(ReadOnlyClient::new(client), entry::REQUEST_DEADLINE)
-                    }),
+                    })),
                     None => None,
                 };
-                Ok(entry::check_all(&sources, &kubeconfigs, open.as_ref()).await)
+                let open = open
+                    .as_ref()
+                    .map(|open| open.as_ref().map_err(Clone::clone));
+                Ok(entry::check_all(&sources, &kubeconfigs, open).await)
             },
         );
         self.job = Some(job);
@@ -239,141 +276,50 @@ impl SourcesList {
         cx.notify();
     }
 
-    /// What the example answers: every part readable, unless a test says
+    /// What the example answers: everything readable, unless a test says
     /// otherwise for an entry.
     fn example_check(&self) -> Checked {
+        let reach = |chosen: &Chosen, read: Read| match chosen {
+            Chosen::NoEntry(_) | Chosen::Gone(_) => {
+                Reach::Missing(chosen.missing().unwrap_or_default())
+            }
+            Chosen::Open => Reach::Readable,
+            Chosen::Entry { entry, .. } => self.example_answer(&entry.id, read),
+        };
         let parts = self
             .sources
             .iter()
-            .map(|(part, chosen)| {
-                let reach = match chosen {
-                    Chosen::NoEntry(_) | Chosen::Gone(_) => {
-                        Reach::Missing(chosen.missing().unwrap_or_default())
-                    }
-                    Chosen::Open => Reach::Readable,
-                    Chosen::Entry { entry, .. } => self.example_answer(&entry.id, part),
-                };
-                (part, reach)
-            })
+            .map(|(part, chosen)| (part, reach(chosen, Read::Part(part))))
             .collect();
-        Checked { parts }
+        let workloads = self
+            .sources
+            .workloads()
+            .iter()
+            .map(|chosen| (rows::workload_id(chosen), reach(chosen, Read::Workloads)))
+            .collect();
+        let argocd_reached = self.sources.get(Part::ArgoCd).entry().is_some()
+            || matches!(self.sources.get(Part::ArgoCd), Chosen::Open);
+        Checked {
+            parts,
+            argocd_in: match argocd_reached {
+                true => vec!["argocd".to_owned()],
+                false => Vec::new(),
+            },
+            workloads,
+        }
     }
 
     #[cfg(not(test))]
-    fn example_answer(&self, _: &str, _: Part) -> Reach {
+    fn example_answer(&self, _: &str, _: Read) -> Reach {
         Reach::Readable
     }
 
     #[cfg(test)]
-    fn example_answer(&self, entry: &str, part: Part) -> Reach {
+    fn example_answer(&self, entry: &str, read: Read) -> Reach {
         self.example_answers
-            .get(&(entry.to_owned(), part))
+            .get(&(entry.to_owned(), read))
             .cloned()
             .unwrap_or(Reach::Readable)
-    }
-
-    /// The rows, from where each part is read and what the last check
-    /// found, so `render` only reads them.
-    fn derive_rows(&mut self) {
-        let rows = self
-            .sources
-            .iter()
-            .map(|(part, chosen)| self.row(part, chosen))
-            .collect();
-        self.rows = rows;
-        (self.columns, self.width) = source::columns(&self.rows);
-    }
-
-    fn row(&self, part: Part, chosen: &Chosen) -> SourceRow {
-        let (entry, why, listed) = match chosen {
-            Chosen::Entry { entry, why } => (
-                entry.id.clone(),
-                match why {
-                    Why::Role(_) => why.words(),
-                    Why::Pinned => "Pinned".to_owned(),
-                },
-                true,
-            ),
-            Chosen::Open => (
-                "The open cluster".to_owned(),
-                "Workspace of one".to_owned(),
-                true,
-            ),
-            Chosen::NoEntry(roles) => (
-                "None".to_owned(),
-                format!(
-                    "No {} entry",
-                    roles
-                        .iter()
-                        .map(|role| role.label())
-                        .collect::<Vec<_>>()
-                        .join(" or ")
-                ),
-                false,
-            ),
-            Chosen::Gone(id) => (id.clone(), "Pinned, not listed".to_owned(), false),
-        };
-        let found = match &self.check {
-            Check::Done(checked) => checked
-                .parts
-                .iter()
-                .find(|(checked, _)| *checked == part)
-                .map(|(_, reach)| reach.clone()),
-            _ => None,
-        };
-        let missing = chosen.missing().map(Reach::Missing);
-        let reach = missing.or(found);
-        let (state, tone, sentence) = match (&reach, &self.check) {
-            (Some(reach), _) => (
-                reach.label().to_owned(),
-                Some(tone(reach)),
-                reach.words(part, &entry),
-            ),
-            (None, Check::Running) => (
-                "Checking…".to_owned(),
-                None,
-                format!("Reading one item of {} from {entry}", part.label()),
-            ),
-            (None, Check::Failed(why)) => (
-                "Unreachable".to_owned(),
-                Some(ui::Tone::Unknown),
-                why.clone(),
-            ),
-            (None, _) => (
-                "Not checked".to_owned(),
-                None,
-                "Check sources reads one item of each part".to_owned(),
-            ),
-        };
-        let chosen_by = match chosen {
-            Chosen::Entry {
-                why: Why::Pinned, ..
-            } => format!("{entry}, pinned in workspace.json"),
-            Chosen::Entry { why, .. } => {
-                format!("{entry}, the first entry with the {}", why.words())
-            }
-            Chosen::Open => "the open cluster: the workspace has no entries".to_owned(),
-            _ => chosen.missing().unwrap_or_default(),
-        };
-        let key = part.key();
-        SourceRow {
-            part,
-            label: part.label().into(),
-            tooltip: format!(
-                "{}: {chosen_by}\n{sentence}\nReads {}",
-                part.label(),
-                part.reads()
-            )
-            .into(),
-            entry: entry.into(),
-            why: why.into(),
-            state: state.into(),
-            reads: part.reads().into(),
-            tone,
-            listed,
-            id: format!("settings-source-{key}").into(),
-            mark_id: format!("settings-source-{key}-mark").into(),
-        }
     }
 
     fn focus(&self, window: &mut Window, cx: &mut App) {
@@ -406,16 +352,16 @@ impl SourcesList {
     }
 
     #[cfg(test)]
-    pub(super) fn set_example_answer(&mut self, entry: &str, part: Part, reach: Reach) {
-        self.example_answers.insert((entry.to_owned(), part), reach);
+    pub(super) fn set_example_answer(&mut self, entry: &str, read: Read, reach: Reach) {
+        self.example_answers.insert((entry.to_owned(), read), reach);
     }
 
-    /// Each part's state and entry, as shown.
+    /// Each row's state and entry, as shown.
     #[cfg(test)]
-    pub(super) fn states(&self) -> Vec<(Part, &str, &str)> {
+    pub(super) fn states(&self) -> Vec<(Read, &str, &str)> {
         self.rows
             .iter()
-            .map(|row| (row.part, row.entry.as_ref(), row.state.as_ref()))
+            .map(|row| (row.read, row.entry.as_ref(), row.state.as_ref()))
             .collect()
     }
 
@@ -425,20 +371,10 @@ impl SourcesList {
     }
 }
 
-/// A state's glyph: readable is fine, refused needs a look, and the rest
-/// say nothing is known.
-fn tone(reach: &Reach) -> ui::Tone {
-    match reach {
-        Reach::Readable => ui::Tone::Good,
-        Reach::Refused(_) => ui::Tone::Warn,
-        Reach::Missing(_) | Reach::Unreachable(_) | Reach::NotServed(_) => ui::Tone::Unknown,
-    }
-}
-
 impl Render for SourcesList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(window, cx);
-        // Three rows, never more: as tall as they are, under the lists that
+        // Four rows, never more: as tall as they are, under the lists that
         // take the room.
         v_flex()
             .id("settings-sources")
@@ -456,7 +392,7 @@ impl Render for SourcesList {
                     .on_action(cx.listener(|this, _: &CheckSources, _, cx| this.check(cx)))
                     .child(
                         table::DataTable::new()
-                            .fit(Part::ALL.len())
+                            .fit(self.rows.len())
                             .render(self, window, cx),
                     ),
             )
