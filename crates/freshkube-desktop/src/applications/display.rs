@@ -332,8 +332,17 @@ pub(super) fn note_words(note: &Note, labels: &Labels) -> String {
             labels.all(sessions)
         ),
         Note::ManagerUnknown { member } => format!(
-            "{} may be managed by an Argo CD Application, but that cluster's Applications weren't read in full",
+            "{} may be managed by an Argo CD Application that wasn't read, or isn't matched to its cluster",
             member_words(member, labels)
+        ),
+        Note::DestinationUnread {
+            member,
+            session,
+            why,
+        } => format!(
+            "{} deploys to {}, whose labelled workloads weren't read: {why}",
+            member_words(member, labels),
+            labels.of(session)
         ),
     }
 }
@@ -342,7 +351,10 @@ pub(super) fn note_words(note: &Note, labels: &Labels) -> String {
 fn note_is_unknown(note: &Note) -> bool {
     matches!(
         note,
-        Note::MembersUnknown { .. } | Note::ProjectNotRead { .. } | Note::ManagerUnknown { .. }
+        Note::MembersUnknown { .. }
+            | Note::ProjectNotRead { .. }
+            | Note::ManagerUnknown { .. }
+            | Note::DestinationUnread { .. }
     )
 }
 
@@ -557,7 +569,8 @@ fn note_about<'a>(note: &'a Note, labels: &Labels) -> Option<(&'a MemberRef, Str
         Note::LowerClaim { member, .. }
         | Note::UnmappedDestination { member }
         | Note::ProjectNotRead { member, .. }
-        | Note::ManagerUnknown { member } => member,
+        | Note::ManagerUnknown { member }
+        | Note::DestinationUnread { member, .. } => member,
         _ => return None,
     };
     let lead = member_words(member, labels);
@@ -793,9 +806,13 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     lines
 }
 
+/// Whether a coverage is one a body says.
+type Names = fn(&CoverageState) -> bool;
+
 /// The body when nothing was found: refused or failed before empty, since
-/// an unread source may hold applications.
-fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
+/// an unread source may hold applications. With it, whether a coverage is
+/// one the body names, so the banner says the rest.
+fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, Option<Names>) {
     let refused: Vec<&Coverage> = coverage
         .iter()
         .filter(|c| matches!(c.state, CoverageState::Refused(_)))
@@ -827,7 +844,7 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
         }
     };
     if !refused.is_empty() {
-        return Body::Refused {
+        let body = Body::Refused {
             title: format!("Not permitted to list {}", sources(&refused)).into(),
             description: format!(
                 "The identity of {} may not list {}. That says nothing about whether any applications exist.",
@@ -837,10 +854,14 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
             .into(),
             reason: reason(&refused),
         };
+        return (
+            body,
+            Some(|state| matches!(state, CoverageState::Refused(_))),
+        );
     }
     if !unreachable.is_empty() {
         let clusters = clusters(&unreachable);
-        return Body::Failed {
+        let body = Body::Failed {
             title: format!("Couldn't reach {clusters}").into(),
             description: format!(
                 "{} weren't read, so no application is shown as missing. Refresh starts over.",
@@ -849,18 +870,26 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
             .into(),
             reason: reason(&unreachable),
         };
+        return (
+            body,
+            Some(|state| matches!(state, CoverageState::Unreachable(_))),
+        );
     }
     if !not_read.is_empty() {
-        return Body::Failed {
+        let body = Body::Failed {
             title: format!("{} aren't read", capital(&sources(&not_read))).into(),
             description: "No workspace entry holds them, so no application is shown as missing. \
                  Settings › Workspace says where each is read."
                 .into(),
             reason: reason(&not_read),
         };
+        return (
+            body,
+            Some(|state| matches!(state, CoverageState::NotInWorkspace(_))),
+        );
     }
     if !failed.is_empty() {
-        return Body::Failed {
+        let body = Body::Failed {
             title: format!("Couldn't read {}", sources(&failed)).into(),
             description: format!(
                 "Nothing is known yet on {}, so no application is shown as missing. Refresh starts over.",
@@ -869,6 +898,10 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
             .into(),
             reason: reason(&failed),
         };
+        return (
+            body,
+            Some(|state| matches!(state, CoverageState::Unreadable(_))),
+        );
     }
     let sessions: BTreeSet<&SessionKey> = coverage.iter().map(|c| &c.session).collect();
     let mut description = format!(
@@ -889,17 +922,26 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> Body {
         description.push_str(&line);
         description.push('.');
     }
-    Body::Empty {
+    let body = Body::Empty {
         title: format!(
             "No applications found in what was read on {}",
             labels.all(sessions)
         )
         .into(),
         description: description.into(),
-    }
+    };
+    (body, None)
 }
 
 impl Display {
+    /// Adds a line the coverage doesn't say, after its own.
+    pub(super) fn add_legend(&mut self, line: String) {
+        self.legend_text = Some(match self.legend_text.take() {
+            Some(text) => format!("{text} · {line}").into(),
+            None => line.into(),
+        });
+    }
+
     pub(super) fn new(derived: &Derived, labels: &Labels) -> Self {
         let short = Short::new(&derived.coverage);
         let mut rows: Vec<AppRow> = derived
@@ -913,17 +955,19 @@ impl Display {
         for row in &rows {
             marks[row.mark.index()] += 1;
         }
-        let body = if rows.is_empty() {
-            body_without_applications(&derived.coverage, labels)
-        } else {
-            Body::Table
+        let (body, named) = match rows.is_empty() {
+            true => body_without_applications(&derived.coverage, labels),
+            false => (Body::Table, None),
         };
-        // A refused or failed state already says what wasn't read.
-        let missing = if matches!(body, Body::Refused { .. } | Body::Failed { .. }) {
-            Vec::new()
-        } else {
-            missing_lines(&derived.coverage, labels)
-        };
+        // A refused or failed state already says what it names; the banner
+        // says the rest.
+        let unnamed: Vec<Coverage> = derived
+            .coverage
+            .iter()
+            .filter(|c| !named.is_some_and(|named| named(&c.state)))
+            .cloned()
+            .collect();
+        let missing = missing_lines(&unnamed, labels);
         let missing_text = (!missing.is_empty()).then(|| {
             let text = missing
                 .iter()
@@ -962,6 +1006,18 @@ mod tests {
         Labels::default()
     }
 
+    /// acme without the environments' labelled parts, which Argo CD's
+    /// inventories on core-fra aren't matched to: each would carry its
+    /// caveat, and mark its application incomplete whatever else it says.
+    fn without_environment_labels(mut inputs: Inputs) -> Inputs {
+        for session in &mut inputs.sessions {
+            if !session.asked.argo_cd {
+                session.workloads = Source::Read(Vec::new());
+            }
+        }
+        inputs
+    }
+
     fn shown(inputs: &Inputs) -> Display {
         Display::new(&derive(inputs, &Override::default()), &labels())
     }
@@ -970,6 +1026,7 @@ mod tests {
         Inputs {
             sessions: vec![session],
             stage_naming: None,
+            destinations: Vec::new(),
         }
     }
 
@@ -1141,17 +1198,26 @@ mod tests {
         assert!(text.contains("stopped after 500"), "{text}");
         let catalog = display.rows.iter().find(|r| r.name == "catalog").unwrap();
         assert_eq!(catalog.mark, Mark::Incomplete);
+    }
+
+    /// A labelled part on an entry Argo CD isn't read on may be managed by
+    /// an Application there, whose inventory isn't matched to it.
+    #[test]
+    fn a_label_beside_argo_cd_on_another_entry_is_never_the_last_word() {
+        let display = shown(&example::acme());
         let loyalty = display.rows.iter().find(|r| r.name == "loyalty").unwrap();
-        assert_eq!(
-            loyalty.mark,
-            Mark::Read,
-            "dev-fra's labels were read in full"
+        assert_eq!(loyalty.mark, Mark::Incomplete);
+        assert!(
+            loyalty.notes.iter().any(|note| note
+                == "Deployment loyalty/loyalty-api on dev-fra may be managed by an Argo CD Application that wasn't read, or isn't matched to its cluster"),
+            "{:?}",
+            loyalty.notes
         );
     }
 
     #[test]
     fn notes_mark_an_application_without_making_it_unknown() {
-        let display = shown(&example::acme());
+        let display = shown(&without_environment_labels(example::acme()));
         let checkout = display.rows.iter().find(|r| r.name == "checkout").unwrap();
         assert_eq!(checkout.mark, Mark::Notes);
         assert!(!checkout.note.is_empty());
@@ -1167,7 +1233,7 @@ mod tests {
 
     #[test]
     fn argo_read_where_it_runs_is_a_legend_fact_that_says_where_and_how() {
-        let mut inputs = example::acme();
+        let mut inputs = without_environment_labels(example::acme());
         scoped(
             &mut inputs,
             &["gitops"],
@@ -1243,7 +1309,7 @@ mod tests {
 
     #[test]
     fn a_kargo_project_beside_argo_cd_read_in_part_is_never_read_in_full() {
-        let mut inputs = example::acme();
+        let mut inputs = without_environment_labels(example::acme());
         scoped(
             &mut inputs,
             &["gitops"],
@@ -1302,13 +1368,54 @@ mod tests {
         );
     }
 
+    /// With nothing found, the state names one kind of failure and the
+    /// banner every other.
+    #[test]
+    fn nothing_found_names_every_source_that_failed() {
+        let mut inputs = example::acme();
+        for session in &mut inputs.sessions {
+            match session.key.0.as_str() {
+                "cicd-fra" => {
+                    *session = SessionInputs::absent(
+                        session.key.clone(),
+                        session.asked,
+                        freshkube_core::applications::Absent::Unreachable(
+                            "connection refused".into(),
+                        ),
+                    )
+                }
+                "core-fra" => {
+                    session.argo_applications = Source::Refused("forbidden".into());
+                    session.argo_application_sets = Source::Refused("forbidden".into());
+                    session.workloads = Source::Read(Vec::new());
+                }
+                _ => session.workloads = Source::Read(Vec::new()),
+            }
+        }
+        let display = shown(&inputs);
+        let Body::Refused { title, .. } = &display.body else {
+            panic!("expected the refused state");
+        };
+        assert!(title.contains("Argo CD Applications"), "{title}");
+        let (missing, _) = display.missing_text.clone().expect("a banner");
+        assert!(
+            missing.contains("Couldn't reach cicd-fra: connection refused"),
+            "{missing}"
+        );
+        assert!(
+            !missing.contains("refused on core-fra"),
+            "said once: {missing}"
+        );
+    }
+
     #[test]
     fn notes_about_several_parts_are_said_once() {
         let display = shown(&example::acme());
         let cart = display.rows.iter().find(|r| r.name == "cart").unwrap();
+        // Three of its four destinations are mapped.
         assert!(
             cart.notes.contains(&SharedString::from(
-                "4 parts on core-fra deploy to another cluster, not mapped yet: argocd/cart-dev, argocd/cart-stage, argocd/cart-prod-ams, argocd/cart-prod-lon"
+                "Argo CD Application argocd/cart-prod-lon on core-fra deploys to another cluster, not mapped yet"
             )),
             "{:?}",
             cart.notes

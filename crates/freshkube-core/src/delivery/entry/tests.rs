@@ -125,17 +125,28 @@ impl Reader for Slow {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_listing_has_the_deadline_once_for_each_page_it_may_read() {
+async fn an_entry_readers_listing_has_the_deadline_once_for_each_page_it_may_read() {
     let request = ListRequest {
         resource: Resource::new("apps", "v1", "deployments", true),
         scope: Scope::Cluster,
     };
     // Longer than one request, as several pages that each answer take.
-    let several = Deadline::new(Slow(REQUEST_DEADLINE * 3), REQUEST_DEADLINE);
-    assert!(several.list(&request).await.is_ok());
-    let past = Deadline::new(Slow(REQUEST_DEADLINE * (MAX_PAGES + 1)), REQUEST_DEADLINE);
-    let failure = past.list(&request).await.unwrap_err();
+    let entry = |slow| {
+        Deadline::new(Slow(slow), REQUEST_DEADLINE).with_list_limit(REQUEST_DEADLINE * MAX_PAGES)
+    };
+    assert!(entry(REQUEST_DEADLINE * 3).list(&request).await.is_ok());
+    let failure = entry(REQUEST_DEADLINE * (MAX_PAGES + 1))
+        .list(&request)
+        .await
+        .unwrap_err();
     assert_eq!(failure.kind, FailureKind::Timeout);
+
+    // Any other reader's listing keeps the one deadline it was given.
+    let started = tokio::time::Instant::now();
+    let other = Deadline::new(Slow(REQUEST_DEADLINE * 3), REQUEST_DEADLINE);
+    let failure = other.list(&request).await.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Timeout);
+    assert_eq!(started.elapsed(), REQUEST_DEADLINE);
 }
 
 fn entry(id: &str, role: Role) -> Entry {

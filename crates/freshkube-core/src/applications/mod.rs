@@ -266,6 +266,14 @@ pub enum Note {
     /// An Argo CD Application may manage this workload, but that cluster's
     /// Applications were not fully read, so it went by its label.
     ManagerUnknown { member: MemberRef },
+    /// An Argo CD Application deploys to a workspace entry whose labelled
+    /// workloads weren't read, so its parts there may be missing.
+    DestinationUnread {
+        member: MemberRef,
+        /// The entry it deploys to.
+        session: SessionKey,
+        why: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -547,6 +555,9 @@ pub struct Inputs {
     /// How an Argo CD Application names a Kargo Project besides the
     /// authorized-stage annotation, where the setup configured it.
     pub stage_naming: Option<StageNaming>,
+    /// The workspace's Argo CD destinations: which entry, keyed as its
+    /// session, each server or name is. Empty for the workspace of one.
+    pub destinations: Vec<crate::workspace::Destination>,
 }
 
 /// The override's wishes that matched nothing, kept for the user to see

@@ -80,6 +80,7 @@ fn inputs(sessions: Vec<SessionInputs>) -> Inputs {
     Inputs {
         sessions,
         stage_naming: None,
+        destinations: Vec::new(),
     }
 }
 
@@ -374,7 +375,14 @@ fn a_part_the_override_placed_is_claimed() {
     let workers = of_with(&acme(), &wishes, "workers");
     let claim = &workers.links[0];
     assert_eq!(claim.confidence, Confidence::Claimed);
-    assert_eq!(claim.why, "Placed by your override");
+    // prod-lon's Argo CD Applications were read on core-fra, and aren't
+    // matched to its workloads: the override says where, and the caveat
+    // stays.
+    assert!(
+        claim.why.starts_with("Placed by your override. Argo CD's"),
+        "{}",
+        claim.why
+    );
 }
 
 #[test]
@@ -510,4 +518,134 @@ fn a_read_of_one_namespace_is_no_gap() {
             .filter(|c| c.member.kind == MemberKind::ArgoApplication)
             .all(|c| c.confidence == Confidence::Confirmed)
     );
+}
+
+/// A labelled part on an entry Argo CD wasn't asked of: its Argo CD is the
+/// one read on its own entry, named, and never the last word until its
+/// inventories are matched to that cluster.
+#[test]
+fn a_label_on_another_entry_says_how_argo_cd_was_read_on_its_own() {
+    let loyalty = of(&acme(), "loyalty");
+    let api = link(&loyalty, "loyalty-api");
+    assert_eq!(api.member.session, SessionKey::new("dev-fra"));
+    assert_eq!(api.argo_on, Some(SessionKey::new(CORE)));
+    // Read in full on core-fra, its inventories still aren't matched to
+    // dev-fra.
+    assert_eq!(api.unchecked, Some(Unchecked::NotMatched));
+
+    // Read in argocd only there, it says so.
+    let mut inputs = acme();
+    let core = inputs
+        .sessions
+        .iter_mut()
+        .find(|s| s.key.0 == CORE)
+        .unwrap();
+    core.argo_scope = ArgoScope::Namespace {
+        namespaces: vec!["argocd".into()],
+        found: ArgoFound::Default,
+    };
+    let api = link(&of(&inputs, "loyalty"), "loyalty-api").clone();
+    assert_eq!(
+        api.unchecked,
+        Some(Unchecked::Namespaces(vec!["argocd".into()]))
+    );
+
+    // Refused there, it wasn't read for dev-fra either.
+    let mut inputs = acme();
+    let core = inputs
+        .sessions
+        .iter_mut()
+        .find(|s| s.key.0 == CORE)
+        .unwrap();
+    core.argo_applications = Source::Refused("forbidden".into());
+    let loyalty = of(&inputs, "loyalty");
+    let api = link(&loyalty, "loyalty-api");
+    assert_eq!(api.argo_on, Some(SessionKey::new(CORE)));
+    assert_eq!(api.unchecked, Some(Unchecked::NotRead));
+    assert!(api.why.contains("one may manage it"), "{}", api.why);
+}
+
+/// An Application deploys to an entry whose labelled workloads weren't
+/// read: its application says its parts there may be missing.
+#[test]
+fn an_application_deploying_to_an_unread_entry_may_be_missing_parts() {
+    let mut inputs = acme();
+    let dev = inputs
+        .sessions
+        .iter_mut()
+        .find(|s| s.key.0 == "dev-fra")
+        .unwrap();
+    *dev = SessionInputs::absent(
+        dev.key.clone(),
+        dev.asked,
+        Absent::Unreachable("connection refused".into()),
+    );
+    let derived = derive(&inputs, &Override::default());
+    for name in ["cart", "checkout"] {
+        let app = derived
+            .applications
+            .iter()
+            .find(|a| a.name == name)
+            .unwrap();
+        assert!(
+            app.notes.iter().any(|note| matches!(
+                note,
+                Note::DestinationUnread { session, why, .. }
+                    if session.0 == "dev-fra" && why == "couldn't be reached: connection refused"
+            )),
+            "{name}: {:?}",
+            app.notes
+        );
+    }
+    // Read, the entry leaves no such note, and a mapped destination isn't
+    // said to be unmapped.
+    let derived = derive(&acme(), &Override::default());
+    let cart = derived
+        .applications
+        .iter()
+        .find(|a| a.name == "cart")
+        .unwrap();
+    assert!(
+        !cart.notes.iter().any(|note| matches!(
+            note,
+            Note::DestinationUnread { member, .. } | Note::UnmappedDestination { member }
+                if member.name.ends_with("-dev")
+        )),
+        "{:?}",
+        cart.notes
+    );
+}
+
+/// An Application read on Argo CD's entry manages what its inventory lists
+/// on the entry its destination is mapped to; on a cluster no row maps, its
+/// inventory names nothing the workspace read there.
+#[test]
+fn an_inventory_is_matched_on_the_entry_its_destination_maps_to() {
+    let derived = derive(&acme(), &Override::default());
+    let part = |app: &str, session: &str, name: &str| {
+        let app = derived.applications.iter().find(|a| a.name == app).unwrap();
+        let member = app
+            .members
+            .iter()
+            .find(|m| m.at.session.0 == session && m.at.name == name)
+            .unwrap_or_else(|| panic!("{name} on {session}"))
+            .clone();
+        let caveat = app
+            .notes
+            .iter()
+            .any(|note| matches!(note, Note::ManagerUnknown { member: at } if *at == member.at));
+        (member, caveat)
+    };
+    let (api, caveat) = part("cart", "dev-fra", "cart-api");
+    assert_eq!(api.basis, Basis::Tracked);
+    assert_eq!(
+        api.via.as_ref().map(|via| via.name.as_str()),
+        Some("cart-dev")
+    );
+    assert_eq!(api.via.map(|via| via.session), Some(SessionKey::new(CORE)));
+    assert!(!caveat, "its manager was found");
+    let (_, caveat) = part("catalog", "prod-lon", "catalog-api");
+    assert!(caveat, "prod-lon isn't mapped");
+    let (_, caveat) = part("loyalty", "dev-fra", "loyalty-api");
+    assert!(caveat, "no inventory lists it");
 }

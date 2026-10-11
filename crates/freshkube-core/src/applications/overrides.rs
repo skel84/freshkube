@@ -157,7 +157,8 @@ impl Note {
             Self::LowerClaim { member, .. }
             | Self::UnmappedDestination { member }
             | Self::ProjectNotRead { member, .. }
-            | Self::ManagerUnknown { member } => member == at,
+            | Self::ManagerUnknown { member }
+            | Self::DestinationUnread { member, .. } => member == at,
             _ => false,
         }
     }

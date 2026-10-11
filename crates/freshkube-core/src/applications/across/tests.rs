@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::*;
 use crate::applications::read::read_session;
-use crate::applications::{CoverageState, Inputs, Override, SourceKind, derive};
+use crate::applications::{CoverageState, Inputs, Override, SourceKind, derive, example};
 use crate::delivery::fixtures::FixtureReader;
 use crate::delivery::read::{ListRequest, Listing, Resource, ServedGroup};
 use crate::resources::Failure;
@@ -96,6 +96,7 @@ fn coverage(sessions: Vec<SessionInputs>) -> Vec<(String, SourceKind, CoverageSt
         &Inputs {
             sessions,
             stage_naming: None,
+            destinations: Vec::new(),
         },
         &Override::default(),
     );
@@ -142,13 +143,14 @@ async fn each_part_is_read_from_its_own_entry_and_nothing_else_there() {
         !environment.contains("kargo") && !environment.contains("argoproj"),
         "{environment}"
     );
-    // Argo CD's entry lists only the workloads that say where it runs.
+    // Argo CD's entry is its own cluster's destination: its labelled
+    // workloads are read with it.
     let argo = asked("cluster-a");
     assert!(!argo.contains("kargo"), "{argo}");
+    assert!(argo.contains("argoproj"), "{argo}");
     assert!(
-        argo.lines()
-            .filter(|line| line.contains("deployments"))
-            .all(|line| line.contains("part-of=argocd")),
+        argo.lines().any(|line| line.contains("deployments")
+            && line.ends_with("selector=Some(\"app.kubernetes.io/part-of\")")),
         "{argo}"
     );
 
@@ -156,6 +158,7 @@ async fn each_part_is_read_from_its_own_entry_and_nothing_else_there() {
         &Inputs {
             sessions: sessions.clone(),
             stage_naming: None,
+            destinations: Vec::new(),
         },
         &Override::default(),
     );
@@ -165,14 +168,18 @@ async fn each_part_is_read_from_its_own_entry_and_nothing_else_there() {
         .map(|a| a.name.as_str())
         .collect();
     assert_eq!(names, ["checkout", "storefront"]);
-    // The workload in cluster-c joins the Application read in cluster-a.
+    // The workloads in cluster-c and in cluster-a join the Application
+    // read in cluster-a.
     let storefront = &derived.applications[1];
-    assert!(
-        storefront
-            .members
-            .iter()
-            .any(|m| m.at.name == "web" && m.at.session.0 == "cluster-c")
-    );
+    for cluster in ["cluster-a", "cluster-c"] {
+        assert!(
+            storefront
+                .members
+                .iter()
+                .any(|m| m.at.name == "web" && m.at.session.0 == cluster),
+            "{cluster}"
+        );
+    }
     // No cluster says anything of a source it wasn't asked for.
     let covered = coverage(sessions);
     assert_eq!(
@@ -183,7 +190,10 @@ async fn each_part_is_read_from_its_own_entry_and_nothing_else_there() {
         state(&covered, "cluster-c", SourceKind::KargoProjects),
         None
     );
-    assert_eq!(state(&covered, "cluster-a", SourceKind::Workloads), None);
+    assert_eq!(
+        state(&covered, "cluster-a", SourceKind::Workloads),
+        Some(CoverageState::Read)
+    );
 }
 
 #[tokio::test]
@@ -237,7 +247,11 @@ async fn each_source_says_why_it_wasnt_read_in_its_entrys_name() {
         .await,
     );
     assert_eq!(
-        state(&covered, WORKSPACE, SourceKind::ArgoApplications),
+        state(
+            &covered,
+            &missing_key(Part::ArgoCd).0,
+            SourceKind::ArgoApplications
+        ),
         Some(CoverageState::NotInWorkspace(
             "No Core entry in the workspace".into()
         ))
@@ -246,6 +260,15 @@ async fn each_source_says_why_it_wasnt_read_in_its_entrys_name() {
         state(&covered, "cluster-b", SourceKind::KargoProjects),
         Some(CoverageState::Read)
     );
+
+    // With neither, each part is missing under its own name.
+    let sources = Sources::of(&Workspace::new(vec![entry("cluster-c", Role::Environment)]));
+    let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, |_| async {
+        Ok::<_, String>(everything())
+    })
+    .await;
+    let keys: Vec<&str> = sessions.iter().map(|s| s.key.0.as_str()).collect();
+    assert_eq!(keys, ["the workspace (Kargo)", "the workspace (Argo CD)"]);
 }
 
 /// A reader that counts itself among the live clients until dropped.
@@ -365,13 +388,18 @@ async fn the_open_entry_is_read_through_the_open_connection() {
 }
 
 #[tokio::test]
-async fn an_entry_holding_two_sources_is_read_once_for_both() {
-    // cluster-a holds Argo CD and is a destination too.
-    let mut workspace = workspace(&[]);
+async fn an_entry_holding_two_sources_is_read_once_for_all_it_holds() {
+    // cluster-a is the workspace's only Core entry: Kargo falls back to it,
+    // Argo CD runs there, and its labelled workloads are its own cluster's.
+    let mut workspace = Workspace::new(vec![
+        entry("cluster-a", Role::Core),
+        entry("cluster-c", Role::Environment),
+    ]);
     workspace.destinations = vec![Destination::new(
-        Key::Name("in-cluster".into()),
-        "cluster-a",
+        Key::Server("https://cluster-c.example.test:6443".into()),
+        "cluster-c",
     )];
+    assert_eq!(workspace.destinations[0].fault(), None, "a valid row");
     let sources = Sources::of(&workspace);
     let connected = RefCell::new(Vec::new());
     let connect = |entry: Entry| {
@@ -379,14 +407,183 @@ async fn an_entry_holding_two_sources_is_read_once_for_both() {
         async { Ok::<_, String>(everything()) }
     };
     let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
-    assert_eq!(connected.into_inner(), ["cluster-b", "cluster-a"]);
+    assert_eq!(connected.into_inner(), ["cluster-a", "cluster-c"]);
     let a = sessions.iter().find(|s| s.key.0 == "cluster-a").unwrap();
+    assert_eq!(a.asked, Asked::ALL);
+}
+
+/// A reader serving what `objects` hold, as the example's clusters hold
+/// them.
+fn reader_of(objects: Vec<example::CoreObject>) -> FixtureReader {
+    let mut lists: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
+    for object in objects {
+        let plural = object.key.split('.').next().unwrap_or_default();
+        lists.entry(plural).or_default().push(object.value);
+    }
+    let mut reader = FixtureReader::default()
+        .serves(
+            "kargo.akuity.io",
+            "v1alpha1",
+            &["projects", "stages", "warehouses"],
+        )
+        .serves(
+            "argoproj.io",
+            "v1alpha1",
+            &["applications", "applicationsets"],
+        );
+    for (plural, items) in lists {
+        reader = reader.with(plural, items);
+    }
+    reader
+}
+
+/// The example workspace's entries, each holding what its acme cluster
+/// holds; cicd-fra holds core-fra's objects, of which only Kargo is asked.
+fn example_reader(id: &str) -> FixtureReader {
+    match id {
+        "core-fra" | "cicd-fra" => reader_of(example::core_objects()),
+        cluster => reader_of(example::environment_objects(cluster)),
+    }
+}
+
+async fn read_example(open: Option<&str>) -> crate::applications::Derived {
+    let workspace = crate::workspace::example();
+    let sources = Sources::of(&workspace);
+    let reader = open.map(example_reader);
+    let open = open.zip(reader.as_ref()).map(|(entry, reader)| Open {
+        entry: Some(entry),
+        key: SessionKey::new("connection-1"),
+        reader: Ok(reader),
+    });
+    let sessions = read_workspace(&sources, open, |entry: Entry| async move {
+        Ok::<_, String>(example_reader(&entry.id))
+    })
+    .await;
+    derive(
+        &Inputs {
+            sessions,
+            stage_naming: None,
+            destinations: workspace.destinations,
+        },
+        &Override::default(),
+    )
+}
+
+#[tokio::test]
+async fn the_same_applications_are_read_whichever_entry_is_open() {
+    let alone = read_example(None).await;
+    for open in ["core-fra", "cicd-fra", "dev-fra", "prod-fra"] {
+        assert_eq!(read_example(Some(open)).await, alone, "with {open} open");
+    }
+    let names: Vec<&str> = alone.applications.iter().map(|a| a.name.as_str()).collect();
     assert_eq!(
-        a.asked,
-        Asked {
-            argo_cd: true,
-            workloads: true,
-            ..Asked::NONE
-        }
+        names,
+        ["cart", "catalog", "checkout", "loyalty", "status-page"]
+    );
+    // Argo CD's own cluster's labelled workloads are read with it: the
+    // Deployment its local Application lists and names back is Tracked.
+    let status = alone
+        .applications
+        .iter()
+        .find(|a| a.name == "status-page")
+        .unwrap();
+    let deployment = status
+        .members
+        .iter()
+        .find(|m| matches!(m.at.kind, crate::applications::MemberKind::Workload(_)))
+        .expect("status-page's Deployment");
+    assert_eq!(deployment.at.session, SessionKey::new("core-fra"));
+    assert_eq!(deployment.basis, crate::applications::Basis::Tracked);
+}
+
+#[tokio::test(start_paused = true)]
+async fn one_entry_that_hangs_keeps_no_other_waiting() {
+    let environments = ["env-1", "env-2", "env-3", "env-4", "env-5", "env-6"];
+    let sources = Sources::of(&workspace(&environments));
+    let started = tokio::time::Instant::now();
+    let connect = |entry: Entry| async move {
+        Ok::<_, String>(match entry.id.as_str() {
+            // The first destination never answers its listing.
+            "env-1" => everything().hanging("deployments"),
+            _ => everything(),
+        })
+    };
+    let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
+    assert_eq!(
+        started.elapsed(),
+        ENTRY_DEADLINE,
+        "ends with the one that hung"
+    );
+    let covered = coverage(sessions);
+    assert_eq!(
+        state(&covered, "env-1", SourceKind::Workloads),
+        Some(CoverageState::Unreachable(format!(
+            "no answer within {} s",
+            ENTRY_DEADLINE.as_secs()
+        )))
+    );
+    for id in &environments[1..] {
+        assert_eq!(
+            state(&covered, id, SourceKind::Workloads),
+            Some(CoverageState::Read),
+            "{id}"
+        );
+    }
+    assert_eq!(
+        state(&covered, "cluster-b", SourceKind::KargoProjects),
+        Some(CoverageState::Read)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_read_keeps_what_answered_within_its_budget() {
+    // Twelve destinations that all hang: three rounds of four would pass
+    // the budget, so the third round is cut where it stands.
+    let environments: Vec<String> = (1..=12).map(|n| format!("env-{n}")).collect();
+    let names: Vec<&str> = environments.iter().map(String::as_str).collect();
+    let sources = Sources::of(&workspace(&names));
+    let started = tokio::time::Instant::now();
+    let connect = |entry: Entry| async move {
+        Ok::<_, String>(match entry.id.starts_with("env-") {
+            true => everything().hanging("deployments"),
+            false => everything(),
+        })
+    };
+    let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
+    assert_eq!(started.elapsed(), BUDGET);
+    assert_eq!(sessions.len(), 14, "every entry is said");
+    let covered = coverage(sessions);
+    assert_eq!(
+        state(&covered, "cluster-b", SourceKind::KargoProjects),
+        Some(CoverageState::Read),
+        "kept, though others never answered"
+    );
+    assert_eq!(
+        state(&covered, "env-12", SourceKind::Workloads),
+        Some(CoverageState::Unreachable(format!(
+            "not read within the read's {} s",
+            BUDGET.as_secs()
+        )))
+    );
+}
+
+#[tokio::test]
+async fn a_source_its_entry_doesnt_serve_says_so_in_its_name() {
+    let sources = Sources::of(&workspace(&["cluster-c"]));
+    let connect = |entry: Entry| async move {
+        Ok::<_, String>(match entry.id.as_str() {
+            // Kargo isn't installed on its entry.
+            "cluster-b" => FixtureReader::default(),
+            _ => everything(),
+        })
+    };
+    let covered =
+        coverage(read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await);
+    assert!(
+        matches!(
+            state(&covered, "cluster-b", SourceKind::KargoProjects),
+            Some(CoverageState::NotInstalled(_))
+        ),
+        "{covered:?}"
     );
 }

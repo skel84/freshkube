@@ -42,8 +42,10 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 
 use freshkube_core::applications::across::{Open, read_workspace};
-use freshkube_core::applications::{Derived, Inputs, Override, SessionInputs, SessionKey, derive};
-use freshkube_core::delivery::entry;
+use freshkube_core::applications::{
+    ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
+};
+use freshkube_core::delivery::entry::{self, Deadline};
 use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::resources::kubeconfig_sources;
 use freshkube_core::snapshot::{Request, Snapshot};
@@ -112,6 +114,26 @@ struct Read {
     labels: Labels,
     connections: Connections,
     changes: Changes,
+    /// Argo CD's entry, when no destination is mapped and the workspace has
+    /// other entries: labelled workloads were read there alone.
+    unmapped: Option<String>,
+    /// Where a live read found Argo CD's Applications, which the Changes
+    /// list reads in.
+    argocd_namespace: Option<String>,
+}
+
+/// The namespace Argo CD's Applications were first read in, on whichever
+/// entry was asked for them; its default when none was scoped.
+fn argocd_namespace(inputs: &Inputs) -> String {
+    inputs
+        .sessions
+        .iter()
+        .filter(|session| session.asked.argo_cd)
+        .find_map(|session| match &session.argo_scope {
+            ArgoScope::Namespace { namespaces, .. } => namespaces.first().cloned(),
+            _ => None,
+        })
+        .unwrap_or_else(|| "argocd".into())
 }
 
 impl Read {
@@ -121,12 +143,16 @@ impl Read {
             labels,
             connections,
             changes: Changes::None,
+            unmapped: None,
+            argocd_namespace: None,
         }
     }
 
-    /// A live read: each cluster is a workspace entry, named by its id,
-    /// except the open connection, which the workspace of one keys by its
-    /// id and names by its context; `entry` is the workspace entry it is.
+    /// A live read: each cluster is a workspace entry, keyed and named by
+    /// its id. `entry` is the workspace entry the open connection is: its
+    /// session is keyed by the entry's id and maps to the open connection.
+    /// The workspace of one has a session keyed by the connection's id,
+    /// named by its context.
     fn live(inputs: &Inputs, source: &KubeSource, entry: Option<&str>) -> Self {
         let key = SessionKey::new(source.id.clone());
         let open: Vec<SessionKey> = [Some(key.clone()), entry.map(SessionKey::new)]
@@ -150,6 +176,7 @@ impl Read {
                 .cloned()
                 .collect(),
             stage_naming: inputs.stage_naming.clone(),
+            destinations: inputs.destinations.clone(),
         };
         let changes = match here.sessions.iter().any(|session| session.asked.kargo) {
             true => Changes::live(&here, source),
@@ -157,6 +184,7 @@ impl Read {
         };
         Self {
             changes,
+            argocd_namespace: Some(argocd_namespace(inputs)),
             ..Self::of(
                 inputs,
                 labels,
@@ -166,6 +194,23 @@ impl Read {
                 ),
             )
         }
+    }
+}
+
+/// Argo CD's entry, when no destination is mapped though the workspace has
+/// other entries: the labelled workloads were read there alone.
+fn unmapped(
+    sources: &Sources,
+    destinations: &[freshkube_core::workspace::Destination],
+    entries: &[String],
+) -> Option<String> {
+    match sources.get(PartKind::ArgoCd) {
+        Chosen::Entry { entry, .. }
+            if destinations.is_empty() && entries.iter().any(|id| *id != entry.id) =>
+        {
+            Some(entry.id.clone())
+        }
+        _ => None,
     }
 }
 
@@ -199,15 +244,21 @@ pub(crate) struct SwitchLink {
     pub(crate) link: ResourceLink,
 }
 
+/// Whose read it is: the connection, and the workspace entry it is.
+type Identity = (String, Option<String>);
+
 pub(crate) struct ApplicationsPage {
     runtime: tokio::runtime::Handle,
     source: Option<KubeSource>,
+    /// The workspace entry the source's connection is, handed with it, so
+    /// a read never names one entry's cluster with another's.
+    entry: Option<String>,
     visible: bool,
     /// The example's shape, in example data.
     variant: Variant,
     /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
     hold: bool,
-    snapshot: Snapshot<Read, String>,
+    snapshot: Snapshot<Read, Identity>,
     /// Whether a read is in flight; dropping its job and task stops it.
     pending: bool,
     job: Option<OwnedJob>,
@@ -301,6 +352,7 @@ impl ApplicationsPage {
             visible: false,
             variant: Variant::from_env(),
             hold: crate::fixture::hold().applications,
+            entry: None,
             snapshot: Snapshot::default(),
             pending: false,
             job: None,
@@ -352,11 +404,19 @@ impl ApplicationsPage {
         self.example_delay = delay;
     }
 
-    /// The connection the page reads. Another connection drops what was
+    /// The connection the page reads, and the workspace entry it is.
+    /// Another connection, or the same one as another entry, drops what was
     /// read and what is in flight; the page reads it again if shown.
-    pub(crate) fn set_source(&mut self, source: Option<KubeSource>, cx: &mut Context<Self>) {
-        let same = self.source.as_ref().map(|s| &s.id) == source.as_ref().map(|s| &s.id);
+    pub(crate) fn set_source(
+        &mut self,
+        source: Option<KubeSource>,
+        entry: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let same = self.source.as_ref().map(|s| &s.id) == source.as_ref().map(|s| &s.id)
+            && self.entry == entry;
         self.source = source.clone();
+        self.entry = entry;
         if same {
             return;
         }
@@ -381,8 +441,15 @@ impl ApplicationsPage {
         if clusters == self.clusters {
             return;
         }
-        let reads_elsewhere = (&clusters.sources, &clusters.kubeconfig)
-            != (&self.clusters.sources, &self.clusters.kubeconfig);
+        let reads_elsewhere = (
+            &clusters.sources,
+            &clusters.kubeconfig,
+            &clusters.mapping.destinations,
+        ) != (
+            &self.clusters.sources,
+            &self.clusters.kubeconfig,
+            &self.clusters.mapping.destinations,
+        );
         self.clusters = clusters;
         self.update_open(cx);
         self.update_change(cx);
@@ -533,7 +600,7 @@ impl ApplicationsPage {
             return;
         };
         self.stop();
-        let request = self.snapshot.begin(source.id.clone());
+        let request = self.snapshot.begin((source.id.clone(), self.entry.clone()));
         match &source.access {
             KubeAccess::Example => {
                 // Held, it stays in flight, so the page keeps its loading
@@ -567,16 +634,24 @@ impl ApplicationsPage {
                 let access = access.clone();
                 let sources = self.clusters.sources.clone();
                 let kubeconfig = self.clusters.kubeconfig.clone();
-                let entry = self.clusters.active.clone();
+                let destinations = self.clusters.mapping.destinations.clone();
+                let unmapped = unmapped(&sources, &destinations, &self.clusters.entries);
+                let entry = self.entry.clone();
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
                     DEADLINE,
                     "Reading the applications timed out".into(),
                     async move {
-                        let open = access.client().await.map(ReadOnlyClient::new);
                         // The workspace of one reads the open connection
-                        // alone, and fails as it does.
-                        if matches!(sources.get(PartKind::Kargo), Chosen::Open) {
+                        // alone, under the read's deadline, and fails as it
+                        // does; beside other entries, the open one has
+                        // their deadlines.
+                        let alone = matches!(sources.get(PartKind::Kargo), Chosen::Open);
+                        let open = access.client().await.map(|client| match alone {
+                            true => Deadline::new(ReadOnlyClient::new(client), DEADLINE),
+                            false => entry::reader(client),
+                        });
+                        if alone {
                             open.as_ref().map_err(Clone::clone)?;
                         }
                         let kubeconfigs = kubeconfig_sources(kubeconfig.as_deref());
@@ -593,8 +668,12 @@ impl ApplicationsPage {
                         let inputs = Inputs {
                             sessions,
                             stage_naming: None,
+                            destinations,
                         };
-                        Ok(Read::live(&inputs, &source, entry.as_deref()))
+                        Ok(Read {
+                            unmapped,
+                            ..Read::live(&inputs, &source, entry.as_deref())
+                        })
                     },
                 );
                 self.job = Some(job);
@@ -614,7 +693,7 @@ impl ApplicationsPage {
     /// A read's answer, published only while it is the one in flight.
     fn answer(
         &mut self,
-        request: &Request<String>,
+        request: &Request<Identity>,
         result: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
@@ -642,21 +721,31 @@ impl ApplicationsPage {
             let inputs = Inputs {
                 sessions: vec![SessionInputs::unread(key.clone(), why)],
                 stage_naming: None,
+                destinations: Vec::new(),
             };
-            Some(Read::live(&inputs, source, None))
+            Some(Read::live(&inputs, source, self.entry.as_deref()))
         };
-        if let Some(Read {
-            changes: Changes::Live(live),
-            ..
-        }) = self.snapshot.data()
+        if let Some(namespace) = self
+            .snapshot
+            .data()
+            .and_then(|read| read.argocd_namespace.clone())
         {
-            let namespace = live.argocd_namespace.clone();
             self.changes.update(cx, |changes, cx| {
                 changes.set_argocd_namespace(namespace, cx)
             });
         }
         self.display = match self.snapshot.data().cloned().or_else(unread) {
-            Some(read) => Display::new(&read.derived, &read.labels),
+            Some(read) => {
+                let mut display = Display::new(&read.derived, &read.labels);
+                if let Some(entry) = &read.unmapped {
+                    display.add_legend(format!(
+                        "No Argo CD destination is mapped; labelled workloads were read on {} \
+                         only. Settings › Workspace maps them",
+                        read.labels.of(&SessionKey::new(entry.clone()))
+                    ));
+                }
+                display
+            }
             None => Display::default(),
         };
         self.stale = self.snapshot.data().and(self.snapshot.error()).map(|why| {
@@ -1060,7 +1149,7 @@ impl ApplicationsPage {
             return;
         };
         self.stop();
-        let request = self.snapshot.begin(source.id);
+        let request = self.snapshot.begin((source.id, self.entry.clone()));
         self.pending = true;
         self.answer(&request, Err(why.into()), cx);
     }

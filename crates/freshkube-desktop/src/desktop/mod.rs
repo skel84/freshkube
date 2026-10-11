@@ -1714,8 +1714,11 @@ impl Pilot {
         let id = source.as_ref().map(|source| source.id.clone());
         self.observability
             .update(cx, |page, cx| page.set_source(id, cx));
+        // The entry the window is on is the one the source's connection is:
+        // both change together here.
+        let entry = self.active_cluster().map(str::to_owned);
         self.applications
-            .update(cx, |page, cx| page.set_source(source.clone(), cx));
+            .update(cx, |page, cx| page.set_source(source.clone(), entry, cx));
         let sources = self.settings_page.read(cx).sources.clone();
         sources.update(cx, |list, cx| list.set_source(source.clone(), cx));
         let identity = self.kube_identity();

@@ -33,12 +33,6 @@ const AT_ONCE: usize = 4;
 /// How long a read may take before what hasn't answered is left out.
 pub const BUDGET: Duration = Duration::from_secs(90);
 
-/// How long one request may take ([`Deadline`](crate::delivery::entry::Deadline)):
-/// a listing may run to [`MAX_PAGES`](crate::delivery::read::MAX_PAGES)
-/// pages, each given the change page's GET deadline, and a little more.
-pub const REQUEST_DEADLINE: Duration =
-    Duration::from_secs(crate::delivery::change::live::pages::DEADLINE.as_secs() * 6);
-
 /// Where the list is read: the cluster that runs Kargo, and how its
 /// changes are followed past it.
 #[derive(Clone, Debug, PartialEq, Eq)]

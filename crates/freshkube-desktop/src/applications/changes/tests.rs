@@ -599,6 +599,21 @@ fn a_new_argo_cd_namespace_reads_a_live_list_again(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+#[gpui_kit::test]
+fn another_connection_forgets_where_argo_cd_was_found(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = answered_live(cx);
+    cx.update_window(handle, |_, _, cx| {
+        changes(&view, cx).update(cx, |page, cx| {
+            page.set_argocd_namespace("gitops".into(), cx);
+            page.read_answer(Changes::default(), cx);
+            page.set_source(Some(live_source("other")), cx);
+            assert_eq!(page.argocd_namespace, "argocd", "until its read finds it");
+            assert_eq!(page.read_namespace.as_deref(), Some("argocd"));
+        });
+    })
+    .unwrap();
+}
+
 /// No rows beside a project that wasn't read: the banner says what, and
 /// the empty state says none only of what was read.
 #[gpui_kit::test]

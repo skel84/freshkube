@@ -16,6 +16,9 @@ const APPLICATIONS: layout_check::TablePage = layout_check::TablePage {
 const CART: &str = "application-kargo:cart";
 const CATALOG: &str = "application-argocd:applicationset/argocd/catalog";
 const LOYALTY: &str = "application-part-of:loyalty";
+/// Argo CD's Application on its own cluster, which nothing else leaves
+/// incomplete: its mark is Argo CD's scope.
+const STATUS: &str = "application-argocd:application/argocd/status-page";
 
 fn page(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<ApplicationsPage> {
     view.read(cx).applications().0
@@ -98,12 +101,20 @@ fn acme_lists_every_cluster_grouped_by_the_rule_that_found_it(cx: &mut TestAppCo
             let words = format!("applications-tally-{slug}-words");
             assert!(window.find(gpui_kit::SharedString::from(words)).visible());
         }
-        let mark = gpui_kit::SharedString::from(format!("{CATALOG}-mark"));
+        let mark = gpui_kit::SharedString::from(format!("{STATUS}-mark"));
         assert_eq!(
             window.find(mark).label(),
             Some(
                 "Argo CD on core-fra was read in argocd only, its default: no workload is labelled app.kubernetes.io/part-of=argocd"
             )
+        );
+        // catalog deploys to prod-lon, which no destination maps: its
+        // labelled part there may be managed by an Application not matched
+        // to it.
+        let mark = gpui_kit::SharedString::from(format!("{CATALOG}-mark"));
+        assert_eq!(
+            window.find(mark).label(),
+            Some("May be incomplete: a source it depends on wasn't read in full")
         );
         assert!(window.try_find("applications-missing").is_none());
         let status = page.read(cx).status.clone();
@@ -432,7 +443,10 @@ fn a_capped_source_marks_its_applications_incomplete(cx: &mut TestAppContext) {
         window.click("applications-tally-incomplete", cx);
         window.render_frame(cx);
         assert!(window.find(CATALOG).visible());
-        assert!(window.try_find(LOYALTY).is_none());
+        assert!(window.find(STATUS).visible());
+        // cart's Stages promote to Applications that may not all be
+        // listed: scoped, not incomplete.
+        assert!(window.try_find(CART).is_none());
         let mark = gpui_kit::SharedString::from(format!("{CATALOG}-mark"));
         assert_eq!(
             window.find(mark).label(),
@@ -586,7 +600,7 @@ fn a_scoped_application_keeps_its_name_in_the_inspector(cx: &mut TestAppContext)
     let (_runtime, handle, _view) = open(cx, 1280., 880., |page| page.set_variant(Variant::Spread));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(CATALOG, cx);
+        window.click(STATUS, cx);
         window.render_frame(cx);
         let pane = window.find("applications-detail").bounds();
         let title = window.find("applications-detail-title");
@@ -697,9 +711,10 @@ fn an_unreachable_cicd_entry_says_so_by_name_never_none_found(cx: &mut TestAppCo
         assert!(window.find(CATALOG).visible());
         assert!(window.find(LOYALTY).visible());
         assert!(window.try_find("applications-none").is_none());
-        // cart is still found by its label, never as none found.
+        // cart's parts are still found by the Applications its Stages
+        // promote to, whose inventories list them: never none found.
         let names = page(&view, cx).read(cx).names();
-        assert!(names.contains(&"cart".to_owned()), "{names:?}");
+        assert!(names.contains(&"cart-dev".to_owned()), "{names:?}");
     })
     .unwrap();
 }
@@ -751,12 +766,72 @@ fn an_unreachable_destination_says_so_by_name(cx: &mut TestAppContext) {
         let names = page(&view, cx).read(cx).names();
         assert!(!names.contains(&"loyalty".to_owned()), "{names:?}");
         assert!(names.contains(&"checkout".to_owned()), "{names:?}");
+        // cart and checkout deploy to dev-fra, whose parts weren't read.
+        let page = page(&view, cx);
+        for name in ["cart", "checkout"] {
+            let row = page.read(cx).display.rows.iter().find(|r| r.name == name);
+            let row = row.unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(row.mark, super::Mark::Incomplete, "{name}");
+            assert!(
+                row.notes.iter().any(|note| note.contains(
+                    "deploys to dev-fra, whose labelled workloads weren't read: couldn't be reached"
+                )),
+                "{name}: {:?}",
+                row.notes
+            );
+        }
     })
     .unwrap();
 }
 
 /// A live read follows each Kargo Stage's current Freight, and reads Argo
 /// CD where the applications read found it.
+/// The Changes list reads Argo CD in the namespace the read found it in,
+/// on whichever entry was asked for it, whichever entry is open.
+#[test]
+fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
+    use super::example;
+    use crate::resources::{KubeAccess, KubeSource};
+    use freshkube_core::applications::{ArgoFound, ArgoScope};
+
+    let mut inputs = example::inputs(Variant::Acme);
+    for session in &mut inputs.sessions {
+        // Only Argo CD's entry's scope is the one to follow.
+        session.argo_scope = ArgoScope::Namespace {
+            namespaces: vec![match session.asked.argo_cd {
+                true => "gitops".into(),
+                false => "elsewhere".into(),
+            }],
+            found: ArgoFound::Labelled {
+                skipped: Vec::new(),
+            },
+        };
+    }
+    assert!(inputs.sessions.iter().any(|s| !s.asked.argo_cd));
+    let source = KubeSource {
+        id: "connection-1".into(),
+        context: "homelab".into(),
+        access: KubeAccess::Example,
+    };
+    for entry in [None, Some("cicd-fra"), Some("core-fra"), Some("dev-fra")] {
+        let read = super::Read::live(&inputs, &source, entry);
+        assert_eq!(
+            read.argocd_namespace.as_deref(),
+            Some("gitops"),
+            "{entry:?}"
+        );
+    }
+    for session in &mut inputs.sessions {
+        session.argo_scope = ArgoScope::AllNamespaces;
+    }
+    let read = super::Read::live(&inputs, &source, Some("cicd-fra"));
+    assert_eq!(
+        read.argocd_namespace.as_deref(),
+        Some("argocd"),
+        "its default"
+    );
+}
+
 #[test]
 fn a_live_read_follows_each_stages_current_freight() {
     use super::change::{Changes, LiveChanges};
@@ -810,4 +885,118 @@ fn a_live_read_follows_each_stages_current_freight() {
         "a Stage running nothing"
     );
     assert_eq!(changes.freight_of("shop", "no-such-stage"), None);
+}
+
+/// A live read follows the workspace: another Sources reads again while the
+/// page shows and waits while it is hidden; the same connection as another
+/// entry is another read.
+#[gpui_kit::test]
+fn a_live_read_follows_the_workspace_and_the_entry_it_is(cx: &mut TestAppContext) {
+    use crate::resources::direct::DirectAccess;
+    use crate::resources::{KubeAccess, KubeSource};
+    let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
+    // Nothing answers it: the read stays in flight until it is ended here.
+    let access = DirectAccess::new(
+        vec![std::env::temp_dir().join("freshkube-no-such-kubeconfig")],
+        "cluster-a".into(),
+        freshkube_core::ConfigurationRevision::default(),
+    );
+    let source = KubeSource {
+        id: access.id(),
+        context: "cluster-a".into(),
+        access: KubeAccess::Direct(access),
+    };
+    let workspace = |entry: &str| {
+        let mut workspace = freshkube_core::workspace::example();
+        workspace.clusters.retain(|e| e.id != entry);
+        super::Clusters {
+            entries: workspace.clusters.iter().map(|e| e.id.clone()).collect(),
+            sources: freshkube_core::workspace::Sources::of(&workspace),
+            ..Default::default()
+        }
+    };
+    cx.update_window(handle, |_, _, cx| {
+        page(&view, cx).update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.set_source(Some(source.clone()), None, cx);
+            assert!(!page.is_reading(), "hidden, it reads nothing");
+            page.set_clusters(workspace("prod-fra"), cx);
+            assert!(!page.is_reading(), "nor for another workspace");
+            page.set_visible(true, cx);
+            assert!(page.is_reading(), "shown, it reads what changed");
+            page.fail_read("ended here", cx);
+            assert!(!page.is_reading());
+
+            page.set_clusters(workspace("dev-fra"), cx);
+            assert!(page.is_reading(), "shown, another workspace reads again");
+            page.fail_read("ended here", cx);
+            page.set_source(Some(source.clone()), Some("core-fra".into()), cx);
+            assert!(page.is_reading(), "the connection as an entry reads again");
+            page.fail_read("ended here", cx);
+            page.set_source(Some(source.clone()), Some("core-fra".into()), cx);
+            assert!(!page.is_reading(), "the same pair is the same read");
+        });
+    })
+    .unwrap();
+}
+
+/// A live read's sessions are keyed by their entries; the open entry's maps
+/// to the open connection, and every other entry is a switch away.
+#[test]
+fn a_live_read_keys_each_entry_and_opens_the_open_one_here() {
+    use crate::resources::{KubeAccess, KubeSource};
+    use freshkube_core::applications::{Asked, Inputs, SessionInputs, SessionKey};
+    let source = KubeSource {
+        id: "connection-1".into(),
+        context: "admin@lab".into(),
+        access: KubeAccess::Example,
+    };
+    let inputs = Inputs {
+        sessions: ["cicd-fra", "core-fra", "dev-fra"]
+            .into_iter()
+            .map(|id| SessionInputs::asking(SessionKey::new(id), Asked::NONE))
+            .collect(),
+        stage_naming: None,
+        destinations: Vec::new(),
+    };
+    let read = super::Read::live(&inputs, &source, Some("core-fra"));
+    for id in ["cicd-fra", "core-fra", "dev-fra"] {
+        assert_eq!(read.labels.of(&SessionKey::new(id)), id, "named by its id");
+    }
+    let core = SessionKey::new("core-fra");
+    assert!(read.connections.opens(&core));
+    assert!(!read.connections.opens(&SessionKey::new("dev-fra")));
+    let connections = read
+        .connections
+        .clone()
+        .with_entries(["cicd-fra".to_owned(), "dev-fra".to_owned()]);
+    assert_eq!(
+        connections.switch_to(&SessionKey::new("dev-fra")),
+        Some("dev-fra")
+    );
+    assert_eq!(connections.switch_to(&core), None);
+}
+
+/// With no destination mapped, only Argo CD's entry has its labels read,
+/// and the legend says so; the workspace of one and a workspace that maps
+/// one don't.
+#[test]
+fn no_mapped_destination_says_where_labels_were_read() {
+    use freshkube_core::workspace::{Destination, Key, Sources, example};
+    let workspace = example();
+    let entries: Vec<String> = workspace.clusters.iter().map(|e| e.id.clone()).collect();
+    let sources = Sources::of(&workspace);
+    assert_eq!(
+        super::unmapped(&sources, &[], &entries).as_deref(),
+        Some("core-fra")
+    );
+    let mapped = [Destination::new(Key::Name("dev-fra".into()), "dev-fra")];
+    assert_eq!(super::unmapped(&sources, &mapped, &entries), None);
+    assert_eq!(super::unmapped(&sources, &[], &["core-fra".into()]), None);
+    assert_eq!(super::unmapped(&Sources::default(), &[], &entries), None);
+
+    let mut display = super::display::Display::default();
+    display.add_legend("first".into());
+    display.add_legend("second".into());
+    assert_eq!(display.legend_text.as_deref(), Some("first · second"));
 }

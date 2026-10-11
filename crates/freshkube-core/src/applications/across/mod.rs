@@ -4,22 +4,27 @@
 //! - Kargo from [`Part::Kargo`]'s entry;
 //! - Argo CD from [`Part::ArgoCd`]'s, in the namespaces
 //!   [`argo_namespaces`](super::read::argo_namespaces) finds there;
-//! - the `part-of` labelled workloads from each entry an Argo CD
-//!   destination maps to ([`Sources::workloads`]).
+//! - the `part-of` labelled workloads from Argo CD's entry, its own
+//!   cluster, and from each entry an Argo CD destination maps to
+//!   ([`Sources::workloads`]).
 //!
-//! An entry is read once for everything asked of it. Kargo's and Argo CD's
-//! entries are read at once, then the destinations' entries, at most
-//! [`MAX_AT_ONCE`] at a time. The open entry is read through the open
-//! connection; every other entry through a client made for this read alone,
-//! dropped when its read ends. The workspace of one reads the open
-//! connection for everything, as [`read_session`](super::read::read_session)
-//! does.
+//! An entry is read once for everything asked of it, at most [`MAX_AT_ONCE`]
+//! at a time, Kargo's and Argo CD's entries first. Each has
+//! [`ENTRY_DEADLINE`], connecting included, and the whole read [`BUDGET`]:
+//! an entry that hasn't answered by then is unreachable in its own name, and
+//! never keeps another from starting or from being shown. The open entry is
+//! read through the open connection; every other entry through a client
+//! made for this read alone, dropped when its read ends. The workspace of
+//! one reads the open connection for everything, as
+//! [`read_session`](super::read::read_session) does, without those
+//! deadlines.
 //!
 //! A part whose entry couldn't be reached, or that no entry holds, is a
 //! session [`Absent`] for it: its coverage says so in the entry's name, and
 //! nothing reads it as none found.
 
 use std::future::Future;
+use std::time::Duration;
 
 use futures::StreamExt;
 
@@ -29,9 +34,21 @@ use crate::delivery::entry::MAX_AT_ONCE;
 use crate::delivery::read::Reader;
 use crate::workspace::{Chosen, Entry, Part, Sources};
 
+/// How long one entry may take, connecting and reading everything asked of
+/// it.
+pub const ENTRY_DEADLINE: Duration = Duration::from_secs(20);
+/// How long the whole read may take: two rounds of entries, well inside the
+/// page's own deadline. What answered by then is kept.
+pub const BUDGET: Duration = Duration::from_secs(45);
+
 /// How a part no workspace entry holds is keyed: the workspace, which is
-/// where it is missing.
+/// where it is missing, and the part, so two missing parts stay two.
 pub const WORKSPACE: &str = "the workspace";
+
+/// The session of `part` when no workspace entry holds it.
+pub fn missing_key(part: Part) -> SessionKey {
+    SessionKey::new(format!("{WORKSPACE} ({})", part.label()))
+}
 
 /// The open connection, which the open entry and the workspace of one are
 /// read through.
@@ -55,6 +72,9 @@ struct Target {
     key: SessionKey,
     place: Place,
     asked: Asked,
+    /// Under [`ENTRY_DEADLINE`] and [`BUDGET`]: everything but the
+    /// workspace of one.
+    bounded: bool,
 }
 
 /// What every part's entry holds, read across the workspace, in this
@@ -72,41 +92,80 @@ where
     Fut: Future<Output = Result<C, String>>,
 {
     let targets = targets(sources, open.as_ref());
-    let read = |target: Target| {
+    let shapes: Vec<(SessionKey, Asked)> = targets
+        .iter()
+        .map(|target| (target.key.clone(), target.asked))
+        .collect();
+    let bounded = targets.iter().any(|target| target.bounded);
+    let read = |(number, target): (usize, Target)| {
         let (open, connect) = (&open, &connect);
         async move {
-            let Target { key, place, asked } = target;
+            let Target {
+                key,
+                place,
+                asked,
+                bounded,
+            } = target;
             let unreachable =
                 |why: String| SessionInputs::absent(key.clone(), asked, Absent::Unreachable(why));
-            match place {
-                Place::Missing(why) => {
-                    SessionInputs::absent(key, asked, Absent::NotInWorkspace(why))
+            let session = async {
+                match place {
+                    Place::Missing(why) => {
+                        SessionInputs::absent(key.clone(), asked, Absent::NotInWorkspace(why))
+                    }
+                    Place::Open => match open.as_ref().map(|open| &open.reader) {
+                        Some(Ok(reader)) => read_asked(*reader, key.clone(), asked).await,
+                        Some(Err(why)) => unreachable(why.clone()),
+                        None => unreachable("no cluster is open".into()),
+                    },
+                    // The client lives for this read alone.
+                    Place::Entry(entry) => match connect(entry).await {
+                        Ok(reader) => read_asked(&reader, key.clone(), asked).await,
+                        Err(why) => unreachable(why),
+                    },
                 }
-                Place::Open => match open.as_ref().map(|open| &open.reader) {
-                    Some(Ok(reader)) => read_asked(*reader, key, asked).await,
-                    Some(Err(why)) => unreachable(why.clone()),
-                    None => unreachable("no cluster is open".into()),
-                },
-                // The client lives for this read alone.
-                Place::Entry(entry) => match connect(entry).await {
-                    Ok(reader) => read_asked(&reader, key, asked).await,
-                    Err(why) => unreachable(why),
-                },
-            }
+            };
+            let session = match bounded {
+                false => session.await,
+                true => tokio::time::timeout(ENTRY_DEADLINE, session)
+                    .await
+                    .unwrap_or_else(|_| {
+                        unreachable(format!("no answer within {} s", ENTRY_DEADLINE.as_secs()))
+                    }),
+            };
+            (number, session)
         }
     };
-    let (first, rest): (Vec<Target>, Vec<Target>) = targets
-        .into_iter()
-        .partition(|target| target.asked.kargo || target.asked.argo_cd);
-    let mut sessions = futures::future::join_all(first.into_iter().map(read)).await;
-    sessions.extend(
-        futures::stream::iter(rest)
-            .map(read)
-            .buffered(MAX_AT_ONCE)
-            .collect::<Vec<_>>()
-            .await,
-    );
+    // One queue, in the parts' order, so Kargo's and Argo CD's entries
+    // start first; each answer is kept as it comes, whatever its place.
+    let mut answers = futures::stream::iter(targets.into_iter().enumerate())
+        .map(read)
+        .buffer_unordered(MAX_AT_ONCE);
+    let mut sessions: Vec<Option<SessionInputs>> = vec![None; shapes.len()];
+    let ends = tokio::time::Instant::now() + BUDGET;
+    loop {
+        let next = match bounded {
+            true => match tokio::time::timeout_at(ends, answers.next()).await {
+                Ok(next) => next,
+                Err(_) => break,
+            },
+            false => answers.next().await,
+        };
+        match next {
+            Some((number, session)) => sessions[number] = Some(session),
+            None => break,
+        }
+    }
     sessions
+        .into_iter()
+        .zip(shapes)
+        .map(|(session, (key, asked))| {
+            session.unwrap_or_else(|| {
+                let why = format!("not read within the read's {} s", BUDGET.as_secs());
+                SessionInputs::absent(key, asked, Absent::Unreachable(why))
+            })
+        })
+        .collect()
 }
 
 /// Each place to read and what to ask it, one per entry, in the parts'
@@ -116,8 +175,11 @@ fn targets<R>(sources: &Sources, open: Option<&Open<'_, R>>) -> Vec<Target> {
         kargo: true,
         ..Asked::NONE
     };
+    // Argo CD's own cluster is a destination of its own, which no mapping
+    // names: its labelled workloads are read with it.
     let argo_cd = Asked {
         argo_cd: true,
+        workloads: true,
         ..Asked::NONE
     };
     let workloads = Asked {
@@ -125,13 +187,19 @@ fn targets<R>(sources: &Sources, open: Option<&Open<'_, R>>) -> Vec<Target> {
         ..Asked::NONE
     };
     let asks = [
-        (sources.get(Part::Kargo), kargo),
-        (sources.get(Part::ArgoCd), argo_cd),
+        (sources.get(Part::Kargo), kargo, Some(Part::Kargo)),
+        (sources.get(Part::ArgoCd), argo_cd, Some(Part::ArgoCd)),
     ]
     .into_iter()
-    .chain(sources.workloads().iter().map(|chosen| (chosen, workloads)));
+    .chain(
+        sources
+            .workloads()
+            .iter()
+            .map(|chosen| (chosen, workloads, None)),
+    );
     let mut targets: Vec<Target> = Vec::new();
-    for (chosen, asked) in asks {
+    for (chosen, asked, part) in asks {
+        let bounded = !matches!(chosen, Chosen::Open);
         let (key, place) = match chosen {
             Chosen::Open => (
                 open.map_or_else(|| SessionKey::new(WORKSPACE), |open| open.key.clone()),
@@ -145,7 +213,7 @@ fn targets<R>(sources: &Sources, open: Option<&Open<'_, R>>) -> Vec<Target> {
                 },
             ),
             Chosen::NoEntry(_) => (
-                SessionKey::new(WORKSPACE),
+                part.map_or_else(|| SessionKey::new(WORKSPACE), missing_key),
                 Place::Missing(chosen.missing().unwrap_or_default()),
             ),
             Chosen::Gone(id) => (
@@ -153,12 +221,25 @@ fn targets<R>(sources: &Sources, open: Option<&Open<'_, R>>) -> Vec<Target> {
                 Place::Missing(chosen.missing().unwrap_or_default()),
             ),
         };
+        // A part no entry holds is missing for what it is alone.
+        let asked = match (&place, asked == argo_cd) {
+            (Place::Missing(_), true) => Asked {
+                workloads: false,
+                ..asked
+            },
+            _ => asked,
+        };
         let merges = !matches!(place, Place::Missing(_));
         match targets.iter_mut().find(|target| {
             merges && target.key == key && !matches!(target.place, Place::Missing(_))
         }) {
             Some(target) => target.asked = target.asked.and(asked),
-            None => targets.push(Target { key, place, asked }),
+            None => targets.push(Target {
+                key,
+                place,
+                asked,
+                bounded,
+            }),
         }
     }
     targets

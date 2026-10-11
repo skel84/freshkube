@@ -64,13 +64,17 @@ pub struct Claim {
     /// What wasn't checked that could still say otherwise: Argo CD's
     /// Applications in the part's cluster, for a labelled part there.
     pub unchecked: Option<Unchecked>,
+    /// Where that Argo CD is, when it isn't the part's cluster: read on its
+    /// own entry, for every entry it deploys to.
+    pub argo_on: Option<SessionKey>,
     /// Lower rules that also found the part, with what each would have
     /// called its application.
     pub lower: Vec<(Rule, String)>,
 }
 
 /// How Argo CD's Applications in a labelled part's cluster were read,
-/// when not in full: the cluster is the part's.
+/// when not in full: the cluster is the part's, or Argo CD's own entry
+/// ([`Claim::argo_on`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unchecked {
     /// Refused or failed: none were read.
@@ -81,6 +85,10 @@ pub enum Unchecked {
     NotFound(String),
     /// Stopped at the page cap after this many.
     Capped(usize),
+    /// Read in full on Argo CD's own entry, where no Application whose
+    /// destination the workspace maps to the part's cluster lists it; one
+    /// deploying there under an unmapped destination still may.
+    NotMatched,
 }
 
 /// A read in one cluster that may have left parts of this application out.
@@ -192,10 +200,14 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
             _ => None,
         })
         .collect();
-    let unchecked = app.notes.iter().find_map(|note| match note {
-        Note::ManagerUnknown { member } if member == at => Some(argo_unchecked(derived, at)),
-        _ => None,
-    });
+    let (unchecked, argo_on) = app
+        .notes
+        .iter()
+        .find_map(|note| match note {
+            Note::ManagerUnknown { member } if member == at => Some(argo_unchecked(derived, at)),
+            _ => None,
+        })
+        .map_or((None, None), |(unchecked, on)| (Some(unchecked), on));
     let claim = |confidence, app_side, member_side, why: &str| {
         let mut why = why.to_owned();
         if unchecked.is_some() {
@@ -211,6 +223,7 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
             member_side,
             why,
             unchecked: unchecked.clone(),
+            argo_on: argo_on.clone(),
             lower,
         }
     };
@@ -414,21 +427,35 @@ fn part_of(at: &MemberRef, name: &str) -> Side {
     .at(&at.session)
 }
 
-/// What wasn't checked in the part's cluster: Argo CD's Applications,
-/// none of them or only some.
-fn argo_unchecked(derived: &Derived, at: &MemberRef) -> Unchecked {
-    let state = derived
+/// What wasn't checked of Argo CD's Applications for the part's cluster,
+/// none of them or only some, and where Argo CD is when it was read on
+/// another entry.
+fn argo_unchecked(derived: &Derived, at: &MemberRef) -> (Unchecked, Option<SessionKey>) {
+    let argo = |c: &&super::Coverage| c.source == SourceKind::ArgoApplications;
+    let (state, on) = match derived
         .coverage
         .iter()
-        .find(|c| c.session == at.session && c.source == SourceKind::ArgoApplications);
-    match state.map(|c| &c.state) {
+        .filter(argo)
+        .find(|c| c.session == at.session)
+    {
+        Some(own) => (Some(&own.state), None),
+        // Argo CD wasn't asked of the part's cluster: it was read on its
+        // own entry, if anywhere.
+        None => match derived.coverage.iter().find(argo) {
+            Some(elsewhere) => (Some(&elsewhere.state), Some(elsewhere.session.clone())),
+            None => (None, None),
+        },
+    };
+    let unchecked = match state {
         Some(CoverageState::NamespaceOnly { namespaces, .. }) => {
             Unchecked::Namespaces(namespaces.clone())
         }
         Some(CoverageState::NamespaceNotFound(namespace)) => Unchecked::NotFound(namespace.clone()),
         Some(CoverageState::Capped(read)) => Unchecked::Capped(*read),
+        Some(CoverageState::Read) if on.is_some() => Unchecked::NotMatched,
         _ => Unchecked::NotRead,
-    }
+    };
+    (unchecked, on)
 }
 
 /// Why Argo CD's Applications in a cluster may not all have been read:

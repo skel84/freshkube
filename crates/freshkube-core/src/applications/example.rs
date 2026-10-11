@@ -98,12 +98,28 @@ fn argo_app(name: &str, destination: Value, metadata: Value, status: Value) -> C
     )
 }
 
+/// What an Application deployed to `cluster`, as its inventory lists it:
+/// the Deployments there in its own namespace that it manages.
+fn inventory(namespace: &str, cluster: &str) -> Value {
+    let resources: Vec<Value> = environment_items(cluster)
+        .iter()
+        .filter(|item| item.managed && item.namespace == namespace)
+        .map(|item| {
+            json!({
+                "group": "apps", "kind": "Deployment",
+                "namespace": item.namespace, "name": item.name,
+            })
+        })
+        .collect();
+    json!({"resources": resources})
+}
+
 fn pinned_to(project: &str, stage: &str, cluster: &str) -> CoreObject {
     argo_app(
         &format!("{project}-{stage}"),
         json!({"server": server(cluster), "namespace": project}),
         json!({"annotations": {AUTHORIZED_STAGE: format!("{project}:{stage}")}}),
-        json!({}),
+        inventory(project, cluster),
     )
 }
 
@@ -114,7 +130,7 @@ fn generated(set: &str, stage: &str, cluster: &str) -> CoreObject {
         json!({"ownerReferences": [{
             "kind": "ApplicationSet", "apiVersion": "argoproj.io/v1alpha1", "name": set,
         }]}),
-        json!({}),
+        inventory(set, cluster),
     )
 }
 
@@ -252,34 +268,62 @@ fn core() -> SessionInputs {
     }
 }
 
+/// One labelled Deployment an environment cluster holds.
+struct EnvironmentItem {
+    namespace: &'static str,
+    name: &'static str,
+    part_of: &'static str,
+    /// Deployed by its namespace's Application for the cluster's stage,
+    /// whose inventory lists it and whose name its instance label carries,
+    /// as Argo CD's label tracking writes it. One that isn't was put there
+    /// by hand, and only its label says whose it is.
+    managed: bool,
+}
+
+fn environment_items(cluster: &str) -> Vec<EnvironmentItem> {
+    let item = |namespace, name, part_of, managed| EnvironmentItem {
+        namespace,
+        name,
+        part_of,
+        managed,
+    };
+    match cluster {
+        "dev-fra" => vec![
+            item("checkout", "checkout-api", "checkout", true),
+            item("cart", "cart-api", "cart", true),
+            item("loyalty", "loyalty-api", "loyalty", false),
+        ],
+        // The Deployment the change page's prod-ams Stage reports, so
+        // Switch and open lands on it.
+        "prod-ams" => vec![item("checkout", "checkout-api", "checkout", true)],
+        "prod-lon" => vec![
+            item("checkout", "checkout-api", "checkout", true),
+            item("checkout", "checkout-worker", "checkout", true),
+            item("catalog", "catalog-api", "catalog", true),
+        ],
+        _ => Vec::new(),
+    }
+}
+
 /// The Deployments an environment cluster holds with a `part-of` label.
 /// The example Resources page lists them for the cluster's context, so a
 /// part opened there is the one read.
 pub fn environment_objects(cluster: &str) -> Vec<CoreObject> {
-    let items: &[(&str, &str, &str)] = match cluster {
-        "dev-fra" => &[
-            ("checkout", "checkout-api", "checkout"),
-            ("cart", "cart-api", "cart"),
-            ("loyalty", "loyalty-api", "loyalty"),
-        ],
-        // The Deployment the change page's prod-ams Stage reports, so
-        // Switch and open lands on it.
-        "prod-ams" => &[("checkout", "checkout-api", "checkout")],
-        "prod-lon" => &[
-            ("checkout", "checkout-api", "checkout"),
-            ("checkout", "checkout-worker", "checkout"),
-            ("catalog", "catalog-api", "catalog"),
-        ],
-        _ => &[],
-    };
-    items
+    let stage = ENVIRONMENTS
         .iter()
-        .map(|(namespace, name, part_of)| {
+        .find(|(_, at)| *at == cluster)
+        .map(|(stage, _)| *stage);
+    environment_items(cluster)
+        .into_iter()
+        .map(|item| {
+            let mut labels = json!({"app.kubernetes.io/part-of": item.part_of});
+            if let (true, Some(stage)) = (item.managed, stage) {
+                labels["app.kubernetes.io/instance"] = json!(format!("{}-{stage}", item.namespace));
+            }
             object(
                 DEPLOYMENTS,
                 json!({"metadata": {
-                    "namespace": namespace, "name": name,
-                    "labels": {"app.kubernetes.io/part-of": part_of},
+                    "namespace": item.namespace, "name": item.name, "labels": labels,
                 }}),
             )
         })
@@ -313,6 +357,9 @@ pub fn acme() -> Inputs {
     Inputs {
         sessions,
         stage_naming: None,
+        // The example workspace's rows, which map each server acme's
+        // Applications name but prod-lon's.
+        destinations: crate::workspace::example().destinations,
     }
 }
 

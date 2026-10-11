@@ -1237,6 +1237,7 @@ fn another_source_drops_the_change(cx: &mut TestAppContext) {
                     context: "other".into(),
                     access: KubeAccess::Example,
                 }),
+                None,
                 cx,
             )
         });

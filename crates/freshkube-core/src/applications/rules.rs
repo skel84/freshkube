@@ -389,12 +389,26 @@ pub(super) fn argo(
             );
             let place = destination(application);
             if matches!(place, Destination::Other { .. }) {
-                builder.note(
-                    &id,
-                    Note::UnmappedDestination {
-                        member: m.at.clone(),
-                    },
-                );
+                match mapped_entry(inputs, application) {
+                    None => builder.note(
+                        &id,
+                        Note::UnmappedDestination {
+                            member: m.at.clone(),
+                        },
+                    ),
+                    Some(entry) => {
+                        if let Some(why) = workloads_unread(inputs, &entry) {
+                            builder.note(
+                                &id,
+                                Note::DestinationUnread {
+                                    member: m.at.clone(),
+                                    session: entry,
+                                    why,
+                                },
+                            );
+                        }
+                    }
+                }
             }
             if let Some((project, unread, why)) = unread_project {
                 builder.note(
@@ -461,28 +475,57 @@ pub(super) fn kind_name(kind: WorkloadKind) -> &'static str {
     }
 }
 
+/// The Argo CD Application whose inventory lists the workload, and the
+/// session it was read in: in the workload's own cluster, one that deploys
+/// there; read on another entry, one whose destination the workspace maps
+/// to the workload's.
 fn managing_application<'a>(
+    inputs: &'a Inputs,
     session: &'a SessionInputs,
     workload: &super::LabelledWorkload,
-) -> Option<&'a ArgoApplication> {
-    session
-        .argo_applications
-        .read()?
+) -> Option<(&'a SessionKey, &'a ArgoApplication)> {
+    let lists = |application: &&ArgoApplication| {
+        application
+            .managed_object(
+                "apps",
+                kind_name(workload.kind),
+                Some(&workload.namespace),
+                &workload.name,
+            )
+            .is_some()
+    };
+    let by_name = |a: &(&SessionKey, &ArgoApplication), b: &(&SessionKey, &ArgoApplication)| {
+        (a.0, &a.1.namespace, &a.1.name).cmp(&(b.0, &b.1.namespace, &b.1.name))
+    };
+    if session.asked.argo_cd {
+        return session
+            .argo_applications
+            .read()?
+            .iter()
+            // An Application that deploys to another cluster manages
+            // nothing here, whatever its inventory names.
+            .filter(|application| destination(application) == Destination::Local)
+            .filter(lists)
+            .map(|application| (&session.key, application))
+            .min_by(by_name);
+    }
+    inputs
+        .sessions
         .iter()
-        // An Application that deploys to another cluster manages nothing
-        // here, whatever its inventory names.
-        .filter(|application| destination(application) == Destination::Local)
-        .filter(|application| {
-            application
-                .managed_object(
-                    "apps",
-                    kind_name(workload.kind),
-                    Some(&workload.namespace),
-                    &workload.name,
-                )
-                .is_some()
+        .filter(|argo| argo.asked.argo_cd)
+        .flat_map(|argo| {
+            argo.argo_applications
+                .read()
+                .into_iter()
+                .flatten()
+                .map(move |application| (&argo.key, application))
         })
-        .min_by(|a, b| (&a.namespace, &a.name).cmp(&(&b.namespace, &b.name)))
+        .filter(|(_, application)| {
+            matches!(destination(application), Destination::Other { .. })
+                && mapped_entry(inputs, application).as_ref() == Some(&session.key)
+        })
+        .filter(|(_, application)| lists(application))
+        .min_by(by_name)
 }
 
 /// Whether the workload names the Application whose inventory lists it:
@@ -522,23 +565,24 @@ pub(super) fn part_of(
             }
             let kind = MemberKind::Workload(workload.kind);
             let ns = Some(workload.namespace.as_str());
-            let managed = managing_application(session, workload).and_then(|application| {
-                home.get(&(
-                    session.key.clone(),
-                    application.namespace.clone(),
-                    application.name.clone(),
-                ))
-                .map(|id| (application, id))
-            });
-            let via = managed.map(|(application, _)| MemberRef {
-                session: session.key.clone(),
+            let managed =
+                managing_application(inputs, session, workload).and_then(|(argo, application)| {
+                    home.get(&(
+                        argo.clone(),
+                        application.namespace.clone(),
+                        application.name.clone(),
+                    ))
+                    .map(|id| (argo, application, id))
+                });
+            let via = managed.map(|(argo, application, _)| MemberRef {
+                session: argo.clone(),
                 kind: MemberKind::ArgoApplication,
                 namespace: Some(application.namespace.clone()),
                 name: application.name.clone(),
             });
             let same_name = same_name_target(builder, value);
             let (id, basis) = match (managed, same_name) {
-                (Some((application, id)), _) => {
+                (Some((_, application, id)), _) => {
                     let basis = if names_back(workload, application) {
                         Basis::Tracked
                     } else {
@@ -575,7 +619,7 @@ pub(super) fn part_of(
             }
             // A workload that stays with its label, in a cluster whose
             // Applications were not all read, may be managed by one.
-            if !matches!(basis, Basis::ManagedBy | Basis::Tracked) && !argo_whole(session) {
+            if !matches!(basis, Basis::ManagedBy | Basis::Tracked) && !argo_whole(session, inputs) {
                 builder.note(
                     &id,
                     Note::ManagerUnknown {
@@ -590,16 +634,72 @@ pub(super) fn part_of(
 
 /// Whether the cluster's Argo CD Applications are all known: read in every
 /// namespace they may be in, or not served at all (then there is nothing
-/// they could have held). Not asked, Argo CD is read on its own entry,
-/// whose Applications manage only what they deploy to it.
-fn argo_whole(session: &SessionInputs) -> bool {
+/// they could have held). A cluster not asked for Argo CD is never whole
+/// while Argo CD is served on its entry.
+fn argo_whole(session: &SessionInputs, inputs: &Inputs) -> bool {
     if !session.asked.argo_cd {
-        return true;
+        // Read on another entry, its Applications' inventories are matched
+        // to this cluster's workloads only through the destinations the
+        // workspace maps: one deploying here under a destination no row
+        // maps may manage a workload none listed. Only an Argo CD that
+        // isn't served there leaves nothing that could manage them.
+        let mut argo = inputs.sessions.iter().filter(|s| s.asked.argo_cd);
+        let first = argo.next();
+        return first.is_some()
+            && first
+                .into_iter()
+                .chain(argo)
+                .all(|s| matches!(s.argo_applications, Source::NotInstalled(_)));
     }
     match &session.argo_applications {
         Source::NotInstalled(_) => true,
         Source::Read(_) => session.argo_scope == ArgoScope::AllNamespaces,
         _ => false,
+    }
+}
+
+/// The workspace entry an Application deploys to, as the workspace's
+/// destinations map it: its server's row, else its name's, as Argo CD
+/// matches them. `None` when no row is it, or rows name several entries.
+fn mapped_entry(inputs: &Inputs, application: &ArgoApplication) -> Option<SessionKey> {
+    use crate::workspace::Key;
+    let wanted = match (
+        &application.destination_server,
+        &application.destination_name,
+    ) {
+        (Some(server), _) => Key::Server(server.clone()),
+        (None, Some(name)) => Key::Name(name.clone()),
+        (None, None) => return None,
+    };
+    let mut entries: Vec<&str> = inputs
+        .destinations
+        .iter()
+        .filter(|row| row.key().same(&wanted))
+        .map(|row| row.entry.trim())
+        .collect();
+    entries.sort();
+    entries.dedup();
+    match entries[..] {
+        [entry] if !entry.is_empty() => Some(SessionKey::new(entry)),
+        _ => None,
+    }
+}
+
+/// Why the labelled workloads on `entry` weren't all read, when they were
+/// asked of it.
+fn workloads_unread(inputs: &Inputs, entry: &SessionKey) -> Option<String> {
+    let session = inputs
+        .sessions
+        .iter()
+        .find(|s| &s.key == entry && s.asked.workloads)?;
+    match (&session.absent, &session.workloads) {
+        (Some(Absent::Unreachable(why)), _) => Some(format!("couldn't be reached: {why}")),
+        (Some(Absent::NotInWorkspace(why)), _) => Some(why.clone()),
+        (None, Source::Capped(_, truncation)) => Some(format!(
+            "the listing stopped at the page cap after {} items",
+            truncation.read
+        )),
+        (None, source) => source.why_not_read(),
     }
 }
 

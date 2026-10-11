@@ -419,9 +419,11 @@ fn side_words(side: &Side, labels: &Labels) -> String {
     format!("{}{at} ({fact})", side.text)
 }
 
-/// How Argo CD was read in the part's cluster, naming the cluster and
-/// the namespaces.
-fn unchecked_words(unchecked: &Unchecked, cluster: &str) -> String {
+/// How Argo CD was read for the part, naming the cluster it was read on
+/// (`argo`, the part's own `cluster` or Argo CD's entry) and the
+/// namespaces.
+fn unchecked_words(unchecked: &Unchecked, part: &str, argo: &str) -> String {
+    let cluster = argo;
     match unchecked {
         Unchecked::NotRead => format!("Argo CD not read on {cluster}"),
         Unchecked::Namespaces(namespaces) => {
@@ -435,6 +437,9 @@ fn unchecked_words(unchecked: &Unchecked, cluster: &str) -> String {
         }
         Unchecked::Capped(read) => {
             format!("Argo CD read in part on {cluster}: stopped after {read}")
+        }
+        Unchecked::NotMatched => {
+            format!("no Argo CD Application on {argo} mapped to {part} lists it")
         }
     }
 }
@@ -456,10 +461,13 @@ fn row(app: &Application, claim: &Claim, labels: &Labels, connections: &Connecti
     let found = found_by(app, member);
     let word = row_word(app, claim);
     // What wasn't checked, and where, says more than the label's fact.
-    let unchecked = claim
-        .unchecked
-        .as_ref()
-        .map(|unchecked| unchecked_words(unchecked, &cluster));
+    let unchecked = claim.unchecked.as_ref().map(|unchecked| {
+        let argo = claim
+            .argo_on
+            .as_ref()
+            .map_or_else(|| cluster.clone(), |on| labels.of(on));
+        unchecked_words(unchecked, &cluster, &argo)
+    });
     let read_from = unchecked.clone().unwrap_or_else(|| {
         claim
             .member_side

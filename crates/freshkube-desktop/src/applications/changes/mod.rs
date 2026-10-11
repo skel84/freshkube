@@ -25,8 +25,7 @@ use freshkube_core::delivery::change::live::{Mapping, Place};
 use freshkube_core::delivery::changes::{
     self as core_changes, Changes as Derived, Fold, live::Where,
 };
-use freshkube_core::delivery::entry::Deadline;
-use freshkube_core::delivery::read::ReadOnlyClient;
+use freshkube_core::delivery::entry;
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
@@ -215,6 +214,7 @@ impl ChangesPage {
         self.snapshot = Snapshot::default();
         self.read_at = None;
         self.read_namespace = None;
+        self.argocd_namespace = "argocd".into();
         self.selected = None;
         self.inspect = false;
         self.change = None;
@@ -367,10 +367,7 @@ impl ChangesPage {
                     "Reading the changes timed out".into(),
                     async move {
                         let client = access.client().await?;
-                        let reader = Deadline::new(
-                            ReadOnlyClient::new(client),
-                            core_changes::live::REQUEST_DEADLINE,
-                        );
+                        let reader = entry::reader(client);
                         let read = core_changes::live::read(
                             &reader,
                             &at,
