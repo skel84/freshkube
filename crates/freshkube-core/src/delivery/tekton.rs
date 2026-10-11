@@ -41,6 +41,8 @@ pub struct PipelineRun {
     pub event: Option<String>,
     /// The pull request number PaC recorded, a claim.
     pub pull_request: Option<u64>,
+    /// The commit's title, as Pipelines as Code records it.
+    pub title: Option<String>,
     pub branch: Option<String>,
     /// The run's parameters, where it may name its revision: a second
     /// witness to the SHA.
@@ -156,6 +158,16 @@ fn label(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// A commit's title from Pipelines as Code's `sha-title`, which holds the
+/// whole message, body included: its first line that isn't blank, trimmed.
+pub fn title_line(message: &str) -> Option<String> {
+    message
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
+}
+
 fn annotation(value: &Value, key: &str) -> Option<String> {
     value
         .pointer("/metadata/annotations")
@@ -194,6 +206,9 @@ pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
         pull_request: annotation(value, "pipelinesascode.tekton.dev/pull-request")
             .or_else(|| label(value, "pipelinesascode.tekton.dev/pull-request"))
             .and_then(|number| number.parse().ok()),
+        title: annotation(value, "pipelinesascode.tekton.dev/sha-title")
+            .as_deref()
+            .and_then(title_line),
         branch: label(value, "pipelinesascode.tekton.dev/branch"),
         params,
         succeeded: condition.and_then(|condition| text(condition, "/status")),

@@ -151,6 +151,9 @@ impl ApplicationsPage {
 
     /// The application whose page shows in the list's place.
     pub(crate) fn shown_application(&self, cx: &App) -> Option<SharedString> {
+        if self.changes_shown {
+            return None;
+        }
         let (page, _) = self.open.as_ref()?;
         Some(page.read(cx).id().as_str().to_owned().into())
     }
@@ -174,6 +177,7 @@ impl ApplicationsPage {
     /// for when it comes back. A filter or chip that hides it is cleared,
     /// so the list never comes back filtered against its selection.
     pub(crate) fn open_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.hide_changes(cx);
         let Some(key) = self
             .display
             .rows
@@ -208,7 +212,51 @@ impl ApplicationsPage {
     /// All applications: the list, with the application whose page showed
     /// selected.
     pub(crate) fn show_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.hide_changes(cx);
         self.close_application(window, cx);
+    }
+
+    /// Changes: the Changes list in the list's place, which reads while it
+    /// shows. A change it opened shows again; another press comes back to
+    /// the list.
+    pub(crate) fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.changes_shown {
+            self.changes
+                .update(cx, |changes, cx| changes.close_change(window, cx));
+            return;
+        }
+        self.changes_shown = true;
+        self.column_revision += 1;
+        let visible = self.visible;
+        self.changes.update(cx, |changes, cx| {
+            changes.set_visible(visible, cx);
+            changes.focus_shown(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Whether the Changes list shows in the list's place.
+    pub(crate) fn changes_shown(&self) -> bool {
+        self.changes_shown
+    }
+
+    /// The Changes list, shown or not.
+    #[cfg(test)]
+    pub(crate) fn changes_page(&self) -> &Entity<ChangesPage> {
+        &self.changes
+    }
+
+    /// The list or an application's page again: the Changes list stops
+    /// reading.
+    fn hide_changes(&mut self, cx: &mut Context<Self>) {
+        if !self.changes_shown {
+            return;
+        }
+        self.changes_shown = false;
+        self.column_revision += 1;
+        self.changes
+            .update(cx, |changes, cx| changes.set_visible(false, cx));
+        cx.notify();
     }
 }
 

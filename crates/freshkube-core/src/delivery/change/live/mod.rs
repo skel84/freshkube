@@ -170,9 +170,30 @@ pub async fn read<R: Reader>(
             ));
         }
     };
+    Ok(follow(reader, place, &freight, observed_at).await)
+}
+
+/// The change of `freight`, already read, through `reader` alone: what the
+/// Changes list follows for each Freight from the project's own listing.
+pub async fn follow<R: Reader>(
+    reader: &R,
+    place: &Place,
+    freight: &Freight,
+    observed_at: DateTime<Utc>,
+) -> Change {
+    let (clusters, plan) = (clusters(reader), plan(place, freight));
+    let (evidence, pages) = futures::join!(
+        collect(&clusters, &plan, observed_at),
+        pages::read(reader, &place.argocd_namespace),
+    );
+    derive(place, &evidence, freight, &pages)
+}
+
+/// What [`collect`] reads for `freight` at `place`.
+fn plan(place: &Place, freight: &Freight) -> Plan {
     let (contexts, cluster_names) = place.mapping.pairs();
-    let plan = Plan {
-        sha: commit_of(&freight).unwrap_or_default().to_owned(),
+    Plan {
+        sha: commit_of(freight).unwrap_or_default().to_owned(),
         followed: Some(freight.name.clone()),
         kargo_project: place.project.clone(),
         argocd_namespace: place.argocd_namespace.clone(),
@@ -191,17 +212,16 @@ pub async fn read<R: Reader>(
             },
             false => MapHint::Flags,
         },
-    };
-    let clusters = Clusters {
+    }
+}
+
+/// `reader` in every role, without GitHub.
+fn clusters<R: Reader>(reader: &R) -> Clusters<'_, R, R, R, R, NoGitHub> {
+    Clusters {
         kargo: reader,
         argocd: reader,
         tekton: reader,
         environment: reader,
         github: &NoGitHub,
-    };
-    let (evidence, pages) = futures::join!(
-        collect(&clusters, &plan, observed_at),
-        pages::read(reader, &place.argocd_namespace),
-    );
-    Ok(derive(place, &evidence, &freight, &pages))
+    }
 }

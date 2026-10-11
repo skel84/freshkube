@@ -57,6 +57,8 @@ gpui_kit::assets::icon_assets!(
         // The resource table.
         SquareCheck,
         Flame,
+        // The Applications column's Changes.
+        GitCommitHorizontal,
     ]
 );
 

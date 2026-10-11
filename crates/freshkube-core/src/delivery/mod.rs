@@ -9,6 +9,7 @@
 pub mod address;
 pub mod argocd;
 pub mod change;
+pub mod changes;
 pub mod collect;
 pub mod deployments;
 pub mod digest;
@@ -20,6 +21,7 @@ pub mod observation;
 pub mod pods;
 pub mod read;
 pub mod rollouts;
+pub mod shared;
 pub mod source;
 pub mod tekton;
 mod versions;

@@ -2,6 +2,9 @@
 //! field may be missing, and both the older single `currentFreight` and the
 //! newer `freightHistory` of a Stage are understood.
 
+use std::collections::BTreeSet;
+
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::digest::{Digest, text};
@@ -25,6 +28,16 @@ pub const IMAGE_REVISION: &str = "org.opencontainers.image.revision";
 pub struct FreightCommit {
     pub repo_url: String,
     pub id: String,
+    /// The commit's message, as Kargo copied it, when it did.
+    pub message: Option<String>,
+}
+
+impl FreightCommit {
+    /// The message's first line, when there is one.
+    pub fn subject(&self) -> Option<&str> {
+        let line = self.message.as_deref()?.lines().next()?.trim();
+        (!line.is_empty()).then_some(line)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +58,8 @@ pub struct Freight {
     pub name: String,
     /// `metadata.uid` and `metadata.resourceVersion`.
     pub meta: Meta,
+    /// `metadata.creationTimestamp`: when the Warehouse made it.
+    pub created: Option<DateTime<Utc>>,
     pub alias: Option<String>,
     pub warehouse: Option<String>,
     pub commits: Vec<FreightCommit>,
@@ -248,6 +263,8 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
         meta: Meta::parse(value),
+        created: text(value, "/metadata/creationTimestamp")
+            .and_then(|at| at.parse::<DateTime<Utc>>().ok()),
         alias: text(value, "/metadata/labels/kargo.akuity.io~1alias")
             .or_else(|| text(value, "/alias")),
         warehouse: text(body, "/origin/name").or_else(|| text(value, "/origin/name")),
@@ -256,6 +273,7 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
                 Some(FreightCommit {
                     repo_url: text(commit, "/repoURL")?,
                     id: text(commit, "/id")?,
+                    message: text(commit, "/message"),
                 })
             })
             .collect(),
@@ -610,6 +628,43 @@ impl Warehouse {
             &self.meta,
         )
     }
+}
+
+/// Stages in promotion order: those that take Freight from no other Stage
+/// first, then each Stage after every Stage it takes Freight from, by name
+/// within a step. A Stage in a loop, or after one not given, comes last,
+/// by name.
+pub fn promotion_order<'a>(stages: impl IntoIterator<Item = &'a Stage>) -> Vec<&'a Stage> {
+    let mut sorted: Vec<&Stage> = stages.into_iter().collect();
+    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut ordered: Vec<&Stage> = Vec::new();
+    let mut placed: BTreeSet<&str> = BTreeSet::new();
+    loop {
+        let level: Vec<&Stage> = sorted
+            .iter()
+            .filter(|stage| !placed.contains(stage.name.as_str()))
+            .filter(|stage| {
+                stage
+                    .upstream
+                    .iter()
+                    .all(|upstream| placed.contains(upstream.as_str()))
+            })
+            .copied()
+            .collect();
+        if level.is_empty() {
+            break;
+        }
+        for stage in level {
+            placed.insert(&stage.name);
+            ordered.push(stage);
+        }
+    }
+    ordered.extend(
+        sorted
+            .into_iter()
+            .filter(|stage| !placed.contains(stage.name.as_str())),
+    );
+    ordered
 }
 
 /// Everything Kargo knows about one project's delivery.

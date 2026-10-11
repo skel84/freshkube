@@ -1939,3 +1939,28 @@ fn every_parser_keeps_uid_and_resource_version() {
     let bare = serde_json::json!({"metadata": {"namespace": "acme", "name": "example"}});
     assert_eq!(parse_application(&bare).unwrap().meta, Meta::default());
 }
+
+/// Pipelines as Code's `sha-title` holds the whole commit message; the
+/// title is its first line that isn't blank, so a body never reaches a
+/// one-line cell.
+#[test]
+fn a_run_titles_its_commit_by_the_first_line_of_sha_title() {
+    let run = |title: &str| {
+        super::tekton::parse_pipeline_run(&serde_json::json!({
+            "metadata": {
+                "namespace": "acme-ci",
+                "name": "storefront-push-x",
+                "annotations": {"pipelinesascode.tekton.dev/sha-title": title},
+            },
+        }))
+        .unwrap()
+        .title
+    };
+    assert_eq!(
+        run("\n  Keep the basket when signing in  \r\n\nA guest's basket was dropped.\n")
+            .as_deref(),
+        Some("Keep the basket when signing in")
+    );
+    assert_eq!(run("One line").as_deref(), Some("One line"));
+    assert_eq!(run(" \n\t\n"), None, "nothing but blank lines is no title");
+}

@@ -34,6 +34,11 @@ pub const POD_HASH: &str = "5d8f7c9b6";
 /// The checkout-api Deployment each environment runs.
 pub const DEPLOYMENT: &str = "checkout-api";
 const COMMIT: &str = "a1f3c9e";
+/// The pull request that made the change, and its title.
+pub const PULL_REQUEST: u64 = 418;
+pub const TITLE: &str = "Retry idempotency keys";
+/// The Freight prod-ams runs, from before this change.
+pub const PREVIOUS: &str = "brave-lynx";
 /// The pull request's head commit, which its pull_request run built.
 const HEAD: &str = "7d2e04b";
 const VERSION: &str = "v1alpha1";
@@ -237,6 +242,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
         steps,
         verification,
         link: None,
+        reach: Reach::Linked(Confidence::Confirmed),
         object: stage_object(name),
     };
     vec![
@@ -283,7 +289,8 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
             ],
         ),
         Stage {
-            running: Some("brave-lynx".into()),
+            running: Some(PREVIOUS.into()),
+            reach: Reach::NotReached,
             ..stage(
                 "prod-ams",
                 "prod-ams",
@@ -961,6 +968,11 @@ pub fn change(now: DateTime<Utc>) -> Change {
         kargo_cluster: CORE.into(),
         observed_at: now,
         page: Ok(kargo_page()),
+        origin: Origin {
+            pull_request: Some(PULL_REQUEST),
+            commit: Some(COMMIT.into()),
+            title: Some(TITLE.into()),
+        },
         groups,
         stages,
         hops,

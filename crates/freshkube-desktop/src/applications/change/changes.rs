@@ -102,7 +102,7 @@ impl Changes {
             Self::None => None,
             Self::Example(now) => Some(Fetch::Example {
                 project: project.to_owned(),
-                stage: stage.to_owned(),
+                freight,
                 now: *now,
                 delay,
             }),

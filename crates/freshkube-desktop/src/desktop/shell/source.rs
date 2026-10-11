@@ -28,6 +28,8 @@ pub(crate) enum ColumnKey {
     Dashboards,
     /// A namespace for Pods under Workloads, or every one.
     Namespace(Option<SharedString>),
+    /// The Changes list.
+    Changes,
     /// The Applications list.
     AllApplications,
     /// An application's page, by its id.
@@ -462,7 +464,13 @@ impl Pilot {
         let page = self.applications.read(cx);
         let column = page.column();
         let shown = page.shown_application(cx);
-        let listing = self.page == Page::Applications && shown.is_none();
+        let here = self.page == Page::Applications;
+        let listing = here && shown.is_none() && !page.changes_shown();
+        // Changes leads; the workspace's delivery sources will sit under it.
+        let changes = Row::new(ColumnKey::Changes, "nav-changes", "Changes")
+            .icon(IconName::GitCommitHorizontal)
+            .tooltip("Each Freight, and how sure it is that each Stage's pods run it")
+            .current(here && page.changes_shown());
         let mut all = Row::new(
             ColumnKey::AllApplications,
             "nav-all-applications",
@@ -473,7 +481,7 @@ impl Pilot {
         if column.note.is_none() {
             all = all.count(column.total.to_string(), None);
         }
-        let mut lines: Vec<Line<ColumnKey>> = vec![all.into()];
+        let mut lines: Vec<Line<ColumnKey>> = vec![changes.into(), all.into()];
         if let Some(note) = &column.note {
             let mut line = Note::new("nav-applications-status", note.text.clone());
             if let Some(tooltip) = &note.tooltip {
@@ -695,6 +703,11 @@ impl SourceListHost for Pilot {
             ColumnKey::Dashboards => self.navigate_from_keyboard(Page::Monitoring, window, cx),
             ColumnKey::Namespace(namespace) => {
                 self.choose_sidebar_namespace(namespace.map(String::from), window, cx)
+            }
+            ColumnKey::Changes => {
+                self.applications
+                    .update(cx, |page, cx| page.show_changes(window, cx));
+                self.navigate_from_keyboard(Page::Applications, window, cx);
             }
             ColumnKey::AllApplications => {
                 self.applications

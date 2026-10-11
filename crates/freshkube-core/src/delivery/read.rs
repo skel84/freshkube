@@ -35,7 +35,7 @@ pub const MAX_PAGES: u32 = 5;
 pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 /// One kind on one API version, as a REST path is built from it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Resource {
     pub group: String,
     pub version: String,
@@ -76,7 +76,7 @@ impl Resource {
 /// What a listing is limited to. There is no unscoped variant for a kind
 /// that has many objects: [`Scope::Cluster`] is for the small cluster-scoped
 /// kinds only.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Scope {
     /// Every object of a small cluster-scoped kind, such as Kargo's
     /// Projects. Still read a page at a time and cut off at [`MAX_PAGES`], so
@@ -93,7 +93,7 @@ pub enum Scope {
 }
 
 /// A bounded page-by-page read of one scoped collection.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ListRequest {
     pub resource: Resource,
     pub scope: Scope,

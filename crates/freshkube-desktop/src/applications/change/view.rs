@@ -16,7 +16,9 @@ impl ChangePage {
         let this = cx.entity().downgrade();
         let header = PageHeader::new(PREFIX, self.change.freight.clone()).parent(
             "back",
-            self.change.project.clone(),
+            self.parent
+                .clone()
+                .unwrap_or_else(|| self.change.project.clone().into()),
             move |_, _, cx| {
                 _ = this.update(cx, |_, cx| cx.emit(ChangeEvent::Back));
             },

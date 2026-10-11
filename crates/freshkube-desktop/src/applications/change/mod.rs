@@ -238,6 +238,8 @@ pub(crate) struct ChangePage {
     selected: Option<SharedString>,
     /// What the Inspector says of the selection.
     detail: Option<detail::Detail>,
+    /// What the breadcrumb goes back to, when it isn't the project's page.
+    parent: Option<SharedString>,
 }
 
 impl EventEmitter<ChangeEvent> for ChangePage {}
@@ -247,7 +249,7 @@ impl ChangePage {
     /// when it is `visible`, else once it shows.
     pub(super) fn new(
         fetch: Fetch,
-        stage: &str,
+        stage: Option<&str>,
         connections: Connections,
         visible: bool,
         window: &Window,
@@ -268,7 +270,7 @@ impl ChangePage {
             read_at: None,
             visible,
             window: window.window_handle(),
-            stage: Some(stage.to_owned()),
+            stage: stage.map(str::to_owned),
             stale: None,
             loading,
             loading_motion,
@@ -286,6 +288,7 @@ impl ChangePage {
             page_scroll: ScrollHandle::new(),
             selected: None,
             detail: None,
+            parent: None,
         };
         if visible {
             page.read(Some(window), cx);
@@ -424,6 +427,12 @@ impl ChangePage {
             }
             self.lines.extend(rows.into_iter().map(Entry::Row));
         }
+    }
+
+    /// The breadcrumb names `parent`, which it goes back to, in place of
+    /// the project's page.
+    pub(in crate::applications) fn set_parent(&mut self, parent: impl Into<SharedString>) {
+        self.parent = Some(parent.into());
     }
 
     /// Puts the keyboard on the table, where its keys are bound.

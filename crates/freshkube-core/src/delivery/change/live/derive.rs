@@ -16,7 +16,7 @@ use crate::delivery::deployments::current_set;
 use crate::delivery::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, freight_links};
 use crate::delivery::kargo::{self, Freight, Stage as KargoStage};
 use crate::delivery::observation::{ObjectRef, Observation};
-use crate::delivery::source::cap_note;
+use crate::delivery::source::{Source, cap_note};
 use crate::indicators::HealthIndicator::{self, *};
 
 /// The change `place` names, from what was read and the join's links.
@@ -87,6 +87,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
         let runs = stage_run(&links, &stage_id);
         let holds = stage.current_freight.contains(&freight.name);
         let cluster = deploys_to(place, evidence, holds, &runs);
+        let reach = reach(place, evidence, holds, &runs);
         groups.push(Group {
             phase: Phase::Stage(ix),
             detail: cluster.words(),
@@ -131,6 +132,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
             steps: Vec::new(),
             verification: gates.verification,
             link: runs.first().map(|link| link_detail(link)),
+            reach,
             object: object(
                 place,
                 &ObjectRef::new(
@@ -153,6 +155,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
         kargo_cluster: place.label.clone(),
         observed_at: evidence.observed_at,
         page: links::freight_page(pages, freight),
+        origin: origin(evidence, freight),
         groups,
         stages: model,
         hops,
@@ -167,43 +170,142 @@ fn reachable<'a>(freight: &Freight, evidence: &'a Evidence) -> Vec<&'a KargoStag
     let Some(stages) = evidence.kargo.stages.read() else {
         return Vec::new();
     };
-    let mut ordered: Vec<&KargoStage> = Vec::new();
-    let mut placed: BTreeSet<&str> = BTreeSet::new();
-    let fed = |stage: &KargoStage| {
+    let fed = |stage: &&KargoStage| {
         stage.warehouses.is_empty()
             || freight
                 .warehouse
                 .as_ref()
                 .is_none_or(|warehouse| stage.warehouses.contains(warehouse))
     };
-    let mut sorted: Vec<&KargoStage> = stages.iter().filter(|stage| fed(stage)).collect();
-    sorted.sort_by(|a, b| a.name.cmp(&b.name));
-    loop {
-        let level: Vec<&KargoStage> = sorted
-            .iter()
-            .filter(|stage| !placed.contains(stage.name.as_str()))
-            .filter(|stage| {
-                stage
-                    .upstream
-                    .iter()
-                    .all(|upstream| placed.contains(upstream.as_str()))
-            })
-            .copied()
-            .collect();
-        if level.is_empty() {
-            break;
-        }
-        for stage in level {
-            placed.insert(&stage.name);
-            ordered.push(stage);
+    kargo::promotion_order(stages.iter().filter(fed))
+}
+
+/// What the change is: the pull request a build of its commit names, its
+/// commit, and the commit's title from that build, else from the Freight.
+fn origin(evidence: &Evidence, freight: &Freight) -> Origin {
+    let commit = super::commit_of(freight).map(str::to_owned);
+    let runs = || {
+        evidence
+            .builds
+            .read()
+            .into_iter()
+            .flatten()
+            .map(|build| &build.run)
+            .filter(|run| commit.is_some() && run.sha == commit)
+    };
+    Origin {
+        pull_request: runs().find_map(|run| run.pull_request),
+        title: runs().find_map(|run| run.title.clone()).or_else(|| {
+            freight
+                .commits
+                .first()
+                .and_then(|commit| commit.subject())
+                .map(str::to_owned)
+        }),
+        commit,
+    }
+}
+
+/// How sure a link is, to find the weakest.
+fn sureness(confidence: Confidence) -> u8 {
+    match confidence {
+        Confidence::Unknown => 0,
+        Confidence::Claimed => 1,
+        Confidence::Confirmed => 2,
+    }
+}
+
+/// How sure it is that a Stage's pods run the Freight: the weakest link of
+/// its run, and Unknown when no link reaches its pods. An Application on
+/// another workspace entry, whose workloads Argo CD reports, stands for its
+/// links into that cluster, as the page shows it: Claimed at most, since
+/// nothing there was read. Unknown because a source the run needed was
+/// refused is Refused, naming what.
+pub(super) fn reach(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) -> Reach {
+    if !holds {
+        return Reach::NotReached;
+    }
+    let reported = |link: &&Link| {
+        link.from == Joined::Application
+            && elsewhere(place, evidence, &link.subject).is_some_and(|(app, _)| reports(app))
+    };
+    let kept: Vec<&Link> = run.iter().copied().filter(|link| !reported(link)).collect();
+    let away = kept.len() < run.len();
+    let pods = kept.iter().any(|link| link.to == Joined::Pod);
+    // An Application read here still needs its pods, beside one elsewhere.
+    let local = kept.iter().any(|link| {
+        (link.from == Joined::Application || link.to == Joined::Application)
+            && elsewhere(place, evidence, &link.subject).is_none()
+    });
+    let weakest = kept
+        .iter()
+        .map(|link| link.confidence)
+        .min_by_key(|confidence| sureness(*confidence));
+    let confidence = match weakest {
+        Some(weakest) if away && (pods || !local) => [weakest, Confidence::Claimed]
+            .into_iter()
+            .min_by_key(|confidence| sureness(*confidence))
+            .unwrap_or(Confidence::Unknown),
+        Some(weakest) if pods => weakest,
+        _ => Confidence::Unknown,
+    };
+    if confidence == Confidence::Unknown {
+        let kinds = refused(evidence, &kept);
+        if !kinds.is_empty() {
+            return Reach::Refused(kinds.join(", "));
         }
     }
-    ordered.extend(
-        sorted
-            .into_iter()
-            .filter(|stage| !placed.contains(stage.name.as_str())),
-    );
-    ordered
+    Reach::Linked(confidence)
+}
+
+/// Whether Argo CD reports a workload for the Application, which the page
+/// lists in place of its links ([`reported_hops`]).
+fn reports(app: &Application) -> bool {
+    app.managed.iter().any(|object| {
+        WORKLOADS
+            .iter()
+            .any(|(group, kind)| object.group == *group && object.kind == *kind)
+    })
+}
+
+/// The kinds a Stage's run needed that the cluster refused: Argo CD's
+/// Applications, which every run goes through, and the workloads and pods
+/// its own links reach.
+fn refused(evidence: &Evidence, run: &[&Link]) -> Vec<&'static str> {
+    fn no<T>(source: &Source<T>) -> bool {
+        matches!(source, Source::Refused(_))
+    }
+    let pods = |subject: &str| {
+        let rollout = evidence
+            .pods
+            .get(subject)
+            .is_some_and(|pods| no(&pods.pods));
+        let deployment = evidence
+            .deployment_pods
+            .get(subject)
+            .is_some_and(|pods| no(&pods.pods));
+        let namespace = evidence.namespace_pods.get(subject).is_some_and(no);
+        rollout || deployment || namespace
+    };
+    let touches = |kind: Joined| run.iter().any(|link| link.from == kind || link.to == kind);
+    let checks = [
+        ("Argo CD Applications", no(&evidence.applications)),
+        (
+            "Rollouts",
+            touches(Joined::Rollout) && (no(&evidence.rollouts) || no(&evidence.replica_sets)),
+        ),
+        (
+            "Deployments",
+            touches(Joined::Deployment)
+                && (no(&evidence.deployments) || no(&evidence.deployment_sets)),
+        ),
+        ("Pods", run.iter().any(|link| pods(&link.subject))),
+    ];
+    checks
+        .into_iter()
+        .filter(|(_, refused)| *refused)
+        .map(|(kind, _)| kind)
+        .collect()
 }
 
 /// A Stage's Freight → Stage link and every link after it, up to the next
