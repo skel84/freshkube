@@ -411,9 +411,10 @@ impl ApplicationsPage {
         if same {
             return;
         }
+        // The list has the new connections before it reads the new source.
+        self.update_changes(cx);
         self.changes
             .update(cx, |changes, cx| changes.set_source(source, cx));
-        self.update_changes(cx);
         self.stop();
         self.snapshot = Snapshot::default();
         self.read_at = None;
