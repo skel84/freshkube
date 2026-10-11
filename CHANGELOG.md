@@ -4,6 +4,56 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.14.0 (2026-10-11)
+
+### Other changes
+
+- **Applications across the workspace:** Kargo, Argo CD and each destination's
+  labelled workloads are read from their own workspace entries, so the same
+  applications show whichever cluster is open, and an entry that can't be
+  reached, refuses, doesn't finish in time or isn't in the workspace is named
+  in the page's banner. Each entry is read under its own deadline, Argo CD's
+  inventories are matched to the workloads on the entries its destinations
+  map to, and an application whose destination wasn't read is marked may be
+  incomplete.
+- **The change page and the Changes list across the workspace:** a change is
+  followed from Kargo's and the builds' entry through Argo CD's to the entries
+  its Stages deploy to, each read under its own deadline, so the trail shows
+  whichever cluster is open. Pods on a destination entry that was read can be
+  Confirmed; an entry that can't be reached, refuses or isn't served is named
+  on its hop and in a May be missing banner, never shown as nothing found.
+- **Changes:** the Applications column leads with Changes, a list of every Kargo
+  Freight with its pull request or commit, its title and age, and for each Stage
+  whether its running pods are Confirmed, Claimed, Unknown or Refused to run it,
+  with why. Changes that need a look come first, the selection's trail shows in
+  the Inspector, and Enter opens the change page.
+- **Delivery sources:** Settings › Workspace has a Delivery sources list that says
+  which entry Kargo, the builds and Argo CD are read from (by role, or pinned under
+  `sources` in `workspace.json`) and which entries the Argo CD destinations' workloads
+  are on. Its Check sources reads one item of each, saying whether it is readable,
+  refused, not served, unreachable or not in the workspace. Until Check is pressed it
+  reads nothing.
+- **README:** "Following a change" now covers both ways in (the Changes list and
+  Follow on a Stage), a workspace of several clusters with its roles, Delivery
+  sources, destination mappings and a `workspace.json` example, and what each
+  link state and each read's deadline mean across clusters.
+- **Applications deadlines:** a destination that the whole read's deadline
+  cuts short now names that 45 s deadline, and a Kargo with no projects
+  asks for nothing more. The example Argo CD is now found where its own
+  labelled workloads run, as on a live cluster.
+- **Changes:** a Stage's reason names its cluster by its context, never by the
+  app's connection key, and beside the Inspector a change's title keeps the
+  Change cell, with its application after it, dimmer, cut first.
+- **The change page's Stage rows agree with the Changes list:** a Stage's
+  group row says when its pods aren't confirmed to run the change, such as
+  "pods on dev-fra unknown" when its destination couldn't be read, and takes
+  the weaker glyph, so it no longer shows verified alone, and it doesn't
+  fold as fine.
+- **README:** the Features table lists Applications, the change page, the workspace,
+  Monitoring, Observability, the log dock and port forwards; a new "Following a
+  change" section says how to use the change page and why its buttons grey out;
+  and the navigation paragraphs describe the header's Clusters list and the rail.
+
 ## 0.13.0 (2026-10-09)
 
 ### Coroot
