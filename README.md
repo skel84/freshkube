@@ -36,12 +36,19 @@ This puts `Freshkube.app` in `/Applications` and links the `freshkube` command; 
 | **Security** | PKI certificate expiry and encryption status |
 | **Lifecycle** | Talos and Kubernetes versions, configuration drift and alerts |
 | **Operations** | Cordon, uncordon, drain, reboot and shutdown of one node or a rolling selection, with a preflight preview, etcd safety checks, confirmation and an audit log |
+| **Applications** | Applications found from Kargo Projects, Argo CD Applications and ApplicationSets, and the `app.kubernetes.io/part-of` label, across the workspace's clusters; each application's page lists its parts and how sure each link is |
+| **Change page** | One Kargo Freight followed from its pull request through its builds, each Stage's gates and Argo CD to the pods that run it ([Following a change](#following-a-change)) |
+| **Workspace** | Your clusters, listed in Settings › Workspace and opened from the header's Clusters list, with Argo CD destinations mapped to them |
+| **Monitoring** | Grafana dashboards drawn natively from the cluster's Prometheus, reached through the Kubernetes API; built-in dashboards plus a folder of your own Grafana JSON |
+| **Observability** | A Coroot server you connect: applications, service map, incidents, traces, profiles, logs and Deployments |
+| **Log dock** | Tabs under every page for pod and workload logs and pod shells; a log tab keeps reading while it is open, with levels, search, follow, copy and download |
+| **Port forwards** | Started from Ports on a pod, Service or workload; each runs until stopped, listed in the status bar |
 
 Maintenance mode (`--insecure --endpoint <node>`) opens a bootstrap wizard for nodes that have no configuration yet.
 
-Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. The sidebar lists the kubeconfig's contexts and connects to its current one, or to the one `--kube-context` names. It starts on Overview; Control plane is replaced by an Add a talosconfig link. Talos views reached another way ask for a talosconfig.
+Without a talosconfig, or with `--kubernetes-only`, Freshkube browses Kubernetes alone. It connects to the context `--kube-context` names, else the kubeconfig's current one. It starts on Overview; Control plane is replaced by an Add a talosconfig link. Talos views reached another way ask for a talosconfig.
 
-The context switcher sits above Cluster, Resources and Control plane navigation. Node inspection views and logs are tabs in Nodes; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
+The header holds the context switcher, whose Clusters list opens a cluster of your workspace, with the location, Search everything, Refresh and Settings. An icon rail on the left picks the area (Overview, Nodes, Namespaces, Events, Applications, Monitoring, Observability, the Kubernetes groups, Custom Resources and Control plane), and a column beside it lists that area's pages. Node inspection views and logs are tabs in Nodes; Settings holds the talosconfig and kubeconfig choice, auto-refresh and light or dark appearance. Unavailable data is shown as unknown, never as failed, and failed refreshes keep the previous data marked stale.
 
 Pod Overview links to its node, controllers and matching Services, with container logs, previous instances and recent warnings. Owner links work on other kinds too; the kubelet’s node detail links to its Pods tab.
 
@@ -114,6 +121,27 @@ freshkube --insecure --endpoint 192.168.1.100
 # Debug logging (written to <temp dir>/freshkube.log, or --log-file)
 freshkube --debug
 ```
+
+### Following a change
+
+The change page follows one Kargo Freight from its pull request to the pods that run it. It only reads: it never approves, promotes or syncs.
+
+1. Open the cluster that runs Kargo and Argo CD, for example `freshkube --kubernetes-only --kubeconfig /path/to/kubeconfig --kube-context admin@lab`.
+2. Choose **Applications** on the rail, then a Kargo application.
+3. Select a Stage and choose **Follow ⟨Freight⟩** (or press F). The page lists the hops in travel order: Build, Freight, then each Stage with its gates, the Argo CD Application, the workload and its pods. Each link says how sure it is: Confirmed, Claimed or Unknown.
+
+Some buttons are greyed out, with the reason in their tooltip:
+
+- **Open in Argo CD** and **Open in Kargo** need the address the cluster records: `url` in the `argocd-cm` ConfigMap, and `ADMIN_ACCOUNT_TOKEN_ISSUER` in the `kargo-api` ConfigMap in the `kargo` namespace.
+- A build's pull request, commit and run links need the Pipelines as Code annotations on its PipelineRun.
+- **Compare in Observability** needs Coroot connected, with a Coroot cluster linked to the open one, and a Deployment whose pods are confirmed to run the Freight.
+
+A Stage whose Argo CD Application deploys to Argo CD's own cluster (`in-cluster`) needs no setup. For a Stage that deploys to another cluster, tell Freshkube which cluster that is. It never guesses from your kubeconfig:
+
+1. In **Settings › Workspace**, add an entry for each cluster.
+2. Under **Argo CD destinations**, map each destination, by its server URL or its cluster name, to one of those entries.
+
+An unmapped destination stays Unknown and says so. A Stage on another entry lists the workloads Argo CD reports there, and **Switch and open** asks before it switches the window to that cluster and opens the object in Resources.
 
 ### Keyboard
 
