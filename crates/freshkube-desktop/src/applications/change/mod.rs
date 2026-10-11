@@ -2,8 +2,8 @@
 //! its pull request to the pods that run it, as a trail page. Its rows are
 //! hops in the order the change travels, grouped by phase and by Stage,
 //! never problems first; the chips count the hops by state and show only
-//! theirs, and a Stage whose every row is fine folds while anything else
-//! needs a look. Link confidence has its own column, beside the hop's
+//! theirs, and a Stage whose every row is fine, and whose pods are
+//! confirmed to run it, folds while anything else needs a look. Link confidence has its own column, beside the hop's
 //! state. The selection's Inspector shows the hop, or for a gate row its
 //! Stage with the three gates apart.
 //!
@@ -27,7 +27,9 @@ use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
 use freshkube_core::applications::SessionKey;
-use freshkube_core::delivery::change::{Change, Destination, Object, Phase, Shows, Target};
+use freshkube_core::delivery::change::{
+    Change, Destination, Object, Phase, Reach, Shows, Stage, Target,
+};
 use freshkube_core::delivery::join::Confidence;
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
@@ -133,6 +135,35 @@ fn rank(tone: Tone) -> u8 {
         Tone::Unknown => 2,
         _ => 1,
     }
+}
+
+/// A Stage's group row, after where it deploys and its words: how sure it
+/// is that its pods run the change, when that is less than Confirmed, as
+/// the Changes list's cell says, and a glyph the weaker of its rows' and
+/// that. A Stage that runs other Freight keeps its rows' words and glyph.
+pub(super) fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone) {
+    let mut words = vec![detail.to_owned(), stage.words.to_lowercase()];
+    let on = stage
+        .cluster
+        .cluster()
+        .map(|cluster| format!(" on {cluster}"))
+        .unwrap_or_default();
+    let (reach, tone) = match &stage.reach {
+        Reach::NotReached | Reach::Linked(Confidence::Confirmed) => return (words, rows),
+        Reach::Linked(confidence) => (
+            format!("pods{on} {}", link_word(*confidence).to_lowercase()),
+            super::page::link_tone(*confidence),
+        ),
+        Reach::Refused(kinds) => (format!("{kinds} refused"), Tone::Unknown),
+    };
+    words.push(reach);
+    // The blue dot is weaker than Good, though both count as ok.
+    let tone = match (rows, tone) {
+        (Tone::Good, Tone::Info) => Tone::Info,
+        _ if rank(tone) > rank(rows) => tone,
+        _ => rows,
+    };
+    (words, tone)
 }
 
 /// An instant as the page shows it: the local time of day.
@@ -349,19 +380,28 @@ impl ChangePage {
                     .map(|row| status(row.tone))
                     .max_by_key(|tone| rank(*tone))
                     .unwrap_or(Tone::Good);
-                let (label, detail, folds, read_there) = match group.phase {
-                    Phase::Build => ("Build".to_owned(), vec![group.detail.clone()], false, true),
+                let (label, detail, tone, folds, read_there) = match group.phase {
+                    Phase::Build => (
+                        "Build".to_owned(),
+                        vec![group.detail.clone()],
+                        tone,
+                        false,
+                        true,
+                    ),
                     Phase::Freight => (
                         "Freight".to_owned(),
                         vec![group.detail.clone()],
+                        tone,
                         false,
                         true,
                     ),
                     Phase::Stage(stage) => {
                         let stage = &change.stages[stage];
+                        let (detail, tone) = stage_line(&group.detail, stage, tone);
                         (
                             format!("Stage {}", stage.name),
-                            vec![group.detail.clone(), stage.words.to_lowercase()],
+                            detail,
+                            tone,
                             true,
                             !matches!(stage.cluster, Destination::Entry { .. }),
                         )
@@ -379,8 +419,8 @@ impl ChangePage {
             .collect();
         if first {
             // A Stage whose every row is fine folds while anything else on
-            // the page needs a look; a waiting or failing one never folds
-            // itself.
+            // the page needs a look; a waiting or failing one, or one whose
+            // pods aren't confirmed to run it, never folds itself.
             let anything_wrong = groups.iter().any(|group| group.tone != Tone::Good);
             self.folded = groups
                 .iter()
