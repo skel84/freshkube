@@ -3,7 +3,9 @@
 //! `freshkube_core::workspace`) and edits them: the shell hands it what the
 //! file held at launch, and every change is saved at once, off the UI thread
 //! (`edit.rs`). Under the clusters, its Argo CD destinations map what an
-//! Application names to one of them (`destinations/`). Example data and a
+//! Application names to one of them (`destinations/`). Under those, its
+//! delivery sources say which entry each part of the delivery chain is read
+//! from, and check them (`sources/`). Example data and a
 //! window without a preferences folder show the lists and change nothing.
 pub(super) mod destinations;
 mod edit;
@@ -11,6 +13,7 @@ mod edit;
 mod edit_tests;
 mod form;
 mod source;
+pub(super) mod sources;
 #[cfg(test)]
 pub(super) mod tests;
 
@@ -128,6 +131,8 @@ pub(crate) struct SettingsPage {
     focus: FocusHandle,
     /// The second list: the Argo CD destinations.
     destinations: Entity<destinations::Destinations>,
+    /// The third list: where each delivery part is read.
+    pub(in crate::desktop) sources: Entity<sources::SourcesList>,
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
 }
@@ -178,7 +183,7 @@ impl SettingsPage {
         &self.workspace
     }
 
-    pub(super) fn new(cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(runtime: tokio::runtime::Handle, cx: &mut Context<Self>) -> Self {
         let (columns, width) = source::columns(&[]);
         Self {
             rows: Vec::new(),
@@ -203,6 +208,7 @@ impl SettingsPage {
                 let page = cx.entity();
                 cx.new(|cx| destinations::Destinations::new(&page, cx))
             },
+            sources: cx.new(|cx| sources::SourcesList::new(runtime, cx)),
             status: Segment::default(),
         }
     }
@@ -288,6 +294,9 @@ impl SettingsPage {
             _ => None,
         };
         (self.columns, self.width) = source::columns(&self.rows);
+        let example = origin == Origin::Example;
+        self.sources
+            .update(cx, |list, cx| list.set_workspace(&workspace, example, cx));
         self.origin = origin;
         let kubeconfig = match &workspace.kubeconfig {
             Some(path) => format!("Kubeconfig: {}", path.display()),
@@ -582,11 +591,12 @@ impl Render for SettingsPage {
         let _span = crate::perf::span("page.render");
         let short = page::is_short(window);
         let header = self.render_header(window, cx);
+        // Three lists stack here, so the frame scrolls whenever they don't
+        // fit, not only in a short window.
         page::page("settings-page")
             .track_scroll(&self.page_scroll)
-            .when(short, |this| {
-                this.overflow_y_scroll().restrict_scroll_to_axis()
-            })
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .child(page::toolbar(cx).child(header))
             .children(self.render_banners(cx))
             .child(
@@ -626,6 +636,7 @@ impl Render for SettingsPage {
                     .child(table::data_table(self, window, cx).flex_1().min_h_0()),
             )
             .child(self.destinations.clone())
+            .child(self.sources.clone())
     }
 }
 

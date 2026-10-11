@@ -100,7 +100,7 @@ pub enum Chosen {
 }
 
 impl Chosen {
-    /// The entry's id, when there is one to read.
+    /// The entry it is read from, when there is one.
     pub fn entry(&self) -> Option<&Entry> {
         match self {
             Chosen::Entry { entry, .. } => Some(entry),
@@ -180,9 +180,14 @@ fn choose(workspace: &Workspace, part: Part) -> Chosen {
 }
 
 /// `workspace.json`'s `sources`: a part pinned to an entry by id. Every
-/// key is optional; keys this version doesn't know are written back.
+/// key is optional; keys this version doesn't know are written back. Boxed,
+/// since most workspaces pin nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pins {
+#[serde(transparent)]
+pub struct Pins(Box<Pinned>);
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Pinned {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kargo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,31 +195,36 @@ pub struct Pins {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     argocd: Option<String>,
     #[serde(flatten)]
-    pub(super) extra: serde_json::Map<String, serde_json::Value>,
+    extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Pins {
     /// The entry `part` is pinned to.
     pub fn pin(&self, part: Part) -> Option<&str> {
         match part {
-            Part::Kargo => self.kargo.as_deref(),
-            Part::Builds => self.builds.as_deref(),
-            Part::ArgoCd => self.argocd.as_deref(),
+            Part::Kargo => self.0.kargo.as_deref(),
+            Part::Builds => self.0.builds.as_deref(),
+            Part::ArgoCd => self.0.argocd.as_deref(),
         }
     }
 
     /// Pins `part` to `entry`, or unpins it.
     pub fn set(&mut self, part: Part, entry: Option<String>) {
         let slot = match part {
-            Part::Kargo => &mut self.kargo,
-            Part::Builds => &mut self.builds,
-            Part::ArgoCd => &mut self.argocd,
+            Part::Kargo => &mut self.0.kargo,
+            Part::Builds => &mut self.0.builds,
+            Part::ArgoCd => &mut self.0.argocd,
         };
         *slot = entry;
     }
 
     pub fn is_empty(&self) -> bool {
-        Part::ALL.iter().all(|&part| self.pin(part).is_none()) && self.extra.is_empty()
+        Part::ALL.iter().all(|&part| self.pin(part).is_none()) && self.0.extra.is_empty()
+    }
+
+    /// Keys this version doesn't know.
+    pub(super) fn unknown_keys(&self) -> impl Iterator<Item = &String> {
+        self.0.extra.keys()
     }
 
     pub(super) fn validate(&self) -> Result<(), Invalid> {

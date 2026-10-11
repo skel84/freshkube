@@ -30,7 +30,9 @@ async fn an_answer_is_readable_even_when_empty() {
         "{requests:?}"
     );
     assert!(
-        requests.contains(&"LIST argoproj.io/v1alpha1/applications ns=Some(\"argocd\") selector=None".into()),
+        requests.contains(
+            &"LIST argoproj.io/v1alpha1/applications ns=Some(\"argocd\") selector=None".into()
+        ),
         "{requests:?}"
     );
 }
@@ -103,8 +105,11 @@ async fn every_part_is_checked_and_a_missing_entry_reads_nothing() {
         entry("cluster-c", Role::Environment),
     ]);
     let checked = check_all(&Sources::of(&workspace), &[], None::<&FixtureReader>).await;
-    let [(kargo, kargo_reach), (builds, builds_reach), (argocd, argocd_reach)] =
-        checked.parts.as_slice()
+    let [
+        (kargo, kargo_reach),
+        (builds, builds_reach),
+        (argocd, argocd_reach),
+    ] = checked.parts.as_slice()
     else {
         panic!("{checked:?}");
     };
@@ -176,7 +181,11 @@ async fn a_credential_plugin_waiting_for_a_sign_in_ends_at_the_connect_deadline(
     .await
     .err()
     .expect("the plugin never answers in time");
-    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
     assert_eq!(
         error,
         "no answer within 300 ms; a credential plugin may be waiting for a sign-in"

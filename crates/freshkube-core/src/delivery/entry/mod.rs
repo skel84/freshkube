@@ -163,10 +163,7 @@ pub async fn connect_within(
         )),
         Ok(Err(_)) => Err("the connection worker stopped".into()),
         Ok(Ok(Err(why))) => Err(why),
-        Ok(Ok(Ok(client))) => Ok(Deadline::new(
-            ReadOnlyClient::new(client),
-            REQUEST_DEADLINE,
-        )),
+        Ok(Ok(Ok(client))) => Ok(Deadline::new(ReadOnlyClient::new(client), REQUEST_DEADLINE)),
     }
 }
 

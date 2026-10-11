@@ -791,10 +791,7 @@ mod sources {
             Some(("cluster-b", Why::Role(Role::Cicd)))
         );
         // A pin to an entry that is gone never falls back to a role.
-        assert_eq!(
-            sources.get(Part::ArgoCd),
-            &Chosen::Gone("cluster-x".into())
-        );
+        assert_eq!(sources.get(Part::ArgoCd), &Chosen::Gone("cluster-x".into()));
         assert_eq!(
             sources.get(Part::ArgoCd).missing().as_deref(),
             Some("cluster-x is no longer in the workspace")

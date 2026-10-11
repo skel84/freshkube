@@ -423,7 +423,6 @@ impl Render for Destinations {
         v_flex()
             .id("settings-destinations")
             .flex_1()
-            .min_h_0()
             .child(
                 page::toolbar(cx)
                     .border_t_1()

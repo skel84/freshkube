@@ -249,7 +249,10 @@ impl Workspace {
     /// misspelt key doesn't go unnoticed.
     pub fn unknown_keys(&self) -> Vec<String> {
         let top = self.extra.keys().cloned();
-        let sources = self.sources.extra.keys().map(|key| format!("sources.{key}"));
+        let sources = self
+            .sources
+            .unknown_keys()
+            .map(|key| format!("sources.{key}"));
         let entries = self
             .clusters
             .iter()
