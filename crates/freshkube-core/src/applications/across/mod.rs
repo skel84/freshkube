@@ -111,13 +111,18 @@ where
                 first,
             } = target;
             let started = tokio::time::Instant::now();
-            let until = match first {
-                true => ends,
-                false => ends.min(started + ENTRY_DEADLINE),
+            // A destination started late has only what the budget leaves:
+            // the read's end, not its own deadline, is what cut it short.
+            let (until, by_budget) = match first {
+                true => (ends, true),
+                false => match started + ENTRY_DEADLINE {
+                    own if own <= ends => (own, false),
+                    _ => (ends, true),
+                },
             };
-            let within = || match first {
+            let within = || match by_budget {
                 true => format!("the read's {} s", BUDGET.as_secs()),
-                false => format!("{} s", until.saturating_duration_since(started).as_secs()),
+                false => format!("{} s", ENTRY_DEADLINE.as_secs()),
             };
             let until = bounded.then_some(until);
             let unreachable =
@@ -170,8 +175,16 @@ where
     sessions
         .into_iter()
         .zip(shapes)
-        .map(|(session, (key, asked))| session.unwrap_or_else(|| SessionInputs::asking(key, asked)))
+        .map(|(session, (key, asked))| answered(session, key, asked))
         .collect()
+}
+
+/// A session's answer, or, for one that never answered, unreachable: never
+/// [`SessionInputs::asking`], which reads as read and empty.
+fn answered(session: Option<SessionInputs>, key: SessionKey, asked: Asked) -> SessionInputs {
+    session.unwrap_or_else(|| {
+        SessionInputs::absent(key, asked, Absent::Unreachable("no answer".into()))
+    })
 }
 
 /// `future`'s answer, or none when it hasn't one by `until`; so a step

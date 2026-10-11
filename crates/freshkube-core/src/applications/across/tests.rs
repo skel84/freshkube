@@ -570,6 +570,15 @@ async fn the_read_keeps_what_answered_within_its_budget() {
         Some(CoverageState::Read),
         "kept, though others never answered"
     );
+    // The second round started 30 s in, so the budget, not its own
+    // deadline, cut it short: it names the read's.
+    assert_eq!(
+        state(&covered, "env-5", SourceKind::Workloads),
+        Some(CoverageState::Unreadable(format!(
+            "didn't finish reading within the read's {} s",
+            BUDGET.as_secs()
+        )))
+    );
     assert_eq!(
         state(&covered, "env-12", SourceKind::Workloads),
         Some(CoverageState::Unreachable(format!(
@@ -730,4 +739,44 @@ async fn kargo_has_the_budget_and_a_destination_its_deadline() {
             ENTRY_DEADLINE.as_secs()
         )))
     );
+}
+
+#[test]
+fn an_entry_that_never_answered_is_unreachable_not_empty() {
+    let asked = Asked {
+        workloads: true,
+        ..Asked::NONE
+    };
+    let session = answered(None, SessionKey::new("env-1"), asked);
+    assert_eq!(
+        session.absent,
+        Some(Absent::Unreachable("no answer".into()))
+    );
+    assert!(matches!(session.workloads, Source::Unreadable(_)));
+}
+
+/// A Kargo with no projects asks nothing of Stages' or Warehouses'
+/// discovery.
+#[tokio::test(start_paused = true)]
+async fn a_kargo_with_no_projects_discovers_nothing_more() {
+    let sources = Sources::of(&workspace(&["cluster-c"]));
+    let asked_of_kargo = Rc::new(Cell::new(0));
+    let connect = |entry: Entry| {
+        let (reader, requests) = match entry.id.as_str() {
+            "cluster-b" => (
+                everything().with("projects", Vec::new()),
+                asked_of_kargo.clone(),
+            ),
+            _ => (everything(), Rc::new(Cell::new(0))),
+        };
+        async move { Ok::<_, String>(Distant { reader, requests }) }
+    };
+    let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
+    let session = sessions
+        .iter()
+        .find(|session| session.key == SessionKey::new("cluster-b"))
+        .expect("Kargo's entry");
+    assert_eq!(session.kargo, Source::Read(Vec::new()));
+    // The projects' discovery and listing alone.
+    assert_eq!(asked_of_kargo.get(), 3);
 }

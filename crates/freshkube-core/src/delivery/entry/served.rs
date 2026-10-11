@@ -4,7 +4,8 @@
 //!
 //! A key holds the talosconfig's content fingerprint too, so a changed file
 //! asks again, and a key whose credentials the cluster rejects is
-//! forgotten, so the next read asks again, as after a rotated CA. Nothing here is logged, shown or written to disk.
+//! forgotten, so the next read asks again, as after a rotated CA. Nothing
+//! here is logged, shown or written to disk.
 
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex, PoisonError};

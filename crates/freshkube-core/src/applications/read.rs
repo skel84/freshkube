@@ -163,8 +163,21 @@ async fn read_kargo<R: Reader>(reader: &R) -> Source<Vec<KargoProjectRead>> {
     } else {
         capped
     };
-    // Discovered once for every project, then each project's two lists
-    // together, a few projects at a time, in their order.
+    // With no project, nothing is asked of Stages' or Warehouses' discovery.
+    let projects = match names.is_empty() {
+        true => Vec::new(),
+        false => read_projects(reader, names).await,
+    };
+    match capped {
+        Some(truncation) => Source::Capped(projects, truncation),
+        None => Source::Read(projects),
+    }
+}
+
+/// Each of `names`' Stages and Warehouses: discovered once for every
+/// project, then each project's two lists together, a few projects at a
+/// time, in their order.
+async fn read_projects<R: Reader>(reader: &R, names: Vec<String>) -> Vec<KargoProjectRead> {
     let [stages, warehouses] = match resolve_each(
         reader,
         kargo::GROUP,
@@ -178,26 +191,21 @@ async fn read_kargo<R: Reader>(reader: &R) -> Source<Vec<KargoProjectRead>> {
         Err(failure) => [Err(failure.clone()), Err(failure)],
     };
     let (stages, warehouses) = (&stages, &warehouses);
-    let projects: Vec<KargoProjectRead> =
-        futures::stream::iter(names.into_iter().take(MAX_PROJECTS))
-            .map(|name| async move {
-                let (stages, warehouses) = futures::join!(
-                    list_in(reader, stages, &name, parse_stage),
-                    list_in(reader, warehouses, &name, parse_warehouse),
-                );
-                KargoProjectRead {
-                    stages: Source::from_listing(stages),
-                    warehouses: Source::from_listing(warehouses),
-                    name,
-                }
-            })
-            .buffered(PROJECTS_AT_ONCE)
-            .collect()
-            .await;
-    match capped {
-        Some(truncation) => Source::Capped(projects, truncation),
-        None => Source::Read(projects),
-    }
+    futures::stream::iter(names.into_iter().take(MAX_PROJECTS))
+        .map(|name| async move {
+            let (stages, warehouses) = futures::join!(
+                list_in(reader, stages, &name, parse_stage),
+                list_in(reader, warehouses, &name, parse_warehouse),
+            );
+            KargoProjectRead {
+                stages: Source::from_listing(stages),
+                warehouses: Source::from_listing(warehouses),
+                name,
+            }
+        })
+        .buffered(PROJECTS_AT_ONCE)
+        .collect()
+        .await
 }
 
 const KINDS: [(&str, WorkloadKind); 3] = [
