@@ -407,6 +407,7 @@ async fn main() {
         argocd: argocd.alias.clone(),
         cluster_names: args.known_as_name.clone(),
         map_hint: Default::default(),
+        names: Default::default(),
         evidence_result: match (
             &args.evidence_result,
             &args.evidence_commit,

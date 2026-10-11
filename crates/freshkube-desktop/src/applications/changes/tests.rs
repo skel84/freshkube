@@ -662,3 +662,31 @@ fn stages_the_cell_drops_end_it_with_a_count(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// The title keeps the Change cell beside the Inspector: its application
+/// follows it, dimmer, and gives way first (#568).
+#[gpui_kit::test]
+fn the_title_keeps_its_cell_and_its_application_gives_way(cx: &mut TestAppContext) {
+    const TITLE: &str = "changes-row-cart/lucky-finch-title";
+    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            freshkube_ui::table::word_cut_shown(TITLE).as_deref(),
+            Some("Keep the basket when signing in · cart")
+        );
+        changes(&view, cx).update(cx, |page, cx| page.select("cart/lucky-finch", window, cx));
+        window.render_frame(cx);
+        assert!(window.find("changes-detail").visible());
+        let shown = freshkube_ui::table::word_cut_shown(TITLE).expect("drawn");
+        assert!(
+            shown.starts_with("Keep the basket") && shown.ends_with('…'),
+            "the title keeps the cell: {shown}"
+        );
+        assert!(
+            !shown.contains("cart"),
+            "the application goes first: {shown}"
+        );
+    })
+    .unwrap();
+}

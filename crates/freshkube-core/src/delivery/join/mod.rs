@@ -182,6 +182,8 @@ pub struct Evidence {
     pub stage_naming: Option<StageNaming>,
     /// How a destination no context matches says it could be matched.
     pub map_hint: MapHint,
+    /// The words for a context, by its key, where they differ ([`Evidence::name`]).
+    pub names: BTreeMap<String, String>,
     pub builds: Source<Vec<Build>>,
     pub kargo: KargoRead,
     pub applications: Source<Vec<Application>>,
@@ -215,6 +217,12 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// How a context is named in words: the name given for its key, else
+    /// the key itself, which a kubeconfig context or a workspace entry is.
+    pub fn name<'a>(&'a self, context: &'a str) -> &'a str {
+        self.names.get(context).map_or(context, String::as_str)
+    }
+
     /// Whether the Application's destination is the environment cluster.
     /// Its Rollouts and pods are read, and judged, only then: a workload of
     /// the same name in another cluster says nothing about this one.

@@ -281,8 +281,8 @@ impl TableSource for ChangesPage {
                 })
                 .child(row.named.clone())
                 .into_any_element(),
-            // The title cut at a word, then its application, inside the
-            // column's own width.
+            // The title, then its application, dimmer, in one line cut at a
+            // word: the application gives way before the title.
             Field::Change => kit::cell(column)
                 .id(SharedString::from(format!(
                     "{PREFIX}-row-{}-title-cell",
@@ -290,17 +290,15 @@ impl TableSource for ChangesPage {
                 )))
                 .flex()
                 .items_center()
-                .gap(dp(8.))
-                .follow_tooltip(row.title.clone())
-                .child(div().flex_1().min_w_0().child(kit::word_cut(
-                    SharedString::from(format!("{PREFIX}-row-{}-title", row.key)),
-                    row.title.clone(),
-                )))
+                .follow_tooltip(row.change.clone())
                 .child(
-                    div()
-                        .flex_none()
-                        .text_color(p.muted)
-                        .child(SharedString::from(row.project.clone())),
+                    div().flex_1().min_w_0().child(
+                        kit::word_cut(
+                            SharedString::from(format!("{PREFIX}-row-{}-title", row.key)),
+                            row.change.clone(),
+                        )
+                        .dim_from(row.title.len(), p.muted),
+                    ),
                 )
                 .into_any_element(),
             Field::Stages => stages_cell(row, column, cx),
