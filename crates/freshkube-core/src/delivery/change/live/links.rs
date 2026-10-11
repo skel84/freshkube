@@ -4,7 +4,7 @@
 //! whose address isn't recorded, or isn't http or https, is greyed out with
 //! why; so is the console Pipelines as Code names when it has none.
 
-use super::Place;
+use super::At;
 use super::pages::Pages;
 use crate::delivery::address::Address;
 use crate::delivery::change::{Action, Object, Target};
@@ -33,12 +33,7 @@ pub(super) fn freight_page(pages: &Pages, freight: &Freight) -> Result<Address, 
 }
 
 /// The tools' pages and logs a hop offers beside Open in Resources.
-pub(super) fn actions(
-    place: &Place,
-    evidence: &Evidence,
-    pages: &Pages,
-    link: &Link,
-) -> Vec<Action> {
+pub(super) fn actions(at: &At, evidence: &Evidence, pages: &Pages, link: &Link) -> Vec<Action> {
     let found = |kind: &str| {
         link.evidence
             .iter()
@@ -64,7 +59,7 @@ pub(super) fn actions(
                         && build.run.name == run.name
                 })
             })
-            .map(|build| run_actions(place, build))
+            .map(|build| run_actions(at, build))
             .unwrap_or_default(),
         _ => Vec::new(),
     }
@@ -72,7 +67,7 @@ pub(super) fn actions(
 
 /// A run's pull request, commit and own page, from what Pipelines as Code
 /// annotated it with, then its step logs.
-fn run_actions(place: &Place, build: &Build) -> Vec<Action> {
+fn run_actions(at: &At, build: &Build) -> Vec<Action> {
     let mut actions = Vec::new();
     if let Some(number) = build.run.pull_request {
         actions.push(Action::browser(
@@ -82,7 +77,7 @@ fn run_actions(place: &Place, build: &Build) -> Vec<Action> {
     }
     actions.push(Action::browser("Open the commit", commit(build)));
     actions.push(Action::browser("Open the run", run_page(build)));
-    actions.push(logs(place, build));
+    actions.push(logs(at, build));
     actions
 }
 
@@ -146,7 +141,7 @@ fn pull_request(build: &Build, number: u64) -> Result<Address, String> {
 /// The steps' logs of the task that failed, else the one that ended last
 /// (one still running before any that ended), in the pod it ran in on
 /// this cluster.
-fn logs(place: &Place, build: &Build) -> Action {
+fn logs(at: &At, build: &Build) -> Action {
     let with_pod = || build.tasks.iter().filter(|task| task.pod.is_some());
     let task = with_pod()
         .find(|task| task.succeeded.as_deref() == Some("False"))
@@ -157,7 +152,7 @@ fn logs(place: &Place, build: &Build) -> Action {
             None if build.tasks.is_empty() => "No TaskRun of the run was found".into(),
             None => "No TaskRun of the run records its pod".into(),
         };
-        let pod = pod_object(place, &build.run.namespace, "");
+        let pod = pod_object(at, &build.run.namespace, "");
         return Action::new(Target::Logs {
             what: "the run".into(),
             pod,
@@ -165,24 +160,20 @@ fn logs(place: &Place, build: &Build) -> Action {
         })
         .disabled(why);
     };
-    step_logs(place, task)
+    step_logs(at, task)
 }
 
-fn step_logs(place: &Place, task: &TaskRun) -> Action {
+fn step_logs(at: &At, task: &TaskRun) -> Action {
     Action::new(Target::Logs {
         what: task.task.clone().unwrap_or_else(|| task.name.clone()),
-        pod: pod_object(
-            place,
-            &task.namespace,
-            task.pod.as_deref().unwrap_or_default(),
-        ),
+        pod: pod_object(at, &task.namespace, task.pod.as_deref().unwrap_or_default()),
         container: task.steps.first().cloned(),
     })
 }
 
-fn pod_object(place: &Place, namespace: &str, name: &str) -> Object {
+fn pod_object(at: &At, namespace: &str, name: &str) -> Object {
     Object {
-        cluster: place.cluster.clone(),
+        cluster: at.cluster.clone(),
         group: String::new(),
         version: "v1".into(),
         kind: "Pod".into(),

@@ -93,7 +93,7 @@ pub(crate) enum Body {
 pub(crate) struct Display {
     pub(crate) rows: Vec<ChangeRow>,
     /// What may be missing, in one sentence, and the same as a label.
-    pub(crate) missing: Option<SharedString>,
+    pub(crate) missing: Option<(SharedString, SharedString)>,
     pub(crate) body: Body,
     pub(crate) needs_a_look: bool,
 }
@@ -130,13 +130,14 @@ impl Display {
         };
         let rows: Vec<ChangeRow> = changes.rows.iter().map(|row| self::row(row, now)).collect();
         let missing = (!changes.notes.is_empty()).then(|| {
-            changes
+            let text = changes
                 .notes
                 .iter()
                 .map(|note| note.text.as_str())
                 .collect::<Vec<_>>()
-                .join(". ")
-                .into()
+                .join(". ");
+            let label = format!("May be missing: {text}");
+            (text.into(), label.into())
         });
         let body = if !rows.is_empty() {
             Body::Table

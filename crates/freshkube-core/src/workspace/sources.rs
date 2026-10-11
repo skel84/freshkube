@@ -171,6 +171,16 @@ impl Sources {
         }
     }
 
+    /// The entry `id`, when a part or a destination is read from it.
+    pub fn entry(&self, id: &str) -> Option<&Entry> {
+        Part::ALL
+            .into_iter()
+            .map(|part| self.get(part))
+            .chain(&self.workloads)
+            .filter_map(Chosen::entry)
+            .find(|entry| entry.id == id)
+    }
+
     /// Every part and where it is read, in [`Part::ALL`]'s order.
     pub fn iter(&self) -> impl Iterator<Item = (Part, &Chosen)> {
         Part::ALL.into_iter().map(|part| (part, self.get(part)))

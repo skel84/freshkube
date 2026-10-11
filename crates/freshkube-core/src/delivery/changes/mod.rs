@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
-use super::change::{Change, Reach};
+use super::change::{self, Change, Reach};
 use super::join::Confidence;
 use super::kargo::{Freight, Stage, promotion_order};
 use super::source::Source;
@@ -52,6 +52,9 @@ pub struct Read {
     /// How many changes weren't followed before the read's budget ran
     /// out; their Stages show Unknown.
     pub late: usize,
+    /// Why Kargo's entry wasn't read at all, in its words: no entry holds
+    /// Kargo, or the one that does couldn't be reached.
+    pub unreached: Option<String>,
 }
 
 /// What a row names the change by.
@@ -163,6 +166,14 @@ impl Changes {
 /// The list from what was read.
 pub fn derive(read: &Read) -> Changes {
     let mut changes = Changes::default();
+    if let Some(why) = &read.unreached {
+        changes.notes.push(Note {
+            gap: Gap::Unreadable,
+            project: None,
+            text: why.clone(),
+        });
+        return changes;
+    }
     let projects = match &read.projects {
         Source::Read(projects) => projects,
         Source::Capped(projects, truncation) => {
@@ -208,7 +219,28 @@ pub fn derive(read: &Read) -> Changes {
             .then(b.created.cmp(&a.created))
             .then(a.key.cmp(&b.key))
     });
+    changes.notes.extend(followed_missing(&changes.rows));
     changes
+}
+
+/// What the followed changes may be missing, each sentence once: an entry
+/// or a destination that couldn't be read, a kind refused or not served.
+fn followed_missing(rows: &[Row]) -> Vec<Note> {
+    let mut seen = BTreeSet::new();
+    rows.iter()
+        .filter_map(|row| row.trail.as_ref().ok())
+        .flat_map(|change| &change.missing)
+        .filter(|line| seen.insert(line.text.as_str()))
+        .map(|line| Note {
+            gap: match line.gap {
+                change::Gap::NotServed => Gap::NotServed,
+                change::Gap::Refused => Gap::Refused,
+                change::Gap::Unreadable => Gap::Unreadable,
+            },
+            project: None,
+            text: line.text.clone(),
+        })
+        .collect()
 }
 
 /// A source that wasn't read, as a note; none for one that was.

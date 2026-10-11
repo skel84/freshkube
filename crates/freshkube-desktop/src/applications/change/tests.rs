@@ -38,9 +38,19 @@ fn on_stage(
     width: f32,
     height: f32,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    on_stage_of(cx, width, height, Variant::Acme)
+}
+
+/// [`on_stage`] in the example reshaped as `variant`.
+fn on_stage_of(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    variant: Variant,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     let (runtime, handle, view) = fixture(cx, width, height);
     cx.update_window(handle, |_, window, cx| {
-        list(&view, cx).update(cx, |page, _| page.set_variant(Variant::Acme));
+        list(&view, cx).update(cx, |page, _| page.set_variant(variant));
         window.render_frame(cx);
         window.click("nav-applications", cx);
         window.render_frame(cx);
@@ -67,6 +77,34 @@ fn open(
         window.render_frame(cx);
     })
     .unwrap();
+    cx.run_until_parked();
+    (runtime, handle, view)
+}
+
+/// The acme workspace's entries; `prod-lon` isn't one.
+const ENTRIES: [&str; 5] = ["core-fra", "cicd-fra", "dev-fra", "stage-fra", "prod-ams"];
+
+/// As [`open`], with `active` the workspace entry open in the window, which
+/// in example data stands for the open example cluster.
+fn open_on(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    active: &str,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = open(cx, width, height);
+    cx.update(|cx| {
+        list(&view, cx).update(cx, |page, cx| {
+            page.set_clusters(
+                super::super::Clusters {
+                    entries: ENTRIES.map(str::to_owned).to_vec(),
+                    active: Some(active.into()),
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+    });
     cx.run_until_parked();
     (runtime, handle, view)
 }
@@ -635,9 +673,10 @@ fn detail_cuts_at_a_word_beside_the_inspector(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// Kargo is read on `cicd-fra`: with it open, O opens the Freight there.
 #[gpui_kit::test]
 fn o_opens_the_freight_in_resources(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    let (_runtime, handle, view) = open_on(cx, 1280., 880., "cicd-fra");
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("freight"), cx);
         window.render_frame(cx);
@@ -799,9 +838,9 @@ fn dock_tabs(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
     })
 }
 
-/// The release run's policy check ran on the open cluster: its Logs opens
-/// the step pod's log in the dock, every step at once, falling back to the
-/// container core named.
+/// The release run's policy check ran on the builds' cluster, `cicd-fra`;
+/// with it open, its Logs opens the step pod's log in the dock, every step
+/// at once, falling back to the container core named.
 #[gpui_kit::test]
 fn a_steps_logs_open_in_the_dock_on_the_open_cluster(cx: &mut TestAppContext) {
     use super::ChangeEvent;
@@ -809,7 +848,7 @@ fn a_steps_logs_open_in_the_dock_on_the_open_cluster(cx: &mut TestAppContext) {
     use freshkube_core::delivery::change::example::{RELEASE_NAMESPACE, VERIFY_TASK};
     use std::{cell::RefCell, rc::Rc};
 
-    let (_runtime, handle, view) = open(cx, 1280., 880.);
+    let (_runtime, handle, view) = open_on(cx, 1280., 880., "cicd-fra");
     let asked: Rc<RefCell<Vec<ResourceLink>>> = Rc::default();
     let page = cx.update(|cx| change(&view, cx).unwrap());
     let _subscription = cx.update(|cx| {
@@ -823,7 +862,7 @@ fn a_steps_logs_open_in_the_dock_on_the_open_cluster(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("policy"), cx);
         window.render_frame(cx);
-        let logs = action(&view, "Logs of verify · core-fra", cx);
+        let logs = action(&view, "Logs of verify · cicd-fra", cx);
         window.click(logs, cx);
         window.render_frame(cx);
     })
@@ -1269,10 +1308,13 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
                     freight: "f".into(),
                     argocd_namespace: "argocd".into(),
                     mapping: Default::default(),
+                    sources: Default::default(),
                 }),
+                kubeconfig: None,
             };
         });
-        window.click(hop("freight"), cx);
+        // Argo CD's Application, read on core-fra, the open cluster here.
+        window.click(hop("prod-ams-argocd"), cx);
         window.render_frame(cx);
         let labels = change(&view, cx).unwrap().read(cx).action_labels();
         assert!(
@@ -1541,4 +1583,78 @@ fn a_revision_on_a_cluster_that_is_not_open_does_not_open(cx: &mut TestAppContex
     .unwrap();
     cx.run_until_parked();
     cx.read(|cx| assert_eq!(view.read(cx).applications().1, Page::Applications));
+}
+
+/// The change followed from prod-ams in the example reshaped as `variant`,
+/// and its May be missing banner's label.
+fn missing_in(variant: Variant, cx: &mut TestAppContext) -> String {
+    let (_runtime, handle, view) = on_stage_of(cx, 1280., 880., variant);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(change(&view, cx).is_some(), "the change opens");
+        assert!(window.try_find("change-failed").is_none());
+        window
+            .find("change-missing")
+            .label()
+            .expect("a label")
+            .to_owned()
+    })
+    .unwrap()
+}
+
+#[gpui_kit::test]
+fn argo_cd_refused_on_its_entry_is_a_banner_in_its_name(cx: &mut TestAppContext) {
+    let missing = missing_in(Variant::ArgoRefused, cx);
+    assert!(
+        missing.starts_with("May be missing: Argo CD Applications were refused on core-fra: "),
+        "{missing}"
+    );
+}
+
+#[gpui_kit::test]
+fn an_unreachable_destination_is_a_banner_and_reported_hops(cx: &mut TestAppContext) {
+    let missing = missing_in(Variant::Destination, cx);
+    assert_eq!(
+        missing,
+        "May be missing: Couldn't reach dev-fra: connection refused by dev-fra.example.test:6443"
+    );
+}
+
+#[gpui_kit::test]
+fn a_whole_example_has_no_banner(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.try_find("change-missing").is_none());
+    })
+    .unwrap();
+}
+
+/// With Kargo's entry open, the trail's Kargo objects open on it.
+#[gpui_kit::test]
+fn with_cicd_fra_open_its_freight_opens_and_argo_cds_offer_a_switch(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open_on(cx, 1280., 880., "cicd-fra");
+    cx.update_window(handle, |_, window, cx| {
+        window.click(hop("freight"), cx);
+        window.render_frame(cx);
+        let page = change(&view, cx).unwrap();
+        assert!(
+            page.read(cx).action_why("Open in Resources").is_none(),
+            "{:?}",
+            page.read(cx).action_labels()
+        );
+        window.click(hop("prod-ams-argocd"), cx);
+        window.render_frame(cx);
+        let labels = page.read(cx).action_labels();
+        assert!(
+            labels.iter().any(|label| label.starts_with("Switch")),
+            "{labels:?}"
+        );
+    })
+    .unwrap();
 }

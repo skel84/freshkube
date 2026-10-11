@@ -24,16 +24,16 @@ use crate::resources::Failure;
 /// The answer to each question asked so far, or the one being read.
 type Answers<K, V> = Mutex<HashMap<K, Arc<OnceCell<Result<V, Failure>>>>>;
 
-pub struct SharedReader<'a, R> {
-    reader: &'a R,
+pub struct SharedReader<R> {
+    reader: R,
     gets: Answers<(Resource, Option<String>, String), Value>,
     lists: Answers<ListRequest, Listing>,
     groups: OnceCell<Result<Vec<ServedGroup>, Failure>>,
     plurals: Answers<(String, String), Vec<String>>,
 }
 
-impl<'a, R: Reader> SharedReader<'a, R> {
-    pub fn new(reader: &'a R) -> Self {
+impl<R: Reader> SharedReader<R> {
+    pub fn new(reader: R) -> Self {
         Self {
             reader,
             gets: Mutex::default(),
@@ -54,7 +54,7 @@ fn cell<K: Hash + Eq, V>(answers: &Answers<K, V>, key: K) -> Arc<OnceCell<Result
         .clone()
 }
 
-impl<R: Reader> Reader for SharedReader<'_, R> {
+impl<R: Reader> Reader for SharedReader<R> {
     async fn get(
         &self,
         resource: &Resource,

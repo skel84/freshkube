@@ -11,7 +11,7 @@ use crate::delivery::kargo::Freight;
 use crate::delivery::pods::RunningImage;
 use crate::delivery::source::cap_note;
 
-use super::argo::{not_the_environment, rollout_namespace};
+use super::argo::{rollout_namespace, workloads};
 use super::observe::{concluded, deployment_revision, deployment_state, deployment_tie, manages};
 use super::workload::{Controller, judge_revision, pinned_containers, pinned_link, running};
 use super::*;
@@ -22,6 +22,17 @@ use super::*;
 /// to, so the chain speaks, as unknown. Otherwise the Application is judged
 /// by its namespace's pods, as one that manages no controller is.
 pub(super) fn speaks_for(evidence: &Evidence, freight: &Freight, app: &Application) -> bool {
+    let app_id = id(&app.namespace, &app.name);
+    speaks_for_in(workloads(evidence, &app_id).ok(), freight, app)
+}
+
+/// [`speaks_for`], judged by `read`, what was read where the Application
+/// deploys; `None` when nothing was.
+pub(super) fn speaks_for_in(
+    read: Option<&Workloads>,
+    freight: &Freight,
+    app: &Application,
+) -> bool {
     let managed: Vec<_> = app
         .managed
         .iter()
@@ -30,11 +41,10 @@ pub(super) fn speaks_for(evidence: &Evidence, freight: &Freight, app: &Applicati
     if managed.is_empty() {
         return false;
     }
-    let app_id = id(&app.namespace, &app.name);
-    if !evidence.deploys_to_environment(&app_id) {
+    let Some(read) = read else {
         return true;
-    }
-    let Some(found) = evidence.deployments.read() else {
+    };
+    let Some(found) = read.deployments.read() else {
         return true;
     };
     managed.iter().any(|object| {
@@ -69,16 +79,14 @@ pub(super) fn deployment_links(
             why,
         )
     };
-    if !evidence.deploys_to_environment(&app_id) {
-        return vec![unknown(
-            app_id.clone(),
-            not_the_environment(evidence, &app_id),
-        )];
-    }
-    let Some(deployments) = evidence.deployments.read() else {
+    let read = match workloads(evidence, &app_id) {
+        Ok(read) => read,
+        Err(why) => return vec![unknown(app_id.clone(), why)],
+    };
+    let Some(deployments) = read.deployments.read() else {
         return vec![unknown(
             app_id,
-            evidence.deployments.why_not_read().unwrap_or_default(),
+            read.deployments.why_not_read().unwrap_or_default(),
         )];
     };
     let mut links = Vec::new();
@@ -99,7 +107,7 @@ pub(super) fn deployment_links(
                 deployment_id,
                 format!(
                     "the Application lists it but it was not found in the environment cluster{}",
-                    cap_note(evidence.deployments.capped())
+                    cap_note(read.deployments.capped())
                 ),
             ));
             continue;
@@ -127,7 +135,7 @@ pub(super) fn deployment_links(
                 &Key::Digest(digest.clone()),
             ));
         }
-        let pods = pod_link(evidence, freight, deployment, &deployment_id);
+        let pods = pod_link(read, freight, deployment, &deployment_id);
         links.push(match pinned {
             Some(digest) => pinned_link(
                 app,
@@ -195,7 +203,7 @@ fn deployment_summary(deployment: &Deployment) -> String {
 /// ReplicaSet is the one the controller reports as current by revision, and
 /// owns by UID; only its pods count.
 fn pod_link(
-    evidence: &Evidence,
+    workloads: &Workloads,
     freight: &Freight,
     deployment: &Deployment,
     deployment_id: &str,
@@ -211,16 +219,16 @@ fn pod_link(
             why,
         )
     };
-    let sets = evidence.deployment_sets.read().map(Vec::as_slice);
+    let sets = workloads.deployment_sets.read().map(Vec::as_slice);
     let tie = match sets {
         Some(sets) => current_set(deployment, sets)
-            .map_err(|why| format!("{why}{}", cap_note(evidence.deployment_sets.capped()))),
+            .map_err(|why| format!("{why}{}", cap_note(workloads.deployment_sets.capped()))),
         None => Err(format!(
             "its ReplicaSets were not read ({})",
-            evidence.deployment_sets.why_not_read().unwrap_or_default()
+            workloads.deployment_sets.why_not_read().unwrap_or_default()
         )),
     };
-    let Some(read) = evidence.deployment_pods.get(deployment_id) else {
+    let Some(read) = workloads.deployment_pods.get(deployment_id) else {
         return unknown(match &tie {
             Err(why) => format!("{why}, so its current pods were not read"),
             Ok(_) => "pods were not read".into(),
@@ -264,7 +272,7 @@ fn pod_link(
                         link.reason,
                         deployment_summary(deployment)
                     );
-                } else if let Some(truncation) = evidence.deployment_sets.capped() {
+                } else if let Some(truncation) = workloads.deployment_sets.capped() {
                     link.confidence = Confidence::Claimed;
                     link.key = Key::None;
                     link.reason = format!(
@@ -292,7 +300,7 @@ fn pod_link(
     }
     let mut seen = deployment_revision(deployment);
     seen.append(&mut link.evidence);
-    seen.extend(rolling(evidence, deployment, &read.hash));
+    seen.extend(rolling(workloads, deployment, &read.hash));
     link.evidence = seen;
     link
 }
@@ -300,8 +308,8 @@ fn pod_link(
 /// The pods of the Deployment's older ReplicaSets that still exist, as one
 /// observation: a rolling update is not a mismatch, so it is never a reason
 /// for a claim, only something to see.
-fn rolling(evidence: &Evidence, deployment: &Deployment, hash: &str) -> Option<Observation> {
-    let older: Vec<&DeploymentSet> = evidence
+fn rolling(workloads: &Workloads, deployment: &Deployment, hash: &str) -> Option<Observation> {
+    let older: Vec<&DeploymentSet> = workloads
         .deployment_sets
         .read()
         .into_iter()

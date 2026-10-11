@@ -560,8 +560,11 @@ fn a_remap_reads_a_live_list_again(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, _, cx| {
         changes(&view, cx).update(cx, |page, cx| {
             let connections = super::super::links::Connections::default();
-            let remapped = freshkube_core::delivery::change::live::Mapping {
-                entries: vec!["homelab".into()],
+            let remapped = super::super::across::Across {
+                mapping: freshkube_core::delivery::change::live::Mapping {
+                    entries: vec!["homelab".into()],
+                    ..Default::default()
+                },
                 ..Default::default()
             };
             page.set_clusters(connections.clone(), remapped.clone(), cx);
@@ -702,6 +705,66 @@ fn the_title_keeps_its_cell_and_its_application_gives_way(cx: &mut TestAppContex
             !shown.contains("cart"),
             "the application goes first: {shown}"
         );
+    })
+    .unwrap();
+}
+
+/// The list in the example reshaped as `variant`.
+fn open_shaped(
+    cx: &mut TestAppContext,
+    variant: super::super::Variant,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    let (runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        list(&view, cx).update(cx, |page, _| page.set_variant(variant));
+        window.render_frame(cx);
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        window.click("nav-changes", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    (runtime, handle, view)
+}
+
+#[gpui_kit::test]
+fn an_unreachable_kargo_entry_fails_in_its_name_never_none(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open_shaped(cx, super::super::Variant::Unreachable);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("changes-failed").visible());
+        assert!(window.try_find("changes-none").is_none());
+        assert!(window.try_find(WONKY).is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn argo_cd_refused_keeps_the_rows_with_a_banner(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open_shaped(cx, super::super::Variant::ArgoRefused);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let missing = window.find("changes-missing").label().unwrap().to_owned();
+        assert!(missing.contains("refused on core-fra"), "{missing}");
+        assert!(window.find(LYNX).visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn an_unreachable_destination_keeps_the_rows_with_a_banner(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open_shaped(cx, super::super::Variant::Destination);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let missing = window.find("changes-missing").label().unwrap().to_owned();
+        assert!(
+            missing.contains(
+                "Couldn't reach dev-fra: connection refused by dev-fra.example.test:6443"
+            ),
+            "{missing}"
+        );
+        assert!(window.find(LYNX).visible());
     })
     .unwrap();
 }

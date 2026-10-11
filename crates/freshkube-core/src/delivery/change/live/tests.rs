@@ -22,12 +22,13 @@ fn place(freight: &str) -> Place {
         freight: freight.into(),
         argocd_namespace: "argocd".into(),
         mapping: Mapping::default(),
+        sources: Default::default(),
     }
 }
 
 /// A Stage of storefront taking Freight from the Warehouse (`upstream`
 /// empty) or from the Stages named, holding `current`.
-fn stage_of(name: &str, upstream: &[&str], current: &[&str]) -> Value {
+pub(super) fn stage_of(name: &str, upstream: &[&str], current: &[&str]) -> Value {
     let mut value = stage(current);
     value["metadata"]["name"] = json!(name);
     value["spec"]["requestedFreight"][0]["sources"] = if upstream.is_empty() {
@@ -1411,9 +1412,14 @@ fn dev_holding_new() -> Value {
 /// deploys the storefront Deployment there, pinned to the Freight's digest,
 /// with its current pod running it. `edit` changes the Deployment.
 fn on_deployment(edit: impl FnOnce(&mut Value)) -> World {
+    on_deployment_at(IN_CLUSTER_SERVER, edit)
+}
+
+/// [`on_deployment`], its Application deploying to `server`.
+pub(super) fn on_deployment_at(server: &str, edit: impl FnOnce(&mut Value)) -> World {
     let image = format!("{REPO}@{NEW}");
     let mut world = without_rollouts();
-    let mut app = summarised(application(Some(IN_CLUSTER_SERVER)), &[&image]);
+    let mut app = summarised(application(Some(server)), &[&image]);
     app["status"]["resources"] = json!([
         {"group": "apps", "kind": "Deployment", "namespace": "shop", "name": "storefront"}
     ]);

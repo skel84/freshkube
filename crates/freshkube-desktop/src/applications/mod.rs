@@ -24,6 +24,7 @@
 //! list's place: every Freight of the open cluster's Kargo projects, with
 //! how sure it is that each Stage's pods run it. It reads itself, while it
 //! shows, and opens the change page in its own place.
+mod across;
 mod change;
 mod changes;
 mod column;
@@ -45,8 +46,7 @@ use freshkube_core::applications::across::{Open, read_workspace};
 use freshkube_core::applications::{
     ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
 };
-use freshkube_core::delivery::entry::{self, Deadline};
-use freshkube_core::delivery::read::ReadOnlyClient;
+use freshkube_core::delivery::entry;
 use freshkube_core::resources::kubeconfig_sources;
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_core::workspace::{Chosen, Part as PartKind, Sources};
@@ -59,6 +59,7 @@ use gpui_kit::*;
 
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
+use across::{Across, Alone};
 use change::{ChangeEvent, ChangePage, Changes};
 use changes::ChangesEvent;
 pub(crate) use changes::ChangesPage;
@@ -166,20 +167,10 @@ impl Read {
             };
             (session.key.clone(), label)
         }));
-        // The change page reads the open connection: it follows a change
-        // only when Kargo was read there.
-        let here = Inputs {
-            sessions: inputs
-                .sessions
-                .iter()
-                .filter(|session| open.contains(&session.key))
-                .cloned()
-                .collect(),
-            stage_naming: inputs.stage_naming.clone(),
-            destinations: inputs.destinations.clone(),
-        };
-        let changes = match here.sessions.iter().any(|session| session.asked.kargo) {
-            true => Changes::live(&here, source),
+        // The change page reads each part from its entry: it follows a
+        // change wherever Kargo was read.
+        let changes = match inputs.sessions.iter().any(|session| session.asked.kargo) {
+            true => Changes::live(inputs, source),
             false => Changes::None,
         };
         Self {
@@ -420,9 +411,10 @@ impl ApplicationsPage {
         if same {
             return;
         }
+        // The list has the new connections before it reads the new source.
+        self.update_changes(cx);
         self.changes
             .update(cx, |changes, cx| changes.set_source(source, cx));
-        self.update_changes(cx);
         self.stop();
         self.snapshot = Snapshot::default();
         self.read_at = None;
@@ -468,14 +460,23 @@ impl ApplicationsPage {
         }
     }
 
-    /// Tells the Changes list which connection each cluster is and how the
-    /// workspace maps Argo CD's destinations.
+    /// Tells the Changes list which connection each cluster is and where
+    /// a live read reads each part.
     fn update_changes(&mut self, cx: &mut Context<Self>) {
         let connections = self.base_connections();
-        let mapping = self.clusters.mapping.clone();
+        let across = self.across();
         self.changes.update(cx, |changes, cx| {
-            changes.set_clusters(connections, mapping, cx)
+            changes.set_clusters(connections, across, cx)
         });
+    }
+
+    /// The workspace as a live change read sees it.
+    fn across(&self) -> Across {
+        Across {
+            mapping: self.clusters.mapping.clone(),
+            sources: self.clusters.sources.clone(),
+            kubeconfig: self.clusters.kubeconfig.clone(),
+        }
     }
 
     /// Which connection each cluster is, without a read: the open
@@ -510,8 +511,8 @@ impl ApplicationsPage {
             return;
         };
         let connections = self.connections(read);
-        let mapping = self.clusters.mapping.clone();
-        change.update(cx, |page, cx| page.set_clusters(mapping, connections, cx));
+        let across = self.across();
+        change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
     }
 
     /// Which connection each cluster of a read is, and which workspace
@@ -612,8 +613,12 @@ impl ApplicationsPage {
                     return;
                 }
                 let inputs = example::inputs(self.variant);
+                // The Changes list follows the same shape.
+                let shape = self.variant.shape();
+                self.changes
+                    .update(cx, |changes, _| changes.set_shape(shape));
                 let read = Read {
-                    changes: Changes::Example(Utc::now()),
+                    changes: Changes::Example(Utc::now(), shape),
                     ..Read::of(
                         &inputs,
                         example::labels(&inputs),
@@ -647,26 +652,9 @@ impl ApplicationsPage {
                         // does; beside other entries, the open one has
                         // their deadlines.
                         let alone = matches!(sources.get(PartKind::Kargo), Chosen::Open);
-                        let client = match alone {
-                            true => access.client().await,
-                            // Its setup ends in time too, so a client
-                            // being made again holds up no other entry.
-                            false => tokio::time::timeout(entry::CONNECT_DEADLINE, access.client())
-                                .await
-                                .unwrap_or_else(|_| {
-                                    Err(format!(
-                                        "no answer within {} s",
-                                        entry::CONNECT_DEADLINE.as_secs()
-                                    ))
-                                }),
-                        };
-                        let open = client.map(|client| match alone {
-                            true => Deadline::new(ReadOnlyClient::new(client), DEADLINE),
-                            false => entry::reader(client),
-                        });
-                        if alone {
-                            open.as_ref().map_err(Clone::clone)?;
-                        }
+                        let open =
+                            across::open_reader(&access, alone.then_some(Alone::Within(DEADLINE)))
+                                .await?;
                         let kubeconfigs = kubeconfig_sources(kubeconfig.as_deref());
                         let sessions = read_workspace(
                             &sources,
@@ -873,7 +861,7 @@ impl ApplicationsPage {
             stage,
             &self.runtime,
             &source.access,
-            self.clusters.mapping.clone(),
+            self.across(),
             self.example_delay,
         ) else {
             return;

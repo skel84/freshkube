@@ -7,22 +7,86 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 
 use super::super::*;
-use super::Place;
 use super::gates::{self, Row, instant};
 use super::links;
 use super::pages::Pages;
+use super::{At, Place, Reached};
 use crate::delivery::argocd::{Application, DestinationMatch, ManagedObject};
 use crate::delivery::deployments::current_set;
-use crate::delivery::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, freight_links};
+use crate::delivery::join::{
+    self, Confidence, Evidence, Hop as Joined, Key, Link, Workloads, freight_links,
+};
 use crate::delivery::kargo::{self, Freight, Stage as KargoStage};
 use crate::delivery::observation::{ObjectRef, Observation};
 use crate::delivery::source::{Source, cap_note};
 use crate::indicators::HealthIndicator::{self, *};
+use crate::workspace::Part;
+
+/// Where each part of the change was read, and, for one Stage, where it
+/// deploys and what was read there.
+#[derive(Clone)]
+struct Sides<'a> {
+    builds: At,
+    kargo: At,
+    argocd: At,
+    /// The Stage's destination, when it is known.
+    environment: Option<At>,
+    /// What was read there, when it was.
+    workloads: Option<&'a Workloads>,
+}
+
+impl<'a> Sides<'a> {
+    fn of(place: &Place) -> Self {
+        Self {
+            builds: place.at(Part::Builds),
+            kargo: place.at(Part::Kargo),
+            argocd: place.at(Part::ArgoCd),
+            environment: None,
+            workloads: None,
+        }
+    }
+
+    /// For the Stage whose run is `run`: its Application's destination.
+    fn stage(&self, place: &Place, evidence: &'a Evidence, run: &[&Link]) -> Self {
+        let context = run
+            .iter()
+            .find(|link| link.to == Joined::Application)
+            .and_then(|link| evidence.destination_of(&link.subject));
+        Self {
+            environment: context.map(|context| place.at_context(context)),
+            workloads: context
+                .and_then(|context| evidence.environments.get(context))
+                .and_then(|read| read.as_ref().ok()),
+            ..self.clone()
+        }
+    }
+
+    /// Where the side of a link `hop` names was read.
+    fn at(&self, hop: Joined) -> &At {
+        match hop {
+            Joined::PullRequest | Joined::Commit | Joined::PipelineRun | Joined::SupplyChain => {
+                &self.builds
+            }
+            Joined::Freight | Joined::Warehouse | Joined::Promotion | Joined::Stage => &self.kargo,
+            Joined::Application => &self.argocd,
+            Joined::Rollout | Joined::Deployment | Joined::Pod => {
+                self.environment.as_ref().unwrap_or(&self.argocd)
+            }
+        }
+    }
+}
 
 /// The change `place` names, from what was read and the join's links.
 /// `freight` is the Freight as first read; the one the project's list
-/// holds wins, as the join used it.
-pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pages) -> Change {
+/// holds wins, as the join used it. `reached` says which parts' entries
+/// weren't read at all.
+pub fn derive(
+    place: &Place,
+    evidence: &Evidence,
+    freight: &Freight,
+    pages: &Pages,
+    reached: &Reached,
+) -> Change {
     let freight = evidence
         .kargo
         .freight
@@ -32,22 +96,29 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
     let trail = (!evidence.sha.is_empty()).then(|| join::join(evidence));
     let links = freight_links(evidence, freight);
     let stages = reachable(freight, evidence);
+    let sides = Sides::of(place);
 
     let mut groups = vec![
         Group {
             phase: Phase::Build,
-            detail: format!("Tekton on {}", place.label),
+            detail: sides.builds.on("Tekton"),
         },
         Group {
             phase: Phase::Freight,
-            detail: format!("Kargo on {}", place.label),
+            detail: sides.kargo.on("Kargo"),
         },
     ];
-    let mut hops = build_hops(place, evidence, freight, pages, trail.as_ref());
-    hops.push(freight_hop(place, evidence, freight, pages, trail.as_ref()));
+    let mut hops = build_hops(&sides, evidence, freight, pages, trail.as_ref());
+    hops.push(freight_hop(
+        &sides,
+        evidence,
+        freight,
+        pages,
+        trail.as_ref(),
+    ));
     if let Some(warehouse) = links.iter().find(|link| link.to == Joined::Warehouse) {
         let mut hop = link_hop(
-            place,
+            &sides,
             evidence,
             freight,
             pages,
@@ -76,7 +147,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
         hops.push(hop);
     }
     if let Some(why) = evidence.kargo.stages.why_not_read() {
-        hops.push(unread_stages(place, &why));
+        hops.push(unread_stages(&sides, &why));
     }
 
     let mut model = Vec::new();
@@ -86,6 +157,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
         let stage_id = format!("{}/{}", stage.project, stage.name);
         let runs = stage_run(&links, &stage_id);
         let holds = stage.current_freight.contains(&freight.name);
+        let at = sides.stage(place, evidence, &runs);
         let cluster = deploys_to(place, evidence, holds, &runs);
         let reach = reach(place, evidence, holds, &runs);
         groups.push(Group {
@@ -97,21 +169,21 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
             ("Promotion", &gates.promotion_row),
             ("Verification", &gates.verification_row),
         ] {
-            hops.push(gate_hop(place, &stage.name, group, ix, gate, row));
+            hops.push(gate_hop(&sides, &stage.name, group, ix, gate, row));
         }
         for (n, link) in runs.iter().skip(1).enumerate() {
             // An Application mapped to another workspace cluster: in place
             // of its links into that cluster, which nothing read, the
             // workloads Argo CD reports there.
             let reported = elsewhere(place, evidence, &link.subject)
-                .map(|(app, entry)| reported_hops(place, &stage.name, group, app, entry))
+                .map(|away| reported_hops(&sides, &stage.name, group, away))
                 .unwrap_or_default();
             if link.from == Joined::Application && !reported.is_empty() {
                 continue;
             }
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
             hops.push(link_hop(
-                place, evidence, freight, pages, key, group, link, &runs,
+                &at, evidence, freight, pages, key, group, link, &runs,
             ));
             if link.to == Joined::Application {
                 hops.extend(reported);
@@ -134,7 +206,7 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
             link: runs.first().map(|link| link_detail(link)),
             reach,
             object: object(
-                place,
+                &sides.kargo,
                 &ObjectRef::new(
                     kargo::GROUP,
                     "Stage",
@@ -152,10 +224,11 @@ pub fn derive(place: &Place, evidence: &Evidence, freight: &Freight, pages: &Pag
             .alias
             .clone()
             .unwrap_or_else(|| freight.name.clone()),
-        kargo_cluster: place.label.clone(),
+        kargo_cluster: sides.kargo.label.clone(),
         observed_at: evidence.observed_at,
         page: links::freight_page(pages, freight),
         origin: origin(evidence, freight),
+        missing: missing(place, evidence, &sides, reached),
         groups,
         stages: model,
         hops,
@@ -218,19 +291,27 @@ fn sureness(confidence: Confidence) -> u8 {
 /// How sure it is that a Stage's pods run the Freight: the weakest link of
 /// its run, and Unknown when no link reaches its pods. An Application on
 /// another workspace entry, whose workloads Argo CD reports, stands for its
-/// links into that cluster, as the page shows it: Claimed at most, since
-/// nothing there was read. Unknown because a source the run needed was
-/// refused is Refused, naming what.
+/// links into that cluster, as the page shows it: Claimed at most when
+/// nothing asked its entry, and Unknown when its entry was asked and
+/// couldn't be read, since a side is unread. Unknown because a source the
+/// run needed was refused is Refused, naming what.
 pub(super) fn reach(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) -> Reach {
     if !holds {
         return Reach::NotReached;
     }
+    let at = Sides::of(place).stage(place, evidence, run);
     let reported = |link: &&Link| {
         link.from == Joined::Application
-            && elsewhere(place, evidence, &link.subject).is_some_and(|(app, _)| reports(app))
+            && elsewhere(place, evidence, &link.subject).is_some_and(|away| reports(away.app))
     };
     let kept: Vec<&Link> = run.iter().copied().filter(|link| !reported(link)).collect();
     let away = kept.len() < run.len();
+    // An entry asked that couldn't be read leaves a side unread: Unknown,
+    // as the claims say, though what Argo CD reports stays Claimed.
+    let unread = run.iter().any(|link| {
+        link.from == Joined::Application
+            && elsewhere(place, evidence, &link.subject).is_some_and(|away| away.why.is_some())
+    });
     let pods = kept.iter().any(|link| link.to == Joined::Pod);
     // An Application read here still needs its pods, beside one elsewhere.
     let local = kept.iter().any(|link| {
@@ -242,6 +323,7 @@ pub(super) fn reach(place: &Place, evidence: &Evidence, holds: bool, run: &[&Lin
         .map(|link| link.confidence)
         .min_by_key(|confidence| sureness(*confidence));
     let confidence = match weakest {
+        _ if unread => Confidence::Unknown,
         Some(weakest) if away && (pods || !local) => [weakest, Confidence::Claimed]
             .into_iter()
             .min_by_key(|confidence| sureness(*confidence))
@@ -250,7 +332,7 @@ pub(super) fn reach(place: &Place, evidence: &Evidence, holds: bool, run: &[&Lin
         _ => Confidence::Unknown,
     };
     if confidence == Confidence::Unknown {
-        let kinds = refused(evidence, &kept);
+        let kinds = refused(evidence, at.workloads, &kept);
         if !kinds.is_empty() {
             return Reach::Refused(kinds.join(", "));
         }
@@ -271,33 +353,32 @@ fn reports(app: &Application) -> bool {
 /// The kinds a Stage's run needed that the cluster refused: Argo CD's
 /// Applications, which every run goes through, and the workloads and pods
 /// its own links reach.
-fn refused(evidence: &Evidence, run: &[&Link]) -> Vec<&'static str> {
+fn refused(evidence: &Evidence, workloads: Option<&Workloads>, run: &[&Link]) -> Vec<&'static str> {
     fn no<T>(source: &Source<T>) -> bool {
         matches!(source, Source::Refused(_))
     }
     let pods = |subject: &str| {
-        let rollout = evidence
-            .pods
-            .get(subject)
-            .is_some_and(|pods| no(&pods.pods));
-        let deployment = evidence
-            .deployment_pods
-            .get(subject)
-            .is_some_and(|pods| no(&pods.pods));
-        let namespace = evidence.namespace_pods.get(subject).is_some_and(no);
-        rollout || deployment || namespace
+        workloads.is_some_and(|read| {
+            let rollout = read.pods.get(subject).is_some_and(|pods| no(&pods.pods));
+            let deployment = read
+                .deployment_pods
+                .get(subject)
+                .is_some_and(|pods| no(&pods.pods));
+            let namespace = read.namespace_pods.get(subject).is_some_and(no);
+            rollout || deployment || namespace
+        })
     };
     let touches = |kind: Joined| run.iter().any(|link| link.from == kind || link.to == kind);
+    let read = |refused: fn(&Workloads) -> bool| workloads.is_some_and(refused);
     let checks = [
         ("Argo CD Applications", no(&evidence.applications)),
         (
             "Rollouts",
-            touches(Joined::Rollout) && (no(&evidence.rollouts) || no(&evidence.replica_sets)),
+            touches(Joined::Rollout) && read(|w| no(&w.rollouts) || no(&w.replica_sets)),
         ),
         (
             "Deployments",
-            touches(Joined::Deployment)
-                && (no(&evidence.deployments) || no(&evidence.deployment_sets)),
+            touches(Joined::Deployment) && read(|w| no(&w.deployments) || no(&w.deployment_sets)),
         ),
         ("Pods", run.iter().any(|link| pods(&link.subject))),
     ];
@@ -358,8 +439,11 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
         });
     };
     let shown = |context: &str| {
-        if context == place.here() {
+        if place.is_here(context) {
             Destination::Cluster(place.label.clone())
+        } else if matches!(evidence.environments.get(context), Some(Ok(_))) {
+            // Read there, through a client of its own.
+            Destination::Cluster(context.to_owned())
         } else if !place.mapping.lists(context) {
             Not(format!(
                 "mapped to {context}, which the workspace no longer lists"
@@ -389,7 +473,7 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
             let entries: Vec<&str> = entries
                 .iter()
                 .map(|entry| {
-                    if entry == place.here() {
+                    if place.is_here(entry) {
                         place.label.as_str()
                     } else {
                         entry.as_str()
@@ -411,23 +495,46 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
     }
 }
 
+/// An Application mapped to another workspace cluster that wasn't read.
+struct Away<'a> {
+    app: &'a Application,
+    entry: &'a str,
+    /// Why it wasn't read, when its entry was asked; else nothing asked it,
+    /// as the workspace of one asks no other entry.
+    why: Option<&'a str>,
+}
+
 /// The Application `app_id` names and the workspace cluster it is mapped
-/// to, when that is a cluster the workspace lists other than this one.
-fn elsewhere<'a>(
-    place: &Place,
-    evidence: &'a Evidence,
-    app_id: &str,
-) -> Option<(&'a Application, &'a str)> {
-    let entry = evidence.destinations.get(app_id)?.context()?;
-    if entry == place.here() || !place.mapping.lists(entry) {
+/// to, when that is a cluster the workspace lists other than this one, and
+/// nothing was read there.
+fn elsewhere<'a>(place: &Place, evidence: &'a Evidence, app_id: &str) -> Option<Away<'a>> {
+    let entry = evidence.destination_of(app_id)?;
+    if place.is_here(entry) || !place.mapping.lists(entry) {
         return None;
     }
+    let why = match evidence.environments.get(entry) {
+        Some(Ok(_)) => return None,
+        Some(Err(why)) => Some(why.as_str()),
+        None => None,
+    };
     let app = evidence
         .applications
         .read()?
         .iter()
         .find(|app| format!("{}/{}", app.namespace, app.name) == app_id)?;
-    Some((app, entry))
+    Some(Away { app, entry, why })
+}
+
+/// Whether Argo CD reports a workload for an Application that deploys to
+/// `context`.
+pub(super) fn reported_on(evidence: &Evidence, context: &str) -> bool {
+    evidence.applications.read().is_some_and(|apps| {
+        apps.iter().any(|app| {
+            reports(app)
+                && evidence.destination_of(&format!("{}/{}", app.namespace, app.name))
+                    == Some(context)
+        })
+    })
 }
 
 /// The workload kinds Argo CD may report for an Application, by group.
@@ -440,15 +547,10 @@ const WORKLOADS: [(&str, &str); 4] = [
 
 /// The workloads Argo CD reports for an Application on another workspace
 /// cluster, from its `status.resources`: what Argo CD says, since that
-/// cluster isn't read, so each link is Argo CD's claim. Each opens on that
+/// cluster wasn't read, so each link is Argo CD's claim. Each opens on that
 /// cluster.
-fn reported_hops(
-    place: &Place,
-    stage: &str,
-    group: usize,
-    app: &Application,
-    entry: &str,
-) -> Vec<Hop> {
+fn reported_hops(sides: &Sides, stage: &str, group: usize, away: Away) -> Vec<Hop> {
+    let app = away.app;
     app.managed
         .iter()
         .filter(|object| {
@@ -459,25 +561,24 @@ fn reported_hops(
         .enumerate()
         .map(|(n, object)| {
             reported_hop(
-                place,
+                sides,
                 format!("{stage}-reported-{}-{n}", app.name),
                 group,
-                app,
+                &away,
                 object,
-                entry,
             )
         })
         .collect()
 }
 
 fn reported_hop(
-    place: &Place,
+    sides: &Sides,
     key: String,
     group: usize,
-    app: &Application,
+    away: &Away,
     object: &ManagedObject,
-    entry: &str,
 ) -> Hop {
+    let (app, entry) = (away.app, away.entry);
     let namespace = object
         .namespace
         .clone()
@@ -523,7 +624,7 @@ fn reported_hop(
     }
     fields.push(Field {
         label: "Read from".into(),
-        value: Value::Mono(format!("Argo CD on {}", place.label)),
+        value: Value::Mono(format!("Argo CD on {}", sides.argocd.label)),
     });
     let shown = if namespace.is_empty() {
         object.name.clone()
@@ -551,7 +652,7 @@ fn reported_hop(
         state,
         name: format!("{} {}", object.kind, object.name),
         detail: format!("Argo CD reports it on {entry}; not read there"),
-        from: place.label.clone(),
+        from: sides.argocd.label.clone(),
         at: None,
         link: Some(Confidence::Claimed),
         shows: Shows::Hop(Box::new(HopDetail {
@@ -561,9 +662,14 @@ fn reported_hop(
             notice: Some(Notice {
                 state: Info,
                 lead: "Not read.".into(),
-                body: format!(
-                    "{entry} isn't the open cluster, so this is what Argo CD reports, not what was read there."
-                ),
+                body: match away.why {
+                    Some(why) => sentence(&format!(
+                        "{why}, so this is what Argo CD reports, not what was read there"
+                    )),
+                    None => format!(
+                        "{entry} wasn't read for this change, so this is what Argo CD reports, not what was read there."
+                    ),
+                },
             }),
             fields,
             link: Some(LinkDetail {
@@ -572,9 +678,14 @@ fn reported_hop(
                 before: "Application".into(),
                 before_says: format!("status.resources lists {} {shown}", object.kind),
                 here_says: "not read".into(),
-                why: format!(
-                    "Only Argo CD's status says so: {entry} isn't read, so nothing there confirms it."
-                ),
+                why: match away.why {
+                    Some(why) => format!(
+                        "Only Argo CD's status says so: {why}, so nothing there confirms it."
+                    ),
+                    None => format!(
+                        "Only Argo CD's status says so: {entry} isn't read, so nothing there confirms it."
+                    ),
+                },
             }),
             unlinked: None,
             actions: vec![Action::new(Target::OnEntry {
@@ -659,15 +770,16 @@ fn row_name(link: &Link) -> String {
     }
 }
 
-/// An object to open, on this cluster, in the version the app reads it.
-fn object(place: &Place, object: &ObjectRef) -> Object {
+/// An object to open, on the cluster it was read on, in the version the
+/// app reads it.
+fn object(at: &At, object: &ObjectRef) -> Object {
     let version = match object.group.as_str() {
         "" | "apps" => "v1",
         "tekton.dev" => "v1",
         _ => "v1alpha1",
     };
     Object {
-        cluster: place.cluster.clone(),
+        cluster: at.cluster.clone(),
         group: object.group.clone(),
         version: version.into(),
         kind: object.kind.clone(),
@@ -749,7 +861,12 @@ fn sentence(text: &str) -> String {
 }
 
 /// The state of what a link leads to, as far as what was read says.
-fn state_of(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthIndicator, String) {
+fn state_of(
+    evidence: &Evidence,
+    workloads: Option<&Workloads>,
+    freight: &Freight,
+    link: &Link,
+) -> (HealthIndicator, String) {
     if link.confidence == Confidence::Unknown {
         return (Unknown, "Unknown".into());
     }
@@ -791,9 +908,8 @@ fn state_of(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthIndic
             (state, words)
         }
         Joined::Rollout => {
-            let rollout = evidence
-                .rollouts
-                .read()
+            let rollout = workloads
+                .and_then(|read| read.rollouts.read())
                 .and_then(|all| all.iter().find(|r| id(&r.namespace, &r.name)));
             let Some(rollout) = rollout else {
                 return (Unknown, "Not read".into());
@@ -814,9 +930,8 @@ fn state_of(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthIndic
             }
         }
         Joined::Deployment => {
-            let deployment = evidence
-                .deployments
-                .read()
+            let deployment = workloads
+                .and_then(|read| read.deployments.read())
                 .and_then(|all| all.iter().find(|d| id(&d.namespace, &d.name)));
             let Some(d) = deployment else {
                 return (Unknown, "Not read".into());
@@ -843,7 +958,7 @@ fn state_of(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthIndic
                 (Healthy, "Available".into())
             }
         }
-        Joined::Pod => pods_state(evidence, freight, link),
+        Joined::Pod => pods_state(workloads, freight, link),
         _ => {
             let mut word = link.confidence.word().to_owned();
             word[..1].make_ascii_uppercase();
@@ -854,7 +969,11 @@ fn state_of(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthIndic
 
 /// The pods' state: how many of the containers that run the Freight's
 /// digest are ready, of those the link names.
-fn pods_state(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthIndicator, String) {
+fn pods_state(
+    workloads: Option<&Workloads>,
+    freight: &Freight,
+    link: &Link,
+) -> (HealthIndicator, String) {
     let digests: BTreeSet<&str> = freight
         .images
         .iter()
@@ -877,14 +996,16 @@ fn pods_state(evidence: &Evidence, freight: &Freight, link: &Link) -> (HealthInd
             (Unknown, "No pods reported".into())
         };
     }
-    let read = [
-        evidence.pods.get(&link.subject).map(|read| &read.pods),
-        evidence
-            .deployment_pods
-            .get(&link.subject)
-            .map(|read| &read.pods),
-        evidence.namespace_pods.get(&link.subject),
-    ];
+    let read = workloads.map_or([None; 3], |workloads| {
+        [
+            workloads.pods.get(&link.subject).map(|read| &read.pods),
+            workloads
+                .deployment_pods
+                .get(&link.subject)
+                .map(|read| &read.pods),
+            workloads.namespace_pods.get(&link.subject),
+        ]
+    });
     let containers: Vec<_> = read
         .into_iter()
         .flatten()
@@ -923,7 +1044,7 @@ fn time_of(evidence: &Evidence, link: &Link) -> Option<DateTime<Utc>> {
 /// build's or the Warehouse's.
 #[allow(clippy::too_many_arguments)]
 fn link_hop(
-    place: &Place,
+    sides: &Sides,
     evidence: &Evidence,
     freight: &Freight,
     pages: &Pages,
@@ -932,7 +1053,8 @@ fn link_hop(
     link: &Link,
     run: &[&Link],
 ) -> Hop {
-    let (state, words) = state_of(evidence, freight, link);
+    let at = sides.at(link.to);
+    let (state, words) = state_of(evidence, sides.workloads, freight, link);
     let to_kind = kind_of(link.to);
     // An Unknown link to an object it never found names the side it came
     // from: the row says what wasn't found, or wasn't read when its list was
@@ -949,8 +1071,12 @@ fn link_hop(
             .any(|seen| Some(seen.object.kind.as_str()) == to_kind);
     let listed = match link.to {
         Joined::Application => evidence.applications.read().is_some(),
-        Joined::Rollout => evidence.rollouts.read().is_some(),
-        Joined::Deployment => evidence.deployments.read().is_some(),
+        Joined::Rollout => sides
+            .workloads
+            .is_some_and(|read| read.rollouts.read().is_some()),
+        Joined::Deployment => sides
+            .workloads
+            .is_some_and(|read| read.deployments.read().is_some()),
         _ => true,
     };
     let missing_words = format!(
@@ -981,7 +1107,7 @@ fn link_hop(
         });
     }
     let revision = (!missing)
-        .then(|| revision(place, evidence, link, run))
+        .then(|| revision(at, sides.workloads, link, run))
         .flatten();
     if let Some(Action {
         target: Target::Revision {
@@ -1003,9 +1129,9 @@ fn link_hop(
     }
     fields.push(Field {
         label: "Read from".into(),
-        value: Value::Mono(place.label.clone()),
+        value: Value::Mono(at.label.clone()),
     });
-    let mut actions: Vec<Action> = links::actions(place, evidence, pages, link);
+    let mut actions: Vec<Action> = links::actions(&sides.builds, evidence, pages, link);
     actions.extend(
         link.evidence
             .iter()
@@ -1013,7 +1139,7 @@ fn link_hop(
             .map(|seen| {
                 Action::new(Target::Resource {
                     what: format!("the {}", seen.object.kind),
-                    object: object(place, &seen.object),
+                    object: object(at, &seen.object),
                 })
             }),
     );
@@ -1033,7 +1159,7 @@ fn link_hop(
             row_name(link)
         },
         detail: link.reason.clone(),
-        from: place.label.clone(),
+        from: at.label.clone(),
         at: time_of(evidence, link),
         link: Some(link.confidence),
         shows: Shows::Hop(Box::new(HopDetail {
@@ -1060,15 +1186,15 @@ fn link_hop(
 /// only when the pods link in `run` confirms that revision runs the
 /// Freight, since otherwise it may be another change. Coroot keeps
 /// revisions of Deployments only, so a Rollout's says so.
-fn revision(place: &Place, evidence: &Evidence, link: &Link, run: &[&Link]) -> Option<Action> {
+fn revision(at: &At, workloads: Option<&Workloads>, link: &Link, run: &[&Link]) -> Option<Action> {
     let seen = link
         .evidence
         .iter()
         .find(|seen| Some(seen.object.kind.as_str()) == kind_of(link.to))?;
-    let workload = object(place, &seen.object);
+    let workload = object(at, &seen.object);
     match link.to {
         Joined::Deployment => {
-            let hash = current_hash(evidence, link)
+            let hash = current_hash(workloads, link)
                 .map_err(|why| sentence(&format!("{why}, so Coroot's revision of it isn't known")));
             let runs_it = hash.is_err()
                 || run.iter().any(|pods| {
@@ -1100,18 +1226,16 @@ fn revision(place: &Place, evidence: &Evidence, link: &Link, run: &[&Link]) -> O
 
 /// The pod-template hash of the current ReplicaSet of the Deployment a
 /// link leads to, or why it isn't known.
-fn current_hash(evidence: &Evidence, link: &Link) -> Result<String, String> {
-    let deployment = evidence
-        .deployments
-        .read()
+fn current_hash(workloads: Option<&Workloads>, link: &Link) -> Result<String, String> {
+    let deployment = workloads
+        .and_then(|read| read.deployments.read())
         .and_then(|all| {
             all.iter()
                 .find(|d| format!("{}/{}", d.namespace, d.name) == link.subject)
         })
         .ok_or("the Deployment wasn't read")?;
-    let sets = evidence
-        .deployment_sets
-        .read()
+    let sets = workloads
+        .and_then(|read| read.deployment_sets.read())
         .ok_or("the Deployment's ReplicaSets couldn't be read")?;
     let set = current_set(deployment, sets)?;
     set.pod_hash
@@ -1122,7 +1246,7 @@ fn current_hash(evidence: &Evidence, link: &Link) -> Result<String, String> {
 /// The builds of the Freight's commit: every link the join made before it
 /// reached a Freight, one hop each.
 fn build_hops(
-    place: &Place,
+    sides: &Sides,
     evidence: &Evidence,
     freight: &Freight,
     pages: &Pages,
@@ -1136,7 +1260,7 @@ fn build_hops(
             name: "Builds".into(),
             detail: "The Freight names no commit or image revision, so no build is looked for"
                 .into(),
-            from: place.label.clone(),
+            from: sides.builds.label.clone(),
             at: None,
             link: Some(Confidence::Unknown),
             shows: Shows::Hop(Box::new(HopDetail {
@@ -1164,7 +1288,7 @@ fn build_hops(
         .enumerate()
         .map(|(n, link)| {
             link_hop(
-                place,
+                sides,
                 evidence,
                 freight,
                 pages,
@@ -1180,7 +1304,7 @@ fn build_hops(
 /// The Freight itself, joined to its build by the link the join made into
 /// it, when it made one.
 fn freight_hop(
-    place: &Place,
+    sides: &Sides,
     evidence: &Evidence,
     freight: &Freight,
     pages: &Pages,
@@ -1253,7 +1377,7 @@ fn freight_hop(
             || format!("Followed from its Stage; {}", unjoined(evidence, freight)),
             |link| link.reason.clone(),
         ),
-        from: place.label.clone(),
+        from: sides.kargo.label.clone(),
         at: None,
         link: into.map(|link| link.confidence),
         shows: Shows::Hop(Box::new(HopDetail {
@@ -1273,7 +1397,7 @@ fn freight_hop(
                 Action::new(Target::Resource {
                     what: "the Freight".into(),
                     object: object(
-                        place,
+                        &sides.kargo,
                         &ObjectRef::new(
                             kargo::GROUP,
                             "Freight",
@@ -1290,7 +1414,7 @@ fn freight_hop(
 }
 
 /// The row that says the project's Stages weren't read, so none is shown.
-fn unread_stages(place: &Place, why: &str) -> Hop {
+fn unread_stages(sides: &Sides, why: &str) -> Hop {
     let body = sentence(&format!("The project's Stages weren't read: {why}"));
     Hop {
         key: "stages".into(),
@@ -1298,7 +1422,7 @@ fn unread_stages(place: &Place, why: &str) -> Hop {
         state: Unknown,
         name: "Stages".into(),
         detail: format!("Not read: {why}"),
-        from: place.label.clone(),
+        from: sides.kargo.label.clone(),
         at: None,
         link: Some(Confidence::Unknown),
         shows: Shows::Hop(Box::new(HopDetail {
@@ -1343,16 +1467,102 @@ fn unjoined(evidence: &Evidence, freight: &Freight) -> String {
     }
 }
 
-fn gate_hop(place: &Place, stage: &str, group: usize, ix: usize, gate: &str, row: &Row) -> Hop {
+fn gate_hop(sides: &Sides, stage: &str, group: usize, ix: usize, gate: &str, row: &Row) -> Hop {
     Hop {
         key: format!("{stage}-{}", gate.to_lowercase()),
         group,
         state: row.state,
         name: gate.into(),
         detail: row.detail.clone(),
-        from: place.label.clone(),
+        from: sides.kargo.label.clone(),
         at: row.at,
         link: None,
         shows: Shows::Stage(ix),
     }
+}
+
+/// What may be missing from the change, one sentence each, in the words
+/// that name the entry: a part whose entry couldn't be read at all, a
+/// destination that couldn't be, and a kind refused or not served where it
+/// was asked.
+fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached) -> Vec<Missing> {
+    fn kind<T>(source: &Source<T>, what: &str, at: &At) -> Option<Missing> {
+        let entry = &at.label;
+        match source {
+            Source::Refused(why) => Some(Missing::new(
+                Gap::Refused,
+                format!("{what} were refused on {entry}: {why}"),
+            )),
+            Source::NotInstalled(_) => Some(Missing::new(
+                Gap::NotServed,
+                format!("{what} aren't served on {entry}"),
+            )),
+            Source::Unreadable(why) => Some(Missing::new(
+                Gap::Unreadable,
+                format!("{what} couldn't be read on {entry}: {why}"),
+            )),
+            Source::Read(_) | Source::Capped(..) => None,
+        }
+    }
+    let mut lines: Vec<Missing> = Vec::new();
+    for (unread, kinds) in [
+        (
+            &reached.builds,
+            // No build is looked for without a commit.
+            vec![
+                (!evidence.sha.is_empty())
+                    .then(|| kind(&evidence.builds, "PipelineRuns", &sides.builds))
+                    .flatten(),
+            ],
+        ),
+        (
+            &reached.kargo,
+            vec![
+                kind(&evidence.kargo.stages, "Kargo Stages", &sides.kargo),
+                kind(&evidence.kargo.promotions, "Kargo Promotions", &sides.kargo),
+            ],
+        ),
+        (
+            &reached.argocd,
+            vec![kind(
+                &evidence.applications,
+                "Argo CD Applications",
+                &sides.argocd,
+            )],
+        ),
+    ] {
+        match unread {
+            Some(unread) => lines.push(Missing::new(Gap::Unreadable, unread.words())),
+            None => lines.extend(kinds.into_iter().flatten()),
+        }
+    }
+    for (context, read) in &evidence.environments {
+        let at = place.at_context(context);
+        match read {
+            Err(why) => lines.push(Missing::new(Gap::Unreadable, why.clone())),
+            Ok(workloads) => {
+                let pods = workloads
+                    .pods
+                    .values()
+                    .chain(workloads.deployment_pods.values())
+                    .map(|read| &read.pods)
+                    .chain(workloads.namespace_pods.values())
+                    .find(|pods| matches!(pods, Source::Refused(_) | Source::NotInstalled(_)));
+                // Rollouts not served are only Argo Rollouts not installed.
+                let rollouts = kind(&workloads.rollouts, "Rollouts", &at)
+                    .filter(|line| line.gap != Gap::NotServed);
+                lines.extend(
+                    [
+                        rollouts,
+                        kind(&workloads.deployments, "Deployments", &at),
+                        pods.and_then(|pods| kind(pods, "Pods", &at)),
+                    ]
+                    .into_iter()
+                    .flatten(),
+                );
+            }
+        }
+    }
+    lines.dedup();
+    lines
 }

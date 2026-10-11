@@ -197,7 +197,7 @@ fn step_logs(task: &str, run: &str) -> Action {
 
 /// The Stage itself, in Kargo's project namespace.
 pub fn stage_object(stage: &str) -> Object {
-    object(CORE, kargo::GROUP, "Stage", PROJECT, stage)
+    object(CICD, kargo::GROUP, "Stage", PROJECT, stage)
 }
 
 fn application_object(name: &str) -> Object {
@@ -355,7 +355,7 @@ fn gates(
             state,
             name: (*gate).into(),
             detail: detail.into(),
-            from: CORE.into(),
+            from: CICD.into(),
             at,
             link: None,
             shows: Shows::Stage(stage),
@@ -654,7 +654,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         state: Healthy,
         name: "Policy acme-prod".into(),
         detail: "Conforma: 41 of 41 rules passed".into(),
-        from: CORE.into(),
+        from: CICD.into(),
         at: Some(at(now, 18)),
         link: Some(Confidence::Confirmed),
         shows: Shows::Hop(Box::new(HopDetail {
@@ -680,7 +680,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
                 Action::new(Target::Logs {
                     what: "verify".into(),
                     pod: object(
-                        CORE,
+                        CICD,
                         "",
                         "Pod",
                         RELEASE_NAMESPACE,
@@ -691,7 +691,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
                 resource(
                     "the TaskRun",
                     object(
-                        CORE,
+                        CICD,
                         "tekton.dev",
                         "TaskRun",
                         RELEASE_NAMESPACE,
@@ -743,7 +743,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         state: Healthy,
         name: format!("Freight {FREIGHT}"),
         detail: "Found by Warehouse checkout-images · image + checkout-deploy".into(),
-        from: CORE.into(),
+        from: CICD.into(),
         at: Some(at(now, 19)),
         link: Some(Confidence::Confirmed),
         shows: Shows::Hop(Box::new(HopDetail {
@@ -770,7 +770,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
             actions: vec![
                 resource(
                     "the Freight",
-                    object(CORE, kargo::GROUP, "Freight", PROJECT, FREIGHT),
+                    object(CICD, kargo::GROUP, "Freight", PROJECT, FREIGHT),
                 ),
                 Action::browser("Open in Kargo", Ok(kargo_page())),
             ],
@@ -880,11 +880,11 @@ pub fn change(now: DateTime<Utc>) -> Change {
     let mut groups = vec![
         Group {
             phase: Phase::Build,
-            detail: format!("{GIT} · {CICD} · {CORE} · {REGISTRY}"),
+            detail: format!("{GIT} · {CICD} · {REGISTRY}"),
         },
         Group {
             phase: Phase::Freight,
-            detail: format!("Kargo on {CORE}"),
+            detail: format!("Kargo on {CICD}"),
         },
     ];
     groups.extend(stages.iter().enumerate().map(|(ix, stage)| Group {
@@ -965,7 +965,7 @@ pub fn change(now: DateTime<Utc>) -> Change {
     Change {
         project: PROJECT.into(),
         freight: FREIGHT.into(),
-        kargo_cluster: CORE.into(),
+        kargo_cluster: CICD.into(),
         observed_at: now,
         page: Ok(kargo_page()),
         origin: Origin {
@@ -973,9 +973,228 @@ pub fn change(now: DateTime<Utc>) -> Change {
             commit: Some(COMMIT.into()),
             title: Some(TITLE.into()),
         },
+        missing: Vec::new(),
         groups,
         stages,
         hops,
+    }
+}
+
+/// What the example couldn't read, as the acme workspace's entries are
+/// reshaped for captures and tests (`FRESHKUBE_APPLICATIONS` in debug
+/// builds): each in the words a live read across the workspace uses.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Shape {
+    /// Everything read.
+    #[default]
+    Whole,
+    /// `cicd-fra`, where Kargo and the builds are read, couldn't be
+    /// reached: no Freight answers.
+    KargoUnreachable,
+    /// Argo CD's Applications refused on `core-fra`.
+    ArgoRefused,
+    /// `dev-fra`, the `dev` Stage's destination, couldn't be reached.
+    DestinationUnreachable,
+}
+
+/// Why the example's unreachable entry wasn't read.
+const NO_ANSWER: &str = "no answer within 5 s; a credential plugin may be waiting for a sign-in";
+/// The Stage whose destination [`Shape::DestinationUnreachable`] can't
+/// reach, and its cluster.
+const UNREACHED: (&str, &str) = ("dev", "dev-fra");
+
+impl Shape {
+    /// The words of what wasn't read, as a live read says it.
+    fn words(self) -> Option<String> {
+        match self {
+            Self::Whole => None,
+            Self::KargoUnreachable => Some(format!("Couldn't reach {CICD}: {NO_ANSWER}")),
+            Self::ArgoRefused => Some(format!(
+                "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
+                 forbidden for this identity"
+            )),
+            Self::DestinationUnreachable => Some(format!(
+                "Couldn't reach {0}: connection refused by {0}.example.test:6443",
+                UNREACHED.1
+            )),
+        }
+    }
+
+    /// Why `project`'s Freight couldn't be read, when its entry wasn't.
+    pub fn unreached(self) -> Option<String> {
+        (self == Self::KargoUnreachable)
+            .then(|| self.words())
+            .flatten()
+    }
+
+    /// `change` as this shape reads it: an error when its Freight couldn't
+    /// be read at all.
+    pub fn apply(self, mut change: Change) -> Result<Change, String> {
+        let Some(why) = self.words() else {
+            return Ok(change);
+        };
+        match self {
+            Self::Whole => {}
+            Self::KargoUnreachable => {
+                return Err(format!(
+                    "Freight {} of {} couldn't be read: {why}",
+                    change.freight, change.project
+                ));
+            }
+            Self::ArgoRefused => {
+                for ix in 0..change.stages.len() {
+                    let Some(group) = stage_group(&change, ix) else {
+                        continue;
+                    };
+                    let stage = &mut change.stages[ix];
+                    if stage.reach != Reach::NotReached {
+                        stage.reach = Reach::Refused("Argo CD Applications".into());
+                    }
+                    stage.cluster =
+                        Destination::Unknown(format!("its Application couldn't be read: {why}"));
+                    change.groups[group].detail = stage.cluster.words();
+                    let name = stage.name.clone();
+                    let at = change
+                        .hops
+                        .iter()
+                        .position(|hop| hop.group == group && !is_gate(hop))
+                        .unwrap_or(change.hops.len());
+                    change.hops.retain(|hop| hop.group != group || is_gate(hop));
+                    let at = at.min(change.hops.len());
+                    change
+                        .hops
+                        .insert(at, refused_application(&name, group, &why));
+                }
+            }
+            Self::DestinationUnreachable => {
+                let (name, cluster) = UNREACHED;
+                if let Some(ix) = change.stages.iter().position(|stage| stage.name == name)
+                    && let Some(group) = stage_group(&change, ix)
+                {
+                    let stage = &mut change.stages[ix];
+                    // A side couldn't be read: Unknown, unless it was less.
+                    let unread = Reach::Linked(Confidence::Unknown);
+                    if stage.reach.rank() > unread.rank() {
+                        stage.reach = unread;
+                    }
+                    stage.cluster = Destination::Entry {
+                        entry: cluster.into(),
+                        via: format!("server https://{cluster}.example.test:6443"),
+                    };
+                    change.groups[group].detail = stage.cluster.words();
+                    let read_there =
+                        |hop: &Hop| hop.group == group && hop.from == cluster && !is_gate(hop);
+                    if let Some(at) = change.hops.iter().position(read_there) {
+                        change.hops.retain(|hop| !read_there(hop));
+                        change.hops.insert(at, reported(name, cluster, group, &why));
+                    }
+                }
+            }
+        }
+        let gap = match self {
+            Self::ArgoRefused => Gap::Refused,
+            _ => Gap::Unreadable,
+        };
+        change.missing.push(Missing::new(gap, why));
+        Ok(change)
+    }
+}
+
+/// The group of the `ix`th Stage.
+fn stage_group(change: &Change, ix: usize) -> Option<usize> {
+    change
+        .groups
+        .iter()
+        .position(|group| group.phase == Phase::Stage(ix))
+}
+
+/// A Stage's gate, which Kargo answers, not Argo CD.
+fn is_gate(hop: &Hop) -> bool {
+    matches!(hop.shows, Shows::Stage(_))
+}
+
+/// In place of what Argo CD's Applications would have said of a Stage.
+fn refused_application(stage: &str, group: usize, why: &str) -> Hop {
+    Hop {
+        key: format!("{stage}-argocd"),
+        group,
+        state: Unknown,
+        name: "Argo CD Application".into(),
+        detail: format!("Not readable: {why}"),
+        from: CORE.into(),
+        at: None,
+        link: Some(Confidence::Unknown),
+        shows: Shows::Hop(Box::new(HopDetail {
+            kind: "Argo CD Application".into(),
+            title: format!("{PROJECT}-{stage}"),
+            state: "Not readable".into(),
+            notice: Some(Notice {
+                state: Warning,
+                lead: "Not readable.".into(),
+                body: format!(
+                    "{why}. This says nothing about what runs there: nothing past the Stage \
+                     can be followed."
+                ),
+            }),
+            fields: vec![mono("Read from", CORE)],
+            link: link(
+                Confidence::Unknown,
+                "revision",
+                "Promotion",
+                "git-push wrote the env branch",
+                "can't be read",
+                "A side can't be read, so the link is Unknown.",
+            ),
+            unlinked: None,
+            actions: Vec::new(),
+        })),
+    }
+}
+
+/// What Argo CD reports of a Stage's Deployment on an entry that couldn't
+/// be reached, as a live read shows it.
+fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
+    let mut target = deployment(cluster);
+    target.cluster = String::new();
+    Hop {
+        key: format!("{stage}-reported-{PROJECT}-{stage}-0"),
+        group,
+        state: Info,
+        name: format!("Deployment {DEPLOYMENT}"),
+        detail: format!("Argo CD reports it on {cluster}; not read there"),
+        from: CORE.into(),
+        at: None,
+        link: Some(Confidence::Claimed),
+        shows: Shows::Hop(Box::new(HopDetail {
+            kind: "Deployment".into(),
+            title: DEPLOYMENT.into(),
+            state: "Argo CD reports Synced · Healthy".into(),
+            notice: Some(Notice {
+                state: Info,
+                lead: "Not read.".into(),
+                body: format!("{why}, so this is what Argo CD reports, not what was read there."),
+            }),
+            fields: vec![
+                mono("Namespace", PROJECT),
+                mono("Name", DEPLOYMENT),
+                mono("Cluster", cluster),
+                mono("Read from", &format!("Argo CD on {CORE}")),
+            ],
+            link: Some(LinkDetail {
+                confidence: Confidence::Claimed,
+                by: "name".into(),
+                before: "Application".into(),
+                before_says: format!("status.resources lists Deployment {PROJECT}/{DEPLOYMENT}"),
+                here_says: "not read".into(),
+                why: format!("Only Argo CD's status says so: {why}, so nothing there confirms it."),
+            }),
+            unlinked: None,
+            actions: vec![Action::new(Target::OnEntry {
+                what: "the Deployment".into(),
+                entry: cluster.into(),
+                object: target,
+            })],
+        })),
     }
 }
 

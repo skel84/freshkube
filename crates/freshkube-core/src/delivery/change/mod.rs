@@ -34,6 +34,10 @@ pub struct Change {
     /// What the change is: its pull request, commit and title, as far as
     /// they were read.
     pub origin: Origin,
+    /// What may be missing, one sentence each that names the entry: a
+    /// part's entry or a destination that couldn't be read, a kind refused
+    /// or not served. The page's banner; empty when everything was read.
+    pub missing: Vec<Missing>,
     pub groups: Vec<Group>,
     pub stages: Vec<Stage>,
     pub hops: Vec<Hop>,
@@ -400,6 +404,33 @@ impl Destination {
             Self::Unknown(why) => format!("destination unknown: {why}"),
         }
     }
+}
+
+/// What a change may be missing: a sentence that names the entry, and
+/// what kept it out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Missing {
+    pub gap: Gap,
+    pub text: String,
+}
+
+impl Missing {
+    pub fn new(gap: Gap, text: impl Into<String>) -> Self {
+        Self {
+            gap,
+            text: text.into(),
+        }
+    }
+}
+
+/// What kept a part of a change out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gap {
+    /// Its kind isn't served there.
+    NotServed,
+    Refused,
+    /// Unreachable, unfinished in time, or another error.
+    Unreadable,
 }
 
 /// A Stage and its three gates.

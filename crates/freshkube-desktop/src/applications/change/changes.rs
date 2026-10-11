@@ -7,12 +7,11 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::applications::{ArgoScope, Inputs};
-use freshkube_core::delivery::change::{
-    self as delivery_change,
-    live::{Mapping, Place},
-};
+use freshkube_core::delivery::change::example::Shape;
+use freshkube_core::delivery::change::{self as delivery_change, live::Place};
 
 use super::Fetch;
+use crate::applications::across::Across;
 use crate::resources::{KubeAccess, KubeSource};
 
 /// Where a Stage's change comes from.
@@ -20,14 +19,16 @@ use crate::resources::{KubeAccess, KubeSource};
 pub(in crate::applications) enum Changes {
     /// Nothing reads a change.
     None,
-    /// Example data's, its times counted from when it was read.
-    Example(DateTime<Utc>),
+    /// Example data's, its times counted from when it was read, in the
+    /// example's shape.
+    Example(DateTime<Utc>, Shape),
     /// The open connection's, from the Freight each Stage runs.
     Live(Arc<LiveChanges>),
 }
 
 /// What a live read found to follow: each Kargo Stage's current Freight,
-/// and where to read the rest.
+/// wherever Kargo was read, and the open connection the rest is read
+/// from.
 #[derive(Debug)]
 pub(in crate::applications) struct LiveChanges {
     /// The connection's id, which objects to open carry.
@@ -75,7 +76,7 @@ impl Changes {
     pub(in crate::applications) fn freight_of(&self, project: &str, stage: &str) -> Option<String> {
         match self {
             Self::None => None,
-            Self::Example(_) => {
+            Self::Example(..) => {
                 delivery_change::example::freight_of(project, stage).map(str::to_owned)
             }
             Self::Live(live) => live
@@ -86,24 +87,26 @@ impl Changes {
     }
 
     /// What reads the change a Kargo project's Stage carries, when it
-    /// carries one; a live one reads through `access` and resolves its
-    /// Stages' destinations through the workspace's `mapping`.
+    /// carries one; a live one reads from `access` across the workspace,
+    /// each part where `across` says, its Stages' destinations resolved
+    /// through its mapping.
     pub(in crate::applications) fn fetch(
         &self,
         project: &str,
         stage: &str,
         runtime: &tokio::runtime::Handle,
         access: &KubeAccess,
-        mapping: Mapping,
+        across: Across,
         delay: Duration,
     ) -> Option<Fetch> {
         let freight = self.freight_of(project, stage)?;
         match self {
             Self::None => None,
-            Self::Example(now) => Some(Fetch::Example {
+            Self::Example(now, shape) => Some(Fetch::Example {
                 project: project.to_owned(),
                 freight,
                 now: *now,
+                shape: *shape,
                 delay,
             }),
             Self::Live(live) => Some(Fetch::Live {
@@ -115,8 +118,10 @@ impl Changes {
                     project: project.to_owned(),
                     freight,
                     argocd_namespace: live.argocd_namespace.clone(),
-                    mapping,
+                    mapping: across.mapping,
+                    sources: across.sources,
                 }),
+                kubeconfig: across.kubeconfig,
             }),
         }
     }

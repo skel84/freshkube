@@ -48,6 +48,11 @@ impl WordCut {
     /// The text from byte `ix` on in `color`: a second part, such as an
     /// application after a title, that gives way before the first.
     pub fn dim_from(mut self, ix: usize, color: Hsla) -> Self {
+        debug_assert!(
+            self.text.is_char_boundary(ix),
+            "{ix} isn't a character boundary of {:?}",
+            self.text
+        );
         self.dim = Some((ix, color));
         self
     }

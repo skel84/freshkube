@@ -135,18 +135,34 @@ impl ChangePage {
         }
     }
 
-    /// A refresh that failed over an earlier answer.
-    fn render_stale(&self, cx: &App) -> Option<AnyElement> {
-        let (text, label) = self.stale.clone()?;
+    /// A refresh that failed over an earlier answer, then what the change
+    /// may be missing.
+    fn render_notes(&self, cx: &App) -> Option<AnyElement> {
+        let refresh = self.stale.as_ref().map(|(text, label)| {
+            ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
+                .id("change-stale")
+                .aria_label(label.clone())
+                .test_support()
+                .role(Role::Status)
+        });
+        let missing = self.missing.as_ref().map(|(text, label)| {
+            ui::warning_banner(Some("May be missing".into()), text.clone(), None, cx)
+                .id("change-missing")
+                .aria_label(label.clone())
+                .test_support()
+                .role(Role::Status)
+        });
+        if refresh.is_none() && missing.is_none() {
+            return None;
+        }
         Some(
             page::inset()
-                .child(
-                    ui::warning_banner(Some("Couldn't read again".into()), text, None, cx)
-                        .id("change-stale")
-                        .aria_label(label)
-                        .test_support()
-                        .role(Role::Status),
-                )
+                .id("change-notes")
+                .flex()
+                .flex_col()
+                .gap(dp(page::PANE_PADDING_Y))
+                .children(refresh)
+                .children(missing)
                 .into_any_element(),
         )
     }
@@ -201,7 +217,7 @@ impl Render for ChangePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         let header = self.render_header(window, cx);
-        let stale = self.render_stale(cx);
+        let notes = self.render_notes(cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,
             None => self.render_table(window, cx),
@@ -226,7 +242,7 @@ impl Render for ChangePage {
                         this.overflow_y_scroll().restrict_scroll_to_axis()
                     })
                     .child(page::toolbar(cx).child(header))
-                    .children(stale)
+                    .children(notes)
                     .child(
                         div()
                             .flex()

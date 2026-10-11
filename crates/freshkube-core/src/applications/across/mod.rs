@@ -32,13 +32,10 @@ use futures::StreamExt;
 use super::read::read_asked;
 use super::{Absent, Asked, SessionInputs, SessionKey};
 use crate::delivery::entry::MAX_AT_ONCE;
+pub use crate::delivery::entry::pool::ENTRY_DEADLINE;
+use crate::delivery::entry::pool::{Place, Unread, Until, Via, reach};
 use crate::delivery::read::Reader;
 use crate::workspace::{Chosen, Entry, Part, Sources};
-
-/// How long a destination's entry may take, connecting and reading its
-/// labelled workloads: room for one listing at its longest. Kargo's and
-/// Argo CD's entries have the rest of [`BUDGET`].
-pub const ENTRY_DEADLINE: Duration = Duration::from_secs(30);
 /// How long the whole read may take: two rounds of entries, well inside the
 /// page's own deadline. What answered by then is kept.
 pub const BUDGET: Duration = Duration::from_secs(45);
@@ -61,13 +58,6 @@ pub struct Open<'a, R> {
     pub key: SessionKey,
     /// Its reader, or why there is none.
     pub reader: Result<&'a R, String>,
-}
-
-/// Where one session is read.
-enum Place {
-    Open,
-    Entry(Entry),
-    Missing(String),
 }
 
 struct Target {
@@ -110,54 +100,36 @@ where
                 bounded,
                 first,
             } = target;
-            let started = tokio::time::Instant::now();
-            // A destination started late has only what the budget leaves:
-            // the read's end, not its own deadline, is what cut it short.
-            let (until, by_budget) = match first {
-                true => (ends, true),
-                false => match started + ENTRY_DEADLINE {
-                    own if own <= ends => (own, false),
-                    _ => (ends, true),
-                },
+            let until = match (bounded, first) {
+                (false, _) => Until::none(),
+                (true, true) => Until::first(ends, BUDGET),
+                (true, false) => Until::destination(ends, BUDGET),
             };
-            let within = || match by_budget {
-                true => format!("the read's {} s", BUDGET.as_secs()),
-                false => format!("{} s", ENTRY_DEADLINE.as_secs()),
-            };
-            let until = bounded.then_some(until);
-            let unreachable =
-                |why: String| SessionInputs::absent(key.clone(), asked, Absent::Unreachable(why));
-            // The cluster answered, but not everything asked of it did.
-            let unfinished = || {
-                let why = format!("didn't finish reading within {}", within());
-                SessionInputs::unfinished(key.clone(), asked, &why)
-            };
-            let session = match place {
-                Place::Missing(why) => {
-                    SessionInputs::absent(key.clone(), asked, Absent::NotInWorkspace(why))
+            let open = open
+                .as_ref()
+                .map(|open| open.reader.as_ref().map_err(|why| why.as_str()).copied());
+            let session = match reach(place, open, connect, &until).await {
+                Err(Unread::Missing(why)) => {
+                    SessionInputs::absent(key, asked, Absent::NotInWorkspace(why))
                 }
-                _ if until.is_some_and(|until| started >= until) => {
-                    unreachable(format!("not read within the read's {} s", BUDGET.as_secs()))
+                Err(unread) => {
+                    SessionInputs::absent(key, asked, Absent::Unreachable(unread.why().to_owned()))
                 }
-                Place::Open => match open.as_ref().map(|open| &open.reader) {
-                    Some(Ok(reader)) => {
-                        within_until(until, read_asked(*reader, key.clone(), asked))
-                            .await
-                            .unwrap_or_else(unfinished)
-                    }
-                    Some(Err(why)) => unreachable(why.clone()),
-                    None => unreachable("no cluster is open".into()),
-                },
-                // The client lives for this read alone.
-                Place::Entry(entry) => match within_until(until, connect(entry)).await {
-                    Some(Ok(reader)) => {
-                        within_until(until, read_asked(&reader, key.clone(), asked))
-                            .await
-                            .unwrap_or_else(unfinished)
-                    }
-                    Some(Err(why)) => unreachable(why),
-                    None => unreachable(format!("no answer within {}", within())),
-                },
+                // The cluster answered, but not everything asked of it did.
+                Ok(reader) => {
+                    let read = match &reader {
+                        Via::Open(reader) => {
+                            until.bound(read_asked(*reader, key.clone(), asked)).await
+                        }
+                        // The client lives for this read alone.
+                        Via::Entry(reader) => {
+                            until.bound(read_asked(reader, key.clone(), asked)).await
+                        }
+                    };
+                    read.unwrap_or_else(|| {
+                        SessionInputs::unfinished(key, asked, &until.unfinished())
+                    })
+                }
             };
             (number, session)
         }
@@ -185,18 +157,6 @@ fn answered(session: Option<SessionInputs>, key: SessionKey, asked: Asked) -> Se
     session.unwrap_or_else(|| {
         SessionInputs::absent(key, asked, Absent::Unreachable("no answer".into()))
     })
-}
-
-/// `future`'s answer, or none when it hasn't one by `until`; so a step
-/// that runs out says which step it was.
-async fn within_until<T>(
-    until: Option<tokio::time::Instant>,
-    future: impl Future<Output = T>,
-) -> Option<T> {
-    match until {
-        Some(until) => tokio::time::timeout_at(until, future).await.ok(),
-        None => Some(future.await),
-    }
 }
 
 /// Each place to read and what to ask it, one per entry, in the parts'

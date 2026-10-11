@@ -1,17 +1,23 @@
-//! The list read from one cluster: its Kargo projects' Freight and Stages,
-//! a few projects at a time, and as each answers, the change of each
-//! Freight a Stage runs, followed as the change page follows it
-//! ([`change::live::follow`](crate::delivery::change::live::follow)), a few
-//! at a time. Freight no Stage runs isn't followed: its cells are all not
-//! reached, and nothing about it needs reading.
+//! The list read across the workspace: the Kargo projects' Freight and
+//! Stages from Kargo's entry, a few projects at a time, and as each
+//! answers, the change of each Freight a Stage runs, followed as the change
+//! page follows it
+//! ([`change::live::follow_in`](crate::delivery::change::live::follow_in)),
+//! each part from its own entry, a few at a time. Freight no Stage runs
+//! isn't followed: its cells are all not reached, and nothing about it
+//! needs reading.
 //!
-//! Every request goes through one [`SharedReader`], so what many changes
-//! need (the project's Kargo kinds, Argo CD's Applications, the ConfigMaps,
-//! the workloads of a namespace, discovery) is read once per read, and only
-//! each change's builds are its own. What hasn't answered within the budget
-//! is left out with why, and the rest is kept.
+//! Every request goes through one [`Pool`], which connects to each entry
+//! once and asks each entry's questions through its own
+//! [`SharedReader`](crate::delivery::shared::SharedReader), so what many
+//! changes need (the project's Kargo kinds, Argo CD's Applications, the
+//! ConfigMaps, the workloads of a namespace, discovery) is read once per
+//! read, and only each change's builds are its own. What hasn't answered
+//! within the budget is left out with why, and the rest is kept. The
+//! workspace of one ([`read`]) reads everything from the open connection.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,11 +27,12 @@ use tokio::time::{Instant, timeout_at};
 
 use super::{Project, Read};
 use crate::applications::read::MAX_PROJECTS;
-use crate::delivery::change::live::{self, Mapping, Place};
+use crate::delivery::change::live::{self, Mapping, Never, Place};
+use crate::delivery::entry::pool::{Open, Pool};
 use crate::delivery::kargo::{Freight, parse_freight, parse_stage, read_kind, read_project_names};
 use crate::delivery::read::Reader;
-use crate::delivery::shared::SharedReader;
 use crate::delivery::source::{Source, Truncation};
+use crate::workspace::{Chosen, Entry, Part, Sources};
 
 /// How many projects, then changes, are read at once.
 const AT_ONCE: usize = 4;
@@ -33,42 +40,103 @@ const AT_ONCE: usize = 4;
 /// How long a read may take before what hasn't answered is left out.
 pub const BUDGET: Duration = Duration::from_secs(90);
 
-/// Where the list is read: the cluster that runs Kargo, and how its
-/// changes are followed past it.
+/// Where the list is read: the open cluster, where each part is, and how
+/// its changes are followed past Kargo.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Where {
-    /// The cluster's key, which the objects to open carry.
+    /// The open cluster's key, which the objects to open on it carry.
     pub cluster: String,
     /// Its name, which the page shows.
     pub label: String,
     /// The namespace Argo CD's Applications are read in.
     pub argocd_namespace: String,
     pub mapping: Mapping,
+    /// Where Kargo, the builds and Argo CD are read; the workspace of one's
+    /// reads everything from the open cluster.
+    pub sources: Sources,
 }
 
-/// Why a part wasn't read: the budget ran out first.
+impl Where {
+    /// The name of the cluster Kargo is read on, which the notes name.
+    fn kargo(&self) -> String {
+        match self.sources.get(Part::Kargo) {
+            Chosen::Entry { entry, .. } if self.mapping.open.as_deref() != Some(&entry.id) => {
+                entry.id.clone()
+            }
+            _ => self.label.clone(),
+        }
+    }
+}
+
+/// Why a part wasn't read: the budget ran out first, as the pool says it.
 fn late(budget: Duration) -> String {
-    format!(
-        "no answer within the {} s a read may take",
-        budget.as_secs()
-    )
+    format!("no answer within the read's {} s", budget.as_secs())
 }
 
-/// Reads the list through `reader` alone, within `budget`.
-///
-/// Every project starts at once and takes one of [`AT_ONCE`] turns to read
-/// its Freight and Stages, in whatever order they answer, so one that
-/// hangs holds one turn, never the others. Its changes are followed as
-/// soon as it answers, [`AT_ONCE`] at a time across the read, without
-/// waiting for the other projects.
+/// Reads the list through `reader` alone, within `budget`: the workspace
+/// of one, whatever `at.sources` says.
 pub async fn read<R: Reader>(
     reader: &R,
     at: &Where,
     observed_at: DateTime<Utc>,
     budget: Duration,
 ) -> Read {
+    let alone = Where {
+        sources: Sources::default(),
+        ..at.clone()
+    };
+    let pool = Pool::new(
+        &alone.sources,
+        Some(Open {
+            entry: alone.mapping.open.as_deref(),
+            reader: Ok(reader),
+        }),
+        |_: Entry| {
+            std::future::ready(Err::<Never, _>(
+                "the workspace of one reads the open cluster alone".to_owned(),
+            ))
+        },
+        budget,
+    );
+    read_in(&pool, &alone, observed_at, budget).await
+}
+
+/// Reads the list across the workspace through `pool`, within `budget`.
+///
+/// Kargo's entry is read first; one that can't be reached, or that no
+/// entry holds, is the list's own state, in its words. Every project
+/// starts at once and takes one of [`AT_ONCE`] turns to read its Freight
+/// and Stages, in whatever order they answer, so one that hangs holds one
+/// turn, never the others. Its changes are followed as soon as it answers,
+/// [`AT_ONCE`] at a time across the read, without waiting for the other
+/// projects.
+pub async fn read_in<R, C, F, Fut>(
+    pool: &Pool<'_, R, C, F>,
+    at: &Where,
+    observed_at: DateTime<Utc>,
+    budget: Duration,
+) -> Read
+where
+    R: Reader,
+    C: Reader,
+    F: Fn(Entry) -> Fut,
+    Fut: Future<Output = Result<C, String>>,
+{
     let deadline = Instant::now() + budget;
-    let reader = &SharedReader::new(reader);
+    let reader = match pool.part(Part::Kargo).await {
+        Ok((reader, _)) => reader,
+        Err(unread) => {
+            // The open cluster is named by its context, as the notes do.
+            let unread = unread.named(at.kargo());
+            return Read {
+                cluster: at.kargo(),
+                projects: Source::Unreadable(unread.words()),
+                late: 0,
+                unreached: Some(unread.words()),
+            };
+        }
+    };
+    let reader = &reader;
     let names = timeout_at(deadline, read_project_names(reader))
         .await
         .unwrap_or_else(|_| Source::Unreadable(late(budget)));
@@ -102,19 +170,20 @@ pub async fn read<R: Reader>(
                 stages: Source::Unreadable(late(budget)),
                 followed: BTreeMap::new(),
             });
-            let late = follow(reader, at, observed_at, turns, &mut project).await;
+            let late = follow(pool, at, observed_at, turns, &mut project).await;
             (project, late)
         }))
         .await;
     let late = read.iter().map(|(_, late)| late).sum();
     let projects = read.into_iter().map(|(project, _)| project).collect();
     Read {
-        cluster: at.label.clone(),
+        cluster: at.kargo(),
         projects: match capped {
             Some(truncation) => Source::Capped(projects, truncation),
             None => Source::Read(projects),
         },
         late,
+        unreached: None,
     }
 }
 
@@ -128,9 +197,10 @@ struct Turns {
 
 fn unread(at: &Where, projects: Source<Vec<Project>>) -> Read {
     Read {
-        cluster: at.label.clone(),
+        cluster: at.kargo(),
         projects,
         late: 0,
+        unreached: None,
     }
 }
 
@@ -152,13 +222,19 @@ async fn project<R: Reader>(reader: &R, name: &str) -> Project {
 /// one of the read's change turns. A Freight the project's listing doesn't
 /// hold is read by name. Returns how many weren't followed within the
 /// budget.
-async fn follow<R: Reader>(
-    reader: &R,
+async fn follow<R, C, F, Fut>(
+    pool: &Pool<'_, R, C, F>,
     at: &Where,
     observed_at: DateTime<Utc>,
     turns: &Turns,
     project: &mut Project,
-) -> usize {
+) -> usize
+where
+    R: Reader,
+    C: Reader,
+    F: Fn(Entry) -> Fut,
+    Fut: Future<Output = Result<C, String>>,
+{
     let running: BTreeSet<&String> = project
         .stages
         .read()
@@ -181,6 +257,7 @@ async fn follow<R: Reader>(
                 freight: freight.clone(),
                 argocd_namespace: at.argocd_namespace.clone(),
                 mapping: at.mapping.clone(),
+                sources: at.sources.clone(),
             };
             (place, listed)
         })
@@ -189,8 +266,8 @@ async fn follow<R: Reader>(
         let change = async {
             let _turn = turns.changes.acquire().await;
             match &listed {
-                Some(freight) => Ok(live::follow(reader, &place, freight, observed_at).await),
-                None => live::read(reader, &place, observed_at).await,
+                Some(freight) => Ok(live::follow_in(pool, &place, freight, observed_at).await),
+                None => live::read_in(pool, &place, observed_at).await,
             }
         };
         let change = timeout_at(turns.deadline, change).await;

@@ -259,13 +259,24 @@ pub(super) fn rollout_namespace(app: &Application, managed: &ManagedObject) -> O
         .filter(|namespace| !namespace.is_empty())
 }
 
+/// What the Application's destination holds, or why nothing was read there
+/// for it: no environment cluster asked is its destination, or the one that
+/// is couldn't be read, in the words that say why in its own name.
+pub(super) fn workloads<'a>(evidence: &'a Evidence, app_id: &str) -> Result<&'a Workloads, String> {
+    match evidence.workloads_of(app_id) {
+        Some(Ok(workloads)) => Ok(workloads),
+        Some(Err(why)) => Err(why.to_owned()),
+        None => Err(not_the_environment(evidence, app_id)),
+    }
+}
+
 /// Why nothing was read in the environment cluster for an Application, and
 /// how the user would say otherwise when its destination is that cluster.
 pub(super) fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
     if let MapHint::Settings { listed } = &evidence.map_hint {
         return not_the_open_cluster(evidence, app_id, listed);
     }
-    let env = &evidence.environment;
+    let env = evidence.environment().unwrap_or("<context>");
     let why = match evidence.destinations.get(app_id) {
         Some(DestinationMatch::ByName(_)) => format!(
             "its cluster name is mapped to no context; if it is the environment cluster, map the name the Application gives with --known-as-name {env}=<cluster name>"
@@ -283,7 +294,9 @@ pub(super) fn not_the_environment(evidence: &Evidence, app_id: &str) -> String {
             matched
                 .context()
                 .map_or("?", |context| evidence.name(context)),
-            evidence.name(env)
+            evidence
+                .environment()
+                .map_or("not one cluster", |env| evidence.name(env))
         ),
         None => "its destination was not matched".to_owned(),
     };

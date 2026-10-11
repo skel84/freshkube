@@ -21,11 +21,12 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use freshkube_core::delivery::change::live::{Mapping, Place};
+use freshkube_core::delivery::change::example::Shape;
+use freshkube_core::delivery::change::live::Place;
 use freshkube_core::delivery::changes::{
     self as core_changes, Changes as Derived, Fold, live::Where,
 };
-use freshkube_core::delivery::entry;
+use freshkube_core::delivery::entry::{self, pool};
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
@@ -34,6 +35,7 @@ use freshkube_ui::ui::Tone;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
+use super::across::{Across, Alone};
 use super::change::{ChangeEvent, ChangePage, Fetch};
 use super::links::Connections;
 use crate::backend::{self, OwnedJob};
@@ -101,6 +103,8 @@ pub(crate) struct ChangesPage {
     visible: bool,
     /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
     hold: bool,
+    /// What example data couldn't read (`FRESHKUBE_APPLICATIONS`).
+    shape: Shape,
     /// Example data answers after this, in tests, so a read stays in
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
@@ -112,7 +116,9 @@ pub(crate) struct ChangesPage {
     read_at: Option<Instant>,
     /// Which connection each cluster is, for the change page's links.
     connections: Connections,
-    mapping: Mapping,
+    /// Where a live read reads each part, and how the workspace maps Argo
+    /// CD's destinations.
+    across: Across,
     /// Where Argo CD's Applications are read, as the Applications read
     /// found it.
     argocd_namespace: String,
@@ -160,6 +166,7 @@ impl ChangesPage {
             source: None,
             visible: false,
             hold: crate::fixture::hold().applications,
+            shape: super::Variant::from_env().shape(),
             example_delay: Duration::ZERO,
             snapshot: Snapshot::default(),
             pending: false,
@@ -167,7 +174,7 @@ impl ChangesPage {
             task: None,
             read_at: None,
             connections: Connections::default(),
-            mapping: Mapping::default(),
+            across: Across::default(),
             argocd_namespace: "argocd".into(),
             read_namespace: None,
             display,
@@ -201,6 +208,12 @@ impl ChangesPage {
         self.hold = hold;
     }
 
+    /// What example data can't read, as the Applications example's
+    /// variant says.
+    pub(crate) fn set_shape(&mut self, shape: Shape) {
+        self.shape = shape;
+    }
+
     /// The connection the page reads. Another connection drops what was
     /// read, what is in flight and the change shown; the page reads it
     /// again if shown.
@@ -225,23 +238,23 @@ impl ChangesPage {
         }
     }
 
-    /// Which connection each cluster is, and how the workspace maps Argo
-    /// CD's destinations; the change shown follows them.
+    /// Which connection each cluster is, and where a live read reads each
+    /// part; the change shown follows them.
     pub(crate) fn set_clusters(
         &mut self,
         connections: Connections,
-        mapping: Mapping,
+        across: Across,
         cx: &mut Context<Self>,
     ) {
-        let remapped = mapping != self.mapping;
+        let remapped = across != self.across;
         self.connections = connections.clone();
-        self.mapping = mapping.clone();
+        self.across = across.clone();
         if let Some((change, _)) = &self.change {
-            change.update(cx, |page, cx| page.set_clusters(mapping, connections, cx));
+            change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
         }
-        // A live list resolves its Stages by the mapping: read it again,
-        // now if shown, else when next shown. The change shown read itself
-        // again above.
+        // A live list reads each part where the workspace says and
+        // resolves its Stages by the mapping: read it again, now if shown,
+        // else when next shown. The change shown read itself again above.
         if remapped && self.is_live() {
             self.read_again(cx);
         }
@@ -339,7 +352,9 @@ impl ChangesPage {
                 }
                 let now = Utc::now();
                 let read = Read {
-                    changes: core_changes::derive(&core_changes::example::read(now)),
+                    changes: core_changes::derive(&core_changes::example::read_shaped(
+                        now, self.shape,
+                    )),
                     example: Some(now),
                 };
                 if self.example_delay.is_zero() {
@@ -359,17 +374,30 @@ impl ChangesPage {
                     cluster: source.id.clone(),
                     label: source.context.clone(),
                     argocd_namespace: self.argocd_namespace.clone(),
-                    mapping: self.mapping.clone(),
+                    mapping: self.across.mapping.clone(),
+                    sources: self.across.sources.clone(),
                 };
+                let across = self.across.clone();
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
                     DEADLINE,
                     "Reading the changes timed out".into(),
                     async move {
-                        let client = access.client().await?;
-                        let reader = entry::reader(client);
-                        let read = core_changes::live::read(
-                            &reader,
+                        // The list has read with entries' deadlines since before there
+                        // was a workspace.
+                        let open = across.open(&access, Alone::AsEntry).await?;
+                        let kubeconfigs = across.kubeconfigs();
+                        let pool = pool::Pool::new(
+                            &at.sources,
+                            Some(pool::Open {
+                                entry: at.mapping.open.as_deref(),
+                                reader: open.as_ref().map_err(Clone::clone),
+                            }),
+                            |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
+                            core_changes::live::BUDGET,
+                        );
+                        let read = core_changes::live::read_in(
+                            &pool,
                             &at,
                             Utc::now(),
                             core_changes::live::BUDGET,
@@ -637,6 +665,7 @@ impl ChangesPage {
                 project: project.to_owned(),
                 freight: freight.to_owned(),
                 now,
+                shape: self.shape,
                 delay: self.example_delay,
             },
             (KubeAccess::Example, None) => return None,
@@ -649,8 +678,10 @@ impl ChangesPage {
                     project: project.to_owned(),
                     freight: freight.to_owned(),
                     argocd_namespace: self.argocd_namespace.clone(),
-                    mapping: self.mapping.clone(),
+                    mapping: self.across.mapping.clone(),
+                    sources: self.across.sources.clone(),
                 }),
+                kubeconfig: self.across.kubeconfig.clone(),
             },
         })
     }

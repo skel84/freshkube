@@ -9,7 +9,7 @@
 //!
 //! It is opened from a Kargo application's page, on a Stage, and reads the
 //! change itself (`read.rs`): live, through core's `delivery::change::live`
-//! on the open connection, while it shows; example data answers at once.
+//! across the workspace, while it shows; example data answers at once.
 //! Its breadcrumb, and Escape with nothing selected, go back to the
 //! application's page.
 //! An action that leads into Resources goes through the shell, as every
@@ -177,7 +177,7 @@ pub(crate) struct GroupLine {
     pub(super) tone: Tone,
     /// Only a Stage folds.
     pub(super) folds: bool,
-    /// Whether its rows were read: a Stage on another workspace entry is
+    /// Whether its rows were read: a Stage whose entry wasn't read is
     /// known only from Argo CD's report, so it never folds itself as fine,
     /// though its chevron still folds it.
     pub(super) read_there: bool,
@@ -209,6 +209,10 @@ pub(crate) struct ChangePage {
     /// A refresh that failed over an earlier answer, and its label for
     /// assistive technology, derived with it.
     stale: Option<(SharedString, SharedString)>,
+    /// What the change may be missing, one sentence each that names the
+    /// entry, and its words for assistive technology, derived with the
+    /// change.
+    missing: Option<(SharedString, SharedString)>,
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
@@ -272,6 +276,7 @@ impl ChangePage {
             window: window.window_handle(),
             stage: stage.map(str::to_owned),
             stale: None,
+            missing: None,
             loading,
             loading_motion,
             connections,
@@ -301,6 +306,16 @@ impl ChangePage {
     /// filter and the selection where their rows still are.
     fn show(&mut self, change: Change) {
         let first = self.rows.is_empty();
+        self.missing = (!change.missing.is_empty()).then(|| {
+            let text = change
+                .missing
+                .iter()
+                .map(|line| line.text.trim_end_matches('.'))
+                .collect::<Vec<_>>()
+                .join(". ");
+            let label = format!("May be missing: {text}");
+            (text.into(), label.into())
+        });
         let rows: Vec<HopRow> = change
             .hops
             .iter()

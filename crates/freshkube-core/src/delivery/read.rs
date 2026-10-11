@@ -154,6 +154,56 @@ pub trait Reader {
     ) -> impl Future<Output = Result<Vec<String>, Failure>>;
 }
 
+/// A borrowed reader reads as its owner does, so a wrapper that owns its
+/// reader ([`SharedReader`](super::shared::SharedReader)) may wrap a borrow.
+impl<R: Reader + ?Sized> Reader for &R {
+    async fn get(
+        &self,
+        resource: &Resource,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<Value, Failure> {
+        (**self).get(resource, namespace, name).await
+    }
+    async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
+        (**self).list(request).await
+    }
+    async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
+        (**self).probe(request).await
+    }
+    async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
+        (**self).groups().await
+    }
+    async fn plurals(&self, group: &str, version: &str) -> Result<Vec<String>, Failure> {
+        (**self).plurals(group, version).await
+    }
+}
+
+/// A shared reader reads as the one it shares, so one entry's client can
+/// serve many changes at once.
+impl<R: Reader + ?Sized> Reader for std::sync::Arc<R> {
+    async fn get(
+        &self,
+        resource: &Resource,
+        namespace: Option<&str>,
+        name: &str,
+    ) -> Result<Value, Failure> {
+        (**self).get(resource, namespace, name).await
+    }
+    async fn list(&self, request: &ListRequest) -> Result<Listing, Failure> {
+        (**self).list(request).await
+    }
+    async fn probe(&self, request: &ListRequest) -> Result<(), Failure> {
+        (**self).probe(request).await
+    }
+    async fn groups(&self) -> Result<Vec<ServedGroup>, Failure> {
+        (**self).groups().await
+    }
+    async fn plurals(&self, group: &str, version: &str) -> Result<Vec<String>, Failure> {
+        (**self).plurals(group, version).await
+    }
+}
+
 /// A client for one explicitly named context that can only read.
 #[derive(Clone)]
 pub struct ReadOnlyClient {

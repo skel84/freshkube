@@ -36,11 +36,17 @@ impl Pages {
     }
 }
 
-pub(super) async fn read<R: Reader>(reader: &R, argocd_namespace: &str) -> Pages {
+/// Both addresses: Argo CD's read through `argocd`, from its entry, and
+/// Kargo's through `kargo`, from Kargo's.
+pub(super) async fn read<K: Reader, A: Reader>(
+    kargo: &K,
+    argocd: &A,
+    argocd_namespace: &str,
+) -> Pages {
     let (argocd, kargo) = futures::join!(
-        address(reader, argocd_namespace, "argocd-cm", "url"),
+        address(argocd, argocd_namespace, "argocd-cm", "url"),
         address(
-            reader,
+            kargo,
             KARGO_NAMESPACE,
             "kargo-api",
             "ADMIN_ACCOUNT_TOKEN_ISSUER"
