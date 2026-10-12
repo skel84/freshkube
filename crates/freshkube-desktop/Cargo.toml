@@ -14,6 +14,7 @@ base64.workspace = true
 fastrand = "2"
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+freshkube-delivery.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
 freshkube-observability.workspace = true

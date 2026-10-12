@@ -37,19 +37,19 @@ mod table;
 mod tests;
 mod view;
 
-use freshkube_core::delivery::change::live::Mapping;
+use freshkube_delivery::change::live::Mapping;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
-use freshkube_core::applications::across::{Open, read_workspace};
-use freshkube_core::applications::{
-    ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
-};
-use freshkube_core::delivery::entry;
 use freshkube_core::resources::kubeconfig_sources;
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_core::workspace::{Chosen, Part as PartKind, Sources};
+use freshkube_delivery::applications::across::{Open, read_workspace};
+use freshkube_delivery::applications::{
+    ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
+};
+use freshkube_delivery::entry;
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self as kit, TableState};

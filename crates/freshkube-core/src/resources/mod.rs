@@ -15,7 +15,7 @@
 //! [`start_forward`], which forwards a pod's port only when the user asks.
 
 mod connection;
-pub(crate) mod contexts;
+pub mod contexts;
 mod discovery;
 mod events;
 mod exec;

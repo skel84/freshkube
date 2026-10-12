@@ -24,11 +24,11 @@ mod table;
 mod tests;
 mod view;
 
-use freshkube_core::applications::claims::{Claim, Claims, Gap, Side, Unchecked, claims};
-use freshkube_core::applications::{
+use freshkube_delivery::applications::claims::{Claim, Claims, Gap, Side, Unchecked, claims};
+use freshkube_delivery::applications::{
     Application, ApplicationId, Basis, Evidence, MemberKind, MemberRef, Rule,
 };
-use freshkube_core::delivery::join::Confidence;
+use freshkube_delivery::join::Confidence;
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::table::{self as kit, TableState};
 use gpui_kit::prelude::*;

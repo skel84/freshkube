@@ -12,7 +12,7 @@
 //! Deployment's UID never names one of `WORKLOADS`.
 use serde_json::{Value, json};
 
-use freshkube_core::applications::example::{CoreObject, core_objects, environment_objects};
+use freshkube_delivery::applications::example::{CoreObject, core_objects, environment_objects};
 
 use super::*;
 

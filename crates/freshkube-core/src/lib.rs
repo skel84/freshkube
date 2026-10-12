@@ -20,7 +20,6 @@
 //! - [`resources`] - Read-only listing and watching of any Kubernetes kind
 //! - [`monitoring`] - Prometheus dashboards through the service proxy, GET only
 
-pub mod applications;
 mod base_url;
 mod client_cache;
 pub mod cluster_overview;
@@ -28,7 +27,6 @@ pub mod cluster_source;
 
 pub mod constants;
 pub mod coroot;
-pub mod delivery;
 pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;
@@ -36,7 +34,7 @@ pub mod formatting;
 pub mod indicators;
 pub mod inspection;
 pub mod job;
-mod kube_client;
+pub mod kube_client;
 mod kubeconfig_selection;
 pub use kubeconfig_selection::{BoundedReadError, read_bounded_regular_file};
 pub mod lifecycle_versions;
@@ -57,7 +55,9 @@ pub mod workloads;
 pub mod workspace;
 
 // Re-export commonly used items at crate root
-pub use client_cache::{AccessIdentity, AccessSessionId, ConfigurationRevision};
+pub use client_cache::{
+    AccessIdentity, AccessSessionId, ConfigurationRevision, TtlCache, file_revision,
+};
 pub use cluster_overview::*;
 pub use diagnostics::*;
 pub use errors::*;

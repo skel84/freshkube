@@ -1,0 +1,174 @@
+//! The images pods actually run: `containerStatuses[].imageID`, which names
+//! the digest the runtime pulled, whatever the tag says.
+
+use serde_json::Value;
+
+use super::deployments::TEMPLATE_HASH_LABEL;
+use super::digest::{Digest, text};
+use super::observation::{Meta, ObjectRef};
+use super::read::{ListRequest, Listing, Reader, Resource, Scope, label_equals};
+use super::rollouts::POD_HASH_LABEL;
+use super::source::{Source, Truncation};
+use freshkube_core::resources::Failure;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningImage {
+    pub pod: String,
+    pub namespace: Option<String>,
+    /// `metadata.uid` and `metadata.resourceVersion`.
+    pub meta: Meta,
+    pub container: String,
+    /// The tag or reference the container was asked to run, shown only.
+    pub image: Option<String>,
+    pub digest: Option<Digest>,
+    pub ready: bool,
+    /// The pod's `rollouts-pod-template-hash` label.
+    pub pod_hash: Option<String>,
+    /// The pod's `pod-template-hash` label, which the Deployment controller
+    /// puts on the pods of a Deployment's ReplicaSet.
+    pub template_hash: Option<String>,
+    /// The UID of the ReplicaSet its controller owner reference names.
+    pub owner_uid: Option<String>,
+}
+
+impl RunningImage {
+    /// The pod this container belongs to.
+    pub fn object_ref(&self) -> ObjectRef {
+        ObjectRef::new("", "Pod", self.namespace.as_deref(), &self.pod, &self.meta)
+    }
+}
+
+fn running(listing: &Listing) -> (Vec<RunningImage>, Option<Truncation>) {
+    (
+        listing.items.iter().flat_map(parse_pod).collect(),
+        listing.truncated,
+    )
+}
+
+pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
+    let Some(pod) = text(value, "/metadata/name") else {
+        return Vec::new();
+    };
+    let namespace = text(value, "/metadata/namespace");
+    let meta = Meta::parse(value);
+    let pod_hash = value
+        .pointer("/metadata/labels")
+        .and_then(|labels| labels.get(POD_HASH_LABEL))
+        .and_then(Value::as_str)
+        .filter(|hash| !hash.is_empty())
+        .map(str::to_owned);
+    let template_hash = value
+        .pointer("/metadata/labels")
+        .and_then(|labels| labels.get(TEMPLATE_HASH_LABEL))
+        .and_then(Value::as_str)
+        .filter(|hash| !hash.is_empty())
+        .map(str::to_owned);
+    let owner_uid = value
+        .pointer("/metadata/ownerReferences")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|owner| {
+            text(owner, "/kind").as_deref() == Some("ReplicaSet")
+                && text(owner, "/apiVersion").as_deref() == Some("apps/v1")
+                && owner.get("controller").and_then(Value::as_bool) == Some(true)
+        })
+        .and_then(|owner| text(owner, "/uid"));
+    // Init containers don't keep running; only the app containers count.
+    value
+        .pointer("/status/containerStatuses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|status| {
+            Some(RunningImage {
+                pod: pod.clone(),
+                namespace: namespace.clone(),
+                meta: meta.clone(),
+                pod_hash: pod_hash.clone(),
+                template_hash: template_hash.clone(),
+                owner_uid: owner_uid.clone(),
+                container: text(status, "/name")?,
+                image: text(status, "/image"),
+                digest: text(status, "/imageID").and_then(|id| Digest::from_image_id(&id)),
+                ready: status
+                    .pointer("/ready")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .collect()
+}
+
+/// Reads a Rollout's pods by its pod-template-hash label, in its namespace,
+/// and returns what each container runs.
+pub async fn read_rollout_pods<R: Reader>(
+    reader: &R,
+    namespace: &str,
+    pod_hash: &str,
+) -> Source<Vec<RunningImage>> {
+    async fn run<R: Reader>(
+        reader: &R,
+        namespace: &str,
+        pod_hash: &str,
+    ) -> Result<(Vec<RunningImage>, Option<Truncation>), Failure> {
+        let listing = reader
+            .list(&ListRequest {
+                resource: Resource::new("", "v1", "pods", true),
+                scope: Scope::Labels {
+                    namespace: Some(namespace.to_owned()),
+                    selector: label_equals(POD_HASH_LABEL, pod_hash)?,
+                },
+            })
+            .await?;
+        Ok(running(&listing))
+    }
+    Source::from_listing(run(reader, namespace, pod_hash).await)
+}
+
+/// Reads a Deployment's pods by their `pod-template-hash` label, in its
+/// namespace, and returns what each container runs.
+pub async fn read_deployment_pods<R: Reader>(
+    reader: &R,
+    namespace: &str,
+    pod_hash: &str,
+) -> Source<Vec<RunningImage>> {
+    async fn run<R: Reader>(
+        reader: &R,
+        namespace: &str,
+        pod_hash: &str,
+    ) -> Result<(Vec<RunningImage>, Option<Truncation>), Failure> {
+        let listing = reader
+            .list(&ListRequest {
+                resource: Resource::new("", "v1", "pods", true),
+                scope: Scope::Labels {
+                    namespace: Some(namespace.to_owned()),
+                    selector: label_equals(TEMPLATE_HASH_LABEL, pod_hash)?,
+                },
+            })
+            .await?;
+        Ok(running(&listing))
+    }
+    Source::from_listing(run(reader, namespace, pod_hash).await)
+}
+
+/// Reads every pod of one namespace, for a workload that is not a Rollout.
+/// The list is scoped to the namespace and bounded like every other.
+pub async fn read_namespace_pods<R: Reader>(
+    reader: &R,
+    namespace: &str,
+) -> Source<Vec<RunningImage>> {
+    async fn run<R: Reader>(
+        reader: &R,
+        namespace: &str,
+    ) -> Result<(Vec<RunningImage>, Option<Truncation>), Failure> {
+        let listing = reader
+            .list(&ListRequest {
+                resource: Resource::new("", "v1", "pods", true),
+                scope: Scope::Namespace(namespace.to_owned()),
+            })
+            .await?;
+        Ok(running(&listing))
+    }
+    Source::from_listing(run(reader, namespace).await)
+}
