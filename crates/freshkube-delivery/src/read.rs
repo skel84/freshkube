@@ -223,7 +223,7 @@ impl ReadOnlyClient {
     /// Bounds each page of a listing by `limit`, so a listing of many
     /// pages that each answer in time is read whole, and one page that
     /// hangs fails as timed out.
-    pub fn with_page_deadline(mut self, limit: std::time::Duration) -> Self {
+    pub(crate) fn with_page_deadline(mut self, limit: std::time::Duration) -> Self {
         self.page_deadline = Some(limit);
         self
     }

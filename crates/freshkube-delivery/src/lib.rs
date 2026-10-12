@@ -13,7 +13,7 @@
 //! The crate uses `freshkube-core` and `talos-rs` and no UI types. Only the
 //! modules a screen reaches are public; example data and parsers that
 //! other crates' tests read are behind the `testing` feature
-//! ([`testing`]).
+//! (`freshkube_delivery::testing`).
 
 pub(crate) mod address;
 pub mod applications;

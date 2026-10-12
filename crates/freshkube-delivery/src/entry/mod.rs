@@ -98,7 +98,7 @@ impl<R: Reader> Deadline<R> {
     }
 
     /// The same, with a whole listing allowed `limit`.
-    pub fn with_list_limit(self, limit: Duration) -> Self {
+    pub(crate) fn with_list_limit(self, limit: Duration) -> Self {
         Self {
             list_limit: limit,
             ..self
