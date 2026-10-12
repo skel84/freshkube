@@ -32,6 +32,7 @@ pub mod delivery;
 pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;
+pub mod failure;
 pub mod formatting;
 pub mod indicators;
 pub mod inspection;

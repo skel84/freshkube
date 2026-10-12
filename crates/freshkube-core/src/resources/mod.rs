@@ -19,7 +19,8 @@ pub(crate) mod contexts;
 mod discovery;
 mod events;
 mod exec;
-mod failure;
+// Moved to `crate::failure`; kept so `resources::failure` paths still resolve.
+pub use crate::failure;
 mod forward;
 mod kinds;
 mod metadata;
