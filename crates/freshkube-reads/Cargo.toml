@@ -1,0 +1,17 @@
+[package]
+name = "freshkube-reads"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The owners of Freshkube's cluster reads: a Loader keeps one read's answer for one identity and the Tokio work that fills it"
+
+# Builds on core's Snapshot and spawn_job and takes a Tokio Handle, so it
+# can't live in freshkube-ui, which depends on no core.
+[dependencies]
+gpui-kit = "=0.7.0"
+freshkube-core.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }

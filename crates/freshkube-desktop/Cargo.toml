@@ -18,6 +18,7 @@ freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
 freshkube-observability.workspace = true
 freshkube-probe.workspace = true
+freshkube-reads.workspace = true
 freshkube-terminal.workspace = true
 freshkube-ui.workspace = true
 talos-rs.workspace = true

@@ -9,6 +9,7 @@ crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
+├── freshkube-reads/     the owners of cluster reads: Loader<T, I>, one read's answer for one identity and its Tokio work
 ├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
 ├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
@@ -307,7 +308,7 @@ assert!(!state.apply(&refresh, Ok(99)));
 assert!(state.apply(&replacement, Ok(8)));
 ```
 
-For ordinary inspection reads, [screens::Loader](crates/freshkube-desktop/src/screens/mod.rs) owns `Snapshot<T, Target>`, `Option<OwnedJob>` and `Option<Task<()>>`. Use `load(target, &runtime, what, work, slot, cx)` for Tokio work, `resolve(target, result)` for fixtures, and `reset()` when `set_source` detects a changed target. [The etcd example](docs/STATE_LIFETIMES.md#ordinary-screen-reads) shows the real call. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
+For ordinary inspection reads, [screens::Loader](crates/freshkube-desktop/src/screens/loader.rs) is `freshkube-reads`'s [`Loader<T, Target>`](crates/freshkube-reads/src/loader.rs), which owns `Snapshot<T, I>`, `Option<OwnedJob>` and `Option<Task<()>>`, with `SCREEN_DEADLINE` plugged in. Use `load(target, &runtime, what, work, slot, cx)` for Tokio work, `resolve(target, result)` for fixtures, and `reset()` when `set_source` detects a changed target. [The etcd example](docs/STATE_LIFETIMES.md#ordinary-screen-reads) shows the real call. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
 
 Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`.
 

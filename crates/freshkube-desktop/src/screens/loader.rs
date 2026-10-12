@@ -1,53 +1,44 @@
-//! A screen's data for one target and the work that fills it.
+//! A screen's [`Loader`](freshkube_reads::Loader): its data for the target
+//! node, read within [`SCREEN_DEADLINE`].
 
-use std::future::Future;
+use std::{
+    future::Future,
+    ops::{Deref, DerefMut},
+};
 
 use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use super::SCREEN_DEADLINE;
-use crate::backend::{self, OwnedJob, Target};
-use crate::state::{Request, Snapshot};
+use crate::backend::Target;
 
-/// One screen's data for one target: a [`Snapshot`] plus the work that fills it.
-pub(crate) struct Loader<T> {
-    state: Snapshot<T, Target>,
-    job: Option<OwnedJob>,
-    task: Option<Task<()>>,
-    /// Rises whenever what [`data`](Self::data) or [`error`](Self::error)
-    /// return may have changed, so a screen derives its display data again
-    /// only then.
-    revision: u64,
-}
+/// One screen's data for one target. Everything but [`load`](Self::load)
+/// is the shared loader's.
+pub(crate) struct Loader<T>(freshkube_reads::Loader<T, Target>);
 
 impl<T> Default for Loader<T> {
     fn default() -> Self {
-        Self {
-            state: Snapshot::default(),
-            job: None,
-            task: None,
-            revision: 0,
-        }
+        Self(freshkube_reads::Loader::default())
+    }
+}
+
+impl<T> Deref for Loader<T> {
+    type Target = freshkube_reads::Loader<T, Target>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Loader<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
 impl<T: Send + 'static> Loader<T> {
-    /// Forgets data and cancels in-flight work, e.g. when the target changes.
-    pub(crate) fn reset(&mut self) {
-        let revision = self.revision + 1;
-        *self = Self::default();
-        self.revision = revision;
-    }
-
-    pub(crate) fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    /// Runs `work` on Tokio for `identity`. The result lands only if this is
-    /// still the latest request for that identity; `slot` finds the loader
-    /// again inside the screen when it does. `what` names the data in
-    /// lowercase with its article, e.g. "the process list".
-    #[allow(clippy::too_many_arguments)]
+    /// Runs `work` on Tokio for `identity` within [`SCREEN_DEADLINE`]; see
+    /// [`freshkube_reads::Loader::load`].
     pub(crate) fn load<V: 'static>(
         &mut self,
         identity: Target,
@@ -57,75 +48,14 @@ impl<T: Send + 'static> Loader<T> {
         slot: fn(&mut V) -> &mut Loader<T>,
         cx: &mut Context<V>,
     ) {
-        let request = self.state.begin(identity);
-        self.revision += 1;
-        let (job, receiver) = backend::spawn_job(
+        self.0.load(
+            identity,
             runtime,
             SCREEN_DEADLINE,
-            format!("Loading {what} timed out"),
+            what,
             work,
+            move |view| &mut slot(view).0,
+            cx,
         );
-        self.job = Some(job);
-        let stopped = format!("Loading {what} stopped unexpectedly");
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let result = receiver.await.unwrap_or_else(|_| Err(stopped));
-            _ = this.update(cx, |view, cx| {
-                slot(view).apply(&request, result);
-                cx.notify();
-            });
-        }));
-    }
-
-    /// Applies a result at once; used for example data.
-    pub(crate) fn resolve(&mut self, identity: Target, result: Result<T, String>) {
-        self.job = None;
-        self.task = None;
-        let request = self.state.begin(identity);
-        self.state.apply(&request, result);
-        self.revision += 1;
-    }
-
-    pub(crate) fn data(&self) -> Option<&T> {
-        self.state.data()
-    }
-
-    /// The data to change in place, as a newer observation arrives, without
-    /// a request; the revision stays.
-    pub(crate) fn data_mut(&mut self) -> Option<&mut T> {
-        self.state.data_mut()
-    }
-
-    /// Starts waiting for an answer for `identity` without asking for one,
-    /// for tests that hold a screen on its loading rows or answer it late
-    /// through [`apply`](Self::apply).
-    pub(crate) fn begin(&mut self, identity: Target) -> Request<Target> {
-        self.state.begin(identity)
-    }
-
-    /// Lands `result` if `request` is still the latest for its identity, as
-    /// an answer from [`load`](Self::load) does.
-    pub(crate) fn apply(&mut self, request: &Request<Target>, result: Result<T, String>) -> bool {
-        let applied = self.state.apply(request, result);
-        if applied {
-            self.job = None;
-            self.revision += 1;
-        }
-        applied
-    }
-
-    pub(crate) fn error(&self) -> Option<&str> {
-        self.state.error()
-    }
-
-    pub(crate) fn is_loading(&self) -> bool {
-        self.state.is_loading()
-    }
-
-    pub(crate) fn last_successful(&self) -> Option<std::time::SystemTime> {
-        self.state.last_successful()
-    }
-
-    pub(crate) fn last_failure(&self) -> Option<std::time::SystemTime> {
-        self.state.last_failure()
     }
 }
