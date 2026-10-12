@@ -1,5 +1,7 @@
 use super::*;
 
+const SILENT_NODE: &str = "talos-wk-fra1-03";
+
 #[gpui_kit::test]
 fn target_picker_and_tiles_change_the_target_node(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
