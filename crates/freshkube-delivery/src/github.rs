@@ -42,7 +42,7 @@ impl PullRequest {
     }
 }
 
-pub fn parse_pull_request(repo: &str, value: &Value) -> Option<PullRequest> {
+pub(crate) fn parse_pull_request(repo: &str, value: &Value) -> Option<PullRequest> {
     let merged = value.get("merged_at").is_some_and(|at| !at.is_null())
         || value
             .get("merged")

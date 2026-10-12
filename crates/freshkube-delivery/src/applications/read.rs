@@ -25,15 +25,15 @@ use freshkube_core::workloads::WorkloadKind;
 pub const PART_OF: &str = "app.kubernetes.io/part-of";
 /// The annotation Argo CD's annotation tracking writes on what it applies:
 /// `<application>:<group>/<kind>:<namespace>/<name>`.
-pub const TRACKING_ID: &str = "argocd.argoproj.io/tracking-id";
+pub(crate) const TRACKING_ID: &str = "argocd.argoproj.io/tracking-id";
 /// The label Argo CD's label tracking, its default, writes: the
 /// Application's name.
-pub const INSTANCE: &str = "app.kubernetes.io/instance";
+pub(crate) const INSTANCE: &str = "app.kubernetes.io/instance";
 /// The most Kargo Projects whose Stages and Warehouses are read; two lists
 /// each, so this bounds the requests. The rest are reported as capped.
-pub const MAX_PROJECTS: usize = 50;
+pub(crate) const MAX_PROJECTS: usize = 50;
 /// How many Kargo Projects are read at once, each its two lists together.
-pub const PROJECTS_AT_ONCE: usize = 4;
+pub(crate) const PROJECTS_AT_ONCE: usize = 4;
 
 /// The `part-of` value Argo CD's own workloads carry, and the namespace it
 /// installs into by default.
@@ -50,14 +50,19 @@ pub const MAX_ARGO_NAMESPACES: usize = 3;
 /// kind does not have), so the read is marked [`ArgoScope::Namespace`] and
 /// never counts as whole: Applications elsewhere, where Argo CD allows them,
 /// are not known to be absent.
-pub async fn read_session<R: Reader>(reader: &R, key: SessionKey) -> SessionInputs {
+#[cfg(test)]
+pub(crate) async fn read_session<R: Reader>(reader: &R, key: SessionKey) -> SessionInputs {
     read_asked(reader, key, Asked::ALL).await
 }
 
 /// Reads one cluster for what `asked` asks, as [`read_session`] reads it
 /// all; the rest stays empty. Argo CD alone still lists the workloads
 /// labelled `part-of=argocd`, to find where it runs, but keeps none of them.
-pub async fn read_asked<R: Reader>(reader: &R, key: SessionKey, asked: Asked) -> SessionInputs {
+pub(crate) async fn read_asked<R: Reader>(
+    reader: &R,
+    key: SessionKey,
+    asked: Asked,
+) -> SessionInputs {
     let mut session = SessionInputs::asking(key, asked);
     let workloads = match (asked.workloads, asked.argo_cd) {
         (true, _) => Some(read_workloads(reader).await),
@@ -222,7 +227,10 @@ fn text<'a>(value: &'a Value, pointer: &str) -> Option<&'a str> {
 }
 
 /// A workload with a non-empty `part-of` label.
-pub fn parse_labelled_workload(value: &Value, kind: WorkloadKind) -> Option<LabelledWorkload> {
+pub(crate) fn parse_labelled_workload(
+    value: &Value,
+    kind: WorkloadKind,
+) -> Option<LabelledWorkload> {
     Some(LabelledWorkload {
         namespace: text(value, "/metadata/namespace")?.to_owned(),
         name: text(value, "/metadata/name")?.to_owned(),

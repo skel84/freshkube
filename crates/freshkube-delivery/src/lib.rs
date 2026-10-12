@@ -38,16 +38,14 @@ pub(crate) mod tests;
 #[cfg(test)]
 mod warehouse_tests;
 
+pub use address::Address;
 pub use argocd::StageNaming;
 pub use collect::{Clusters, Plan, collect, commit_of_pull_request};
-pub use digest::{Digest, is_full_sha};
-pub use github::{GhCli, GitHub, PullRequest};
-pub use join::{Confidence, Evidence, Hop, Key, Link, Trail, join, render};
-pub use observation::{Fact, Meta, ObjectRef, Observation};
+pub use digest::is_full_sha;
+pub use github::GhCli;
+pub use join::{Confidence, join, render};
 pub use read::{ListRequest, ReadOnlyClient, Reader, Resource, Scope};
-pub use source::{
-    Source, printable, redact_body, redact_identity, redact_location, redact_message, shown,
-};
+pub use source::{Source, printable, shown};
 pub use tekton::{CommitNames, EvidenceResult};
 
 /// The example data and parsers that other crates' tests read. Compiled

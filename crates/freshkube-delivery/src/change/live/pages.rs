@@ -17,7 +17,7 @@ use crate::source::Source;
 pub const DEADLINE: Duration = Duration::from_secs(5);
 
 /// Kargo's chart installs into its release's namespace, `kargo` by default.
-pub const KARGO_NAMESPACE: &str = "kargo";
+pub(crate) const KARGO_NAMESPACE: &str = "kargo";
 
 /// The tools' addresses, or why each isn't known.
 #[derive(Clone, Debug, PartialEq, Eq)]

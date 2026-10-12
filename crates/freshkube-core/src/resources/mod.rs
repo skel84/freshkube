@@ -15,7 +15,7 @@
 //! [`start_forward`], which forwards a pod's port only when the user asks.
 
 mod connection;
-pub mod contexts;
+pub(crate) mod contexts;
 mod discovery;
 mod events;
 mod exec;
@@ -33,7 +33,9 @@ mod watch;
 mod workload_pods;
 
 pub use connection::{Connection, connect};
-pub use contexts::{KubeContext, KubeconfigReport, discover_contexts, kubeconfig_sources};
+pub use contexts::{
+    KubeContext, KubeconfigReport, discover_contexts, kubeconfig_sources, load as load_kubeconfigs,
+};
 pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds};
 pub use events::{EventScope, EventUpdate, ObjectEvent, watch_object_events};
 pub use exec::{

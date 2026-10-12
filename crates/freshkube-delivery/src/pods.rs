@@ -45,7 +45,7 @@ fn running(listing: &Listing) -> (Vec<RunningImage>, Option<Truncation>) {
     )
 }
 
-pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
+pub(crate) fn parse_pod(value: &Value) -> Vec<RunningImage> {
     let Some(pod) = text(value, "/metadata/name") else {
         return Vec::new();
     };
@@ -102,7 +102,7 @@ pub fn parse_pod(value: &Value) -> Vec<RunningImage> {
 
 /// Reads a Rollout's pods by its pod-template-hash label, in its namespace,
 /// and returns what each container runs.
-pub async fn read_rollout_pods<R: Reader>(
+pub(crate) async fn read_rollout_pods<R: Reader>(
     reader: &R,
     namespace: &str,
     pod_hash: &str,
@@ -128,7 +128,7 @@ pub async fn read_rollout_pods<R: Reader>(
 
 /// Reads a Deployment's pods by their `pod-template-hash` label, in its
 /// namespace, and returns what each container runs.
-pub async fn read_deployment_pods<R: Reader>(
+pub(crate) async fn read_deployment_pods<R: Reader>(
     reader: &R,
     namespace: &str,
     pod_hash: &str,
@@ -154,7 +154,7 @@ pub async fn read_deployment_pods<R: Reader>(
 
 /// Reads every pod of one namespace, for a workload that is not a Rollout.
 /// The list is scoped to the namespace and bounded like every other.
-pub async fn read_namespace_pods<R: Reader>(
+pub(crate) async fn read_namespace_pods<R: Reader>(
     reader: &R,
     namespace: &str,
 ) -> Source<Vec<RunningImage>> {

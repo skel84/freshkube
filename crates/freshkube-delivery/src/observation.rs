@@ -187,7 +187,7 @@ fn short_value(value: &str) -> String {
 }
 
 /// A label or annotation key as a JSON pointer segment (RFC 6901).
-pub fn pointer_segment(key: &str) -> String {
+pub(crate) fn pointer_segment(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 

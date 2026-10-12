@@ -15,19 +15,19 @@ use super::source::{Source, Truncation, printable};
 use super::versions::resolve_each;
 use freshkube_core::resources::Failure;
 
-pub const TEKTON_GROUP: &str = "tekton.dev";
+pub(crate) const TEKTON_GROUP: &str = "tekton.dev";
 pub(crate) const TEKTON_VERSIONS: &[&str] = &["v1", "v1beta1"];
 
 /// How many of a commit's builds have their TaskRuns listed, one list each,
 /// so a busy commit can't run the read past its deadline.
-pub const MOST_TASK_READS: usize = 10;
+pub(crate) const MOST_TASK_READS: usize = 10;
 
 /// The label PaC puts on every PipelineRun it starts.
-pub const SHA_LABEL: &str = "pipelinesascode.tekton.dev/sha";
+pub(crate) const SHA_LABEL: &str = "pipelinesascode.tekton.dev/sha";
 pub(crate) const REPOSITORY_LABEL: &str = "pipelinesascode.tekton.dev/repository";
 const PIPELINE_RUN_LABEL: &str = "tekton.dev/pipelineRun";
 /// Chains writes `"true"` here once it has signed a run.
-pub const CHAINS_SIGNED: &str = "chains.tekton.dev/signed";
+pub(crate) const CHAINS_SIGNED: &str = "chains.tekton.dev/signed";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PipelineRun {
@@ -160,7 +160,7 @@ fn label(value: &Value, key: &str) -> Option<String> {
 
 /// A commit's title from Pipelines as Code's `sha-title`, which holds the
 /// whole message, body included: its first line that isn't blank, trimmed.
-pub fn title_line(message: &str) -> Option<String> {
+pub(crate) fn title_line(message: &str) -> Option<String> {
     message
         .lines()
         .map(str::trim)
@@ -187,7 +187,7 @@ fn succeeded(value: &Value) -> Option<&Value> {
         .find(|condition| text(condition, "/type").as_deref() == Some("Succeeded"))
 }
 
-pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
+pub(crate) fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
     let condition = succeeded(value);
     let params = value
         .pointer("/spec/params")
@@ -234,7 +234,7 @@ pub fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
     })
 }
 
-pub fn parse_task_run(value: &Value) -> Option<TaskRun> {
+pub(crate) fn parse_task_run(value: &Value) -> Option<TaskRun> {
     Some(TaskRun {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
@@ -260,7 +260,7 @@ pub fn parse_task_run(value: &Value) -> Option<TaskRun> {
 
 /// The images a set of results names: a `IMAGE_URL` result paired with the
 /// `IMAGE_DIGEST` that has the same prefix, as Chains' type hinting does.
-pub fn built_images(results: &BTreeMap<String, String>) -> Vec<BuiltImage> {
+pub(crate) fn built_images(results: &BTreeMap<String, String>) -> Vec<BuiltImage> {
     results
         .iter()
         .filter_map(|(name, url)| {
@@ -305,7 +305,10 @@ fn named_commit(
 }
 
 /// A commit the results themselves name.
-pub fn result_commit(results: &BTreeMap<String, String>, names: &CommitNames) -> Option<String> {
+pub(crate) fn result_commit(
+    results: &BTreeMap<String, String>,
+    names: &CommitNames,
+) -> Option<String> {
     named_commit(results, UPSTREAM_COMMIT_RESULTS, &names.results)
 }
 
@@ -328,7 +331,7 @@ pub struct EvidenceRecord {
     pub image_digest: Option<Digest>,
 }
 
-pub fn evidence_record(
+pub(crate) fn evidence_record(
     results: &BTreeMap<String, String>,
     config: &EvidenceResult,
 ) -> Option<EvidenceRecord> {
@@ -341,7 +344,7 @@ pub fn evidence_record(
 
 /// `TEST_OUTPUT` is the result name upstream Conforma tasks write their
 /// verdict under.
-pub fn conforma(results: &BTreeMap<String, String>) -> Option<Conforma> {
+pub(crate) fn conforma(results: &BTreeMap<String, String>) -> Option<Conforma> {
     let output: Value = serde_json::from_str(results.get("TEST_OUTPUT")?).ok()?;
     Some(Conforma {
         outcome: text(&output, "/result")?,
@@ -521,7 +524,7 @@ async fn list_scoped<R: Reader, T>(
 /// A SHA-256 commit (64 digits) is longer than a label value may be, so no
 /// build is found by it: that read says so, and the commit joins Kargo
 /// Freight on the commit alone.
-pub async fn read_builds<R: Reader>(
+pub(crate) async fn read_builds<R: Reader>(
     reader: &R,
     namespace: Option<&str>,
     sha: &str,

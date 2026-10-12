@@ -70,7 +70,7 @@ pub fn is_full_sha(sha: &str) -> bool {
 /// its port stays, so `registry.example:5000` is another registry. A name the
 /// reference grammar rejects stays as written, since a false match is worse
 /// than a miss.
-pub fn repository(reference: &str) -> String {
+pub(crate) fn repository(reference: &str) -> String {
     let written = written_repository(reference);
     normalized(&written).unwrap_or(written)
 }
@@ -147,7 +147,7 @@ fn is_path_segment(segment: &str) -> bool {
 
 /// The repository of an image reference as written: no tag, no digest. It
 /// is for showing; compare with [`repository`].
-pub fn written_repository(reference: &str) -> String {
+pub(crate) fn written_repository(reference: &str) -> String {
     let without_digest = reference.split('@').next().unwrap_or(reference);
     // A colon after the last slash starts a tag; one before it is a port.
     match without_digest.rsplit_once('/') {

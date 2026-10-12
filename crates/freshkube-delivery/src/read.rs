@@ -27,12 +27,12 @@ use freshkube_core::resources::{Failure, FailureKind};
 use super::source::{Truncation, cap_message, redact_body};
 
 /// Items asked for per page.
-pub const PAGE_LIMIT: u32 = 200;
+pub(crate) const PAGE_LIMIT: u32 = 200;
 /// Pages read before a listing is cut off and marked truncated.
-pub const MAX_PAGES: u32 = 5;
+pub(crate) const MAX_PAGES: u32 = 5;
 /// The longest response body read. A page of [`PAGE_LIMIT`] large objects
 /// fits; a longer answer fails rather than fill memory.
-pub const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 
 /// One kind on one API version, as a REST path is built from it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -326,7 +326,7 @@ fn is_label_value(text: &str) -> bool {
 
 /// The selector `key=value`, once the value is checked as a label value, so
 /// a value read from an object can't add a term to the selector.
-pub fn label_equals(key: &str, value: &str) -> Result<String, Failure> {
+pub(crate) fn label_equals(key: &str, value: &str) -> Result<String, Failure> {
     check("label value", value, is_label_value)?;
     Ok(format!("{key}={value}"))
 }

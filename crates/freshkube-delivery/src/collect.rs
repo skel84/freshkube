@@ -210,7 +210,7 @@ pub async fn upstream<K: Reader, A: Reader, T: Reader, G: GitHub>(
 /// What the environment cluster `context`, read through `environment`,
 /// holds of the change: only for the Applications whose destination it
 /// is, and only what they reach.
-pub async fn read_environment<E: Reader>(
+pub(crate) async fn read_environment<E: Reader>(
     environment: &E,
     evidence: &Evidence,
     context: &str,

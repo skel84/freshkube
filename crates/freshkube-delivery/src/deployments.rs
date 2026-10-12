@@ -19,9 +19,9 @@ use freshkube_core::resources::Failure;
 pub const GROUP: &str = "apps";
 /// The annotation the Deployment controller writes on a Deployment and on
 /// the ReplicaSet of each of its revisions.
-pub const REVISION: &str = "deployment.kubernetes.io/revision";
+pub(crate) const REVISION: &str = "deployment.kubernetes.io/revision";
 /// The label the Deployment controller puts on a ReplicaSet and its pods.
-pub const TEMPLATE_HASH_LABEL: &str = "pod-template-hash";
+pub(crate) const TEMPLATE_HASH_LABEL: &str = "pod-template-hash";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Deployment {
@@ -108,7 +108,7 @@ fn annotation(value: &Value, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-pub fn parse_deployment(value: &Value) -> Option<Deployment> {
+pub(crate) fn parse_deployment(value: &Value) -> Option<Deployment> {
     let containers: Vec<Container> = value
         .pointer("/spec/template/spec/containers")
         .and_then(Value::as_array)
@@ -146,7 +146,7 @@ pub fn parse_deployment(value: &Value) -> Option<Deployment> {
 
 /// A ReplicaSet whose controller owner reference is an `apps` Deployment;
 /// any other is not read as one.
-pub fn parse_deployment_set(value: &Value) -> Option<DeploymentSet> {
+pub(crate) fn parse_deployment_set(value: &Value) -> Option<DeploymentSet> {
     let owner_uid = value
         .pointer("/metadata/ownerReferences")
         .and_then(Value::as_array)
@@ -179,7 +179,7 @@ pub fn parse_deployment_set(value: &Value) -> Option<DeploymentSet> {
 /// the Deployment owns by UID, and that carries the Deployment's revision and
 /// a pod-template hash, which its pods carry too. Why there is none
 /// otherwise.
-pub fn current_set<'a>(
+pub(crate) fn current_set<'a>(
     deployment: &Deployment,
     sets: &'a [DeploymentSet],
 ) -> Result<&'a DeploymentSet, String> {
@@ -229,14 +229,17 @@ async fn list<R: Reader, T>(
     Ok(listing.parse(parse))
 }
 
-pub async fn read_deployments<R: Reader>(reader: &R, namespace: &str) -> Source<Vec<Deployment>> {
+pub(crate) async fn read_deployments<R: Reader>(
+    reader: &R,
+    namespace: &str,
+) -> Source<Vec<Deployment>> {
     Source::from_listing(list(reader, "deployments", namespace, parse_deployment).await)
 }
 
 /// The ReplicaSets of one namespace that a Deployment owns. Other
 /// ReplicaSets are read and left out, so a cap counts them: a Deployment's
 /// may be among those not read.
-pub async fn read_deployment_sets<R: Reader>(
+pub(crate) async fn read_deployment_sets<R: Reader>(
     reader: &R,
     namespace: &str,
 ) -> Source<Vec<DeploymentSet>> {

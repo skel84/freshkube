@@ -91,7 +91,7 @@ impl<T> Source<T> {
 
 /// What to add to "none was found" when the listing was capped: the thing may
 /// be among the items that were not read.
-pub fn cap_note(truncation: Option<Truncation>) -> String {
+pub(crate) fn cap_note(truncation: Option<Truncation>) -> String {
     truncation.map_or_else(String::new, |truncation| {
         format!(
             "; the listing stopped at the page cap after {} items, so it may be among those not read",
@@ -106,7 +106,7 @@ pub fn cap_note(truncation: Option<Truncation>) -> String {
 ///
 /// One pass: each ` "` is found once and the word before it checked, so a
 /// message full of one marker never rescans for the others.
-pub fn redact_identity(message: &str) -> String {
+pub(crate) fn redact_identity(message: &str) -> String {
     const NAMES: [&str; 4] = ["User", "users", "Group", "groups"];
     let mut out = String::with_capacity(message.len());
     let mut rest = message;
@@ -154,7 +154,7 @@ pub fn printable(failure: &Failure) -> String {
 /// message loses a bare host name only where Go's errors write one
 /// (after `lookup `, or in an x509 `valid for` list), a webhook's quoted
 /// name goes as an identity does, and only a body loses every host name.
-pub fn redact_message(message: &str) -> String {
+pub(crate) fn redact_message(message: &str) -> String {
     redact_capped(message, redact_places)
 }
 
@@ -175,7 +175,7 @@ pub fn shown(failure: &Failure) -> String {
 
 /// Replaces each word that names a place: a URL, an absolute or home-relative
 /// path, an IP address, or a `host:port`.
-pub fn redact_location(message: &str) -> String {
+pub(crate) fn redact_location(message: &str) -> String {
     let mut out = String::with_capacity(message.len());
     let mut rest = message;
     while !rest.is_empty() {
@@ -208,7 +208,7 @@ fn redact_word(word: &str) -> String {
 
 /// The longest message [`redact_body`] and [`redact_message`] keep, their
 /// ellipsis included.
-pub const MAX_BODY_MESSAGE_BYTES: usize = 4 * 1024;
+pub(crate) const MAX_BODY_MESSAGE_BYTES: usize = 4 * 1024;
 /// How much of a body [`redact_body`] reads. Redaction can shorten a body a
 /// lot (a long URL becomes `<url>`), so it reads more than it keeps, but never
 /// the whole of a body that may be 32 MiB.
@@ -237,7 +237,7 @@ const ELLIPSIS: char = '…';
 /// is cut inside and redacted as what is left of it. A URL or a path still
 /// reads as one, but any other token at the cut can be split from what
 /// marks it: `user:secret` without its `@host`, `gitlab.i`, `jane%4`.
-pub fn redact_body(body: &str) -> String {
+pub(crate) fn redact_body(body: &str) -> String {
     redact_capped(body, |text| redact_hosts(&redact_places(text)))
 }
 

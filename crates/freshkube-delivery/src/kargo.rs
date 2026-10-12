@@ -19,10 +19,10 @@ pub(crate) const VERSIONS: &[&str] = &["v1alpha1"];
 /// The annotation Kargo puts on a Promotion a user created, naming who. The
 /// Stage controller's auto-promotions carry none; other controllers write
 /// `controller:<name>`.
-pub const CREATE_ACTOR: &str = "kargo.akuity.io/create-actor";
+pub(crate) const CREATE_ACTOR: &str = "kargo.akuity.io/create-actor";
 /// The OCI annotation naming the commit an image was built from, which Kargo
 /// copies onto the Freight's image when the registry has it.
-pub const IMAGE_REVISION: &str = "org.opencontainers.image.revision";
+pub(crate) const IMAGE_REVISION: &str = "org.opencontainers.image.revision";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FreightCommit {
@@ -247,7 +247,7 @@ fn array<'a>(value: &'a Value, pointer: &str) -> impl Iterator<Item = &'a Value>
         .flatten()
 }
 
-pub fn parse_freight(value: &Value) -> Option<Freight> {
+pub(crate) fn parse_freight(value: &Value) -> Option<Freight> {
     // Older Kargo keeps the origin and contents under `spec`, newer at the top.
     let body = if value.get("images").is_some() || value.get("commits").is_some() {
         value
@@ -448,7 +448,7 @@ fn step_commits(value: &Value) -> (Vec<String>, Vec<String>) {
     (pushed, source)
 }
 
-pub fn parse_promotion(value: &Value) -> Option<Promotion> {
+pub(crate) fn parse_promotion(value: &Value) -> Option<Promotion> {
     let (pushed_commits, source_commits) = step_commits(value);
     let mut freight_digests: Vec<(Digest, &'static str)> = value
         .pointer("/status/freight")
@@ -494,7 +494,7 @@ pub fn parse_promotion(value: &Value) -> Option<Promotion> {
     })
 }
 
-pub fn parse_warehouse(value: &Value) -> Option<Warehouse> {
+pub(crate) fn parse_warehouse(value: &Value) -> Option<Warehouse> {
     Some(Warehouse {
         project: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
@@ -634,7 +634,7 @@ impl Warehouse {
 /// first, then each Stage after every Stage it takes Freight from, by name
 /// within a step. A Stage in a loop, or after one not given, comes last,
 /// by name.
-pub fn promotion_order<'a>(stages: impl IntoIterator<Item = &'a Stage>) -> Vec<&'a Stage> {
+pub(crate) fn promotion_order<'a>(stages: impl IntoIterator<Item = &'a Stage>) -> Vec<&'a Stage> {
     let mut sorted: Vec<&Stage> = stages.into_iter().collect();
     sorted.sort_by(|a, b| a.name.cmp(&b.name));
     let mut ordered: Vec<&Stage> = Vec::new();
@@ -701,7 +701,7 @@ pub struct KargoRead {
     pub promotions: Source<Vec<Promotion>>,
 }
 
-pub async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
+pub(crate) async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
     KargoRead {
         warehouses: Source::from_listing(
             read_kind(reader, "warehouses", project, parse_warehouse).await,
@@ -716,7 +716,7 @@ pub async fn read_project<R: Reader>(reader: &R, project: &str) -> KargoRead {
 
 /// One Freight of a project, by name: a GET, for the commit to follow it
 /// by before the rest is read.
-pub async fn read_freight<R: Reader>(
+pub(crate) async fn read_freight<R: Reader>(
     reader: &R,
     project: &str,
     name: &str,
@@ -736,7 +736,7 @@ pub async fn read_freight<R: Reader>(
 /// not empty. (A namespace carrying Kargo's `kargo.akuity.io/project` label
 /// is not a Project: the label can sit on a namespace Kargo adopted, and
 /// reading namespaces would need a permission a Project reader may lack.)
-pub async fn read_project_names<R: Reader>(reader: &R) -> Source<Vec<String>> {
+pub(crate) async fn read_project_names<R: Reader>(reader: &R) -> Source<Vec<String>> {
     async fn run<R: Reader>(reader: &R) -> Result<(Vec<String>, Option<Truncation>), Failure> {
         let resource = resolve(reader, GROUP, "projects", VERSIONS, false).await?;
         let listing = reader

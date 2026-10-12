@@ -28,6 +28,8 @@ pub(crate) const KUBERNETES_TTL: Duration = Duration::from_secs(120);
 const MAX_ENTRIES: usize = 16;
 
 /// A bounded cache whose entries expire. Time is injected so tests need not sleep.
+///
+/// Public for `freshkube-delivery`'s per-entry client cache, not as a general API.
 pub struct TtlCache<K, V> {
     entries: HashMap<K, (V, Instant)>,
     ttl: Option<Duration>,
@@ -161,6 +163,8 @@ fn fingerprint(value: impl Hash) -> u64 {
     HASHER.hash_one(value)
 }
 
+/// A file's identity for cache keys. Public for `freshkube-delivery`'s per-entry
+/// client cache, not as a general API.
 pub fn file_revision(path: &Path) -> Option<ConfigIdentity> {
     crate::kubeconfig_selection::read_bounded_regular_file(path, 4 * 1024 * 1024)
         .ok()

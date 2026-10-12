@@ -33,7 +33,9 @@ mod rules;
 mod tests;
 
 pub use derive::derive;
-pub use overrides::{Merge, Override, Split};
+#[cfg(test)]
+use overrides::Merge;
+pub use overrides::{Override, Split};
 
 /// Which cluster something lives in, as the session registry (#44) names it.
 /// Opaque here: today it is the one connection's id.

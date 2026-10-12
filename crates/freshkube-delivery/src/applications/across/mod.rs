@@ -32,7 +32,8 @@ use futures::StreamExt;
 use super::read::read_asked;
 use super::{Absent, Asked, SessionInputs, SessionKey};
 use crate::entry::MAX_AT_ONCE;
-pub use crate::entry::pool::ENTRY_DEADLINE;
+#[cfg(test)]
+use crate::entry::pool::ENTRY_DEADLINE;
 use crate::entry::pool::{Place, Unread, Until, Via, reach};
 use crate::read::Reader;
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
@@ -45,7 +46,7 @@ pub const BUDGET: Duration = Duration::from_secs(45);
 pub const WORKSPACE: &str = "the workspace";
 
 /// The session of `part` when no workspace entry holds it.
-pub fn missing_key(part: Part) -> SessionKey {
+pub(crate) fn missing_key(part: Part) -> SessionKey {
     SessionKey::new(format!("{WORKSPACE} ({})", part.label()))
 }
 

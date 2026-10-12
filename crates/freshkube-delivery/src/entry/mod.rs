@@ -47,7 +47,7 @@ pub const CONNECT_DEADLINE: Duration = Duration::from_secs(5);
 /// How long one GET may take, as the change page's own GETs.
 pub const REQUEST_DEADLINE: Duration = super::change::live::pages::DEADLINE;
 /// The most entries connected to at once, as the destinations are.
-pub const MAX_AT_ONCE: usize = 4;
+pub(crate) const MAX_AT_ONCE: usize = 4;
 
 /// A reader whose every request ends by its deadline: one that doesn't
 /// answer in time fails as timed out, which reads as unreachable.
@@ -190,7 +190,7 @@ pub async fn connect(kubeconfigs: Vec<PathBuf>, context: String) -> Result<Entry
 }
 
 /// [`connect`] with its deadline given.
-pub async fn connect_within(
+pub(crate) async fn connect_within(
     kubeconfigs: Vec<PathBuf>,
     context: String,
     limit: Duration,
@@ -215,7 +215,7 @@ async fn open_listed(
     // while it makes the client, so all of it stays off the async workers
     // and inside the deadline.
     let setup = tokio::task::spawn_blocking(move || {
-        let (report, kubeconfig) = freshkube_core::resources::contexts::load(&kubeconfigs);
+        let (report, kubeconfig) = freshkube_core::resources::load_kubeconfigs(&kubeconfigs);
         if report.context(&context).is_none() {
             return Ok(None);
         }
@@ -343,7 +343,7 @@ pub type Connected = (String, Result<EntryReader, String>);
 /// Clients for `entries`, at most [`MAX_AT_ONCE`] connecting at a time, in
 /// the order given, each with its entry's id. Each connects within its own
 /// deadline, and a slow one never keeps the next from starting.
-pub async fn connect_all(kubeconfigs: &[PathBuf], entries: Vec<Entry>) -> Vec<Connected> {
+pub(crate) async fn connect_all(kubeconfigs: &[PathBuf], entries: Vec<Entry>) -> Vec<Connected> {
     connect_each(entries, |entry| connect_entry(kubeconfigs.to_vec(), entry)).await
 }
 
@@ -471,7 +471,7 @@ fn reach(answer: Result<(), Failure>) -> Reach {
 /// `argocd`, as the Applications read chooses them
 /// ([`argo_namespaces`]). One item is read in each; the first that fails
 /// says the state. Returns the namespaces read too.
-pub async fn check_argo<R: Reader>(reader: &R) -> (Reach, Vec<String>) {
+pub(crate) async fn check_argo<R: Reader>(reader: &R) -> (Reach, Vec<String>) {
     let (namespaces, _) = argo_namespaces(&read_argo_workloads(reader).await);
     let resource = match resolve(
         reader,
@@ -499,7 +499,7 @@ pub async fn check_argo<R: Reader>(reader: &R) -> (Reach, Vec<String>) {
 
 /// Whether an entry's workloads can be read: one labelled Deployment, in
 /// every namespace, as the Applications read lists them.
-pub async fn check_workloads<R: Reader>(reader: &R) -> Reach {
+pub(crate) async fn check_workloads<R: Reader>(reader: &R) -> Reach {
     let request = ListRequest {
         resource: Resource::new("apps", "v1", "deployments", true),
         scope: Scope::Labels {

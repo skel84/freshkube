@@ -48,7 +48,7 @@ use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{self, Chosen, Entry, Key, Part, Sources};
 
 pub use derive::derive;
-pub use pages::{KARGO_NAMESPACE, Pages};
+pub use pages::Pages;
 
 /// Where a change is read: one cluster, one Kargo project, one Freight.
 #[derive(Clone, Debug, PartialEq, Eq)]

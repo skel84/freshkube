@@ -41,7 +41,7 @@ use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 /// How long a destination's entry may take, connecting and reading: room
 /// for one listing at its longest. Kargo's, the builds' and Argo CD's
 /// entries have the rest of the read's budget.
-pub const ENTRY_DEADLINE: Duration = Duration::from_secs(30);
+pub(crate) const ENTRY_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Where one part or entry is read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -312,7 +312,7 @@ type Client<C> = Arc<SharedReader<C>>;
 type Slot<C> = Arc<OnceCell<Result<Client<C>, Unread>>>;
 
 /// A reader of the pool: the open connection's, or an entry's.
-pub type PoolReader<'p, R, C> = Via<&'p SharedReader<&'p R>, Client<C>>;
+pub(crate) type PoolReader<'p, R, C> = Via<&'p SharedReader<&'p R>, Client<C>>;
 
 /// The clients of one read across the workspace. See the module's notes.
 pub struct Pool<'a, R, C, F> {

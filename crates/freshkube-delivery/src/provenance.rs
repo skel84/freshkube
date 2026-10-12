@@ -1074,7 +1074,7 @@ fn the_rule_fails_on_a_side_with_nothing_read() {
     let digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
     let object =
         |kind: &str| ObjectRef::new("argoproj.io", kind, Some("shop"), "api", &Meta::default());
-    let key = Key::Digest(super::Digest::parse(digest).unwrap());
+    let key = Key::Digest(crate::digest::Digest::parse(digest).unwrap());
     let link = |evidence: Vec<Observation>| Link {
         from: Hop::Application,
         to: Hop::Rollout,
@@ -1120,7 +1120,7 @@ fn each_value_keeps_the_field_it_was_read_from() {
     use super::observation::pointer_segment;
     let digest = |hex: char| format!("sha256:{}", hex.to_string().repeat(64));
     let (x, y) = (digest('1'), digest('2'));
-    let parsed = |d: &str| super::Digest::parse(d).unwrap();
+    let parsed = |d: &str| crate::digest::Digest::parse(d).unwrap();
     // Older Kargo: the current Freight A, and the last Promotion's B.
     let stage = parse_stage(&serde_json::json!({
         "metadata": {"namespace": "storefront", "name": "dev"},
@@ -1297,7 +1297,7 @@ async fn a_current_pod_on_another_digest_keeps_the_link_claimed_and_names_it() {
     .await;
     let pods = one(&trail, Hop::Rollout, Hop::Pod);
     assert_eq!(pods.confidence, Confidence::Claimed);
-    let old = super::Digest::parse(OLD).unwrap().short();
+    let old = crate::digest::Digest::parse(OLD).unwrap().short();
     assert!(
         pods.reason.contains(&format!(
             "the current revision's pods run another digest ({old})"
@@ -1422,7 +1422,7 @@ async fn a_summary_that_lists_another_image_keeps_it_claimed_and_names_it() {
     let old = format!("{REPO}@{OLD}");
     let tagged = format!("{REPO}:v1.4.0");
     let other = format!("registry.example/acme/proxy@{NEW}");
-    let short = super::Digest::parse(OLD).unwrap().short();
+    let short = crate::digest::Digest::parse(OLD).unwrap().short();
     for (images, words) in [
         (
             vec![old.as_str()],
@@ -1471,7 +1471,7 @@ async fn current_pods_on_another_digest_keep_a_pinned_rollout_claimed() {
     let trail = run(&world, &ENV).await;
     let rollout = one(&trail, Hop::Application, Hop::Rollout);
     assert_eq!(rollout.confidence, Confidence::Claimed);
-    let short = super::Digest::parse(OLD).unwrap().short();
+    let short = crate::digest::Digest::parse(OLD).unwrap().short();
     assert!(
         rollout
             .reason

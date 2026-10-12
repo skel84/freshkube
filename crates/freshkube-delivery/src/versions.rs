@@ -26,7 +26,7 @@ pub async fn resolve<R: Reader>(
 /// is not served. A kind that no version serves, or that was not yet found
 /// when a version's document could not be read, fails on its own; the kinds
 /// already found keep their versions.
-pub async fn resolve_each<R: Reader, const N: usize>(
+pub(crate) async fn resolve_each<R: Reader, const N: usize>(
     reader: &R,
     group: &str,
     plurals: [&str; N],

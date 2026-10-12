@@ -11,13 +11,13 @@ use super::read::{ListRequest, Reader, Scope};
 use super::source::{Source, Truncation, redact_message};
 use super::versions::resolve;
 use freshkube_core::resources::Failure;
-pub use freshkube_core::workspace::{IN_CLUSTER_NAME, IN_CLUSTER_SERVER, normalize_server};
+pub(crate) use freshkube_core::workspace::{IN_CLUSTER_NAME, IN_CLUSTER_SERVER, normalize_server};
 
 pub const GROUP: &str = "argoproj.io";
 pub(crate) const VERSIONS: &[&str] = &["v1alpha1"];
 /// The annotation Kargo reads to know which Stage may sync an Application:
 /// `<project>:<stage>`.
-pub const AUTHORIZED_STAGE: &str = "kargo.akuity.io/authorized-stage";
+pub(crate) const AUTHORIZED_STAGE: &str = "kargo.akuity.io/authorized-stage";
 
 /// How an Application ties itself to a Kargo stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -293,7 +293,7 @@ pub struct Application {
     pub conditions: Vec<Condition>,
 }
 
-pub fn parse_application(value: &Value) -> Option<Application> {
+pub(crate) fn parse_application(value: &Value) -> Option<Application> {
     let mut found: Vec<(String, &'static str)> = Vec::new();
     if let Some(revision) = text(value, "/status/sync/revision") {
         found.push((revision, "/status/sync/revision"));
@@ -723,7 +723,7 @@ pub struct ApplicationSet {
     pub project: Option<String>,
 }
 
-pub fn parse_application_set(value: &Value) -> Option<ApplicationSet> {
+pub(crate) fn parse_application_set(value: &Value) -> Option<ApplicationSet> {
     Some(ApplicationSet {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
@@ -747,7 +747,7 @@ impl ApplicationSet {
 }
 
 /// The ApplicationSets of one Argo CD namespace.
-pub async fn read_application_sets<R: Reader>(
+pub(crate) async fn read_application_sets<R: Reader>(
     reader: &R,
     namespace: &str,
 ) -> Source<Vec<ApplicationSet>> {
@@ -829,7 +829,10 @@ pub struct Destinations<'a> {
 /// function; only context names come out. Argo CD's own names for its
 /// cluster match the Argo CD context, as they do in Argo CD; any other
 /// cluster name matches only the contexts the user mapped it to.
-pub fn match_destination(application: &Application, to: Destinations<'_>) -> DestinationMatch {
+pub(crate) fn match_destination(
+    application: &Application,
+    to: Destinations<'_>,
+) -> DestinationMatch {
     let (mut found, own) = if let Some(server) = &application.destination_server {
         let wanted = normalize_server(server);
         let found: Vec<String> = to

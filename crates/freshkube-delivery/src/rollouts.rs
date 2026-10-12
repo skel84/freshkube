@@ -13,7 +13,7 @@ use freshkube_core::resources::Failure;
 pub const GROUP: &str = "argoproj.io";
 const VERSIONS: &[&str] = &["v1alpha1"];
 /// The label every pod of a Rollout's ReplicaSet carries.
-pub const POD_HASH_LABEL: &str = "rollouts-pod-template-hash";
+pub(crate) const POD_HASH_LABEL: &str = "rollouts-pod-template-hash";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rollout {
@@ -143,7 +143,7 @@ fn count(value: &Value, pointer: &str) -> u64 {
     value.pointer(pointer).and_then(Value::as_u64).unwrap_or(0)
 }
 
-pub fn parse_replica_set(value: &Value) -> Option<ReplicaSet> {
+pub(crate) fn parse_replica_set(value: &Value) -> Option<ReplicaSet> {
     let owner_uid = value
         .pointer("/metadata/ownerReferences")
         .and_then(Value::as_array)
@@ -176,7 +176,7 @@ pub fn parse_replica_set(value: &Value) -> Option<ReplicaSet> {
     })
 }
 
-pub fn parse_rollout(value: &Value) -> Option<Rollout> {
+pub(crate) fn parse_rollout(value: &Value) -> Option<Rollout> {
     Some(Rollout {
         namespace: text(value, "/metadata/namespace")?,
         name: text(value, "/metadata/name")?,
@@ -201,7 +201,7 @@ pub fn parse_rollout(value: &Value) -> Option<Rollout> {
     })
 }
 
-pub fn parse_analysis_run(value: &Value) -> Option<AnalysisRun> {
+pub(crate) fn parse_analysis_run(value: &Value) -> Option<AnalysisRun> {
     let rollout = value
         .pointer("/metadata/ownerReferences")
         .and_then(Value::as_array)
@@ -234,11 +234,11 @@ async fn read_namespace<R: Reader, T>(
     Ok(listing.parse(parse))
 }
 
-pub async fn read_rollouts<R: Reader>(reader: &R, namespace: &str) -> Source<Vec<Rollout>> {
+pub(crate) async fn read_rollouts<R: Reader>(reader: &R, namespace: &str) -> Source<Vec<Rollout>> {
     Source::from_listing(read_namespace(reader, "rollouts", namespace, parse_rollout).await)
 }
 
-pub async fn read_analysis_runs<R: Reader>(
+pub(crate) async fn read_analysis_runs<R: Reader>(
     reader: &R,
     namespace: &str,
 ) -> Source<Vec<AnalysisRun>> {
@@ -250,7 +250,10 @@ pub async fn read_analysis_runs<R: Reader>(
 /// The ReplicaSets of one namespace that carry the Rollouts' pod-template
 /// hash label, so only those a Rollout made; the caller keeps those its
 /// Rollouts own.
-pub async fn read_replica_sets<R: Reader>(reader: &R, namespace: &str) -> Source<Vec<ReplicaSet>> {
+pub(crate) async fn read_replica_sets<R: Reader>(
+    reader: &R,
+    namespace: &str,
+) -> Source<Vec<ReplicaSet>> {
     async fn run<R: Reader>(
         reader: &R,
         namespace: &str,

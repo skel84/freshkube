@@ -17,14 +17,14 @@ use crate::applications::example::{CICD, CORE};
 use crate::{argocd, deployments, kargo};
 use freshkube_core::indicators::HealthIndicator::{self, *};
 
-pub const PROJECT: &str = "checkout";
-pub const FREIGHT: &str = "wonky-otter";
+pub(crate) const PROJECT: &str = "checkout";
+pub(crate) const FREIGHT: &str = "wonky-otter";
 /// The git and registry hosts the build read from.
-pub const GIT: &str = "git.example.test";
-pub const REGISTRY: &str = "registry.example.test";
+pub(crate) const GIT: &str = "git.example.test";
+pub(crate) const REGISTRY: &str = "registry.example.test";
 /// Where the invented Kargo and Argo CD serve their pages.
-pub const KARGO_PAGE: &str = "https://kargo.example.test";
-pub const ARGOCD_PAGE: &str = "https://argocd.example.test";
+pub(crate) const KARGO_PAGE: &str = "https://kargo.example.test";
+pub(crate) const ARGOCD_PAGE: &str = "https://argocd.example.test";
 
 const DIGEST: &str = "sha256:9c4e…b21a";
 /// The pod-template hash of checkout-api's ReplicaSet that runs this
@@ -35,10 +35,10 @@ pub const POD_HASH: &str = "5d8f7c9b6";
 pub const DEPLOYMENT: &str = "checkout-api";
 const COMMIT: &str = "a1f3c9e";
 /// The pull request that made the change, and its title.
-pub const PULL_REQUEST: u64 = 418;
+pub(crate) const PULL_REQUEST: u64 = 418;
 pub const TITLE: &str = "Retry idempotency keys";
 /// The Freight prod-ams runs, from before this change.
-pub const PREVIOUS: &str = "brave-lynx";
+pub(crate) const PREVIOUS: &str = "brave-lynx";
 /// The pull request's head commit, which its pull_request run built.
 const HEAD: &str = "7d2e04b";
 const VERSION: &str = "v1alpha1";
@@ -52,7 +52,7 @@ const STEPS: [&str; 4] = [
 ];
 
 /// checkout's Stages, in promotion order.
-pub const STAGES: [&str; 4] = ["dev", "stage", "prod-ams", "prod-lon"];
+pub(crate) const STAGES: [&str; 4] = ["dev", "stage", "prod-ams", "prod-lon"];
 
 /// The Freight a Stage of a project carries, when example mode has one:
 /// every Stage of `checkout` leads to `wonky-otter`. Builds no change.
@@ -61,7 +61,8 @@ pub fn freight_of(project: &str, stage: &str) -> Option<&'static str> {
 }
 
 /// The change of a Stage of a project, when example mode has one.
-pub fn for_stage(project: &str, stage: &str, now: DateTime<Utc>) -> Option<Change> {
+#[cfg(test)]
+pub(crate) fn for_stage(project: &str, stage: &str, now: DateTime<Utc>) -> Option<Change> {
     freight_of(project, stage).map(|_| change(now))
 }
 
@@ -196,7 +197,7 @@ fn step_logs(task: &str, run: &str) -> Action {
 }
 
 /// The Stage itself, in Kargo's project namespace.
-pub fn stage_object(stage: &str) -> Object {
+pub(crate) fn stage_object(stage: &str) -> Object {
     object(CICD, kargo::GROUP, "Stage", PROJECT, stage)
 }
 

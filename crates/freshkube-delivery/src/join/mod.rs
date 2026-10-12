@@ -20,7 +20,9 @@ mod workload;
 
 use argo::rollout_namespace;
 use build::{commit_link, pull_request_links, supply_chain_links};
-pub use conflict::{BuiltDigest, DigestConflict};
+#[cfg(test)]
+pub(crate) use conflict::BuiltDigest;
+pub(crate) use conflict::DigestConflict;
 use conflict::{conflict_reason, digest_conflicts};
 use kargo::{freight_summary, stage_links, warehouse_link};
 pub use render::render;
@@ -301,7 +303,7 @@ pub(super) fn owned_replica_sets<'a>(
 
 /// A Rollout the change reaches.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct WantedRollout {
+pub(crate) struct WantedRollout {
     pub namespace: String,
     pub name: String,
 }
@@ -530,13 +532,13 @@ fn build_freight(
 /// those an Application managed by a Stage that reports one of `freight` as
 /// current points at, when the Application deploys there. Used by the
 /// collector so pods are read only for the change in question.
-pub fn candidate_rollouts(evidence: &Evidence, context: &str) -> Vec<WantedRollout> {
+pub(crate) fn candidate_rollouts(evidence: &Evidence, context: &str) -> Vec<WantedRollout> {
     candidate_workloads(evidence, context, ControllerKind::Rollout)
 }
 
 /// The Deployments whose pods should be read, as [`candidate_rollouts`] finds
 /// Rollouts.
-pub fn candidate_deployments(evidence: &Evidence, context: &str) -> Vec<WantedRollout> {
+pub(crate) fn candidate_deployments(evidence: &Evidence, context: &str) -> Vec<WantedRollout> {
     candidate_workloads(evidence, context, ControllerKind::Deployment)
 }
 
@@ -614,7 +616,7 @@ fn candidate_workloads(
 /// `read` is what was read in `context` so far, whose Deployments say
 /// whether the Deployment chain speaks for an Application; without it,
 /// what `evidence` holds for `context`.
-pub fn candidate_applications(
+pub(crate) fn candidate_applications(
     evidence: &Evidence,
     context: &str,
     read: Option<&Workloads>,
@@ -665,7 +667,7 @@ pub fn candidate_applications(
 /// Freight it matches: its Warehouse, its Promotions, and each Stage that
 /// runs it with that Stage's Application, workloads and pods. In trail
 /// order; a Stage's links follow its Freight → Stage link.
-pub fn freight_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
+pub(crate) fn freight_links(evidence: &Evidence, freight: &Freight) -> Vec<Link> {
     let mut links = vec![warehouse_link(evidence, freight)];
     links.extend(stage_links(evidence, freight));
     links
