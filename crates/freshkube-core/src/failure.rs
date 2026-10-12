@@ -1,5 +1,7 @@
 use std::fmt;
 
+use talos_rs::TalosError;
+
 /// The reason kube gives an error whose body it couldn't read as a Status.
 const UNPARSED: &str = "Failed to parse error data";
 
@@ -45,6 +47,30 @@ impl Failure {
             kind,
             message: message.into(),
         }
+    }
+
+    /// Classifies a Talos error by its gRPC code, never its message. Errors
+    /// with no code (transport, connection, TLS) are classified by the
+    /// variant alone.
+    pub fn from_talos(error: &TalosError) -> Self {
+        let kind = match error {
+            TalosError::Grpc(status) => match status.code() {
+                tonic::Code::PermissionDenied => FailureKind::Forbidden,
+                tonic::Code::Unauthenticated => FailureKind::Unauthorized,
+                tonic::Code::Unavailable => FailureKind::Unreachable,
+                tonic::Code::DeadlineExceeded => FailureKind::Timeout,
+                tonic::Code::NotFound => FailureKind::NotFound,
+                _ => FailureKind::Other,
+            },
+            TalosError::Connection(_) | TalosError::Transport(_) => FailureKind::Unreachable,
+            TalosError::ConfigNotFound(_)
+            | TalosError::ConfigParse(_)
+            | TalosError::ConfigInvalid(_)
+            | TalosError::ContextNotFound(_)
+            | TalosError::NoEndpoints(_) => FailureKind::Config,
+            _ => FailureKind::Other,
+        };
+        Self::new(kind, crate::errors::format_talos_error(error))
     }
 
     pub fn from_kube(error: kube::Error) -> Self {
@@ -93,6 +119,24 @@ impl Failure {
 
     pub fn timeout(what: &str) -> Self {
         Self::new(FailureKind::Timeout, format!("{what} timed out"))
+    }
+}
+
+impl From<kube::Error> for Failure {
+    fn from(error: kube::Error) -> Self {
+        Self::from_kube(error)
+    }
+}
+
+impl From<&TalosError> for Failure {
+    fn from(error: &TalosError) -> Self {
+        Self::from_talos(error)
+    }
+}
+
+impl From<TalosError> for Failure {
+    fn from(error: TalosError) -> Self {
+        Self::from_talos(&error)
     }
 }
 
@@ -183,5 +227,81 @@ mod tests {
             Failure::from_kube(api(404, "\"x\" not found")).message,
             "\"x\" not found"
         );
+    }
+
+    /// A fake API server answering every request with `status` and `body`,
+    /// or, with `None`, with a connection that is cut.
+    fn server(reply: Option<(u16, &'static str)>) -> kube::Client {
+        use kube::client::Body;
+        let service = tower::service_fn(move |_: http::Request<Body>| async move {
+            match reply {
+                Some((status, body)) => Ok(http::Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.as_bytes().to_vec()))
+                    .unwrap()),
+                None => Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "connection reset by peer",
+                )),
+            }
+        });
+        kube::Client::new(service, "default")
+    }
+
+    async fn read(client: kube::Client) -> Failure {
+        let pods = kube::Api::<k8s_openapi::api::core::v1::Pod>::default_namespaced(client);
+        let error = pods.list(&Default::default()).await.unwrap_err();
+        Failure::from(error)
+    }
+
+    fn status_body(code: u16, message: &str) -> &'static str {
+        Box::leak(
+            serde_json::json!({
+                "kind": "Status", "apiVersion": "v1", "status": "Failure",
+                "message": message, "code": code,
+            })
+            .to_string()
+            .into_boxed_str(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_fake_servers_refusals_and_cut_connection_are_classified() {
+        let unauthorized = read(server(Some((401, status_body(401, "Unauthorized"))))).await;
+        assert_eq!(unauthorized.kind, FailureKind::Unauthorized);
+
+        let forbidden = read(server(Some((403, status_body(403, "pods is forbidden"))))).await;
+        assert_eq!(forbidden.kind, FailureKind::Forbidden);
+        assert_eq!(forbidden.message, "pods is forbidden");
+
+        let missing = read(server(Some((404, status_body(404, "not found"))))).await;
+        assert_eq!(missing.kind, FailureKind::NotFound);
+
+        let cut = read(server(None)).await;
+        assert_eq!(cut.kind, FailureKind::Unreachable);
+        assert!(cut.message.contains("connection reset"), "{}", cut.message);
+    }
+
+    #[test]
+    fn talos_grpc_codes_map_to_kinds_never_by_message() {
+        use tonic::Code;
+        for (code, kind) in [
+            (Code::PermissionDenied, FailureKind::Forbidden),
+            (Code::Unauthenticated, FailureKind::Unauthorized),
+            (Code::Unavailable, FailureKind::Unreachable),
+            (Code::DeadlineExceeded, FailureKind::Timeout),
+            (Code::NotFound, FailureKind::NotFound),
+            (Code::Internal, FailureKind::Other),
+        ] {
+            // A message that names another kind must not matter.
+            let error = TalosError::Grpc(tonic::Status::new(code, "something unrelated"));
+            assert_eq!(Failure::from(&error).kind, kind, "{code:?}");
+            assert_eq!(Failure::from(error).kind, kind, "{code:?}");
+        }
+        let misleading = TalosError::Grpc(tonic::Status::new(Code::Internal, "permission denied"));
+        assert_eq!(Failure::from(&misleading).kind, FailureKind::Other);
+        let refused = TalosError::Connection("connection refused".into());
+        assert_eq!(Failure::from(&refused).kind, FailureKind::Unreachable);
     }
 }

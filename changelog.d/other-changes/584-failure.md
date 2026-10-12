@@ -1,0 +1,1 @@
+- **Talos errors:** a Talos gRPC error is worded by its status code, not by searching its message, so a refusal, a timeout or a missing resource keeps its words whatever the node wrote.
