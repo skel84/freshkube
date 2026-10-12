@@ -1,10 +1,19 @@
-//! Read-only delivery joins: a commit to the pods that run it (#158).
+//! The delivery chain, read-only: a commit to the pods that run it (#158),
+//! and the applications derived from it (#521).
 //!
-//! This is a spike. It reads Kargo, Argo CD, Argo Rollouts, Pipelines as
-//! Code and Tekton (with Chains and Conforma results), and pods, and joins
-//! them only on commit SHA and image digest, saying for each link whether it
-//! is confirmed, claimed or unknown. Every cluster call goes through
+//! It reads Kargo, Argo CD, Argo Rollouts, Pipelines as Code and Tekton
+//! (with Chains and Conforma results), and pods, across the workspace's
+//! cluster entries, and joins them only on commit SHA and image digest,
+//! saying for each link whether it is confirmed, claimed or unknown
+//! ([`join`], [`change`], [`changes`]). [`applications`] derives what a
+//! cluster runs from Kargo Projects, Argo CD and the `part-of` label, and
+//! says how far each was read. Every cluster call goes through
 //! [`read::ReadOnlyClient`], which can only GET; nothing here writes.
+//!
+//! The crate uses `freshkube-core` and `talos-rs` and no UI types. Only the
+//! modules a screen reaches are public; example data and parsers that
+//! other crates' tests read are behind the `testing` feature
+//! ([`testing`]).
 
 pub(crate) mod address;
 pub mod applications;
