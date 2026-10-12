@@ -8,6 +8,8 @@
 //! shows.
 mod loader;
 mod visibility;
+mod watch;
 
 pub use loader::Loader;
 pub use visibility::OnShow;
+pub use watch::{Pace, Watch};

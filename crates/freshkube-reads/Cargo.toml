@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "The owners of Freshkube's cluster reads: a Loader keeps one read's answer for one identity and the Tokio work that fills it"
+description = "The owners of Freshkube's cluster reads: a Loader keeps one read's answer for one identity and the Tokio work that fills it, a Watch one stream's"
 
 [lib]
 # This library has no doctests; re-enable them if an example is added.
