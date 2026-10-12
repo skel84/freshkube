@@ -844,8 +844,8 @@ fn a_live_read_follows_each_stages_current_freight() {
     use super::example;
     use crate::resources::{KubeAccess, KubeSource};
     use freshkube_delivery::applications::{ArgoFound, ArgoScope, KargoProjectRead};
-    use freshkube_delivery::testing::parse_stage;
     use freshkube_delivery::source::Source;
+    use freshkube_delivery::testing::parse_stage;
 
     let stage = |name: &str, current: &[&str]| {
         let items: serde_json::Map<String, serde_json::Value> = current
