@@ -4,6 +4,7 @@ use gpui_kit::{AppContext, Entity, TestAppContext};
 use tokio::{runtime::Runtime, sync::oneshot};
 
 use super::Loader;
+use crate::OnShow;
 
 const DEADLINE: Duration = Duration::from_secs(5);
 
@@ -241,5 +242,119 @@ fn a_read_past_its_deadline_fails_in_its_own_words(cx: &mut TestAppContext) {
     screen.read_with(cx, |screen, _| {
         assert!(screen.loader.data().is_none());
         assert_eq!(screen.loader.error(), Some("Loading the number timed out"));
+    });
+}
+
+#[gpui_kit::test]
+fn hiding_drops_the_read_and_keeps_the_data(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let (send, answer) = oneshot::channel();
+    let delivered = Rc::new(Cell::new(0));
+    screen.update(cx, |screen, _| screen.loader.resolve("a", Ok(1)));
+    load(
+        &screen,
+        &runtime,
+        "a",
+        DEADLINE,
+        answer,
+        delivered.clone(),
+        cx,
+    );
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    screen.update(cx, |screen, cx| {
+        assert!(!screen.loader.set_visible(false, policy, cx));
+        assert!(!screen.loader.is_visible());
+    });
+    // Hiding cancelled the job, dropping its work.
+    until(cx, || send.is_closed());
+    assert!(send.send(Ok(2)).is_err());
+    cx.run_until_parked();
+    assert_eq!(delivered.get(), 0);
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.loader.data(), Some(&1), "kept as last known");
+        assert!(!screen.loader.is_loading());
+    });
+    // The read it cut short is read again, however recent the data.
+    screen.update(cx, |screen, cx| {
+        assert!(screen.loader.set_visible(true, policy, cx))
+    });
+}
+
+#[gpui_kit::test]
+fn showing_reads_again_past_the_threshold_and_not_before(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let (send, answer) = oneshot::channel();
+    let delivered = Rc::new(Cell::new(0));
+    load(
+        &screen,
+        &runtime,
+        "a",
+        DEADLINE,
+        answer,
+        delivered.clone(),
+        cx,
+    );
+    send.send(Ok(7)).unwrap();
+    until(cx, || delivered.get() == 1);
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    screen.update(cx, |screen, cx| {
+        screen.loader.set_visible(false, policy, cx)
+    });
+    cx.executor().advance_clock(Duration::from_secs(29));
+    screen.update(cx, |screen, cx| {
+        assert!(!screen.loader.set_visible(true, policy, cx), "not yet");
+        assert!(
+            !screen.loader.set_visible(true, policy, cx),
+            "already shown"
+        );
+        screen.loader.set_visible(false, policy, cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    screen.update(cx, |screen, cx| {
+        assert!(screen.loader.set_visible(true, policy, cx), "30 s old");
+        assert_eq!(screen.loader.data(), Some(&7));
+    });
+
+    // Example data has no age, so it counts as old.
+    screen.update(cx, |screen, cx| {
+        screen.loader.resolve("a", Ok(8));
+        screen.loader.set_visible(false, policy, cx);
+        assert!(screen.loader.set_visible(true, policy, cx));
+    });
+}
+
+#[gpui_kit::test]
+fn never_reads_again_on_showing(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let (_send, answer) = oneshot::channel();
+    let delivered = Rc::new(Cell::new(0));
+    screen.update(cx, |screen, _| screen.loader.resolve("a", Ok(1)));
+    load(
+        &screen,
+        &runtime,
+        "a",
+        DEADLINE,
+        answer,
+        delivered.clone(),
+        cx,
+    );
+    screen.update(cx, |screen, cx| {
+        screen.loader.set_visible(false, OnShow::Never, cx)
+    });
+    cx.executor().advance_clock(Duration::from_secs(3_600));
+    screen.update(cx, |screen, cx| {
+        assert!(!screen.loader.set_visible(true, OnShow::Never, cx));
+        assert_eq!(screen.loader.data(), Some(&1));
+        assert!(!screen.loader.is_loading());
+    });
+}
+
+#[gpui_kit::test]
+fn reset_keeps_whether_it_shows(cx: &mut TestAppContext) {
+    let (_runtime, screen) = mount(cx);
+    screen.update(cx, |screen, cx| {
+        screen.loader.set_visible(false, OnShow::Never, cx);
+        screen.loader.reset();
+        assert!(!screen.loader.is_visible());
     });
 }
