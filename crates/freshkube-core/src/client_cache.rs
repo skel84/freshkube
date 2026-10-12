@@ -86,12 +86,12 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
         self.entries.remove(key);
     }
 
-    pub fn remove_where(&mut self, mut predicate: impl FnMut(&K) -> bool) {
+    pub(crate) fn remove_where(&mut self, mut predicate: impl FnMut(&K) -> bool) {
         self.entries.retain(|key, _| !predicate(key));
     }
 
     #[cfg(test)]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
 }
