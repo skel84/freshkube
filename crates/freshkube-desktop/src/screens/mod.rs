@@ -10,6 +10,7 @@ mod etcd;
 mod lifecycle;
 mod network;
 mod operations;
+mod page;
 mod processes;
 mod security;
 mod storage;
@@ -20,6 +21,7 @@ pub(crate) use etcd::EtcdScreen;
 pub(crate) use lifecycle::LifecycleScreen;
 pub(crate) use network::NetworkScreen;
 pub(crate) use operations::OperationsScreen;
+pub(crate) use page::{PageEvent, PageSource};
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
@@ -180,6 +182,16 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
         cx: &mut Context<Self>,
     );
 
+    /// Everything the shell hands its pages; a screen reads the Talos
+    /// target alone, so by default this is [`set_source`](Self::set_source).
+    fn set_page_source(&mut self, source: PageSource, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_source(source.screen, window, cx);
+    }
+
+    /// The page showed or hid. A hidden page reads nothing: hiding drops
+    /// what it has in flight, and showing reads what it lacks.
+    fn set_visible(&mut self, _visible: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
+
     /// The screen became visible, or its target changed while visible. Load
     /// when there is nothing for the current target yet.
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>);
@@ -213,6 +225,10 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 }
 
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
+type PageSourceFn = Rc<dyn Fn(PageSource, &mut Window, &mut App)>;
+type VisibleFn = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type PageEventFn = Box<dyn Fn(&PageEvent, &mut Window, &mut App)>;
+type SubscribeFn = Rc<dyn Fn(PageEventFn, &mut Window, &mut App) -> Subscription>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
 type StatusFn = Rc<dyn Fn(&mut App) -> Option<freshkube_ui::status::Segment>>;
@@ -220,9 +236,16 @@ type MotionFn = Rc<dyn Fn(&App) -> Option<Entity<freshkube_ui::table::LoadingMot
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the shell uses its page hooks from #579's step 2")
+)]
 pub(crate) struct ScreenHandle {
     view: AnyView,
     set_source: SourceFn,
+    page_source: PageSourceFn,
+    visible: VisibleFn,
+    subscribe: SubscribeFn,
     activate: WindowFn,
     refresh: WindowFn,
     focus: WindowFn,
@@ -240,7 +263,19 @@ impl ScreenHandle {
             entity.clone(),
         );
         let (embedded, status, motion) = (entity.clone(), entity.clone(), entity.clone());
+        let (paged, shown, heard) = (entity.clone(), entity.clone(), entity.clone());
         Self {
+            page_source: Rc::new(move |source, window, cx| {
+                paged.update(cx, |screen, cx| screen.set_page_source(source, window, cx))
+            }),
+            visible: Rc::new(move |visible, window, cx| {
+                shown.update(cx, |screen, cx| screen.set_visible(visible, window, cx))
+            }),
+            subscribe: Rc::new(move |on_event, window, cx| {
+                window.subscribe(&heard, cx, move |_, event: &ScreenEvent, window, cx| {
+                    on_event(&PageEvent::Screen(event.clone()), window, cx)
+                })
+            }),
             motion: Rc::new(move |cx| motion.read(cx).loading_motion(cx)),
             status: Rc::new(move |cx| status.update(cx, |screen, _| screen.status().cloned())),
             embedded: Rc::new(move |value, cx| {
@@ -304,6 +339,33 @@ impl ScreenHandle {
 
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
         (self.focus)(window, cx)
+    }
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the shell uses these from #579's step 2")
+)]
+impl ScreenHandle {
+    /// Hands the page the shell's whole source; it takes what it reads.
+    pub(crate) fn set_page_source(&self, source: PageSource, window: &mut Window, cx: &mut App) {
+        (self.page_source)(source, window, cx)
+    }
+
+    /// Tells the page it showed or hid.
+    pub(crate) fn set_visible(&self, visible: bool, window: &mut Window, cx: &mut App) {
+        (self.visible)(visible, window, cx)
+    }
+
+    /// Hears the page's requests, as [`PageEvent`]s, while the
+    /// subscription is kept.
+    pub(crate) fn subscribe(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        on_event: impl Fn(&PageEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        (self.subscribe)(Box::new(on_event), window, cx)
     }
 }
 
