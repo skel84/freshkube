@@ -959,7 +959,7 @@ fn the_first_read_shows_the_columns_over_loading_rows(cx: &mut TestAppContext) {
         screen.update(cx, |screen, cx| {
             let target = screen.source.as_ref().unwrap().target.clone();
             screen.loader.reset();
-            screen.loader.state.begin(target);
+            screen.loader.begin(target);
             screen.derived = None;
             cx.notify();
         });
