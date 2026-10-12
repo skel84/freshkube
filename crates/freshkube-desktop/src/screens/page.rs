@@ -4,24 +4,35 @@
 //! Today the shell reaches its pages three ways, each with its own events
 //! and its own shape of source (#579). [`PageEvent`] gathers those events
 //! and [`PageSource`] what `push_source` hands them, so a page takes them
-//! through its [`ScreenHandle`](super::ScreenHandle) as the screens do. Until
-//! every page has moved, the shell still reaches each the old way.
+//! through its [`ScreenHandle`] as the screens do. Until every page has
+//! moved, the shell still reaches each the old way.
 #![expect(
     dead_code,
     reason = "the shell reaches its pages through these from #579's step 2"
 )]
 
-use freshkube_core::cluster_source::ClusterSource;
-use gpui_kit::FocusHandle;
+use std::rc::Rc;
 
-use super::{ScreenEvent, ScreenSource};
+use freshkube_core::cluster_source::ClusterSource;
+use freshkube_core::resources::ResourceKind;
+use gpui_kit::{App, FocusHandle, Subscription, Window};
+
+use super::{ScreenEvent, ScreenHandle, ScreenSource};
 use crate::applications::SwitchLink;
-use crate::observability::RevisionLink;
-use crate::resources::{KubeSource, NodePodsEvent, ResourceLink};
+use crate::desktop::dock::DockEvent;
+use crate::monitoring::page::MonitoringEvent;
+use crate::observability::{ObservabilityEvent, RevisionLink};
+use crate::resources::{KubeSource, NodePodsEvent, NotServed, ResourceLink};
+
+/// What hears a page's requests; a page that emits several types hands
+/// each subscription a clone.
+pub(crate) type PageEventFn = Rc<dyn Fn(&PageEvent, &mut Window, &mut App)>;
 
 /// A request a page makes of the shell.
+#[derive(Debug)]
 pub(crate) enum PageEvent {
-    /// A Talos screen's request: a node, a service's logs, a retry.
+    /// A Talos screen's request: a node, a service's logs, a retry. The
+    /// node pane's Pods list hands the keyboard back as its `Back`.
     Screen(ScreenEvent),
     /// Open an object, its owner, a node, or a pod's logs or shell.
     Link(ResourceLink),
@@ -31,11 +42,16 @@ pub(crate) enum PageEvent {
     Switch(SwitchLink),
     /// The node pane's Pods list opens this object in Resources.
     OpenPod(crate::resources::model::ResourceIdentity),
-    /// The node pane's Pods list hands the keyboard back.
-    PodsBack,
     /// The keyboard leaves the dock, for what had it before, if the shell
     /// still draws it, or else the page.
     LeaveDock(Option<FocusHandle>),
+    /// Observability's navigation, object links and breadcrumb.
+    Observability(ObservabilityEvent),
+    /// Monitoring's catalog, history source and breadcrumb.
+    Monitoring(MonitoringEvent),
+    /// The kind Resources shows isn't served, so its group's discovery may
+    /// be out of date.
+    NotServed(ResourceKind),
 }
 
 impl From<ScreenEvent> for PageEvent {
@@ -66,16 +82,34 @@ impl From<NodePodsEvent> for PageEvent {
     fn from(event: NodePodsEvent) -> Self {
         match event {
             NodePodsEvent::Open(identity) => Self::OpenPod(identity),
-            NodePodsEvent::Back => Self::PodsBack,
+            NodePodsEvent::Back => Self::Screen(ScreenEvent::Back),
         }
     }
 }
 
-impl From<crate::desktop::dock::DockEvent> for PageEvent {
-    fn from(event: crate::desktop::dock::DockEvent) -> Self {
+impl From<DockEvent> for PageEvent {
+    fn from(event: DockEvent) -> Self {
         match event {
-            crate::desktop::dock::DockEvent::Leave(focus) => Self::LeaveDock(focus),
+            DockEvent::Leave(focus) => Self::LeaveDock(focus),
         }
+    }
+}
+
+impl From<ObservabilityEvent> for PageEvent {
+    fn from(event: ObservabilityEvent) -> Self {
+        Self::Observability(event)
+    }
+}
+
+impl From<MonitoringEvent> for PageEvent {
+    fn from(event: MonitoringEvent) -> Self {
+        Self::Monitoring(event)
+    }
+}
+
+impl From<NotServed> for PageEvent {
+    fn from(NotServed(kind): NotServed) -> Self {
+        Self::NotServed(kind)
     }
 }
 
@@ -90,6 +124,10 @@ pub(crate) struct PageSource {
     /// The workspace entry the connection is, handed with it, so a read
     /// never names one entry's cluster with another's.
     pub(crate) entry: Option<String>,
+    /// The access the connection belongs to, as the dock keys its tabs. It
+    /// stays set while the source is missing for a while, so it can't be
+    /// derived from [`kube`](Self::kube).
+    pub(crate) kube_identity: Option<String>,
 }
 
 impl PageSource {
@@ -101,6 +139,33 @@ impl PageSource {
     /// The cluster Monitoring reads Prometheus from.
     pub(crate) fn cluster(&self) -> Option<ClusterSource> {
         self.kube.as_ref().map(KubeSource::cluster)
+    }
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the shell uses these from #579's step 2")
+)]
+impl ScreenHandle {
+    /// Hands the page the shell's whole source; it takes what it reads.
+    pub(crate) fn set_page_source(&self, source: PageSource, window: &mut Window, cx: &mut App) {
+        (self.page_source)(source, window, cx)
+    }
+
+    /// Tells the page it showed or hid.
+    pub(crate) fn set_visible(&self, visible: bool, window: &mut Window, cx: &mut App) {
+        (self.visible)(visible, window, cx)
+    }
+
+    /// Hears the page's requests, as [`PageEvent`]s, while the
+    /// subscriptions are kept.
+    pub(crate) fn subscribe(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        on_event: impl Fn(&PageEvent, &mut Window, &mut App) + 'static,
+    ) -> Vec<Subscription> {
+        (self.subscribe)(Rc::new(on_event), window, cx)
     }
 }
 
@@ -184,17 +249,16 @@ mod tests {
             Root::new(fake, window, cx)
         });
         let fake = page.unwrap();
-        let mut subscription = None;
+        let mut subscriptions = Vec::new();
+        let mut handle = None;
         window
             .update(cx, |_, window, cx| {
-                let handle = ScreenHandle::new(fake.clone());
+                let screen = ScreenHandle::new(fake.clone());
                 let heard = heard.clone();
-                subscription = Some(handle.subscribe(window, cx, move |event, _, _| {
-                    if let PageEvent::Screen(ScreenEvent::RetryCluster) = event {
-                        heard.borrow_mut().push("retry");
-                    }
-                }));
-                handle.set_page_source(
+                subscriptions = screen.subscribe(window, cx, move |event, _, _| {
+                    heard.borrow_mut().push(format!("{event:?}"));
+                });
+                screen.set_page_source(
                     PageSource {
                         screen: Some(source("cp-1")),
                         ..PageSource::default()
@@ -202,10 +266,11 @@ mod tests {
                     window,
                     cx,
                 );
-                handle.set_visible(true, window, cx);
-                handle.refresh(window, cx);
-                handle.set_visible(false, window, cx);
-                handle.set_page_source(PageSource::default(), window, cx);
+                screen.set_visible(true, window, cx);
+                screen.refresh(window, cx);
+                screen.set_visible(false, window, cx);
+                screen.set_page_source(PageSource::default(), window, cx);
+                handle = Some(screen);
             })
             .unwrap();
         cx.run_until_parked();
@@ -220,7 +285,22 @@ mod tests {
                 "source none"
             ]
         );
-        assert_eq!(*heard.borrow(), ["retry"]);
-        drop(subscription);
+        assert_eq!(*heard.borrow(), ["Screen(RetryCluster)"]);
+
+        // Dropped, the subscriptions hear nothing more.
+        drop(subscriptions);
+        let handle = handle.unwrap();
+        window
+            .update(cx, |_, window, cx| handle.refresh(window, cx))
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| fake.read(cx).0.len()), 6);
+        assert_eq!(*heard.borrow(), ["Screen(RetryCluster)"]);
+    }
+
+    #[test]
+    fn the_node_pods_lists_back_is_a_screens_back() {
+        let event = PageEvent::from(NodePodsEvent::Back);
+        assert_eq!(format!("{event:?}"), "Screen(Back)");
     }
 }

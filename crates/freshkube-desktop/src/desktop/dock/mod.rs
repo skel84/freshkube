@@ -71,6 +71,7 @@ actions!(
     ]
 );
 
+#[derive(Clone, Debug)]
 pub(crate) enum DockEvent {
     /// The keyboard leaves the dock, for what had it before, if the shell
     /// still draws it, or else the page.

@@ -21,7 +21,7 @@ pub(crate) use etcd::EtcdScreen;
 pub(crate) use lifecycle::LifecycleScreen;
 pub(crate) use network::NetworkScreen;
 pub(crate) use operations::OperationsScreen;
-pub(crate) use page::{PageEvent, PageSource};
+pub(crate) use page::{PageEventFn, PageSource};
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
@@ -188,9 +188,28 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
         self.set_source(source.screen, window, cx);
     }
 
-    /// The page showed or hid. A hidden page reads nothing: hiding drops
-    /// what it has in flight, and showing reads what it lacks.
+    /// The page showed or hid. Pages that own reads drop them on hide; the
+    /// screens' [`Loader`] gets its hook in #582 (#578's step 4), and until
+    /// then a screen does nothing here. The shell calls it before
+    /// [`activate`](Self::activate), which a shown screen still gets: it
+    /// doesn't replace it.
     fn set_visible(&mut self, _visible: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+    /// Hears the page's requests as [`PageEvent`](page::PageEvent)s. A screen emits
+    /// [`ScreenEvent`] alone; a page that emits other types subscribes each
+    /// here and converts it.
+    fn subscribe_page(
+        this: &Entity<Self>,
+        on_event: PageEventFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<Subscription> {
+        vec![
+            window.subscribe(this, cx, move |_, event: &ScreenEvent, window, cx| {
+                on_event(&event.clone().into(), window, cx)
+            }),
+        ]
+    }
 
     /// The screen became visible, or its target changed while visible. Load
     /// when there is nothing for the current target yet.
@@ -227,8 +246,7 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type PageSourceFn = Rc<dyn Fn(PageSource, &mut Window, &mut App)>;
 type VisibleFn = Rc<dyn Fn(bool, &mut Window, &mut App)>;
-type PageEventFn = Box<dyn Fn(&PageEvent, &mut Window, &mut App)>;
-type SubscribeFn = Rc<dyn Fn(PageEventFn, &mut Window, &mut App) -> Subscription>;
+type SubscribeFn = Rc<dyn Fn(PageEventFn, &mut Window, &mut App) -> Vec<Subscription>>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
 type StatusFn = Rc<dyn Fn(&mut App) -> Option<freshkube_ui::status::Segment>>;
@@ -272,9 +290,7 @@ impl ScreenHandle {
                 shown.update(cx, |screen, cx| screen.set_visible(visible, window, cx))
             }),
             subscribe: Rc::new(move |on_event, window, cx| {
-                window.subscribe(&heard, cx, move |_, event: &ScreenEvent, window, cx| {
-                    on_event(&PageEvent::Screen(event.clone()), window, cx)
-                })
+                T::subscribe_page(&heard, on_event, window, cx)
             }),
             motion: Rc::new(move |cx| motion.read(cx).loading_motion(cx)),
             status: Rc::new(move |cx| status.update(cx, |screen, _| screen.status().cloned())),
@@ -339,33 +355,6 @@ impl ScreenHandle {
 
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
         (self.focus)(window, cx)
-    }
-}
-
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the shell uses these from #579's step 2")
-)]
-impl ScreenHandle {
-    /// Hands the page the shell's whole source; it takes what it reads.
-    pub(crate) fn set_page_source(&self, source: PageSource, window: &mut Window, cx: &mut App) {
-        (self.page_source)(source, window, cx)
-    }
-
-    /// Tells the page it showed or hid.
-    pub(crate) fn set_visible(&self, visible: bool, window: &mut Window, cx: &mut App) {
-        (self.visible)(visible, window, cx)
-    }
-
-    /// Hears the page's requests, as [`PageEvent`]s, while the
-    /// subscription is kept.
-    pub(crate) fn subscribe(
-        &self,
-        window: &mut Window,
-        cx: &mut App,
-        on_event: impl Fn(&PageEvent, &mut Window, &mut App) + 'static,
-    ) -> Subscription {
-        (self.subscribe)(Box::new(on_event), window, cx)
     }
 }
 
