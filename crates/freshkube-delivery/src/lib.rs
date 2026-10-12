@@ -6,25 +6,25 @@
 //! is confirmed, claimed or unknown. Every cluster call goes through
 //! [`read::ReadOnlyClient`], which can only GET; nothing here writes.
 
-pub mod address;
+pub(crate) mod address;
 pub mod applications;
 pub mod argocd;
 pub mod change;
 pub mod changes;
-pub mod collect;
-pub mod deployments;
-pub mod digest;
+pub(crate) mod collect;
+pub(crate) mod deployments;
+pub(crate) mod digest;
 pub mod entry;
-pub mod github;
+pub(crate) mod github;
 pub mod join;
 pub mod kargo;
-pub mod observation;
-pub mod pods;
+pub(crate) mod observation;
+pub(crate) mod pods;
 pub mod read;
-pub mod rollouts;
-pub mod shared;
+pub(crate) mod rollouts;
+pub(crate) mod shared;
 pub mod source;
-pub mod tekton;
+pub(crate) mod tekton;
 pub(crate) mod versions;
 
 #[cfg(test)]
@@ -40,7 +40,7 @@ mod warehouse_tests;
 
 pub use argocd::StageNaming;
 pub use collect::{Clusters, Plan, collect, commit_of_pull_request};
-pub use digest::Digest;
+pub use digest::{Digest, is_full_sha};
 pub use github::{GhCli, GitHub, PullRequest};
 pub use join::{Confidence, Evidence, Hop, Key, Link, Trail, join, render};
 pub use observation::{Fact, Meta, ObjectRef, Observation};

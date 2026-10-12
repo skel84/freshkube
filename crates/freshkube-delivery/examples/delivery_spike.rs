@@ -44,7 +44,7 @@
 use std::collections::BTreeMap;
 
 use freshkube_core::resources::{connect, kubeconfig_sources};
-use freshkube_delivery::digest::is_full_sha;
+use freshkube_delivery::is_full_sha;
 use freshkube_delivery::{
     Clusters, CommitNames, EvidenceResult, GhCli, Plan, ReadOnlyClient, Reader, Scope, StageNaming,
     collect, commit_of_pull_request, join, render,
