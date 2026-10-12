@@ -6,6 +6,10 @@ license.workspace = true
 publish = false
 description = "The owners of Freshkube's cluster reads: a Loader keeps one read's answer for one identity and the Tokio work that fills it"
 
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
 # Builds on core's Snapshot and spawn_job and takes a Tokio Handle, so it
 # can't live in freshkube-ui, which depends on no core.
 [dependencies]
