@@ -9,7 +9,7 @@ crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
-├── freshkube-reads/     the owners of cluster reads: Loader<T, I>, one read's answer for one identity and its Tokio work
+├── freshkube-reads/     the owners of cluster reads: Loader<T, I>, one read's answer for one identity and its Tokio work; Watch<T, I>, one stream's
 ├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
 ├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
@@ -21,7 +21,7 @@ crates/
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
 
-Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary. Shared components live in `freshkube-ui`, which depends on neither; desktop reaches its modules by their old paths (`crate::ui`, `crate::palette`, `crate::theme`, `crate::text_size`, `crate::meters`). Monitoring is `freshkube-monitoring`, which desktop reaches as `crate::monitoring`; it sits under desktop and uses only core, `talos-rs`, `freshkube-ui` and `freshkube-probe`, so Resources and Observability depend on it, never the other way. Observability is `freshkube-observability`, which desktop reaches as `crate::observability`; it uses core, `freshkube-ui`, `freshkube-logs`, `freshkube-graph` and `freshkube-monitoring`, and names nothing of desktop: the shell turns its `ObservabilityEvent`s into navigation, and desktop's tests reach its fixture links through its `testing` feature. Reads are `freshkube-reads`, whose `Loader` the screens own; it uses only core, GPUI Kit and Tokio, and names nothing of `freshkube-ui` or desktop. A new page draws with `freshkube_ui::page` and `freshkube_ui::table` ([DESIGN.md](docs/DESIGN.md#in-code)).
+Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary. Shared components live in `freshkube-ui`, which depends on neither; desktop reaches its modules by their old paths (`crate::ui`, `crate::palette`, `crate::theme`, `crate::text_size`, `crate::meters`). Monitoring is `freshkube-monitoring`, which desktop reaches as `crate::monitoring`; it sits under desktop and uses only core, `talos-rs`, `freshkube-ui` and `freshkube-probe`, so Resources and Observability depend on it, never the other way. Observability is `freshkube-observability`, which desktop reaches as `crate::observability`; it uses core, `freshkube-ui`, `freshkube-logs`, `freshkube-graph` and `freshkube-monitoring`, and names nothing of desktop: the shell turns its `ObservabilityEvent`s into navigation, and desktop's tests reach its fixture links through its `testing` feature. Reads are `freshkube-reads`, whose `Loader` the screens own, with `Watch` for a stream and `OnShow` for what showing a hidden page does; it uses only core, GPUI Kit and Tokio, and names nothing of `freshkube-ui` or desktop. A new page draws with `freshkube_ui::page` and `freshkube_ui::table` ([DESIGN.md](docs/DESIGN.md#in-code)).
 
 ### Module layout
 
