@@ -13,5 +13,10 @@ gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 tokio.workspace = true
 
+[features]
+# Test hooks for crates whose screens own a loader (`begin`, `apply`,
+# `is_stale`); turned on from dev-dependencies.
+testing = []
+
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }

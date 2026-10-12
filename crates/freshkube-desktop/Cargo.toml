@@ -78,6 +78,9 @@ freshkube-monitoring = { workspace = true, features = ["testing"] }
 freshkube-observability = { workspace = true, features = ["testing"] }
 # The status bar tests read which line a segment drew (`status::shown`).
 freshkube-ui = { workspace = true, features = ["testing"] }
+# Lifecycle's and Health's tests hold a loader on a request and answer it
+# late (`begin`, `apply`).
+freshkube-reads = { workspace = true, features = ["testing"] }
 # Operations' tests run the example on a paused Tokio clock (`start_paused`).
 tokio = { workspace = true, features = ["test-util"] }
 # The map's tests measure its boxes in the graph's units (`observability/map.rs`).

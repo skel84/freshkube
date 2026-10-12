@@ -58,7 +58,7 @@ self.loader.load(
 cx.notify();
 ```
 
-That screen owns `Loader<EtcdHealthSnapshot>`, compares old/new `source.target` in `set_source`, and calls `reset()` on a change. `activate` loads only with no data and no request in flight; `refresh` guards duplicate work. Fixtures use `resolve(source.target.clone(), example(&source))`. Read `data()`, `error()`, `is_loading()` and timestamps during rendering. `is_stale()` says the data is kept from an earlier answer after a failed refresh; the shared header/failure banner present refresh state. Do not invent a loader method or put cluster I/O on the UI thread.
+That screen owns `Loader<EtcdHealthSnapshot>`, compares old/new `source.target` in `set_source`, and calls `reset()` on a change. `activate` loads only with no data and no request in flight; `refresh` guards duplicate work. Fixtures use `resolve(source.target.clone(), example(&source))`. Read `data()`, `error()`, `is_loading()` and timestamps during rendering. `Loader` exposes `is_stale()` only to tests, behind `freshkube-reads`'s `testing` feature; its underlying snapshot tracks staleness and the shared header/failure banner present refresh state. Do not invent a loader method or put cluster I/O on the UI thread.
 
 ## Read-job and delivery ownership
 

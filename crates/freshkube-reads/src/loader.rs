@@ -69,7 +69,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = receiver.await.unwrap_or_else(|_| Err(stopped));
             _ = this.update(cx, |view, cx| {
-                slot(view).apply(&request, result);
+                slot(view).deliver(&request, result);
                 cx.notify();
             });
         }));
@@ -97,13 +97,20 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     /// Starts waiting for an answer for `identity` without asking for one,
     /// for tests that hold a screen on its loading rows or answer it late
     /// through [`apply`](Self::apply).
+    #[cfg(any(test, feature = "testing"))]
     pub fn begin(&mut self, identity: I) -> Request<I> {
         self.state.begin(identity)
     }
 
-    /// Lands `result` if `request` is still the latest for its identity, as
-    /// an answer from [`load`](Self::load) does.
+    /// Lands `result` as an answer from [`load`](Self::load) does, for tests
+    /// that answer a request late.
+    #[cfg(any(test, feature = "testing"))]
     pub fn apply(&mut self, request: &Request<I>, result: Result<T, String>) -> bool {
+        self.deliver(request, result)
+    }
+
+    /// Lands `result` if `request` is still the latest for its identity.
+    fn deliver(&mut self, request: &Request<I>, result: Result<T, String>) -> bool {
         let applied = self.state.apply(request, result);
         if applied {
             self.job = None;
@@ -121,7 +128,8 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     }
 
     /// Whether the data is kept from an earlier answer after a later read
-    /// for the same identity failed.
+    /// for the same identity failed, for tests.
+    #[cfg(any(test, feature = "testing"))]
     pub fn is_stale(&self) -> bool {
         self.state.is_stale()
     }
