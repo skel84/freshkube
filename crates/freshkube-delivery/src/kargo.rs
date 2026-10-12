@@ -296,7 +296,7 @@ pub fn parse_freight(value: &Value) -> Option<Freight> {
     })
 }
 
-pub fn parse_stage(value: &Value) -> Option<Stage> {
+pub(crate) fn parse_stage(value: &Value) -> Option<Stage> {
     let mut current: Vec<String> = Vec::new();
     let mut current_at: Vec<&'static str> = Vec::new();
     let mut digests: Vec<(Digest, &'static str)> = Vec::new();

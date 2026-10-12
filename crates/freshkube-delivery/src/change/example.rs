@@ -174,7 +174,7 @@ fn argocd_page(app: &str) -> Action {
 }
 
 /// The Freight's page in Kargo.
-pub fn kargo_page() -> Address {
+pub(crate) fn kargo_page() -> Address {
     Address::parse(KARGO_PAGE)
         .expect("an address")
         .join(["project", PROJECT, "freight", FREIGHT])
@@ -182,9 +182,9 @@ pub fn kargo_page() -> Address {
 
 /// Where the release pipeline checks policy: on Kargo's cluster, the one
 /// the example opens, so its logs open there.
-pub const RELEASE_NAMESPACE: &str = "checkout-release";
+pub(crate) const RELEASE_NAMESPACE: &str = "checkout-release";
 /// The release run's policy TaskRun.
-pub const VERIFY_TASK: &str = "checkout-release-wonky-otter-verify";
+pub(crate) const VERIFY_TASK: &str = "checkout-release-wonky-otter-verify";
 
 /// The pod a TaskRun of the CI cluster ran its steps in.
 fn step_logs(task: &str, run: &str) -> Action {
@@ -875,7 +875,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
 }
 
 /// The whole invented change, its times counted back from `now`.
-pub fn change(now: DateTime<Utc>) -> Change {
+pub(crate) fn change(now: DateTime<Utc>) -> Change {
     let stages = stages(now);
     let mut groups = vec![
         Group {

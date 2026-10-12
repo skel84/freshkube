@@ -40,7 +40,7 @@ const ENVIRONMENTS: [(&str, &str); 4] = [
     ("prod-lon", "prod-lon"),
 ];
 /// Argo CD's own Deployments in `core-fra`, labelled `part-of=argocd`.
-pub const ARGOCD_WORKLOADS: [&str; 2] = ["argocd-server", "argocd-repo-server"];
+pub(crate) const ARGOCD_WORKLOADS: [&str; 2] = ["argocd-server", "argocd-repo-server"];
 const AUTHORIZED_STAGE: &str = "kargo.akuity.io/authorized-stage";
 
 fn server(cluster: &str) -> String {

@@ -778,7 +778,7 @@ fn a_tools_page_opens_in_the_browser_only_with_an_address(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn the_header_opens_and_copies_the_freights_kargo_page(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = open(cx, 1280., 880.);
-    let page = freshkube_delivery::change::example::kargo_page().to_string();
+    let page = freshkube_delivery::testing::kargo_page().to_string();
     assert_eq!(
         page,
         "https://kargo.example.test/project/checkout/freight/wonky-otter"
@@ -845,7 +845,7 @@ fn dock_tabs(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
 fn a_steps_logs_open_in_the_dock_on_the_open_cluster(cx: &mut TestAppContext) {
     use super::ChangeEvent;
     use crate::resources::{LogsAt, ResourceLink};
-    use freshkube_delivery::change::example::{RELEASE_NAMESPACE, VERIFY_TASK};
+    use freshkube_delivery::testing::{RELEASE_NAMESPACE, VERIFY_TASK};
     use std::{cell::RefCell, rc::Rc};
 
     let (_runtime, handle, view) = open_on(cx, 1280., 880., "cicd-fra");
@@ -1664,7 +1664,7 @@ fn dev_with(
     reach: freshkube_delivery::change::Reach,
     cluster: freshkube_delivery::change::Destination,
 ) -> freshkube_delivery::change::Stage {
-    let change = freshkube_delivery::change::example::change(chrono::Utc::now());
+    let change = freshkube_delivery::testing::change(chrono::Utc::now());
     let mut dev = change
         .stages
         .into_iter()

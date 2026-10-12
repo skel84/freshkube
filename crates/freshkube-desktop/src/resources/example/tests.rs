@@ -1,6 +1,6 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
-use freshkube_delivery::applications::example::ARGOCD_WORKLOADS;
+use freshkube_delivery::testing::ARGOCD_WORKLOADS;
 use std::collections::HashSet;
 
 #[test]

@@ -169,6 +169,7 @@ fn stages(project: &str) -> Vec<Value> {
 }
 
 /// What the list reads in example mode.
+#[cfg(any(test, feature = "testing"))]
 pub fn read(now: DateTime<Utc>) -> Read {
     read_shaped(now, Shape::Whole)
 }

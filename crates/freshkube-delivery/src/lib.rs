@@ -49,3 +49,37 @@ pub use source::{
     Source, printable, redact_body, redact_identity, redact_location, redact_message, shown,
 };
 pub use tekton::{CommitNames, EvidenceResult};
+
+/// The example data and parsers that other crates' tests read. Compiled
+/// only for this crate's tests and for dependents' dev-dependencies
+/// (`features = ["testing"]`); nothing shipped names them.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use crate::address::Address;
+    use crate::change::Change;
+    use crate::kargo::Stage;
+    use chrono::{DateTime, Utc};
+    use serde_json::Value;
+
+    /// Argo CD's own Deployments in the example's `core-fra`.
+    pub const ARGOCD_WORKLOADS: [&str; 2] = crate::applications::example::ARGOCD_WORKLOADS;
+    /// Where the example release pipeline checks policy.
+    pub const RELEASE_NAMESPACE: &str = crate::change::example::RELEASE_NAMESPACE;
+    /// The example release run's policy TaskRun.
+    pub const VERIFY_TASK: &str = crate::change::example::VERIFY_TASK;
+
+    /// The example Freight's page in Kargo.
+    pub fn kargo_page() -> Address {
+        crate::change::example::kargo_page()
+    }
+
+    /// The example change as the change page shows it.
+    pub fn change(now: DateTime<Utc>) -> Change {
+        crate::change::example::change(now)
+    }
+
+    /// A Kargo Stage as the reads parse it.
+    pub fn parse_stage(value: &Value) -> Option<Stage> {
+        crate::kargo::parse_stage(value)
+    }
+}
