@@ -32,6 +32,8 @@ mod switch_tests;
 mod system_services;
 mod target;
 #[cfg(test)]
+mod testing;
+#[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]
 mod use_kubernetes_tests;

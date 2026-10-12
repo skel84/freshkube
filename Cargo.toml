@@ -81,6 +81,7 @@ freshkube-logs = { path = "crates/freshkube-logs" }
 freshkube-monitoring = { path = "crates/freshkube-monitoring" }
 freshkube-observability = { path = "crates/freshkube-observability" }
 freshkube-probe = { path = "crates/freshkube-probe" }
+freshkube-reads = { path = "crates/freshkube-reads" }
 freshkube-terminal = { path = "crates/freshkube-terminal" }
 freshkube-desktop = { path = "crates/freshkube-desktop" }
 freshkube-ui = { path = "crates/freshkube-ui" }

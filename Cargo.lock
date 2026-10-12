@@ -2496,6 +2496,7 @@ dependencies = [
  "freshkube-monitoring",
  "freshkube-observability",
  "freshkube-probe",
+ "freshkube-reads",
  "freshkube-terminal",
  "freshkube-ui",
  "futures",
@@ -2574,6 +2575,15 @@ name = "freshkube-probe"
 version = "0.14.0"
 dependencies = [
  "chrono",
+]
+
+[[package]]
+name = "freshkube-reads"
+version = "0.14.0"
+dependencies = [
+ "freshkube-core",
+ "gpui-kit",
+ "tokio",
 ]
 
 [[package]]

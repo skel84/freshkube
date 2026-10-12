@@ -8,6 +8,7 @@
 mod diagnostics;
 mod etcd;
 mod lifecycle;
+mod loader;
 mod network;
 mod operations;
 mod processes;
@@ -18,6 +19,7 @@ mod workloads;
 pub(crate) use diagnostics::DiagnosticsScreen;
 pub(crate) use etcd::EtcdScreen;
 pub(crate) use lifecycle::LifecycleScreen;
+pub(crate) use loader::Loader;
 pub(crate) use network::NetworkScreen;
 pub(crate) use operations::OperationsScreen;
 pub(crate) use processes::ProcessesScreen;
@@ -25,7 +27,7 @@ pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
 pub(crate) use workloads::{Summary as HealthSummary, WorkloadData, WorkloadsScreen};
 
-use std::{future::Future, path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use std::{path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 
 use freshkube_core::{
     cluster_overview::{ClusterOverview, ClusterOverviewCollector},
@@ -42,10 +44,9 @@ use gpui_kit::*;
 use talos_rs::TalosClient;
 use tokio::runtime::Handle;
 
-use crate::backend::{self, OwnedJob, Target};
+use crate::backend::Target;
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
-use crate::state::Snapshot;
 use crate::ui::{self, MONO_FONT, clock, dp};
 // The page widths live in `freshkube_ui::page`; screens reach them here.
 pub(crate) use freshkube_ui::page::{content_width, inset_width, page_width, set_chrome_width};
@@ -304,107 +305,6 @@ impl ScreenHandle {
 
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
         (self.focus)(window, cx)
-    }
-}
-
-/// One screen's data for one target: a [`Snapshot`] plus the work that fills it.
-pub(crate) struct Loader<T> {
-    state: Snapshot<T, Target>,
-    job: Option<OwnedJob>,
-    task: Option<Task<()>>,
-    /// Rises whenever what [`data`](Self::data) or [`error`](Self::error)
-    /// return may have changed, so a screen derives its display data again
-    /// only then.
-    revision: u64,
-}
-
-impl<T> Default for Loader<T> {
-    fn default() -> Self {
-        Self {
-            state: Snapshot::default(),
-            job: None,
-            task: None,
-            revision: 0,
-        }
-    }
-}
-
-impl<T: Send + 'static> Loader<T> {
-    /// Forgets data and cancels in-flight work, e.g. when the target changes.
-    pub(crate) fn reset(&mut self) {
-        let revision = self.revision + 1;
-        *self = Self::default();
-        self.revision = revision;
-    }
-
-    pub(crate) fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    /// Runs `work` on Tokio for `identity`. The result lands only if this is
-    /// still the latest request for that identity; `slot` finds the loader
-    /// again inside the screen when it does. `what` names the data in
-    /// lowercase with its article, e.g. "the process list".
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn load<V: 'static>(
-        &mut self,
-        identity: Target,
-        runtime: &Handle,
-        what: &str,
-        work: impl Future<Output = Result<T, String>> + Send + 'static,
-        slot: fn(&mut V) -> &mut Loader<T>,
-        cx: &mut Context<V>,
-    ) {
-        let request = self.state.begin(identity);
-        self.revision += 1;
-        let (job, receiver) = backend::spawn_job(
-            runtime,
-            SCREEN_DEADLINE,
-            format!("Loading {what} timed out"),
-            work,
-        );
-        self.job = Some(job);
-        let stopped = format!("Loading {what} stopped unexpectedly");
-        self.task = Some(cx.spawn(async move |this, cx| {
-            let result = receiver.await.unwrap_or_else(|_| Err(stopped));
-            _ = this.update(cx, |view, cx| {
-                let loader = slot(view);
-                if loader.state.apply(&request, result) {
-                    loader.job = None;
-                    loader.revision += 1;
-                }
-                cx.notify();
-            });
-        }));
-    }
-
-    /// Applies a result at once; used for example data.
-    pub(crate) fn resolve(&mut self, identity: Target, result: Result<T, String>) {
-        self.job = None;
-        self.task = None;
-        let request = self.state.begin(identity);
-        self.state.apply(&request, result);
-        self.revision += 1;
-    }
-
-    pub(crate) fn data(&self) -> Option<&T> {
-        self.state.data()
-    }
-
-    pub(crate) fn error(&self) -> Option<&str> {
-        self.state.error()
-    }
-
-    pub(crate) fn is_loading(&self) -> bool {
-        self.state.is_loading()
-    }
-
-    pub(crate) fn last_successful(&self) -> Option<std::time::SystemTime> {
-        self.state.last_successful()
-    }
-
-    pub(crate) fn last_failure(&self) -> Option<std::time::SystemTime> {
-        self.state.last_failure()
     }
 }
 

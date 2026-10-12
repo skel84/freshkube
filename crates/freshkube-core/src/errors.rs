@@ -55,23 +55,22 @@ fn format_connection_error(msg: &str) -> String {
     }
 }
 
-/// Format a gRPC status error
+/// Format a gRPC status error, by its code and never its message. A known
+/// code's words come first, followed by the server's own message when it
+/// sent one.
 fn format_grpc_error(status: &tonic::Status) -> String {
-    let msg = status.message().to_lowercase();
-    if msg.contains("unavailable") {
-        "Service unavailable - node may be down".to_string()
-    } else if msg.contains("permission denied") {
-        "Permission denied - check RBAC/credentials".to_string()
-    } else if msg.contains("unauthenticated") {
-        "Authentication failed - check talosconfig".to_string()
-    } else if msg.contains("deadline exceeded") || msg.contains("timeout") {
-        "Request timed out".to_string()
-    } else if msg.contains("not found") {
-        "Resource not found".to_string()
-    } else if msg.contains("already exists") {
-        "Resource already exists".to_string()
-    } else {
-        format!("gRPC error: {}", status.message())
+    let words = match status.code() {
+        tonic::Code::Unavailable => "Service unavailable - node may be down",
+        tonic::Code::PermissionDenied => "Permission denied - check RBAC/credentials",
+        tonic::Code::Unauthenticated => "Authentication failed - check talosconfig",
+        tonic::Code::DeadlineExceeded => "Request timed out",
+        tonic::Code::NotFound => "Resource not found",
+        tonic::Code::AlreadyExists => "Resource already exists",
+        _ => return format!("gRPC error: {}", status.message()),
+    };
+    match status.message() {
+        "" => words.to_string(),
+        detail => format!("{words}: {detail}"),
     }
 }
 
@@ -110,5 +109,42 @@ mod tests {
     #[test]
     fn test_format_timeout_error() {
         assert_eq!(format_timeout_error(10), "Request timed out after 10s");
+    }
+
+    #[test]
+    fn test_format_grpc_error_by_code() {
+        use tonic::{Code, Status};
+        for (code, words) in [
+            (Code::Unavailable, "Service unavailable - node may be down"),
+            (
+                Code::PermissionDenied,
+                "Permission denied - check RBAC/credentials",
+            ),
+            (
+                Code::Unauthenticated,
+                "Authentication failed - check talosconfig",
+            ),
+            (Code::DeadlineExceeded, "Request timed out"),
+            (Code::NotFound, "Resource not found"),
+            (Code::AlreadyExists, "Resource already exists"),
+        ] {
+            // The message says something else: the code decides, and the
+            // server's message follows the words.
+            assert_eq!(
+                format_grpc_error(&Status::new(code, "boom")),
+                format!("{words}: boom")
+            );
+            assert_eq!(format_grpc_error(&Status::new(code, "")), words);
+        }
+        assert_eq!(
+            format_grpc_error(&Status::new(Code::Internal, "permission denied")),
+            "gRPC error: permission denied"
+        );
+        assert_eq!(
+            format_grpc_error(&Status::permission_denied(
+                "validate configuration on cp-1: proxy denied"
+            )),
+            "Permission denied - check RBAC/credentials: validate configuration on cp-1: proxy denied"
+        );
     }
 }
