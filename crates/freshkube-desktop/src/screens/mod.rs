@@ -45,7 +45,7 @@ use tokio::runtime::Handle;
 use crate::backend::{self, OwnedJob, Target};
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
-use crate::state::Snapshot;
+use crate::state::{Request, Snapshot};
 use crate::ui::{self, MONO_FONT, clock, dp};
 // The page widths live in `freshkube_ui::page`; screens reach them here.
 pub(crate) use freshkube_ui::page::{content_width, inset_width, page_width, set_chrome_width};
@@ -368,11 +368,7 @@ impl<T: Send + 'static> Loader<T> {
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = receiver.await.unwrap_or_else(|_| Err(stopped));
             _ = this.update(cx, |view, cx| {
-                let loader = slot(view);
-                if loader.state.apply(&request, result) {
-                    loader.job = None;
-                    loader.revision += 1;
-                }
+                slot(view).apply(&request, result);
                 cx.notify();
             });
         }));
@@ -389,6 +385,30 @@ impl<T: Send + 'static> Loader<T> {
 
     pub(crate) fn data(&self) -> Option<&T> {
         self.state.data()
+    }
+
+    /// The data to change in place, as a newer observation arrives, without
+    /// a request; the revision stays.
+    pub(crate) fn data_mut(&mut self) -> Option<&mut T> {
+        self.state.data_mut()
+    }
+
+    /// Starts waiting for an answer for `identity` without asking for one,
+    /// for tests that hold a screen on its loading rows or answer it late
+    /// through [`apply`](Self::apply).
+    pub(crate) fn begin(&mut self, identity: Target) -> Request<Target> {
+        self.state.begin(identity)
+    }
+
+    /// Lands `result` if `request` is still the latest for its identity, as
+    /// an answer from [`load`](Self::load) does.
+    pub(crate) fn apply(&mut self, request: &Request<Target>, result: Result<T, String>) -> bool {
+        let applied = self.state.apply(request, result);
+        if applied {
+            self.job = None;
+            self.revision += 1;
+        }
+        applied
     }
 
     pub(crate) fn error(&self) -> Option<&str> {
