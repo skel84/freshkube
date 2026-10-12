@@ -1,0 +1,372 @@
+use super::*;
+
+#[gpui_kit::test]
+fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("services"), None);
+    wait_until(cx, handle, "the kubeconfig to load", |_, cx| {
+        !view.read(cx).contexts.is_empty()
+    });
+    cx.update(|cx| {
+        let reading = view.read(cx).system_services.read(cx).reading().clone();
+        assert_eq!(reading, super::super::system_services::Reading::Answered);
+    });
+}
+
+fn kubeconfig_file(name: &str) -> std::path::PathBuf {
+    let path = scratch(name);
+    std::fs::write(&path, KUBECONFIG).unwrap();
+    path
+}
+
+/// Renders until `ready` holds, letting Tokio work land between frames.
+fn wait_until(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    what: &str,
+    ready: impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) -> bool,
+) {
+    for _ in 0..1000 {
+        cx.run_until_parked();
+        let done = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                ready(window, cx)
+            })
+            .unwrap();
+        if done {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("timed out waiting for {what}");
+}
+
+fn kubernetes_status(window: &gpui_kit::Window) -> String {
+    window
+        .find("kubernetes-status")
+        .label()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("ctrl-tab"), None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Overview);
+        for (page, kind) in [
+            (Page::Nodes, None),
+            (Page::Resources, Some("namespaces")),
+            (Page::Resources, Some("events")),
+            (Page::Health, None),
+            (Page::Resources, Some("pods")),
+            (Page::Overview, None),
+        ] {
+            window.press("ctrl-tab", cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).page, page);
+            if let Some(kind) = kind {
+                assert_eq!(view.read(cx).resource_kind.key(), kind);
+            }
+        }
+        for key in ["secondary-6", "secondary-7", "secondary-8", "secondary-9"] {
+            window.press(key, cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).page, Page::Overview);
+        }
+        window.press("ctrl-shift-tab", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(window.find("resource-body").focused(), Some(true));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("contexts"), None);
+    wait_until(cx, handle, "lab to refuse", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to lab: ")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(view.read(cx).page, Page::Overview);
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+    })
+    .unwrap();
+    // The page read through that same connection, and failed with it.
+    wait_until(cx, handle, "the page to fail", |window, _| {
+        window.try_find("resource-failed").is_some()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let pilot = view.read(cx);
+        assert_eq!(pilot.contexts, ["lab", "staging"]);
+        assert_eq!(pilot.applied.context.as_deref(), Some("lab"));
+        assert_eq!(pilot.page, Page::Resources);
+        assert_eq!(pilot.context_display.detail.as_ref(), "Couldn't connect");
+        contexts(window, cx);
+        assert_eq!(window.find(("context", 0usize)).selected(), Some(true));
+        assert_eq!(window.find("page-title").label(), Some("Pods"));
+        assert!(
+            window
+                .find("applied-config")
+                .label()
+                .unwrap()
+                .starts_with("Kubeconfig: ")
+        );
+        // No nodes to target without Talos.
+        assert!(window.try_find("target-node").is_none());
+
+        // Choosing the failed context again retries it.
+        contexts(window, cx);
+        window.click(("context", 0usize), cx);
+        window.render_frame(cx);
+        assert_eq!(kubernetes_status(window), "Connecting to lab…");
+    })
+    .unwrap();
+    wait_until(cx, handle, "lab to refuse again", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to lab: ")
+    });
+
+    cx.update_window(handle, |_, window, cx| {
+        contexts(window, cx);
+        window.click(("context", 1usize), cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging"));
+        contexts(window, cx);
+        assert_eq!(window.find(("context", 1usize)).selected(), Some(true));
+        contexts(window, cx);
+        assert_eq!(window.find(("context", 0usize)).selected(), Some(false));
+    })
+    .unwrap();
+    wait_until(cx, handle, "staging to refuse", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to staging: ")
+    });
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
+    let path = kubeconfig_file("talos-pages");
+    let (_runtime, handle, view) = kubernetes_only(cx, path.clone(), None);
+    // Settings lists the files read, and the read runs on Tokio, which
+    // `run_until_parked` doesn't wait for.
+    let read = view.clone();
+    wait_until(cx, handle, "the kubeconfig to be read", move |_, cx| {
+        !read.read(cx).config_loading
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for page in Page::ALL.into_iter().filter(|page| {
+            !matches!(
+                page,
+                Page::Overview
+                    | Page::Resources
+                    | Page::Health
+                    | Page::Nodes
+                    | Page::Monitoring
+                    | Page::Observability
+                    | Page::Applications
+                    | Page::Settings
+            )
+        }) {
+            view.update(cx, |view, cx| view.navigate(page, window, cx));
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).page, page);
+            assert!(window.find("needs-talosconfig").visible(), "{page:?}");
+        }
+        // Monitoring reads the cluster's Prometheus, which needs no Talos.
+        view.update(cx, |view, cx| view.navigate(Page::Monitoring, window, cx));
+        window.render_frame(cx);
+        assert!(window.find("monitoring-page").visible());
+        assert!(window.try_find("needs-talosconfig").is_none());
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx));
+        window.render_frame(cx);
+        window.click("browse-kubernetes", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).page, Page::Resources);
+        assert!(window.try_find("needs-talosconfig").is_none());
+
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx));
+        window.render_frame(cx);
+        window.click("open-settings", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("talosconfig-path").visible());
+        let files = format!("Kubeconfig files: {}", path.display());
+        assert_eq!(window.find("kubeconfig-path").label(), Some(files.as_str()));
+        // The Talos kubeconfig choices don't apply without Talos.
+        assert!(window.try_find("kubeconfig-automatic").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_control_plane_offers_a_talosconfig(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("rail"), None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        area(window, cx, "nav-control-plane");
+        // The area shows why it is empty and keeps the page.
+        assert_eq!(view.read(cx).page, Page::Overview);
+        assert!(window.try_find("nav-etcd").is_none());
+        window.click("add-talosconfig", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("talosconfig-path").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_never_swaps_in_another_context(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("asked-for"), Some("prod"));
+    wait_until(cx, handle, "prod to be missing", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to prod: ")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let status = kubernetes_status(window);
+        assert!(status.contains("Context 'prod' was not found"), "{status}");
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applied.context.as_deref(), Some("prod"));
+        assert_eq!(pilot.contexts, ["lab", "staging"]);
+        contexts(window, cx);
+        assert_eq!(window.find(("context", 0usize)).selected(), Some(false));
+    })
+    .unwrap();
+}
+
+/// Kubernetes-only Health, after `what` failed: the reason, never "No node
+/// selected". Returns the reason.
+fn kubernetes_only_health_failure(
+    cx: &mut TestAppContext,
+    handle: AnyWindowHandle,
+    view: &Entity<Pilot>,
+    what: &str,
+) -> String {
+    wait_until(cx, handle, what, |window, _| {
+        window.try_find("k8s-unavailable").is_some()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("screen-no-node").is_none());
+        assert!(window.try_find("workloads-loading").is_none());
+        match &view.read(cx).registry.active().summary_health {
+            Some(Err(reason)) => reason.clone(),
+            _ => panic!("{what}: Health has no failure"),
+        }
+    })
+    .unwrap()
+}
+
+fn show_health(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<Pilot>) {
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(Page::Health, window, cx))
+    })
+    .unwrap();
+}
+
+/// Staging, not the kubeconfig's current lab: Health's Retry connects to
+/// the applied context again, never the current one.
+#[gpui_kit::test]
+fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) =
+        kubernetes_only(cx, kubeconfig_file("health-refused"), Some("staging"));
+    show_health(cx, handle, &view);
+    let reason = kubernetes_only_health_failure(cx, handle, &view, "staging to refuse");
+    cx.update_window(handle, |_, window, cx| {
+        let pilot = view.read(cx);
+        let kube = pilot.kubernetes_only.as_ref().unwrap();
+        assert!(
+            matches!(
+                &kube.connection,
+                super::super::kubernetes_only::KubeConnection::Failed(error) if *error == reason
+            ),
+            "{reason}"
+        );
+        window.click("screen-retry", cx);
+    })
+    .unwrap();
+    // The shell takes Health's event once the click's update ends.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(kubernetes_status(window), "Connecting to staging…");
+    })
+    .unwrap();
+    wait_until(cx, handle, "staging to refuse again", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to staging: ")
+    });
+    kubernetes_only_health_failure(cx, handle, &view, "Health to say so again");
+    cx.update_window(handle, |_, _, cx| {
+        assert_eq!(view.read(cx).applied.context.as_deref(), Some("staging"));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_health_says_the_kubeconfig_is_missing_and_retries(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, scratch("no-such-health-kubeconfig"), None);
+    show_health(cx, handle, &view);
+    let reason = kubernetes_only_health_failure(cx, handle, &view, "the kubeconfig to fail");
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(view.read(cx).config_error.as_deref(), Some(reason.as_str()));
+        // Retry reads the kubeconfig again: Health's table shows its
+        // loading rows while it does.
+        window.click("screen-retry", cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(view.read(cx).config_loading);
+        assert!(window.try_find("workloads-loading").is_some());
+        assert!(window.try_find("k8s-unavailable").is_none());
+    })
+    .unwrap();
+    kubernetes_only_health_failure(cx, handle, &view, "the kubeconfig to fail again");
+}
+
+#[gpui_kit::test]
+fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = kubernetes_only(cx, scratch("no-such-kubeconfig"), None);
+    wait_until(cx, handle, "the kubeconfig to fail", |window, _| {
+        kubernetes_status(window).starts_with("No kubeconfig loaded: ")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let status = kubernetes_status(window);
+        assert!(
+            status.contains("file is unreadable or does not exist"),
+            "{status}"
+        );
+        assert!(view.read(cx).contexts.is_empty());
+        view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
+        window.render_frame(cx);
+        assert!(window.find("resource-disconnected").visible());
+
+        // Applying no talosconfig keeps the window as it is: the default
+        // one is what's missing.
+        view.update(cx, |view, cx| view.apply_config_path(window, cx));
+        assert!(view.read(cx).kubernetes_only.is_some());
+        // A talosconfig switches the window to Talos.
+        view.update(cx, |view, cx| {
+            let path = scratch("no-such-talosconfig").display().to_string();
+            view.path
+                .update(cx, |input, cx| input.set_value(path, window, cx));
+            view.apply_config_path(window, cx);
+        });
+        window.render_frame(cx);
+        assert!(view.read(cx).kubernetes_only.is_none());
+        assert!(window.find("context-switcher").visible());
+        assert!(window.try_find("kubernetes-status").is_none());
+    })
+    .unwrap();
+}

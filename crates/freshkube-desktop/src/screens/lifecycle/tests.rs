@@ -385,7 +385,6 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
                     let old = screen.loader.data().unwrap().clone();
                     let request = screen
                         .loader
-                        .state
                         .begin(screen.source.as_ref().unwrap().target.clone());
                     (request, old)
                 })
@@ -432,7 +431,7 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
         if let Some((request, old)) = delayed {
             cx.update(|cx| {
                 screen.update(cx, |screen, cx| {
-                    assert!(screen.loader.state.apply(&request, Ok(old)));
+                    assert!(screen.loader.apply(&request, Ok(old)));
                     cx.notify();
                 })
             });
@@ -451,12 +450,10 @@ fn shared_nodes_update_both_lifecycle_views_and_incomplete_rosters_prove_no_abse
         screen.update(cx, |screen, _| {
             let request = screen
                 .loader
-                .state
                 .begin(screen.source.as_ref().unwrap().target.clone());
             assert!(
                 screen
                     .loader
-                    .state
                     .apply(&request, Err("Talos unavailable".into()))
             );
             (
@@ -719,7 +716,7 @@ fn the_loading_rows_give_way_to_the_roster_when_it_answers(cx: &mut TestAppConte
         let target = screen.update(cx, |screen, cx| {
             let target = screen.source.as_ref().unwrap().target.clone();
             screen.loader.reset();
-            screen.loader.state.begin(target.clone());
+            screen.loader.begin(target.clone());
             cx.notify();
             target
         });

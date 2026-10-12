@@ -37,7 +37,7 @@ Resetting a loader replaces its snapshot **and** drops its read and delivery tas
 
 ## Ordinary screen reads
 
-[screens::Loader<T>](../crates/freshkube-desktop/src/screens/mod.rs) owns a `Snapshot<T, Target>`, a Tokio `OwnedJob` and a GPUI `Task<()>`. `load` calls `begin`, runs a `Send + 'static` future through `backend::spawn_job` under `SCREEN_DEADLINE`, and keeps a GPUI receiver task. That task uses the weak screen entity, finds its loader through `slot`, and calls `apply` before releasing the read job. Failure to receive a result becomes an error. The caller notifies when starting; delivery notifies on completion.
+[screens::Loader<T>](../crates/freshkube-desktop/src/screens/loader.rs) is `freshkube-reads`'s [`Loader<T, I>`](../crates/freshkube-reads/src/loader/mod.rs) with `Target` as its identity. It owns a `Snapshot<T, Target>`, a Tokio `OwnedJob` and a GPUI `Task<()>`. `load` begins a request on the snapshot, runs a `Send + 'static` future through core's `spawn_job` under the deadline it is given (`SCREEN_DEADLINE` for a screen), and keeps a GPUI receiver task. That task uses the weak screen entity, finds its loader through `slot`, and lands the answer through its private `deliver`, which releases the read job; tests answer late through `apply`, behind the `testing` feature. Failure to receive a result becomes an error. The caller notifies when starting; delivery notifies on completion.
 
 This is the live-read portion of [EtcdScreen::refresh](../crates/freshkube-desktop/src/screens/etcd.rs), inside its `ScreenPanel` implementation, after obtaining `source` and `live`:
 
@@ -58,7 +58,7 @@ self.loader.load(
 cx.notify();
 ```
 
-That screen owns `Loader<EtcdHealthSnapshot>`, compares old/new `source.target` in `set_source`, and calls `reset()` on a change. `activate` loads only with no data and no request in flight; `refresh` guards duplicate work. Fixtures use `resolve(source.target.clone(), example(&source))`. Read `data()`, `error()`, `is_loading()` and timestamps during rendering. `Loader` does not expose an `is_stale()` reader; its underlying snapshot tracks staleness and the shared header/failure banner present refresh state. Do not invent a loader method or put cluster I/O on the UI thread.
+That screen owns `Loader<EtcdHealthSnapshot>`, compares old/new `source.target` in `set_source`, and calls `reset()` on a change. `activate` loads only with no data and no request in flight; `refresh` guards duplicate work. Fixtures use `resolve(source.target.clone(), example(&source))`. Read `data()`, `error()`, `is_loading()` and timestamps during rendering. `Loader` exposes `is_stale()` only to tests, behind `freshkube-reads`'s `testing` feature; its underlying snapshot tracks staleness and the shared header/failure banner present refresh state. Do not invent a loader method or put cluster I/O on the UI thread.
 
 ## Read-job and delivery ownership
 

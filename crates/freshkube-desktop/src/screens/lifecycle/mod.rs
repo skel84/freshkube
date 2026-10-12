@@ -243,7 +243,7 @@ impl LifecycleScreen {
         let Some(publication) = self.summary_nodes.as_ref().and_then(Subscription::latest) else {
             return;
         };
-        let Some(data) = self.loader.state.data_mut() else {
+        let Some(data) = self.loader.data_mut() else {
             return;
         };
         let observation = (publication.identity.clone(), publication.revision);
@@ -918,7 +918,7 @@ impl LifecycleScreen {
     pub(crate) fn wait_again(&mut self, cx: &mut Context<Self>) {
         let target = self.source.as_ref().expect("a target").target.clone();
         self.loader.reset();
-        self.loader.state.begin(target);
+        self.loader.begin(target);
         cx.notify();
     }
 
