@@ -11,6 +11,7 @@ use super::read::{ListRequest, Reader, Scope};
 use super::source::{Source, Truncation, redact_message};
 use super::versions::resolve;
 use crate::resources::Failure;
+pub use crate::workspace::{IN_CLUSTER_NAME, IN_CLUSTER_SERVER, normalize_server};
 
 pub const GROUP: &str = "argoproj.io";
 pub(crate) const VERSIONS: &[&str] = &["v1alpha1"];
@@ -766,11 +767,6 @@ pub async fn read_application_sets<R: Reader>(
     Source::from_listing(run(reader, namespace).await)
 }
 
-/// The name Argo CD gives the cluster it runs in.
-pub const IN_CLUSTER_NAME: &str = "in-cluster";
-/// The address Argo CD gives the cluster it runs in, as seen from inside it.
-pub const IN_CLUSTER_SERVER: &str = "https://kubernetes.default.svc";
-
 /// How a destination that matches no context says it could be: by the
 /// spike's flags, or in the app's Settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -827,17 +823,6 @@ pub struct Destinations<'a> {
     pub contexts: &'a [(String, String)],
     pub names: &'a [(String, String)],
     pub argocd: &'a str,
-}
-
-/// `https://Host:443/` and `https://host` name the same server.
-pub fn normalize_server(server: &str) -> String {
-    let lower = server.trim().to_ascii_lowercase();
-    let trimmed = lower.trim_end_matches('/');
-    trimmed
-        .strip_suffix(":443")
-        .filter(|rest| rest.starts_with("https://"))
-        .unwrap_or(trimmed)
-        .to_owned()
 }
 
 /// Matches a destination against the contexts. The servers stay inside this
