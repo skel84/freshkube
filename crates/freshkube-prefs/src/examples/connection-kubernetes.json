@@ -1,0 +1,5 @@
+{
+  "mode": "kubernetes",
+  "kubeconfig": "/home/acme/.kube/config",
+  "context": "cluster-a"
+}
