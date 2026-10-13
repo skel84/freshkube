@@ -2,24 +2,32 @@
 //! functions that map a health to its tag, so a refactor of them shows up as
 //! a changed row, never as a changed glyph that no test noticed.
 
-use freshkube_core::{HealthIndicator, HealthState};
+use freshkube_core::HealthIndicator;
+use freshkube_core::workloads::HealthState;
 
 use crate::presentation::Health;
 use crate::ui;
+
+fn push(
+    rows: &mut Vec<String>,
+    enum_name: &str,
+    variant: &str,
+    tone: ui::Tone,
+    icon: Option<String>,
+) {
+    rows.push(format!("{enum_name}::{variant} => {tone:?}, {icon:?}"));
+}
 
 /// (enum, variant, tone, icon) for every variant of every health enum that
 /// reaches a tag or glyph.
 fn table() -> Vec<String> {
     let mut rows = Vec::new();
-    let mut row = |enum_name: &str, variant: &str, tone: ui::Tone, icon: Option<String>| {
-        rows.push(format!("{enum_name}::{variant} => {tone:?}, {icon:?}"));
-    };
     for (variant, health) in [
         ("Healthy", Health::Healthy),
         ("Unhealthy", Health::Unhealthy),
         ("Unknown", Health::Unknown),
     ] {
-        row("Health", variant, ui::health_tone(health), None);
+        push(&mut rows, "Health", variant, ui::health_tone(health), None);
     }
     for (variant, state) in [
         ("Failing", HealthState::Failing),
@@ -27,7 +35,8 @@ fn table() -> Vec<String> {
         ("Pending", HealthState::Pending),
         ("Healthy", HealthState::Healthy),
     ] {
-        row(
+        push(
+            &mut rows,
             "HealthState",
             variant,
             super::workloads::health_tone(state),
@@ -43,7 +52,8 @@ fn table() -> Vec<String> {
         ("Unknown", HealthIndicator::Unknown),
     ] {
         let (tone, icon, label) = super::lifecycle::health_tone(&indicator);
-        row(
+        push(
+            &mut rows,
             "HealthIndicator",
             variant,
             tone,
