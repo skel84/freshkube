@@ -1,4 +1,5 @@
-//! Visible-only node metrics. The workspace owns cancellation and publication.
+//! Visible-only node metrics. The workspace owns cancellation and publication;
+//! Nodes' handle hears the connection and whether its page shows.
 use std::{collections::HashMap, time::Duration};
 
 use freshkube_core::resources::{FailureKind, NodeUsage, list_node_usage};
@@ -15,6 +16,8 @@ const INTERVAL: Duration = Duration::from_secs(15);
 
 pub(super) struct Metrics {
     runtime: tokio::runtime::Handle,
+    /// The connection the shell last handed Nodes, read while it shows.
+    kube: Option<crate::resources::KubeSource>,
     pub(super) source: Option<String>,
     pub(super) visible: bool,
     /// Example mode answers from the rows themselves, so new rows answer at once.
@@ -29,6 +32,7 @@ impl Metrics {
     pub(super) fn new(runtime: tokio::runtime::Handle) -> Self {
         Self {
             runtime,
+            kube: None,
             source: None,
             visible: false,
             example: false,
@@ -67,22 +71,32 @@ impl Metrics {
     }
 }
 
-impl Pilot {
-    /// Nodes reads its nodes' use while its page shows.
-    pub(in crate::desktop) fn sync_node_metrics(
+impl Nodes {
+    /// The connection to read nodes' use from; a new one reads again if
+    /// Nodes shows.
+    pub(super) fn set_metrics_source(
         &mut self,
+        source: Option<crate::resources::KubeSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let visible = self.page == Page::Nodes;
-        let source = self.kube_source();
-        self.node_workspace.update(cx, |nodes, cx| {
-            nodes.sync_metrics(visible, source, window, cx)
-        });
+        self.metrics.kube = source.clone();
+        let visible = self.metrics.visible;
+        self.sync_metrics(visible, source, window, cx)
     }
-}
 
-impl Nodes {
+    /// Nodes reads its nodes' use while its page shows, whatever its pane
+    /// does.
+    pub(super) fn set_metrics_visible(
+        &mut self,
+        visible: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let source = self.metrics.kube.clone();
+        self.sync_metrics(visible, source, window, cx)
+    }
+
     fn sync_metrics(
         &mut self,
         visible: bool,

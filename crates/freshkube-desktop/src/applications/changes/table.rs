@@ -406,7 +406,7 @@ impl TableSource for ChangesPage {
     }
 
     fn loading(&self) -> Option<&kit::LoadingRows> {
-        (self.pending && self.snapshot.data().is_none() && self.snapshot.error().is_none())
+        (self.loader.is_loading() && self.loader.data().is_none() && self.loader.error().is_none())
             .then_some(&self.loading)
     }
 

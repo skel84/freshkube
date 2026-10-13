@@ -63,7 +63,7 @@ impl ApplicationsPage {
                 cx,
             )
         });
-        let reading = self.pending;
+        let reading = self.loader.is_loading();
         let label = "Read the applications again";
         let refresh = Button::new(header.id("refresh"))
             .ghost()
@@ -137,7 +137,7 @@ impl ApplicationsPage {
     /// empty.
     fn render_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         // A retry in flight says so, and another press does nothing.
-        let retrying = self.pending;
+        let retrying = self.loader.is_loading();
         let retry = || {
             let label = if retrying { "Retrying…" } else { "Retry" };
             Button::new("applications-retry")

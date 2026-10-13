@@ -164,8 +164,8 @@ impl ApplicationsPage {
         let column = Column::new(
             &self.display,
             self.source.is_some(),
-            self.snapshot.data().is_some() || self.snapshot.error().is_some(),
-            self.pending,
+            self.loader.data().is_some() || self.loader.error().is_some(),
+            self.loader.is_loading(),
         );
         if column != self.column {
             self.column = column;
