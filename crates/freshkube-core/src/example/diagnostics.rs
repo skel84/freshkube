@@ -220,3 +220,239 @@ pub fn diagnostics(
     snapshot.checks = snapshot.evaluate();
     snapshot
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostic_runner::{
+        DiagnosticCheck, LoadAverageSnapshot, MemorySnapshot, ServiceHealthSnapshot,
+        ServiceSnapshot,
+    };
+    use crate::diagnostics::CheckStatus;
+
+    fn node(name: &str, control_plane: bool) -> ExampleNode {
+        ExampleNode::new(name, control_plane, Some(8)).with_diagnostics(
+            "192.0.2.20",
+            Some(MemorySnapshot {
+                total_bytes: 8 * 1024 * 1024 * 1024,
+                available_bytes: 5 * 1024 * 1024 * 1024,
+                used_bytes: 3 * 1024 * 1024 * 1024,
+                usage_percent: 37.5,
+            }),
+            Some(LoadAverageSnapshot {
+                one_minute: 0.84,
+                five_minutes: 0.71,
+                fifteen_minutes: 0.66,
+            }),
+            vec![ServiceSnapshot {
+                node: name.into(),
+                id: "kubelet".into(),
+                state: "Running".into(),
+                health: SourceState::Available(ServiceHealthSnapshot {
+                    healthy: false,
+                    last_message: "Example health check failed".into(),
+                }),
+            }],
+        )
+    }
+
+    fn check<'a>(snapshot: &'a DiagnosticSnapshot, id: &str) -> &'a DiagnosticCheck {
+        snapshot.checks.iter().find(|check| check.id == id).unwrap()
+    }
+
+    #[test]
+    fn control_plane_and_worker_keep_node_facts_and_differ_on_etcd() {
+        let control_plane = diagnostics(
+            &node("example-control-02", true),
+            "example",
+            true,
+            "192.0.2.10",
+        );
+        let worker = diagnostics(
+            &node("example-worker-02", false),
+            "example",
+            true,
+            "192.0.2.10",
+        );
+        for (snapshot, name, role) in [
+            (&control_plane, "example-control-02", "controlplane"),
+            (&worker, "example-worker-02", "worker"),
+        ] {
+            assert_eq!(
+                snapshot.context.target,
+                DiagnosticTarget::new(name, "192.0.2.20", role, "example")
+            );
+            assert_eq!(snapshot.context.cpu_count.as_ref(), Some(&8));
+            assert_eq!(
+                snapshot.context.platform.as_ref().map(String::as_str),
+                Some("metal")
+            );
+            assert_eq!(
+                snapshot.context.kubernetes_access.as_ref().unwrap(),
+                &KubernetesAccess {
+                    control_plane_address: "192.0.2.10".into(),
+                    config_identity: "example".into(),
+                    source: None,
+                    warning: None,
+                }
+            );
+            let memory = snapshot.system.memory.as_ref().unwrap();
+            assert_eq!(memory.total_bytes, 8 * 1024 * 1024 * 1024);
+            assert_eq!(memory.available_bytes, 5 * 1024 * 1024 * 1024);
+            assert_eq!(memory.used_bytes, 3 * 1024 * 1024 * 1024);
+            assert_eq!(memory.usage_percent, 37.5);
+            let load = snapshot.system.load_average.as_ref().unwrap();
+            assert_eq!(
+                (load.one_minute, load.five_minutes, load.fifteen_minutes),
+                (0.84, 0.71, 0.66)
+            );
+            let services = snapshot.services.services.as_ref().unwrap();
+            assert_eq!(services.len(), 1);
+            assert_eq!(services[0].node, name);
+            let service = check(snapshot, "service_kubelet");
+            assert_eq!(service.status, CheckStatus::Fail);
+            assert_eq!(
+                service.details.as_deref(),
+                Some("Example health check failed")
+            );
+            assert!(service.fix.is_some());
+            assert_eq!(check(snapshot, "memory").status, CheckStatus::Pass);
+            assert_eq!(check(snapshot, "cpu_load").status, CheckStatus::Pass);
+            assert_eq!(
+                snapshot.kubernetes.pod_health.as_ref().unwrap().total_pods,
+                142
+            );
+        }
+        assert!(matches!(control_plane.etcd, EtcdSnapshot::Available(_)));
+        assert_eq!(check(&control_plane, "etcd").status, CheckStatus::Pass);
+        assert!(matches!(worker.etcd, EtcdSnapshot::NotApplicable));
+        assert!(!worker.checks.iter().any(|check| check.id == "etcd"));
+    }
+
+    #[test]
+    fn missing_memory_and_load_remain_unknown() {
+        let node = ExampleNode::new("example-worker", false, None).with_diagnostics(
+            "192.0.2.20",
+            None,
+            None,
+            Vec::new(),
+        );
+        let snapshot = diagnostics(&node, "example", true, "192.0.2.10");
+        assert_eq!(
+            snapshot.system.memory.unavailable_info(),
+            Some(&SourceUnavailable {
+                source: "Talos Memory API".into(),
+                reason: "no memory information".into(),
+            })
+        );
+        assert_eq!(
+            snapshot.system.load_average.unavailable_info(),
+            Some(&SourceUnavailable {
+                source: "Talos LoadAvg API".into(),
+                reason: "no load information".into(),
+            })
+        );
+        assert_eq!(
+            snapshot.context.cpu_count.unavailable_info(),
+            Some(&SourceUnavailable {
+                source: "Talos CPUInfo API".into(),
+                reason: "no CPU information".into(),
+            })
+        );
+        for id in ["memory", "cpu_load", "services"] {
+            assert_eq!(check(&snapshot, id).status, CheckStatus::Unknown);
+        }
+    }
+
+    #[test]
+    fn unavailable_kubernetes_keeps_talos_evidence() {
+        let snapshot = diagnostics(
+            &node("example-control-02", true),
+            "example-without-kubernetes",
+            false,
+            "",
+        );
+        assert_eq!(
+            snapshot.context.target.config_identity,
+            "example-without-kubernetes"
+        );
+        assert_eq!(
+            snapshot.context.kubernetes_access.unavailable_info(),
+            Some(&SourceUnavailable {
+                source: "Selected Kubernetes access".into(),
+                reason: "no Kubernetes source is available for this example context".into(),
+            })
+        );
+        for info in [
+            snapshot.kubernetes.pod_health.unavailable_info().unwrap(),
+            snapshot.cni.pods.unavailable_info().unwrap(),
+            snapshot.addons.crd_names.unavailable_info().unwrap(),
+            snapshot.addons.pod_sources[0]
+                .pods
+                .unavailable_info()
+                .unwrap(),
+        ] {
+            assert_eq!(
+                info.reason,
+                "Selected Kubernetes access unavailable: no Kubernetes source is available for this example context"
+            );
+        }
+        assert!(
+            snapshot
+                .addons
+                .addons
+                .iter()
+                .all(|addon| addon.presence == AddonPresence::Unknown)
+        );
+        assert!(snapshot.addons.cert_manager.is_none());
+        for id in ["kubernetes_api", "pod_health", "flannel_pods"] {
+            assert_eq!(check(&snapshot, id).status, CheckStatus::Unknown);
+        }
+        for id in ["memory", "cpu_load", "etcd", "br_netfilter", "cni"] {
+            assert_eq!(check(&snapshot, id).status, CheckStatus::Pass);
+        }
+        assert_eq!(
+            check(&snapshot, "service_kubelet").status,
+            CheckStatus::Fail
+        );
+        // Core accepts the desktop decision even for the adapter's special context name.
+        let available = diagnostics(
+            &node("example-control-02", true),
+            "homelab",
+            true,
+            "192.0.2.10",
+        );
+        assert!(available.context.kubernetes_access.is_available());
+    }
+
+    #[test]
+    fn only_control_plane_names_ending_in_01_are_etcd_leaders() {
+        for (name, expected_leader) in [("example-control-01", true), ("example-control-02", false)]
+        {
+            let snapshot = diagnostics(&node(name, true), "example", true, "192.0.2.10");
+            let EtcdSnapshot::Available(status) = &snapshot.etcd else {
+                panic!("control plane must have etcd evidence");
+            };
+            assert_eq!(status.node, name);
+            assert_eq!(status.is_leader, expected_leader);
+            assert_eq!(status.member_id, 0x8e9e_05c5_2164_694d);
+            assert_eq!(status.leader_id, 0x8e9e_05c5_2164_694d);
+            assert_eq!(status.raft_index, 90_412);
+            assert_eq!(status.raft_applied_index, 90_412);
+            assert_eq!(status.raft_term, 7);
+            let message = &check(&snapshot, "etcd").message;
+            if expected_leader {
+                assert_eq!(message, "Leader, healthy");
+            } else {
+                assert_eq!(message, "Follower (leader: 8e9e05c52164694d)");
+            }
+        }
+        let worker = diagnostics(
+            &node("example-worker-01", false),
+            "example",
+            true,
+            "192.0.2.10",
+        );
+        assert!(matches!(worker.etcd, EtcdSnapshot::NotApplicable));
+    }
+}
