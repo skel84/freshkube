@@ -417,3 +417,41 @@ fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 }
+
+/// The node pane's System services tab draws inside the Nodes host, so a
+/// notify of the shell still draws it again; its own changes draw it once.
+/// PR 3 of #579 takes the host away and changes the first count.
+#[gpui_kit::test]
+fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1700., 1200.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_node_by_name(
+                "talos-wk-fra1-02",
+                super::super::nodes::NodeTab::Services,
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+        let before = count("node-services");
+        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        count("node-services") - before
+    };
+    let shell = redrawn(&|_, cx| cx.notify());
+    let selection = redrawn(&|view, cx| view.select_service(Some("kubelet".into()), cx));
+    let services = redrawn(&|view, cx| view.push_services(cx));
+    assert_eq!([shell, selection, services], [1, 1, 1]);
+}

@@ -170,7 +170,7 @@ This section records the first, polling design. Core got `kubernetes_summary.rs`
     - the node's rows from Needs attention.
   - **Pods N** is a Resources list of pods across all namespaces, with the field selector `spec.nodeName=<name>`. It has its own filter and no pane of its own: Enter opens the pod on the Resources page (see [Opening objects](#opening-objects)).
     - Core's `watch_collection`, `list_table` and `watch_table` gain an optional field selector, carried in the watch's identity. Example data filters its pods by node.
-  - **System services** is today's `desktop/services.rs` for this node, with Restart and Open logs.
+  - **System services** is today's `desktop/services/` for this node, with Restart and Open logs.
     - The "unhealthy on another node · Show it" notice goes; Control plane covers it.
     - When the kubelet is selected, its detail adds "Pods on this node · 31", which goes to the Pods tab.
     - The tab carries a dot when a service is unhealthy.

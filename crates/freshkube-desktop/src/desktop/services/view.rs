@@ -23,6 +23,7 @@ const LIST_WIDTH: f32 = 330.;
 
 impl Render for NodeServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::super::probe::hit("node-services");
         let node = match self.services_state(cx) {
             Ok(node) => node,
             Err(state) => {
