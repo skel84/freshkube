@@ -13,7 +13,7 @@ use gpui_kit::*;
 use std::rc::Rc;
 use std::sync::Arc;
 
-pub(super) mod attention;
+mod attention;
 mod cards;
 
 /// What Overview asks of the shell.
@@ -31,23 +31,23 @@ pub(crate) enum OverviewEvent {
 /// Overview's states, banner and heading say. The shell hands it over
 /// whenever it changes; an equal one redraws nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct OverviewState {
-    pub(crate) context: SharedString,
-    pub(crate) config_error: Option<String>,
-    pub(crate) kubernetes_only: bool,
+pub(super) struct OverviewState {
+    context: SharedString,
+    config_error: Option<String>,
+    kubernetes_only: bool,
     /// The Talos overview failed with nothing kept and isn't loading.
-    pub(crate) unreachable: Option<String>,
-    pub(crate) stale_talos: Option<StaleTalos>,
+    unreachable: Option<String>,
+    stale_talos: Option<StaleTalos>,
     /// The Talos overview or the summary is stale.
-    pub(crate) stale: bool,
+    stale: bool,
     /// Why the attention list may be out of date.
-    pub(crate) attention_stale: Option<SharedString>,
-    pub(crate) connection: Connection,
+    attention_stale: Option<SharedString>,
+    connection: Connection,
     /// The restored summary shows its age instead of the connection.
-    pub(crate) last_known: bool,
+    last_known: bool,
 }
 
-pub(crate) struct OverviewPage {
+pub(super) struct OverviewPage {
     display: Arc<Overview>,
     attention: Arc<Attention>,
     state: OverviewState,
@@ -248,13 +248,6 @@ impl super::Pilot {
             && !self.overview.is_loading())
         .then(|| self.overview.error().cloned())
         .flatten();
-        let attention_stale = if self.overview.is_stale() {
-            self.overview.error().map(String::as_str)
-        } else if summary.is_stale() {
-            summary.error().map(String::as_str)
-        } else {
-            None
-        };
         OverviewState {
             context: self.applied.context.clone().unwrap_or_default().into(),
             config_error: self.config_error.clone(),
@@ -262,10 +255,24 @@ impl super::Pilot {
             unreachable,
             stale_talos: StaleTalos::of(&self.overview),
             stale: self.overview.is_stale() || summary.is_stale(),
-            attention_stale: attention_stale.map(|error| error.to_owned().into()),
+            attention_stale: self.attention_stale(),
             connection: self.context_display.state,
             last_known: self.last_known_since().is_some(),
         }
+    }
+
+    /// Why the attention list may be out of date: the Talos overview's or
+    /// the summary's failed refresh. Overview and the node pane show it.
+    pub(super) fn attention_stale(&self) -> Option<SharedString> {
+        let summary = &self.registry.active().kubernetes_summary;
+        let error = if self.overview.is_stale() {
+            self.overview.error()
+        } else if summary.is_stale() {
+            summary.error()
+        } else {
+            None
+        };
+        error.map(|error| error.clone().into())
     }
 
     /// Hands Overview where things stand; it redraws only for a change.

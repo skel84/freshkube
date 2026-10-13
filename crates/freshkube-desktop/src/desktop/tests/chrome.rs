@@ -278,6 +278,10 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     };
     let shell = redrawn(&|_, cx| cx.notify());
     let cards = redrawn(&|view, cx| view.rebuild_joined_nodes(cx));
+    // A refresh that fails through the shell: the observer hands Overview
+    // the stale state, with the joined nodes rebuilt in the same frame.
+    let stale = redrawn(&|view, cx| view.simulate_failure(cx));
+    let after_stale = redrawn(&|_, cx| cx.notify());
     let attention = redrawn(&|view, cx| {
         let attention = view.attention.clone();
         view.overview_page
@@ -293,9 +297,18 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let text_size = redrawn(&|_, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
     assert_eq!(
         [
-            shell, cards, attention, state, unchanged, show_all, cached, text_size
+            shell,
+            cards,
+            stale,
+            after_stale,
+            attention,
+            state,
+            unchanged,
+            show_all,
+            cached,
+            text_size
         ],
-        [0, 1, 1, 1, 0, 1, 1, 1]
+        [0, 1, 1, 0, 1, 1, 0, 1, 1, 1]
     );
     let before = count("overview");
     cx.update_window(handle, |_, window, cx| {
@@ -306,6 +319,52 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| draw(window, cx))
         .unwrap();
     assert_eq!(count("overview") - before, 1, "a theme change redraws it");
+}
+
+/// The pointer moving onto a card and off it again redraws Overview once
+/// each way for the card's hover tint. The shell draws again as its
+/// ancestor, as it did around the host; the cached header stays as drawn.
+#[gpui_kit::test]
+fn overview_card_hover_redraws_only_overview(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent, MouseMoveEvent};
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut moved = |onto_card: bool| {
+        let (overview, header) = (count("overview"), count("chrome.header"));
+        cx.update_window(handle, |_, window, cx| {
+            let card = window.find("tile-nodes").bounds();
+            let position = if onto_card {
+                card.center()
+            } else {
+                card.origin - gpui_kit::point(gpui_kit::px(4.), gpui_kit::px(4.))
+            };
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        (
+            count("overview") - overview,
+            count("chrome.header") - header,
+        )
+    };
+    let onto = moved(true);
+    let off = moved(false);
+    assert_eq!([onto, off], [(1, 0), (1, 0)]);
 }
 
 /// System services is a cached view of its own: a notify of the shell

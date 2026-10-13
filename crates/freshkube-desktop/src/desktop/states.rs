@@ -23,19 +23,19 @@ pub(crate) enum ConfigAction {
 }
 
 /// Runs a state's button.
-pub(crate) type OnConfigAction = Rc<dyn Fn(ConfigAction, &mut Window, &mut App)>;
+pub(super) type OnConfigAction = Rc<dyn Fn(ConfigAction, &mut Window, &mut App)>;
 
 /// The Talos overview's failed refresh over a snapshot it kept, as the
 /// banner words it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StaleTalos {
+pub(super) struct StaleTalos {
     failed: String,
     kept: String,
     reason: String,
 }
 
 impl StaleTalos {
-    pub(crate) fn of<T, I: Clone + Eq>(
+    pub(super) fn of<T, I: Clone + Eq>(
         snapshot: &crate::state::Snapshot<T, I, String>,
     ) -> Option<Self> {
         if !snapshot.is_stale() {
@@ -66,7 +66,7 @@ fn button(button: Button, action: ConfigAction, on_action: &OnConfigAction) -> A
         .into_any_element()
 }
 
-pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {
+pub(super) fn page_scroll(id: &'static str) -> Stateful<Div> {
     div()
         .id(id)
         .size_full()
@@ -76,7 +76,7 @@ pub(crate) fn page_scroll(id: &'static str) -> Stateful<Div> {
 
 /// The talosconfig couldn't be read; shown on every screen. Without
 /// Talos it is the kubeconfig that couldn't be read.
-pub(crate) fn config_error_state(
+pub(super) fn config_error_state(
     error: String,
     kubernetes_only: bool,
     on_action: &OnConfigAction,
@@ -150,7 +150,7 @@ fn kubeconfig_error_state(error: String, on_action: &OnConfigAction, cx: &App) -
 }
 
 /// Unreachable cluster with no earlier snapshot to fall back to.
-pub(crate) fn unreachable_state(
+pub(super) fn unreachable_state(
     context: &str,
     error: String,
     on_action: &OnConfigAction,
@@ -184,7 +184,7 @@ pub(crate) fn unreachable_state(
     .into_any_element()
 }
 
-pub(crate) fn stale_banner(
+pub(super) fn stale_banner(
     stale: Option<&StaleTalos>,
     on_action: &OnConfigAction,
     cx: &App,
