@@ -18,9 +18,9 @@ fn named_keys_navigate_all_screens_and_configured_contexts(cx: &mut TestAppConte
         ] {
             window.press(key, cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, page);
+            assert_eq!(view.read(cx).navigation.page, page);
             if let Some(kind) = kind {
-                assert_eq!(view.read(cx).resource_kind.key(), kind);
+                assert_eq!(view.read(cx).navigation.resource_kind.key(), kind);
             }
         }
         window.press("secondary-1", cx);
@@ -55,7 +55,7 @@ fn shell_keys_work_while_a_kind_shows_no_rows(cx: &mut TestAppContext) {
         assert_eq!(window.find("resource-body").focused(), Some(true));
         window.press("secondary-2", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).navigation.page, Page::Nodes);
     })
     .unwrap();
 }
@@ -112,7 +112,7 @@ fn the_logs_page_puts_the_keyboard_on_its_lines(cx: &mut TestAppContext) {
         window.render_frame(cx);
         open_node_tab(window, cx, super::super::nodes::NodeTab::Logs);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).navigation.page, Page::Nodes);
         assert_eq!(window.find("logs-viewport").focused(), Some(true));
         // Command-F finds in the logs, and the shell's keys still work.
         window.press("secondary-f", cx);
@@ -120,7 +120,7 @@ fn the_logs_page_puts_the_keyboard_on_its_lines(cx: &mut TestAppContext) {
         assert_eq!(window.find("logs-viewport").focused(), Some(false));
         window.press("secondary-1", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Overview);
+        assert_eq!(view.read(cx).navigation.page, Page::Overview);
     })
     .unwrap();
 }
@@ -147,11 +147,11 @@ fn ctrl_tab_cycles_through_every_screen(cx: &mut TestAppContext) {
         ] {
             window.press("ctrl-tab", cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, expected);
+            assert_eq!(view.read(cx).navigation.page, expected);
         }
         window.press("ctrl-shift-tab", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Security);
+        assert_eq!(view.read(cx).navigation.page, Page::Security);
     })
     .unwrap();
 }
@@ -181,8 +181,11 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
     step(cx, &|window, cx| window.press("enter", cx));
     step(cx, &|window, cx| {
         assert!(!window.has_active_dialog(cx));
-        assert_eq!(view.read(cx).page, Page::Resources);
-        assert_eq!(view.read(cx).resource_kind.key(), "statefulsets.apps");
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
+        assert_eq!(
+            view.read(cx).navigation.resource_kind.key(),
+            "statefulsets.apps"
+        );
         assert_eq!(window.find("page-title").label(), Some("StatefulSets"));
         assert_eq!(window.find("resource-body").focused(), Some(true));
         // Escape leaves the palette and hands the keyboard back.
@@ -195,7 +198,10 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
     step(cx, &|window, cx| {
         assert!(!window.has_active_dialog(cx));
         assert_eq!(window.find("resource-body").focused(), Some(true));
-        assert_eq!(view.read(cx).resource_kind.key(), "statefulsets.apps");
+        assert_eq!(
+            view.read(cx).navigation.resource_kind.key(),
+            "statefulsets.apps"
+        );
         // Custom kinds join once discovered.
         let kind = crate::resources::example::kind("certificates.cert-manager.io").unwrap();
         view.update(cx, |view, cx| view.open_kind(kind, window, cx));
@@ -207,9 +213,9 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
     step(cx, &|window, cx| window.input("certificates.cert", cx));
     step(cx, &|window, cx| window.press("enter", cx));
     step(cx, &|_, cx| {
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(
-            view.read(cx).resource_kind.key(),
+            view.read(cx).navigation.resource_kind.key(),
             "certificates.cert-manager.io"
         );
     });

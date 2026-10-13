@@ -56,7 +56,7 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                 cx.run_until_parked();
                 cx.update_window(handle, |_, window, cx| {
                     window.render_frame(cx);
-                    assert_eq!(pilot.read(cx).page, expected);
+                    assert_eq!(pilot.read(cx).navigation.page, expected);
                     let element = window.find(id);
                     if page == "overview" && !element.visible() {
                         for _ in 0..10 {
@@ -129,7 +129,7 @@ fn fixture_monitoring_opens_its_dashboard_from_example_data_and_hides_on_navigat
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).area, Area::Monitoring);
+        assert_eq!(pilot.read(cx).navigation.area, Area::Monitoring);
         assert!(window.find("monitoring-grid").visible());
         assert!(window.find("monitoring-variable-node").visible());
         assert!(window.find("monitoring-panel-0-title").visible());

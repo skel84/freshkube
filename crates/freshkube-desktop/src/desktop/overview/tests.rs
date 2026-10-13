@@ -57,9 +57,9 @@ fn every_overview_card_opens_its_target_and_filter(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(pilot.read(cx).page, page, "{id}");
+            assert_eq!(pilot.read(cx).navigation.page, page, "{id}");
             if let Some(kind) = kind {
-                assert_eq!(pilot.read(cx).resource_kind.key(), kind);
+                assert_eq!(pilot.read(cx).navigation.resource_kind.key(), kind);
             }
             if let Some(filter) = expected_filter {
                 assert_eq!(pilot.read(cx).resources.read(cx).filter_value(cx), filter);
@@ -144,7 +144,12 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
             // run.
             cx.run_until_parked();
             cx.update(|cx| {
-                assert_ne!(pilot.read(cx).page, Page::Overview, "{} {id}", row.id);
+                assert_ne!(
+                    pilot.read(cx).navigation.page,
+                    Page::Overview,
+                    "{} {id}",
+                    row.id
+                );
                 if row.kind == "Pod" && id == "attention-logs" {
                     // The pod opens on Overview, and its logs in the dock.
                     assert_eq!(
@@ -153,7 +158,7 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
                     );
                 }
                 if id == "attention-open-node" {
-                    assert_eq!(pilot.read(cx).page, Page::Nodes);
+                    assert_eq!(pilot.read(cx).navigation.page, Page::Nodes);
                     assert_eq!(
                         pilot.read(cx).node_workspace.read(cx).tab,
                         NodeTab::Services
@@ -249,7 +254,7 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
     // A row asks the shell, which hears it once the click's effects run.
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(pilot.read(cx).page, Page::Etcd);
+        assert_eq!(pilot.read(cx).navigation.page, Page::Etcd);
         let mut many = Vec::new();
         for ix in 0..80 {
             let mut row = rows[0].clone();
@@ -363,12 +368,12 @@ fn tab_reaches_a_card_and_enter_or_space_opens_it(cx: &mut TestAppContext) {
                 assert!(tabs < 100, "Tab never reached {id}");
                 window.press("tab", cx);
             }
-            assert_eq!(pilot.read(cx).page, Page::Overview);
+            assert_eq!(pilot.read(cx).navigation.page, Page::Overview);
             window.press(key, cx);
         })
         .unwrap();
         cx.run_until_parked();
-        cx.update(|cx| assert_eq!(pilot.read(cx).page, page, "{key} on {id}"));
+        cx.update(|cx| assert_eq!(pilot.read(cx).navigation.page, page, "{key} on {id}"));
     }
 }
 
@@ -465,7 +470,11 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
         assert_eq!(tone(pilot.read(cx), cx, "tile-services").0, Tone::Warn);
         assert_eq!(tone(pilot.read(cx), cx, "tile-etcd").0, Tone::Good);
         assert_eq!(
-            pilot.read(cx).rail_marks.tone(Area::ControlPlane),
+            pilot
+                .read(cx)
+                .navigation
+                .rail_marks
+                .tone(Area::ControlPlane),
             Some(Tone::Warn)
         );
         window.click("fixture-fail", cx);
@@ -477,7 +486,14 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
             // The header's stale mark says so too.
             assert!(window.find(format!("{id}-stale")).visible(), "{id}");
         }
-        assert_eq!(pilot.read(cx).rail_marks.tone(Area::ControlPlane), None);
+        assert_eq!(
+            pilot
+                .read(cx)
+                .navigation
+                .rail_marks
+                .tone(Area::ControlPlane),
+            None
+        );
         // A refresh that answers brings back the good cards, the warning and its dot.
         window.click("refresh", cx);
         window.render_frame(cx);
@@ -487,7 +503,11 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
             .collect();
         assert_eq!(after, before);
         assert_eq!(
-            pilot.read(cx).rail_marks.tone(Area::ControlPlane),
+            pilot
+                .read(cx)
+                .navigation
+                .rail_marks
+                .tone(Area::ControlPlane),
             Some(Tone::Warn)
         );
     })
@@ -527,7 +547,10 @@ fn object_frontdoor_navigates_at_once_while_a_shell_runs(cx: &mut TestAppContext
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).resource_kind.key(), "persistentvolumeclaims");
+        assert_eq!(
+            pilot.read(cx).navigation.resource_kind.key(),
+            "persistentvolumeclaims"
+        );
         assert_eq!(
             shell::running_anywhere(cx),
             [gpui_kit::SharedString::from(pod.name.clone())]

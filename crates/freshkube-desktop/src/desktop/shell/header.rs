@@ -96,9 +96,9 @@ impl Pilot {
                     ),
                 ]
                 .into_iter()
-                .filter(|(_, _, area, _)| !minimal || self.area == *area)
+                .filter(|(_, _, area, _)| !minimal || self.navigation.area == *area)
                 .map(|(id, label, area, icon)| {
-                    let selected = self.area == area;
+                    let selected = self.navigation.area == area;
                     Button::new(SharedString::from(format!("section-{id}")))
                         .ghost()
                         .small()
@@ -153,7 +153,7 @@ impl Pilot {
                 self.selected_node.as_deref().unwrap_or("None")
             )
         };
-        let applied = format!("{applied} · Page: {}", self.page_title());
+        let applied = format!("{applied} · Page: {}", self.navigation.page_title());
         h_flex()
             .id("applied-config")
             .test_support()
@@ -165,12 +165,12 @@ impl Pilot {
                 div()
                     .id("page-title")
                     .test_support()
-                    .aria_label(self.page_title())
+                    .aria_label(self.navigation.page_title())
                     .text_size(dp(13.))
                     .font_weight(ui::HEADING_WEIGHT)
                     .truncate()
-                    .child(self.page_title())
-                    .when(self.page == Page::Nodes, |this| {
+                    .child(self.navigation.page_title())
+                    .when(self.navigation.page == Page::Nodes, |this| {
                         this.cursor_pointer().on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|view, _, window, cx| view.close_node(window, cx)),
@@ -178,7 +178,7 @@ impl Pilot {
                     }),
             )
             .when_some(
-                (self.page == Page::Nodes)
+                (self.navigation.page == Page::Nodes)
                     .then(|| self.node_workspace.read(cx).crumb())
                     .flatten(),
                 |this, (node, tab)| {
@@ -390,7 +390,7 @@ impl Pilot {
         let (remaining, ring_visible) = self.countdown_state();
         // The ring is a view of its own: hand it this frame's values without
         // notifying, since it draws right after the shell does.
-        self.countdown.update(cx, |countdown, _| {
+        self.chrome.countdown.update(cx, |countdown, _| {
             countdown.set(remaining, ring_visible);
         });
         let pilot = cx.entity().downgrade();
@@ -405,7 +405,7 @@ impl Pilot {
                     .absolute()
                     .top_0()
                     .left_0()
-                    .child(self.countdown.clone()),
+                    .child(self.chrome.countdown.clone()),
             )
             .child(
                 Button::new("refresh")
@@ -468,11 +468,11 @@ impl Pilot {
         };
         Popover::new("settings-popover")
             .anchor(Anchor::TopRight)
-            .open(self.settings_open)
+            .open(self.navigation.settings_open)
             .on_open_change(move |open, window, cx| {
                 let open = *open;
                 _ = open_pilot.update(cx, |view, cx| {
-                    view.settings_open = open;
+                    view.navigation.settings_open = open;
                     cx.notify();
                 });
                 if !open {

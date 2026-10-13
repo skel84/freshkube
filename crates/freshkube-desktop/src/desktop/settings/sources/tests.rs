@@ -10,10 +10,9 @@ use freshkube_core::workspace::{self, Destination, Entry, Key, Loaded, Part, Rol
 #[cfg(unix)]
 use freshkube_delivery::entry::Checked;
 use freshkube_delivery::entry::Reach;
-use gpui_kit::{
-    AppContext, TestAppContext,
-    test::{TestAppContextExt, TestWindowExt},
-};
+use freshkube_ui::real_io::RealIo;
+use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
+#[cfg(unix)]
 use std::time::Duration;
 
 const FRAME: layout_check::PageFrame = layout_check::PageFrame {
@@ -463,7 +462,7 @@ async fn a_check_past_its_deadline_fails(cx: &mut TestAppContext) {
     })
     .unwrap();
     let waiting = view.clone();
-    cx.wait_for(handle, Duration::from_secs(10), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         !list(&waiting, cx).read(cx).is_checking()
     })
     .await;
@@ -514,7 +513,7 @@ async fn a_live_entry_missing_from_the_kubeconfig_is_unreachable(cx: &mut TestAp
     })
     .unwrap();
     let waiting = view.clone();
-    cx.wait_for(handle, Duration::from_secs(10), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         !list(&waiting, cx).read(cx).is_checking()
     })
     .await;

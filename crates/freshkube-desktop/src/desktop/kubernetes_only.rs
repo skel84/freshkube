@@ -369,7 +369,7 @@ impl Pilot {
     /// Reinspect local files at the refresh boundary. Unchanged access keeps
     /// its watch and selection, including while a failed transport retries.
     pub(super) fn refresh_kubernetes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.elapsed = Duration::ZERO;
+        self.chrome.elapsed = Duration::ZERO;
         if self.config_loading {
             return;
         }
@@ -709,7 +709,7 @@ impl Pilot {
                     "Needs a talosconfig",
                     format!(
                         "{} reads the Talos API. This window opened with a kubeconfig only, so it can browse Kubernetes but can't reach the nodes. Choose a talosconfig in Settings to manage them.",
-                        self.page.title()
+                        self.navigation.page.title()
                     ),
                     None,
                     vec![
@@ -718,7 +718,7 @@ impl Pilot {
                             .icon(IconName::Settings)
                             .label("Open Settings")
                             .on_click(cx.listener(|view, _, _, cx| {
-                                view.settings_open = true;
+                                view.navigation.settings_open = true;
                                 cx.notify();
                             }))
                             .into_any_element(),
@@ -726,7 +726,7 @@ impl Pilot {
                             .outline()
                             .label("Browse Kubernetes")
                             .on_click(cx.listener(|view, _, window, cx| {
-                                view.open_kind(view.resource_kind.clone(), window, cx)
+                                view.open_kind(view.navigation.resource_kind.clone(), window, cx)
                             }))
                             .into_any_element(),
                     ],

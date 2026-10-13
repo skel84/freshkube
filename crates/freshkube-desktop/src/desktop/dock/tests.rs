@@ -7,7 +7,7 @@ use super::{Dock, MAX_LOG_TABS, MAX_SHELL_TABS, TabKind};
 use crate::desktop::tests::{fixture, start_shell};
 use crate::desktop::{Page, Pilot};
 use crate::logs::PodLogPanel;
-use crate::logs::PodLogView;
+use crate::logs::{PodLogView, WorkloadLogView};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::shell::{self, ShellState, ShellView};
 use crate::resources::{Tab, example, live};
@@ -81,6 +81,80 @@ fn pod_view(dock: &Entity<Dock>, ix: usize, cx: &mut TestAppContext) -> Entity<P
         TabKind::Pod(view) => view.clone(),
         TabKind::Workload(_) | TabKind::Shell(_) => panic!("not a pod's log tab"),
     })
+}
+
+fn workload_view(
+    dock: &Entity<Dock>,
+    ix: usize,
+    cx: &mut TestAppContext,
+) -> Entity<WorkloadLogView> {
+    cx.update(|cx| match &dock.read(cx).tabs[ix].kind {
+        TabKind::Workload(view) => view.clone(),
+        TabKind::Pod(_) | TabKind::Shell(_) => panic!("not a workload's log tab"),
+    })
+}
+
+#[gpui_kit::test]
+fn log_tabs_keep_their_streams_on_every_page_and_minimized(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    let api = objects(&pilot, "deployments.apps", |_, name| name == "api", cx);
+    open_logs(handle, &pilot, "pods", &pods[0], cx);
+    open_logs(handle, &pilot, "deployments.apps", &api[0], cx);
+    let pod = pod_view(&dock, 0, cx);
+    let workload = workload_view(&dock, 1, cx);
+    let open = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            (
+                pod.read(cx).source().stream_open(),
+                workload.read(cx).source().reads_open(),
+            )
+        })
+    };
+    let read = |cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            (
+                pod.read(cx).retained().len(),
+                workload.read(cx).retained().len(),
+            )
+        })
+    };
+    // The workload's feed opens with its first example line.
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(3));
+    cx.run_until_parked();
+    assert_eq!(open(cx), (true, true));
+
+    // Every page hides and shows the others; no page's hide reaches a tab.
+    for page in Page::ALL {
+        let before = read(cx);
+        cx.update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| pilot.navigate(page, window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+        draw(handle, cx);
+        assert_eq!(open(cx), (true, true), "on {page:?}");
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(3));
+        cx.run_until_parked();
+        let after = read(cx);
+        assert!(after.0 > before.0 && after.1 > before.1, "read on {page:?}");
+    }
+
+    // Minimized to its tabs, the dock reads on.
+    cx.update_window(handle, |_, window, cx| window.click("dock-toggle", cx))
+        .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    let before = read(cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(3));
+    cx.run_until_parked();
+    assert_eq!(open(cx), (true, true));
+    let after = read(cx);
+    assert!(after.0 > before.0 && after.1 > before.1, "read minimized");
 }
 
 #[gpui_kit::test]

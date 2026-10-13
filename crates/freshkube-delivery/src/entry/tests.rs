@@ -13,6 +13,98 @@ fn serving() -> FixtureReader {
         .serves(argocd::GROUP, "v1alpha1", &["applications"])
 }
 
+/// The HTTP boundary the fixture Reader normally replaces: discovery serves
+/// Kargo, then its one-item entry probe answers with an API Status.
+async fn api_entry_failure(code: u16, kind: FailureKind, message: &str, words: &str) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let api_message = message.to_owned();
+    let server = freshkube_core::job::OwnedJob::new(tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 1024];
+                let count = socket.read(&mut buffer).await.unwrap();
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..count]);
+                if request.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+                assert!(request.len() <= 16 * 1024);
+            }
+            let head = String::from_utf8(request).unwrap();
+            let path = head.split_whitespace().nth(1).unwrap();
+            log.lock().unwrap().push(path.to_owned());
+            let (status, body) = match path {
+                "/apis" => (
+                    200,
+                    serde_json::json!({"groups":[{"name":kargo::GROUP,
+                    "preferredVersion":{"version":"v1alpha1"}, "versions":[{"version":"v1alpha1"}]}]}),
+                ),
+                "/apis/kargo.akuity.io/v1alpha1" => {
+                    (200, serde_json::json!({"resources":[{"name":"projects"}]}))
+                }
+                _ => (
+                    code,
+                    serde_json::json!({"kind":"Status", "apiVersion":"v1", "status":"Failure",
+                    "reason":"Synthetic", "message":api_message, "code":code}),
+                ),
+            };
+            let body = body.to_string();
+            let answer = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(answer.as_bytes()).await.unwrap();
+        }
+    }));
+    let client = freshkube_core::kube_client::client(Config::new(
+        format!("http://{address}").parse().unwrap(),
+    ))
+    .unwrap();
+    let reader = bounded(ReadOnlyClient::new(client));
+    let reach = check(&reader, Part::Kargo).await;
+    let failure = match (&reach, code) {
+        (Reach::Refused(failure), 403) | (Reach::NotServed(failure), 404) => failure,
+        other => panic!("a failed entry probe must not be readable: {other:?}"),
+    };
+    assert_eq!(failure.kind, kind);
+    assert_eq!(failure.message, message);
+    assert_eq!(reach.words(Part::Kargo.label(), "cluster-a"), words);
+    let paths = seen.lock().unwrap();
+    assert_eq!(paths.len(), 3);
+    assert!(paths[2].starts_with("/apis/kargo.akuity.io/v1alpha1/projects?"));
+    assert!(paths[2].contains("limit=1"));
+    drop(server);
+}
+
+#[tokio::test]
+async fn an_entry_probe_403_keeps_the_refusal_kind_and_words() {
+    api_entry_failure(
+        403,
+        FailureKind::Forbidden,
+        "projects is forbidden",
+        "Kargo refused on cluster-a: projects is forbidden",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn an_entry_probe_404_keeps_the_not_served_kind_and_words() {
+    api_entry_failure(
+        404,
+        FailureKind::NotFound,
+        "the server could not find the requested resource",
+        "Kargo isn't served on cluster-a",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn an_answer_is_readable_even_when_empty() {
     let reader = serving();

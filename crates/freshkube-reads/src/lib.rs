@@ -13,3 +13,6 @@ mod watch;
 pub use loader::Loader;
 pub use visibility::OnShow;
 pub use watch::{Pace, Watch};
+
+#[cfg(test)]
+mod test_support;

@@ -1,3 +1,4 @@
+use freshkube_ui::real_io::RealIo;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use freshkube_core::resources::{
     ForwardFailure, ForwardFailureKind, ForwardTarget, builtin, listen_local,
 };
 use gpui_kit::component::Root;
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, size};
 use tokio::runtime::Runtime;
 
@@ -18,9 +19,6 @@ use super::{ForwardList, ForwardSpec, ForwardsIndicator, Listen, list, running, 
 use crate::resources::KubeAccess;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{example, live};
-
-/// How long, in test time, a forward may take to answer.
-const PATIENCE: Duration = Duration::from_secs(5);
 
 struct Mounted {
     runtime: Runtime,
@@ -56,7 +54,7 @@ impl Mounted {
     /// Waits until a forward has its port, or has failed to get one.
     async fn settle(&self, cx: &mut TestAppContext, id: u64) {
         let list = self.list.clone();
-        cx.wait_for(self.window, PATIENCE, move |_, cx| {
+        cx.wait_for_io(self.window, move |_, cx| {
             list.read(cx).get(id, cx).unwrap().read(cx).phase != Phase::Starting
         })
         .await;
@@ -108,7 +106,7 @@ impl Mounted {
 
     async fn wait_until(&self, cx: &mut TestAppContext, what: impl Fn(&str) -> bool, id: u64) {
         let list = self.list.clone();
-        cx.wait_for(self.window, PATIENCE, move |_, cx| {
+        cx.wait_for_io(self.window, move |_, cx| {
             let label = list
                 .read(cx)
                 .get(id, cx)
@@ -496,7 +494,7 @@ async fn closing_the_window_asks_then_stops_every_forward(cx: &mut TestAppContex
     cx.run_until_parked();
     cx.simulate_prompt_answer("Stop");
     let flag = closed.clone();
-    cx.wait_for(forwards.window, PATIENCE, move |_, _| flag.get())
+    cx.wait_for_io(forwards.window, move |_, _| flag.get())
         .await;
     assert_eq!(cx.read(running), 0);
     assert!(freed(port), "the port is free once it closes");

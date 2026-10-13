@@ -1094,6 +1094,7 @@ fn audit_kubeconfig_certificates(kubeconfig: &str) -> SourceSnapshot<Vec<Certifi
     }
 }
 
+// String exception: certificate decoding messages become inventory warnings, not classified read failures.
 fn parse_base64_certificate(
     name: &str,
     source: CertificateSource,
@@ -1105,6 +1106,7 @@ fn parse_base64_certificate(
     parse_certificate_bundle(name, source, &pem)
 }
 
+// String exception: certificate-bundle validation messages become inventory warnings without classification.
 fn parse_certificate_bundle(
     name: &str,
     source: CertificateSource,
@@ -1141,6 +1143,7 @@ fn parse_certificate_bundle(
     Ok(certificates)
 }
 
+// String exception: PEM/X.509 parse messages become inventory warnings without classification.
 fn parse_certificate(
     name: &str,
     source: CertificateSource,
@@ -1407,6 +1410,7 @@ async fn config_hash_for_selected(
     }
 }
 
+// String exception: machineconfig YAML/version validation is displayed as unavailable without classification.
 fn parse_config_hash(bytes: &[u8]) -> Result<String, String> {
     let mut fallback = None;
     for document in serde_yaml::Deserializer::from_slice(bytes).take(64) {

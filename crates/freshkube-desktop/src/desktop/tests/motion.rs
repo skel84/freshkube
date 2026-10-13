@@ -7,7 +7,7 @@ fn a_cold_nodes_table_draws_its_header_over_the_loading_rows(cx: &mut TestAppCon
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-2", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).navigation.page, Page::Nodes);
         assert!(view.read(cx).nodes_wait(cx));
         assert!(window.find("nodes-loading").visible());
         let header: Vec<_> = (0usize..12)

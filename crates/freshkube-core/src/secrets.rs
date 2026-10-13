@@ -8,6 +8,7 @@
 //! `Display`, so no key reaches a log or an error by formatting.
 use std::sync::Arc;
 
+// String exception: OS credential-store messages are displayed, never classified as cluster failures.
 pub trait SecretStore: Send + Sync {
     fn read(&self, account: &str) -> Result<Option<String>, String>;
     fn write(&self, account: &str, secret: &str) -> Result<(), String>;
@@ -36,6 +37,7 @@ pub struct MemoryStore {
 
 #[cfg(any(test, feature = "testing"))]
 impl MemoryStore {
+    // String exception: the test store preserves the credential-store message contract.
     fn check(&self) -> Result<(), String> {
         if self.unavailable.load(std::sync::atomic::Ordering::SeqCst) {
             Err(format!("No {STORE_NAME} is available"))
