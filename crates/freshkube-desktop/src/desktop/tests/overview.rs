@@ -1,5 +1,7 @@
 use super::*;
 
+const FIRST_NODE: &str = "talos-cp-fra1-01";
+
 #[gpui_kit::test]
 fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
