@@ -280,37 +280,6 @@ impl ScreenPanel for SettingsPage {
 }
 
 impl Pilot {
-    /// The handles of the pages that aren't Talos screens, by their keys:
-    /// one argument a page.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn page_handles(
-        overview: &Entity<OverviewPage>,
-        nodes: &Entity<nodes::Nodes>,
-        services: &Entity<SystemServices>,
-        monitoring: &Entity<MonitoringPage>,
-        observability: &Entity<ObservabilityPage>,
-        applications: &Entity<ApplicationsPage>,
-        settings: &Entity<SettingsPage>,
-        resources: &Entity<ResourcesScreen>,
-    ) -> [(PageId, ScreenHandle); 8] {
-        [
-            (PageId::Overview, ScreenHandle::new(overview.clone())),
-            (PageId::Nodes, ScreenHandle::new(nodes.clone())),
-            (PageId::SystemServices, ScreenHandle::new(services.clone())),
-            (PageId::Monitoring, ScreenHandle::new(monitoring.clone())),
-            (
-                PageId::Observability,
-                ScreenHandle::new(observability.clone()),
-            ),
-            (
-                PageId::Applications,
-                ScreenHandle::new(applications.clone()),
-            ),
-            (PageId::Settings, ScreenHandle::new(settings.clone())),
-            (PageId::Resources, ScreenHandle::new(resources.clone())),
-        ]
-    }
-
     /// Hears a page through its handle. A handle hands its events no
     /// shell, so they go back through a weak one, gone with the window.
     /// Called while the shell is made, before anything it starts can emit:
