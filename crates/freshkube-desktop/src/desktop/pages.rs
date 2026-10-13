@@ -422,6 +422,30 @@ impl Pilot {
         }
     }
 
+    /// Tells every page with a handle whether it shows: the one
+    /// [`shown_page`](Self::shown_page) names shows and every other hides,
+    /// so a node pane's screen shows only while Nodes is up with its tab
+    /// selected. A page drops its reads on hide; one told what it already
+    /// knows does nothing.
+    pub(super) fn sync_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = self.shown_page();
+        let pages = self.pages.iter().map(|(_, handle)| handle);
+        for handle in pages.chain(self.screens.iter().map(|(_, handle)| handle)) {
+            handle.set_visible(shown.as_ref() == Some(handle), window, cx);
+        }
+    }
+
+    /// [`sync_visible`](Self::sync_visible) for a change made without the
+    /// window at hand, once the update that made it ends.
+    pub(super) fn sync_visible_soon(&self, cx: &mut Context<Self>) {
+        let (window, pilot) = (self.window, cx.weak_entity());
+        cx.defer(move |cx| {
+            _ = window.update(cx, |_, window, cx| {
+                _ = pilot.update(cx, |this, cx| this.sync_visible(window, cx));
+            });
+        });
+    }
+
     pub(super) fn navigate_from_keyboard(
         &mut self,
         page: Page,
@@ -460,25 +484,11 @@ impl Pilot {
         if page == Page::Resources {
             self.column_reveal = Some(ColumnReveal::Kind(self.resource_kind.key()));
         }
-        self.monitoring.update(cx, |monitoring, cx| {
-            monitoring.set_visible(page == Page::Monitoring, cx)
-        });
-        self.observability.update(cx, |observability, cx| {
-            observability.set_visible(page == Page::Observability, cx)
-        });
-        self.applications.update(cx, |applications, cx| {
-            applications.set_visible(page == Page::Applications, cx)
-        });
-        let sources = self.settings_page.read(cx).sources.clone();
-        sources.update(cx, |sources, cx| {
-            sources.set_visible(page == Page::Settings, cx)
-        });
-        self.resources.update(cx, |resources, cx| {
-            resources.set_visible(page == Page::Resources, window, cx);
-            if page == Page::Resources {
-                resources.focus(window, cx);
-            }
-        });
+        // `sync_node_visibility` has told every page whether it shows.
+        if page == Page::Resources {
+            self.resources
+                .update(cx, |resources, cx| resources.focus(window, cx));
+        }
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
             screen.focus(window, cx);

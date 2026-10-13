@@ -4,6 +4,7 @@ mod app_menu;
 mod applications_column_tests;
 mod connection;
 pub(crate) mod dock;
+mod entity_pages;
 #[cfg(test)]
 mod gate_tests;
 mod kubeconfig;
@@ -48,17 +49,17 @@ use crate::{
     logs::{LogPanel, TalosPanel},
     maintenance::MaintenanceView,
     monitoring::history::HistoryView,
-    monitoring::page::{MonitoringEvent, MonitoringPage, TalosNodes},
+    monitoring::page::{MonitoringPage, TalosNodes},
     mutation::{self, Operations},
     presentation::{self, Health, LoadHistory, NodeSummary},
     resources::{
-        self, KubeAccess, KubeSource, NotServed, ResourcesScreen, custom::CustomResources,
-        navigation, shell as pod_shell,
+        self, KubeAccess, KubeSource, ResourcesScreen, custom::CustomResources, navigation,
+        shell as pod_shell,
     },
     screens::{
         DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
-        OperationsScreen, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
-        SecurityScreen, StorageScreen, WorkloadsScreen,
+        OperationsScreen, PageEvent, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel,
+        ScreenSource, SecurityScreen, StorageScreen, WorkloadsScreen,
     },
     state::Snapshot,
     text_size, theme,
@@ -320,12 +321,8 @@ fn cached_page_style() -> StyleRefinement {
 /// The entities whose events the shell routes.
 struct PageEntities<'a> {
     node_pods: &'a Entity<ResourcesScreen>,
-    resources: &'a Entity<ResourcesScreen>,
     dock: &'a Entity<dock::Dock>,
-    observability: &'a Entity<crate::observability::ObservabilityPage>,
-    monitoring: &'a Entity<MonitoringPage>,
     custom: &'a Entity<CustomResources>,
-    applications: &'a Entity<crate::applications::ApplicationsPage>,
 }
 
 pub(crate) struct Pilot {
@@ -392,6 +389,9 @@ pub(crate) struct Pilot {
     node_workspace: nodes::Nodes,
     node_pods: Entity<ResourcesScreen>,
     screens: Vec<(ScreenKind, ScreenHandle)>,
+    /// The entity pages' handles, which hear whether they show; #579's
+    /// step 3 keeps them and `screens` in one map.
+    pages: Vec<(Page, ScreenHandle)>,
     /// Typed observation recipients; `screens` wraps these same entities.
     health: Entity<WorkloadsScreen>,
     lifecycle: Entity<LifecycleScreen>,
@@ -494,6 +494,9 @@ pub(crate) struct Pilot {
     /// The selected service changed by pointer or keyboard, so a stacked
     /// layout brings its details into view once they are laid out.
     reveal_service: bool,
+    /// The window the shell draws in, for what changes the shown page
+    /// without one at hand (`Pilot::sync_visible_soon`).
+    window: AnyWindowHandle,
     _subscriptions: Vec<Subscription>,
     config_job: Option<OwnedJob>,
     overview_job: Option<OwnedJob>,
@@ -722,7 +725,9 @@ impl Pilot {
         ]);
     }
 
-    /// Routes the pages' and the dock's events to the shell.
+    /// Routes the node pane's Pods list's and the dock's events to the
+    /// shell; the entity pages' come through their handles
+    /// (`subscribe_pages`).
     fn subscribe_page_events(
         subscriptions: &mut Vec<Subscription>,
         pages: PageEntities<'_>,
@@ -731,165 +736,25 @@ impl Pilot {
     ) {
         let PageEntities {
             node_pods,
-            resources,
             dock,
-            observability,
-            monitoring,
             custom,
-            applications,
         } = pages;
-        // A part of an open application, opened as every object link is.
-        subscriptions.push(cx.subscribe_in(
-            applications,
-            window,
-            |this, _, link: &resources::ResourceLink, window, cx| {
-                this.resource_link(link.clone(), window, cx)
-            },
-        ));
-        // A change's Deployment revision, in Observability.
-        subscriptions.push(cx.subscribe_in(
-            applications,
-            window,
-            |this, _, link: &crate::observability::RevisionLink, window, cx| {
-                this.open_revision(link.clone(), window, cx)
-            },
-        ));
-        // One in another workspace entry's cluster, after a switch.
-        subscriptions.push(cx.subscribe_in(
-            applications,
-            window,
-            |this, _, event: &crate::applications::SwitchLink, window, cx| {
-                this.open_on_entry(event.entry.to_string(), event.link.clone(), window, cx)
-            },
-        ));
         subscriptions.push(cx.subscribe_in(
             node_pods,
             window,
-            |this, _, event: &resources::NodePodsEvent, window, cx| match event {
-                resources::NodePodsEvent::Back => this.node_back(window, cx),
-                resources::NodePodsEvent::Open(identity) => {
-                    let identity = identity.clone();
-                    this.open_object(
-                        builtin("pods").expect("pod kind"),
-                        identity.into(),
-                        resources::Tab::Overview,
-                        window,
-                        cx,
-                    );
-                }
-            },
-        ));
-        subscriptions.push(cx.subscribe_in(
-            resources,
-            window,
-            |this, _, event: &resources::ResourceLink, window, cx| {
-                this.resource_link(event.clone(), window, cx)
+            |this, _, event: &resources::NodePodsEvent, window, cx| {
+                this.page_event(&event.clone().into(), window, cx)
             },
         ));
         subscriptions.push(cx.observe(dock, |_, _, cx| cx.notify()));
         subscriptions.push(cx.subscribe_in(
             dock,
             window,
-            |this, _, event: &dock::DockEvent, window, cx| match event {
-                dock::DockEvent::Leave(back) => {
-                    // What had the keyboard may no longer be drawn, as after
-                    // going to another page; the shell's root contains it
-                    // only if the last frame drew it.
-                    if let Some(back) = back {
-                        window.focus(back, cx);
-                        if this.focus.contains_focused(window, cx) {
-                            return;
-                        }
-                    }
-                    this.focus_page(window, cx)
-                }
+            |this, _, event: &dock::DockEvent, window, cx| {
+                this.page_event(&event.clone().into(), window, cx)
             },
         ));
-        subscriptions.push(
-            cx.subscribe_in(observability, window, |this, _, event, window, cx| {
-                use crate::observability::ObservabilityEvent;
-                match event {
-                    ObservabilityEvent::Navigation => cx.notify(),
-                    ObservabilityEvent::Dashboards => {
-                        this.navigate_from_keyboard(Page::Monitoring, window, cx)
-                    }
-                    ObservabilityEvent::OpenExamplePod {
-                        namespace,
-                        name,
-                        logs,
-                    } if this.fixture => this.open_object(
-                        builtin("pods").unwrap(),
-                        resources::model::ObjectRef {
-                            connection: None,
-                            namespace: namespace.clone(),
-                            name: name.clone(),
-                            uid: String::new(),
-                        },
-                        if *logs {
-                            resources::Tab::Logs
-                        } else {
-                            resources::Tab::Overview
-                        },
-                        window,
-                        cx,
-                    ),
-                    ObservabilityEvent::OpenExamplePod { .. } => {}
-                    ObservabilityEvent::OpenObject {
-                        source,
-                        app,
-                        subject,
-                    } => {
-                        if this
-                            .observability
-                            .read(cx)
-                            .link_is_current(source, app, subject)
-                            && this
-                                .kube_source()
-                                .is_some_and(|source| source.id == subject.access())
-                        {
-                            this.open_object(
-                                subject.kind().clone(),
-                                resources::model::ObjectRef {
-                                    connection: Some(subject.access().into()),
-                                    namespace: subject.namespace().into(),
-                                    name: subject.name().into(),
-                                    uid: String::new(),
-                                },
-                                resources::Tab::Overview,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                }
-            }),
-        );
-        subscriptions.push(
-            cx.subscribe_in(
-                monitoring,
-                window,
-                |this, _, event, window, cx| match event {
-                    MonitoringEvent::Catalog => cx.notify(),
-                    MonitoringEvent::History => this.push_history(cx),
-                    // The column lists the dashboards; an open one stays open.
-                    MonitoringEvent::Dashboards => {
-                        if this.column_collapsed(window) {
-                            this.toggle_column(window, cx);
-                        }
-                    }
-                },
-            ),
-        );
-        subscriptions.extend([
-            cx.observe(custom, |_, _, cx| cx.notify()),
-            // A kind that stopped being served may have taken its group's
-            // other kinds with it; discover the group again.
-            cx.subscribe(resources, |view, _, NotServed(kind), cx| {
-                let group = kind.group.clone();
-                view.custom
-                    .update(cx, |custom, cx| custom.not_served(&group, cx));
-            }),
-        ]);
+        subscriptions.push(cx.observe(custom, |_, _, cx| cx.notify()));
     }
 
     /// The one-second tick: the countdown, and the automatic refresh.
@@ -1042,38 +907,60 @@ impl Pilot {
             mutation::may_close(window, cx)
                 && pod_shell::may_close(window, cx, |window, _| window.remove_window())
         });
-        let health =
-            Self::screen_entity::<WorkloadsScreen>(runtime.clone(), &mut subscriptions, window, cx);
-        let lifecycle =
-            Self::screen_entity::<LifecycleScreen>(runtime.clone(), &mut subscriptions, window, cx);
+        let health = Self::screen_entity(
+            WorkloadsScreen::new,
+            runtime.clone(),
+            &mut subscriptions,
+            window,
+            cx,
+        );
+        let lifecycle = Self::screen_entity(
+            LifecycleScreen::new,
+            runtime.clone(),
+            &mut subscriptions,
+            window,
+            cx,
+        );
         let screens = ScreenKind::ALL
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
-                    ScreenKind::Processes => {
-                        Self::screen::<ProcessesScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Processes => Self::screen(
+                        ProcessesScreen::new,
+                        runtime,
+                        &mut subscriptions,
+                        window,
+                        cx,
+                    ),
                     ScreenKind::Storage => {
-                        Self::screen::<StorageScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(StorageScreen::new, runtime, &mut subscriptions, window, cx)
                     }
                     ScreenKind::Network => {
-                        Self::screen::<NetworkScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(NetworkScreen::new, runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Diagnostics => {
-                        Self::screen::<DiagnosticsScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Diagnostics => Self::screen(
+                        DiagnosticsScreen::new,
+                        runtime,
+                        &mut subscriptions,
+                        window,
+                        cx,
+                    ),
                     ScreenKind::Etcd => {
-                        Self::screen::<EtcdScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(EtcdScreen::new, runtime, &mut subscriptions, window, cx)
                     }
                     ScreenKind::Health => ScreenHandle::new(health.clone()),
                     ScreenKind::Security => {
-                        Self::screen::<SecurityScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(SecurityScreen::new, runtime, &mut subscriptions, window, cx)
                     }
                     ScreenKind::Lifecycle => ScreenHandle::new(lifecycle.clone()),
-                    ScreenKind::Operations => {
-                        Self::screen::<OperationsScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Operations => Self::screen(
+                        OperationsScreen::new,
+                        runtime,
+                        &mut subscriptions,
+                        window,
+                        cx,
+                    ),
                 };
                 (page, handle)
             })
@@ -1138,16 +1025,21 @@ impl Pilot {
         ]);
         let applications =
             cx.new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx));
+        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
+        let pages = Self::page_handles(
+            &monitoring,
+            &observability,
+            &applications,
+            &settings_page,
+            &resources,
+        );
+        subscriptions.extend(Self::subscribe_pages(&pages, window, cx));
         Self::subscribe_page_events(
             &mut subscriptions,
             PageEntities {
                 node_pods: &node_pods,
-                resources: &resources,
                 dock: &dock,
-                observability: &observability,
-                monitoring: &monitoring,
                 custom: &custom,
-                applications: &applications,
             },
             window,
             cx,
@@ -1193,13 +1085,14 @@ impl Pilot {
             node_workspace,
             node_pods,
             screens,
+            pages,
             health,
             lifecycle,
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
-            settings_page: cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx)),
+            settings_page,
             applications,
             workspace_file: options
                 .preferences
@@ -1264,6 +1157,7 @@ impl Pilot {
             service_focus: cx.focus_handle(),
             service_scroll: ScrollHandle::new(),
             reveal_service: false,
+            window: window.window_handle(),
             _subscriptions: subscriptions,
             config_job: None,
             overview_job: None,
@@ -1520,32 +1414,33 @@ impl Pilot {
     }
 
     fn screen<T: ScreenPanel>(
+        new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
         runtime: Handle,
         subscriptions: &mut Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ScreenHandle {
-        ScreenHandle::new(Self::screen_entity::<T>(runtime, subscriptions, window, cx))
+        ScreenHandle::new(Self::screen_entity(new, runtime, subscriptions, window, cx))
     }
 
     fn screen_entity<T: ScreenPanel>(
+        new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
         runtime: Handle,
         subscriptions: &mut Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<T> {
-        let screen = cx.new(|cx| T::new(runtime, window, cx));
-        subscriptions.push(cx.subscribe_in(&screen, window, Self::screen_event));
+        let screen = cx.new(|cx| new(runtime, window, cx));
+        subscriptions.push(
+            cx.subscribe_in(&screen, window, |this, _, event, window, cx| {
+                this.page_event(&PageEvent::Screen(event.clone()), window, cx)
+            }),
+        );
         screen
     }
 
-    fn screen_event<T>(
-        &mut self,
-        _: &Entity<T>,
-        event: &ScreenEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// What a Talos screen asks of the shell.
+    fn screen_event(&mut self, event: &ScreenEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             ScreenEvent::Back => self.node_back(window, cx),
             // With nothing reading yet, Health's Retry reads the kubeconfig

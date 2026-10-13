@@ -148,16 +148,8 @@ pub(crate) struct StorageScreen {
 
 impl EventEmitter<ScreenEvent> for StorageScreen {}
 
-impl ScreenPanel for StorageScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
-        self.embedded = embedded;
-        cx.notify();
-    }
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl StorageScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextRow, Some(CONTEXT)),
             KeyBinding::new("up", PreviousRow, Some(CONTEXT)),
@@ -180,6 +172,17 @@ impl ScreenPanel for StorageScreen {
             disk_table: table::TableState::new("storage-disks"),
             volume_table: table::TableState::new("storage-volumes"),
         }
+    }
+}
+
+impl ScreenPanel for StorageScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
