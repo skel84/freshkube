@@ -753,18 +753,7 @@ impl Pilot {
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
         navigation_file.clone().install(cx);
         Self::bind_shell_keys(cx);
-        let path = cx.new(|cx| InputState::new(window, cx).placeholder("Default talosconfig"));
-        path.update(cx, |input, cx| {
-            input.set_value(
-                options
-                    .config_path
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default(),
-                window,
-                cx,
-            )
-        });
+        let path = Self::talosconfig_input(&options, window, cx);
         let mut subscriptions = Self::subscribe_shell(window, cx);
         let pages = page_map::Pages::new(&options, &runtime, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
@@ -855,10 +844,33 @@ impl Pilot {
         self.push_attention_stale(cx);
     }
 
+    /// The session's talosconfig input, holding the path it was launched
+    /// with. Made before the pages, as it always was.
+    fn talosconfig_input(
+        options: &GpuiOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        let path = cx.new(|cx| InputState::new(window, cx).placeholder("Default talosconfig"));
+        path.update(cx, |input, cx| {
+            input.set_value(
+                options
+                    .config_path
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+                window,
+                cx,
+            )
+        });
+        path
+    }
+
     /// The shell around the owners `Pilot::new` made, with the session as
     /// it starts, before anything is read. Two of the session's entities
     /// are made earlier, where they always were: the talosconfig input
-    /// before the pages, and the age label with Overview, which draws it.
+    /// (`talosconfig_input`) before the pages, and the age label with
+    /// Overview, which draws it.
     fn with_session(
         options: &GpuiOptions,
         runtime: Handle,
