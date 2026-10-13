@@ -292,26 +292,26 @@ fn groups_tallies_and_glyphs_agree_and_arrows_skip_folded_healthy_rows(cx: &mut 
         pilot.update(cx, |pilot, cx| {
             window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
-        for name in ["talos-wk-fra1-02", "talos-wk-fra1-03", "talos-wk-fra1-01"] {
-            window.press("down", cx);
-            window.render_frame(cx);
+    })
+    .unwrap();
+    // The arrows step through the shell, as an event.
+    let press = |cx: &mut TestAppContext, key: &str| {
+        step(cx, handle, |window, cx| window.press(key, cx));
+        cx.update_window(handle, |_, window, cx| {
             let nodes = &pilot.read(cx).node_workspace.read(cx);
-            assert_eq!(nodes.row().unwrap().name, name);
-            assert!(nodes.row().unwrap().tone != Tone::Good);
-            assert!(window.find(nodes.row().unwrap().id.clone()).visible());
-        }
-        window.press("down", cx);
-        window.render_frame(cx);
-        assert_eq!(
-            pilot.read(cx).node_workspace.read(cx).row().unwrap().name,
-            "talos-wk-fra1-01"
-        );
-        window.press("up", cx);
-        window.render_frame(cx);
-        assert_eq!(
-            pilot.read(cx).node_workspace.read(cx).row().unwrap().name,
-            "talos-wk-fra1-03"
-        );
+            let row = nodes.row().unwrap();
+            assert!(row.tone != Tone::Good);
+            assert!(window.find(row.id.clone()).visible());
+            row.name.clone()
+        })
+        .unwrap()
+    };
+    for name in ["talos-wk-fra1-02", "talos-wk-fra1-03", "talos-wk-fra1-01"] {
+        assert_eq!(press(cx, "down"), name);
+    }
+    assert_eq!(press(cx, "down"), "talos-wk-fra1-01");
+    assert_eq!(press(cx, "up"), "talos-wk-fra1-03");
+    cx.update_window(handle, |_, window, cx| {
         window.click("nodes-tally-warning", cx);
         window.render_frame(cx);
         let nodes = &pilot.read(cx).node_workspace.read(cx);
@@ -475,49 +475,58 @@ fn opening_a_folded_healthy_node_from_overview_expands_and_reveals_it_on_return(
 ) {
     use freshkube_ui::table::TableSource;
     let (_runtime, handle, pilot) = fixture(cx, 1280., 560.);
-    cx.update_window(handle, |_, window, cx| {
-        let key = pilot
-            .read(cx)
-            .node_workspace
-            .read(cx)
-            .rows
-            .iter()
-            .find(|row| row.name == "talos-cp-fra1-01")
-            .unwrap()
-            .key
-            .clone();
-        assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
-        assert!(
-            pilot
+    let key = cx
+        .update_window(handle, |_, window, cx| {
+            let key = pilot
                 .read(cx)
                 .node_workspace
                 .read(cx)
-                .line_of(&key)
-                .is_none()
-        );
-        pilot.update(cx, |pilot, cx| {
-            pilot.open_destination(
-                crate::presentation::attention::Destination::Node(key.clone(), NodeTab::Overview),
-                window,
-                cx,
-            )
-        });
-        window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
-        assert_eq!(
-            pilot.read(cx).node_workspace.read(cx).selected.as_ref(),
-            Some(&key)
-        );
-        // Simulate a newer summary folding its now-healthy selected row while the pane is open.
-        pilot.update(cx, |pilot, cx| {
-            pilot.node_workspace.update(cx, |nodes, _| {
-                nodes.healthy_open = false;
-                nodes.rebuild_lines();
-                nodes.table.reveal(0, gpui_kit::ScrollStrategy::Top);
+                .rows
+                .iter()
+                .find(|row| row.name == "talos-cp-fra1-01")
+                .unwrap()
+                .key
+                .clone();
+            assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
+            assert!(
+                pilot
+                    .read(cx)
+                    .node_workspace
+                    .read(cx)
+                    .line_of(&key)
+                    .is_none()
+            );
+            pilot.update(cx, |pilot, cx| {
+                pilot.open_destination(
+                    crate::presentation::attention::Destination::Node(
+                        key.clone(),
+                        NodeTab::Overview,
+                    ),
+                    window,
+                    cx,
+                )
             });
-        });
-        assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
-        window.press("escape", cx);
+            window.render_frame(cx);
+            assert!(!pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
+            assert_eq!(
+                pilot.read(cx).node_workspace.read(cx).selected.as_ref(),
+                Some(&key)
+            );
+            // Simulate a newer summary folding its now-healthy selected row while the pane is open.
+            pilot.update(cx, |pilot, cx| {
+                pilot.node_workspace.update(cx, |nodes, _| {
+                    nodes.healthy_open = false;
+                    nodes.rebuild_lines();
+                    nodes.table.reveal(0, gpui_kit::ScrollStrategy::Top);
+                });
+            });
+            assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
+            window.press("escape", cx);
+            key
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(!pilot.read(cx).node_workspace.read(cx).open);
         assert!(!pilot.read(cx).node_workspace.read(cx).healthy_collapsed());

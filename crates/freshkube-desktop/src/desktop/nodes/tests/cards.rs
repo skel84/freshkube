@@ -116,28 +116,33 @@ fn a_card_tooltip_waiting_to_show_does_not_show_after_its_card_scrolls_away(
 #[gpui_kit::test]
 fn arrows_scroll_the_card_grid_to_the_selected_cards_row(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 392.);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("nav-nodes", cx);
-        crate::desktop::tests::settle_header(window, cx);
-        window.click("nodes-view-cards", cx);
-        window.render_frame(cx);
-        assert_eq!(super::super::cards::card_columns(window), 3);
-        let lines = pilot.read(cx).node_workspace.read(cx).lines.len();
-        assert!(lines > 3, "only {lines} cards: no second row");
-        // The second row starts below the list, so isn't drawn.
-        let fourth = pilot.read(cx).node_workspace.read(cx).lines[3];
-        let fourth = pilot.read(cx).node_workspace.read(cx).rows[fourth]
-            .id
-            .clone();
-        assert!(window.try_find(fourth.clone()).is_none());
-        pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
-        });
-        for _ in 0..4 {
-            window.press("down", cx);
+    let fourth = cx
+        .update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-        }
+            window.click("nav-nodes", cx);
+            crate::desktop::tests::settle_header(window, cx);
+            window.click("nodes-view-cards", cx);
+            window.render_frame(cx);
+            assert_eq!(super::super::cards::card_columns(window), 3);
+            let lines = pilot.read(cx).node_workspace.read(cx).lines.len();
+            assert!(lines > 3, "only {lines} cards: no second row");
+            // The second row starts below the list, so isn't drawn.
+            let fourth = pilot.read(cx).node_workspace.read(cx).lines[3];
+            let fourth = pilot.read(cx).node_workspace.read(cx).rows[fourth]
+                .id
+                .clone();
+            assert!(window.try_find(fourth.clone()).is_none());
+            pilot.update(cx, |pilot, cx| {
+                window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
+            });
+            fourth
+        })
+        .unwrap();
+    // On the cards the arrows step through the shell, as an event.
+    for _ in 0..4 {
+        step(cx, handle, |window, cx| window.press("down", cx));
+    }
+    cx.update_window(handle, |_, window, cx| {
         let row = pilot
             .read(cx)
             .node_workspace

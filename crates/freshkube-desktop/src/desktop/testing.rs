@@ -213,22 +213,11 @@ pub(crate) fn open_node_tab(
         view.update(cx, |view, cx| view.open_node(key, window, cx));
         window.render_frame(cx);
     }
-    if window.try_find(tab.id()).is_some_and(|button| {
-        let pane = window.find("node-pane").bounds();
-        button.visible()
-            && button.bounds().left() >= pane.left()
-            && button.bounds().right() <= pane.right()
-    }) {
-        window.click(tab.id(), cx);
-    } else {
-        for _ in 0..10 {
-            if view.read(cx).node_workspace.read(cx).tab == tab {
-                break;
-            }
-            window.press("secondary-}", cx);
-            window.render_frame(cx);
-        }
-    }
+    // A tab's click and Command-Shift-] reach the shell as events once the
+    // update ends; hand the shell the tab's event at once, as they would.
+    view.update(cx, |view, cx| {
+        view.nodes_event(&super::nodes::NodesEvent::Tab(tab), window, cx)
+    });
     window.render_frame(cx);
 }
 

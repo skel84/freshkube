@@ -1,4 +1,5 @@
 mod cards;
+mod events;
 mod keys;
 mod layout;
 mod menu;
@@ -104,4 +105,21 @@ fn open_first_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     crate::desktop::tests::expand_healthy_nodes(window, cx);
     crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
     window.render_frame(cx);
+}
+
+/// Runs `act` in an update of its own, lets what it emitted reach the
+/// shell, and draws: a key or click in Nodes asks the shell through an
+/// event, which lands only once the update ends.
+fn step<R>(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    act: impl FnOnce(&mut gpui_kit::Window, &mut gpui_kit::App) -> R,
+) -> R {
+    let result = cx
+        .update_window(handle, |_, window, cx| act(window, cx))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    result
 }
