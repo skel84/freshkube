@@ -458,8 +458,9 @@ fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
     let services = redrawn(&|view, cx| view.push_services(cx));
     let notice = redrawn(&|view, cx| view.note_restart("kubelet", cx));
     let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    // Nodes is a view of its own: the shell's notify no longer redraws it.
     assert_eq!(
         [shell, selection, services, notice, cached],
-        [1, 1, 1, 1, 1]
+        [0, 1, 1, 1, 1]
     );
 }

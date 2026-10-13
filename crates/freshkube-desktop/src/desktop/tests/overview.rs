@@ -13,9 +13,12 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         window
             .within("nodes-page")
             .click("node-talos-cp-fra1-01", cx);
-        window.press("down", cx);
     })
     .unwrap();
+    // The click reaches the shell once the update ends.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.press("down", cx))
+        .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);

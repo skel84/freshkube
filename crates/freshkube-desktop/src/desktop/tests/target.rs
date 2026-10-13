@@ -86,9 +86,13 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
                 .selected(),
             Some(false)
         );
-        window
-            .within("nodes-page")
-            .click("node-talos-wk-fra1-01", cx);
+        assert!(
+            window
+                .within("nodes-page")
+                .try_find("node-talos-wk-fra1-01")
+                .is_some()
+        );
+        click_node(window, cx, "node-talos-wk-fra1-01");
         window.render_frame(cx);
         assert_eq!(
             view.read(cx).selected_node.as_deref(),
