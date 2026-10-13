@@ -1,0 +1,1 @@
+- **Pod health:** the Kubernetes summary counts an unready pod or a failing init container the way its details do, and Diagnostics includes init-container faults and running pods that are not ready.

@@ -129,6 +129,13 @@ async fn check(
     );
     assert_eq!(health.total_pods, 1);
     assert_eq!(health.has_issues(), diagnostic_issue.is_some());
+    if let Some((category, _)) = diagnostic_issue {
+        assert_eq!(
+            serialized[category][0]["restart_count"].as_u64().unwrap(),
+            u64::from(diagnosis.as_ref().unwrap().restarts),
+            "{name}: selected container restart count"
+        );
+    }
     let context = DiagnosticContext {
         target: DiagnosticTarget::new("node-a", "192.0.2.1", "controlplane", "example"),
         platform: SourceState::Available("metal".into()),

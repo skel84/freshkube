@@ -159,10 +159,13 @@ pub struct UnhealthyPodInfo {
 /// Pod health information from K8s API
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PodHealthInfo {
-    /// Pods in CrashLoopBackOff
+    /// Pods with a selected crash-like fault, including init containers.
     pub crashing: Vec<UnhealthyPodInfo>,
     /// Pods in ImagePullBackOff
     pub image_pull_errors: Vec<UnhealthyPodInfo>,
+    /// Running pods with explicit non-True Ready evidence.
+    #[serde(default)]
+    pub not_ready: Vec<UnhealthyPodInfo>,
     /// Total pod count
     pub total_pods: usize,
 }
@@ -170,12 +173,14 @@ pub struct PodHealthInfo {
 impl PodHealthInfo {
     /// Check if there are any unhealthy pods
     pub fn has_issues(&self) -> bool {
-        !self.crashing.is_empty() || !self.image_pull_errors.is_empty()
+        !self.crashing.is_empty()
+            || !self.image_pull_errors.is_empty()
+            || !self.not_ready.is_empty()
     }
 
     /// Get summary message
     pub fn summary(&self) -> String {
-        if self.crashing.is_empty() && self.image_pull_errors.is_empty() {
+        if !self.has_issues() {
             "All pods healthy".to_string()
         } else {
             let mut parts = Vec::new();
@@ -184,6 +189,9 @@ impl PodHealthInfo {
             }
             if !self.image_pull_errors.is_empty() {
                 parts.push(format!("{} image errors", self.image_pull_errors.len()));
+            }
+            if !self.not_ready.is_empty() {
+                parts.push(format!("{} not ready", self.not_ready.len()));
             }
             parts.join(", ")
         }
@@ -247,9 +255,30 @@ mod tests {
                 restart_count: 5,
             }],
             image_pull_errors: vec![],
+            not_ready: vec![],
             total_pods: 10,
         };
         assert!(unhealthy.has_issues());
         assert_eq!(unhealthy.summary(), "1 crashing");
+    }
+
+    #[test]
+    fn not_ready_counts_join_existing_categories_and_old_snapshots_still_load() {
+        let mut health: PodHealthInfo =
+            serde_json::from_str(r#"{"crashing":[],"image_pull_errors":[],"total_pods":3}"#)
+                .unwrap();
+        assert!(health.not_ready.is_empty());
+        let pod = |state: &str| UnhealthyPodInfo {
+            name: "app".into(),
+            namespace: "example".into(),
+            state: state.into(),
+            restart_count: 0,
+        };
+        health.not_ready.push(pod("Not ready"));
+        assert!(health.has_issues());
+        assert_eq!(health.summary(), "1 not ready");
+        health.crashing.push(pod("CrashLoopBackOff"));
+        health.image_pull_errors.push(pod("ImagePullBackOff"));
+        assert_eq!(health.summary(), "1 crashing, 1 image errors, 1 not ready");
     }
 }

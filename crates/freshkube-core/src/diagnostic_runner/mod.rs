@@ -1158,36 +1158,48 @@ async fn collect_pod_health(client: &Client) -> Result<PodHealthInfo, Failure> {
     };
 
     for pod in pod_list.items {
-        let name = pod.metadata.name.unwrap_or_default();
-        let namespace = pod.metadata.namespace.unwrap_or_default();
-        let status = pod.status.as_ref();
-
-        if let Some(container_statuses) =
-            status.and_then(|status| status.container_statuses.as_ref())
-        {
-            for container in container_statuses {
-                let Some(waiting) = container
-                    .state
-                    .as_ref()
-                    .and_then(|state| state.waiting.as_ref())
-                else {
-                    continue;
-                };
-                let reason = waiting.reason.clone().unwrap_or_default();
-                let unhealthy = UnhealthyPodInfo {
-                    name: name.clone(),
-                    namespace: namespace.clone(),
-                    state: reason.clone(),
-                    restart_count: container.restart_count,
-                };
-
-                match reason.as_str() {
-                    "CrashLoopBackOff" => health.crashing.push(unhealthy),
-                    "ImagePullBackOff" | "ErrImagePull" => health.image_pull_errors.push(unhealthy),
-                    _ => {}
-                }
+        let Some(decision) = crate::workloads::pod_health(&pod) else {
+            continue;
+        };
+        let bucket = match decision.reason {
+            "CrashLoopBackOff" | "OOMKilled" | "Error" => &mut health.crashing,
+            "ImagePullBackOff" | "ErrImagePull" => &mut health.image_pull_errors,
+            "Not ready"
+                if matches!(
+                    decision.evidence,
+                    crate::workloads::PodEvidence::NotReady(_)
+                ) =>
+            {
+                &mut health.not_ready
             }
-        }
+            // Diagnostics keeps its categories; other diagnosed reasons do
+            // not become new checks or reads here.
+            _ => continue,
+        };
+        let index = match decision.evidence {
+            crate::workloads::PodEvidence::Waiting(index)
+            | crate::workloads::PodEvidence::Terminated(index) => Some(index),
+            crate::workloads::PodEvidence::NotReady(index) => index,
+            _ => None,
+        };
+        let restart_count = index
+            .and_then(|index| {
+                let status = pod.status.as_ref()?;
+                status
+                    .init_container_statuses
+                    .iter()
+                    .flatten()
+                    .chain(status.container_statuses.iter().flatten())
+                    .nth(index)
+                    .map(|container| container.restart_count)
+            })
+            .unwrap_or(0);
+        bucket.push(UnhealthyPodInfo {
+            name: pod.metadata.name.clone().unwrap_or_default(),
+            namespace: pod.metadata.namespace.clone().unwrap_or_default(),
+            state: decision.reason.to_owned(),
+            restart_count,
+        });
     }
 
     Ok(health)

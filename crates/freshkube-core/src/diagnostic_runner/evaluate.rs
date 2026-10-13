@@ -205,8 +205,8 @@ pub(super) fn build_kubernetes_checks(
                 details.push_str("Crashing pods:\n");
                 for pod in &health.crashing {
                     details.push_str(&format!(
-                        "  {}/{} ({} restarts)\n",
-                        pod.namespace, pod.name, pod.restart_count
+                        "  {}/{}: {} ({} restarts)\n",
+                        pod.namespace, pod.name, pod.state, pod.restart_count
                     ));
                 }
             }
@@ -217,6 +217,18 @@ pub(super) fn build_kubernetes_checks(
                 details.push_str("Image pull errors:\n");
                 for pod in &health.image_pull_errors {
                     details.push_str(&format!("  {}/{}\n", pod.namespace, pod.name));
+                }
+            }
+            if !health.not_ready.is_empty() {
+                if !details.is_empty() {
+                    details.push('\n');
+                }
+                details.push_str("Not ready pods:\n");
+                for pod in &health.not_ready {
+                    details.push_str(&format!(
+                        "  {}/{}: {}\n",
+                        pod.namespace, pod.name, pod.state
+                    ));
                 }
             }
             DiagnosticCheck::warn(
