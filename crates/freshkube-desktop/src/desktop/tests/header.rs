@@ -29,10 +29,10 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             window.render_frame(cx);
             let pilot = view.read(cx);
             assert_eq!(pilot.selected_node.as_deref(), Some(DEGRADED_NODE));
-            assert_eq!(pilot.selected_service.as_deref(), Some("containerd"));
+            assert_eq!(pilot.selected_service(cx).as_deref(), Some("containerd"));
             let context = pilot.applied.context.clone();
             let node = pilot.selected_node.clone();
-            let service = pilot.selected_service.clone();
+            let service = pilot.selected_service(cx).clone();
             let epoch = pilot.epoch;
             let config_generation = pilot.config_generation;
             let overview_success = pilot.overview.last_successful();
@@ -77,7 +77,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             assert_eq!(pilot.page, page);
             assert_eq!(pilot.applied.context, context);
             assert_eq!(pilot.selected_node, node);
-            assert_eq!(pilot.selected_service, service);
+            assert_eq!(pilot.selected_service(cx), service);
             assert_eq!(pilot.epoch, epoch);
             assert_eq!(pilot.config_generation, config_generation);
             assert_eq!(pilot.overview.last_successful(), overview_success);

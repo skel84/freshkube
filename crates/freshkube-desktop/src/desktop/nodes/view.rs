@@ -336,7 +336,7 @@ impl Pilot {
                 )
                 .into_any_element(),
             NodeTab::Pods => inset(self.node_pods.clone().into_any_element()),
-            NodeTab::Services => inset(self.render_services(window, cx)),
+            NodeTab::Services => inset(self.node_services.clone().into_any_element()),
             NodeTab::Logs => {
                 // In a short window the body scrolls inside the inspector:
                 // it's as tall as its room and the log's toolbar and
