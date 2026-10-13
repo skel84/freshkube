@@ -63,6 +63,15 @@ struct FrameDetail {
 }
 
 impl Profiles {
+    /// Nothing from the last connection, but the viewer's search, which
+    /// the search field still shows. Application and profile choices reset.
+    pub(super) fn cleared(&mut self) -> Self {
+        Self {
+            search: std::mem::take(&mut self.search),
+            ..Self::default()
+        }
+    }
+
     /// Another application or project: forget its types and choices.
     pub(super) fn reset_for(&mut self, app: Option<&api::AppId>) {
         if self.app.as_ref() != app {
@@ -610,6 +619,87 @@ impl ObservabilityPage {
 #[cfg(test)]
 mod tests {
     use super::{Profiles, api};
+    use crate::{Destination, example, tests::mount};
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    fn a_profile_search_keeps_dimming_after_a_connection_reset(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = mount(cx, true);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.open(Destination::Profiling, cx);
+                page.selected_app = Some(example::id(example::WORKER));
+                page.read_profiling(cx);
+            })
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("obs-flame-search", cx);
+            window.input("MaIn", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            let before = page
+                .read(cx)
+                .live_profiles
+                .drawn
+                .iter()
+                .filter(|f| f.dim)
+                .count();
+            assert!(before > 0);
+            assert!(before < page.read(cx).live_profiles.drawn.len());
+            page.update(cx, |page, cx| {
+                page.clear_observations();
+                page.selected_app = Some(example::id(example::WORKER));
+                page.read_profiling(cx);
+            });
+            window.render_frame(cx);
+            assert_eq!(window.find("obs-flame-search").value(), Some("MaIn"));
+            let profiles = &page.read(cx).live_profiles;
+            assert_eq!(profiles.drawn.iter().filter(|f| f.dim).count(), before);
+            let frames = &profiles.graph.as_ref().unwrap().frames;
+            assert!(
+                profiles
+                    .drawn
+                    .iter()
+                    .all(|f| f.dim == !frames[f.index].name.to_lowercase().contains("main"))
+            );
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_connection_reset_clears_profile_evidence_and_application_choices(cx: &mut TestAppContext) {
+        let (_runtime, _handle, page) = mount(cx, true);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                let app = example::id(example::WORKER);
+                page.selected_app = Some(app);
+                page.read_profiling(cx);
+                let profiles = &mut page.live_profiles;
+                profiles.query.kind = profiles.shown_kind.clone();
+                profiles.query.instance = profiles.instances.first().cloned();
+                profiles.query.compare = true;
+                profiles.zoom(1);
+                assert!(profiles.app.is_some() && profiles.graph.is_some());
+                assert!(profiles.query.kind.is_some() && profiles.query.instance.is_some());
+                page.fixture = false;
+                page.clear_observations();
+                assert!(page.selected_app.is_none());
+                let profiles = &page.live_profiles;
+                assert!(profiles.app.is_none());
+                assert_eq!(profiles.query, api::ProfileQuery::default());
+                assert!(profiles.kinds.is_empty() && profiles.instances.is_empty());
+                assert!(profiles.shown_kind.is_none() && profiles.graph.is_none());
+                assert!(profiles.drawn.is_empty() && profiles.detail.is_none());
+                assert!(profiles.increases.is_empty() && profiles.selected.is_none());
+                assert_eq!(profiles.zoom, 0);
+                assert!(!profiles.answered);
+            })
+        });
+    }
 
     fn frame(name: &str, parent: Option<usize>, depth: usize, x: f64, width: f64) -> api::Frame {
         api::Frame {

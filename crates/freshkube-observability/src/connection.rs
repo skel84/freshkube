@@ -217,10 +217,10 @@ impl ObservabilityPage {
         self.live.clear();
         self.incident_observations = self.incident_observations.cleared();
         self.revision_observations = self.revision_observations.cleared();
-        self.live_traces = Default::default();
+        self.live_traces = self.live_traces.cleared();
         // The headers stay known, so a first read shows them over its loading rows.
         self.prepare_trace_columns();
-        self.live_profiles = Default::default();
+        self.live_profiles = self.live_profiles.cleared();
         self.live_logs.forget();
         if !self.fixture {
             self.nodes = Default::default();
