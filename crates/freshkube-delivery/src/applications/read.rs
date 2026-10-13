@@ -13,7 +13,7 @@ use serde_json::Value;
 use super::{
     ArgoFound, ArgoScope, Asked, KargoProjectRead, LabelledWorkload, SessionInputs, SessionKey,
 };
-use crate::argocd::{read_application_sets, read_applications};
+use crate::argocd::{Application, read_application_sets, read_applications};
 use crate::kargo::{self, parse_stage, parse_warehouse, read_project_names};
 use crate::read::{ListRequest, Reader, Resource, Scope};
 use crate::source::{Source, Truncation};
@@ -107,6 +107,38 @@ pub fn argo_namespaces(workloads: &Source<Vec<LabelledWorkload>>) -> (Vec<String
     let mut namespaces: Vec<String> = found.into_iter().map(str::to_owned).collect();
     let skipped = namespaces.split_off(namespaces.len().min(MAX_ARGO_NAMESPACES));
     (namespaces, ArgoFound::Labelled { skipped })
+}
+
+/// Applications in every discovered namespace, merged as the Applications
+/// page merges them: an unread namespace leaves the whole source unread.
+pub(crate) async fn read_applications_in<R: Reader>(
+    reader: &R,
+    namespaces: &[String],
+) -> Source<Vec<Application>> {
+    let mut reads = Vec::new();
+    for namespace in namespaces {
+        reads.push(read_applications(reader, namespace).await);
+    }
+    merge(reads)
+}
+
+/// The namespaces left unread past the discovery cap, when there are any.
+pub(crate) fn argo_namespace_note(
+    entry: &str,
+    namespaces: &[String],
+    found: &ArgoFound,
+) -> Option<String> {
+    let ArgoFound::Labelled { skipped } = found else {
+        return None;
+    };
+    (!skipped.is_empty()).then(|| {
+        format!(
+            "Argo CD Applications on {entry}: reading was limited to {}; {} weren't read \
+             (namespace cap)",
+            namespaces.join(", "),
+            skipped.join(", "),
+        )
+    })
 }
 
 /// One source from its reads in several namespaces. A refusal or a failure

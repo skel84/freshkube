@@ -35,9 +35,13 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
-use super::Change;
+use super::{Change, Gap, Missing};
+use crate::applications::ArgoFound;
+use crate::applications::read::{
+    argo_namespace_note, argo_namespaces, read_applications_in, read_argo_workloads,
+};
 use crate::argocd::MapHint;
-use crate::collect::{Plan, Upstream, read_environment, upstream};
+use crate::collect::{Plan, Upstream, read_environment, upstream_with_applications};
 use crate::entry::pool::{Open, Pool, PoolReader, Read, Unread, Until};
 use crate::github::{GitHub, PullRequest};
 use crate::join::{Evidence, candidate_applications, candidate_deployments, candidate_rollouts};
@@ -61,7 +65,8 @@ pub struct Place {
     pub project: String,
     /// The Freight's name, its content hash.
     pub freight: String,
-    /// The namespace Argo CD's Applications are read in.
+    /// The namespace used for Argo CD's page address. Applications are
+    /// read in the namespaces discovered on Argo CD's own entry.
     pub argocd_namespace: String,
     /// Which workspace cluster each Argo CD destination is.
     pub mapping: Mapping,
@@ -406,12 +411,27 @@ where
         tekton: &builds,
         github: &NoGitHub,
     };
+    let mut scope = (Vec::new(), ArgoFound::Default);
+    let applications = async {
+        scope = argo_namespaces(&read_argo_workloads(&argocd).await);
+        read_applications_in(&argocd, &scope.0).await
+    };
     let (mut evidence, pages) = futures::join!(
-        upstream(&upstream_readers, &plan, observed_at),
+        upstream_with_applications(&upstream_readers, &plan, observed_at, applications),
         pages::read(&kargo, &argocd, &place.argocd_namespace),
     );
     read_environments(pool, place, &mut evidence).await;
-    derive(place, &evidence, freight, &pages, &reached)
+    // Derivation uses this field only to describe where Applications were
+    // looked for; the page address still uses the installation's namespace.
+    let described = Place {
+        argocd_namespace: scope.0.join(", "),
+        ..place.clone()
+    };
+    let mut change = derive(&described, &evidence, freight, &pages, &reached);
+    if let Some(note) = argo_namespace_note(&place.at(Part::ArgoCd).label, &scope.0, &scope.1) {
+        change.missing.push(Missing::new(Gap::Unreadable, note));
+    }
+    change
 }
 
 /// The reader of `part`, an entry it couldn't read named as the page
@@ -609,7 +629,7 @@ fn clusters<R: Reader>(reader: &R) -> crate::collect::Clusters<'_, R, R, R, R, N
     }
 }
 
-/// What [`upstream`] reads for `freight` at `place`.
+/// What [`upstream_with_applications`] reads for `freight` at `place`.
 fn plan(place: &Place, freight: &Freight) -> Plan {
     let (contexts, cluster_names) = place.mapping.pairs();
     Plan {
