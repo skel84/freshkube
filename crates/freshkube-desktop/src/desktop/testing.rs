@@ -215,6 +215,13 @@ pub(crate) fn open_node_tab(
     }
     // A tab's click and Command-Shift-] reach the shell as events once the
     // update ends; hand the shell the tab's event at once, as they would.
+    // The strip draws the tab, or More holds it.
+    use super::nodes::NodeTab;
+    assert!(
+        window.try_find(tab.id()).is_some() || matches!(tab, NodeTab::Events | NodeTab::Yaml),
+        "{} is reachable",
+        tab.id()
+    );
     view.update(cx, |view, cx| {
         view.nodes_event(&super::nodes::NodesEvent::Tab(tab), window, cx)
     });

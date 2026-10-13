@@ -403,7 +403,9 @@ fn a_nodes_view_switch_redraws_the_shell(cx: &mut TestAppContext) {
 
 /// An Expand, which Nodes makes itself, tells the shell to draw again: the
 /// expanded pane replaces the table, and the shell mounts the motion only
-/// over a drawn table.
+/// over a drawn table. The next frame draws only a dirty window, so the
+/// shell's count rises only if the Expand dirtied it; a settled window
+/// draws nothing.
 #[gpui_kit::test]
 fn a_node_expand_redraws_the_shell(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
@@ -414,10 +416,15 @@ fn a_node_expand_redraws_the_shell(cx: &mut TestAppContext) {
         crate::desktop::tests::expand_healthy_nodes(window, cx);
         crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
-        draw(window, cx);
     })
     .unwrap();
     cx.run_until_parked();
+    for _ in 0..3 {
+        next_frame(cx, handle);
+    }
+    let settled = probe::count("shell");
+    next_frame(cx, handle);
+    assert_eq!(probe::count("shell"), settled, "settled, nothing draws");
     for expanded in [true, false] {
         let before = probe::count("shell");
         // Straight on Nodes, as no click's frame would draw the shell anyway.
@@ -425,9 +432,7 @@ fn a_node_expand_redraws_the_shell(cx: &mut TestAppContext) {
             let nodes = view.read(cx).node_workspace.clone();
             nodes.update(cx, |nodes, cx| nodes.toggle_expanded(cx));
         });
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| draw(window, cx))
-            .unwrap();
+        next_frame(cx, handle);
         cx.update(|cx| assert_eq!(view.read(cx).node_workspace.read(cx).expanded, expanded));
         assert!(probe::count("shell") > before, "expanded {expanded}");
     }

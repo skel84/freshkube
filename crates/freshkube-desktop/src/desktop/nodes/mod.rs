@@ -258,6 +258,12 @@ impl Nodes {
         let loading_motion = cx.new(|_| loading.motion(freshkube_ui::table::Look::Pulse));
         let history =
             cx.new(|_| crate::monitoring::history::HistoryView::new(runtime.clone(), "node"));
+        // Seeded from the entities, so the flags hold whatever they start as.
+        let collecting = {
+            use crate::logs::TalosPanel as _;
+            logs.read(cx).collecting_count() > 0
+        };
+        let chart = history.read(cx).shows();
         let watches = [
             cx.observe(&logs, |nodes, logs, cx| {
                 use crate::logs::TalosPanel as _;
@@ -327,8 +333,8 @@ impl Nodes {
             load_history: Default::default(),
             services: cx.new(|cx| super::services::NodeServices::new(window, cx)),
             logs,
-            collecting: false,
-            chart: false,
+            collecting,
+            chart,
             _watches: watches,
             screens: Default::default(),
             attention: Default::default(),
