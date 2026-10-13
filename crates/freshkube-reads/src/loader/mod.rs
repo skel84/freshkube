@@ -1,6 +1,9 @@
 //! One read's data for one identity and the work that fills it.
 
-use std::{future::Future, time::Duration};
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 
 use freshkube_core::{
     job::{OwnedJob, spawn_job},
@@ -8,6 +11,8 @@ use freshkube_core::{
 };
 use gpui_kit::*;
 use tokio::runtime::Handle;
+
+use crate::OnShow;
 
 /// One read's data for one identity, such as a screen's target: a
 /// [`Snapshot`] plus the work that fills it.
@@ -19,6 +24,15 @@ pub struct Loader<T, I> {
     /// return may have changed, so a screen derives its display data again
     /// only then.
     revision: u64,
+    /// Whether the owner shows it; see [`set_visible`](Self::set_visible).
+    visible: bool,
+    /// A read hiding dropped before it answered: the snapshot still waits
+    /// for it, but nothing is loading.
+    cut: bool,
+    /// When the last successful answer from [`load`](Self::load) landed,
+    /// by the executor's clock. A failure clears it: a refresh that failed
+    /// doesn't make old data new.
+    answered: Option<Instant>,
 }
 
 impl<T, I> Default for Loader<T, I> {
@@ -28,6 +42,9 @@ impl<T, I> Default for Loader<T, I> {
             job: None,
             task: None,
             revision: 0,
+            visible: true,
+            cut: false,
+            answered: None,
         }
     }
 }
@@ -36,8 +53,41 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     /// Forgets data and cancels in-flight work, e.g. when the identity changes.
     pub fn reset(&mut self) {
         let revision = self.revision + 1;
+        let visible = self.visible;
         *self = Self::default();
         self.revision = revision;
+        self.visible = visible;
+    }
+
+    /// Hiding drops the read in flight and keeps the data as last known;
+    /// showing again returns whether the owner should read again, as
+    /// `on_show` says, by the age of the last successful answer. A failed
+    /// answer, an answer from [`resolve`](Self::resolve) and a read hiding
+    /// cut short have no age and count as old. Returns false when nothing
+    /// changed.
+    pub fn set_visible(&mut self, visible: bool, on_show: OnShow, cx: &App) -> bool {
+        if self.visible == visible {
+            return false;
+        }
+        self.visible = visible;
+        if !visible {
+            self.task = None;
+            if self.job.take().is_some() && self.state.is_loading() {
+                // Nothing loads any more: what shows it derives again.
+                self.cut = true;
+                self.revision += 1;
+            }
+            return false;
+        }
+        let since = self.answered.filter(|_| !self.cut);
+        on_show.reads_again(since, cx.background_executor().now())
+    }
+
+    /// Whether the owner shows it, as [`set_visible`](Self::set_visible)
+    /// last said; a new loader is shown. For tests: an owner keeps its own.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn is_visible(&self) -> bool {
+        self.visible
     }
 
     pub fn revision(&self) -> u64 {
@@ -61,6 +111,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         cx: &mut Context<V>,
     ) {
         let request = self.state.begin(identity);
+        self.cut = false;
         self.revision += 1;
         let (job, receiver) =
             spawn_job(runtime, deadline, format!("Loading {what} timed out"), work);
@@ -69,7 +120,11 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = receiver.await.unwrap_or_else(|_| Err(stopped));
             _ = this.update(cx, |view, cx| {
-                slot(view).deliver(&request, result);
+                let ok = result.is_ok();
+                let loader = slot(view);
+                if loader.deliver(&request, result) && ok {
+                    loader.answered = Some(cx.background_executor().now());
+                }
                 cx.notify();
             });
         }));
@@ -79,6 +134,8 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     pub fn resolve(&mut self, identity: I, result: Result<T, String>) {
         self.job = None;
         self.task = None;
+        self.cut = false;
+        self.answered = None;
         let request = self.state.begin(identity);
         self.state.apply(&request, result);
         self.revision += 1;
@@ -99,6 +156,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     /// through [`apply`](Self::apply).
     #[cfg(any(test, feature = "testing"))]
     pub fn begin(&mut self, identity: I) -> Request<I> {
+        self.cut = false;
         self.state.begin(identity)
     }
 
@@ -111,9 +169,14 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
 
     /// Lands `result` if `request` is still the latest for its identity.
     fn deliver(&mut self, request: &Request<I>, result: Result<T, String>) -> bool {
+        let failed = result.is_err();
         let applied = self.state.apply(request, result);
         if applied {
+            if failed {
+                self.answered = None;
+            }
             self.job = None;
+            self.cut = false;
             self.revision += 1;
         }
         applied
@@ -124,7 +187,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     }
 
     pub fn is_loading(&self) -> bool {
-        self.state.is_loading()
+        self.state.is_loading() && !self.cut
     }
 
     /// Whether the data is kept from an earlier answer after a later read
