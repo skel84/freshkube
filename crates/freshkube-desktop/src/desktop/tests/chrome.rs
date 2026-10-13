@@ -253,3 +253,43 @@ fn cached_overview_redraws_after_data_and_theme_change(cx: &mut TestAppContext) 
         "theme change must redraw it"
     );
 }
+
+/// System services is a cached view of its own: a notify of the shell
+/// leaves it as drawn, while its nodes, a changed Talos reading and the
+/// global redraw each draw it again.
+#[gpui_kit::test]
+fn cached_system_services_redraws_for_its_own_changes(cx: &mut TestAppContext) {
+    use crate::screens::Reading;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.navigate(Page::SystemServices, window, cx)
+        });
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+        let before = count("system-services");
+        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        count("system-services") - before
+    };
+    let shell = redrawn(&|_, cx| cx.notify());
+    let nodes = redrawn(&|view, cx| {
+        let nodes = view.nodes.clone();
+        view.system_services
+            .update(cx, |page, cx| page.set_nodes(&nodes, cx));
+    });
+    let reading = redrawn(&|view, cx| {
+        let reading = Reading::Failed("no answer".into());
+        view.system_services
+            .update(cx, |page, cx| page.set_reading(reading, cx));
+    });
+    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    assert_eq!([shell, nodes, reading, cached], [0, 1, 1, 1]);
+}
