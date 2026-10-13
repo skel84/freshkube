@@ -23,13 +23,14 @@ use freshkube_core::monitoring::{
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AppContext, Context, Entity, IntoElement, Render, SharedString, StyleRefinement, Subscription,
-    Task, TestSupportExt, Window, div,
+    AppContext, Context, Entity, EntityId, IntoElement, Render, SharedString, StyleRefinement,
+    Subscription, Task, TestSupportExt, WeakEntity, Window, div,
 };
 use tokio::runtime::Handle;
 
 use super::panel::{Linked, PanelEvent, PanelView};
 use super::request::{self, Request};
+use crate::page::{MonitoringEvent, MonitoringPage};
 use crate::ui::{self, dp};
 
 /// The window drawn, and how often it is read again while shown.
@@ -47,6 +48,8 @@ pub struct HistorySource {
     /// Counts the page's rebuilt clients, so a Ready source built again
     /// reads through the new one.
     pub(crate) client: u64,
+    /// The one bounded recovery owner, without keeping its page alive.
+    pub(crate) owner: Option<WeakEntity<MonitoringPage>>,
 }
 
 #[derive(Clone)]
@@ -64,18 +67,24 @@ pub(crate) enum HistoryKind {
 impl HistorySource {
     /// What tells two sources apart: the connection, the endpoint, whether
     /// it was confirmed and its client.
-    fn key(&self) -> (String, Option<Endpoint>, bool, u64) {
+    pub(crate) fn key(&self) -> (String, Option<Endpoint>, bool, u64, Option<EntityId>) {
         let id = self.id.clone();
+        let owner = self.owner.as_ref().map(|owner| owner.entity_id());
         match &self.kind {
-            HistoryKind::Example => (id, None, true, self.client),
-            HistoryKind::Ready(prometheus) => {
-                (id, Some(prometheus.endpoint().clone()), true, self.client)
-            }
+            HistoryKind::Example => (id, None, true, self.client, owner),
+            HistoryKind::Ready(prometheus) => (
+                id,
+                Some(prometheus.endpoint().clone()),
+                true,
+                self.client,
+                owner,
+            ),
             HistoryKind::Remembered { service, .. } => (
                 id,
                 Some(Endpoint::Service(service.clone())),
                 false,
                 self.client,
+                owner,
             ),
         }
     }
@@ -113,7 +122,12 @@ pub struct HistoryView {
     asked: Option<i64>,
     /// Each panel's read in flight.
     requests: Vec<Option<Request>>,
+    /// Each replacement, cancellation and read invalidates old deliveries.
+    generation: u64,
     timer: Option<Task<()>>,
+    /// Connection changes reach history without a shell or dashboard read.
+    _connection: Option<Subscription>,
+    _release: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
     /// Unix seconds now. Tests fix it, so example data is the same each run.
     now: fn() -> i64,
@@ -134,7 +148,10 @@ impl HistoryView {
             linked: Linked::default(),
             asked: None,
             requests: Vec::new(),
+            generation: 0,
             timer: None,
+            _connection: None,
+            _release: None,
             _subscriptions: Vec::new(),
             now: || chrono::Utc::now().timestamp(),
             #[cfg(test)]
@@ -160,13 +177,16 @@ impl HistoryView {
         }
         let was = self.source.as_ref().map(|source| source.id.clone());
         let now = source.as_ref().map(|source| source.id.clone());
+        self.leave_connection(cx);
         self.source = source;
+        self.watch_connection(cx);
         if was != now {
             // Another cluster's answers never show as this one's.
             self.rebuild(cx);
         } else {
             self.forget();
         }
+        self.sync_consumer(cx);
         self.read(cx);
         cx.notify();
     }
@@ -178,6 +198,7 @@ impl HistoryView {
         }
         self.subject = subject;
         self.rebuild(cx);
+        self.sync_consumer(cx);
         self.read(cx);
         cx.notify();
     }
@@ -188,6 +209,7 @@ impl HistoryView {
             return;
         }
         self.visible = visible;
+        self.sync_consumer(cx);
         if visible {
             self.read(cx);
         } else {
@@ -202,14 +224,77 @@ impl HistoryView {
 
     /// The screen's Refresh.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.visible
+            && self.subject.is_some()
+            && let Some(source) = &self.source
+            && let Some(owner) = &source.owner
+        {
+            _ = owner.update(cx, |page, _| page.retry_history(source));
+        }
         self.asked = None;
         self.read(cx);
     }
 
     /// Drops what was asked; the panels keep their answers.
     fn forget(&mut self) {
+        self.generation += 1;
         self.requests.clear();
         self.asked = None;
+    }
+
+    fn leave_connection(&mut self, cx: &mut Context<Self>) {
+        if let Some(owner) = self
+            .source
+            .as_ref()
+            .and_then(|source| source.owner.as_ref())
+        {
+            let id = cx.entity_id();
+            _ = owner.update(cx, |page, _| page.hide_history(id));
+        }
+        self._connection = None;
+    }
+
+    fn watch_connection(&mut self, cx: &mut Context<Self>) {
+        let Some(owner) = self
+            .source
+            .as_ref()
+            .and_then(|source| source.owner.as_ref())
+            .and_then(WeakEntity::upgrade)
+        else {
+            return;
+        };
+        self._connection = Some(
+            cx.subscribe(&owner, |this, page, event: &MonitoringEvent, cx| {
+                if *event == MonitoringEvent::History {
+                    let source = page.read(cx).history();
+                    this.set_source(source, cx);
+                }
+            }),
+        );
+        if self._release.is_none() {
+            let id = cx.entity_id();
+            self._release = Some(cx.on_release(move |this, cx| {
+                if let Some(owner) = this
+                    .source
+                    .as_ref()
+                    .and_then(|source| source.owner.as_ref())
+                {
+                    _ = owner.update(cx, |page, _| page.hide_history(id));
+                }
+            }));
+        }
+    }
+
+    fn sync_consumer(&self, cx: &mut Context<Self>) {
+        let Some(source) = &self.source else {
+            return;
+        };
+        let Some(owner) = &source.owner else {
+            return;
+        };
+        let history = cx.weak_entity();
+        let visible = self.visible && self.subject.is_some();
+        _ = owner.update(cx, |page, _| page.show_history(history, source, visible));
     }
 
     /// New panels for the subject, with nothing answered.
@@ -285,6 +370,8 @@ impl HistoryView {
     fn ask(&mut self, source: HistorySource, subject: Subject, now: i64, cx: &mut Context<Self>) {
         let window = TimeWindow::new(now, SPAN, POINTS);
         let dashboard = history::dashboard(&subject);
+        self.generation += 1;
+        let generation = self.generation;
         self.asked = Some(now);
         #[cfg(test)]
         {
@@ -296,6 +383,7 @@ impl HistoryView {
             .enumerate()
             .map(|(index, spec)| {
                 let (source, subject) = (source.clone(), subject.clone());
+                let answered_source = source.clone();
                 let example = source.example();
                 let work = async move {
                     let source = source.source(subject).await?;
@@ -313,7 +401,17 @@ impl HistoryView {
                     DEADLINE,
                     work,
                     cx,
-                    move |this, result, cx| this.answered(index, window, result, cx),
+                    move |this, result, cx| {
+                        if this.visible
+                            && this.generation == generation
+                            && this
+                                .source
+                                .as_ref()
+                                .is_some_and(|source| source.key() == answered_source.key())
+                        {
+                            this.answered(index, window, result, cx);
+                        }
+                    },
                 ))
             })
             .collect();
@@ -332,12 +430,19 @@ impl HistoryView {
         let Some(panel) = self.panels.get(index) else {
             return;
         };
+        let error = result.as_ref().err().cloned();
         panel.update(cx, |panel, cx| match result {
             Ok(result) => panel.set_result(result, window, cx),
             Err(error) => panel.set_error(&error, cx),
         });
         if self.linked.refresh(&self.panels, cx) {
             cx.notify();
+        }
+        if let Some(error) = error
+            && let Some(source) = &self.source
+            && let Some(owner) = &source.owner
+        {
+            _ = owner.update(cx, |page, cx| page.history_failed(source, &error, cx));
         }
     }
 
