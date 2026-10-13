@@ -255,9 +255,10 @@ fn cached_page_style() -> StyleRefinement {
     StyleRefinement::default().size_full()
 }
 
-/// The entities whose events the shell routes.
+/// What the shell hears beside the page map: Nodes and its pane, whose
+/// own events aren't [`PageEvent`]s yet, the dock and the custom kinds.
 struct PageEntities<'a> {
-    node_pods: &'a Entity<ResourcesScreen>,
+    nodes: &'a Entity<nodes::Nodes>,
     dock: &'a Entity<dock::Dock>,
     custom: &'a Entity<CustomResources>,
 }
@@ -578,22 +579,42 @@ impl Pilot {
         ]);
     }
 
-    /// Routes the node pane's Pods list's and the dock's events to the
-    /// shell; the entity pages' come through their handles
-    /// (`subscribe_pages`).
+    /// Hears every page: each in the map through its handle, as a
+    /// [`PageEvent`] (`hear_page`), then the events of what the map doesn't
+    /// hold. Nodes' own events and its Services tab's aren't `PageEvent`s
+    /// yet, so they keep their arms; the node pane's Pods list and the dock
+    /// turn theirs into one.
     fn subscribe_page_events(
-        subscriptions: &mut Vec<Subscription>,
-        pages: PageEntities<'_>,
+        pages: &BTreeMap<PageId, ScreenHandle>,
+        others: PageEntities<'_>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Vec<Subscription> {
         let PageEntities {
-            node_pods,
+            nodes,
             dock,
             custom,
-        } = pages;
+        } = others;
+        let mut subscriptions = Vec::new();
+        for page in pages.values() {
+            subscriptions.extend(Self::hear_page(page, window, cx));
+        }
         subscriptions.push(cx.subscribe_in(
-            node_pods,
+            nodes,
+            window,
+            |pilot, _, event: &nodes::NodesEvent, window, cx| pilot.nodes_event(event, window, cx),
+        ));
+        let (node_pods, node_services) = {
+            let nodes = nodes.read(cx);
+            (nodes.pods.clone(), nodes.services.clone())
+        };
+        subscriptions.push(cx.subscribe_in(
+            &node_services,
+            window,
+            |view, _, event, window, cx| view.node_services_event(event, window, cx),
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &node_pods,
             window,
             |this, _, event: &resources::NodePodsEvent, window, cx| {
                 this.page_event(&event.clone().into(), window, cx)
@@ -608,6 +629,7 @@ impl Pilot {
             },
         ));
         subscriptions.push(cx.observe(custom, |_, _, cx| cx.notify()));
+        subscriptions
     }
 
     /// The one-second tick: the countdown, and the automatic refresh.
@@ -723,10 +745,6 @@ impl Pilot {
             nodes.rebuild_columns(!options.kubernetes_only);
             nodes
         });
-        let (node_pods, node_services) = {
-            let nodes = node_workspace.read(cx);
-            (nodes.pods.clone(), nodes.services.clone())
-        };
         let mut subscriptions = Vec::new();
         // Overview and Nodes hear where things stand whenever the shell
         // notifies, and redraw only when that changed; the countdown tick
@@ -736,11 +754,6 @@ impl Pilot {
             pilot.push_node_services_state(cx);
             pilot.push_attention_stale(cx);
         }));
-        subscriptions.push(cx.subscribe_in(
-            &node_workspace,
-            window,
-            |pilot, _, event: &nodes::NodesEvent, window, cx| pilot.nodes_event(event, window, cx),
-        ));
         // The status bar shows the running operation; the window refuses to
         // close under it. Cached screens may read the slot too.
         let operations = Operations::global(cx);
@@ -839,19 +852,9 @@ impl Pilot {
             view.notify_cached(cx);
             cx.notify();
         }));
-        subscriptions.extend([
-            cx.subscribe_in(&node_services, window, |view, _, event, window, cx| {
-                view.node_services_event(event, window, cx)
-            }),
-            cx.observe_window_appearance(window, |this, window, cx| {
-                if this.chrome.appearance == Appearance::System {
-                    Theme::sync_system_appearance(Some(window), cx);
-                }
-            }),
-            // Batches arriving while Logs is hidden never notify; the shell
-            // shows only what start, stop and the visible page change.
-            cx.observe(&logs, |_, _, cx| cx.notify()),
-        ]);
+        // Batches arriving while Logs is hidden never notify; the shell
+        // shows only what start, stop and the visible page change.
+        subscriptions.push(cx.observe(&logs, |_, _, cx| cx.notify()));
         let applications = cx.new(|cx| {
             crate::applications::ApplicationsPage::new(
                 runtime.clone(),
@@ -873,17 +876,16 @@ impl Pilot {
             &settings_page,
             &resources,
         ));
-        subscriptions.extend(Self::subscribe_pages(&pages, window, cx));
-        Self::subscribe_page_events(
-            &mut subscriptions,
+        subscriptions.extend(Self::subscribe_page_events(
+            &pages,
             PageEntities {
-                node_pods: &node_pods,
+                nodes: &node_workspace,
                 dock: &dock,
                 custom: &custom,
             },
             window,
             cx,
-        );
+        ));
         let tick = Self::start_tick(window, cx);
         let mut view = Self {
             runtime: runtime.clone(),
@@ -910,7 +912,11 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            chrome: shell::Chrome::new(app_menu::menu_platform(options.debug.app_menu_button), cx),
+            chrome: shell::Chrome::new(
+                app_menu::menu_platform(options.debug.app_menu_button),
+                window,
+                cx,
+            ),
             dock,
             overview_page,
             node_workspace,
@@ -1188,7 +1194,7 @@ impl Pilot {
     }
 
     /// A Talos screen's handle; the shell hears it with every other page
-    /// (`subscribe_pages`).
+    /// (`subscribe_page_events`).
     fn screen<T: ScreenPanel>(
         new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
         runtime: Handle,

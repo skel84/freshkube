@@ -8,7 +8,7 @@ use freshkube_delivery::applications::read::{ARGOCD, argo_namespaces};
 use freshkube_delivery::applications::{
     Absent, ArgoFound, ArgoScope, Asked, Inputs, SessionInputs, SessionKey, example as acme,
 };
-use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::change::example::{SPREAD_NAMESPACES, Shape, spread_namespace};
 use freshkube_delivery::source::{Source, Truncation};
 
 use super::display::Labels;
@@ -89,6 +89,7 @@ impl Variant {
     /// shape: Kargo's entry, Argo CD's Applications, or a destination.
     pub(crate) fn shape(self) -> Shape {
         match self {
+            Self::Spread => Shape::Spread,
             Self::Unreachable => Shape::KargoUnreachable,
             Self::ArgoRefused => Shape::ArgoRefused,
             Self::Destination => Shape::DestinationUnreachable,
@@ -168,12 +169,30 @@ pub(crate) fn inputs(variant: Variant) -> Inputs {
             }
         }
         Variant::Spread => {
-            core(&mut inputs).argo_scope = ArgoScope::Namespace {
-                namespaces: ["delivery", "gitops", "platform"].map(Into::into).to_vec(),
+            let core = core(&mut inputs);
+            let cap = freshkube_delivery::applications::read::MAX_ARGO_NAMESPACES;
+            core.argo_scope = ArgoScope::Namespace {
+                namespaces: SPREAD_NAMESPACES[..cap]
+                    .iter()
+                    .map(|ns| (*ns).into())
+                    .collect(),
                 found: ArgoFound::Labelled {
-                    skipped: vec!["sandbox".into(), "tenants".into()],
+                    skipped: SPREAD_NAMESPACES[cap..]
+                        .iter()
+                        .map(|ns| (*ns).into())
+                        .collect(),
                 },
             };
+            if let Source::Read(applications) = &mut core.argo_applications {
+                for application in applications {
+                    application.namespace = spread_namespace(&application.name).into();
+                }
+            }
+            if let Source::Read(sets) = &mut core.argo_application_sets {
+                for set in sets {
+                    set.namespace = SPREAD_NAMESPACES[0].into();
+                }
+            }
         }
         Variant::NotFound => {
             let core = core(&mut inputs);

@@ -108,15 +108,16 @@ fn main() -> Result<()> {
     } = Cli::parse();
     // A terminal's explicit Talos environment overrides a remembered GUI
     // selection. Finder launches use the saved selection or the default file.
-    let config = if fixture || asked_kubernetes_only || kube_context.is_some() || insecure {
-        config
-    } else {
-        config.or_else(|| {
-            std::env::var("TALOSCONFIG")
-                .ok()
-                .filter(|path| !path.is_empty())
-        })
-    };
+    let config = talosconfig_or_env(
+        config,
+        TalosconfigModes {
+            fixture,
+            kubernetes_only: asked_kubernetes_only,
+            kube_context: kube_context.is_some(),
+            insecure,
+        },
+        std::env::var("TALOSCONFIG").ok(),
+    );
     let kubernetes_only = !fixture
         && wants_kubernetes_only(
             asked_kubernetes_only,
@@ -219,6 +220,30 @@ fn validate(insecure: bool, endpoint: Option<&str>, kubeconfig: Option<&str>) ->
     Ok(())
 }
 
+/// The launch modes in which `TALOSCONFIG` is not consulted. `--context`
+/// (Talos's) is not one of them.
+#[derive(Clone, Copy, Default)]
+struct TalosconfigModes {
+    fixture: bool,
+    kubernetes_only: bool,
+    kube_context: bool,
+    insecure: bool,
+}
+
+/// `--config`, else a non-empty `TALOSCONFIG`, except in the modes that name
+/// their own source or none.
+fn talosconfig_or_env(
+    config: Option<String>,
+    modes: TalosconfigModes,
+    talosconfig: Option<String>,
+) -> Option<String> {
+    if modes.fixture || modes.kubernetes_only || modes.kube_context || modes.insecure {
+        config
+    } else {
+        config.or_else(|| talosconfig.filter(|path| !path.is_empty()))
+    }
+}
+
 /// Kubernetes-only when asked for, or when nothing names Talos and there is
 /// no default talosconfig to use. A named talosconfig that is missing stays
 /// Talos, which then says what's wrong with it.
@@ -261,6 +286,50 @@ fn resolve_log_path(log_file: Option<String>) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn env(path: &str) -> Option<String> {
+        Some(path.to_string())
+    }
+
+    #[test]
+    fn talosconfig_fills_in_a_missing_config() {
+        let none = TalosconfigModes::default();
+        assert_eq!(talosconfig_or_env(None, none, env("/t")), env("/t"));
+        assert_eq!(talosconfig_or_env(None, none, None), None);
+        // An empty variable counts as unset here.
+        assert_eq!(talosconfig_or_env(None, none, env("")), None);
+    }
+
+    #[test]
+    fn an_explicit_config_beats_talosconfig() {
+        let none = TalosconfigModes::default();
+        assert_eq!(talosconfig_or_env(env("/c"), none, env("/t")), env("/c"));
+    }
+
+    #[test]
+    fn some_modes_ignore_talosconfig() {
+        for modes in [
+            TalosconfigModes {
+                fixture: true,
+                ..Default::default()
+            },
+            TalosconfigModes {
+                kubernetes_only: true,
+                ..Default::default()
+            },
+            TalosconfigModes {
+                kube_context: true,
+                ..Default::default()
+            },
+            TalosconfigModes {
+                insecure: true,
+                ..Default::default()
+            },
+        ] {
+            assert_eq!(talosconfig_or_env(None, modes, env("/t")), None);
+            assert_eq!(talosconfig_or_env(env("/c"), modes, env("/t")), env("/c"));
+        }
+    }
 
     #[test]
     fn cli_preserves_identity_and_defaults() {

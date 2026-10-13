@@ -164,6 +164,30 @@ impl DebugOptions {
 mod tests {
     use super::*;
 
+    /// The knob names AGENTS.md's table documents, in its first column.
+    fn documented_knobs() -> std::collections::BTreeSet<String> {
+        include_str!("../../../AGENTS.md")
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `FRESHKUBE_"))
+            .filter_map(|rest| rest.split_once('`'))
+            .map(|(name, _)| format!("FRESHKUBE_{name}"))
+            .collect()
+    }
+
+    #[test]
+    fn agents_table_names_every_knob_the_parser_reads_and_no_other() {
+        let read = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let _ = DebugOptions::parse(|name| {
+            read.borrow_mut().insert(name.to_string());
+            None
+        });
+        assert_eq!(
+            read.into_inner(),
+            documented_knobs(),
+            "AGENTS.md's knob table and DebugOptions::parse disagree"
+        );
+    }
+
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
         DebugOptions::parse(|name| {
             pairs

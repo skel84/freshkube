@@ -820,7 +820,7 @@ struct RosterNode {
 fn load_talosconfig(path: Option<&Path>) -> Result<TalosConfig, Failure> {
     match path {
         Some(path) => TalosConfig::load_from(&path.to_path_buf()),
-        None => TalosConfig::load_default(),
+        None => crate::ambient::load_default_talosconfig(),
     }
     .map_err(|error| {
         Failure::new(

@@ -2,6 +2,9 @@
 //! main-thread stall monitor, and once a second the timings `crate::perf`
 //! collected, with CPU and memory. Built only with the `stress` feature.
 //!
+//! The knobs are read by the `stress` binary alone into a [`StressOptions`]
+//! ([`install`]ed before the app starts); nothing here reads the environment.
+//!
 //! - `FRESHKUBE_STRESS_KEYS`: space-separated keystrokes as GPUI parses them
 //!   (`down`, `enter`, `secondary-}`), `wait:<ms>` to pause, and
 //!   `type:<text>` to type into whatever has focus. `hover:<x0>,<y0>,<x1>,<y1>,<ms>`
@@ -10,11 +13,16 @@
 //!   window, so a script fits any window size.
 //! - `FRESHKUBE_STRESS_SECONDS`: quit after this long (default 30).
 //! - `FRESHKUBE_STRESS_WARMUP`: seconds left out of the summary (default 5).
+//! - `FRESHKUBE_STRESS_APPEARANCE`: `light` or `dark` for the terminal window.
+//! - `FRESHKUBE_STRESS_TALOS_RATE`, `FRESHKUBE_STRESS_WORKLOAD_RATE`: lines a
+//!   second of example Talos and workload logs.
 //!
 //! Output goes to stderr, numbers only: `perf <second> <name> …` lines, then
 //! `summary <name> …` lines over the run after the warm-up.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use gpui_kit::{Context, Keystroke, Window};
@@ -25,10 +33,93 @@ use crate::perf;
 /// the main thread spent on something else.
 const STALL_TICK: Duration = Duration::from_millis(4);
 
+/// The window a terminal run asks for, from `FRESHKUBE_STRESS_APPEARANCE`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Appearance {
+    Light,
+    Dark,
+}
+
+/// The `FRESHKUBE_STRESS_*` knobs, as plain data. A missing or bad value takes
+/// the default it always had.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StressOptions {
+    /// `FRESHKUBE_STRESS_KEYS`: the key script; empty when unset or not UTF-8.
+    pub keys: String,
+    /// `FRESHKUBE_STRESS_SECONDS`: quit after this long.
+    pub seconds: u64,
+    /// `FRESHKUBE_STRESS_WARMUP`: seconds left out of the summary.
+    pub warmup: u64,
+    /// `FRESHKUBE_STRESS_APPEARANCE`: anything but `light` or `dark` leaves
+    /// the theme alone.
+    pub appearance: Option<Appearance>,
+    /// `FRESHKUBE_STRESS_TALOS_RATE`: a positive number, else none.
+    pub talos_rate: Option<u32>,
+    /// `FRESHKUBE_STRESS_WORKLOAD_RATE`: a positive number, else none.
+    pub workload_rate: Option<u32>,
+}
+
+impl Default for StressOptions {
+    fn default() -> Self {
+        Self::parse(|_| None)
+    }
+}
+
+impl StressOptions {
+    /// Reads the knobs from the process environment. Only the `stress` binary
+    /// calls this.
+    pub fn from_env() -> Self {
+        Self::parse(|name| std::env::var_os(name))
+    }
+
+    /// Parses the knobs from `var`, which answers a name with its value.
+    pub fn parse(var: impl Fn(&str) -> Option<OsString>) -> Self {
+        let text = |name: &str| var(name).and_then(|value| value.into_string().ok());
+        let number = |name: &str, default: u64| {
+            text(name)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default)
+        };
+        let rate = |name: &str| {
+            text(name)
+                .and_then(|rate| rate.parse().ok())
+                .filter(|rate| *rate > 0)
+        };
+        Self {
+            keys: text("FRESHKUBE_STRESS_KEYS").unwrap_or_default(),
+            seconds: number("FRESHKUBE_STRESS_SECONDS", 30),
+            warmup: number("FRESHKUBE_STRESS_WARMUP", 5),
+            appearance: match text("FRESHKUBE_STRESS_APPEARANCE").as_deref() {
+                Some("light") => Some(Appearance::Light),
+                Some("dark") => Some(Appearance::Dark),
+                _ => None,
+            },
+            talos_rate: rate("FRESHKUBE_STRESS_TALOS_RATE"),
+            workload_rate: rate("FRESHKUBE_STRESS_WORKLOAD_RATE"),
+        }
+    }
+}
+
+static OPTIONS: OnceLock<StressOptions> = OnceLock::new();
+
+/// Installs the run's options; the first call wins. The log floods sit under
+/// the example sources, so one set-once value stands in for a parameter on
+/// each of them, as core's `Ambient` does.
+pub fn install(options: StressOptions) {
+    let _ = OPTIONS.set(options);
+}
+
+fn options() -> StressOptions {
+    OPTIONS.get().cloned().unwrap_or_default()
+}
+
 pub(crate) fn start<V: 'static>(window: &mut Window, cx: &mut Context<V>) {
-    let seconds = env_u64("FRESHKUBE_STRESS_SECONDS", 30);
-    let warmup = env_u64("FRESHKUBE_STRESS_WARMUP", 5);
-    let keys = std::env::var("FRESHKUBE_STRESS_KEYS").unwrap_or_default();
+    let StressOptions {
+        keys,
+        seconds,
+        warmup,
+        ..
+    } = options();
 
     cx.spawn_in(window, async move |_, cx| {
         for step in keys.split_whitespace() {
@@ -165,13 +256,6 @@ fn numbers(text: &str) -> Vec<f32> {
     text.split(',').filter_map(|n| n.parse().ok()).collect()
 }
 
-fn env_u64(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(default)
-}
-
 /// `n=… p50=… p99=… max=…`, and the sum when it is a time.
 fn stats(samples: &[f64]) -> String {
     if samples.is_empty() {
@@ -273,16 +357,17 @@ pub(crate) fn run_terminal(
 
     use crate::terminal::{TerminalEvent, TerminalView, streams};
 
+    let appearance = options().appearance;
     gpui_kit::application()
         .with_assets(crate::theme::AppAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
             crate::text_size::install_with(None, debug.text_size, cx);
-            match std::env::var("FRESHKUBE_STRESS_APPEARANCE").as_deref() {
-                Ok("light") => Theme::change(ThemeMode::Light, None, cx),
-                Ok("dark") => Theme::change(ThemeMode::Dark, None, cx),
-                _ => {}
+            match appearance {
+                Some(Appearance::Light) => Theme::change(ThemeMode::Light, None, cx),
+                Some(Appearance::Dark) => Theme::change(ThemeMode::Dark, None, cx),
+                None => {}
             }
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::centered(size(px(1150.), px(790.)), cx)),
@@ -367,10 +452,7 @@ pub(crate) fn run_terminal(
 
 /// `FRESHKUBE_STRESS_TALOS_RATE`: lines a second for example Talos logs.
 pub(crate) fn talos_rate() -> Option<u32> {
-    std::env::var("FRESHKUBE_STRESS_TALOS_RATE")
-        .ok()
-        .and_then(|rate| rate.parse().ok())
-        .filter(|rate| *rate > 0)
+    options().talos_rate
 }
 
 /// Writes `rate` example lines a second, spread over `services` and stamped
@@ -412,10 +494,7 @@ pub(crate) async fn talos_flood(
 
 /// The workload logs flood's lines a second, from `FRESHKUBE_STRESS_WORKLOAD_RATE`.
 pub(crate) fn workload_rate() -> Option<u32> {
-    std::env::var("FRESHKUBE_STRESS_WORKLOAD_RATE")
-        .ok()
-        .and_then(|rate| rate.parse().ok())
-        .filter(|rate| *rate > 0)
+    options().workload_rate
 }
 
 /// Writes `rate` pod log lines a second, as Kubernetes stamps them, spread
@@ -445,5 +524,93 @@ where
             }
             sent += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(pairs: &'static [(&'static str, &'static str)]) -> StressOptions {
+        StressOptions::parse(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| OsString::from(value))
+        })
+    }
+
+    #[test]
+    fn nothing_set_takes_the_defaults() {
+        let options = parse(&[]);
+        assert_eq!(options.keys, "");
+        assert_eq!((options.seconds, options.warmup), (30, 5));
+        assert_eq!(options.appearance, None);
+        assert_eq!((options.talos_rate, options.workload_rate), (None, None));
+        assert_eq!(options, StressOptions::default());
+    }
+
+    #[test]
+    fn keys_are_taken_as_written() {
+        assert_eq!(
+            parse(&[("FRESHKUBE_STRESS_KEYS", "down wait:5")]).keys,
+            "down wait:5"
+        );
+    }
+
+    #[test]
+    fn seconds_and_warmup_fall_back_when_bad() {
+        let good = parse(&[
+            ("FRESHKUBE_STRESS_SECONDS", "12"),
+            ("FRESHKUBE_STRESS_WARMUP", "0"),
+        ]);
+        assert_eq!((good.seconds, good.warmup), (12, 0));
+        for bad in ["", "soon", "-3", "1.5"] {
+            let options = StressOptions::parse(|name| {
+                matches!(name, "FRESHKUBE_STRESS_SECONDS" | "FRESHKUBE_STRESS_WARMUP")
+                    .then(|| OsString::from(bad))
+            });
+            assert_eq!((options.seconds, options.warmup), (30, 5), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn appearance_knows_light_and_dark_only() {
+        let appearance = |value: &'static str| {
+            StressOptions::parse(|name| {
+                (name == "FRESHKUBE_STRESS_APPEARANCE").then(|| OsString::from(value))
+            })
+            .appearance
+        };
+        assert_eq!(appearance("light"), Some(Appearance::Light));
+        assert_eq!(appearance("dark"), Some(Appearance::Dark));
+        assert_eq!(appearance("Light"), None);
+        assert_eq!(appearance(""), None);
+    }
+
+    #[test]
+    fn rates_must_be_positive_numbers() {
+        let rates = |value: &'static str| {
+            let options = StressOptions::parse(|name| {
+                matches!(
+                    name,
+                    "FRESHKUBE_STRESS_TALOS_RATE" | "FRESHKUBE_STRESS_WORKLOAD_RATE"
+                )
+                .then(|| OsString::from(value))
+            });
+            (options.talos_rate, options.workload_rate)
+        };
+        assert_eq!(rates("500"), (Some(500), Some(500)));
+        for bad in ["0", "-1", "fast", "", "2.5"] {
+            assert_eq!(rates(bad), (None, None), "{bad:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_value_that_is_not_utf8_counts_as_unset() {
+        use std::os::unix::ffi::OsStringExt;
+        let options = StressOptions::parse(|_| Some(OsString::from_vec(vec![0xff, 0xfe])));
+        assert_eq!(options, StressOptions::default());
     }
 }

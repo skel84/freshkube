@@ -321,10 +321,10 @@ async fn a_destination_started_late_ends_with_the_reads_budget() {
     assert_eq!(missing(&change), [(Gap::Unreadable, late.as_str())]);
 }
 
-/// How long Argo CD's slow entry takes a listing: the first round ends
-/// past 15 s and within 45 s, so a destination's own 30 s would pass the
-/// read's end.
-const LATE: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long Argo CD's slow entry takes each listing: the three discovery
+/// lists and the Applications list end past 15 s and within 45 s, so a
+/// destination's own 30 s would pass the read's end.
+const LATE: std::time::Duration = std::time::Duration::from_secs(6);
 
 /// The first round's reads end with the budget too: an entry that answers
 /// but never finishes says so in its name, and the rest shows.

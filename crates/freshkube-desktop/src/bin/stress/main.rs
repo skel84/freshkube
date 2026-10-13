@@ -248,6 +248,8 @@ fn main() -> color_eyre::Result<()> {
     }
     // After the defaults above, which set HOME for the dashboard scenario.
     freshkube_desktop::install_ambient_from_env();
+    let stress = freshkube_desktop::StressOptions::from_env();
+    freshkube_desktop::install_stress_options(stress.clone());
     eprintln!("stress scenario {scenario:?}");
     let terminal = match scenario {
         Scenario::Terminal { rate } => Some(freshkube_desktop::TerminalWorkload::Flood {
@@ -274,7 +276,7 @@ fn main() -> color_eyre::Result<()> {
         );
     }
     let world = Arc::new(World::new(scenario));
-    let address = runtime.block_on(serve(world.clone()))?;
+    let address = runtime.block_on(serve(world.clone(), stress.seconds))?;
     std::fs::create_dir_all(&dir)?;
     let kubeconfig = dir.join("kubeconfig");
     std::fs::write(
@@ -391,8 +393,8 @@ impl World {
     }
 }
 
-async fn serve(world: Arc<World>) -> std::io::Result<std::net::SocketAddr> {
-    summary::start(world.clone());
+async fn serve(world: Arc<World>, seconds: u64) -> std::io::Result<std::net::SocketAddr> {
+    summary::start(world.clone(), seconds);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     tokio::spawn(async move {

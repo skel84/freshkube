@@ -49,11 +49,15 @@ pub(in crate::desktop) struct Chrome {
     pub(in crate::desktop) app_menu_focus: Option<FocusHandle>,
     /// What the installed menus state, to set them again only on a change.
     pub(in crate::desktop) menu_state: Option<crate::desktop::app_menu::MenuState>,
+    /// Follows the system's light or dark while `appearance` is the
+    /// system's.
+    _appearance: Subscription,
 }
 
 impl Chrome {
     pub(in crate::desktop) fn new(
         menu_platform: freshkube_ui::platform::Platform,
+        window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
         Self {
@@ -71,6 +75,11 @@ impl Chrome {
             app_menu_popup: None,
             app_menu_focus: None,
             menu_state: None,
+            _appearance: cx.observe_window_appearance(window, |pilot, window, cx| {
+                if pilot.chrome.appearance == Appearance::System {
+                    Theme::sync_system_appearance(Some(window), cx);
+                }
+            }),
         }
     }
 
