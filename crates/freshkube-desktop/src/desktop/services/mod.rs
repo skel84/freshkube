@@ -172,10 +172,15 @@ impl NodeServices {
         }
     }
 
-    /// The services the shell read; a selection they no longer have goes.
+    /// The services the shell read; a selection they no longer have goes
+    /// once they answer. While a read is on its way the selection stays,
+    /// so one made from elsewhere waits for the services it names.
     pub(super) fn set_reading(&mut self, reading: ServicesReading, cx: &mut Context<Self>) {
         self.reading = reading;
-        if presentation::selected_service(self.reading.all(), self.selected.as_deref()).is_none() {
+        if !self.reading.loading
+            && presentation::selected_service(self.reading.all(), self.selected.as_deref())
+                .is_none()
+        {
             self.selected = None;
         }
         self.rebuild_rows(cx);

@@ -482,3 +482,66 @@ async fn a_talosconfig_that_fails_to_load_ends_the_services_wait(cx: &mut TestAp
         assert!(!pilot.nodes_wait());
     });
 }
+
+/// A service selected from elsewhere after a failed read that kept nothing
+/// waits through the next read, and stays when the services answer with
+/// it, as the shell kept it before the tab owned its selection.
+#[gpui_kit::test]
+fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        open_node_tab(window, cx, super::super::nodes::NodeTab::Services);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (target, services) = cx.update(|cx| {
+        let pilot = view.read(cx);
+        let target = crate::backend::Target {
+            epoch: pilot.epoch,
+            context: pilot.applied.context.clone().unwrap_or_default(),
+            node: pilot.selected_node.clone().unwrap_or_default(),
+            address: "fixture".into(),
+        };
+        (target, pilot.services.data().cloned().unwrap())
+    });
+    assert!(services.iter().any(|service| service.id == "kubelet"));
+    let selected = |cx: &mut TestAppContext| cx.update(|cx| view.read(cx).selected_service(cx));
+    // The read fails with nothing kept, and a link selects kubelet.
+    cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.services = crate::state::Snapshot::default();
+            let request = pilot.services.begin(target.clone());
+            pilot.services.apply(&request, Err("offline".into()));
+            pilot.push_services(cx);
+            pilot.select_service(Some("kubelet".into()), cx);
+        })
+    });
+    assert_eq!(selected(cx).as_deref(), Some("kubelet"));
+    // The next read starts empty: the selection waits.
+    let request = cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            let request = pilot.services.begin(target.clone());
+            pilot.push_services(cx);
+            request
+        })
+    });
+    assert_eq!(selected(cx).as_deref(), Some("kubelet"));
+    // It answers with kubelet: the selection stays.
+    cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.services.apply(&request, Ok(services.clone()));
+            pilot.push_services(cx);
+        })
+    });
+    assert_eq!(selected(cx).as_deref(), Some("kubelet"));
+    // An answer without it drops it.
+    cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            let request = pilot.services.begin(target.clone());
+            pilot.services.apply(&request, Ok(Vec::new()));
+            pilot.push_services(cx);
+        })
+    });
+    assert_eq!(selected(cx), None);
+}
