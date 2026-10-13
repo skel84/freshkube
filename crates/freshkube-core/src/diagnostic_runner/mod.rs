@@ -1703,6 +1703,9 @@ fn unavailable_info_from_access(
 }
 
 #[cfg(test)]
+mod pod_health_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
