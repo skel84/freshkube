@@ -1663,6 +1663,7 @@ fn worker_failure(error: &crate::cluster_overview::K8sError) -> Failure {
     Failure::new(FailureKind::Other, error.to_string())
 }
 
+// String exception: identity validation supplies the setup message; probe_client classifies the setup as Config.
 fn prepare_probe_kubeconfig(
     path: Option<PathBuf>,
     pinned_yaml: &str,
@@ -1923,6 +1924,7 @@ where
 
 /// Reads a generated configuration for review: one regular file, bounded by
 /// [`REVIEW_LIMIT`], valid UTF-8. The returned text is what gets applied.
+// String exception: local review-file validation messages are displayed without classifying a cluster failure.
 pub fn frozen_review(path: &Path) -> Result<String, String> {
     use std::io::Read;
     if !std::fs::metadata(path)

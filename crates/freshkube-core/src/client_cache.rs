@@ -203,7 +203,7 @@ impl ConfigurationRevision {
     pub fn for_talos_sources(path: Option<&Path>, selection: &KubeconfigSelection) -> Self {
         let path = path
             .map(Path::to_path_buf)
-            .or_else(|| talos_rs::TalosConfig::default_path().ok());
+            .or_else(|| crate::ambient::default_talosconfig_path().ok());
         Self(fingerprint((
             path.as_ref().map(|path| (path, file_revision(path))),
             selection_key(selection),

@@ -252,6 +252,50 @@ pub(super) mod tests {
         .to_string()
     }
 
+    async fn failed_initial_list(code: u16, kind: FailureKind, words: &str) {
+        let message = words.to_owned();
+        let (client, seen) = server(move |_| {
+            (
+                code,
+                json!({"kind":"Status", "apiVersion":"v1", "status":"Failure",
+                "reason":"Synthetic", "message":message, "code":code})
+                .to_string(),
+            )
+        });
+        let pods = builtin("pods").unwrap();
+        let (sender, receiver) = mpsc::channel(4);
+        watch_collection(client, pods, None, None, sender).await;
+        let events = drain(receiver).await;
+        let [WatchEvent::Failed { failure, retrying }] = events.as_slice() else {
+            panic!("a failed list must deliver only its failure: {events:?}");
+        };
+        assert_eq!(failure.kind, kind);
+        assert_eq!(failure.message, words);
+        assert!(!retrying);
+        let seen = seen.lock().unwrap();
+        assert_eq!(
+            seen.len(),
+            1,
+            "a permanent list failure must not start a watch"
+        );
+        assert!(seen[0].starts_with("/api/v1/pods?"));
+    }
+
+    #[tokio::test]
+    async fn an_initial_list_403_keeps_the_refusal_kind_and_words() {
+        failed_initial_list(403, FailureKind::Forbidden, "pods is forbidden").await;
+    }
+
+    #[tokio::test]
+    async fn an_initial_list_404_keeps_the_not_served_kind_and_words() {
+        failed_initial_list(
+            404,
+            FailureKind::NotFound,
+            "the server could not find the requested resource",
+        )
+        .await;
+    }
+
     fn names(rows: &[TableRow]) -> Vec<String> {
         rows.iter()
             .map(|row| row.metadata().unwrap().name.clone())
