@@ -30,13 +30,14 @@ impl Part {
     }
 }
 
-pub(in crate::desktop) struct Chrome {
+/// One cached part: the header, the rail or the column.
+pub(in crate::desktop) struct CachedPart {
     pilot: WeakEntity<Pilot>,
     part: Part,
     _subscriptions: Vec<Subscription>,
 }
 
-impl Chrome {
+impl CachedPart {
     pub(in crate::desktop) fn new(
         pilot: &Entity<Pilot>,
         part: Part,
@@ -61,7 +62,7 @@ impl Chrome {
     }
 }
 
-impl Chrome {
+impl CachedPart {
     /// Draws again when `entity` notifies while the shell's area is one
     /// `shows`.
     fn watch<T: 'static>(
@@ -83,7 +84,7 @@ impl Chrome {
     }
 }
 
-impl Render for Chrome {
+impl Render for CachedPart {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit(self.part.probe());
         let _span = crate::perf::span(self.part.probe());
@@ -104,15 +105,15 @@ impl Render for Chrome {
 
 /// The shell's cached parts, made once with the shell.
 pub(in crate::desktop) struct ChromeParts {
-    pub(in crate::desktop) header: Entity<Chrome>,
-    pub(in crate::desktop) rail: Entity<Chrome>,
-    pub(in crate::desktop) column: Entity<Chrome>,
+    pub(in crate::desktop) header: Entity<CachedPart>,
+    pub(in crate::desktop) rail: Entity<CachedPart>,
+    pub(in crate::desktop) column: Entity<CachedPart>,
 }
 
 impl ChromeParts {
     pub(in crate::desktop) fn new(cx: &mut Context<Pilot>) -> Self {
         let pilot = cx.entity();
-        let mut part = |part| cx.new(|cx| Chrome::new(&pilot, part, cx));
+        let mut part = |part| cx.new(|cx| CachedPart::new(&pilot, part, cx));
         Self {
             header: part(Part::Header),
             rail: part(Part::Rail),
