@@ -34,7 +34,7 @@ impl FailureKind {
     }
 }
 
-/// A failed Kubernetes read, already classified.
+/// A failed Kubernetes or Talos read, already classified.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Failure {
     pub kind: FailureKind,
@@ -67,10 +67,21 @@ impl Failure {
             | TalosError::ConfigParse(_)
             | TalosError::ConfigInvalid(_)
             | TalosError::ContextNotFound(_)
-            | TalosError::NoEndpoints(_) => FailureKind::Config,
-            _ => FailureKind::Other,
+            | TalosError::NoEndpoints(_)
+            | TalosError::Base64Decode(_)
+            | TalosError::Tls(_)
+            | TalosError::NoHomeDirectory => FailureKind::Config,
+            TalosError::Io(_) => FailureKind::Other,
         };
-        Self::new(kind, crate::errors::format_talos_error(error))
+        // A status keeps the server's own message as the detail, since the
+        // kind's label already says what the code means; the words
+        // `format_talos_error` adds for a code are the fallback for a status
+        // with no message.
+        let message = match error {
+            TalosError::Grpc(status) if !status.message().is_empty() => status.message().to_owned(),
+            _ => crate::errors::format_talos_error(error),
+        };
+        Self::new(kind, message)
     }
 
     pub fn from_kube(error: kube::Error) -> Self {
@@ -284,6 +295,24 @@ mod tests {
     }
 
     #[test]
+    fn a_talos_status_keeps_the_servers_message_as_its_detail() {
+        let denied = TalosError::Grpc(tonic::Status::permission_denied(
+            "validate configuration on cp-1: proxy denied",
+        ));
+        let failure = Failure::from(&denied);
+        assert_eq!(
+            failure.to_string(),
+            "Forbidden · validate configuration on cp-1: proxy denied",
+            "the class is said once"
+        );
+        let bare = TalosError::Grpc(tonic::Status::permission_denied(""));
+        assert_eq!(
+            Failure::from(&bare).to_string(),
+            "Forbidden · Permission denied - check RBAC/credentials"
+        );
+    }
+
+    #[test]
     fn talos_grpc_codes_map_to_kinds_never_by_message() {
         use tonic::Code;
         for (code, kind) in [
@@ -301,6 +330,13 @@ mod tests {
         }
         let misleading = TalosError::Grpc(tonic::Status::new(Code::Internal, "permission denied"));
         assert_eq!(Failure::from(&misleading).kind, FailureKind::Other);
+        for config in [
+            TalosError::Tls("handshake".into()),
+            TalosError::NoHomeDirectory,
+            TalosError::Base64Decode(base64::DecodeError::InvalidLength(1)),
+        ] {
+            assert_eq!(Failure::from(&config).kind, FailureKind::Config);
+        }
         let refused = TalosError::Connection("connection refused".into());
         assert_eq!(Failure::from(&refused).kind, FailureKind::Unreachable);
     }

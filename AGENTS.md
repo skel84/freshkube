@@ -290,14 +290,14 @@ A diagnostic showing failure for a healthy system is worse than showing unknown.
 
 ## Code Patterns
 
-### Using Snapshot<T, I> and Loader<T>
+### Using Snapshot<T, I, E> and Loader<T>
 
-Desktop's [state::Snapshot](crates/freshkube-desktop/src/state.rs), core's [`snapshot::Snapshot`](crates/freshkube-core/src/snapshot.rs) with a default identity, retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. This small example uses the same identity labels as its unit tests:
+Desktop's [state::Snapshot](crates/freshkube-desktop/src/state.rs), core's [`snapshot::Snapshot`](crates/freshkube-core/src/snapshot.rs) with a default identity, retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. Its error type defaults to core's `Failure`; a read that still words its own errors names `String` as the third parameter (`Loader` does), until it moves to `Failure`. This small example uses the same identity labels as its unit tests:
 
 ```rust
 use crate::state::Snapshot;
 
-let mut state = Snapshot::<u32, &str>::default();
+let mut state = Snapshot::<u32, &str, String>::default();
 let initial = state.begin("node-a");
 assert!(state.apply(&initial, Ok(7)));
 let refresh = state.begin("node-a");
@@ -362,7 +362,7 @@ Diagnostic checks follow the reliability rules below: find the source of truth f
 ### Do
 
 - Check actual system state (files, APIs)
-- Use desktop `Snapshot<T, I>` and, for ordinary inspection reads, `Loader<T>`; preserve feature-specific owners
+- Use desktop `Snapshot<T, I, E>` and, for ordinary inspection reads, `Loader<T>`; preserve feature-specific owners
 - Check access/target identity and request generation before publishing; retain same-identity refresh failures as stale
 - Keep submitted Operations runs outside the ordinary read-job abort lifetime
 - Implement `HasHealth` for health enums

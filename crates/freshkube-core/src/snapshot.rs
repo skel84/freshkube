@@ -10,6 +10,8 @@
 
 use std::time::SystemTime;
 
+use crate::failure::Failure;
+
 /// A completion token belongs to one identity and one request generation.
 #[derive(Clone, Debug)]
 pub struct Request<I> {
@@ -18,18 +20,20 @@ pub struct Request<I> {
 }
 
 /// Retains the last successful value only while its target identity is unchanged.
-pub struct Snapshot<T, I> {
+/// A read's error is a [`Failure`] unless the caller names another type,
+/// such as `String` for a read that still words its own errors.
+pub struct Snapshot<T, I, E = Failure> {
     identity: Option<I>,
     generation: u64,
     data: Option<T>,
     loading: bool,
-    error: Option<String>,
+    error: Option<E>,
     stale: bool,
     last_successful: Option<SystemTime>,
     last_failure: Option<SystemTime>,
 }
 
-impl<T, I> Default for Snapshot<T, I> {
+impl<T, I, E> Default for Snapshot<T, I, E> {
     fn default() -> Self {
         Self {
             identity: None,
@@ -44,7 +48,7 @@ impl<T, I> Default for Snapshot<T, I> {
     }
 }
 
-impl<T, I: Clone + Eq> Snapshot<T, I> {
+impl<T, I: Clone + Eq, E> Snapshot<T, I, E> {
     pub fn begin(&mut self, identity: I) -> Request<I> {
         if self.identity.as_ref() != Some(&identity) {
             self.data = None;
@@ -69,11 +73,11 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
     /// read of the same identity replaces it, with the time it was taken.
     /// Nothing is loading; a [`begin`](Self::begin) for another identity
     /// drops it, as it drops any data.
-    pub fn restore(&mut self, identity: I, data: T, taken: SystemTime, note: &str) {
+    pub fn restore(&mut self, identity: I, data: T, taken: SystemTime, note: E) {
         self.identity = Some(identity);
         self.data = Some(data);
         self.loading = false;
-        self.error = Some(note.to_owned());
+        self.error = Some(note);
         self.stale = true;
         self.last_successful = Some(taken);
         self.last_failure = None;
@@ -84,7 +88,7 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
     }
 
     /// Returns false without mutation for an obsolete or already-applied request.
-    pub fn apply(&mut self, request: &Request<I>, result: Result<T, String>) -> bool {
+    pub fn apply(&mut self, request: &Request<I>, result: Result<T, E>) -> bool {
         if !self.loading || !self.is_current(request) {
             return false;
         }
@@ -116,8 +120,8 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
         self.data.as_mut()
     }
 
-    pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
+    pub fn error(&self) -> Option<&E> {
+        self.error.as_ref()
     }
 
     pub fn is_loading(&self) -> bool {
@@ -141,10 +145,11 @@ impl<T, I: Clone + Eq> Snapshot<T, I> {
 #[cfg(test)]
 mod tests {
     use super::Snapshot;
+    use crate::failure::{Failure, FailureKind};
 
     #[test]
     fn same_target_failure_retains_data_and_success_time() {
-        let mut snapshot = Snapshot::<u32, &str>::default();
+        let mut snapshot = Snapshot::<u32, &str, String>::default();
         let initial = snapshot.begin("node-a");
         assert!(snapshot.apply(&initial, Ok(7)));
         let successful = snapshot.last_successful();
@@ -159,7 +164,7 @@ mod tests {
         assert_eq!(snapshot.data(), Some(&7));
         assert_eq!(snapshot.last_successful(), successful);
         assert!(snapshot.last_failure().is_some());
-        assert_eq!(snapshot.error(), Some("offline"));
+        assert_eq!(snapshot.error().map(String::as_str), Some("offline"));
         assert!(snapshot.is_stale());
         assert!(!snapshot.is_loading());
 
@@ -173,7 +178,7 @@ mod tests {
 
     #[test]
     fn target_switch_clears_data_and_rejects_late_completions() {
-        let mut snapshot = Snapshot::<u32, &str>::default();
+        let mut snapshot = Snapshot::<u32, &str, String>::default();
         let initial = snapshot.begin("node-a");
         assert!(snapshot.apply(&initial, Ok(7)));
         let old = snapshot.begin("node-a");
@@ -191,11 +196,11 @@ mod tests {
     #[test]
     fn a_restored_answer_is_stale_with_its_own_time_until_another_identity_drops_it() {
         let taken = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
-        let mut snapshot = Snapshot::<u32, &str>::default();
-        snapshot.restore("node-a", 7, taken, "kept");
+        let mut snapshot = Snapshot::<u32, &str, String>::default();
+        snapshot.restore("node-a", 7, taken, "kept".into());
         assert_eq!(snapshot.data(), Some(&7));
         assert!(snapshot.is_stale() && !snapshot.is_loading());
-        assert_eq!(snapshot.error(), Some("kept"));
+        assert_eq!(snapshot.error().map(String::as_str), Some("kept"));
         assert_eq!(snapshot.last_successful(), Some(taken));
 
         let refresh = snapshot.begin("node-a");
@@ -203,7 +208,7 @@ mod tests {
         assert!(snapshot.apply(&refresh, Ok(8)));
         assert!(!snapshot.is_stale());
 
-        snapshot.restore("node-a", 9, taken, "kept");
+        snapshot.restore("node-a", 9, taken, "kept".into());
         snapshot.begin("node-b");
         assert_eq!(snapshot.data(), None);
         assert_eq!(snapshot.last_successful(), None);
@@ -211,7 +216,7 @@ mod tests {
 
     #[test]
     fn superseded_generation_and_duplicate_completion_are_ignored() {
-        let mut snapshot = Snapshot::<u32, &str>::default();
+        let mut snapshot = Snapshot::<u32, &str, String>::default();
         let old = snapshot.begin("node-a");
         let current = snapshot.begin("node-a");
         assert!(!snapshot.apply(&old, Err("late failure".into())));
@@ -225,5 +230,39 @@ mod tests {
         assert!(!snapshot.apply(&switched, Ok(6)));
         assert!(!snapshot.apply(&old, Ok(7)));
         assert!(snapshot.apply(&returned, Ok(8)));
+    }
+
+    #[test]
+    fn a_failure_is_the_default_error_and_is_retained_as_stale() {
+        // No error type named: it is a `Failure`.
+        let mut snapshot = Snapshot::<u32, &str>::default();
+        let initial = snapshot.begin("cluster-a");
+        assert!(snapshot.apply(&initial, Ok(7)));
+        let refresh = snapshot.begin("cluster-a");
+        let denied = Failure::new(FailureKind::Forbidden, "pods is forbidden");
+        assert!(snapshot.apply(&refresh, Err(denied.clone())));
+        assert_eq!(snapshot.data(), Some(&7));
+        assert!(snapshot.is_stale());
+        assert_eq!(snapshot.error(), Some(&denied));
+        assert_eq!(
+            snapshot.error().map(|failure| failure.kind),
+            Some(FailureKind::Forbidden)
+        );
+        assert!(snapshot.last_failure().is_some());
+
+        let retry = snapshot.begin("cluster-a");
+        assert!(snapshot.apply(&retry, Ok(8)));
+        assert_eq!(snapshot.error(), None);
+        assert!(!snapshot.is_stale());
+    }
+
+    #[test]
+    fn a_string_error_is_named_and_behaves_as_before() {
+        let mut snapshot = Snapshot::<u32, &str, String>::default();
+        let initial = snapshot.begin("cluster-a");
+        assert!(snapshot.apply(&initial, Err("offline".to_owned())));
+        assert_eq!(snapshot.error().map(String::as_str), Some("offline"));
+        assert!(snapshot.data().is_none());
+        assert!(!snapshot.is_stale());
     }
 }

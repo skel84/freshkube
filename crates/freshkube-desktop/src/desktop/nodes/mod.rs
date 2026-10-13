@@ -322,7 +322,7 @@ impl Pilot {
         let failure = self
             .config_error
             .as_deref()
-            .or_else(|| self.overview.error());
+            .or_else(|| self.overview.error().map(String::as_str));
         let reading = if self.kubernetes_only.is_some() || self.overview.data().is_some() {
             Reading::Answered
         } else if let Some(failure) = failure {
@@ -386,9 +386,15 @@ impl Pilot {
                 .kubernetes_summary
                 .data()
                 .and_then(|summary| summary.nodes.error())
-                .or_else(|| self.registry.active().kubernetes_summary.error())
+                .or_else(|| {
+                    self.registry
+                        .active()
+                        .kubernetes_summary
+                        .error()
+                        .map(String::as_str)
+                })
                 .or(self.config_error.as_deref())
-                .or_else(|| self.overview.error());
+                .or_else(|| self.overview.error().map(String::as_str));
             Some(if let Some(error) = error {
                 Empty::Failed(error.to_owned().into())
             } else if kubernetes.is_some() {
@@ -422,7 +428,11 @@ impl Pilot {
             self.kubernetes_only.is_some(),
         );
         if self.overview.is_stale() {
-            let reason = self.overview.error().unwrap_or("The refresh failed.");
+            let reason = self
+                .overview
+                .error()
+                .map(String::as_str)
+                .unwrap_or("The refresh failed.");
             self.overview_display =
                 std::mem::take(&mut self.overview_display).talos_stale(reason.to_owned().into());
         }

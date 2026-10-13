@@ -42,7 +42,7 @@ pub(crate) fn run<V: 'static, T: Send + 'static>(
             _task: task,
         };
     }
-    let (job, receiver) = spawn_job(runtime, deadline, TIMED_OUT.into(), async move {
+    let (job, receiver) = spawn_job(runtime, deadline, TIMED_OUT.to_owned(), async move {
         Ok(work.await)
     });
     let task = cx.spawn(async move |this, cx| {
