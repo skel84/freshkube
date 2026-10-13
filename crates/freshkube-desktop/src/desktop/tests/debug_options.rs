@@ -1,4 +1,4 @@
-//! `Pilot::new` hands each page the value `DebugOptions` holds for it, so a
+//! `page_map::Pages::new` hands each page the value `DebugOptions` holds for it, so a
 //! test chooses an example's shape without the environment.
 use super::*;
 use crate::DebugOptions;
