@@ -2498,9 +2498,9 @@ users:
     /// Config, and says what it said before.
     #[tokio::test]
     async fn probe_client_refuses_an_unusable_kubeconfig_as_config() {
-        let failure = probe_client(None, "not yaml".into(), "10.0.0.1".into())
-            .await
-            .expect_err("an unparseable kubeconfig makes no client");
+        let Err(failure) = probe_client(None, "not yaml".into(), "10.0.0.1".into()).await else {
+            panic!("an unparseable kubeconfig makes no client");
+        };
         assert_eq!(failure.kind, FailureKind::Config);
         assert_eq!(
             failure.message,
