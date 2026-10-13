@@ -1,0 +1,1 @@
+- **Nodes:** the usage read uses the shared read owner, keeping its polling, cancellation and last known metrics behavior.
