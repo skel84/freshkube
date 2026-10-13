@@ -26,6 +26,7 @@ mod services;
 mod session;
 mod settings;
 mod shell;
+mod source;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
 mod states;
@@ -1128,107 +1129,6 @@ impl Pilot {
         }
     }
 
-    /// What screens inspect: the target node, its roster and, unless this is
-    /// example data, live Talos access. `None` until a target exists.
-    fn screen_source(&self) -> Option<ScreenSource> {
-        let cluster = self.overview.data()?;
-        let node = self.selected_summary()?;
-        let live = if self.fixture {
-            None
-        } else {
-            let mut collector = ClusterOverviewCollector::new(
-                self.applied.path.clone(),
-                self.applied.context.clone(),
-            );
-            collector.set_kubeconfig_selection(self.kubeconfig.clone());
-            Some(LiveSource {
-                client: cluster.client.clone()?,
-                cluster: Arc::new(cluster.clone()),
-                collector,
-                config_path: self.applied.path.clone(),
-                applied: self.applied_access(),
-            })
-        };
-        Some(ScreenSource {
-            target: Target {
-                epoch: self.epoch,
-                context: cluster.name.clone(),
-                node: node.name.clone(),
-                address: node.address.clone(),
-            },
-            nodes: Arc::new(self.nodes.clone()),
-            live,
-        })
-    }
-
-    /// The local access the last overview was collected with, which a live
-    /// source carries for Operations to pin its clients to.
-    fn applied_access(&self) -> Option<resources::talos::AppliedAccess> {
-        Some(resources::talos::AppliedAccess {
-            config_path: self.applied.path.clone(),
-            selection: self.kubeconfig.clone(),
-            configuration: self.registry.active().access_configuration?,
-            identity: self.registry.active().access?,
-        })
-    }
-
-    /// Whose Kubernetes access this is, as `kube_source`'s id, even while
-    /// that source is missing for a while: none once another context,
-    /// kubeconfig or talosconfig is chosen, until it has loaded.
-    fn kube_identity(&self) -> Option<String> {
-        if self.fixture {
-            return Some(resources::example::connection(
-                self.applied.context.as_ref()?,
-            ));
-        }
-        if let Some(kube) = &self.kubernetes_only {
-            return kube.access().map(|access| access.id());
-        }
-        self.registry.active().access.map(|access| access.key())
-    }
-
-    /// Where the Resources page reads: example objects, or the Kubernetes
-    /// API of the Talos cluster. Its id covers what picks the cluster and
-    /// its credentials, not the target node, so changing node keeps a watch.
-    fn kube_source(&self) -> Option<KubeSource> {
-        if self.fixture {
-            let context = self.applied.context.clone()?;
-            return Some(KubeSource {
-                id: resources::example::connection(&context),
-                context,
-                access: KubeAccess::Example,
-            });
-        }
-        if let Some(kube) = &self.kubernetes_only {
-            let access = kube.access()?.clone();
-            return Some(KubeSource {
-                id: access.id(),
-                context: access.context().to_owned(),
-                access: KubeAccess::Direct(access),
-            });
-        }
-        let context = self.applied.context.clone()?;
-        let cluster = self.overview.data()?;
-        let mut collector =
-            ClusterOverviewCollector::new(self.applied.path.clone(), Some(context.clone()));
-        collector.set_kubeconfig_selection(self.kubeconfig.clone());
-        Some(KubeSource {
-            id: self.registry.active().access?.key(),
-            context: cluster.name.clone(),
-            access: KubeAccess::Talos(Box::new(resources::talos::TalosAccess {
-                configuration: self.registry.active().access_configuration?,
-                selection: self.kubeconfig.clone(),
-                live: LiveSource {
-                    client: cluster.client.clone()?,
-                    cluster: Arc::new(cluster.clone()),
-                    collector,
-                    config_path: self.applied.path.clone(),
-                    applied: self.applied_access(),
-                },
-            })),
-        })
-    }
-
     fn active_screen(&self, cx: &App) -> Option<ScreenHandle> {
         let page = if self.navigation.page == Page::Nodes {
             self.node_workspace.read(cx).pane_screen()?
@@ -1238,25 +1138,12 @@ impl Pilot {
         self.pages.get(&page).cloned()
     }
 
-    /// What every page is handed: the Talos target, and the Kubernetes
-    /// connection with the entry and access it is.
-    fn page_source(&self) -> PageSource {
-        PageSource {
-            screen: self.screen_source(),
-            kube: self.kube_source(),
-            // The entry the window is on is the one the source's connection
-            // is: both change together here.
-            entry: self.active_cluster().map(str::to_owned),
-            kube_identity: self.kube_identity(),
-        }
-    }
-
     /// Hands every page the current source; the visible screen loads if
     /// empty. The screens hear first, then the entities beside the pages,
     /// then the other pages, in key order.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.deliver_summary_nodes(cx);
-        let source = self.page_source();
+        let source = self.source();
         for (_, screen) in self.pages.iter().filter(|(id, _)| id.is_screen()) {
             screen.set_page_source(source.clone(), window, cx);
         }

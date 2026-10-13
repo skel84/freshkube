@@ -118,7 +118,7 @@ impl Pilot {
             return;
         }
         let local = self.local_search_entries(cx);
-        let source = self.kube_source();
+        let source = self.source().kube;
         let search = self.search.clone();
         search.update(cx, |search, cx| search.begin(local, source, window, cx));
         let pilot = cx.entity().downgrade();

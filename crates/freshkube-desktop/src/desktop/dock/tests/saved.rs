@@ -94,7 +94,7 @@ fn saved_tabs_come_back_for_their_context_and_read_once_shown(cx: &mut TestAppCo
     };
     // As the app opens: the saved dock waits for the first connection.
     cx.update_window(handle, |_, window, cx| {
-        let source = pilot.read(cx).kube_source();
+        let source = pilot.read(cx).source().kube;
         dock.update(cx, |dock, cx| {
             dock.source = None;
             dock.height.release(260., cx);
@@ -194,7 +194,7 @@ fn a_restored_shell_tab_comes_back_idle(cx: &mut TestAppContext) {
     let written = cx.update(|cx| dock.read(cx).saved(cx));
     assert_eq!(written.tabs, saved.tabs);
     cx.update_window(handle, |_, window, cx| {
-        let source = pilot.read(cx).kube_source();
+        let source = pilot.read(cx).source().kube;
         dock.update(cx, |dock, cx| {
             dock.set_source(None, None, window, cx);
             dock.restore = Some(saved);
@@ -275,7 +275,7 @@ fn a_tab_saved_on_all_containers_comes_back_on_all_of_them(cx: &mut TestAppConte
         }],
     };
     cx.update_window(handle, |_, window, cx| {
-        let source = pilot.read(cx).kube_source();
+        let source = pilot.read(cx).source().kube;
         dock.update(cx, |dock, cx| {
             dock.source = None;
             dock.restore = Some(saved.clone());

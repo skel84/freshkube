@@ -5,11 +5,10 @@
 //! The desktop app builds one from its own connection type, so a page that
 //! takes a [`ClusterSource`] depends on neither that type nor the UI.
 //!
-//! The access the shell hands its pages lives here too: [`KubeAccess`]
-//! (example data, the Kubernetes client the Talos side sets up, or a
-//! kubeconfig context), [`LiveSource`] (Talos access for a connected
-//! context), [`TalosAccess`], [`AppliedAccess`] and [`DirectAccess`].
-//! Desktop names them by their old paths.
+//! Every page is handed the same [`ClusterSource`]: example data, the
+//! Kubernetes client the Talos side sets up ([`TalosAccess`], holding the
+//! [`LiveSource`] of a connected context and its [`AppliedAccess`]), or a
+//! kubeconfig context ([`DirectAccess`]).
 
 use futures::future::BoxFuture;
 use std::fmt;
@@ -36,7 +35,12 @@ pub trait KubeClientSource: Send + Sync {
 pub enum ClusterAccess {
     /// Made-up data for `--fixture`; nothing is contacted.
     Example,
-    /// A live cluster, through the app's own client cache.
+    /// The Kubernetes client the Talos side sets up for its cluster.
+    Talos(Box<TalosAccess>),
+    /// A kubeconfig context, without Talos.
+    Direct(DirectAccess),
+    /// Any other way to a client. The app builds none; tests hand pages
+    /// fakes that count what they are asked, through it.
     Live(Arc<dyn KubeClientSource>),
 }
 
@@ -48,14 +52,22 @@ impl ClusterAccess {
     pub async fn client(&self) -> Result<kube::Client, String> {
         match self {
             ClusterAccess::Example => Err("Example data has no Kubernetes client".into()),
+            ClusterAccess::Talos(talos) => talos.client().await,
+            ClusterAccess::Direct(direct) => {
+                direct.connect().await.map(|connection| connection.client)
+            }
             ClusterAccess::Live(source) => source.client().await,
         }
     }
 
-    /// As [`KubeClientSource::forget`]; example data keeps nothing.
+    /// Drops a reused client after a failure, so the next read rebuilds it;
+    /// example data keeps nothing.
     pub fn forget(&self) {
-        if let ClusterAccess::Live(source) = self {
-            source.forget();
+        match self {
+            ClusterAccess::Example => {}
+            ClusterAccess::Talos(talos) => talos.forget(),
+            ClusterAccess::Direct(direct) => direct.forget(),
+            ClusterAccess::Live(source) => source.forget(),
         }
     }
 }
@@ -64,6 +76,8 @@ impl fmt::Debug for ClusterAccess {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ClusterAccess::Example => f.write_str("Example"),
+            ClusterAccess::Talos(_) => f.write_str("Talos"),
+            ClusterAccess::Direct(_) => f.write_str("Direct"),
             ClusterAccess::Live(_) => f.write_str("Live"),
         }
     }
@@ -73,56 +87,13 @@ impl fmt::Debug for ClusterAccess {
 /// for one id never show for another, and the same id keeps what was found.
 #[derive(Clone, Debug)]
 pub struct ClusterSource {
-    /// The opaque access key derived from [`crate::AccessIdentity`], as the
-    /// shell's `KubeSource.id` carries it; never a context name. A context
+    /// The opaque access key derived from [`crate::AccessIdentity`]; never
+    /// a context name. A context
     /// keeps its name when its credentials change, and its key does not.
     pub id: String,
     /// The context the page names.
     pub context: String,
     pub access: ClusterAccess,
-}
-
-#[derive(Clone)]
-pub enum KubeAccess {
-    /// Made-up objects for `--fixture`; nothing is contacted.
-    Example,
-    /// The Kubernetes client the Talos side sets up for its cluster.
-    Talos(Box<TalosAccess>),
-    /// A kubeconfig context, without Talos.
-    Direct(DirectAccess),
-}
-
-impl KubeAccess {
-    pub async fn client(&self) -> Result<kube::Client, String> {
-        match self {
-            KubeAccess::Example => Err("Example data has no Kubernetes client".into()),
-            KubeAccess::Talos(live) => live.client().await,
-            KubeAccess::Direct(direct) => {
-                direct.connect().await.map(|connection| connection.client)
-            }
-        }
-    }
-
-    /// Drops a reused client after a failure, so the next read rebuilds it.
-    pub fn forget(&self) {
-        match self {
-            KubeAccess::Example => {}
-            KubeAccess::Talos(live) => live.forget(),
-            KubeAccess::Direct(direct) => direct.forget(),
-        }
-    }
-}
-
-/// Pages outside Resources reach a live cluster through this, so a clone
-/// shares the client the Talos or kubeconfig access caches.
-impl KubeClientSource for KubeAccess {
-    fn client(&self) -> BoxFuture<'_, Result<kube::Client, String>> {
-        Box::pin(KubeAccess::client(self))
-    }
-
-    fn forget(&self) {
-        KubeAccess::forget(self);
-    }
 }
 
 #[cfg(test)]

@@ -764,7 +764,7 @@ fn a_link_naming_a_cluster_is_refused_while_none_is_open(cx: &mut TestAppContext
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, _| {
             pilot.applied.context = None;
-            assert!(pilot.kube_identity().is_none() && pilot.kube_source().is_none());
+            assert!(pilot.source().kube_identity.is_none() && pilot.source().kube.is_none());
         });
         let page = pilot.read(cx).navigation.page;
         let before = notices(window, cx);
@@ -790,7 +790,7 @@ fn an_owner_read_for_a_link_from_another_cluster_starts_nothing(cx: &mut TestApp
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
     let (identity, _) = pod();
     cx.update_window(handle, |_, window, cx| {
-        let source = pilot.read(cx).kube_source().unwrap();
+        let source = pilot.read(cx).source().kube.unwrap();
         let owner = |connection: String| {
             let mut object: crate::resources::model::ObjectRef = identity.clone().into();
             object.connection = Some(connection);

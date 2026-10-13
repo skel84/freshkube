@@ -534,7 +534,7 @@ fn holding(
                 (
                     identity.connection.clone(),
                     identity.uid.clone(),
-                    pilot.kube_source().map(|source| source.id),
+                    pilot.source().kube.map(|source| source.id),
                     pilot.registry.active_key().clone(),
                 )
             })
@@ -629,7 +629,7 @@ fn each_clusters_rows_carry_their_own_connection_after_a_switch(cx: &mut TestApp
             "{id}: a row names another cluster"
         );
         assert_eq!(
-            cx.read(|cx| view.read(cx).kube_source().unwrap().id),
+            cx.read(|cx| view.read(cx).source().kube.unwrap().id),
             example::connection(id)
         );
         uids.push((id.into(), rows.into_iter().map(|row| row.uid).collect()));

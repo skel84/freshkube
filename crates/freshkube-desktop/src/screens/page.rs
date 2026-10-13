@@ -10,7 +10,6 @@
 
 use std::rc::Rc;
 
-use freshkube_core::cluster_source::ClusterSource;
 use freshkube_core::resources::ResourceKind;
 use gpui_kit::{App, FocusHandle, Subscription, Window};
 
@@ -142,18 +141,6 @@ pub(crate) struct PageSource {
     /// stays set while the source is missing for a while, so it can't be
     /// derived from [`kube`](Self::kube).
     pub(crate) kube_identity: Option<String>,
-}
-
-impl PageSource {
-    /// The connection's id, which Observability keys Coroot's access by.
-    pub(crate) fn access(&self) -> Option<String> {
-        self.kube.as_ref().map(|source| source.id.clone())
-    }
-
-    /// The cluster Monitoring reads Prometheus from.
-    pub(crate) fn cluster(&self) -> Option<ClusterSource> {
-        self.kube.as_ref().map(KubeSource::cluster)
-    }
 }
 
 impl PartialEq for ScreenHandle {

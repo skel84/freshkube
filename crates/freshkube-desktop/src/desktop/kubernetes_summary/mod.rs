@@ -100,7 +100,7 @@ impl Pilot {
     }
 
     fn ensure_summary_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = self.kube_source() else {
+        let Some(source) = self.source().kube else {
             return;
         };
         if self

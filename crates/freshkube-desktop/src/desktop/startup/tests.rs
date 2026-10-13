@@ -179,7 +179,7 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
         assert!(window.try_find("nav-etcd").is_none());
         assert!(pilot.read(cx).nodes.is_empty());
         assert!(matches!(
-            pilot.read(cx).kube_source().unwrap().access,
+            pilot.read(cx).source().kube.unwrap().access,
             KubeAccess::Example
         ));
         pilot.update(cx, |pilot, cx| {
@@ -196,7 +196,7 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
         assert!(view.nodes.is_empty());
         assert_eq!(view.applied.context.as_deref(), Some("staging-eu"));
         assert!(matches!(
-            view.kube_source().unwrap().access,
+            view.source().kube.unwrap().access,
             KubeAccess::Example
         ));
         assert!(view.kubernetes_only.as_ref().unwrap().access().is_none());

@@ -727,7 +727,7 @@ impl Pilot {
             },
             ..object
         };
-        let Some(source) = self.kube_source() else {
+        let Some(source) = self.source().kube else {
             self.open_kind(kind, window, cx);
             return;
         };
@@ -818,7 +818,7 @@ impl Pilot {
                 .map_err(|error| error.to_string())
             },
             move |this, cx| {
-                this.kube_source()
+                this.source().kube
                     .is_none_or(|source| source.id != connection)
                     || this.resources.read(cx).detail_identity(cx).is_some()
             },

@@ -146,7 +146,7 @@ impl ScreenPanel for MonitoringPage {
 
     /// The cluster it finds Prometheus in.
     fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
-        MonitoringPage::set_source(self, source.cluster(), cx)
+        MonitoringPage::set_source(self, source.kube, cx)
     }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
@@ -179,7 +179,7 @@ impl ScreenPanel for ObservabilityPage {
 
     /// The connection's id, which it keys Coroot's access by.
     fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
-        ObservabilityPage::set_source(self, source.access(), cx)
+        ObservabilityPage::set_source(self, source.kube.map(|kube| kube.id), cx)
     }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
@@ -434,7 +434,7 @@ impl Pilot {
                     .read(cx)
                     .link_is_current(source, app, subject)
                     && self
-                        .kube_source()
+                        .source().kube
                         .is_some_and(|source| source.id == subject.access())
                 {
                     self.open_object(

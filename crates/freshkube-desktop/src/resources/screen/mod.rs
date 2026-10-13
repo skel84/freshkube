@@ -93,31 +93,9 @@ actions!(
 /// Where the Resources page reads from. `id` is part of every row's
 /// identity, so rows from one connection are never shown or selected as
 /// another's; the same `id` keeps a running watch across source updates.
-#[derive(Clone)]
-pub(crate) struct KubeSource {
-    pub(crate) id: String,
-    /// The context the scope line names.
-    pub(crate) context: String,
-    pub(crate) access: KubeAccess,
-}
+pub(crate) type KubeSource = freshkube_core::cluster_source::ClusterSource;
 
-pub(crate) use freshkube_core::cluster_source::KubeAccess;
-
-impl KubeSource {
-    /// This connection as Monitoring and Observability take it.
-    pub(crate) fn cluster(&self) -> freshkube_core::cluster_source::ClusterSource {
-        use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
-        let access = match &self.access {
-            KubeAccess::Example => ClusterAccess::Example,
-            live => ClusterAccess::Live(std::sync::Arc::new(live.clone())),
-        };
-        ClusterSource {
-            id: self.id.clone(),
-            context: self.context.clone(),
-            access,
-        }
-    }
-}
+pub(crate) use freshkube_core::cluster_source::ClusterAccess as KubeAccess;
 
 /// One entry of the namespace picker; `None` lists every namespace.
 #[derive(Clone, Debug, PartialEq)]
