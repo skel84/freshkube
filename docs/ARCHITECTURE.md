@@ -127,3 +127,4 @@ The command-line options are `src/main.rs`'s `Cli`, which builds a `GpuiOptions`
 Behaviour that does not belong in the rules lives in one doc per feature, each starting with its module paths and the modules whose tests prove it (#587).
 
 - [docs/features/applications.md](features/applications.md): the Applications area, the Changes list and the change page.
+- [docs/features/resources.md](features/resources.md): the Resources page, the dock's logs, shells and ports, and a pod's cause card.
