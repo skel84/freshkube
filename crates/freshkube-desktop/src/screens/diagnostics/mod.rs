@@ -292,16 +292,8 @@ pub(crate) struct DiagnosticsScreen {
 
 impl EventEmitter<ScreenEvent> for DiagnosticsScreen {}
 
-impl ScreenPanel for DiagnosticsScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
-        self.embedded = embedded;
-        cx.notify();
-    }
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl DiagnosticsScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextCheck, Some(CONTEXT)),
             KeyBinding::new("up", PreviousCheck, Some(CONTEXT)),
@@ -322,6 +314,17 @@ impl ScreenPanel for DiagnosticsScreen {
             table: table::TableState::new("diagnostic"),
             derived: None,
         }
+    }
+}
+
+impl ScreenPanel for DiagnosticsScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {

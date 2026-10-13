@@ -80,8 +80,8 @@ pub(crate) struct SecurityScreen {
 
 impl EventEmitter<ScreenEvent> for SecurityScreen {}
 
-impl ScreenPanel for SecurityScreen {
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl SecurityScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -103,7 +103,9 @@ impl ScreenPanel for SecurityScreen {
             loading: TableLoading::new(PREFIX, cx),
         }
     }
+}
 
+impl ScreenPanel for SecurityScreen {
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);
