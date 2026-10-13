@@ -315,3 +315,185 @@ pub fn processes(
         next_sample,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot(
+        name: &str,
+        control_plane: bool,
+        cores: Option<usize>,
+        tick: u64,
+    ) -> ProcessInspectionSnapshot {
+        processes(
+            &ExampleNode::new(name, control_plane, cores),
+            InspectionTarget::new(name, "192.0.2.10"),
+            tick,
+        )
+    }
+
+    #[test]
+    fn control_plane_and_worker_have_their_own_processes() {
+        let control_plane = snapshot("example-control-plane", true, Some(8), 0);
+        let worker = snapshot("example-worker", false, Some(16), 0);
+        assert_eq!(
+            control_plane.target,
+            InspectionTarget::new("example-control-plane", "192.0.2.10")
+        );
+        assert_eq!(
+            worker.target,
+            InspectionTarget::new("example-worker", "192.0.2.10")
+        );
+        assert_eq!(control_plane.processes.len(), 19);
+        assert_eq!(worker.processes.len(), 19);
+        for (control_plane, worker) in control_plane
+            .processes
+            .iter()
+            .zip(&worker.processes)
+            .take(14)
+        {
+            assert_eq!(format!("{control_plane:?}"), format!("{worker:?}"));
+        }
+        let has = |snapshot: &ProcessInspectionSnapshot, command: &str| {
+            snapshot
+                .processes
+                .iter()
+                .any(|entry| entry.process.command == command)
+        };
+        for command in [
+            "etcd",
+            "kube-apiserver",
+            "kube-controller-manager",
+            "kube-scheduler",
+        ] {
+            assert!(has(&control_plane, command));
+            assert!(!has(&worker, command));
+        }
+        for command in ["postgres", "node"] {
+            assert!(has(&worker, command));
+            assert!(!has(&control_plane, command));
+        }
+        assert_eq!(control_plane.system.cpu_count, Some(8));
+        assert_eq!(worker.system.cpu_count, Some(16));
+        assert!(!control_plane.is_partial());
+        assert!(!worker.is_partial());
+    }
+
+    #[test]
+    fn degraded_worker_reports_waits_memory_pressure_and_missing_cpu_info() {
+        let normal = snapshot("example-worker", false, None, 3);
+        let degraded = snapshot("talos-wk-fra1-02", false, None, 3);
+        assert_eq!(normal.processes.len(), 19);
+        assert_eq!(degraded.processes.len(), 21);
+        assert_eq!(normal.state_counts.zombie, 0);
+        assert_eq!(normal.state_counts.disk_sleep, 0);
+        assert_eq!(degraded.state_counts.zombie, 1);
+        assert_eq!(degraded.state_counts.disk_sleep, 1);
+        assert!(
+            degraded
+                .processes
+                .iter()
+                .any(|entry| entry.process.pid == 2216
+                    && entry.process.state == ProcessState::Zombie)
+        );
+        assert!(degraded.processes.iter().any(
+            |entry| entry.process.pid == 2302 && entry.process.state == ProcessState::DiskSleep
+        ));
+        let memory = degraded.system.memory.unwrap();
+        assert_eq!(memory.total_bytes, 8 * 1024 * 1024 * 1024);
+        assert_eq!(memory.used_bytes, memory.total_bytes / 100 * 91);
+        assert_eq!(
+            normal.system.memory.unwrap().used_bytes,
+            memory.total_bytes / 100 * 47
+        );
+        assert_eq!(degraded.system.cpu_count, Some(4));
+        assert_eq!(normal.system.cpu_count, Some(4));
+        assert_eq!(
+            degraded.system.cpu.as_ref().unwrap().usage_percent,
+            Some(71.0)
+        );
+        assert_eq!(
+            normal.system.cpu.as_ref().unwrap().usage_percent,
+            Some(23.5)
+        );
+        assert_eq!(degraded.system.cpu.as_ref().unwrap().blocked_processes, 1);
+        assert_eq!(
+            degraded.system.load_average,
+            Some(LoadAverageSnapshot {
+                one_minute: 5.12,
+                five_minutes: 4.40,
+                fifteen_minutes: 3.95,
+            })
+        );
+        assert_eq!(
+            degraded.unavailable,
+            vec![InspectionUnavailable {
+                source: InspectionSource::ProcessCpuInfo,
+                message: "Example: the CPU information request timed out after 10 s".into(),
+            }]
+        );
+        assert!(normal.unavailable.is_empty());
+    }
+
+    #[test]
+    fn tick_moves_only_cpu_figures_and_their_sample_bookkeeping() {
+        for (name, control_plane) in [
+            ("example-control-plane", true),
+            ("example-worker", false),
+            ("talos-wk-fra1-02", false),
+        ] {
+            let first = snapshot(name, control_plane, Some(8), 0);
+            assert!(
+                first
+                    .processes
+                    .iter()
+                    .all(|entry| entry.cpu_percent.is_none())
+            );
+            assert!(first.system.cpu.as_ref().unwrap().usage_percent.is_none());
+            assert_eq!(first.next_sample.cpu_times.len(), 1);
+            for tick in [3, 4] {
+                let mut later = snapshot(name, control_plane, Some(8), tick);
+                assert_eq!(later.next_sample.cpu_times.len(), tick as usize + 1);
+                for entry in later.processes.iter().take(tick as usize + 1) {
+                    assert_eq!(
+                        later.next_sample.cpu_times[&entry.process.pid],
+                        entry.process.cpu_time
+                    );
+                }
+                assert!(
+                    later
+                        .processes
+                        .iter()
+                        .all(|entry| entry.cpu_percent.is_some())
+                );
+                assert!(later.system.cpu.as_ref().unwrap().usage_percent.is_some());
+                assert!(
+                    later
+                        .processes
+                        .iter()
+                        .zip(&first.processes)
+                        .any(|(later, first)| later.process.cpu_time != first.process.cpu_time)
+                );
+                for (later, first) in later.processes.iter_mut().zip(&first.processes) {
+                    later.cpu_percent = first.cpu_percent;
+                    later.process.cpu_time = first.process.cpu_time;
+                }
+                later.system.cpu.as_mut().unwrap().usage_percent =
+                    first.system.cpu.as_ref().unwrap().usage_percent;
+                later.sampled_at = first.sampled_at;
+                later.next_sample = first.next_sample.clone();
+                assert_eq!(format!("{later:?}"), format!("{first:?}"));
+            }
+            let third = snapshot(name, control_plane, Some(8), 3);
+            let fourth = snapshot(name, control_plane, Some(8), 4);
+            assert!(
+                third
+                    .processes
+                    .iter()
+                    .zip(&fourth.processes)
+                    .any(|(third, fourth)| third.cpu_percent != fourth.cpu_percent)
+            );
+        }
+    }
+}
