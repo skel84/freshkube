@@ -83,7 +83,7 @@ use tokio::runtime::Handle;
 pub(crate) use freshkube_probe::probe;
 
 pub(crate) use pages::Page;
-use pages::{Area, ColumnReveal, ScreenKind};
+use pages::{Area, ColumnReveal, PageId};
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 /// A key context no element draws: a binding in it only gives macOS's bar
@@ -389,7 +389,7 @@ pub(crate) struct Pilot {
     nodes_page: Entity<PageHost>,
     node_workspace: nodes::Nodes,
     node_pods: Entity<ResourcesScreen>,
-    screens: Vec<(ScreenKind, ScreenHandle)>,
+    screens: Vec<(PageId, ScreenHandle)>,
     /// The entity pages' handles, which hear whether they show; #579's
     /// step 3 keeps them and `screens` in one map.
     pages: Vec<(Page, ScreenHandle)>,
@@ -920,46 +920,47 @@ impl Pilot {
             window,
             cx,
         );
-        let screens = ScreenKind::ALL
+        let screens = PageId::SCREENS
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
-                    ScreenKind::Processes => Self::screen(
+                    PageId::Processes => Self::screen(
                         ProcessesScreen::new,
                         runtime,
                         &mut subscriptions,
                         window,
                         cx,
                     ),
-                    ScreenKind::Storage => {
+                    PageId::Storage => {
                         Self::screen(StorageScreen::new, runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Network => {
+                    PageId::Network => {
                         Self::screen(NetworkScreen::new, runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Diagnostics => Self::screen(
+                    PageId::Diagnostics => Self::screen(
                         DiagnosticsScreen::new,
                         runtime,
                         &mut subscriptions,
                         window,
                         cx,
                     ),
-                    ScreenKind::Etcd => {
+                    PageId::Etcd => {
                         Self::screen(EtcdScreen::new, runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Health => ScreenHandle::new(health.clone()),
-                    ScreenKind::Security => {
+                    PageId::Health => ScreenHandle::new(health.clone()),
+                    PageId::Security => {
                         Self::screen(SecurityScreen::new, runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Lifecycle => ScreenHandle::new(lifecycle.clone()),
-                    ScreenKind::Operations => Self::screen(
+                    PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
+                    PageId::Operations => Self::screen(
                         OperationsScreen::new,
                         runtime,
                         &mut subscriptions,
                         window,
                         cx,
                     ),
+                    _ => unreachable!("SCREENS holds the Talos screens alone"),
                 };
                 (page, handle)
             })

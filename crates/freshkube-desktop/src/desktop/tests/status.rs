@@ -120,7 +120,7 @@ impl crate::screens::ScreenPanel for SegmentScreen {
 
 #[gpui_kit::test]
 fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContext) {
-    use super::super::pages::ScreenKind;
+    use super::super::pages::PageId;
     use freshkube_ui::status::Segment;
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     // etcd's page draws a screen that sets its segment as the test says.
@@ -130,7 +130,7 @@ fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContex
             let slot = view
                 .screens
                 .iter_mut()
-                .find(|(kind, _)| *kind == ScreenKind::Etcd)
+                .find(|(kind, _)| *kind == PageId::Etcd)
                 .expect("etcd has a screen");
             slot.1 = crate::screens::ScreenHandle::new(screen.clone());
         })

@@ -71,12 +71,12 @@ impl NodeTab {
             Self::Yaml => "node-tab-yaml",
         }
     }
-    pub(super) fn screen(self) -> Option<super::pages::ScreenKind> {
+    pub(super) fn screen(self) -> Option<super::pages::PageId> {
         match self {
-            Self::Processes => Some(super::pages::ScreenKind::Processes),
-            Self::Storage => Some(super::pages::ScreenKind::Storage),
-            Self::Network => Some(super::pages::ScreenKind::Network),
-            Self::Diagnostics => Some(super::pages::ScreenKind::Diagnostics),
+            Self::Processes => Some(super::pages::PageId::Processes),
+            Self::Storage => Some(super::pages::PageId::Storage),
+            Self::Network => Some(super::pages::PageId::Network),
+            Self::Diagnostics => Some(super::pages::PageId::Diagnostics),
             _ => None,
         }
     }

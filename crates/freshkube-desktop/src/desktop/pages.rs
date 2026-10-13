@@ -25,9 +25,19 @@ pub(crate) enum Page {
     Settings,
 }
 
-/// The retained inspection views, including those embedded in the node pane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ScreenKind {
+/// Every page by its key, in the order the shell tells them whether they
+/// show: the pages that aren't Talos screens, then the retained inspection
+/// views, including those embedded in the node pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum PageId {
+    Overview,
+    Nodes,
+    SystemServices,
+    Monitoring,
+    Observability,
+    Applications,
+    Settings,
+    Resources,
     Processes,
     Storage,
     Network,
@@ -39,8 +49,9 @@ pub(super) enum ScreenKind {
     Operations,
 }
 
-impl ScreenKind {
-    pub(super) const ALL: [Self; 9] = [
+impl PageId {
+    /// The Talos screens, the retained inspection views.
+    pub(super) const SCREENS: [Self; 9] = [
         Self::Processes,
         Self::Storage,
         Self::Network,
@@ -51,6 +62,11 @@ impl ScreenKind {
         Self::Lifecycle,
         Self::Operations,
     ];
+
+    /// Whether this is one of the [Talos screens](Self::SCREENS).
+    pub(super) fn is_screen(self) -> bool {
+        Self::SCREENS.contains(&self)
+    }
 }
 
 /// A row of the navigation column to scroll into view; scrolling is
@@ -219,15 +235,28 @@ impl Page {
         Self::Settings,
     ];
 
-    pub(super) fn screen(self) -> Option<ScreenKind> {
+    /// The page's key.
+    pub(super) fn id(self) -> PageId {
         match self {
-            Self::Etcd => Some(ScreenKind::Etcd),
-            Self::Health => Some(ScreenKind::Health),
-            Self::Security => Some(ScreenKind::Security),
-            Self::Lifecycle => Some(ScreenKind::Lifecycle),
-            Self::Operations => Some(ScreenKind::Operations),
-            _ => None,
+            Self::Overview => PageId::Overview,
+            Self::Nodes => PageId::Nodes,
+            Self::Health => PageId::Health,
+            Self::Resources => PageId::Resources,
+            Self::Etcd => PageId::Etcd,
+            Self::SystemServices => PageId::SystemServices,
+            Self::Security => PageId::Security,
+            Self::Lifecycle => PageId::Lifecycle,
+            Self::Operations => PageId::Operations,
+            Self::Monitoring => PageId::Monitoring,
+            Self::Observability => PageId::Observability,
+            Self::Applications => PageId::Applications,
+            Self::Settings => PageId::Settings,
         }
+    }
+
+    /// The page's key when a Talos screen draws it.
+    pub(super) fn screen(self) -> Option<PageId> {
+        Some(self.id()).filter(|id| id.is_screen())
     }
     pub(super) fn title(self) -> &'static str {
         match self {

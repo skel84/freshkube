@@ -62,7 +62,7 @@ struct Fakes {
 
 impl Fakes {
     fn mount(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Self {
-        use super::super::pages::ScreenKind;
+        use super::super::pages::PageId;
         let fakes = Self {
             log: Rc::default(),
             told: Rc::default(),
@@ -86,8 +86,8 @@ impl Fakes {
             view.update(cx, |view, _| {
                 for (kind, handle) in view.screens.iter_mut() {
                     match kind {
-                        ScreenKind::Etcd => *handle = etcd.clone(),
-                        ScreenKind::Processes => *handle = processes.clone(),
+                        PageId::Etcd => *handle = etcd.clone(),
+                        PageId::Processes => *handle = processes.clone(),
                         _ => {}
                     }
                 }
