@@ -188,15 +188,20 @@ impl From<TalosError> for Failure {
     }
 }
 
-/// Whether an I/O error of kind `TimedOut` is among the error's causes: where
-/// the client's connect, read and write timeouts surface.
+/// Whether a read or write timed out, or the OS did, among the error's
+/// causes. The client's connect timeout is not one: hyper-timeout raises it
+/// as a `TimedOut` io error whose inner error is tokio's `Elapsed`, and a
+/// connection that could not be made is `Unreachable`; its read and write
+/// timeouts and the OS's `ETIMEDOUT` carry no such inner error.
 fn timed_out(error: &(dyn std::error::Error + 'static)) -> bool {
     let mut source = Some(error);
     while let Some(cause) = source {
-        if cause
-            .downcast_ref::<std::io::Error>()
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
-        {
+        if cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+            io.kind() == std::io::ErrorKind::TimedOut
+                && !io
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<tokio::time::error::Elapsed>())
+        }) {
             return true;
         }
         source = cause.source();
@@ -266,7 +271,7 @@ mod tests {
     fn a_timed_out_transport_is_a_timeout_by_its_io_kind() {
         use std::io::{Error, ErrorKind};
         let service = |error: Error| kube::Error::Service(Box::new(error));
-        let timeout = Failure::from_kube(service(Error::new(ErrorKind::TimedOut, "slow")));
+        let timeout = Failure::from_kube(service(Error::from(ErrorKind::TimedOut)));
         assert_eq!(timeout.kind, FailureKind::Timeout);
         // Words that say so do not: the kind comes from the error's type.
         let reset =

@@ -11,40 +11,40 @@ pub fn unreachable(entry: &str, why: &str) -> String {
 
 /// `refused on ⟨entry⟩: ⟨why⟩`: what a read the entry refused (401 or 403)
 /// came to, for a sentence that names its subject itself.
-pub fn refused_on(entry: &str, why: &str) -> String {
+pub(crate) fn refused_on(entry: &str, why: &str) -> String {
     format!("refused on {entry}: {why}")
 }
 
 /// `⟨what⟩ refused on ⟨entry⟩: ⟨why⟩`: a read the entry refused (401 or 403).
-pub fn refused(what: &str, entry: &str, why: &str) -> String {
+fn refused(what: &str, entry: &str, why: &str) -> String {
     format!("{what} {}", refused_on(entry, why))
 }
 
 /// `it wasn't found on ⟨entry⟩`: the answer for one object the entry doesn't
 /// have (404).
-pub fn wasnt_found_on(entry: &str) -> String {
+pub(crate) fn wasnt_found_on(entry: &str) -> String {
     format!("it wasn't found on {entry}")
 }
 
 /// `⟨what⟩ isn't served on ⟨entry⟩`: a kind the entry doesn't serve (404).
-pub fn not_served(what: &str, entry: &str) -> String {
+fn not_served(what: &str, entry: &str) -> String {
     format!("{what} isn't served on {entry}")
 }
 
 /// `⟨what⟩ were refused on ⟨entry⟩: ⟨why⟩`, for a plural `what` that was
 /// asked for and refused.
-pub fn were_refused(what: &str, entry: &str, why: &str) -> String {
+pub(crate) fn were_refused(what: &str, entry: &str, why: &str) -> String {
     format!("{what} were refused on {entry}: {why}")
 }
 
 /// `⟨what⟩ aren't served on ⟨entry⟩`, for a plural `what`.
-pub fn arent_served(what: &str, entry: &str) -> String {
+pub(crate) fn arent_served(what: &str, entry: &str) -> String {
     format!("{what} aren't served on {entry}")
 }
 
 /// `⟨what⟩ couldn't be read on ⟨entry⟩: ⟨why⟩`, for a plural `what` that
 /// was asked for and failed in some other way.
-pub fn unreadable(what: &str, entry: &str, why: &str) -> String {
+pub(crate) fn unreadable(what: &str, entry: &str, why: &str) -> String {
     format!("{what} couldn't be read on {entry}: {why}")
 }
 
@@ -88,6 +88,23 @@ mod tests {
         }
         assert_eq!(
             say(FailureKind::NotFound),
+            "Kargo isn't served on cluster-a"
+        );
+    }
+
+    #[test]
+    fn singular_sentences_are_worded_here() {
+        assert_eq!(
+            refused_on("cluster-a", "forbidden"),
+            "refused on cluster-a: forbidden"
+        );
+        assert_eq!(wasnt_found_on("cluster-a"), "it wasn't found on cluster-a");
+        assert_eq!(
+            refused("Kargo", "cluster-a", "forbidden"),
+            "Kargo refused on cluster-a: forbidden"
+        );
+        assert_eq!(
+            not_served("Kargo", "cluster-a"),
             "Kargo isn't served on cluster-a"
         );
     }
