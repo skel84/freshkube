@@ -1,4 +1,5 @@
 use super::*;
+use crate::DebugOptions;
 
 #[gpui_kit::test]
 fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut TestAppContext) {
@@ -384,7 +385,7 @@ fn stacked_node_logs_scroll_their_body_to_the_controls_then_the_lines(cx: &mut T
     cx.update_window(handle, |_, window, cx| {
         crate::text_size::set(20., cx);
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+            pilot.startup_selection(&DebugOptions::default().with_page("node-logs"), window, cx);
         });
         // The log view learns its width while drawing, then lays out again.
         for _ in 0..3 {
@@ -494,7 +495,7 @@ fn node_logs_in_a_tall_window_keep_the_frame_still(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+            pilot.startup_selection(&DebugOptions::default().with_page("node-logs"), window, cx);
         });
         for _ in 0..3 {
             window.render_frame(cx);

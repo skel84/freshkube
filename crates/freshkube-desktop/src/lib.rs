@@ -3,6 +3,8 @@
 //! The caller owns Tokio and keeps it alive for the native event loop.
 use std::path::{Path, PathBuf};
 
+pub use debug_options::DebugOptions;
+
 #[derive(Clone, Debug)]
 pub struct GpuiOptions {
     config_path: Option<PathBuf>,
@@ -25,6 +27,10 @@ pub struct GpuiOptions {
     /// Example data holds the Talos overview and the summary
     /// (`fixture::hold`).
     hold_talos: bool,
+    /// The debug knobs the binary parsed (`DebugOptions::from_env`); startup
+    /// reads them here, never from the environment.
+    #[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
+    debug: DebugOptions,
 }
 
 impl GpuiOptions {
@@ -43,7 +49,13 @@ impl GpuiOptions {
             preferences: None,
             keyring: false,
             hold_talos: false,
+            debug: DebugOptions::default(),
         }
+    }
+    /// Hands in the debug knobs, which only a debug or stress build parses.
+    pub fn with_debug(mut self, debug: DebugOptions) -> Self {
+        self.debug = debug;
+        self
     }
     /// Marks the launch as naming its source (`--kubernetes-only` asked for
     /// outright), so the workspace file's start rule yields to it.
@@ -285,6 +297,10 @@ mod actions;
 mod applications;
 mod backend;
 mod connection_preferences;
+// Only a debug or stress build reads the knobs; elsewhere `from_env` is the
+// default and the parser has no caller.
+#[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
+mod debug_options;
 mod desktop;
 mod fixture;
 mod forwards;
