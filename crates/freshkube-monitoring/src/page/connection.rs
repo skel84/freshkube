@@ -8,10 +8,10 @@ use freshkube_core::monitoring::{
     Backend, Candidate, Discovery, ErrorKind, Prometheus, PrometheusService, QueryError, Tried,
     cluster_client, confirm, confirm_url, discover, forget_after,
 };
-use gpui_kit::{Context, SharedString};
+use gpui_kit::{Context, EntityId, SharedString, WeakEntity};
 
 use super::{MonitoringEvent, MonitoringPage, Request};
-use crate::history::{HistoryKind, HistorySource};
+use crate::history::{HistoryKind, HistorySource, HistoryView};
 use crate::store::{Choice, token_account};
 
 pub(super) enum Connection {
@@ -54,6 +54,8 @@ pub(super) enum Rebuild {
     Unused,
     Building {
         _request: Request,
+        /// A shown history asked for this rebuild, possibly after the page.
+        history: bool,
     },
     Used,
 }
@@ -64,11 +66,15 @@ impl Connection {
     }
 
     /// Hiding drops a search in progress; showing starts it again.
-    pub(super) fn hide(&mut self) {
+    pub(super) fn hide(&mut self, history_visible: bool) {
         match self {
             Self::Looking { .. } => *self = Self::None,
             Self::Missing(missing) => missing.confirming = None,
             // The next failure may build it again.
+            Self::Ready {
+                rebuild: Rebuild::Building { history: true, .. },
+                ..
+            } if history_visible => {}
             Self::Ready {
                 rebuild: rebuild @ Rebuild::Building { .. },
                 ..
@@ -153,7 +159,74 @@ impl MonitoringPage {
             id: source.id.clone(),
             kind,
             client: self.clients,
+            owner: Some(self.owner.clone()),
         })
+    }
+
+    /// Registers only visible histories; they keep history-requested
+    /// recovery alive independently of the dashboard's reads.
+    pub(crate) fn show_history(
+        &mut self,
+        history: WeakEntity<HistoryView>,
+        source: &HistorySource,
+        visible: bool,
+    ) {
+        self.histories
+            .retain(|shown| shown.entity_id() != history.entity_id() && shown.upgrade().is_some());
+        if visible && self.current_history(source) {
+            self.histories.push(history);
+        }
+        self.cancel_history_rebuild();
+    }
+
+    pub(crate) fn hide_history(&mut self, id: EntityId) {
+        self.histories
+            .retain(|history| history.entity_id() != id && history.upgrade().is_some());
+        self.cancel_history_rebuild();
+    }
+
+    fn cancel_history_rebuild(&mut self) {
+        if !self.visible
+            && self.histories.is_empty()
+            && let Connection::Ready {
+                rebuild: rebuild @ Rebuild::Building { history: true, .. },
+                ..
+            } = &mut self.connection
+        {
+            *rebuild = Rebuild::Unused;
+        }
+    }
+
+    /// A history reports only failures and retries for the client it read.
+    pub(crate) fn history_failed(
+        &mut self,
+        source: &HistorySource,
+        error: &QueryError,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.current_history(source) || self.histories.is_empty() {
+            return;
+        }
+        self.read_failed(error, cx);
+        if error.implicates_client()
+            && let Connection::Ready {
+                rebuild: Rebuild::Building { history, .. },
+                ..
+            } = &mut self.connection
+        {
+            *history = true;
+        }
+    }
+
+    pub(crate) fn retry_history(&mut self, source: &HistorySource) {
+        if self.current_history(source) && !self.histories.is_empty() {
+            self.allow_rebuild();
+        }
+    }
+
+    fn current_history(&self, source: &HistorySource) -> bool {
+        self.history()
+            .is_some_and(|current| current.key() == source.key())
     }
 
     /// Looks for Prometheus when the page shows and hasn't yet on this
@@ -378,14 +451,32 @@ impl MonitoringPage {
             return;
         }
         let prometheus = prometheus.clone();
+        let Some(source) = self.history() else {
+            return;
+        };
         access.forget();
         let request = self.run(
             async move { Ok(prometheus.with_client(cluster_client(&access).await?)) },
             cx,
-            |this, result, cx| this.client_rebuilt(result, cx),
+            move |this, result, cx| {
+                if this.current_history(&source)
+                    && matches!(
+                        this.connection,
+                        Connection::Ready {
+                            rebuild: Rebuild::Building { .. },
+                            ..
+                        }
+                    )
+                {
+                    this.client_rebuilt(result, cx);
+                }
+            },
         );
         if let Connection::Ready { rebuild, .. } = &mut self.connection {
-            *rebuild = Rebuild::Building { _request: request };
+            *rebuild = Rebuild::Building {
+                _request: request,
+                history: false,
+            };
         }
     }
 
