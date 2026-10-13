@@ -164,10 +164,12 @@ impl NavigationFile {
                     return;
                 };
                 // The latest snapshot, which a later change may have moved on.
-                let Ok(value) = file.value.lock() else {
+                // Cloned so the lock is not held through the file I/O: the UI
+                // thread changes and reads the snapshot under the same lock.
+                let Ok(snapshot) = file.value.lock().map(|value| value.clone()) else {
                     return;
                 };
-                if let Err(error) = file.document.save(&value) {
+                if let Err(error) = file.document.save(&snapshot) {
                     tracing::warn!("{} not saved: {error}", file.document.path().display());
                 }
             })
