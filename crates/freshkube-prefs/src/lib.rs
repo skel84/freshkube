@@ -94,23 +94,33 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
 
     /// The file's value, read once.
     pub fn load(&self) -> Loaded<T> {
+        match self.read() {
+            Ok(loaded) => loaded,
+            Err(error) => self.unusable(format!("could not be read: {error}")),
+        }
+    }
+
+    /// As [`load`](Self::load), but a read error other than "not found" is
+    /// returned and not turned into the default. A file that parses wrongly
+    /// is still the default with a problem: it holds nothing worth keeping.
+    fn read(&self) -> std::io::Result<Loaded<T>> {
         let bytes = match std::fs::read(&self.path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Loaded {
+                return Ok(Loaded {
                     value: T::default(),
                     problem: None,
-                };
+                });
             }
-            Err(error) => return self.unusable(format!("could not be read: {error}")),
+            Err(error) => return Err(error),
         };
-        match serde_json::from_slice(&bytes) {
+        Ok(match serde_json::from_slice(&bytes) {
             Ok(value) => Loaded {
                 value,
                 problem: None,
             },
             Err(error) => self.unusable(format!("could not be parsed: {}", describe(&error))),
-        }
+        })
     }
 
     fn unusable(&self, why: String) -> Loaded<T> {
@@ -192,8 +202,11 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// Loads the file, lets `change` edit its value and saves it back. A
     /// writer that owns some keys of a shared document sets those and leaves
     /// the rest as it found it, so a `Document<Map<String, Value>>` keeps
-    /// the keys this build does not know. A file that is missing or unusable
-    /// starts from the default, as [`load`](Self::load) says.
+    /// the keys this build does not know. A file that is missing starts from
+    /// the default, and so does one that parses wrongly (it holds nothing
+    /// this build can keep). A file that exists but can't be read (no
+    /// permission, an I/O error, a directory) returns that error and saves
+    /// nothing, so a transient failure never wipes the other keys.
     ///
     /// Updates in this process run one at a time, so two of them never lose
     /// each other's change. Another process is not excluded. `change` must
@@ -204,7 +217,7 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         let _one_at_a_time = UPDATING
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut value = self.load().value;
+        let mut value = self.read()?.value;
         change(&mut value);
         self.save(&value)
     }
