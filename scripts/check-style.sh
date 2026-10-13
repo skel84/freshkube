@@ -58,6 +58,7 @@ files() {
   find crates -path '*/src/*' -name '*.rs' \
     -not -path 'crates/freshkube-ui/*' \
     -not -path 'crates/freshkube-core/*' \
+    -not -path 'crates/freshkube-delivery/*' \
     -not -path 'crates/talos-rs/*' \
     -not -name 'tests.rs' \
     -not -path '*/tests/*' |
@@ -152,6 +153,7 @@ motion_offences() {
 platform_files() {
   find crates $(test -d src && echo src) \( -path 'src/*' -o -path '*/src/*' -o -name build.rs \) -name '*.rs' \
     -not -path 'crates/freshkube-core/*' \
+    -not -path 'crates/freshkube-delivery/*' \
     -not -path 'crates/talos-rs/*' \
     -not -path 'crates/freshkube-ui/src/platform.rs' \
     -not -path 'crates/freshkube-ui/src/motion/system.rs' \

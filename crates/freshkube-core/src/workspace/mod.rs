@@ -28,7 +28,9 @@ use crate::{BoundedReadError, read_bounded_regular_file};
 mod destinations;
 mod sources;
 
-pub use destinations::{Destination, Fault, Key, MAX_DESTINATIONS};
+pub use destinations::{
+    Destination, Fault, IN_CLUSTER_NAME, IN_CLUSTER_SERVER, Key, MAX_DESTINATIONS, normalize_server,
+};
 pub use sources::{Chosen, Part, Pins, Sources, Why};
 
 /// The file format this version reads.

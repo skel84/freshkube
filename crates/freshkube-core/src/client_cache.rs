@@ -28,14 +28,16 @@ pub(crate) const KUBERNETES_TTL: Duration = Duration::from_secs(120);
 const MAX_ENTRIES: usize = 16;
 
 /// A bounded cache whose entries expire. Time is injected so tests need not sleep.
-pub(crate) struct TtlCache<K, V> {
+///
+/// Public for `freshkube-delivery`'s per-entry client cache, not as a general API.
+pub struct TtlCache<K, V> {
     entries: HashMap<K, (V, Instant)>,
     ttl: Option<Duration>,
     capacity: usize,
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
-    pub(crate) fn new(ttl: Option<Duration>, capacity: usize) -> Self {
+    pub fn new(ttl: Option<Duration>, capacity: usize) -> Self {
         Self {
             entries: HashMap::new(),
             ttl,
@@ -49,7 +51,7 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
     }
 
     /// The entry for exactly `key`, unless it has expired (which removes it).
-    pub(crate) fn get(&mut self, key: &K, now: Instant) -> Option<V> {
+    pub fn get(&mut self, key: &K, now: Instant) -> Option<V> {
         let stored = self.entries.get(key).map(|(_, stored)| *stored)?;
         if self.expired(stored, now) {
             self.entries.remove(key);
@@ -58,7 +60,7 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
         self.entries.get(key).map(|(value, _)| value.clone())
     }
 
-    pub(crate) fn insert(&mut self, key: K, value: V, now: Instant) {
+    pub fn insert(&mut self, key: K, value: V, now: Instant) {
         if !self.entries.contains_key(&key) && self.entries.len() >= self.capacity {
             let expired = self
                 .entries
@@ -82,7 +84,7 @@ impl<K: Eq + Hash + Clone, V: Clone> TtlCache<K, V> {
         self.entries.insert(key, (value, now));
     }
 
-    pub(crate) fn remove(&mut self, key: &K) {
+    pub fn remove(&mut self, key: &K) {
         self.entries.remove(key);
     }
 
@@ -161,7 +163,9 @@ fn fingerprint(value: impl Hash) -> u64 {
     HASHER.hash_one(value)
 }
 
-pub(crate) fn file_revision(path: &Path) -> Option<ConfigIdentity> {
+/// A file's identity for cache keys. Public for `freshkube-delivery`'s per-entry
+/// client cache, not as a general API.
+pub fn file_revision(path: &Path) -> Option<ConfigIdentity> {
     crate::kubeconfig_selection::read_bounded_regular_file(path, 4 * 1024 * 1024)
         .ok()
         .map(|bytes| ConfigIdentity::from_bytes(&bytes))
