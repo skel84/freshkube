@@ -92,11 +92,53 @@ pub(super) fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entit
         .unwrap()
 }
 
+/// Puts `page` in the shell's map under `id`, and in the node pane's when
+/// the pane embeds that screen, so both draw and tell the same one.
+pub(super) fn put_page(
+    view: &mut Pilot,
+    id: super::pages::PageId,
+    page: crate::screens::ScreenHandle,
+    cx: &mut gpui_kit::App,
+) {
+    view.node_workspace.update(cx, |nodes, _| {
+        if let Some(screen) = nodes.screens.get_mut(&id) {
+            *screen = page.clone();
+        }
+    });
+    view.pages.insert(id, page);
+}
+
+/// Opens the Nodes row `id` as its click does. The click reaches the
+/// shell as an event once the update ends, which a test inside one
+/// `update_window` never sees, so this hands the shell that event at once;
+/// `table::a_row_click_opens_its_node_once_the_shell_hears_it` proves the
+/// click itself.
+pub(super) fn click_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
+    assert!(window.find(id.to_string()).visible(), "{id} is drawn");
+    let pilot = root_pilot(window, cx);
+    let key = pilot
+        .read(cx)
+        .node_workspace
+        .read(cx)
+        .rows
+        .iter()
+        .find(|row| row.id.as_ref() == id)
+        .map(|row| row.key.clone())
+        .expect("a node row");
+    pilot.update(cx, |pilot, cx| {
+        pilot.nodes_event(
+            &super::nodes::NodesEvent::Open { key, focus: false },
+            window,
+            cx,
+        )
+    });
+}
+
 /// Test setup that needs a healthy table row follows the actual group control.
 /// Folding itself is exercised separately by Nodes' projection/entry-point tests.
 pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     let pilot = root_pilot(window, cx);
-    let nodes = &pilot.read(cx).node_workspace;
+    let nodes = &pilot.read(cx).node_workspace.read(cx);
     if nodes.healthy_collapsed() && nodes.view == NodeView::Table {
         window.click("nodes-healthy-toggle", cx);
         window.render_frame(cx);
@@ -118,16 +160,18 @@ pub(crate) fn screen<T: 'static>(pilot: &Entity<Pilot>, cx: &gpui_kit::App) -> E
 pub(crate) fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
     let view = root_pilot(window, cx);
     let page = view.read(cx).page;
-    let tab = view.read(cx).node_workspace.tab;
+    let tab = view.read(cx).node_workspace.read(cx).tab;
     window.click("nav-nodes", cx);
     window.render_frame(cx);
-    if view.read(cx).node_workspace.open {
+    if view.read(cx).node_workspace.read(cx).open {
         window.click("node-close", cx);
         window.render_frame(cx);
     }
     expand_healthy_nodes(window, cx);
-    let id = view.read(cx).node_workspace.rows[ix].id.clone();
-    window.click(id, cx);
+    // A row's click reaches the shell as an event, after this update; open
+    // the node as that event would.
+    let key = view.read(cx).node_workspace.read(cx).rows[ix].key.clone();
+    view.update(cx, |view, cx| view.open_node(key, window, cx));
     window.render_frame(cx);
     if page == Page::Nodes {
         view.update(cx, |view, cx| view.show_node_tab(tab, window, cx));
@@ -153,36 +197,34 @@ pub(crate) fn open_node_tab(
     let view = root_pilot(window, cx);
     let name = view.read(cx).selected_node.clone().unwrap();
     area(window, cx, "nav-nodes");
-    if !view.read(cx).node_workspace.open {
+    if !view.read(cx).node_workspace.read(cx).open {
         expand_healthy_nodes(window, cx);
-        let id = view
+        let key = view
             .read(cx)
             .node_workspace
+            .read(cx)
             .rows
             .iter()
             .find(|row| row.key.talos.as_ref() == Some(&name))
             .unwrap()
-            .id
+            .key
             .clone();
-        window.click(id, cx);
+        // As the row's click would, through the shell.
+        view.update(cx, |view, cx| view.open_node(key, window, cx));
         window.render_frame(cx);
     }
-    if window.try_find(tab.id()).is_some_and(|button| {
-        let pane = window.find("node-pane").bounds();
-        button.visible()
-            && button.bounds().left() >= pane.left()
-            && button.bounds().right() <= pane.right()
-    }) {
-        window.click(tab.id(), cx);
-    } else {
-        for _ in 0..10 {
-            if view.read(cx).node_workspace.tab == tab {
-                break;
-            }
-            window.press("secondary-}", cx);
-            window.render_frame(cx);
-        }
-    }
+    // A tab's click and Command-Shift-] reach the shell as events once the
+    // update ends; hand the shell the tab's event at once, as they would.
+    // The strip draws the tab, or More holds it.
+    use super::nodes::NodeTab;
+    assert!(
+        window.try_find(tab.id()).is_some() || matches!(tab, NodeTab::Events | NodeTab::Yaml),
+        "{} is reachable",
+        tab.id()
+    );
+    view.update(cx, |view, cx| {
+        view.nodes_event(&super::nodes::NodesEvent::Tab(tab), window, cx)
+    });
     window.render_frame(cx);
 }
 

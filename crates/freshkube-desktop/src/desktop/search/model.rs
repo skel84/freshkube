@@ -99,7 +99,7 @@ impl Pilot {
                 Destination::Kind(kind),
             ));
         }
-        entries.extend(self.node_workspace.rows.iter().map(|row| {
+        entries.extend(self.node_workspace.read(cx).rows.iter().map(|row| {
             Entry::new(
                 "Nodes",
                 format!("search-node-{}", row.name),

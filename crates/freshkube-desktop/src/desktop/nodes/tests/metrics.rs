@@ -110,102 +110,102 @@ fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut Te
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            assert!(!pilot.node_workspace.metrics.visible);
-            assert!(pilot.node_workspace.metrics.delivery.is_none());
-            assert!(pilot.node_workspace.metrics.job.is_none());
+            let nodes = pilot.node_workspace.clone();
+            nodes.read_with(cx, |nodes, _| {
+                assert!(!nodes.metrics.visible);
+                assert!(nodes.metrics.delivery.is_none());
+                assert!(nodes.metrics.job.is_none());
+            });
             pilot.navigate(Page::Nodes, window, cx);
-            let metrics = &mut pilot.node_workspace.metrics;
-            assert!(metrics.visible);
-            assert!(metrics.delivery.is_some());
-            let generation = metrics.generation;
-            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
-            assert!(metrics.apply(
-                generation,
-                &request,
-                Ok(vec![
-                    NodeUsage {
-                        name: "talos-wk-fra1-02".into(),
-                        usage: Amounts {
-                            cpu_millis: Some(250.),
-                            memory_bytes: Some(1048576.)
+            let (generation, request) = nodes.update(cx, |nodes, _| {
+                let metrics = &mut nodes.metrics;
+                assert!(metrics.visible);
+                assert!(metrics.delivery.is_some());
+                let generation = metrics.generation;
+                let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+                assert!(metrics.apply(
+                    generation,
+                    &request,
+                    Ok(vec![
+                        NodeUsage {
+                            name: "talos-wk-fra1-02".into(),
+                            usage: Amounts {
+                                cpu_millis: Some(250.),
+                                memory_bytes: Some(1048576.)
+                            },
+                            sampled_at: None
                         },
-                        sampled_at: None
-                    },
-                    NodeUsage {
+                        NodeUsage {
+                            name: "old-source".into(),
+                            usage: Amounts::default(),
+                            sampled_at: None
+                        }
+                    ])
+                ));
+                assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
+                let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+                assert!(metrics.apply(generation, &request, Err("denied".into())));
+                assert_eq!(
+                    metrics.snapshot.data().unwrap()["talos-wk-fra1-02"]
+                        .usage
+                        .cpu_millis,
+                    Some(250.)
+                );
+                nodes.rebuild_resource_cells();
+                let row = nodes
+                    .rows
+                    .iter()
+                    .find(|row| row.name == "talos-wk-fra1-02")
+                    .unwrap();
+                let cells = &nodes.resource_cells[&row.key];
+                assert!(cells.cpu.stale);
+                assert_eq!(cells.memory.used, Some(1048576.)); // Last metrics outrank a new fallback.
+                assert!(cells.memory.tooltip.contains("last known metrics.k8s.io"));
+                let request = nodes
+                    .metrics
+                    .snapshot
+                    .begin(nodes.metrics.source.clone().unwrap());
+                (generation, request)
+            });
+            pilot.navigate(Page::Overview, window, cx);
+            nodes.update(cx, |nodes, _| {
+                assert!(nodes.metrics.delivery.is_none());
+                assert!(nodes.metrics.job.is_none());
+                assert!(!nodes.metrics.apply(generation, &request, Ok(vec![])));
+            });
+            pilot.navigate(Page::Nodes, window, cx);
+            let (generation, old_id, request) = nodes.update(cx, |nodes, _| {
+                let metrics = &mut nodes.metrics;
+                let generation = metrics.generation;
+                let token = metrics.snapshot.begin(metrics.source.clone().unwrap());
+                assert!(metrics.apply(
+                    generation,
+                    &token,
+                    Ok(vec![NodeUsage {
                         name: "old-source".into(),
                         usage: Amounts::default(),
                         sampled_at: None
-                    }
-                ])
-            ));
-            assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
-            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
-            assert!(metrics.apply(generation, &request, Err("denied".into())));
-            assert_eq!(
-                metrics.snapshot.data().unwrap()["talos-wk-fra1-02"]
-                    .usage
-                    .cpu_millis,
-                Some(250.)
-            );
-            pilot.node_workspace.rebuild_resource_cells();
-            let row = pilot
-                .node_workspace
-                .rows
-                .iter()
-                .find(|row| row.name == "talos-wk-fra1-02")
-                .unwrap();
-            let cells = &pilot.node_workspace.resource_cells[&row.key];
-            assert!(cells.cpu.stale);
-            assert_eq!(cells.memory.used, Some(1048576.)); // Last metrics outrank a new fallback.
-            assert!(cells.memory.tooltip.contains("last known metrics.k8s.io"));
-            let request = pilot
-                .node_workspace
-                .metrics
-                .snapshot
-                .begin(pilot.node_workspace.metrics.source.clone().unwrap());
-            pilot.navigate(Page::Overview, window, cx);
-            assert!(pilot.node_workspace.metrics.delivery.is_none());
-            assert!(pilot.node_workspace.metrics.job.is_none());
-            assert!(
-                !pilot
-                    .node_workspace
-                    .metrics
-                    .apply(generation, &request, Ok(vec![]))
-            );
-            pilot.navigate(Page::Nodes, window, cx);
-            let metrics = &mut pilot.node_workspace.metrics;
-            let generation = metrics.generation;
-            let token = metrics.snapshot.begin(metrics.source.clone().unwrap());
-            assert!(metrics.apply(
-                generation,
-                &token,
-                Ok(vec![NodeUsage {
-                    name: "old-source".into(),
-                    usage: Amounts::default(),
-                    sampled_at: None
-                }])
-            ));
-            assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
-            let old_id = metrics.source.clone();
-            let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+                    }])
+                ));
+                assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
+                let old_id = metrics.source.clone();
+                let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+                (generation, old_id, request)
+            });
             pilot.applied.context = Some("different".into());
             pilot.push_source(window, cx);
-            assert!(
-                !pilot
-                    .node_workspace
-                    .metrics
-                    .apply(generation, &request, Ok(vec![]))
-            );
-            assert_ne!(pilot.node_workspace.metrics.source, old_id);
-            assert!(
-                !pilot
-                    .node_workspace
-                    .metrics
-                    .snapshot
-                    .data()
-                    .unwrap()
-                    .contains_key("old-source")
-            );
+            nodes.update(cx, |nodes, _| {
+                assert!(!nodes.metrics.apply(generation, &request, Ok(vec![])));
+                assert_ne!(nodes.metrics.source, old_id);
+                assert!(
+                    !nodes
+                        .metrics
+                        .snapshot
+                        .data()
+                        .unwrap()
+                        .contains_key("old-source")
+                );
+            });
         });
     })
     .unwrap();
@@ -219,8 +219,8 @@ fn example_nodes_show_use_as_soon_as_the_page_shows(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    pilot.read_with(cx, |pilot, _| {
-        let nodes = &pilot.node_workspace;
+    pilot.read_with(cx, |pilot, cx| {
+        let nodes = &pilot.node_workspace.read(cx);
         let joined: Vec<_> = nodes
             .rows
             .iter()
@@ -270,16 +270,18 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
         cx.update_window(handle, |_, window, cx| {
             pilot.update(cx, |pilot, cx| {
                 pilot.navigate(Page::Nodes, window, cx);
-                pilot.node_workspace.metrics.job = Some(job);
+                pilot
+                    .node_workspace
+                    .update(cx, |nodes, _| nodes.metrics.job = Some(job));
                 if replace_context {
                     pilot.applied.context = Some("replacement".into());
                     pilot.push_source(window, cx);
                 } else {
                     pilot.navigate(Page::Overview, window, cx);
                 }
-                assert!(pilot.node_workspace.metrics.job.is_none());
+                assert!(pilot.node_workspace.read(cx).metrics.job.is_none());
                 if !replace_context {
-                    assert!(pilot.node_workspace.metrics.delivery.is_none());
+                    assert!(pilot.node_workspace.read(cx).metrics.delivery.is_none());
                 }
             });
         })
@@ -293,12 +295,14 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
         pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
     })
     .unwrap();
-    let before = pilot.read_with(cx, |pilot, _| pilot.node_workspace.metrics.generation);
+    let before = pilot.read_with(cx, |pilot, cx| {
+        pilot.node_workspace.read(cx).metrics.generation
+    });
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(45));
     cx.run_until_parked();
-    pilot.read_with(cx, |pilot, _| {
-        let metrics = &pilot.node_workspace.metrics;
+    pilot.read_with(cx, |pilot, cx| {
+        let metrics = &pilot.node_workspace.read(cx).metrics;
         assert_eq!(metrics.generation, before);
         assert!(metrics.job.is_none());
         assert!(metrics.delivery.is_none());
@@ -351,18 +355,23 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, _, cx| {
         pilot.update(cx, |pilot, cx| {
-            let widths = |pilot: &super::super::Pilot| {
+            let widths = |pilot: &super::super::Pilot, cx: &gpui_kit::App| {
                 pilot
                     .node_workspace
+                    .read(cx)
                     .all_columns
                     .iter()
                     .filter(|column| matches!(column.label().as_ref(), "CPU" | "Memory" | "Load"))
                     .map(TableColumn::width)
                     .collect::<Vec<_>>()
             };
-            let before = widths(pilot);
-            pilot.node_workspace.hidden_columns.insert(Field::Services);
-            pilot.node_workspace.show_columns();
+            let before = widths(pilot, cx);
+            pilot.node_workspace.update(cx, |nodes, _| {
+                nodes.hidden_columns.insert(Field::Services);
+            });
+            pilot.node_workspace.update(cx, |nodes, _| {
+                nodes.show_columns();
+            });
             for node in &mut pilot.nodes {
                 node.load = Some([12345.67; 3]);
                 if let Some(memory) = node.memory.as_mut() {
@@ -370,20 +379,22 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
                 }
             }
             pilot.rebuild_joined_nodes(cx);
-            assert_eq!(widths(pilot), before);
+            assert_eq!(widths(pilot, cx), before);
             assert!(
                 pilot
                     .node_workspace
+                    .read(cx)
                     .hidden_columns
                     .contains(&Field::Services)
             );
             assert_eq!(
-                pilot.node_workspace.columns.len(),
-                pilot.node_workspace.all_columns.len() - 2
+                pilot.node_workspace.read(cx).columns.len(),
+                pilot.node_workspace.read(cx).all_columns.len() - 2
             );
             assert!(
                 !pilot
                     .node_workspace
+                    .read(cx)
                     .columns
                     .iter()
                     .any(|column| column.label() == "Services")
@@ -401,8 +412,8 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
 fn node_metrics_keep_reading_while_the_pane_shows_a_screen(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let read = |cx: &mut TestAppContext| {
-        pilot.read_with(cx, |pilot, _| {
-            let metrics = &pilot.node_workspace.metrics;
+        pilot.read_with(cx, |pilot, cx| {
+            let metrics = &pilot.node_workspace.read(cx).metrics;
             (metrics.visible, metrics.generation)
         })
     };
@@ -429,4 +440,60 @@ fn node_metrics_keep_reading_while_the_pane_shows_a_screen(cx: &mut TestAppConte
     let (visible, after) = read(cx);
     assert!(!visible);
     assert_ne!(after, generation, "leaving Nodes stops the read");
+}
+
+/// Node usage reads while Nodes shows, whatever its pane does, and drops
+/// its read the moment another page shows (#617's review, item 2).
+#[gpui_kit::test]
+fn node_usage_follows_the_nodes_page_through_its_pane(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            let reading = |pilot: &super::super::Pilot, cx: &gpui_kit::App| {
+                let metrics = &pilot.node_workspace.read(cx).metrics;
+                // Hidden, it holds no read and no delivery.
+                if !metrics.visible {
+                    assert!(metrics.delivery.is_none() && metrics.job.is_none());
+                }
+                metrics.visible
+            };
+            let rows = pilot.node_workspace.read(cx).rows.clone();
+            let (first, second) = (rows[0].key.clone(), rows[1].key.clone());
+            let mut steps = Vec::new();
+            pilot.navigate(Page::Nodes, window, cx);
+            pilot.open_node(first, window, cx);
+            pilot.show_node_tab(NodeTab::Processes, window, cx);
+            steps.push(("processes", reading(pilot, cx)));
+            pilot.open_node(second, window, cx);
+            assert_eq!(pilot.node_workspace.read(cx).tab, NodeTab::Processes);
+            steps.push(("another node on processes", reading(pilot, cx)));
+            pilot.show_node_tab(NodeTab::Logs, window, cx);
+            steps.push(("logs", reading(pilot, cx)));
+            pilot.close_node(window, cx);
+            steps.push(("closed", reading(pilot, cx)));
+            pilot.navigate(Page::Etcd, window, cx);
+            steps.push(("etcd", reading(pilot, cx)));
+            pilot.navigate(Page::Nodes, window, cx);
+            steps.push(("back after etcd", reading(pilot, cx)));
+            pilot.navigate(Page::Overview, window, cx);
+            steps.push(("overview", reading(pilot, cx)));
+            let name = rows[0].name.to_string();
+            pilot.open_node_by_name(&name, NodeTab::Storage, window, cx);
+            steps.push(("opened from overview", reading(pilot, cx)));
+            assert_eq!(
+                steps,
+                [
+                    ("processes", true),
+                    ("another node on processes", true),
+                    ("logs", true),
+                    ("closed", true),
+                    ("etcd", false),
+                    ("back after etcd", true),
+                    ("overview", false),
+                    ("opened from overview", true),
+                ]
+            );
+        });
+    })
+    .unwrap();
 }

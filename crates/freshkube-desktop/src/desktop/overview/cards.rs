@@ -108,7 +108,7 @@ impl Pilot {
             CardTarget::Page(page) => {
                 self.navigate_from_keyboard(page, window, cx);
                 if page == crate::desktop::Page::Health
-                    && let Some(screen) = self.active_screen()
+                    && let Some(screen) = self.active_screen(cx)
                     && let Ok(health) = screen.view().downcast::<crate::screens::WorkloadsScreen>()
                 {
                     health.update(cx, |health, cx| health.set_only_unhealthy(true, cx));

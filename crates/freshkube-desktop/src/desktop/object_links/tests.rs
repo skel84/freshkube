@@ -85,11 +85,12 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
         cx.run_until_parked();
         cx.update(|cx| {
             assert_eq!(pilot.read(cx).page, Page::Nodes);
-            assert_eq!(pilot.read(cx).node_workspace.tab, tab);
+            assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, tab);
             assert_eq!(
                 pilot
                     .read(cx)
                     .node_workspace
+                    .read(cx)
                     .selected
                     .as_ref()
                     .unwrap()
@@ -226,11 +227,12 @@ fn kubelet_links_to_its_scoped_pods(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Pods);
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, NodeTab::Pods);
         assert_eq!(
             pilot
                 .read(cx)
                 .node_workspace
+                .read(cx)
                 .pods
                 .read(cx)
                 .field_selector_value(),

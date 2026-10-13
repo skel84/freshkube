@@ -66,7 +66,7 @@ fn short_window_node_log(cx: &mut TestAppContext, text_size: Option<f32>) {
         assert_eq!(window.simulate_next_frame(cx), 0, "frames never settled");
         // The frame scrolled to the pane when it opened, at the text size
         // of the time.
-        let frame = view.read(cx).node_workspace.page_scroll.clone();
+        let frame = view.read(cx).node_workspace.read(cx).page_scroll.clone();
         frame.scroll_to_bottom();
         window.render_frame(cx);
         // 560 px is short at the default text size, so the Logs body
@@ -91,7 +91,7 @@ fn short_window_node_log(cx: &mut TestAppContext, text_size: Option<f32>) {
         }
         // Scrolling the body brings the notices into view, then the whole
         // viewport, above the status bar's log status.
-        let body = view.read(cx).node_workspace.logs_scroll.clone();
+        let body = view.read(cx).node_workspace.read(cx).logs_scroll.clone();
         let content = window.find("node-logs-scroll").bounds();
         let by = (content.bottom() - notices.bottom()).min(px(0.));
         body.set_offset(point(px(0.), body.offset().y + by));

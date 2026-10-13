@@ -19,7 +19,7 @@ pub(super) fn card_columns(window: &Window) -> usize {
     ((inset_width(window) + 14.) / 330.).floor().clamp(1., 3.) as usize
 }
 
-impl Pilot {
+impl Nodes {
     pub(super) fn joined_node_list(
         &self,
         compact: bool,
@@ -27,7 +27,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let columns = if compact { 1 } else { card_columns(window) };
-        let count = self.node_workspace.lines.len();
+        let count = self.lines.len();
         if count == 0 {
             return ui::empty_state(
                 IconName::Server,
@@ -50,10 +50,10 @@ impl Pilot {
             count,
             columns,
             if compact { 0. } else { CARD_GAP },
-            &self.node_workspace.scroll,
+            &self.scroll,
             move |view: &mut Self, item, _, cx| {
-                let row = view.node_workspace.lines[item];
-                view.joined_node_row(&view.node_workspace.rows[row], compact, cx)
+                let row = view.lines[item];
+                view.joined_node_row(&view.rows[row], compact, cx)
             },
             cx,
         )
@@ -81,7 +81,7 @@ impl Pilot {
     fn joined_node_row(&self, row: &NodeRow, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let cards = !compact;
-        let selected = self.node_workspace.selected.as_ref() == Some(&row.key);
+        let selected = self.selected.as_ref() == Some(&row.key);
         let key = row.key.clone();
         let content = if compact {
             v_flex()
@@ -135,35 +135,30 @@ impl Pilot {
                         ),
                 )
                 .child(div().text_color(p.muted).child(row.address.clone()))
-                .when_some(
-                    self.node_workspace.resource_cells.get(&row.key),
-                    |this, resources| {
-                        use freshkube_ui::meters::Resource;
-                        // One label width, so a card's two bullets line up.
-                        let line = |label: &'static str, cell: AnyElement| {
-                            h_flex()
-                                .gap(dp(10.))
-                                .child(div().w(dp(60.)).flex_none().child(label))
-                                .child(cell)
-                        };
-                        this.child(line(
-                            "CPU",
-                            resources.cpu.render(
-                                Resource::Cpu,
-                                (row.id.clone(), 20usize).into(),
-                                &p,
-                            ),
-                        ))
-                        .child(line(
-                            "Memory",
-                            resources.memory.render(
-                                Resource::Memory,
-                                (row.id.clone(), 21usize).into(),
-                                &p,
-                            ),
-                        ))
-                    },
-                )
+                .when_some(self.resource_cells.get(&row.key), |this, resources| {
+                    use freshkube_ui::meters::Resource;
+                    // One label width, so a card's two bullets line up.
+                    let line = |label: &'static str, cell: AnyElement| {
+                        h_flex()
+                            .gap(dp(10.))
+                            .child(div().w(dp(60.)).flex_none().child(label))
+                            .child(cell)
+                    };
+                    this.child(line(
+                        "CPU",
+                        resources
+                            .cpu
+                            .render(Resource::Cpu, (row.id.clone(), 20usize).into(), &p),
+                    ))
+                    .child(line(
+                        "Memory",
+                        resources.memory.render(
+                            Resource::Memory,
+                            (row.id.clone(), 21usize).into(),
+                            &p,
+                        ),
+                    ))
+                })
                 .child(div().text_color(p.muted).child(row.services.clone()))
                 .child(
                     Button::new(row.open_id.clone())
@@ -172,7 +167,12 @@ impl Pilot {
                         .label("Open")
                         .on_click(cx.listener({
                             let key = key.clone();
-                            move |view, _, window, cx| view.open_node(key.clone(), window, cx)
+                            move |_, _, _, cx| {
+                                cx.emit(NodesEvent::Open {
+                                    key: key.clone(),
+                                    focus: false,
+                                })
+                            }
                         })),
                 )
                 .into_any_element()
@@ -218,9 +218,12 @@ impl Pilot {
             })
             .cursor_pointer()
             .child(content)
-            .on_click(
-                cx.listener(move |view, _, window, cx| view.open_node(key.clone(), window, cx)),
-            )
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.emit(NodesEvent::Open {
+                    key: key.clone(),
+                    focus: false,
+                })
+            }))
             .into_any_element()
     }
 }

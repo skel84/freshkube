@@ -268,28 +268,6 @@ impl Render for Countdown {
     }
 }
 
-/// Nodes is drawn by the shell itself; hosting it in a view of its own lets
-/// GPUI reuse the last frame until the shell's state changes, like the
-/// screens, which are views already. A host is its page's handle, whose
-/// hooks do nothing: the shell feeds what it draws.
-struct PageHost {
-    pilot: WeakEntity<Pilot>,
-    page: Page,
-}
-
-impl Render for PageHost {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        probe::hit(self.page.slug());
-        let page = self.page;
-        self.pilot
-            .update(cx, |pilot, cx| match page {
-                Page::Nodes => pilot.render_nodes(window, cx),
-                _ => unreachable!("only Nodes has a host"),
-            })
-            .unwrap_or_else(|_| div().into_any_element())
-    }
-}
-
 /// Puts the window's controls on the header at the current text size: the
 /// header is in dp and grows with it, macOS's traffic lights don't.
 pub(crate) fn place_window_controls(window: &mut Window, cx: &App) {
@@ -363,8 +341,7 @@ pub(crate) struct Pilot {
     /// Logs under the page, in tabs; app-wide, like the forwards.
     pub(crate) dock: Entity<dock::Dock>,
     overview_page: Entity<overview::OverviewPage>,
-    nodes_page: Entity<PageHost>,
-    node_workspace: nodes::Nodes,
+    node_workspace: Entity<nodes::Nodes>,
     /// Every page's handle by its key. The shell hands each its source,
     /// tells each whether it shows and hears each through it, in key order:
     /// the pages that aren't Talos screens, then the screens.
@@ -766,7 +743,7 @@ impl Pilot {
                 .map(|name| (*name).into())
                 .collect();
             self.applied.context = Some(self.contexts[0].clone());
-            self.seed_fixture_history();
+            self.seed_fixture_history(cx);
             self.refresh(window, cx);
         } else if kubernetes_only {
             let kube = kubernetes_only::KubernetesOnly::new(kubeconfig_path, kube_context);
@@ -831,29 +808,31 @@ impl Pilot {
         });
         let age_label = cx.new(|_| switch::AgeLabel::new());
         let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
-        let pilot = cx.weak_entity();
-        let nodes_page = cx.new(|_| PageHost {
-            pilot,
-            page: Page::Nodes,
+        let node_workspace = cx.new(|cx| {
+            let mut nodes =
+                nodes::Nodes::new(runtime.clone(), logs.clone(), hold.lists, window, cx);
+            // The header the loading rows sit under before anything answers.
+            nodes.rebuild_columns(!options.kubernetes_only);
+            nodes
         });
-        let mut node_workspace =
-            nodes::Nodes::new(runtime.clone(), logs.clone(), hold.lists, window, cx);
-        // The header the loading rows sit under before anything answers.
-        node_workspace.rebuild_columns(!options.kubernetes_only);
-        let node_pods = node_workspace.pods.clone();
-        let node_services = node_workspace.services.clone();
+        let (node_pods, node_services) = {
+            let nodes = node_workspace.read(cx);
+            (nodes.pods.clone(), nodes.services.clone())
+        };
         let mut subscriptions = Vec::new();
-        // Nodes' host reads the shell's state, so whatever notifies the
-        // shell redraws it; the countdown tick notifies only its ring.
-        // Overview hears where things stand then, and redraws only when that
-        // changed.
-        let hosted = nodes_page.clone();
+        // Overview and Nodes hear where things stand whenever the shell
+        // notifies, and redraw only when that changed; the countdown tick
+        // notifies only its ring.
         subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
             pilot.push_overview_state(cx);
             pilot.push_node_services_state(cx);
-            pilot.node_workspace.attention_stale = pilot.attention_stale();
-            hosted.update(cx, |_, cx| cx.notify());
+            pilot.push_attention_stale(cx);
         }));
+        subscriptions.push(cx.subscribe_in(
+            &node_workspace,
+            window,
+            |pilot, _, event: &nodes::NodesEvent, window, cx| pilot.nodes_event(event, window, cx),
+        ));
         // The status bar shows the running operation; the window refuses to
         // close under it. Cached screens may read the slot too.
         let operations = Operations::global(cx);
@@ -899,7 +878,7 @@ impl Pilot {
             })
             .collect();
         // The node pane embeds four of them.
-        node_workspace.screens = [
+        let screens = [
             nodes::NodeTab::Processes,
             nodes::NodeTab::Storage,
             nodes::NodeTab::Network,
@@ -909,6 +888,7 @@ impl Pilot {
         .filter_map(nodes::NodeTab::screen)
         .filter_map(|id| Some((id, pages.get(&id)?.clone())))
         .collect();
+        node_workspace.update(cx, |nodes, _| nodes.screens = screens);
         let resources =
             cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx).holding(hold.lists));
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
@@ -977,7 +957,7 @@ impl Pilot {
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         pages.extend(Self::page_handles(
             &overview_page,
-            &nodes_page,
+            &node_workspace,
             &system_services,
             &monitoring,
             &observability,
@@ -1028,7 +1008,6 @@ impl Pilot {
             forwards: cx.new(ForwardsIndicator::new),
             dock,
             overview_page,
-            nodes_page,
             node_workspace,
             pages,
             health,
@@ -1144,7 +1123,7 @@ impl Pilot {
         // Overview's first frame needs no notify of the shell to know where
         // things stand.
         view.push_overview_state(cx);
-        view.node_workspace.attention_stale = view.attention_stale();
+        view.push_attention_stale(cx);
         view
     }
 
@@ -1162,16 +1141,16 @@ impl Pilot {
         self.nodes.clear();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&[], cx));
-        self.node_workspace.load_history.clear();
+        self.node_workspace
+            .update(cx, |nodes, _| nodes.load_history.clear());
         self.overview = Snapshot::default();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
         self.push_node_rows(cx);
         self.prepare_context_display(window, cx);
-        self.node_workspace
-            .document
-            .update(cx, |pane, cx| pane.close(cx));
+        let document = self.node_workspace.read(cx).document.clone();
+        document.update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
         self.overview_page
             .update(cx, |overview, cx| overview.collapse(cx));
@@ -1476,9 +1455,9 @@ impl Pilot {
         })
     }
 
-    fn active_screen(&self) -> Option<ScreenHandle> {
+    fn active_screen(&self, cx: &App) -> Option<ScreenHandle> {
         let page = if self.page == Page::Nodes {
-            self.node_workspace.pane_screen()?
+            self.node_workspace.read(cx).pane_screen()?
         } else {
             self.page.screen()?
         };
@@ -1512,14 +1491,15 @@ impl Pilot {
             self.deliver_workloads(data, cx);
         }
         self.sync_unread_health(cx);
-        if let Some(screen) = self.active_screen() {
+        if let Some(screen) = self.active_screen(cx) {
             screen.activate(window, cx);
         }
         let kube = source.kube.clone();
         self.sync_search_source(kube.clone(), window, cx);
         self.custom
             .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
-        self.node_workspace.pods.update(cx, |resources, cx| {
+        let pods = self.node_workspace.read(cx).pods.clone();
+        pods.update(cx, |resources, cx| {
             resources.set_source(kube.clone(), window, cx)
         });
         self.dock.update(cx, |dock, cx| {
@@ -1533,9 +1513,8 @@ impl Pilot {
     /// Hands pod and node history the Monitoring page's Prometheus.
     fn push_history(&mut self, cx: &mut Context<Self>) {
         let history = self.monitoring.read(cx).history();
-        self.node_workspace
-            .history
-            .update(cx, |view, cx| view.set_source(history.clone(), cx));
+        let node_history = self.node_workspace.read(cx).history.clone();
+        node_history.update(cx, |view, cx| view.set_source(history.clone(), cx));
         self.resources
             .update(cx, |resources, cx| resources.set_history(history, cx));
         cx.notify();
@@ -1555,9 +1534,8 @@ impl Pilot {
             page.refresh(window, cx);
         }
         if self.page == Page::Nodes {
-            self.node_workspace
-                .history
-                .update(cx, |history, cx| history.refresh(cx));
+            let history = self.node_workspace.read(cx).history.clone();
+            history.update(cx, |history, cx| history.refresh(cx));
         }
     }
 
@@ -1583,7 +1561,7 @@ impl Pilot {
             let context = self.applied.context.clone().unwrap_or_default();
             self.overview
                 .apply(&request, Ok(fixture::cluster(&context, self.fixture_tick)));
-            self.overview_succeeded();
+            self.overview_succeeded(cx);
             self.sync_nodes(window, cx);
             self.refresh_services(window, cx);
             self.ensure_summary(window, cx);
@@ -1617,30 +1595,32 @@ impl Pilot {
         if self.page == Page::Health {
             return;
         }
-        if let Some(screen) = self.active_screen() {
+        if let Some(screen) = self.active_screen(cx) {
             screen.refresh(window, cx);
         }
     }
 
     /// Example data starts with five minutes of load history so the
     /// sparklines show a trend immediately.
-    fn seed_fixture_history(&mut self) {
+    fn seed_fixture_history(&mut self, cx: &mut App) {
         let context = self.applied.context.clone().unwrap_or_default();
         for _ in 1..presentation::LOAD_HISTORY_LEN {
             self.fixture_tick += 1;
             let nodes =
                 presentation::node_summaries(&fixture::cluster(&context, self.fixture_tick));
-            self.node_workspace.load_history.record(&nodes);
+            self.node_workspace
+                .update(cx, |workspace, _| workspace.load_history.record(&nodes));
         }
     }
 
     /// Records per-refresh history once a snapshot for the applied target lands.
-    fn overview_succeeded(&mut self) {
+    fn overview_succeeded(&mut self, cx: &mut App) {
         let Some(cluster) = self.overview.data() else {
             return;
         };
         let nodes = presentation::node_summaries(cluster);
-        self.node_workspace.load_history.record(&nodes);
+        self.node_workspace
+            .update(cx, |workspace, _| workspace.load_history.record(&nodes));
         if let Some(context) = self.applied.context.clone() {
             self.context_nodes.insert(context, nodes.len());
         }
@@ -1705,10 +1685,16 @@ impl Pilot {
         App::notify(cx, detail);
         App::notify(cx, self.overview_page.entity_id());
         App::notify(cx, self.system_services.entity_id());
-        App::notify(cx, self.nodes_page.entity_id());
-        App::notify(cx, self.node_workspace.services.entity_id());
-        App::notify(cx, self.node_workspace.pods.entity_id());
-        App::notify(cx, self.node_workspace.document.entity_id());
+        App::notify(cx, self.node_workspace.entity_id());
+        let nodes = self.node_workspace.read(cx);
+        let ids = [
+            nodes.services.entity_id(),
+            nodes.pods.entity_id(),
+            nodes.document.entity_id(),
+        ];
+        for id in ids {
+            App::notify(cx, id);
+        }
     }
 
     /// Whether contexts or a connection are loading, for the refresh button.

@@ -435,7 +435,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
             Some("kubelet")
         );
         assert_eq!(
-            view.read(cx).node_workspace.tab,
+            view.read(cx).node_workspace.read(cx).tab,
             super::super::nodes::NodeTab::Services
         );
         // Back on the page, the row is still selected and the list has
@@ -449,7 +449,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).node_workspace.tab,
+            view.read(cx).node_workspace.read(cx).tab,
             super::super::nodes::NodeTab::Logs
         );
         assert_eq!(
@@ -479,7 +479,7 @@ async fn a_talosconfig_that_fails_to_load_ends_the_services_wait(cx: &mut TestAp
             matches!(reading, super::super::system_services::Reading::Failed(_)),
             "{reading:?}"
         );
-        assert!(!pilot.nodes_wait());
+        assert!(!pilot.nodes_wait(cx));
     });
 }
 

@@ -405,7 +405,7 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
         assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
         assert_eq!(pilot.selected_service(cx).as_deref(), Some("apid"));
         assert_eq!(
-            pilot.node_workspace.tab,
+            pilot.node_workspace.read(cx).tab,
             crate::desktop::nodes::NodeTab::Services
         );
     })

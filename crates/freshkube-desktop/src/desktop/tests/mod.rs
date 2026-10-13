@@ -33,7 +33,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use super::testing::{area, root_pilot};
-pub(super) use super::testing::{expand_healthy_nodes, mount};
+pub(super) use super::testing::{click_node, expand_healthy_nodes, mount};
 pub(crate) use super::testing::{
     fixture, open_kind, open_node_tab, pick_target, screen, start_shell,
 };
@@ -43,7 +43,12 @@ pub(crate) use super::testing::{
 fn open_services_with_room(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     open_node_tab(window, cx, super::nodes::NodeTab::Services);
     window.render_frame(cx);
-    if !root_pilot(window, cx).read(cx).node_workspace.expanded {
+    if !root_pilot(window, cx)
+        .read(cx)
+        .node_workspace
+        .read(cx)
+        .expanded
+    {
         window.click("node-expand", cx);
         window.render_frame(cx);
     }

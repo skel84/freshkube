@@ -368,7 +368,7 @@ impl Pilot {
             this.remember_connection(window, cx);
             this.invalidate_target(window, cx);
             if this.fixture {
-                this.seed_fixture_history();
+                this.seed_fixture_history(cx);
             }
             this.refresh(window, cx);
             this.prepare_context_display(window, cx);
@@ -488,13 +488,14 @@ impl Pilot {
         } else if self.page == Page::Monitoring {
             let focus = self.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
-        } else if self.page == Page::Nodes && self.node_workspace.shows_logs() {
+        } else if self.page == Page::Nodes && self.node_workspace.read(cx).shows_logs() {
             self.logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
-        } else if let Some(screen) = self.active_screen() {
+        } else if let Some(screen) = self.active_screen(cx) {
             screen.focus(window, cx);
         } else if self.page == Page::Nodes {
-            window.focus(&self.node_workspace.focus, cx);
+            let focus = self.node_workspace.read(cx).focus.clone();
+            window.focus(&focus, cx);
         }
     }
 
@@ -504,7 +505,15 @@ impl Pilot {
     /// selected, and Nodes shows around it. A page drops its reads on hide;
     /// one told what it already knows does nothing.
     pub(super) fn sync_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let shown = self.shown_pages();
+        let shown = self.shown_pages(cx);
+        // The node pane draws the very screens the shell tells. One way
+        // only: every screen the pane embeds is the shell's, while the
+        // shell keeps pages the pane never shows.
+        debug_assert!(
+            (self.node_workspace.read(cx).screens.iter())
+                .all(|(id, screen)| self.pages.get(id) == Some(screen)),
+            "Nodes' screens and the shell's pages are out of step"
+        );
         for handle in self.pages.values() {
             handle.set_visible(shown.contains(handle), window, cx);
         }
@@ -552,7 +561,7 @@ impl Pilot {
         }
         self.set_area(area, cx);
         self.sync_node_visibility(window, cx);
-        if let Some(screen) = self.active_screen() {
+        if let Some(screen) = self.active_screen(cx) {
             screen.set_embedded(page == Page::Nodes, cx);
         }
         // However the page was reached, its kind shows in the column.
@@ -564,7 +573,7 @@ impl Pilot {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
         }
-        if let Some(screen) = self.active_screen() {
+        if let Some(screen) = self.active_screen(cx) {
             screen.activate(window, cx);
             screen.focus(window, cx);
         }
