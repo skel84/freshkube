@@ -555,6 +555,8 @@ impl Pilot {
             history.set_subject(subject, cx);
             history.set_visible(overview, cx);
         });
+        // The pane's Talos screens show with their tab.
+        self.sync_visible(window, cx);
     }
 
     fn activate_node_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {

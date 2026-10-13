@@ -23,7 +23,7 @@ pub(crate) use lifecycle::LifecycleScreen;
 pub(crate) use loader::Loader;
 pub(crate) use network::NetworkScreen;
 pub(crate) use operations::OperationsScreen;
-pub(crate) use page::{PageEventFn, PageSource};
+pub(crate) use page::{PageEvent, PageEventFn, PageSource};
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
@@ -257,7 +257,10 @@ type MotionFn = Rc<dyn Fn(&App) -> Option<Entity<freshkube_ui::table::LoadingMot
 #[derive(Clone)]
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the shell uses its page hooks from #579's step 2")
+    expect(
+        dead_code,
+        reason = "the shell hands its pages a source from #579's step 3"
+    )
 )]
 pub(crate) struct ScreenHandle {
     view: AnyView,

@@ -16,6 +16,7 @@ mod settings;
 mod shells;
 mod status;
 mod target;
+mod visible;
 
 use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot, probe};
 use crate::logs::TalosPanel;
