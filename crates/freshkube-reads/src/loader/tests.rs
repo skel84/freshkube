@@ -441,3 +441,105 @@ fn a_read_after_showing_again_lands(cx: &mut TestAppContext) {
         assert!(screen.loader.revision() > hidden);
     });
 }
+
+#[gpui_kit::test]
+fn a_read_the_owner_lands_is_timed_and_superseded_like_a_load(cx: &mut TestAppContext) {
+    let screen = cx.new(|_| Screen {
+        loader: Loader::default(),
+    });
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    screen.update(cx, |screen, cx| {
+        let old = screen.loader.start("a");
+        assert!(screen.loader.is_loading());
+        let request = screen.loader.start("a");
+        assert!(!screen.loader.land(&old, Ok(1), cx), "superseded");
+        assert!(screen.loader.land(&request, Ok(2), cx));
+        assert_eq!(screen.loader.data(), Some(&2));
+        assert!(!screen.loader.is_loading());
+        screen.loader.set_visible(false, policy, cx);
+    });
+    // Unlike example data resolved at once, a landed answer has an age.
+    cx.executor().advance_clock(Duration::from_secs(29));
+    screen.update(cx, |screen, cx| {
+        assert!(!screen.loader.set_visible(true, policy, cx), "fresh");
+        screen.loader.set_visible(false, policy, cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    screen.update(cx, |screen, cx| {
+        assert!(screen.loader.set_visible(true, policy, cx), "30 s old");
+    });
+}
+
+#[gpui_kit::test]
+fn a_failed_landing_keeps_the_data_stale_and_old(cx: &mut TestAppContext) {
+    let screen = cx.new(|_| Screen {
+        loader: Loader::default(),
+    });
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    screen.update(cx, |screen, cx| {
+        let request = screen.loader.start("a");
+        screen.loader.land(&request, Ok(1), cx);
+        let request = screen.loader.start("a");
+        assert!(screen.loader.land(&request, Err("offline".into()), cx));
+        assert_eq!(screen.loader.data(), Some(&1));
+        assert!(screen.loader.is_stale());
+        screen.loader.set_visible(false, policy, cx);
+        assert!(screen.loader.set_visible(true, policy, cx));
+    });
+}
+
+#[gpui_kit::test]
+fn hiding_cuts_a_held_read_and_drops_its_task(cx: &mut TestAppContext) {
+    let screen = cx.new(|_| Screen {
+        loader: Loader::default(),
+    });
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    let landed = Rc::new(Cell::new(false));
+    // Held: a read with no work still waits.
+    screen.update(cx, |screen, cx| {
+        let request = screen.loader.start("a");
+        screen.loader.land(&request, Ok(1), cx);
+        screen.loader.start("a");
+        assert!(screen.loader.is_loading());
+        let revision = screen.loader.revision();
+        screen.loader.set_visible(false, policy, cx);
+        assert!(!screen.loader.is_loading());
+        assert!(screen.loader.revision() > revision);
+        assert_eq!(screen.loader.data(), Some(&1), "kept as last known");
+        // A read cut short counts as old.
+        assert!(screen.loader.set_visible(true, policy, cx));
+    });
+    // A read with a task: hiding drops the task, so its answer never lands.
+    screen.update(cx, |screen, cx| {
+        let request = screen.loader.start("a");
+        let landed = landed.clone();
+        let task = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(Duration::from_secs(5)).await;
+            _ = this.update(cx, |screen, cx| {
+                landed.set(screen.loader.land(&request, Ok(9), cx));
+            });
+        });
+        screen.loader.run(None, task);
+        screen.loader.set_visible(false, policy, cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+    assert!(!landed.get());
+    screen.read_with(cx, |screen, _| assert_eq!(screen.loader.data(), Some(&1)));
+}
+
+#[gpui_kit::test]
+fn expiring_reads_again_on_showing_however_recent(cx: &mut TestAppContext) {
+    let screen = cx.new(|_| Screen {
+        loader: Loader::default(),
+    });
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    screen.update(cx, |screen, cx| {
+        let request = screen.loader.start("a");
+        screen.loader.land(&request, Ok(1), cx);
+        screen.loader.set_visible(false, policy, cx);
+        screen.loader.expire();
+        assert!(screen.loader.set_visible(true, policy, cx));
+        assert_eq!(screen.loader.data(), Some(&1), "the data stays");
+    });
+}

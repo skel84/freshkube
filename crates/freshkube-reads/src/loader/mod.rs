@@ -71,9 +71,11 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         }
         self.visible = visible;
         if !visible {
+            self.job = None;
             self.task = None;
-            if self.job.take().is_some() && self.state.is_loading() {
-                // Nothing loads any more: what shows it derives again.
+            // A read waiting, with work or held, waits no more: what shows
+            // it derives again.
+            if self.state.is_loading() && !self.cut {
                 self.cut = true;
                 self.revision += 1;
             }
@@ -110,24 +112,58 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         slot: impl Fn(&mut V) -> &mut Self + 'static,
         cx: &mut Context<V>,
     ) {
-        let request = self.state.begin(identity);
-        self.cut = false;
-        self.revision += 1;
+        let request = self.start(identity);
         let (job, receiver) =
             spawn_job(runtime, deadline, format!("Loading {what} timed out"), work);
-        self.job = Some(job);
         let stopped = format!("Loading {what} stopped unexpectedly");
-        self.task = Some(cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             let result = receiver.await.unwrap_or_else(|_| Err(stopped));
             _ = this.update(cx, |view, cx| {
-                let ok = result.is_ok();
-                let loader = slot(view);
-                if loader.deliver(&request, result) && ok {
-                    loader.answered = Some(cx.background_executor().now());
-                }
+                slot(view).land(&request, result, cx);
                 cx.notify();
             });
-        }));
+        });
+        self.run(Some(job), task);
+    }
+
+    /// Begins a read for `identity` that the owner runs and lands itself,
+    /// for one whose answer needs more than [`load`](Self::load) gives:
+    /// work of its own, a window, or derived data as it lands. The read in
+    /// flight is dropped. Hand the work to [`run`](Self::run) and the answer
+    /// to [`land`](Self::land); a read given no work, as example data held
+    /// on its loading rows, waits until it is replaced or hidden.
+    pub fn start(&mut self, identity: I) -> Request<I> {
+        self.job = None;
+        self.task = None;
+        self.cut = false;
+        self.revision += 1;
+        self.state.begin(identity)
+    }
+
+    /// Keeps the work of the read [`start`](Self::start) began: its Tokio
+    /// job, if any, and the task that brings its answer. Replacing the read,
+    /// hiding or dropping the loader drops both.
+    pub fn run(&mut self, job: Option<OwnedJob>, task: Task<()>) {
+        self.job = job;
+        self.task = Some(task);
+    }
+
+    /// Lands `result` if `request` is still the latest for its identity,
+    /// and returns whether it did. A successful answer is timed by the
+    /// executor's clock, for [`set_visible`](Self::set_visible).
+    pub fn land(&mut self, request: &Request<I>, result: Result<T, String>, cx: &App) -> bool {
+        let ok = result.is_ok();
+        let landed = self.deliver(request, result);
+        if landed && ok {
+            self.answered = Some(cx.background_executor().now());
+        }
+        landed
+    }
+
+    /// Counts what was read as old, as when where it is read from changes:
+    /// showing again reads, whatever the policy's threshold.
+    pub fn expire(&mut self) {
+        self.answered = None;
     }
 
     /// Applies a result at once; used for example data.
@@ -191,8 +227,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     }
 
     /// Whether the data is kept from an earlier answer after a later read
-    /// for the same identity failed, for tests.
-    #[cfg(any(test, feature = "testing"))]
+    /// for the same identity failed.
     pub fn is_stale(&self) -> bool {
         self.state.is_stale()
     }
