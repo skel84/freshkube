@@ -4,6 +4,7 @@ use crate::{
     backend::{self, OwnedJob},
     state::Snapshot,
 };
+use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 use freshkube_core::coroot as api;
 use std::{future::Future, time::Duration};
 use tokio::runtime::Handle;
@@ -189,17 +190,71 @@ impl ObservabilityPage {
             && api::ObjectSubject::for_app(source, app).as_ref() == Some(subject)
     }
 
-    /// The shell's connection id; answers for another one are dropped.
-    pub fn set_source(&mut self, access: Option<String>, cx: &mut Context<Self>) {
-        if self.live.access == access {
+    /// The shell's connection. Its id keys Coroot's access, and answers for
+    /// another one are dropped. Example access answers from the examples,
+    /// unless its hold keeps back the applications, incidents and traces
+    /// (`FRESHKUBE_FIXTURE_HOLD=coroot`), so their tables stay on their
+    /// loading rows.
+    pub fn set_source(&mut self, source: Option<&ClusterSource>, cx: &mut Context<Self>) {
+        let held = match source.map(|source| &source.access) {
+            Some(ClusterAccess::Example(hold)) => Some(hold.coroot),
+            _ => None,
+        };
+        self.set_access(source.map(|source| source.id.clone()), held, cx)
+    }
+    /// The connection's id and, for example data, whether its examples are
+    /// held.
+    pub(super) fn set_access(
+        &mut self,
+        access: Option<String>,
+        held: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
+        let examples = (held.is_some(), held.unwrap_or_default());
+        let shown = (self.fixture, self.hold);
+        if self.live.access == access && shown == examples {
             return;
         }
         self.live.access = access;
         if let Some(source) = self.live.source.take() {
             self.live.source = Some(source.with_association(None));
         }
+        if shown != examples && self.fixture {
+            self.forget_examples();
+        }
+        (self.fixture, self.hold) = examples;
         self.clear_observations();
+        if shown != examples && self.fixture {
+            self.show_examples();
+        }
         self.refresh(cx);
+    }
+    /// What example data shows before its first read: the map and the
+    /// flame graph, and the applications with the worker chosen unless they
+    /// are held. The incidents are answered by [`Self::refresh`].
+    fn show_examples(&mut self) {
+        (self.nodes, self.connections) = projection::map(&example::map());
+        self.frames = example::flame();
+        self.visible_frames = (0..self.frames.len()).collect();
+        self.flame_matches = vec![true; self.frames.len()];
+        if !self.hold {
+            self.selected_app = Some(example::id(example::WORKER));
+            self.apply_applications(&example::applications());
+        }
+        self.project();
+        self.prepare_map();
+        self.prepare_report();
+    }
+    /// Back to the page's first state from example data.
+    fn forget_examples(&mut self) {
+        self.nodes = Default::default();
+        self.connections = Default::default();
+        self.map_display = super::map::display();
+        self.forget_applications();
+        self.app_choices = Rc::new([]);
+        self.frames.clear();
+        self.visible_frames.clear();
+        self.flame_matches.clear();
     }
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if self.live.visible == visible {
@@ -247,20 +302,6 @@ impl ObservabilityPage {
         self.app_count = "0 apps".into();
         self.prepare_application_columns();
         self.namespace = None;
-    }
-    /// Example data never answers, so the applications, incidents and
-    /// traces tables stay on their loading rows, for captures
-    /// (`FRESHKUBE_FIXTURE_HOLD=coroot`). What the examples answered when
-    /// the page was made is forgotten. Without example data it does nothing.
-    pub fn hold_examples(&mut self) {
-        if !self.fixture {
-            return;
-        }
-        self.hold = true;
-        self.incident_observations = self.incident_observations.cleared();
-        self.prepare_incident_columns();
-        self.forget_applications();
-        self.app_choices = Rc::new([]);
     }
     pub(super) fn range_changed(&mut self, cx: &mut Context<Self>) {
         let elapsed = cx

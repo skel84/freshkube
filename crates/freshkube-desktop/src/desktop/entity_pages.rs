@@ -177,9 +177,10 @@ impl ScreenPanel for ObservabilityPage {
     /// Observability reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
 
-    /// The connection's id, which it keys Coroot's access by.
+    /// The connection, whose id it keys Coroot's access by; example access
+    /// answers from its examples.
     fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
-        ObservabilityPage::set_source(self, source.kube.map(|kube| kube.id), cx)
+        ObservabilityPage::set_source(self, source.kube.as_ref(), cx)
     }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
