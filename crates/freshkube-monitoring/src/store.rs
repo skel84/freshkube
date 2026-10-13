@@ -263,9 +263,9 @@ mod tests {
     }
 
     /// The same round trip with a Windows path, written inline.
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     #[test]
-    fn the_example_file_round_trips_byte_for_byte_on_windows() {
+    fn the_example_file_round_trips_byte_for_byte_off_unix() {
         let example = include_str!("../../freshkube-prefs/src/examples/monitoring.json")
             .replace("/home/acme/dashboards", "C:\\\\acme\\\\dashboards");
         round_trip(&example, "C:\\acme\\dashboards");

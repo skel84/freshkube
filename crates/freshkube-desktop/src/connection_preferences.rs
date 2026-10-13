@@ -280,9 +280,9 @@ mod tests {
     }
 
     /// The same round trips with Windows paths, written inline.
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     #[test]
-    fn the_example_files_round_trip_byte_for_byte_on_windows() {
+    fn the_example_files_round_trip_byte_for_byte_off_unix() {
         round_trip(&[
             "{\n  \"talosconfig\": \"C:\\\\acme\\\\talosconfig\",\n  \"context\": \"cluster-a\"\n}\n",
             "{\n  \"mode\": \"kubernetes\",\n  \"kubeconfig\": \"C:\\\\acme\\\\kubeconfig\",\n  \"context\": \"cluster-a\"\n}\n",
