@@ -113,6 +113,9 @@ jobs:
         run: |
           scripts/check-style.test.sh
           scripts/check-style.sh
+      - name: Docs link check
+        # Every relative link and anchor in AGENTS.md and docs/ resolves.
+        run: scripts/check-docs.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)
