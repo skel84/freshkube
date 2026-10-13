@@ -70,7 +70,15 @@ impl Failure {
             | TalosError::NoEndpoints(_) => FailureKind::Config,
             _ => FailureKind::Other,
         };
-        Self::new(kind, crate::errors::format_talos_error(error))
+        // A status keeps the server's own message as the detail, since the
+        // kind's label already says what the code means; the words
+        // `format_talos_error` adds for a code are the fallback for a status
+        // with no message.
+        let message = match error {
+            TalosError::Grpc(status) if !status.message().is_empty() => status.message().to_owned(),
+            _ => crate::errors::format_talos_error(error),
+        };
+        Self::new(kind, message)
     }
 
     pub fn from_kube(error: kube::Error) -> Self {
@@ -281,6 +289,24 @@ mod tests {
         let cut = read(server(None)).await;
         assert_eq!(cut.kind, FailureKind::Unreachable);
         assert!(cut.message.contains("connection reset"), "{}", cut.message);
+    }
+
+    #[test]
+    fn a_talos_status_keeps_the_servers_message_as_its_detail() {
+        let denied = TalosError::Grpc(tonic::Status::permission_denied(
+            "validate configuration on cp-1: proxy denied",
+        ));
+        let failure = Failure::from(&denied);
+        assert_eq!(
+            failure.to_string(),
+            "Forbidden · validate configuration on cp-1: proxy denied",
+            "the class is said once"
+        );
+        let bare = TalosError::Grpc(tonic::Status::permission_denied(""));
+        assert_eq!(
+            Failure::from(&bare).to_string(),
+            "Forbidden · Permission denied - check RBAC/credentials"
+        );
     }
 
     #[test]
