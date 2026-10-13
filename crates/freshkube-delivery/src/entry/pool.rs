@@ -466,10 +466,7 @@ where
         until: &Until,
     ) -> Result<(PoolReader<'_, R, C>, Read), Unread> {
         let Place::Entry(entry) = place else {
-            let open = self
-                .open
-                .as_ref()
-                .map(|open| open.as_ref().map_err(|why| why));
+            let open = self.open.as_ref().map(|open| open.as_ref());
             let no_entry = |_| async { Err::<C, _>(Failure::new(FailureKind::Config, "")) };
             // The open cluster is named by its entry when it is one.
             let named = |unread| match (unread, self.open_entry) {

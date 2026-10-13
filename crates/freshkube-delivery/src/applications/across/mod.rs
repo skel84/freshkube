@@ -107,9 +107,7 @@ where
                 (true, true) => Until::first(ends, BUDGET),
                 (true, false) => Until::destination(ends, BUDGET),
             };
-            let open = open
-                .as_ref()
-                .map(|open| open.reader.as_ref().map_err(|why| why).copied());
+            let open = open.as_ref().map(|open| open.reader.as_ref().copied());
             let session = match reach(place, open, connect, &until).await {
                 Err(Unread::Missing(why)) => {
                     SessionInputs::absent(key, asked, Absent::NotInWorkspace(why.message))
