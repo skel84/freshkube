@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use freshkube_reads::{Pace, Watch};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     AnyElement, Context, Pixels, Role, SharedString, Task, TestSupportExt, Window,
@@ -22,10 +23,18 @@ use tokio::{runtime::Handle, sync::mpsc};
 use freshkube_core::logs::{LogEvent, ServiceId};
 
 use super::{DownloadLines, LogPanel, LogSource};
-use crate::backend::{self, OwnedJob, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
+use crate::backend::{self, STREAM_QUEUE_CAPACITY, StreamEvent, Target};
 use crate::ui;
 
 mod catalog;
+
+/// The collection's delivery: at most a full queue a turn, however busy a
+/// service, and no sooner than 16 ms after the last.
+const PACE: Pace = Pace {
+    capacity: STREAM_QUEUE_CAPACITY,
+    most: STREAM_QUEUE_CAPACITY,
+    every: Duration::from_millis(16),
+};
 
 /// The Logs page's source: one Talos node's service catalog, the services
 /// being collected, their stream and their failures.
@@ -38,9 +47,10 @@ pub(crate) struct TalosLogs {
     pub(super) collecting: BTreeSet<ServiceId>,
     /// Whether the default collection was already offered for this target.
     defaults_applied: bool,
-    pub(super) stream_revision: u64,
-    pub(super) job: Option<OwnedJob>,
-    pub(super) delivery: Option<Task<()>>,
+    /// The collected services' stream, for the node it reads.
+    pub(super) stream: Watch<StreamEvent, Target>,
+    /// Writes the example services' lines into `stream` on the GPUI clock.
+    example_writer: Option<Task<()>>,
     pub(super) collection_active: bool,
     /// The latest failure of each collected service.
     errors: BTreeMap<ServiceId, String>,
@@ -58,9 +68,8 @@ impl TalosLogs {
             services: Vec::new(),
             collecting: BTreeSet::new(),
             defaults_applied: false,
-            stream_revision: 0,
-            job: None,
-            delivery: None,
+            stream: Watch::default(),
+            example_writer: None,
             collection_active: false,
             errors: BTreeMap::new(),
             picker: catalog::Picker::default(),
@@ -317,8 +326,7 @@ impl TalosPanel for LogPanel {
                 result: Ok(line),
             })
             .collect();
-        let revision = self.source().stream_revision;
-        self.apply_batch(&target, revision, batch, cx)
+        self.apply_batch(&target, batch, cx)
     }
 
     #[cfg(test)]
@@ -393,12 +401,12 @@ pub(super) trait Collection: Sized + 'static {
     fn stop(&mut self, cx: &mut Context<Self>);
 
     /// Hands a batch from the current stream to the view: its lines from
-    /// services still collected, and its failures. A batch from an earlier
-    /// stream or another node is dropped, and `false` ends its delivery.
+    /// services still collected, and its failures. The stream's watch
+    /// drops a batch from an earlier stream; one for another node is
+    /// dropped here, and `false` says so; the stream then stops.
     fn apply_batch(
         &mut self,
         target: &Target,
-        revision: u64,
         batch: Vec<StreamEvent>,
         cx: &mut Context<Self>,
     ) -> bool;
@@ -409,12 +417,16 @@ pub(super) trait Collection: Sized + 'static {
 
     fn start_with_tail(&mut self, tail: i32, cx: &mut Context<Self>);
 
-    fn receive(
-        &mut self,
-        target: Target,
-        receiver: mpsc::Receiver<StreamEvent>,
-        cx: &mut Context<Self>,
-    );
+    /// Collects what `work` sends for `target` until it ends or is
+    /// stopped.
+    fn collect<Work, Fut>(&mut self, target: Target, work: Work, cx: &mut Context<Self>)
+    where
+        Work: FnOnce(mpsc::Sender<StreamEvent>) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static;
+
+    /// Writes the example services' lines for `target`, one every 250 ms
+    /// on the GPUI clock, until stopped.
+    fn collect_example(&mut self, target: Target, services: Vec<ServiceId>, cx: &mut Context<Self>);
 
     fn toggle_collection(&mut self, service: ServiceId, checked: bool, cx: &mut Context<Self>);
 
@@ -430,9 +442,8 @@ impl Collection for LogPanel {
         // Lines received before stopping still belong to the review.
         self.flush_backlog(cx);
         let source = self.source_mut();
-        source.stream_revision += 1;
-        source.job = None;
-        source.delivery = None;
+        source.stream.stop();
+        source.example_writer = None;
         source.collection_active = false;
         cx.notify();
     }
@@ -440,13 +451,10 @@ impl Collection for LogPanel {
     fn apply_batch(
         &mut self,
         target: &Target,
-        revision: u64,
         batch: Vec<StreamEvent>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.source().stream_revision != revision
-            || self.source().active_target() != Some(target)
-        {
+        if self.source().active_target() != Some(target) {
             return false;
         }
         let mut lines = Vec::new();
@@ -489,101 +497,109 @@ impl Collection for LogPanel {
             cx.notify();
             return;
         }
-        let (target, job, receiver) = if let Some(target) = self.source().fixture_target.clone() {
-            let (sender, receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
-            let services: Vec<_> = self.source().collecting.iter().cloned().collect();
-            let event_target = target.clone();
-            let initial_sequence = self.next_line_id();
-            let flood = stress_flood(&self.source().runtime, &sender, &event_target, &services);
-            let job = flood.unwrap_or_else(|| {
-                self.source().runtime.spawn(async move {
-                    let mut tick = tokio::time::interval(Duration::from_millis(250));
-                    let mut sequence = initial_sequence;
-                    loop {
-                        tick.tick().await;
-                        let service = services[sequence as usize % services.len()].clone();
-                        let line = crate::fixture::stream_line(service.as_str(), sequence);
-                        if sender
-                            .send(StreamEvent {
-                                target: event_target.clone(),
-                                service,
-                                result: Ok(line),
-                            })
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                        sequence += 1;
-                    }
-                })
-            });
-            (target, OwnedJob::new(job), receiver)
-        } else if let Some((target, client)) = &self.source().target {
-            let (job, receiver) = backend::stream(
-                self.source().runtime.clone(),
-                client.clone(),
+        let services: Vec<_> = self.source().collecting.iter().cloned().collect();
+        if let Some(target) = self.source().fixture_target.clone() {
+            if let Some(rate) = stress_rate() {
+                let event_target = target.clone();
+                self.collect(
+                    target,
+                    move |sender| stress_flood(rate, sender, event_target, services),
+                    cx,
+                );
+            } else {
+                self.collect_example(target, services, cx);
+            }
+        } else if let Some((target, client)) = self.source().target.clone() {
+            self.collect(
                 target.clone(),
-                self.source().collecting.iter().cloned().collect(),
-                tail,
+                move |sender| backend::stream(client, target, services, tail, sender),
+                cx,
             );
-            (target.clone(), job, receiver)
         } else {
             self.set_feedback(Some("Select a connected node first".into()));
             cx.notify();
-            return;
-        };
+        }
+    }
+
+    fn collect<Work, Fut>(&mut self, target: Target, work: Work, cx: &mut Context<Self>)
+    where
+        Work: FnOnce(mpsc::Sender<StreamEvent>) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
         self.set_feedback(None);
         let source = self.source_mut();
         source.errors.clear();
         source.collection_active = true;
-        source.job = Some(job);
-        self.receive(target, receiver, cx);
+        let ended = target.clone();
+        source.stream.start_then(
+            target.clone(),
+            &source.runtime,
+            PACE,
+            work,
+            |view: &mut Self| &mut view.source_mut().stream,
+            move |view, batch, cx| {
+                // A batch for another node ends the stream, as its delivery
+                // used to.
+                if !view.apply_batch(&target, batch, cx) {
+                    view.source_mut().stream.stop();
+                }
+            },
+            // Every service's stream ended: what was held while hidden
+            // lands, and collection stops.
+            move |view, cx| {
+                if view.source().active_target() == Some(&ended) {
+                    view.flush_backlog(cx);
+                    view.source_mut().collection_active = false;
+                }
+            },
+            cx,
+        );
         cx.notify();
     }
 
-    fn receive(
+    fn collect_example(
         &mut self,
         target: Target,
-        mut receiver: mpsc::Receiver<StreamEvent>,
+        services: Vec<ServiceId>,
         cx: &mut Context<Self>,
     ) {
-        let revision = self.source().stream_revision;
-        self.source_mut().delivery = Some(cx.spawn(async move |weak, cx| {
-            while let Some(first) = receiver.recv().await {
-                let mut batch = vec![first];
-                // At most a full queue per turn; yield between turns even
-                // when a busy service keeps the queue full.
-                for _ in 1..STREAM_QUEUE_CAPACITY {
-                    let Ok(event) = receiver.try_recv() else {
-                        break;
-                    };
-                    batch.push(event);
+        self.set_feedback(None);
+        let mut sequence = self.next_line_id();
+        let source = self.source_mut();
+        source.errors.clear();
+        source.collection_active = true;
+        let apply_target = target.clone();
+        let sender = source.stream.open(
+            target.clone(),
+            PACE,
+            |view: &mut Self| &mut view.source_mut().stream,
+            move |view, batch, cx| {
+                if !view.apply_batch(&apply_target, batch, cx) {
+                    view.source_mut().stream.stop();
                 }
-                let valid = weak
-                    .update(cx, |this, cx| {
-                        this.apply_batch(&target, revision, batch, cx)
-                    })
-                    .unwrap_or(false);
-                if !valid {
-                    return;
+            },
+            cx,
+        );
+        source.example_writer = Some(cx.spawn(async move |_, cx| {
+            // The first line goes at once, then one every 250 ms.
+            loop {
+                let service = services[sequence as usize % services.len()].clone();
+                let line = crate::fixture::stream_line(service.as_str(), sequence);
+                let event = StreamEvent {
+                    target: target.clone(),
+                    service,
+                    result: Ok(line),
+                };
+                if sender.send(event).await.is_err() {
+                    break;
                 }
+                sequence += 1;
                 cx.background_executor()
-                    .timer(Duration::from_millis(16))
+                    .timer(Duration::from_millis(250))
                     .await;
             }
-            let _ = weak.update(cx, |this, cx| {
-                if this.source().stream_revision == revision
-                    && this.source().active_target() == Some(&target)
-                {
-                    this.flush_backlog(cx);
-                    let source = this.source_mut();
-                    source.collection_active = false;
-                    source.job = None;
-                    cx.notify();
-                }
-            });
         }));
+        cx.notify();
     }
 
     fn toggle_collection(&mut self, service: ServiceId, checked: bool, cx: &mut Context<Self>) {
@@ -683,30 +699,27 @@ impl Collection for LogPanel {
     }
 }
 
-/// The stress binary can make the example services write faster than their
-/// usual line every 250 ms.
+/// How many lines a second the stress binary has the example services
+/// write between them, faster than their usual line every 250 ms.
 #[cfg(feature = "stress")]
-fn stress_flood(
-    runtime: &Handle,
-    sender: &mpsc::Sender<StreamEvent>,
-    target: &Target,
-    services: &[ServiceId],
-) -> Option<tokio::task::JoinHandle<()>> {
-    let rate = crate::stress::talos_rate()?;
-    Some(runtime.spawn(crate::stress::talos_flood(
-        rate,
-        sender.clone(),
-        target.clone(),
-        services.to_vec(),
-    )))
+fn stress_rate() -> Option<u32> {
+    crate::stress::talos_rate()
 }
 
 #[cfg(not(feature = "stress"))]
-fn stress_flood(
-    _: &Handle,
-    _: &mpsc::Sender<StreamEvent>,
-    _: &Target,
-    _: &[ServiceId],
-) -> Option<tokio::task::JoinHandle<()>> {
+fn stress_rate() -> Option<u32> {
     None
 }
+
+#[cfg(feature = "stress")]
+async fn stress_flood(
+    rate: u32,
+    sender: mpsc::Sender<StreamEvent>,
+    target: Target,
+    services: Vec<ServiceId>,
+) {
+    crate::stress::talos_flood(rate, sender, target, services).await;
+}
+
+#[cfg(not(feature = "stress"))]
+async fn stress_flood(_: u32, _: mpsc::Sender<StreamEvent>, _: Target, _: Vec<ServiceId>) {}

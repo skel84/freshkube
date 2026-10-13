@@ -10,7 +10,7 @@ use freshkube_core::logs::{LogEvent, ServiceId};
 
 use super::talos::Collection;
 use super::{LogPanel, TalosPanel};
-use crate::backend::StreamEvent;
+use crate::backend::{StreamEvent, Target};
 
 fn fixture_events() -> Vec<LogEvent> {
     (0..120)
@@ -64,17 +64,10 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
             cx,
         );
         let offset = panel.read(cx).scroll_offset();
-        let (target, revision) = {
-            let view = panel.read(cx);
-            (
-                view.source().fixture_target.clone().unwrap(),
-                view.source().stream_revision,
-            )
-        };
+        let target = panel.read(cx).source().fixture_target.clone().unwrap();
         panel.update(cx, |view, cx| {
             assert!(view.apply_batch(
                 &target,
-                revision,
                 vec![StreamEvent {
                     target: target.clone(),
                     service: ServiceId::from("apid"),
@@ -94,7 +87,7 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
                     result: Ok(format!("info eviction {ix}")),
                 })
                 .collect();
-            assert!(view.apply_batch(&target, revision, batch, cx));
+            assert!(view.apply_batch(&target, batch, cx));
         });
         window.render_frame(cx);
         assert!(panel.read(cx).anchor_evicted());
@@ -105,7 +98,6 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
         panel.update(cx, |view, cx| {
             assert!(!view.apply_batch(
                 &target,
-                revision,
                 vec![StreamEvent {
                     target: target.clone(),
                     service: ServiceId::from("apid"),
@@ -121,8 +113,8 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
 
 #[gpui_kit::test]
 async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut TestAppContext) {
-    // Tokio's producer uses real time. Let GPUI park for external wakes
-    // rather than racing through its deterministic test-clock timers.
+    // The example writer runs on GPUI's clock, but `wait_for` below waits
+    // in real time: let GPUI park rather than race through its timers.
     cx.executor().allow_parking();
     let (_runtime, panel, handle) = mount(cx);
     let (collected, initial_next_id) = cx
@@ -140,8 +132,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             let initial_next_id = view.next_line_id();
             window.click("logs-collection", cx);
             assert!(panel.read(cx).source().collection_active);
-            assert!(panel.read(cx).source().job.is_some());
-            assert!(panel.read(cx).source().delivery.is_some());
+            assert!(panel.read(cx).source().stream.is_running());
             (collected, initial_next_id)
         })
         .unwrap();
@@ -215,8 +206,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             window.click("logs-collection", cx);
             let view = panel.read(cx);
             assert!(!view.source().collection_active);
-            assert!(view.source().job.is_none());
-            assert!(view.source().delivery.is_none());
+            assert!(!view.source().stream.is_running());
             assert!(!view.following());
             view.next_line_id()
         })
@@ -228,11 +218,10 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
         |window, cx| {
             let view = panel.read(cx);
             // Use a monotonic arrival identity, not bounded buffer size,
-            // and observe six real producer ticks with GPUI still driven.
+            // and see no line land for 120 ms with GPUI still driven.
             assert_eq!(view.next_line_id(), stopped_next_id);
             assert!(!view.source().collection_active);
-            assert!(view.source().job.is_none());
-            assert!(view.source().delivery.is_none());
+            assert!(!view.source().stream.is_running());
             assert_eq!(
                 window.find("logs-collection").label(),
                 Some("Start collecting")
@@ -640,4 +629,135 @@ fn a_talos_download_is_named_by_its_node(cx: &mut TestAppContext) {
         let name = TalosLogs::download_name(panel.read(cx), DownloadLines::Visible);
         assert!(name.starts_with("fixture-node-"), "{name}");
     });
+}
+
+#[gpui_kit::test]
+async fn a_collection_whose_stream_ends_stops_and_lands_what_it_held(cx: &mut TestAppContext) {
+    // The stream runs on Tokio's thread.
+    cx.executor().allow_parking();
+    let (_runtime, panel, handle) = mount(cx);
+    let target = cx.update(|cx| panel.read(cx).source().fixture_target.clone().unwrap());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        panel.update(cx, |view, cx| {
+            view.set_visible(false, cx);
+            // A batch lands while hidden, so the next one is held.
+            assert!(view.apply_batch(
+                &target,
+                vec![StreamEvent {
+                    target: target.clone(),
+                    service: ServiceId::from("apid"),
+                    result: Ok("info landed while hidden".into()),
+                }],
+                cx,
+            ));
+            let line = StreamEvent {
+                target: target.clone(),
+                service: ServiceId::from("apid"),
+                result: Ok("info held until the stream ends".into()),
+            };
+            view.collect(
+                target.clone(),
+                move |sender| async move {
+                    let _ = sender.send(line).await;
+                },
+                cx,
+            );
+            assert!(view.source().collection_active);
+        });
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+        !panel.read(cx).source().stream.is_running()
+    })
+    .await;
+    cx.update(|cx| {
+        let view = panel.read(cx);
+        assert!(!view.source().collection_active);
+        assert!(
+            view.retained()
+                .iter()
+                .any(|entry| entry.raw.contains("held until the stream ends"))
+        );
+    });
+}
+
+fn line(target: &Target, text: &str) -> StreamEvent {
+    StreamEvent {
+        target: target.clone(),
+        service: ServiceId::from("apid"),
+        result: Ok(text.into()),
+    }
+}
+
+fn holds(text: &str, panel: &Entity<LogPanel>, cx: &gpui_kit::App) -> bool {
+    panel
+        .read(cx)
+        .retained()
+        .iter()
+        .any(|entry| entry.raw.contains(text))
+}
+
+#[gpui_kit::test]
+async fn an_earlier_collections_late_batch_on_the_same_node_never_lands(cx: &mut TestAppContext) {
+    // The streams' work runs on Tokio's thread.
+    cx.executor().allow_parking();
+    let (_runtime, panel, handle) = mount(cx);
+    let target = cx.update(|cx| panel.read(cx).source().fixture_target.clone().unwrap());
+    let collect = |view: &mut LogPanel, cx: &mut gpui_kit::Context<LogPanel>| {
+        view.collect(
+            target.clone(),
+            |sender| async move { sender.closed().await },
+            cx,
+        )
+    };
+    let (old, new) = cx.update(|cx| {
+        panel.update(cx, |view, cx| {
+            collect(view, cx);
+            let old = view.source().stream.sender().expect("collecting");
+            view.stop(cx);
+            collect(view, cx);
+            (old, view.source().stream.sender().expect("collecting"))
+        })
+    });
+    let _ = old.try_send(line(&target, "info late from the earlier stream"));
+    new.try_send(line(&target, "info from the current stream"))
+        .unwrap();
+    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+        holds("from the current stream", &panel, cx)
+    })
+    .await;
+    cx.run_until_parked();
+    cx.update(|cx| assert!(!holds("late from the earlier stream", &panel, cx)));
+}
+
+#[gpui_kit::test]
+async fn a_batch_for_another_node_stops_the_stream(cx: &mut TestAppContext) {
+    // The stream's work runs on Tokio's thread.
+    cx.executor().allow_parking();
+    let (_runtime, panel, handle) = mount(cx);
+    let other = cx.update(|cx| {
+        let mut other = panel.read(cx).source().fixture_target.clone().unwrap();
+        other.node = "worker-elsewhere".into();
+        other
+    });
+    let event = line(&other, "info for another node");
+    cx.update(|cx| {
+        panel.update(cx, |view, cx| {
+            view.collect(
+                other.clone(),
+                move |sender| async move {
+                    if sender.send(event).await.is_ok() {
+                        sender.closed().await;
+                    }
+                },
+                cx,
+            );
+        })
+    });
+    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+        !panel.read(cx).source().stream.is_running()
+    })
+    .await;
+    cx.update(|cx| assert!(!holds("for another node", &panel, cx)));
 }
