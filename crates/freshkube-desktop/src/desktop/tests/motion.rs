@@ -437,3 +437,66 @@ fn a_node_expand_redraws_the_shell(cx: &mut TestAppContext) {
         assert!(probe::count("shell") > before, "expanded {expanded}");
     }
 }
+
+/// A screen that is always on its loading rows, for the node pane's
+/// motion.
+struct Loading(Entity<freshkube_ui::table::LoadingMotion>);
+
+impl gpui_kit::EventEmitter<crate::screens::ScreenEvent> for Loading {}
+
+impl gpui_kit::Render for Loading {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        gpui_kit::div()
+    }
+}
+
+impl crate::screens::ScreenPanel for Loading {
+    fn set_source(
+        &mut self,
+        _: Option<crate::screens::ScreenSource>,
+        _: &mut gpui_kit::Window,
+        _: &mut gpui_kit::Context<Self>,
+    ) {
+    }
+
+    fn activate(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
+
+    fn loading_motion(
+        &self,
+        _: &gpui_kit::App,
+    ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        Some(self.0.clone())
+    }
+}
+
+/// The open pane's Talos screen gives the shell its loading motion through
+/// Nodes while its tab shows, and none once another tab does.
+#[gpui_kit::test]
+fn the_pane_screens_loading_motion_reaches_the_shell_through_nodes(cx: &mut TestAppContext) {
+    use super::super::{nodes::NodeTab, pages::PageId};
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let motion = cx.new(|_| {
+        freshkube_ui::table::LoadingRows::new("fake").motion(freshkube_ui::table::Look::Pulse)
+    });
+    let screen = crate::screens::ScreenHandle::new(cx.new(|_| Loading(motion.clone())));
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            super::super::testing::put_page(view, PageId::Processes, screen, cx)
+        })
+    });
+    let shown = |tab, cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            open_node_tab(window, cx, tab);
+            view.read(cx).page_loading_motion(cx)
+        })
+        .unwrap()
+    };
+    assert_eq!(shown(NodeTab::Processes, cx), Some(motion.clone()));
+    assert_eq!(shown(NodeTab::Overview, cx), None);
+}

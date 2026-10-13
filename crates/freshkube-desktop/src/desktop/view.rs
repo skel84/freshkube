@@ -199,21 +199,8 @@ impl Pilot {
             Page::Observability => self.observability.read(cx).loading_motion(cx),
             Page::Applications => self.applications.read(cx).loading_motion(cx),
             page if self.kubernetes_only.is_some() && page.needs_talos() => None,
-            Page::Nodes => {
-                let workspace = self.node_workspace.read(cx);
-                let table = workspace.view == NodeView::Table
-                    && !(workspace.open && workspace.expanded)
-                    && freshkube_ui::table::TableSource::loading(workspace).is_some();
-                if table {
-                    return Some(workspace.loading_motion().clone());
-                }
-                // The open node's tab: a node screen's table loading.
-                workspace
-                    .open
-                    .then(|| self.active_screen(cx))
-                    .flatten()
-                    .and_then(|screen| screen.loading_motion(cx))
-            }
+            // Its table's, or the open node's tab's: a node screen's.
+            Page::Nodes => self.pages.get(&PageId::Nodes)?.loading_motion(cx),
             Page::SystemServices => {
                 let services = self.system_services.read(cx);
                 freshkube_ui::table::TableSource::loading(services)
