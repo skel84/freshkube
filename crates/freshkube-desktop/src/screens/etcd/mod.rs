@@ -195,8 +195,8 @@ struct Derived {
 
 impl EventEmitter<ScreenEvent> for EtcdScreen {}
 
-impl ScreenPanel for EtcdScreen {
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl EtcdScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextMember, Some(CONTEXT)),
             KeyBinding::new("up", PreviousMember, Some(CONTEXT)),
@@ -216,7 +216,9 @@ impl ScreenPanel for EtcdScreen {
             loading: TableLoading::new(PREFIX, cx),
         }
     }
+}
 
+impl ScreenPanel for EtcdScreen {
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);

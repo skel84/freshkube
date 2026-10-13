@@ -268,8 +268,8 @@ impl WorkloadData {
     }
 }
 
-impl ScreenPanel for WorkloadsScreen {
-    fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+impl WorkloadsScreen {
+    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -322,7 +322,9 @@ impl ScreenPanel for WorkloadsScreen {
             _subscription: subscription,
         }
     }
+}
 
+impl ScreenPanel for WorkloadsScreen {
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);

@@ -101,14 +101,6 @@ impl gpui_kit::Render for SegmentScreen {
 }
 
 impl crate::screens::ScreenPanel for SegmentScreen {
-    fn new(
-        _: tokio::runtime::Handle,
-        _: &mut gpui_kit::Window,
-        _: &mut gpui_kit::Context<Self>,
-    ) -> Self {
-        Self(None)
-    }
-
     fn set_source(
         &mut self,
         _: Option<crate::screens::ScreenSource>,

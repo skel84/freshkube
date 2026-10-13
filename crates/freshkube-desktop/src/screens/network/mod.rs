@@ -310,16 +310,8 @@ pub(crate) struct NetworkScreen {
 
 impl EventEmitter<ScreenEvent> for NetworkScreen {}
 
-impl ScreenPanel for NetworkScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
-        self.embedded = embedded;
-        cx.notify();
-    }
-    fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+impl NetworkScreen {
+    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextRow, Some(CONTEXT)),
             KeyBinding::new("up", PreviousRow, Some(CONTEXT)),
@@ -373,6 +365,17 @@ impl ScreenPanel for NetworkScreen {
             derived: Derived::default(),
             _subscription: subscription,
         }
+    }
+}
+
+impl ScreenPanel for NetworkScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {

@@ -44,7 +44,6 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use talos_rs::TalosClient;
-use tokio::runtime::Handle;
 
 use crate::backend::Target;
 use crate::palette::palette;
@@ -167,11 +166,11 @@ pub(crate) enum ScreenEvent {
 }
 
 /// Common lifecycle behavior between the shell and a screen. Feature-specific
-/// data is delivered through the screen's typed entity handle.
+/// data is delivered through the screen's typed entity handle. A page makes
+/// itself with its own `new`, which the shell's factory names, since pages
+/// take different things to start.
 pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     fn set_embedded(&mut self, _embedded: bool, _cx: &mut Context<Self>) {}
-
-    fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
     /// Called whenever the target or its cluster snapshot changes. A different
     /// `source.target` must drop in-flight work and data for the old target;

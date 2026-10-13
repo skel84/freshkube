@@ -149,16 +149,8 @@ pub(crate) struct ProcessesScreen {
 
 impl EventEmitter<ScreenEvent> for ProcessesScreen {}
 
-impl ScreenPanel for ProcessesScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
-        self.embedded = embedded;
-        cx.notify();
-    }
-    fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+impl ProcessesScreen {
+    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextProcess, Some(CONTEXT)),
             KeyBinding::new("up", PreviousProcess, Some(CONTEXT)),
@@ -206,6 +198,17 @@ impl ScreenPanel for ProcessesScreen {
             derived: None,
             _subscription: subscription,
         }
+    }
+}
+
+impl ScreenPanel for ProcessesScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {

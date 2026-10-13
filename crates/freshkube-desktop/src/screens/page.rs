@@ -196,10 +196,6 @@ mod tests {
     }
 
     impl ScreenPanel for Fake {
-        fn new(_: tokio::runtime::Handle, _: &mut Window, _: &mut Context<Self>) -> Self {
-            Self(Vec::new())
-        }
-
         fn set_source(
             &mut self,
             source: Option<ScreenSource>,
@@ -241,11 +237,10 @@ mod tests {
     #[gpui_kit::test]
     fn a_page_registered_by_its_handle_hears_the_shell_and_is_heard(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
-        let runtime = tokio::runtime::Runtime::new().unwrap();
         let heard = Rc::new(RefCell::new(Vec::new()));
         let mut page = None;
         let window = cx.open_window(size(px(400.), px(300.)), |window, cx| {
-            let fake = cx.new(|cx| Fake::new(runtime.handle().clone(), window, cx));
+            let fake = cx.new(|_| Fake(Vec::new()));
             page = Some(fake.clone());
             Root::new(fake, window, cx)
         });

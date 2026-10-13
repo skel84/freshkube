@@ -1041,38 +1041,60 @@ impl Pilot {
             mutation::may_close(window, cx)
                 && pod_shell::may_close(window, cx, |window, _| window.remove_window())
         });
-        let health =
-            Self::screen_entity::<WorkloadsScreen>(runtime.clone(), &mut subscriptions, window, cx);
-        let lifecycle =
-            Self::screen_entity::<LifecycleScreen>(runtime.clone(), &mut subscriptions, window, cx);
+        let health = Self::screen_entity(
+            WorkloadsScreen::new,
+            runtime.clone(),
+            &mut subscriptions,
+            window,
+            cx,
+        );
+        let lifecycle = Self::screen_entity(
+            LifecycleScreen::new,
+            runtime.clone(),
+            &mut subscriptions,
+            window,
+            cx,
+        );
         let screens = ScreenKind::ALL
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
-                    ScreenKind::Processes => {
-                        Self::screen::<ProcessesScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Processes => Self::screen(
+                        ProcessesScreen::new,
+                        runtime,
+                        &mut subscriptions,
+                        window,
+                        cx,
+                    ),
                     ScreenKind::Storage => {
-                        Self::screen::<StorageScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(StorageScreen::new, runtime, &mut subscriptions, window, cx)
                     }
                     ScreenKind::Network => {
-                        Self::screen::<NetworkScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(NetworkScreen::new, runtime, &mut subscriptions, window, cx)
                     }
-                    ScreenKind::Diagnostics => {
-                        Self::screen::<DiagnosticsScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Diagnostics => Self::screen(
+                        DiagnosticsScreen::new,
+                        runtime,
+                        &mut subscriptions,
+                        window,
+                        cx,
+                    ),
                     ScreenKind::Etcd => {
-                        Self::screen::<EtcdScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(EtcdScreen::new, runtime, &mut subscriptions, window, cx)
                     }
                     ScreenKind::Health => ScreenHandle::new(health.clone()),
                     ScreenKind::Security => {
-                        Self::screen::<SecurityScreen>(runtime, &mut subscriptions, window, cx)
+                        Self::screen(SecurityScreen::new, runtime, &mut subscriptions, window, cx)
                     }
                     ScreenKind::Lifecycle => ScreenHandle::new(lifecycle.clone()),
-                    ScreenKind::Operations => {
-                        Self::screen::<OperationsScreen>(runtime, &mut subscriptions, window, cx)
-                    }
+                    ScreenKind::Operations => Self::screen(
+                        OperationsScreen::new,
+                        runtime,
+                        &mut subscriptions,
+                        window,
+                        cx,
+                    ),
                 };
                 (page, handle)
             })
@@ -1519,21 +1541,23 @@ impl Pilot {
     }
 
     fn screen<T: ScreenPanel>(
+        new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
         runtime: Handle,
         subscriptions: &mut Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ScreenHandle {
-        ScreenHandle::new(Self::screen_entity::<T>(runtime, subscriptions, window, cx))
+        ScreenHandle::new(Self::screen_entity(new, runtime, subscriptions, window, cx))
     }
 
     fn screen_entity<T: ScreenPanel>(
+        new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
         runtime: Handle,
         subscriptions: &mut Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<T> {
-        let screen = cx.new(|cx| T::new(runtime, window, cx));
+        let screen = cx.new(|cx| new(runtime, window, cx));
         subscriptions.push(cx.subscribe_in(&screen, window, Self::screen_event));
         screen
     }
