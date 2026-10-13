@@ -844,17 +844,6 @@ impl Pilot {
             }
             page
         });
-        // Cached views keep their last frame; a font size or palette change
-        // that doesn't refresh the window by itself must still redraw them.
-        subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
-            place_window_controls(window, cx);
-            view.prepare_context_display(window, cx);
-            view.notify_cached(cx);
-            cx.notify();
-        }));
-        // Batches arriving while Logs is hidden never notify; the shell
-        // shows only what start, stop and the visible page change.
-        subscriptions.push(cx.observe(&logs, |_, _, cx| cx.notify()));
         let applications = cx.new(|cx| {
             crate::applications::ApplicationsPage::new(
                 runtime.clone(),
@@ -876,6 +865,17 @@ impl Pilot {
             &settings_page,
             &resources,
         ));
+        // Cached views keep their last frame; a font size or palette change
+        // that doesn't refresh the window by itself must still redraw them.
+        subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
+            place_window_controls(window, cx);
+            view.prepare_context_display(window, cx);
+            view.notify_cached(cx);
+            cx.notify();
+        }));
+        // Batches arriving while Logs is hidden never notify; the shell
+        // shows only what start, stop and the visible page change.
+        subscriptions.push(cx.observe(&logs, |_, _, cx| cx.notify()));
         subscriptions.extend(Self::subscribe_page_events(
             &pages,
             PageEntities {
