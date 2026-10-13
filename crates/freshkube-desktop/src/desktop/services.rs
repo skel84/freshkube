@@ -93,7 +93,11 @@ impl Pilot {
         // inset.
         let body = v_flex()
             .gap(dp(12.))
-            .children(self.stale_banner(cx))
+            .children(super::states::stale_banner(
+                super::states::StaleTalos::of(&self.overview).as_ref(),
+                &self.on_config_action(cx),
+                cx,
+            ))
             .children(
                 self.services
                     .error()
@@ -109,7 +113,7 @@ impl Pilot {
             )
             .child(toolbar)
             .child(split);
-        self.page_scroll("services-page")
+        super::states::page_scroll("services-page")
             .track_scroll(&self.service_scroll)
             .test_support()
             .child(body)
@@ -153,7 +157,12 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> Result<presentation::NodeSummary, AnyElement> {
         if let Some(error) = self.config_error.clone() {
-            return Err(self.config_error_state(error, cx));
+            return Err(super::states::config_error_state(
+                error,
+                self.kubernetes_only.is_some(),
+                &self.on_config_action(cx),
+                cx,
+            ));
         }
         if self.overview.data().is_none() {
             if let Some(error) = self
@@ -161,7 +170,12 @@ impl Pilot {
                 .error()
                 .filter(|_| !self.overview.is_loading())
             {
-                return Err(self.unreachable_state(error.to_owned(), cx));
+                return Err(super::states::unreachable_state(
+                    self.applied.context.as_deref().unwrap_or_default(),
+                    error.to_owned(),
+                    &self.on_config_action(cx),
+                    cx,
+                ));
             }
             return Err(self.services_skeleton(cx));
         }
@@ -638,7 +652,7 @@ impl Pilot {
                             .child(ui::skeleton(relative(1.), dp(90.))),
                     ),
             );
-        self.page_scroll("services-page")
+        super::states::page_scroll("services-page")
             .track_scroll(&self.service_scroll)
             .test_support()
             .child(body)

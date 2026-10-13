@@ -175,7 +175,7 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).overview_display.cards.len(), 4);
+        assert_eq!(pilot.read(cx).overview_display(cx).cards.len(), 4);
         assert!(window.try_find("nav-etcd").is_none());
         assert!(pilot.read(cx).nodes.is_empty());
         assert!(matches!(
@@ -192,7 +192,7 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let view = pilot.read(cx);
-        assert_eq!(view.overview_display.cards.len(), 4);
+        assert_eq!(view.overview_display(cx).cards.len(), 4);
         assert!(view.nodes.is_empty());
         assert_eq!(view.applied.context.as_deref(), Some("staging-eu"));
         assert!(matches!(

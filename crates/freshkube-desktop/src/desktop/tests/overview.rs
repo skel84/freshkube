@@ -57,6 +57,11 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("fixture-fail", cx);
+    })
+    .unwrap();
+    // Overview hears where things stand once the shell's effects run.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(view.read(cx).overview.is_stale());
         assert!(
@@ -76,6 +81,10 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
                 .any(|row| row.name.contains(DEGRADED_NODE))
         );
         window.click("refresh", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(!view.read(cx).overview.is_stale());
         assert!(

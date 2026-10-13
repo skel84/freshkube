@@ -7,47 +7,55 @@ use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 #[gpui_kit::test]
 fn every_overview_card_opens_its_target_and_filter(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1000.);
-    cx.update_window(handle, |_, window, cx| {
-        for (id, page, kind, filter) in [
-            ("tile-nodes", Page::Nodes, None, None),
-            ("tile-etcd", Page::Etcd, None, None),
-            ("tile-workloads", Page::Health, None, None),
-            ("tile-pods", Page::Resources, Some("pods"), None),
-            ("tile-services", Page::SystemServices, None, None),
-            ("tile-memory", Page::Nodes, None, None),
-            (
-                "tile-events",
-                Page::Resources,
-                Some("events"),
-                Some("Warning"),
-            ),
-            (
-                "tile-storage",
-                Page::Resources,
-                Some("persistentvolumeclaims"),
-                Some("Pending"),
-            ),
-        ] {
-            window.click("nav-overview", cx);
-            window.render_frame(cx);
-            let expected_filter = if id == "tile-pods" {
-                pilot
-                    .read(cx)
-                    .registry
-                    .active()
-                    .kubernetes_summary
-                    .data()
-                    .unwrap()
-                    .pods
-                    .loaded()
-                    .unwrap()
-                    .issues
-                    .first()
-                    .map(|pod| pod.issue.label().to_owned())
-            } else {
-                filter.map(str::to_owned)
-            };
-            window.click(id, cx);
+    for (id, page, kind, filter) in [
+        ("tile-nodes", Page::Nodes, None, None),
+        ("tile-etcd", Page::Etcd, None, None),
+        ("tile-workloads", Page::Health, None, None),
+        ("tile-pods", Page::Resources, Some("pods"), None),
+        ("tile-services", Page::SystemServices, None, None),
+        ("tile-memory", Page::Nodes, None, None),
+        (
+            "tile-events",
+            Page::Resources,
+            Some("events"),
+            Some("Warning"),
+        ),
+        (
+            "tile-storage",
+            Page::Resources,
+            Some("persistentvolumeclaims"),
+            Some("Pending"),
+        ),
+    ] {
+        let expected_filter = cx
+            .update_window(handle, |_, window, cx| {
+                window.click("nav-overview", cx);
+                window.render_frame(cx);
+                if id == "tile-pods" {
+                    pilot
+                        .read(cx)
+                        .registry
+                        .active()
+                        .kubernetes_summary
+                        .data()
+                        .unwrap()
+                        .pods
+                        .loaded()
+                        .unwrap()
+                        .issues
+                        .first()
+                        .map(|pod| pod.issue.label().to_owned())
+                } else {
+                    filter.map(str::to_owned)
+                }
+            })
+            .unwrap();
+        // A card asks the shell, which hears it once the click's effects
+        // have run.
+        cx.update_window(handle, |_, window, cx| window.click(id, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(pilot.read(cx).page, page, "{id}");
             if let Some(kind) = kind {
@@ -69,34 +77,36 @@ fn every_overview_card_opens_its_target_and_filter(cx: &mut TestAppContext) {
                         .is_unhealthy_filter()
                 );
             }
-        }
-    })
-    .unwrap();
+        })
+        .unwrap();
+    }
 }
 
 #[gpui_kit::test]
 fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1600.);
-    cx.update_window(handle, |_, window, cx| {
-        pilot.update(cx, |pilot, _| {
-            pilot.attention_expanded = true;
-        });
-        window.render_frame(cx);
-        let rows = pilot.read(cx).attention.rows.clone();
-        assert!(rows.iter().any(|row| row.kind == "Node"));
-        assert!(rows.iter().any(|row| row.kind == "Pod"));
-        assert!(rows.iter().any(|row| row.kind == "Deployment"));
-        assert!(rows.iter().any(|row| row.kind == "System service"));
-        assert!(rows.iter().any(|row| row.kind == "Claim"));
-        for row in rows {
-            for (id, available) in [
-                ("attention-open", true),
-                ("attention-logs", row.logs.is_some()),
-                ("attention-open-node", row.open_node.is_some()),
-            ] {
-                if !available {
-                    continue;
-                }
+    let rows = cx
+        .update_window(handle, |_, window, cx| {
+            pilot.update(cx, |pilot, cx| pilot.expand_attention(cx));
+            window.render_frame(cx);
+            pilot.read(cx).attention.rows.clone()
+        })
+        .unwrap();
+    assert!(rows.iter().any(|row| row.kind == "Node"));
+    assert!(rows.iter().any(|row| row.kind == "Pod"));
+    assert!(rows.iter().any(|row| row.kind == "Deployment"));
+    assert!(rows.iter().any(|row| row.kind == "System service"));
+    assert!(rows.iter().any(|row| row.kind == "Claim"));
+    for row in rows {
+        for (id, available) in [
+            ("attention-open", true),
+            ("attention-logs", row.logs.is_some()),
+            ("attention-open-node", row.open_node.is_some()),
+        ] {
+            if !available {
+                continue;
+            }
+            cx.update_window(handle, |_, window, cx| {
                 window.click("nav-overview", cx);
                 window.render_frame(cx);
                 window.scroll(
@@ -119,7 +129,12 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
                 );
                 window.render_frame(cx);
                 window.within(row.id.clone()).click(id, cx);
-                window.render_frame(cx);
+            })
+            .unwrap();
+            // A row asks the shell, which hears it once the click's effects
+            // run.
+            cx.run_until_parked();
+            cx.update(|cx| {
                 assert_ne!(pilot.read(cx).page, Page::Overview, "{} {id}", row.id);
                 if row.kind == "Pod" && id == "attention-logs" {
                     // The pod opens on Overview, and its logs in the dock.
@@ -132,10 +147,9 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
                     assert_eq!(pilot.read(cx).page, Page::Nodes);
                     assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Services);
                 }
-            }
+            });
         }
-    })
-    .unwrap();
+    }
     cx.run_until_parked();
     let titles: Vec<String> = cx.update(|cx| {
         let dock = pilot.read(cx).dock.read(cx);
@@ -152,70 +166,77 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
     use crate::presentation::attention;
     use crate::ui::Tone;
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1000.);
-    cx.update_window(handle, |_, window, cx| {
-        let mut rows = pilot.read(cx).node_workspace.rows.as_ref().clone();
-        let bad = rows
-            .iter_mut()
-            .find(|row| row.name == "talos-wk-fra1-02")
-            .unwrap();
-        bad.talos.as_mut().unwrap().responding = false;
-        let kube = pilot
-            .read(cx)
-            .registry
-            .active()
-            .kubernetes_summary
-            .data()
-            .unwrap()
-            .clone();
-        let mut talos = pilot.read(cx).overview.data().unwrap().clone();
-        talos.etcd_summary.as_mut().unwrap().has_quorum = false;
-        talos.etcd_alarms = Some(vec![talos_rs::EtcdAlarm {
-            node: "control".into(),
-            member_id: 42,
-            alarm_type: talos_rs::EtcdAlarmType::NoSpace,
-        }]);
-        let attention =
-            attention::build(&rows, Some(&kube), Some(&talos), None, chrono::Utc::now());
-        let node = attention
-            .rows
-            .iter()
-            .filter(|row| row.kind == "Node" && row.name == "talos-wk-fra1-02")
-            .collect::<Vec<_>>();
-        assert_eq!(node.len(), 1);
-        assert!(node[0].reason.contains("Talos API not answering"));
-        assert!(node[0].reason.contains("Kubernetes NotReady"));
-        let etcd = attention
-            .rows
-            .iter()
-            .filter(|row| row.kind == "etcd")
-            .collect::<Vec<_>>();
-        assert_eq!(etcd.len(), 1);
-        assert!(etcd[0].reason.contains("quorum"));
-        assert!(etcd[0].reason.contains("NOSPACE"));
-        let first_warn = attention
-            .rows
-            .iter()
-            .position(|row| row.tone == Tone::Warn)
-            .unwrap();
-        assert!(
-            attention.rows[first_warn..]
+    let rows = cx
+        .update_window(handle, |_, window, cx| {
+            let mut rows = pilot.read(cx).node_workspace.rows.as_ref().clone();
+            let bad = rows
+                .iter_mut()
+                .find(|row| row.name == "talos-wk-fra1-02")
+                .unwrap();
+            bad.talos.as_mut().unwrap().responding = false;
+            let kube = pilot
+                .read(cx)
+                .registry
+                .active()
+                .kubernetes_summary
+                .data()
+                .unwrap()
+                .clone();
+            let mut talos = pilot.read(cx).overview.data().unwrap().clone();
+            talos.etcd_summary.as_mut().unwrap().has_quorum = false;
+            talos.etcd_alarms = Some(vec![talos_rs::EtcdAlarm {
+                node: "control".into(),
+                member_id: 42,
+                alarm_type: talos_rs::EtcdAlarmType::NoSpace,
+            }]);
+            let attention =
+                attention::build(&rows, Some(&kube), Some(&talos), None, chrono::Utc::now());
+            let node = attention
+                .rows
                 .iter()
-                .all(|row| row.tone == Tone::Warn)
-        );
-        pilot.update(cx, |pilot, cx| {
-            pilot.attention = attention;
-            cx.notify();
-        });
-        window.render_frame(cx);
-        window.scroll(
-            "overview-page",
-            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-500.))),
-            cx,
-        );
-        window.render_frame(cx);
-        window
-            .within("attention-etcd-cluster-etcd")
-            .click("attention-open", cx);
+                .filter(|row| row.kind == "Node" && row.name == "talos-wk-fra1-02")
+                .collect::<Vec<_>>();
+            assert_eq!(node.len(), 1);
+            assert!(node[0].reason.contains("Talos API not answering"));
+            assert!(node[0].reason.contains("Kubernetes NotReady"));
+            let etcd = attention
+                .rows
+                .iter()
+                .filter(|row| row.kind == "etcd")
+                .collect::<Vec<_>>();
+            assert_eq!(etcd.len(), 1);
+            assert!(etcd[0].reason.contains("quorum"));
+            assert!(etcd[0].reason.contains("NOSPACE"));
+            let first_warn = attention
+                .rows
+                .iter()
+                .position(|row| row.tone == Tone::Warn)
+                .unwrap();
+            assert!(
+                attention.rows[first_warn..]
+                    .iter()
+                    .all(|row| row.tone == Tone::Warn)
+            );
+            pilot.update(cx, |pilot, cx| pilot.set_attention(attention, cx));
+            window.render_frame(cx);
+            window.scroll(
+                "overview-page",
+                gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
+                    gpui_kit::px(0.),
+                    gpui_kit::px(-500.),
+                )),
+                cx,
+            );
+            window.render_frame(cx);
+            window
+                .within("attention-etcd-cluster-etcd")
+                .click("attention-open", cx);
+            rows
+        })
+        .unwrap();
+    // A row asks the shell, which hears it once the click's effects run.
+    cx.run_until_parked();
+    cx.update(|cx| {
         assert_eq!(pilot.read(cx).page, Page::Etcd);
         let mut many = Vec::new();
         for ix in 0..80 {
@@ -228,8 +249,7 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
         assert_eq!(capped.rows.len(), 50);
         assert_eq!(capped.total, 80);
         assert_eq!(capped.more, "Show all 80");
-    })
-    .unwrap();
+    });
 }
 
 #[test]
@@ -318,11 +338,11 @@ fn waiting_cards_show_a_skeleton(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn tab_reaches_a_card_and_enter_or_space_opens_it(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1000.);
-    cx.update_window(handle, |_, window, cx| {
-        for (id, key, page) in [
-            ("tile-nodes", "enter", Page::Nodes),
-            ("tile-etcd", "space", Page::Etcd),
-        ] {
+    for (id, key, page) in [
+        ("tile-nodes", "enter", Page::Nodes),
+        ("tile-etcd", "space", Page::Etcd),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
             window.click("nav-overview", cx);
             window.render_frame(cx);
             let mut tabs = 0;
@@ -333,10 +353,11 @@ fn tab_reaches_a_card_and_enter_or_space_opens_it(cx: &mut TestAppContext) {
             }
             assert_eq!(pilot.read(cx).page, Page::Overview);
             window.press(key, cx);
-            assert_eq!(pilot.read(cx).page, page, "{key} on {id}");
-        }
-    })
-    .unwrap();
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(pilot.read(cx).page, page, "{key} on {id}"));
+    }
 }
 
 #[test]
@@ -418,23 +439,19 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
     let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let tone = |pilot: &crate::desktop::Pilot, id: &str| {
-            let card = pilot
-                .overview_display
-                .cards
-                .iter()
-                .find(|card| card.id == id)
-                .unwrap();
+        let tone = |pilot: &crate::desktop::Pilot, cx: &gpui_kit::App, id: &str| {
+            let display = pilot.overview_display(cx);
+            let card = display.cards.iter().find(|card| card.id == id).unwrap();
             (card.tone, card.detail.to_string())
         };
         // The example cluster has an unhealthy service, so Control plane has
         // a dot, and a healthy etcd.
         let before: Vec<_> = TALOS_CARDS
             .iter()
-            .map(|id| tone(pilot.read(cx), id))
+            .map(|id| tone(pilot.read(cx), cx, id))
             .collect();
-        assert_eq!(tone(pilot.read(cx), "tile-services").0, Tone::Warn);
-        assert_eq!(tone(pilot.read(cx), "tile-etcd").0, Tone::Good);
+        assert_eq!(tone(pilot.read(cx), cx, "tile-services").0, Tone::Warn);
+        assert_eq!(tone(pilot.read(cx), cx, "tile-etcd").0, Tone::Good);
         assert_eq!(
             pilot.read(cx).rail_marks.tone(Area::ControlPlane),
             Some(Tone::Warn)
@@ -442,7 +459,7 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
         window.click("fixture-fail", cx);
         window.render_frame(cx);
         for id in TALOS_CARDS {
-            let (tone, detail) = tone(pilot.read(cx), id);
+            let (tone, detail) = tone(pilot.read(cx), cx, id);
             assert_eq!(tone, Tone::Unknown, "{id}");
             assert!(detail.starts_with("Last known · "), "{id}: {detail}");
             // The header's stale mark says so too.
@@ -454,7 +471,7 @@ fn a_stale_talos_snapshot_shows_its_cards_as_last_known(cx: &mut TestAppContext)
         window.render_frame(cx);
         let after: Vec<_> = TALOS_CARDS
             .iter()
-            .map(|id| tone(pilot.read(cx), id))
+            .map(|id| tone(pilot.read(cx), cx, id))
             .collect();
         assert_eq!(after, before);
         assert_eq!(
@@ -558,7 +575,7 @@ fn overview_uses_the_shared_frame_with_its_state_in_the_meta_line(cx: &mut TestA
             );
             assert_eq!(
                 window.find("roster").label().map(str::to_owned),
-                Some(pilot.read(cx).overview_display.roster_tip.to_string())
+                Some(pilot.read(cx).overview_display(cx).roster_tip.to_string())
             );
             assert_actions_inside_rows(window, width, text);
         })
@@ -602,7 +619,7 @@ fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1600.);
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-overview", cx);
-        pilot.update(cx, |pilot, _| pilot.attention_expanded = true);
+        pilot.update(cx, |pilot, cx| pilot.expand_attention(cx));
         window.render_frame(cx);
         let rows = pilot.read(cx).attention.rows.clone();
         let mut expected = Vec::new();
@@ -654,8 +671,8 @@ fn needs_attention_shows_eight_then_fifty_and_says_how_many_are_left(cx: &mut Te
             })
             .collect();
         pilot.update(cx, |pilot, cx| {
-            pilot.attention = attention::build(&many, None, None, None, chrono::Utc::now());
-            cx.notify();
+            let built = attention::build(&many, None, None, None, chrono::Utc::now());
+            pilot.set_attention(built, cx);
         });
         window.render_frame(cx);
         let shown = |window: &mut gpui_kit::Window| {
@@ -670,7 +687,7 @@ fn needs_attention_shows_eight_then_fifty_and_says_how_many_are_left(cx: &mut Te
             .find("attention-show-all");
         window.click("attention-show-all", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).attention_expanded);
+        assert!(pilot.read(cx).attention_expanded(cx));
         assert_eq!(shown(window), 50);
         // Past the cap the bar stays, without an action, to explain the rest.
         window.find("overview-collapsed");
@@ -705,10 +722,7 @@ fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
         assert!(mine.len() > 8);
         window.click("node-talos-wk-fra1-02", cx);
         window.render_frame(cx);
-        pilot.update(cx, |pilot, cx| {
-            pilot.attention = built;
-            cx.notify();
-        });
+        pilot.update(cx, |pilot, cx| pilot.set_attention(built, cx));
         window.render_frame(cx);
         let lines = attention_lines(window, "needs-attention-rows");
         for row in &mine {
