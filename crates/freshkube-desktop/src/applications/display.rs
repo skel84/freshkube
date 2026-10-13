@@ -493,14 +493,19 @@ impl Short {
                         .namespace_only
                         .insert(c.session.clone(), scope_words(namespaces, found));
                 }
-                state if state.is_unknown() => {
+                CoverageState::Capped(_)
+                | CoverageState::NamespaceNotFound(_)
+                | CoverageState::Refused(_)
+                | CoverageState::Unreadable(_)
+                | CoverageState::Unreachable(_)
+                | CoverageState::NotInWorkspace(_) => {
                     short
                         .unread
                         .entry(c.source.rule())
                         .or_default()
                         .insert(c.session.clone());
                 }
-                _ => {}
+                CoverageState::Read | CoverageState::NotInstalled(_) => {}
             }
         }
         short
@@ -650,7 +655,7 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
                 .iter()
                 .map(|words| format!("{words}; Applications in other namespaces aren't listed"))
                 .collect::<Vec<_>>(),
-            _ => scope.clone(),
+            Rule::Kargo | Rule::PartOf | Rule::Manual => scope.clone(),
         };
         fields.push(("Argo CD", capital(&read.join("\n")).into()));
     }

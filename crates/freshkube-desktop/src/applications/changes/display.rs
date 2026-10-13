@@ -260,10 +260,12 @@ fn why(stage: &str, reach: &Reach, row: &Row) -> String {
         Reach::Linked(_) => {}
     }
     let Ok(change) = &row.trail else {
-        return format!(
-            "The change couldn't be read: {}",
-            row.trail.as_ref().unwrap_err()
-        );
+        let why = row
+            .trail
+            .as_ref()
+            .err()
+            .map_or("", |failure| &failure.message);
+        return format!("The change couldn't be read: {why}");
     };
     weakest_why(change, stage).unwrap_or_else(|| reach_word(reach).to_owned())
 }
@@ -409,5 +411,52 @@ fn row(row: &Row, now: DateTime<Utc>) -> ChangeRow {
             Ok(change) => Ok(trail(change)),
             Err(why) => Err(why.message.clone().into()),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use freshkube_core::resources::{Failure, FailureKind};
+
+    use super::*;
+
+    fn unread_row(failure: Failure) -> Row {
+        Row {
+            key: "shop-api/wonky-otter".into(),
+            project: "shop-api".into(),
+            freight: "wonky-otter".into(),
+            alias: None,
+            named: Named::Nothing,
+            title: None,
+            created: None,
+            stages: Vec::new(),
+            state: Reach::Linked(Confidence::Unknown),
+            fold: Fold::NotConfirmed,
+            trail: Err(failure),
+        }
+    }
+
+    #[test]
+    fn a_change_that_could_not_be_read_says_its_words_without_the_kind() {
+        for (kind, message) in [
+            (
+                FailureKind::Timeout,
+                "It wasn't followed: it ran out of time",
+            ),
+            (
+                FailureKind::Unreachable,
+                "Freight wonky-otter of shop-api couldn't be read: Couldn't reach cicd-b: no answer",
+            ),
+            (
+                FailureKind::NotFound,
+                "Freight wonky-otter of shop-api couldn't be read: it wasn't found on cicd-b",
+            ),
+        ] {
+            let row = unread_row(Failure::new(kind, message));
+            assert_eq!(
+                why("prod", &Reach::Linked(Confidence::Unknown), &row),
+                format!("The change couldn't be read: {message}"),
+            );
+        }
     }
 }

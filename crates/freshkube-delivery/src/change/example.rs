@@ -15,7 +15,7 @@ use freshkube_core::resources::{Failure, FailureKind};
 
 use super::*;
 use crate::applications::example::{CICD, CORE};
-use crate::{argocd, deployments, kargo};
+use crate::{argocd, deployments, kargo, words};
 use freshkube_core::indicators::HealthIndicator::{self, *};
 
 pub(crate) const PROJECT: &str = "checkout";
@@ -1010,14 +1010,14 @@ impl Shape {
     fn words(self) -> Option<String> {
         match self {
             Self::Whole => None,
-            Self::KargoUnreachable => Some(format!("Couldn't reach {CICD}: {NO_ANSWER}")),
+            Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
                  forbidden for this identity"
             )),
-            Self::DestinationUnreachable => Some(format!(
-                "Couldn't reach {0}: connection refused by {0}.example.test:6443",
-                UNREACHED.1
+            Self::DestinationUnreachable => Some(words::unreachable(
+                UNREACHED.1,
+                &format!("connection refused by {}.example.test:6443", UNREACHED.1),
             )),
         }
     }

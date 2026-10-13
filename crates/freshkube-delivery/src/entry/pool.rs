@@ -86,12 +86,12 @@ pub enum Unread {
 
 impl Unread {
     /// No entry holds it.
-    pub fn missing(why: impl Into<String>) -> Self {
+    pub(crate) fn missing(why: impl Into<String>) -> Self {
         Unread::Missing(Failure::new(FailureKind::Config, why))
     }
 
     /// `entry` wasn't reached, for a reason with no kind of its own.
-    pub fn unreachable(entry: impl Into<String>, why: impl Into<String>) -> Self {
+    pub(crate) fn unreachable(entry: impl Into<String>, why: impl Into<String>) -> Self {
         Unread::Unreachable {
             entry: entry.into(),
             why: Failure::new(FailureKind::Unreachable, why),
@@ -99,7 +99,7 @@ impl Unread {
     }
 
     /// `entry` answered but didn't finish by `until`.
-    pub fn unfinished(entry: impl Into<String>, until: &Until) -> Self {
+    pub(crate) fn unfinished(entry: impl Into<String>, until: &Until) -> Self {
         Unread::Unfinished {
             entry: entry.into(),
             why: Failure::new(FailureKind::Timeout, until.unfinished()),
@@ -107,7 +107,7 @@ impl Unread {
     }
 
     /// What kind of failure it was.
-    pub fn kind(&self) -> FailureKind {
+    pub(crate) fn kind(&self) -> FailureKind {
         match self {
             Unread::Missing(why)
             | Unread::Unreachable { why, .. }
@@ -118,7 +118,7 @@ impl Unread {
     /// The state in a sentence that names the entry.
     pub fn words(&self) -> String {
         match self {
-            Unread::Missing(why) => words::failed(why.kind, "", "", &why.message),
+            Unread::Missing(why) => words::failed(FailureKind::Config, "", "", &why.message),
             Unread::Unreachable { entry, why } => words::unreachable(entry, &why.message),
             Unread::Unfinished { entry, why } => words::unfinished(entry, &why.message),
         }

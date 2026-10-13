@@ -4,18 +4,6 @@
 
 use freshkube_core::resources::FailureKind;
 
-/// Whether `kind` says the entry itself was not reached, as opposed to a
-/// refusal, a kind the server doesn't serve, or no entry at all.
-pub fn is_unreached(kind: FailureKind) -> bool {
-    match kind {
-        FailureKind::Unreachable | FailureKind::Timeout | FailureKind::Other => true,
-        FailureKind::Config
-        | FailureKind::Unauthorized
-        | FailureKind::Forbidden
-        | FailureKind::NotFound => false,
-    }
-}
-
 /// `Couldn't reach ⟨entry⟩: ⟨why⟩`.
 pub fn unreachable(entry: &str, why: &str) -> String {
     format!("Couldn't reach {entry}: {why}")
@@ -39,7 +27,7 @@ pub fn failed(kind: FailureKind, what: &str, entry: &str, why: &str) -> String {
 
 /// `⟨entry⟩ ⟨why⟩`: an entry that answered but didn't finish, with `why`
 /// the reason (`didn't finish reading within 30 s`).
-pub fn unfinished(entry: &str, why: &str) -> String {
+pub(crate) fn unfinished(entry: &str, why: &str) -> String {
     format!("{entry} {why}")
 }
 
@@ -57,18 +45,14 @@ mod tests {
             FailureKind::Other,
         ] {
             assert_eq!(say(kind), "Couldn't reach cluster-a: the reason");
-            assert!(is_unreached(kind));
         }
         for kind in [FailureKind::Unauthorized, FailureKind::Forbidden] {
             assert_eq!(say(kind), "Kargo refused on cluster-a: the reason");
-            assert!(!is_unreached(kind));
         }
         assert_eq!(
             say(FailureKind::NotFound),
             "Kargo isn't served on cluster-a"
         );
-        assert!(!is_unreached(FailureKind::Config));
-        assert!(!is_unreached(FailureKind::NotFound));
     }
 
     #[test]

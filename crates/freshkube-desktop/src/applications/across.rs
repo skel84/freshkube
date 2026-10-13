@@ -70,7 +70,7 @@ pub(crate) async fn open_reader(
     if alone.is_some() {
         return access.client().await.map(|client| Ok(wrap(client, alone)));
     }
-    let client = tokio::time::timeout(entry::CONNECT_DEADLINE, unreachable(access))
+    let client = tokio::time::timeout(entry::CONNECT_DEADLINE, client_or_failure(access))
         .await
         .unwrap_or_else(|_| {
             Err(Failure::new(
@@ -81,8 +81,9 @@ pub(crate) async fn open_reader(
     Ok(client.map(|client| wrap(client, None)))
 }
 
-/// The open connection's client, or why it couldn't be had.
-async fn unreachable(access: &KubeAccess) -> Result<kube::Client, Failure> {
+/// The open connection's client, or why it couldn't be had. The kind is a
+/// guess, `Unreachable`, until `KubeAccess` returns a `Failure` of its own.
+async fn client_or_failure(access: &KubeAccess) -> Result<kube::Client, Failure> {
     access
         .client()
         .await

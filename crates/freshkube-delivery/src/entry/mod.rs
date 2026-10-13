@@ -341,15 +341,15 @@ async fn through_talos(
         None => {
             let talos = talos_rs::client::TalosClient::from_context(&talos_context)
                 .await
-                .map_err(|_| {
+                .map_err(|error| {
                     Failure::new(
-                        FailureKind::Unreachable,
+                        Failure::from_talos(&error).kind,
                         "its Talos endpoints couldn't be reached",
                     )
                 })?;
-            let served = talos.kubeconfig().await.map_err(|_| {
+            let served = talos.kubeconfig().await.map_err(|error| {
                 Failure::new(
-                    FailureKind::Unreachable,
+                    Failure::from_talos(&error).kind,
                     "its control plane gave no kubeconfig through Talos",
                 )
             })?;
@@ -422,7 +422,7 @@ where
 
 /// What a part's entry answered. Each failure's kind agrees with its
 /// variant ([`Reach::missing`] and the others make them so), and the
-/// sentence comes from the kind ([`words::failed`]).
+/// sentence comes from the variant's own kind ([`words::failed`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reach {
     /// No entry holds the part, or the one pinned is gone; the words say
@@ -447,10 +447,15 @@ impl Reach {
 
     /// The entry wasn't reached, for `failure`'s reason: a deadline stays a
     /// timeout, anything else is a failure to reach.
-    pub fn unreached(failure: Failure) -> Self {
+    pub(crate) fn unreached(failure: Failure) -> Self {
         let kind = match failure.kind {
             FailureKind::Timeout => FailureKind::Timeout,
-            _ => FailureKind::Unreachable,
+            FailureKind::Config
+            | FailureKind::Unreachable
+            | FailureKind::Unauthorized
+            | FailureKind::Forbidden
+            | FailureKind::NotFound
+            | FailureKind::Other => FailureKind::Unreachable,
         };
         Reach::Unreachable(Failure::new(kind, failure.message))
     }
@@ -485,11 +490,17 @@ impl Reach {
     /// on `entry`, as the view names both.
     pub fn words(&self, what: &str, entry: &str) -> String {
         match self {
-            Reach::Missing(failure)
-            | Reach::Unreachable(failure)
-            | Reach::Refused(failure)
-            | Reach::NotServed(failure) => {
-                words::failed(failure.kind, what, entry, &failure.message)
+            Reach::Missing(failure) => {
+                words::failed(FailureKind::Config, what, entry, &failure.message)
+            }
+            Reach::Unreachable(failure) => {
+                words::failed(FailureKind::Unreachable, what, entry, &failure.message)
+            }
+            Reach::Refused(failure) => {
+                words::failed(FailureKind::Forbidden, what, entry, &failure.message)
+            }
+            Reach::NotServed(failure) => {
+                words::failed(FailureKind::NotFound, what, entry, &failure.message)
             }
             Reach::Readable => format!("{what} answered on {entry}"),
         }
