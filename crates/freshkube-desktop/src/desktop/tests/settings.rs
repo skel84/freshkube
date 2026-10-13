@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 #[gpui_kit::test]
 fn settings_shows_the_metrics_source_read_only_for_example_data(cx: &mut TestAppContext) {
@@ -42,20 +43,16 @@ async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
     let options = GpuiOptions::new(Some(directory.join("missing")), None, 100)
         .with_preferences(Some(preferences.clone()));
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("browse-config-empty", cx);
     })
     .unwrap();
     cx.simulate_path_prompt_response(|_| Some(vec![chosen.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).contexts == ["alpha", "beta"]
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["alpha", "beta"])
+        .await;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         contexts(window, cx);
@@ -64,7 +61,7 @@ async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
     })
     .unwrap();
     let saved_path = directory.join("connection.json");
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+    cx.wait_for_io(handle, |_, _| {
         std::fs::read_to_string(&saved_path)
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
@@ -78,7 +75,7 @@ async fn chosen_talosconfig_and_context_survive_a_launch_without_arguments(
 
     let restored = GpuiOptions::new(None, None, 100).with_preferences(Some(preferences));
     let (_runtime2, handle2, view2) = mount(cx, restored, 1280., 820.);
-    cx.wait_for(handle2, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle2, |_, cx| {
         view2.read(cx).contexts == ["alpha", "beta"]
     })
     .await;
@@ -126,7 +123,7 @@ async fn kubeconfig_file_applies_its_current_context_then_a_chosen_one(cx: &mut 
         assert!(options.files && !options.directories && !options.multiple);
         Some(vec![chosen.clone()])
     });
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).kubeconfig_draft.inspection.is_some()
     })
     .await;
@@ -183,7 +180,7 @@ async fn connection_failure_offers_a_picker_and_bad_files_do_not_replace_saved_s
     let options = GpuiOptions::new(Some(first.clone()), None, 100)
         .with_preferences(Some(preferences.clone()));
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |window, _| {
+    cx.wait_for_io(handle, |window, _| {
         window.try_find("browse-config-unreachable").is_some()
     })
     .await;
@@ -201,12 +198,10 @@ async fn connection_failure_offers_a_picker_and_bad_files_do_not_replace_saved_s
     })
     .unwrap();
     cx.simulate_path_prompt_response(|_| Some(vec![invalid.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     let saved_path = directory.join("connection.json");
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+    cx.wait_for_io(handle, |_, _| {
         std::fs::read_to_string(&saved_path)
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
@@ -221,11 +216,9 @@ async fn connection_failure_offers_a_picker_and_bad_files_do_not_replace_saved_s
     })
     .unwrap();
     cx.simulate_path_prompt_response(|_| Some(vec![second.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).contexts == ["beta"]
-    })
-    .await;
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+    cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["beta"])
+        .await;
+    cx.wait_for_io(handle, |_, _| {
         std::fs::read_to_string(&saved_path)
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
@@ -258,7 +251,7 @@ async fn kubeconfig_without_a_usable_context_is_not_applied(cx: &mut TestAppCont
     })
     .unwrap();
     cx.simulate_path_prompt_response(|_| Some(vec![unreadable.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).kubeconfig_draft.inspection.is_some()
     })
     .await;
@@ -301,10 +294,8 @@ async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext
     // Never the user's default talosconfig: start from a missing file.
     let options = GpuiOptions::new(Some(directory.join("missing")), None, 100);
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         // The error screen offers Browse directly; cancelling changes nothing.
@@ -327,10 +318,8 @@ async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext
         assert!(options.files && !options.directories && !options.multiple);
         Some(vec![chosen.clone()])
     });
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).contexts == ["alpha", "beta"]
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["alpha", "beta"])
+        .await;
     cx.update(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.applied.path.as_deref(), Some(chosen.as_path()));

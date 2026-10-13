@@ -3,7 +3,7 @@
 use super::session::SessionKey;
 use super::switch_tests::live_launch;
 use super::{Page, Pilot};
-use gpui_kit::test::TestAppContextExt;
+use freshkube_ui::real_io::RealIo;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -284,12 +284,9 @@ async fn launched(
     one: &FakeApi,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     let (runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for(handle, Duration::from_secs(10), |_, cx| {
-        !view.read(cx).config_loading
-    })
-    .await;
-    cx.wait_for(handle, Duration::from_secs(10), |_, _| one.hits() > 0)
+    cx.wait_for_io(handle, |_, cx| !view.read(cx).config_loading)
         .await;
+    cx.wait_for_io(handle, |_, _| one.hits() > 0).await;
     (runtime, handle, view)
 }
 
@@ -712,10 +709,8 @@ async fn a_forward_keeps_running_on_its_own_connection_through_a_switch(cx: &mut
     };
     let list = cx.update(crate::forwards::list);
     let forward = cx.update(|cx| list.update(cx, |list, cx| list.start(spec, cx)));
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
-        forward.read(cx).local_port.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| forward.read(cx).local_port.is_some())
+        .await;
     assert_eq!(cx.read(crate::forwards::running), 1);
 
     // No question about forwards on a switch, and the switch happens.

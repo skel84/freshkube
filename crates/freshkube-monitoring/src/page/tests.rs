@@ -2,8 +2,9 @@ use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, KubeClientSou
 use freshkube_core::monitoring::{
     Candidate, Discovery, ErrorKind, PrometheusService, QueryError, Rank, Tried,
 };
+use freshkube_ui::real_io::RealIo;
 use gpui_kit::component::{Root, Theme, ThemeMode};
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Entity, Pixels, Point, ScrollDelta, SharedString,
     TestAppContext, point, px, size,
@@ -1256,7 +1257,7 @@ fn test_said(cx: &mut TestAppContext, page: &Entity<MonitoringPage>) -> Option<S
 
 async fn tested(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<MonitoringPage>) {
     let observed = page.clone();
-    cx.wait_for(handle, Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         !matches!(
             observed.read(cx).form.as_ref().map(|form| &form.test),
             Some(source::Test::Testing(_))
@@ -1267,7 +1268,7 @@ async fn tested(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<
 
 async fn settled(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<MonitoringPage>) {
     let observed = page.clone();
-    cx.wait_for(handle, Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         !matches!(
             observed.read(cx).connection,
             Connection::Looking { .. } | Connection::None
@@ -1354,7 +1355,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
         ));
     });
     let account = crate::store::token_account(&url);
-    cx.wait_for(handle, Duration::from_secs(5), {
+    cx.wait_for_io(handle, {
         let store = store.clone();
         let account = account.clone();
         move |_, _| store.keys.lock().unwrap().contains_key(&account)
@@ -1365,7 +1366,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
         Some("s3cret")
     );
     let file = directory.join("monitoring.json");
-    cx.wait_for(handle, Duration::from_secs(5), {
+    cx.wait_for_io(handle, {
         let file = file.clone();
         move |_, _| std::fs::read_to_string(&file).is_ok_and(|text| text.contains("sources"))
     })
@@ -1396,7 +1397,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
     .unwrap();
     settled(cx, relaunched_handle, &relaunched).await;
     cx.read(|cx| assert_eq!(relaunched.read(cx).connection_name(), "refused"));
-    cx.wait_for(relaunched_handle, Duration::from_secs(5), {
+    cx.wait_for_io(relaunched_handle, {
         let store = store.clone();
         move |_, _| store.keys.lock().unwrap().is_empty()
     })
@@ -1807,7 +1808,7 @@ async fn panels_answered(
     forgot: usize,
 ) {
     let (observed, cluster) = (page.clone(), cluster.clone());
-    cx.wait_for(handle, Duration::from_secs(10), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let page = observed.read(cx);
         let Some(board) = &page.board else {
             return false;
