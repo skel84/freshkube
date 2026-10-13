@@ -57,6 +57,8 @@ impl Dir {
 pub struct Document<T> {
     path: PathBuf,
     layout: Layout,
+    /// Read only where a file has a Unix mode.
+    #[cfg_attr(not(unix), allow(dead_code))]
     mode: u32,
     value: PhantomData<fn() -> T>,
 }
