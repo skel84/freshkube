@@ -140,7 +140,7 @@ impl Render for Pilot {
                 }))
             })
             .child(
-                self.chrome.header.clone().cached(
+                self.chrome.parts.header.clone().cached(
                     StyleRefinement::default()
                         .w_full()
                         .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
@@ -154,7 +154,7 @@ impl Render for Pilot {
                     .flex_1()
                     .min_h_0()
                     .child(
-                        self.chrome.rail.clone().cached(
+                        self.chrome.parts.rail.clone().cached(
                             StyleRefinement::default()
                                 .w(dp(RAIL_WIDTH))
                                 .h_full()
@@ -163,6 +163,7 @@ impl Render for Pilot {
                     )
                     .children(column.map(|width| {
                         self.chrome
+                            .parts
                             .column
                             .clone()
                             .cached(StyleRefinement::default().w(dp(width)).h_full().flex_none())

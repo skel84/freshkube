@@ -1,4 +1,9 @@
-//! The chrome's parts as cached views beside the page: the header, the
+//! The shell's chrome: what the header, the rail, the column and the
+//! status bar show beside the page, held in one plain struct, `Chrome`,
+//! that `Pilot` owns once. What needs the pages, the session or
+//! `Navigation` too stays on `Pilot`.
+//!
+//! The chrome's parts are cached views beside the page: the header, the
 //! rail and the column. A frame that only the page or the loading motion
 //! asks for redraws the shell's frame around them and reuses each part as
 //! it was drawn. The status bar stays with the shell: it reads the pages,
@@ -12,6 +17,19 @@
 //! again draws every cached view inside it again.
 use super::*;
 use crate::desktop::probe;
+
+pub(in crate::desktop) struct Chrome {
+    /// The header, rail and column, each cached beside the page.
+    pub(in crate::desktop) parts: ChromeParts,
+}
+
+impl Chrome {
+    pub(in crate::desktop) fn new(cx: &mut Context<Pilot>) -> Self {
+        Self {
+            parts: ChromeParts::new(cx),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::desktop) enum Part {

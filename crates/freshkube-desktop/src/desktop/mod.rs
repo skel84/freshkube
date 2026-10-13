@@ -334,8 +334,7 @@ pub(crate) struct Pilot {
     logs: Entity<LogPanel>,
     countdown: Entity<Countdown>,
     fps: Entity<shell::fps::Fps>,
-    /// The header, rail and column, each cached beside the page.
-    chrome: shell::ChromeParts,
+    chrome: shell::Chrome,
     /// The status bar's port forwards, which redraw on their own.
     forwards: Entity<ForwardsIndicator>,
     /// Logs under the page, in tabs; app-wide, like the forwards.
@@ -960,7 +959,7 @@ impl Pilot {
             logs,
             countdown,
             fps: cx.new(shell::fps::Fps::new),
-            chrome: shell::ChromeParts::new(cx),
+            chrome: shell::Chrome::new(cx),
             forwards: cx.new(ForwardsIndicator::new),
             dock,
             overview_page,
@@ -1042,7 +1041,7 @@ impl Pilot {
             .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
         view.watch_menus(window, cx);
         view.publish_reading(cx);
-        view.chrome.watch(&view, cx);
+        view.chrome.parts.watch(&view, cx);
         view.prepare_context_display(window, cx);
         // Initial shell focus makes contextual commands available without a click.
         window.focus(&view.focus, cx);
