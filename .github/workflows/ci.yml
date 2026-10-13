@@ -82,6 +82,10 @@ jobs:
           python3 --version
           scripts/changelog.test.sh
           scripts/changelog.sh check
+      - name: Docs link check
+        # Every relative link and anchor in AGENTS.md and docs/ resolves. It
+        # runs here, not in the macOS job, which docs-only changes skip.
+        run: scripts/check-docs.sh
 
   check:
     name: Check, lint and test (macOS)
@@ -113,9 +117,6 @@ jobs:
         run: |
           scripts/check-style.test.sh
           scripts/check-style.sh
-      - name: Docs link check
-        # Every relative link and anchor in AGENTS.md and docs/ resolves.
-        run: scripts/check-docs.sh
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)
