@@ -15,6 +15,8 @@ use kube::api::{Api, ListParams, ObjectList};
 use kube::core::PartialObjectMeta;
 use talos_rs::TalosClient;
 
+use crate::failure::{Failure, FailureKind};
+
 /// How long each list or boot-time read may take.
 const DEADLINE: Duration = Duration::from_secs(8);
 
@@ -106,9 +108,9 @@ pub async fn read_markers(client: kube::Client, since: i64) -> Markers {
     }
 }
 
-fn available<K>(part: Result<Vec<K>, String>, unavailable: &mut Vec<String>) -> Vec<K> {
+fn available<K>(part: Result<Vec<K>, Failure>, unavailable: &mut Vec<String>) -> Vec<K> {
     part.unwrap_or_else(|error| {
-        unavailable.push(error);
+        unavailable.push(error.message);
         Vec::new()
     })
 }
@@ -116,17 +118,25 @@ fn available<K>(part: Result<Vec<K>, String>, unavailable: &mut Vec<String>) -> 
 async fn timed<K>(
     name: &str,
     list: impl Future<Output = kube::Result<ObjectList<K>>>,
-) -> Result<Vec<K>, String>
+) -> Result<Vec<K>, Failure>
 where
     K: Clone,
 {
     match tokio::time::timeout(DEADLINE, list).await {
         Ok(Ok(list)) => Ok(list.items),
-        Ok(Err(kube::Error::Api(error))) if error.code == 403 => {
-            Err(format!("Can't list {name}: forbidden"))
+        Ok(Err(error)) => {
+            let kind = Failure::from_kube(error).kind;
+            let why = if kind == FailureKind::Forbidden {
+                "forbidden"
+            } else {
+                "request failed"
+            };
+            Err(Failure::new(kind, format!("Can't list {name}: {why}")))
         }
-        Ok(Err(_)) => Err(format!("Can't list {name}: request failed")),
-        Err(_) => Err(format!("Can't list {name}: timed out")),
+        Err(_) => Err(Failure::new(
+            FailureKind::Timeout,
+            format!("Can't list {name}: timed out"),
+        )),
     }
 }
 
@@ -452,5 +462,33 @@ mod tests {
         assert!(markers.iter().all(|m| m.at >= 100_000 - 6 * 3600));
         assert!(markers.iter().filter(|m| m.at >= 100_000 - 3600).count() >= 2);
         assert!(markers.windows(2).all(|pair| pair[0].at <= pair[1].at));
+    }
+
+    fn api_error(code: u16) -> kube::Error {
+        kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".into(),
+            message: "denied".into(),
+            reason: "Denied".into(),
+            code,
+        })
+    }
+
+    /// Each way a list fails keeps its words and carries the kind the failure implies.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_list_carries_its_kind() {
+        let forbidden = timed::<Node>("nodes", async { Err(api_error(403)) }).await;
+        let failure = forbidden.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Forbidden);
+        assert_eq!(failure.message, "Can't list nodes: forbidden");
+
+        let failed = timed::<Node>("nodes", async { Err(api_error(500)) }).await;
+        let failure = failed.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Other);
+        assert_eq!(failure.message, "Can't list nodes: request failed");
+
+        let silent = timed::<Node>("nodes", std::future::pending()).await;
+        let failure = silent.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Timeout);
+        assert_eq!(failure.message, "Can't list nodes: timed out");
     }
 }

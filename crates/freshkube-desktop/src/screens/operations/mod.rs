@@ -1523,7 +1523,7 @@ async fn preview_live(
     )
     .await
     .map_err(|_| "The checks timed out; nothing was changed.".to_owned())
-    .and_then(|checked| checked);
+    .and_then(|checked| checked.map_err(|failure| failure.message));
     let checked = match checked {
         Ok(checked) => checked,
         Err(error) => {
@@ -1536,7 +1536,7 @@ async fn preview_live(
         match blocking_pdbs(&kubernetes).await {
             Ok(pdbs) if pdbs.is_empty() => PdbNote::None,
             Ok(pdbs) => PdbNote::Blocking(pdbs),
-            Err(error) => PdbNote::Unknown(error),
+            Err(error) => PdbNote::Unknown(error.message),
         }
     } else {
         PdbNote::NotNeeded
