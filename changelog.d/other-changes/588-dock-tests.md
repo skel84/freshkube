@@ -1,0 +1,1 @@
+- **Maintenance:** split dock tests into scenario modules without changing their behavior.

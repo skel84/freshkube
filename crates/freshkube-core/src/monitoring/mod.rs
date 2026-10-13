@@ -181,6 +181,7 @@ impl Endpoint {
 /// Checks a typed base URL and returns it ending in a slash: `http` or
 /// `https`, a host, and no user, password, query or fragment, since a
 /// token is entered separately and never kept in the URL.
+// String exception: typed URL validation messages are displayed without classifying a read failure.
 pub fn normalise_url(text: &str) -> Result<String, String> {
     let url = parse_base_url(text.trim()).map_err(|error| {
         match error {

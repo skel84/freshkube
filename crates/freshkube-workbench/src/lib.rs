@@ -31,24 +31,48 @@ pub const HEIGHT: f32 = 880.;
 /// The story list's width, as the app's column.
 pub(crate) const LIST_WIDTH: f32 = source_list::WIDTH;
 
-/// Opens the workbench window on the first story, or in a debug build on
-/// `FRESHKUBE_STORY`, at `FRESHKUBE_THEME` and `FRESHKUBE_WINDOW_SIZE` as the
-/// app takes them (`FRESHKUBE_TEXT_SIZE` too, parsed by `text_size::parse`).
-/// Nothing is saved.
-pub fn run() {
+/// What the launch asks for: a story, a look and a window size. Nothing is
+/// saved. The binary reads these from its environment in a debug build
+/// (`FRESHKUBE_STORY`, `FRESHKUBE_THEME`, `FRESHKUBE_WINDOW_SIZE` as the app
+/// takes them, and `FRESHKUBE_TEXT_SIZE` by `text_size::parse`) and hands them
+/// to [`run`]; a release build passes the default. A value that names nothing
+/// known is ignored.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Options {
+    /// The story to open on, by slug.
+    pub story: Option<String>,
+    /// `Some(true)` for dark, `Some(false)` for light, else the system's.
+    pub dark: Option<bool>,
+    /// The window's size, when it names one the app allows.
+    pub size: Option<Size<Pixels>>,
+    /// A step of `text_size::STEPS`.
+    pub text_size: Option<f32>,
+}
+
+impl Options {
+    /// Parses the four knobs from `var`, which answers a name with its value.
+    pub fn parse(var: impl Fn(&str) -> Option<String>) -> Self {
+        Self {
+            story: var("FRESHKUBE_STORY"),
+            dark: match var("FRESHKUBE_THEME").as_deref() {
+                Some("dark") => Some(true),
+                Some("light") => Some(false),
+                _ => None,
+            },
+            size: var("FRESHKUBE_WINDOW_SIZE").and_then(|value| window_size(&value)),
+            text_size: var("FRESHKUBE_TEXT_SIZE").and_then(|size| text_size::parse(&size)),
+        }
+    }
+}
+
+/// Opens the workbench window on `options`' story, or the first one.
+pub fn run(options: Options) {
     gpui_kit::application()
         .with_assets(theme::AppAssets)
-        .run(|cx| {
+        .run(move |cx| {
             gpui_kit::init(cx);
             theme::install(cx);
-            // A debug build starts at `FRESHKUBE_TEXT_SIZE`, unsaved.
-            #[cfg(debug_assertions)]
-            let start = std::env::var("FRESHKUBE_TEXT_SIZE")
-                .ok()
-                .and_then(|size| text_size::parse(&size));
-            #[cfg(not(debug_assertions))]
-            let start = None;
-            text_size::install_with(None, start, cx);
+            text_size::install_with(None, options.text_size, cx);
             motion::follow_system(cx);
             cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
             source_list::bind_keys(cx);
@@ -59,14 +83,19 @@ pub fn run() {
                 }
             })
             .detach();
-            let start = Start::from_env();
-            match start.theme {
+            let story = options
+                .story
+                .as_deref()
+                .and_then(stories::find)
+                .unwrap_or(0);
+            match options.dark {
                 Some(true) => Theme::change(ThemeMode::Dark, None, cx),
                 Some(false) => Theme::change(ThemeMode::Light, None, cx),
                 None => {}
             }
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::centered(start.size, cx)),
+            let bounds = options.size.unwrap_or(size(px(WIDTHS[0]), px(HEIGHT)));
+            let window = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(bounds, cx)),
                 window_min_size: Some(size(px(WIDTHS[1]), px(560.))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Freshkube workbench".into()),
@@ -74,8 +103,8 @@ pub fn run() {
                 }),
                 ..Default::default()
             };
-            let opened = gpui_kit::open_window(options, cx, |window, cx| {
-                cx.new(|cx| Workbench::new(start.story, window, cx))
+            let opened = gpui_kit::open_window(window, cx, |window, cx| {
+                cx.new(|cx| Workbench::new(story, window, cx))
             });
             if opened.is_err() {
                 cx.quit();
@@ -84,45 +113,7 @@ pub fn run() {
         });
 }
 
-/// What the window opens on.
-struct Start {
-    story: usize,
-    /// Dark, light, or the system's.
-    theme: Option<bool>,
-    size: Size<Pixels>,
-}
-
-impl Start {
-    #[cfg(debug_assertions)]
-    fn from_env() -> Self {
-        let var = |name| std::env::var(name).ok();
-        Self {
-            story: var("FRESHKUBE_STORY")
-                .and_then(|slug| stories::find(&slug))
-                .unwrap_or(0),
-            theme: match var("FRESHKUBE_THEME").as_deref() {
-                Some("dark") => Some(true),
-                Some("light") => Some(false),
-                _ => None,
-            },
-            size: var("FRESHKUBE_WINDOW_SIZE")
-                .and_then(|value| window_size(&value))
-                .unwrap_or(size(px(WIDTHS[0]), px(HEIGHT))),
-        }
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn from_env() -> Self {
-        Self {
-            story: 0,
-            theme: None,
-            size: size(px(WIDTHS[0]), px(HEIGHT)),
-        }
-    }
-}
-
 /// `1280x880`, within the sizes the app allows.
-#[cfg(any(debug_assertions, test))]
 fn window_size(value: &str) -> Option<Size<Pixels>> {
     let (width, height) = value.split_once('x')?;
     let (width, height) = (width.parse::<f32>().ok()?, height.parse::<f32>().ok()?);
