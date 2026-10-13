@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::constants::HIGH_RESTART_THRESHOLD;
-use freshkube_core::pluralize;
 use freshkube_core::workloads::{
     HealthState, NamespaceSummary, PodInfo, PodIssue, WorkloadCollectionOutcome, WorkloadInfo,
     WorkloadKind, WorkloadSnapshot, WorkloadSource, WorkloadSourceError,
 };
+use freshkube_core::{HasHealth, pluralize};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, Selectable, Sizable,
@@ -161,22 +161,13 @@ fn health_label(health: HealthState) -> &'static str {
     }
 }
 
-pub(super) fn health_tone(health: HealthState) -> Tone {
-    match health {
-        HealthState::Failing => Tone::Crit,
-        HealthState::Degraded => Tone::Warn,
-        HealthState::Pending => Tone::Unknown,
-        HealthState::Healthy => Tone::Good,
-    }
-}
-
 /// A pod's tone: the skull when a container ran and stopped, otherwise its
 /// severity's.
 fn pod_tone(issue: &PodIssue) -> Tone {
     if issue.died() {
         Tone::Died
     } else {
-        health_tone(issue.severity())
+        ui::health_tone(issue.severity().health()).0
     }
 }
 
@@ -481,7 +472,7 @@ impl WorkloadsScreen {
                 let issues = issues_in(namespace);
                 RowView {
                     health: namespace.health,
-                    tone: health_tone(namespace.health),
+                    tone: ui::health_tone(namespace.health.health()).0,
                     nested: false,
                     chevron: Some(if self.collapsed.contains(&namespace.name) {
                         IconName::ChevronRight
@@ -502,7 +493,7 @@ impl WorkloadsScreen {
                 let workload = &namespaces[ns].workloads[ix];
                 RowView {
                     health: workload.health,
-                    tone: health_tone(workload.health),
+                    tone: ui::health_tone(workload.health.health()).0,
                     nested: true,
                     chevron: None,
                     name: workload.name.clone(),

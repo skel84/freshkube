@@ -2,8 +2,8 @@
 //! functions that map a health to its tag, so a refactor of them shows up as
 //! a changed row, never as a changed glyph that no test noticed.
 
-use freshkube_core::HealthIndicator;
 use freshkube_core::workloads::HealthState;
+use freshkube_core::{HasHealth, HealthIndicator};
 
 use crate::presentation::Health;
 use crate::ui;
@@ -27,7 +27,13 @@ fn table() -> Vec<String> {
         ("Unhealthy", Health::Unhealthy),
         ("Unknown", Health::Unknown),
     ] {
-        push(&mut rows, "Health", variant, ui::health_tone(health), None);
+        push(
+            &mut rows,
+            "Health",
+            variant,
+            ui::health_tone(health.health()).0,
+            None,
+        );
     }
     for (variant, state) in [
         ("Failing", HealthState::Failing),
@@ -39,7 +45,7 @@ fn table() -> Vec<String> {
             &mut rows,
             "HealthState",
             variant,
-            super::workloads::health_tone(state),
+            ui::health_tone(state.health()).0,
             None,
         );
     }
@@ -51,7 +57,7 @@ fn table() -> Vec<String> {
         ("Info", HealthIndicator::Info),
         ("Unknown", HealthIndicator::Unknown),
     ] {
-        let (tone, icon, label) = super::lifecycle::health_tone(&indicator);
+        let (tone, icon, label) = super::lifecycle::alert_look(&indicator);
         push(
             &mut rows,
             "HealthIndicator",

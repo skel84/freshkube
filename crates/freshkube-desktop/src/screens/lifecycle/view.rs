@@ -51,7 +51,7 @@ impl LifecycleScreen {
         } else {
             v_flex()
                 .children(alerts.iter().enumerate().map(|(ix, alert)| {
-                    let (tone, icon, label) = health_tone(&alert.health);
+                    let (tone, icon, label) = alert_look(&alert.health);
                     let item = Item::Alert(alert.key.clone());
                     let selected = self.selected.as_ref() == Some(&item);
                     h_flex()

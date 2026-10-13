@@ -18,6 +18,16 @@ pub(crate) enum Health {
     Unknown,
 }
 
+impl HasHealth for Health {
+    fn health(&self) -> HealthIndicator {
+        match self {
+            Health::Healthy => HealthIndicator::Healthy,
+            Health::Unhealthy => HealthIndicator::Error,
+            Health::Unknown => HealthIndicator::Unknown,
+        }
+    }
+}
+
 pub(crate) fn service_health(service: &ServiceInfo) -> Health {
     match service.health() {
         HealthIndicator::Healthy => Health::Healthy,
