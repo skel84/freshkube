@@ -15,6 +15,8 @@ use kube::api::{Api, ListParams, ObjectList};
 use kube::core::PartialObjectMeta;
 use talos_rs::TalosClient;
 
+use crate::failure::{Failure, FailureKind};
+
 /// How long each list or boot-time read may take.
 const DEADLINE: Duration = Duration::from_secs(8);
 
@@ -106,9 +108,9 @@ pub async fn read_markers(client: kube::Client, since: i64) -> Markers {
     }
 }
 
-fn available<K>(part: Result<Vec<K>, String>, unavailable: &mut Vec<String>) -> Vec<K> {
+fn available<K>(part: Result<Vec<K>, Failure>, unavailable: &mut Vec<String>) -> Vec<K> {
     part.unwrap_or_else(|error| {
-        unavailable.push(error);
+        unavailable.push(error.message);
         Vec::new()
     })
 }
@@ -116,17 +118,25 @@ fn available<K>(part: Result<Vec<K>, String>, unavailable: &mut Vec<String>) -> 
 async fn timed<K>(
     name: &str,
     list: impl Future<Output = kube::Result<ObjectList<K>>>,
-) -> Result<Vec<K>, String>
+) -> Result<Vec<K>, Failure>
 where
     K: Clone,
 {
     match tokio::time::timeout(DEADLINE, list).await {
         Ok(Ok(list)) => Ok(list.items),
-        Ok(Err(kube::Error::Api(error))) if error.code == 403 => {
-            Err(format!("Can't list {name}: forbidden"))
+        Ok(Err(error)) => {
+            let kind = Failure::from_kube(error).kind;
+            let why = if kind == FailureKind::Forbidden {
+                "forbidden"
+            } else {
+                "request failed"
+            };
+            Err(Failure::new(kind, format!("Can't list {name}: {why}")))
         }
-        Ok(Err(_)) => Err(format!("Can't list {name}: request failed")),
-        Err(_) => Err(format!("Can't list {name}: timed out")),
+        Err(_) => Err(Failure::new(
+            FailureKind::Timeout,
+            format!("Can't list {name}: timed out"),
+        )),
     }
 }
 
