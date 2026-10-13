@@ -4,10 +4,11 @@
 //!
 //! Every page's handle sits in the shell's one map (`Pilot::pages`).
 //! Resources, Monitoring, Observability, Applications and Settings take
-//! their part of the shell's [`PageSource`] through it, hear
+//! their part of the shell's [`PageSource`] through it and hear
 //! [`set_visible`](ScreenPanel::set_visible), which is where they drop
-//! their reads on hide, refresh and give their status line through it, and
-//! the shell hears their events through it as [`PageEvent`]s.
+//! their reads on hide; those with a refresh or a status line give it
+//! through it, and the shell hears their events through it as
+//! [`PageEvent`]s.
 //!
 //! Overview, Nodes and System services have handles too. The shell feeds
 //! what they draw, so their hooks do nothing, but for System services'
