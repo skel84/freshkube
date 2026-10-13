@@ -12,6 +12,7 @@ use freshkube_delivery::entry::Checked;
 use freshkube_delivery::entry::Reach;
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
+#[cfg(unix)]
 use std::time::Duration;
 
 const FRAME: layout_check::PageFrame = layout_check::PageFrame {

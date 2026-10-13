@@ -134,6 +134,15 @@ fn a_row_hover_redraws_nodes(cx: &mut TestAppContext) {
 fn the_logs_dot_follows_collection_from_another_tab(cx: &mut TestAppContext) {
     use crate::logs::TalosPanel;
     let (_runtime, handle, pilot) = settled(NodeTab::Logs, cx);
+    let dot_shown = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| {
+            window
+                .within("node-tab-logs")
+                .try_find("node-logs-collecting")
+                .is_some()
+        })
+        .unwrap()
+    };
     let collecting = |cx: &mut TestAppContext| {
         pilot.read_with(cx, |pilot, cx| {
             pilot
@@ -144,17 +153,21 @@ fn the_logs_dot_follows_collection_from_another_tab(cx: &mut TestAppContext) {
                 .collecting_count()
         })
     };
+    assert!(!dot_shown(cx), "no dot before collection starts");
     step(cx, handle, |window, cx| window.click("logs-collection", cx));
     assert!(collecting(cx) > 0, "collecting from the Logs tab");
+    assert!(dot_shown(cx), "the Logs tab holds the dot while collecting");
     redrawn(handle, &pilot, cx, |pilot, window, cx| {
         pilot.show_node_tab(NodeTab::Overview, window, cx)
     });
+    assert!(dot_shown(cx), "the Logs tab keeps the dot from another tab");
     let stopped = redrawn(handle, &pilot, cx, |pilot, window, cx| {
         let logs = pilot.node_workspace.read(cx).logs.clone();
         logs.update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
     });
     assert_eq!(collecting(cx), 0);
     assert!(stopped > 0, "the dot goes when collection stops");
+    assert!(!dot_shown(cx), "no dot after collection stops");
 }
 
 /// A switch between Kubernetes-only and Talos rebuilds the table's columns
