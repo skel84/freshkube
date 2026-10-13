@@ -31,6 +31,7 @@ pub mod coroot;
 pub mod diagnostic_runner;
 pub mod diagnostics;
 pub mod errors;
+pub mod example;
 pub mod failure;
 pub mod formatting;
 pub mod indicators;
