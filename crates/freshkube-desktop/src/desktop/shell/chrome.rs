@@ -16,8 +16,10 @@
 //! Never cache an ancestor of the pages instead: a cached view that draws
 //! again draws every cached view inside it again.
 use super::*;
+use crate::desktop::app_menu::{self, UseDarkAppearance, UseLightAppearance, UseSystemAppearance};
 use crate::desktop::probe;
 use crate::forwards::ForwardsIndicator;
+use freshkube_ui::platform::{About, AppMenu, OpenAppMenu, OpenSettings};
 use gpui_kit::component::{Theme, ThemeMode};
 use std::time::Duration;
 
@@ -96,6 +98,34 @@ impl Chrome {
             Appearance::Light => Theme::change(ThemeMode::Light, Some(window), cx),
             Appearance::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
         }
+    }
+}
+
+impl Chrome {
+    /// Adds the chrome's actions to the shell's root: Settings, About, the
+    /// appearance and the menu button. Their handlers run on `Pilot`.
+    pub(in crate::desktop) fn listen(&self, root: Div, cx: &mut Context<Pilot>) -> Div {
+        root.on_action(cx.listener(|view, _: &OpenSettings, _, cx| {
+            view.navigation.settings_open = true;
+            cx.notify();
+        }))
+        .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
+        .on_action(cx.listener(|view, _: &UseSystemAppearance, window, cx| {
+            view.set_appearance(Appearance::System, window, cx)
+        }))
+        .on_action(cx.listener(|view, _: &UseLightAppearance, window, cx| {
+            view.set_appearance(Appearance::Light, window, cx)
+        }))
+        .on_action(cx.listener(|view, _: &UseDarkAppearance, window, cx| {
+            view.set_appearance(Appearance::Dark, window, cx)
+        }))
+        // Each handler is there only while it can act, so the menus grey
+        // it otherwise and its key goes on to whatever else binds it.
+        .when(self.menu_platform.app_menu() == AppMenu::Button, |this| {
+            this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
+                view.open_app_menu(false, window, cx)
+            }))
+        })
     }
 }
 

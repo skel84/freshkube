@@ -1,7 +1,6 @@
 use super::*;
 use crate::ui::dp;
 use freshkube_probe::first_frame::FirstFrame;
-use freshkube_ui::platform::{About, AppMenu, OpenAppMenu, OpenSettings};
 
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -47,7 +46,8 @@ impl Render for Pilot {
             .text_color(cx.theme().foreground)
             .key_context(freshkube_ui::page::SHELL_CONTEXT)
             .track_focus(&self.focus);
-        self.navigation
+        let root = self.navigation.listen(root, cx);
+        self.chrome
             .listen(root, cx)
             .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
             .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
@@ -75,34 +75,6 @@ impl Render for Pilot {
                     },
                 ))
             })
-            .on_action(cx.listener(|view, _: &OpenSettings, _, cx| {
-                view.navigation.settings_open = true;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
-            .on_action(
-                cx.listener(|view, _: &app_menu::UseSystemAppearance, window, cx| {
-                    view.set_appearance(Appearance::System, window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|view, _: &app_menu::UseLightAppearance, window, cx| {
-                    view.set_appearance(Appearance::Light, window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|view, _: &app_menu::UseDarkAppearance, window, cx| {
-                    view.set_appearance(Appearance::Dark, window, cx)
-                }),
-            )
-            .when(
-                self.chrome.menu_platform.app_menu() == AppMenu::Button,
-                |this| {
-                    this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
-                        view.open_app_menu(false, window, cx)
-                    }))
-                },
-            )
             .child(
                 self.chrome.parts.header.clone().cached(
                     StyleRefinement::default()
