@@ -279,6 +279,34 @@ fn a_read_dropped_on_hide_leaves_the_last_answer_as_old_as_it_was(cx: &mut TestA
     .unwrap();
 }
 
+/// A refresh a hide cuts short never finished, so what shows is no newer
+/// than before it: showing again reads, however recent the last answer.
+#[gpui_kit::test]
+fn a_refresh_cut_short_by_hiding_reads_again_on_showing(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
+    // Answered at 0 s; a refresh at 5 s is dropped on hide.
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.update_window(handle, |_, window, cx| {
+        page(&view, cx).update(cx, |page, _| page.set_hold(true));
+        window.click("applications-refresh", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+        window.click("nav-overview", cx);
+        window.render_frame(cx);
+        assert!(!page(&view, cx).read(cx).is_reading());
+    })
+    .unwrap();
+    // At 6 s the answer is 6 s old, yet the refresh never finished.
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+        assert!(window.find(CART).visible(), "shown while it reads again");
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_read_hidden_mid_flight_never_lands(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
