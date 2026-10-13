@@ -20,6 +20,8 @@
 # chose (`-- --config … --context … --kubeconfig …`); only look and navigate,
 # never press Operations or maintenance actions.
 # FRESHKUBE_SMOKE_BINARY selects a saved executable without rebuilding it.
+# An exported FRESHKUBE_THEME or FRESHKUBE_WINDOW_SIZE is the default for
+# --theme and --size, in start and in pages.
 #
 # The terminal running this needs Screen Recording and Accessibility in
 # System Settings → Privacy & Security, and the screen must be unlocked:
@@ -77,7 +79,9 @@ stop() {
 }
 
 start() {
-  local page="" story="" theme="" size="" profile=debug
+  # An exported theme or size holds unless a flag replaces it, so `pages`
+  # captures every page in it too.
+  local page="" story="" theme=${FRESHKUBE_THEME:-} size=${FRESHKUBE_WINDOW_SIZE:-} profile=debug
   while [[ $# -gt 0 ]]; do
     case $1 in
       --page) page=$2; shift 2 ;;
@@ -229,5 +233,5 @@ pages() {
 case ${1:-} in
   start | shot | key | click | hover | scroll | full | stop | pages) cmd=$1; shift; "$cmd" "$@" ;;
   right-click) shift; right_click "$@" ;;
-  *) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
