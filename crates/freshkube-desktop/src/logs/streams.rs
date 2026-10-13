@@ -223,6 +223,12 @@ impl StreamSet {
         }
     }
 
+    /// Whether the streams' feed is open, for the dock's tests.
+    #[cfg(test)]
+    pub(crate) fn feed_open(&self) -> bool {
+        self.feed.is_running()
+    }
+
     /// Drops every stream, its feed and the example writer, keeping how
     /// far each was read.
     pub(super) fn drop_streams(&mut self) {

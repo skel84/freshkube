@@ -253,6 +253,12 @@ impl PodLogs {
             .then(|| format!("Reading {MAX_STREAMS} of {wanted} containers, in the pod's order."))
     }
 
+    /// Whether the chosen container's stream is open, for the dock's tests.
+    #[cfg(test)]
+    pub(crate) fn stream_open(&self) -> bool {
+        self.stream.is_running()
+    }
+
     /// Drops the stream and its delivery, and every container's stream;
     /// anything still on the way is dropped with them.
     fn drop_stream(&mut self) {

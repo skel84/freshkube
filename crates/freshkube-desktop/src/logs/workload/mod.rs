@@ -234,6 +234,13 @@ impl WorkloadLogs {
         self.pod_watch.is_running()
     }
 
+    /// Whether the pods' watch and the streams' feed are open, for the
+    /// dock's tests.
+    #[cfg(test)]
+    pub(crate) fn reads_open(&self) -> bool {
+        self.pod_watch.is_running() && self.reads.feed_open()
+    }
+
     /// Drops the watch and every stream, keeping how far each was read.
     fn drop_all(&mut self) {
         self.pod_watch.stop();
