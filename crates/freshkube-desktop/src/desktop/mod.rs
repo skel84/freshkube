@@ -350,9 +350,6 @@ pub(crate) struct Pilot {
     health: Entity<WorkloadsScreen>,
     lifecycle: Entity<LifecycleScreen>,
     resources: Entity<ResourcesScreen>,
-    /// The Kubernetes kind the Resources page shows.
-    resource_kind: ResourceKind,
-    last_kind: ResourceKind,
     system_services: Entity<system_services::SystemServices>,
     settings_page: Entity<settings::SettingsPage>,
     applications: Entity<crate::applications::ApplicationsPage>,
@@ -365,53 +362,11 @@ pub(crate) struct Pilot {
     /// The Monitoring page, which reads only while it shows.
     monitoring: Entity<MonitoringPage>,
     observability: Entity<crate::observability::ObservabilityPage>,
-    column_state: shell::ColumnState,
-    /// The rail's area, whose pages or kinds the column lists.
-    area: Area,
-    /// The kind each built-in group showed last, by group slug.
-    group_kinds: BTreeMap<&'static str, String>,
-    /// The custom kind shown last, which Custom Resources opens again.
-    last_custom: Option<ResourceKind>,
-    /// The Control plane page shown last.
-    last_control: Page,
-    /// Problem dots on the rail, from the overview's cards.
-    rail_marks: shell::RailMarks,
-    /// The expanded column's lines, keyboard and scroll.
-    column_list: freshkube_ui::source_list::SourceList<shell::ColumnKey>,
-    /// The column's line that `column_reveal` lands on, derived with it.
-    column_reveal_line: Option<usize>,
-    /// Whether the column's rows to reveal have all arrived.
-    column_settled: bool,
-    /// Whether what the column shows changed since its lines were derived.
-    column_stale: bool,
-    /// The icon rail, which scrolls when the window is short or the text
-    /// large.
-    rail_scroll: ScrollHandle,
-    /// The collapsed column's icons, which scroll in the same way.
-    compact_column_scroll: ScrollHandle,
-    /// A column row to scroll into view on the next frame.
-    column_reveal: Option<ColumnReveal>,
-    /// The column row scrolled into view and waiting to clear the fades.
-    column_reveal_pass: Option<ColumnReveal>,
-    /// The active area, and the room it had, last scrolled into view.
-    rail_revealed: Option<(Area, shell::Room)>,
-    /// The rail button scrolled into view and waiting to clear the fades.
-    rail_reveal_pass: Option<(Area, shell::Room)>,
-    /// The Observability column's list, which scrolls when the window is
-    /// short or the text large.
-    obs_column_scroll: ScrollHandle,
-    /// The destination, whether the column was collapsed and the room it
-    /// had, last scrolled into view.
-    obs_column_revealed: Option<(crate::observability::Destination, bool, shell::Room)>,
-    /// The destination scrolled into view and waiting to clear the fades.
-    obs_column_reveal_pass: Option<(crate::observability::Destination, bool, shell::Room)>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
     /// Set without Talos: contexts come from a kubeconfig and only the
     /// Resources page reads.
     kubernetes_only: Option<kubernetes_only::KubernetesOnly>,
-    /// Whether the settings popover is open; a page can open it too.
-    settings_open: bool,
     /// The platform whose menu the window has: the one it runs on, but a
     /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`
     /// (`DebugOptions::app_menu_button`), and tests choose.
@@ -425,7 +380,8 @@ pub(crate) struct Pilot {
     /// What the installed menus state, to set them again only on a change.
     menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
-    page: Page,
+    /// Where the shell is: the page, the area, the column and the rail.
+    navigation: shell::Navigation,
     appearance: Appearance,
     automatic: bool,
     elapsed: Duration,
@@ -458,7 +414,7 @@ impl Pilot {
     /// The Applications page and the page shown, for its tests.
     #[cfg(test)]
     pub(crate) fn applications(&self) -> (Entity<crate::applications::ApplicationsPage>, Page) {
-        (self.applications.clone(), self.page)
+        (self.applications.clone(), self.navigation.page)
     }
 
     /// The Observability page, for tests of the links that open it.
@@ -782,9 +738,9 @@ impl Pilot {
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
         // Opened before the pages, which read their splits' sizes from it.
-        let navigation =
+        let navigation_file =
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
-        navigation.clone().install(cx);
+        navigation_file.clone().install(cx);
         Self::bind_shell_keys(cx);
         let path = cx.new(|cx| InputState::new(window, cx).placeholder("Default talosconfig"));
         path.update(cx, |input, cx| {
@@ -1013,8 +969,6 @@ impl Pilot {
             health,
             lifecycle,
             resources,
-            resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
-            last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             system_services,
             settings_page,
             applications,
@@ -1026,25 +980,6 @@ impl Pilot {
             search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
             monitoring,
             observability,
-            column_state: shell::ColumnState::new(navigation),
-            area: Area::Overview,
-            group_kinds: BTreeMap::new(),
-            last_custom: None,
-            last_control: Page::Etcd,
-            rail_marks: Default::default(),
-            column_list: freshkube_ui::source_list::SourceList::new("nav-column-list", cx),
-            column_reveal_line: None,
-            column_settled: true,
-            column_stale: true,
-            rail_scroll: ScrollHandle::new(),
-            compact_column_scroll: ScrollHandle::new(),
-            column_reveal: None,
-            column_reveal_pass: None,
-            rail_revealed: None,
-            rail_reveal_pass: None,
-            obs_column_scroll: ScrollHandle::new(),
-            obs_column_revealed: None,
-            obs_column_reveal_pass: None,
             kubeconfig: KubeconfigSelection::Automatic,
             kubernetes_only: None,
             active_definition: Default::default(),
@@ -1058,13 +993,12 @@ impl Pilot {
             restored_taken: None,
             age_label,
             switcher: Vec::new(),
-            settings_open: false,
             menu_platform: app_menu::menu_platform(options.debug.app_menu_button),
             app_menu_popup: None,
             app_menu_focus: None,
             menu_state: None,
             kubeconfig_draft: Default::default(),
-            page: Page::Overview,
+            navigation: shell::Navigation::new(navigation_file, cx),
             appearance: Appearance::System,
             automatic: true,
             elapsed: Duration::ZERO,
@@ -1456,10 +1390,10 @@ impl Pilot {
     }
 
     fn active_screen(&self, cx: &App) -> Option<ScreenHandle> {
-        let page = if self.page == Page::Nodes {
+        let page = if self.navigation.page == Page::Nodes {
             self.node_workspace.read(cx).pane_screen()?
         } else {
-            self.page.screen()?
+            self.navigation.page.screen()?
         };
         self.pages.get(&page).cloned()
     }
@@ -1526,13 +1460,13 @@ impl Pilot {
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
         // The screens refresh with the shell, above.
-        let id = self.page.id();
+        let id = self.navigation.page.id();
         if !id.is_screen()
             && let Some(page) = self.pages.get(&id)
         {
             page.refresh(window, cx);
         }
-        if self.page == Page::Nodes {
+        if self.navigation.page == Page::Nodes {
             let history = self.node_workspace.read(cx).history.clone();
             history.update(cx, |history, cx| history.refresh(cx));
         }
@@ -1591,7 +1525,7 @@ impl Pilot {
     }
 
     fn refresh_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page == Page::Health {
+        if self.navigation.page == Page::Health {
             return;
         }
         if let Some(screen) = self.active_screen(cx) {

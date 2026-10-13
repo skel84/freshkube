@@ -74,7 +74,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             assert_eq!(window.find("theme-toggle").label(), Some("Dark mode"));
             assert_eq!(window.find("theme-toggle").focused(), Some(true));
             let pilot = view.read(cx);
-            assert_eq!(pilot.page, page);
+            assert_eq!(pilot.navigation.page, page);
             assert_eq!(pilot.applied.context, context);
             assert_eq!(pilot.selected_node, node);
             assert_eq!(pilot.selected_service(cx), service);

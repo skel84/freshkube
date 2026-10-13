@@ -490,7 +490,7 @@ fn the_remembered_entry_wins_and_a_kubeconfig_entry_opens_without_talos(cx: &mut
             Some(guard.path().join("missing-kubeconfig").as_path())
         );
         assert_eq!(pilot.applied.path, None);
-        assert_eq!(pilot.page, Page::Overview);
+        assert_eq!(pilot.navigation.page, Page::Overview);
     });
 }
 

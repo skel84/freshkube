@@ -29,7 +29,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         assert!(window.try_find("processes-page").is_none());
         open_node_tab(window, cx, super::super::nodes::NodeTab::Processes);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).navigation.page, Page::Nodes);
         assert_eq!(window.find("node-tab-processes").selected(), Some(true));
         assert!(window.find("processes-list").visible());
         // Rows are keyed by PID. Init leads the first sample, which has no
@@ -70,17 +70,17 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         for (key, page) in [("secondary-6", Page::Etcd), ("secondary-5", Page::Health)] {
             window.press(key, cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, page);
+            assert_eq!(view.read(cx).navigation.page, page);
         }
         // Control plane's pages are in its column.
         area(window, cx, "nav-control-plane");
-        assert_eq!(view.read(cx).page, Page::Etcd);
+        assert_eq!(view.read(cx).navigation.page, Page::Etcd);
         for page in [Page::Security, Page::Lifecycle] {
             let nav = format!("nav-{}", page.slug());
             reveal(window, cx, &nav);
             window.click(SharedString::from(nav), cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, page);
+            assert_eq!(view.read(cx).navigation.page, page);
         }
         // Kubernetes kinds are in their group's column.
         assert!(window.try_find("resources-page").is_none());
@@ -88,7 +88,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         reveal(window, cx, "nav-k8s-pods");
         window.click("nav-k8s-pods", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(window.find("nav-k8s-pods").checked(), Some(true));
         assert!(window.find("resource-list").visible());
         contexts(window, cx);
@@ -97,7 +97,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         reveal(window, cx, "nav-operations");
         window.click("nav-operations", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Operations);
+        assert_eq!(view.read(cx).navigation.page, Page::Operations);
         assert!(window.try_find("resources-page").is_none());
     })
     .unwrap();
