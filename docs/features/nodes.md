@@ -6,6 +6,7 @@ Code:
 
 - `crates/freshkube-desktop/src/desktop/nodes/` is the workspace: `join.rs` (both summaries), `projection.rs`, `table.rs`, `cards.rs`, `header.rs`, `metrics.rs`, `resource.rs` and `view.rs`.
 - The pane embeds the node screens in `crates/freshkube-desktop/src/screens/` and the log view of `crates/freshkube-logs/src/`.
+- Its System services tab is `NodeServices` in `crates/freshkube-desktop/src/desktop/services/`: `mod.rs` (the entity, its reading and state, and the shell's side), `view.rs` (drawing) and `restart.rs` (the restart confirmation). Its tests are in `crates/freshkube-desktop/src/desktop/tests/services.rs` and `operations.rs`, and its redraws in `tests/chrome.rs`.
 
 Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit::test]`, found with `git grep -l '#\[test\]\|#\[tokio::test\]\|#\[gpui_kit::test\]'` run over `desktop/nodes/`):
 
