@@ -11,6 +11,7 @@
 //! keys it doesn't know, and a file it wrote without a split's size gives
 //! that split its default here. Keys this build doesn't know are kept.
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use freshkube_prefs::{Dir, Document, Layout};
@@ -37,6 +38,9 @@ struct File {
     value: Mutex<Map<String, Value>>,
     /// Keeps two saves from writing at once.
     writer: Mutex<()>,
+    /// Whether the last save failed, so a directory that stays unwritable
+    /// is logged once, not on every change.
+    save_failed: AtomicBool,
     /// How many split sizes were saved, for tests that count a drag's
     /// writes.
     #[cfg(test)]
@@ -44,6 +48,21 @@ struct File {
 }
 
 impl Global for NavigationFile {}
+
+impl File {
+    /// Logs a failed save the first time it fails; a save that works again
+    /// re-arms the log.
+    fn report_save(&self, result: std::io::Result<()>) {
+        match result {
+            Ok(()) => self.save_failed.store(false, Ordering::Relaxed),
+            Err(error) => {
+                if !self.save_failed.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("{} not saved: {error}", self.document.path().display());
+                }
+            }
+        }
+    }
+}
 
 impl NavigationFile {
     /// The file beside `preferences`, read once. Without preferences, as in
@@ -62,6 +81,7 @@ impl NavigationFile {
             document,
             value: Mutex::new(value),
             writer: Mutex::new(()),
+            save_failed: AtomicBool::new(false),
             #[cfg(test)]
             sizes_saved: Default::default(),
         })))
@@ -169,9 +189,7 @@ impl NavigationFile {
                 let Ok(snapshot) = file.value.lock().map(|value| value.clone()) else {
                     return;
                 };
-                if let Err(error) = file.document.save(&snapshot) {
-                    tracing::warn!("{} not saved: {error}", file.document.path().display());
-                }
+                file.report_save(file.document.save(&snapshot));
             })
             .detach();
     }
