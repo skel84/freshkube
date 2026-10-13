@@ -38,11 +38,15 @@ impl Dir {
         Self(preferences.with_file_name(""))
     }
 
-    /// The file called `name` in this directory, holding a `T`.
-    pub fn document<T>(&self, name: &str, layout: Layout) -> Document<T> {
+    /// The file called `name` in this directory, holding a `T`. `mode` is the
+    /// Unix permission bits a save gives the file when it creates it (`0o644`
+    /// for `navigation.json`); a file that exists keeps its own. It is
+    /// ignored where there are no such bits.
+    pub fn document<T>(&self, name: &str, layout: Layout, mode: u32) -> Document<T> {
         Document {
             path: self.0.join(name),
             layout,
+            mode,
             value: PhantomData,
         }
     }
@@ -53,6 +57,7 @@ impl Dir {
 pub struct Document<T> {
     path: PathBuf,
     layout: Layout,
+    mode: u32,
     value: PhantomData<fn() -> T>,
 }
 
@@ -102,6 +107,11 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// Writes `value` whole, through a temporary file in the same directory
     /// renamed into place. On failure the old file is untouched and the
     /// temporary file is removed.
+    ///
+    /// The file keeps its permissions when it exists, and takes the
+    /// document's mode when it is new. A path that is a symlink stays one:
+    /// the temporary file goes beside its target and is renamed over the
+    /// target.
     pub fn save(&self, value: &T) -> std::io::Result<()> {
         let mut text = match self.layout {
             Layout::Compact => serde_json::to_string(value),
@@ -109,29 +119,71 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         }
         .map_err(std::io::Error::other)?;
         text.push('\n');
-        let directory = self.path.parent().unwrap_or(Path::new(""));
+        let target = self.target();
+        let directory = target.parent().unwrap_or(Path::new(""));
         if !directory.as_os_str().is_empty() {
             std::fs::create_dir_all(directory)?;
         }
-        let temporary = self.temporary();
+        let permissions = std::fs::metadata(&target).ok().map(|m| m.permissions());
+        let temporary = temporary_beside(&target);
         let result = write_synced(&temporary, text.as_bytes())
-            .and_then(|()| std::fs::rename(&temporary, &self.path));
+            .and_then(|()| self.give_permissions(&temporary, permissions))
+            .and_then(|()| std::fs::rename(&temporary, &target));
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
         }
         result
     }
 
-    /// A name no other save of this process, or another process, uses.
-    fn temporary(&self) -> PathBuf {
-        static SAVES: AtomicU64 = AtomicU64::new(0);
-        let name = self.path.file_name().unwrap_or_default().to_string_lossy();
-        self.path.with_file_name(format!(
-            ".{name}.{}.{}.tmp",
-            std::process::id(),
-            SAVES.fetch_add(1, Ordering::Relaxed)
-        ))
+    /// The file a save replaces: the path itself, or what a symlink there
+    /// points to.
+    fn target(&self) -> PathBuf {
+        let is_link = std::fs::symlink_metadata(&self.path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if !is_link {
+            return self.path.clone();
+        }
+        std::fs::canonicalize(&self.path).unwrap_or_else(|_| {
+            // A link to a file that doesn't exist yet: write where it points.
+            match std::fs::read_link(&self.path) {
+                Ok(to) => self.path.with_file_name("").join(to),
+                Err(_) => self.path.clone(),
+            }
+        })
     }
+
+    #[cfg(unix)]
+    fn give_permissions(
+        &self,
+        temporary: &Path,
+        existing: Option<std::fs::Permissions>,
+    ) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let permissions =
+            existing.unwrap_or_else(|| std::fs::Permissions::from_mode(self.mode & 0o7777));
+        std::fs::set_permissions(temporary, permissions)
+    }
+
+    #[cfg(not(unix))]
+    fn give_permissions(
+        &self,
+        _temporary: &Path,
+        _existing: Option<std::fs::Permissions>,
+    ) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A name no other save of this process, or another process, uses.
+fn temporary_beside(target: &Path) -> PathBuf {
+    static SAVES: AtomicU64 = AtomicU64::new(0);
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    target.with_file_name(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        SAVES.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 /// A parse error in words that never carry the file's contents: serde_json's
@@ -151,10 +203,12 @@ fn describe(error: &serde_json::Error) -> String {
 
 fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // Private until the final permissions are set, whatever they are.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }

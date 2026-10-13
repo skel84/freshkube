@@ -52,7 +52,7 @@ impl NavigationFile {
         let Some(preferences) = preferences else {
             return Self(None);
         };
-        let document = Dir::beside(preferences).document("navigation.json", Layout::Compact);
+        let document = Dir::beside(preferences).document("navigation.json", Layout::Compact, 0o644);
         let loaded = document.load();
         if let Some(problem) = &loaded.problem {
             tracing::warn!("{problem}; starting from the defaults");
