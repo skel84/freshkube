@@ -609,7 +609,7 @@ pub fn list<V: SourceListHost>(
     for (ix, line) in list.lines.iter().enumerate() {
         column = column.child(match line {
             Line::Section(section) => section_line(section, ix == 0, cx),
-            Line::Row(row) => row_line(row, ring == Some(ix), cx),
+            Line::Row(row) => row_line(row, ring == Some(ix), window, cx),
             Line::Note(note) => note_line(note, cx),
             Line::Prose(prose) => prose_line(prose, cx),
             Line::Menu(menu) => menu_line(menu, cx),
@@ -634,8 +634,17 @@ fn section_line<V>(section: &Section, first: bool, cx: &Context<V>) -> AnyElemen
         .into_any_element()
 }
 
-fn row_line<V: SourceListHost>(row: &Row<V::Key>, ring: bool, cx: &mut Context<V>) -> AnyElement {
+fn row_line<V: SourceListHost>(
+    row: &Row<V::Key>,
+    ring: bool,
+    window: &Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
     let p = palette(cx);
+    // The drawing view can be a cached child of the host. GPUI's hover style
+    // records transitions only on mouse movement, so a row first painted
+    // under a resting pointer needs the hover listener's paint-time tracking.
+    let drawing_view = window.current_view();
     let current = row.current;
     let leading = match row.disclosure {
         Some(open) => Icon::new(if open {
@@ -691,7 +700,10 @@ fn row_line<V: SourceListHost>(row: &Row<V::Key>, ring: bool, cx: &mut Context<V
         .text_size(dp(13.))
         .text_color(if current { p.ink } else { p.ink_2 })
         .when(current, |this| this.bg(p.accent_soft))
-        .when(!current, |this| this.hover(|style| style.bg(p.hover)))
+        .when(!current, |this| {
+            this.hover(|style| style.bg(p.hover))
+                .on_hover(move |_, _, cx| cx.notify(drawing_view))
+        })
         .child(leading.flex_none().text_color(p.muted))
         .child(
             div()
@@ -961,7 +973,7 @@ mod tests {
 
     #[derive(Clone, Copy)]
     enum Arrival {
-        BeforePointer,
+        Existing,
         UnderPointer,
         AwayFromPointer,
     }
@@ -979,7 +991,7 @@ mod tests {
         let handle = cx.open_window(size(px(400.), px(200.)), |window, cx| {
             let host = cx.new(|cx| {
                 let mut list = SourceList::new("hover-list", cx);
-                if matches!(arrival, Arrival::BeforePointer) {
+                if matches!(arrival, Arrival::Existing) {
                     list.set_lines(vec![Row::new((), "hover-row", "Sample").into()]);
                 }
                 Host { list }
@@ -1003,7 +1015,7 @@ mod tests {
         if matches!(arrival, Arrival::UnderPointer) {
             move_pointer(cx, handle, 20.);
         }
-        if !matches!(arrival, Arrival::BeforePointer) {
+        if !matches!(arrival, Arrival::Existing) {
             host.update(cx, |host, _| {
                 host.list
                     .set_lines(vec![Row::new((), "hover-row", "Sample").into()]);
@@ -1016,7 +1028,7 @@ mod tests {
             let before = renders.get();
             move_pointer(cx, handle, 20.);
             assert_eq!(renders.get(), before + 1, "entry redraws once");
-            if matches!(arrival, Arrival::BeforePointer) {
+            if matches!(arrival, Arrival::Existing) {
                 let before = renders.get();
                 move_pointer(cx, handle, 21.);
                 assert_eq!(renders.get(), before, "moving inside does not redraw");
@@ -1052,7 +1064,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn an_existing_row_clears_its_hover_after_pointer_entry(cx: &mut TestAppContext) {
-        hover_case(cx, Arrival::BeforePointer);
+        hover_case(cx, Arrival::Existing);
     }
 
     #[gpui_kit::test]
