@@ -152,6 +152,8 @@ impl NodeServices {
                 }
             }),
             cx.observe(&filter, |_, _, cx| cx.notify()),
+            // A restart's notice shows under its service, here alone.
+            cx.observe_global::<restart::RestartNotices>(|_, cx| cx.notify()),
         ];
         let page = cx.weak_entity();
         let on_config: OnConfigAction = Rc::new(move |action, _, cx| {
@@ -346,5 +348,10 @@ impl Pilot {
 
     pub(super) fn service_focused(&self, window: &Window, cx: &App) -> bool {
         self.node_services.read(cx).focus.is_focused(window)
+    }
+
+    /// Leaves a restart's notice, as a finished restart does.
+    pub(super) fn note_restart(&self, service: &str, cx: &mut App) {
+        self.set_restart_notice(service, true, "Restarted".into(), cx);
     }
 }
