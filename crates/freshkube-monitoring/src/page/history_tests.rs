@@ -184,15 +184,21 @@ fn recovered(
     });
 }
 
+/// Arms the gate for the next eviction; earlier marker calls bypass it.
 fn hold_client(cluster: &FakeCluster) -> oneshot::Sender<()> {
     let (send, receive) = oneshot::channel();
-    *cluster.gate.lock().unwrap() = Some(receive);
+    cluster.gate_started.store(false, Ordering::SeqCst);
+    *cluster.gate.lock().unwrap() = Some(ClientGate {
+        after_forget: cluster.forgot() + 1,
+        receive,
+    });
     send
 }
 
+/// Waits for the held future, independently of concurrent marker calls.
 fn client_started(cx: &mut TestAppContext, cluster: &FakeCluster) {
     until_io(cx, "the gated replacement client", |_| {
-        cluster.asked.load(Ordering::SeqCst) == 2
+        cluster.gate_started.load(Ordering::SeqCst)
     });
 }
 
@@ -592,7 +598,12 @@ fn hiding_monitoring_cancels_a_rebuild_only_the_page_requested(cx: &mut TestAppC
             page.read_failed(&QueryError::unauthorized(), cx);
         })
     });
+    // Exercise the ordering that used to skip the waiter's exact count 2.
+    until_io(cx, "the dashboard's concurrent marker read", |_| {
+        cluster.asked.load(Ordering::SeqCst) >= 3
+    });
     client_started(cx, &cluster);
+    assert_eq!(cx.read(|cx| page.read(cx).rebuild_name()), "building");
     cx.update(|cx| page.update(cx, |page, cx| page.set_visible(false, cx)));
     until_io(cx, "the hidden dashboard's client build", |_| {
         release.is_closed()
