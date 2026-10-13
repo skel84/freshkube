@@ -5,6 +5,7 @@ mod header;
 mod keys;
 mod kubernetes_only;
 mod layout;
+mod map;
 mod motion;
 mod observability;
 mod operations;

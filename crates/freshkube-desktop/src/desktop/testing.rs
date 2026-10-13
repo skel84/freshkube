@@ -107,8 +107,9 @@ pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_
 pub(crate) fn screen<T: 'static>(pilot: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<T> {
     pilot
         .read(cx)
-        .screens
+        .pages
         .iter()
+        .filter(|(id, _)| id.is_screen())
         .find_map(|(_, screen)| screen.view().downcast::<T>().ok())
         .expect("a retained screen of this type")
 }
