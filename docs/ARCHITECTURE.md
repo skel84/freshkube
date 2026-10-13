@@ -121,3 +121,9 @@ The knobs are read from the environment where each feature starts, not in one pl
 - Outside the app: the workbench reads `FRESHKUBE_STORY`, `_THEME` and `_WINDOW_SIZE` (`crates/freshkube-workbench/src/lib.rs`); core's `examples/probe.rs` reads `FRESHKUBE_CONTEXT`, `_NAMESPACE` and `_VERSION`.
 
 The command-line options are `src/main.rs`'s `Cli`, which builds a `GpuiOptions` (`crates/freshkube-desktop/src/lib.rs`).
+
+## Feature docs
+
+Behaviour that does not belong in the rules lives in one doc per feature, each starting with its module paths and the modules whose tests prove it (#587).
+
+- [docs/features/applications.md](features/applications.md): the Applications area, the Changes list and the change page.
