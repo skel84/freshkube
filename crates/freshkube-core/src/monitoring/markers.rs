@@ -463,4 +463,32 @@ mod tests {
         assert!(markers.iter().filter(|m| m.at >= 100_000 - 3600).count() >= 2);
         assert!(markers.windows(2).all(|pair| pair[0].at <= pair[1].at));
     }
+
+    fn api_error(code: u16) -> kube::Error {
+        kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".into(),
+            message: "denied".into(),
+            reason: "Denied".into(),
+            code,
+        })
+    }
+
+    /// Each way a list fails keeps its words and carries the kind the failure implies.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_list_carries_its_kind() {
+        let forbidden = timed::<Node>("nodes", async { Err(api_error(403)) }).await;
+        let failure = forbidden.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Forbidden);
+        assert_eq!(failure.message, "Can't list nodes: forbidden");
+
+        let failed = timed::<Node>("nodes", async { Err(api_error(500)) }).await;
+        let failure = failed.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Other);
+        assert_eq!(failure.message, "Can't list nodes: request failed");
+
+        let silent = timed::<Node>("nodes", std::future::pending()).await;
+        let failure = silent.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Timeout);
+        assert_eq!(failure.message, "Can't list nodes: timed out");
+    }
 }
