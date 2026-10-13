@@ -514,7 +514,7 @@ impl Pilot {
                 nodes.selected = None;
                 nodes.open = false;
             }
-            nodes.empty = nodes.rows.is_empty().then(|| match error {
+            nodes.empty = nodes.rows.is_empty().then_some(match error {
                 Some(error) => Empty::Failed(error),
                 None if loaded => Empty::Loaded,
                 None => Empty::Loading,
