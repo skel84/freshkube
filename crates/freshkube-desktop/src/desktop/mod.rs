@@ -789,6 +789,13 @@ impl Pilot {
             system_services,
         } = pages;
         let tick = Self::start_tick(window, cx);
+        let chrome = shell::Chrome::new(
+            app_menu::menu_platform(options.debug.app_menu_button),
+            window,
+            cx,
+        );
+        let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
+        let navigation = shell::Navigation::new(navigation_file, cx);
         let mut view = Self {
             runtime: runtime.clone(),
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
@@ -814,11 +821,7 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            chrome: shell::Chrome::new(
-                app_menu::menu_platform(options.debug.app_menu_button),
-                window,
-                cx,
-            ),
+            chrome,
             dock,
             overview_page,
             node_workspace,
@@ -834,7 +837,7 @@ impl Pilot {
                 .as_deref()
                 .map(|preferences| preferences.with_file_name("workspace.json")),
             custom,
-            search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
+            search,
             monitoring,
             observability,
             kubeconfig: KubeconfigSelection::Automatic,
@@ -851,7 +854,7 @@ impl Pilot {
             age_label,
             switcher: Vec::new(),
             kubeconfig_draft: Default::default(),
-            navigation: shell::Navigation::new(navigation_file, cx),
+            navigation,
             fixture: options.fixture,
             fixture_hold: options.fixture && (options.hold_talos || hold.talos),
             fixture_tick: 0,
