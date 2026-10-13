@@ -65,12 +65,8 @@ impl State {
     }
 }
 
-pub(super) fn start(world: Arc<World>) {
+pub(super) fn start(world: Arc<World>, seconds: u64) {
     let reporting = world.clone();
-    let seconds = std::env::var("FRESHKUBE_STRESS_SECONDS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(30);
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(seconds.saturating_sub(1))).await;
         reporting.summary.report();
