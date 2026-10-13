@@ -231,7 +231,6 @@ fn default_talosconfig_present(path: &std::path::Path) -> bool {
 }
 
 #[cfg(test)]
-mod ambient;
 mod default_talosconfig_tests {
     use super::default_talosconfig_present;
     use std::path::PathBuf;
@@ -295,6 +294,7 @@ pub fn validate_maintenance_endpoint(endpoint: &str) -> color_eyre::Result<()> {
 }
 
 mod actions;
+mod ambient;
 mod applications;
 mod backend;
 mod connection_preferences;
