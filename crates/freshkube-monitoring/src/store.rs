@@ -5,15 +5,12 @@
 //! credential: a URL's token lives in the system's credential store, and
 //! this file only says whether one was saved.
 use std::collections::BTreeMap;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::{Arc, Mutex};
 
 use freshkube_core::monitoring::PrometheusService;
+use freshkube_prefs::{Document, Layout};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::Error as _};
 use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -89,41 +86,81 @@ fn file(preferences: &Path) -> PathBuf {
     preferences.with_file_name("monitoring.json")
 }
 
-/// Reads what was saved; anything unreadable is left out.
+/// `monitoring.json`: at most 256 KiB, a new file open to the user's umask.
+fn document(path: &Path) -> Document<Saved> {
+    Document::at(path, Layout::Pretty, 0o666).limited_to(256 * 1024)
+}
+
+/// Reads what was saved; anything unreadable is left out. A file that exists
+/// but can't be used is logged.
 pub(crate) fn load(preferences: &Path) -> Saved {
-    let Some(value) = std::fs::read(file(preferences))
-        .ok()
-        .filter(|bytes| bytes.len() <= 256 * 1024)
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-    else {
-        return Saved::default();
-    };
-    let folder = value
-        .get("dashboards")
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute());
-    let by_context = |key: &str| {
-        value
-            .get(key)
-            .and_then(Value::as_object)
+    let loaded = document(&file(preferences)).load();
+    if let Some(problem) = &loaded.problem {
+        tracing::warn!("monitoring preferences not used: {problem}");
+    }
+    loaded.value
+}
+
+/// `{dashboards, prometheus, sources}`, the last two by context name.
+impl Serialize for Saved {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let services: serde_json::Map<String, Value> = self
+            .services
+            .iter()
+            .map(|(context, service)| (context.clone(), write_service(service)))
+            .collect();
+        let choices: serde_json::Map<String, Value> = self
+            .choices
+            .iter()
+            .map(|(context, choice)| (context.clone(), write_choice(choice)))
+            .collect();
+        json!({
+            "dashboards": serde_json::to_value(&self.folder).map_err(S::Error::custom)?,
+            "prometheus": services,
+            "sources": choices,
+        })
+        .serialize(serializer)
+    }
+}
+
+/// Lenient, as the file always was: a key that is missing or malformed, and
+/// an entry that is, is left out. Keys this build does not know are not
+/// kept; a save writes only these three.
+impl<'de> Deserialize<'de> for Saved {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from_json(&Value::deserialize(deserializer)?))
+    }
+}
+
+impl Saved {
+    fn from_json(value: &Value) -> Self {
+        let folder = value
+            .get("dashboards")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute());
+        let by_context = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .map(|(context, value)| (context.clone(), value))
+                .collect::<Vec<_>>()
+        };
+        let services = by_context("prometheus")
             .into_iter()
-            .flatten()
-            .map(|(context, value)| (context.clone(), value))
-            .collect::<Vec<_>>()
-    };
-    let services = by_context("prometheus")
-        .into_iter()
-        .filter_map(|(context, value)| Some((context, read_service(value)?)))
-        .collect();
-    let choices = by_context("sources")
-        .into_iter()
-        .filter_map(|(context, value)| Some((context, read_choice(value)?)))
-        .collect();
-    Saved {
-        folder,
-        services,
-        choices,
+            .filter_map(|(context, value)| Some((context, read_service(value)?)))
+            .collect();
+        let choices = by_context("sources")
+            .into_iter()
+            .filter_map(|(context, value)| Some((context, read_choice(value)?)))
+            .collect();
+        Saved {
+            folder,
+            services,
+            choices,
+        }
     }
 }
 
@@ -160,43 +197,7 @@ impl MonitoringStore {
             .lock()
             .map_err(|_| std::io::Error::other("monitoring preference mutex poisoned"))?
             .clone();
-        let services: serde_json::Map<String, Value> = saved
-            .services
-            .iter()
-            .map(|(context, service)| (context.clone(), write_service(service)))
-            .collect();
-        let choices: serde_json::Map<String, Value> = saved
-            .choices
-            .iter()
-            .map(|(context, choice)| (context.clone(), write_choice(choice)))
-            .collect();
-        let value = json!({
-            "dashboards": saved.folder,
-            "prometheus": services,
-            "sources": choices,
-        });
-        if let Some(parent) = self.file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        static NEXT_WRITE: AtomicU64 = AtomicU64::new(0);
-        let temporary = self.file.with_extension(format!(
-            "json.{}.{}.tmp",
-            std::process::id(),
-            NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let result = (|| {
-            let mut output = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)?;
-            output.write_all(format!("{value:#}\n").as_bytes())?;
-            output.sync_all()?;
-            std::fs::rename(&temporary, &self.file)
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(temporary);
-        }
-        result
+        document(&self.file).save(&saved)
     }
 }
 
@@ -245,6 +246,55 @@ mod tests {
             "{\"text_size\":18}"
         );
         std::fs::write(file(&preferences), "{\"dashboards\":\"relative\"}").unwrap();
+        assert_eq!(load(&preferences), Saved::default());
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    /// The example file in `freshkube-prefs`, as the app writes it: what
+    /// loads from it saves back byte for byte.
+    #[test]
+    fn the_example_file_round_trips_byte_for_byte() {
+        let example = include_str!("../../freshkube-prefs/src/examples/monitoring.json");
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-monitoring-example-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        std::fs::write(file(&preferences), example).unwrap();
+        let saved = load(&preferences);
+        assert_eq!(saved.folder, Some(PathBuf::from("/home/acme/dashboards")));
+        assert_eq!((saved.services.len(), saved.choices.len()), (1, 2));
+        MonitoringStore::new(&preferences, saved)
+            .save_latest()
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(file(&preferences)).unwrap(),
+            example
+        );
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn an_unusable_file_is_nothing_saved() {
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-monitoring-unusable-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        assert_eq!(load(&preferences), Saved::default());
+        let padding = " ".repeat(256 * 1024);
+        for text in ["not json", "[]", "null", &format!("{{}}{padding}")] {
+            std::fs::write(file(&preferences), text).unwrap();
+            assert_eq!(load(&preferences), Saved::default(), "{text:.20}");
+        }
+        std::fs::remove_file(file(&preferences)).unwrap();
+        std::fs::create_dir(file(&preferences)).unwrap();
         assert_eq!(load(&preferences), Saved::default());
         std::fs::remove_dir_all(&directory).unwrap();
     }

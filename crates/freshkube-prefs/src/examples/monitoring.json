@@ -1,0 +1,27 @@
+{
+  "dashboards": "/home/acme/dashboards",
+  "prometheus": {
+    "cluster-a": {
+      "namespace": "monitoring",
+      "name": "prometheus-operated",
+      "port": 9090,
+      "https": true,
+      "path": ""
+    }
+  },
+  "sources": {
+    "cluster-a": {
+      "namespace": "vm",
+      "name": "vmselect",
+      "port": 8481,
+      "https": false,
+      "path": "select/0/prometheus",
+      "kind": "service"
+    },
+    "cluster-b": {
+      "kind": "url",
+      "url": "https://metrics.example/",
+      "token": true
+    }
+  }
+}

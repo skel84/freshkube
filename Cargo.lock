@@ -2543,14 +2543,17 @@ version = "0.14.0"
 dependencies = [
  "chrono",
  "freshkube-core",
+ "freshkube-prefs",
  "freshkube-probe",
  "freshkube-ui",
  "futures",
  "gpui-kit",
  "kube",
+ "serde",
  "serde_json",
  "talos-rs",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2563,13 +2566,16 @@ dependencies = [
  "freshkube-graph",
  "freshkube-logs",
  "freshkube-monitoring",
+ "freshkube-prefs",
  "freshkube-probe",
  "freshkube-ui",
  "futures",
  "gpui-kit",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

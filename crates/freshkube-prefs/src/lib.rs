@@ -50,6 +50,7 @@ impl Dir {
             path: self.0.join(name),
             layout,
             mode,
+            limit: None,
             value: PhantomData,
         }
     }
@@ -61,10 +62,20 @@ pub struct Document<T> {
     path: PathBuf,
     layout: Layout,
     mode: u32,
+    limit: Option<u64>,
     value: PhantomData<fn() -> T>,
 }
 
 impl<T> Document<T> {
+    /// Reads at most `bytes` of the file, and only a regular file. One that
+    /// is larger, or is not a regular file (a directory, a FIFO), is
+    /// unusable: the default, with a problem. Only reads are bounded; a
+    /// save writes what it is given.
+    pub fn limited_to(mut self, bytes: u64) -> Self {
+        self.limit = Some(bytes);
+        self
+    }
+
     /// The file at `path`, holding a `T`, for a caller that has the whole
     /// path and not a directory and a name ([`Dir::document`]).
     pub fn at(path: &Path, layout: Layout, mode: u32) -> Self {
@@ -72,6 +83,7 @@ impl<T> Document<T> {
             path: path.to_path_buf(),
             layout,
             mode,
+            limit: None,
             value: PhantomData,
         }
     }
@@ -94,23 +106,70 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
 
     /// The file's value, read once.
     pub fn load(&self) -> Loaded<T> {
-        let bytes = match std::fs::read(&self.path) {
-            Ok(bytes) => bytes,
+        match self.read(false) {
+            Ok(loaded) => loaded,
+            Err(error) => self.unusable(format!("could not be read: {error}")),
+        }
+    }
+
+    /// As [`load`](Self::load), but a read error other than "not found" is
+    /// returned and not turned into the default. A file that parses wrongly
+    /// is still the default with a problem: it holds nothing worth keeping.
+    /// A file a limited document refuses (past the limit, not a regular
+    /// file) is the default with a problem, or with `refuse` an
+    /// `InvalidData` error, for a caller that is about to write over it.
+    fn read(&self, refuse: bool) -> std::io::Result<Loaded<T>> {
+        let bytes = match self.read_bytes() {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(why)) if refuse => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{} {why}", self.path.display()),
+                ));
+            }
+            Ok(Err(why)) => return Ok(self.unusable(why)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Loaded {
+                return Ok(Loaded {
                     value: T::default(),
                     problem: None,
-                };
+                });
             }
-            Err(error) => return self.unusable(format!("could not be read: {error}")),
+            Err(error) => return Err(error),
         };
-        match serde_json::from_slice(&bytes) {
+        Ok(match serde_json::from_slice(&bytes) {
             Ok(value) => Loaded {
                 value,
                 problem: None,
             },
             Err(error) => self.unusable(format!("could not be parsed: {}", describe(&error))),
+        })
+    }
+
+    /// The file's bytes, or why they are not to be used (past the limit,
+    /// not a regular file). An I/O error is the outer error.
+    fn read_bytes(&self) -> std::io::Result<Result<Vec<u8>, String>> {
+        use std::io::Read as _;
+        let Some(limit) = self.limit else {
+            return std::fs::read(&self.path).map(Ok);
+        };
+        // Checked before opening, so a FIFO there does not block the open,
+        // and again on the opened file, which catches a directory swapped
+        // in between. A FIFO swapped in between the two can still block the
+        // open: closing that window needs `O_NONBLOCK`, which needs `libc`,
+        // and this crate is std, serde and serde_json only.
+        if !std::fs::metadata(&self.path)?.is_file() {
+            return Ok(Err("is not a regular file".into()));
         }
+        let file = std::fs::File::open(&self.path)?;
+        if !file.metadata()?.is_file() {
+            return Ok(Err("is not a regular file".into()));
+        }
+        let mut bytes = Vec::new();
+        file.take(limit + 1).read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > limit {
+            return Ok(Err(format!("is larger than {limit} bytes")));
+        }
+        Ok(Ok(bytes))
     }
 
     fn unusable(&self, why: String) -> Loaded<T> {
@@ -192,8 +251,12 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// Loads the file, lets `change` edit its value and saves it back. A
     /// writer that owns some keys of a shared document sets those and leaves
     /// the rest as it found it, so a `Document<Map<String, Value>>` keeps
-    /// the keys this build does not know. A file that is missing or unusable
-    /// starts from the default, as [`load`](Self::load) says.
+    /// the keys this build does not know. A file that is missing starts from
+    /// the default, and so does one that parses wrongly (it holds nothing
+    /// this build can keep). A file that exists but can't be read (no
+    /// permission, an I/O error, a directory) returns that error and saves
+    /// nothing, so a transient failure never wipes the other keys. So does a
+    /// file that a [`limited_to`](Self::limited_to) document refuses.
     ///
     /// Updates in this process run one at a time, so two of them never lose
     /// each other's change. Another process is not excluded. `change` must
@@ -204,7 +267,7 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         let _one_at_a_time = UPDATING
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut value = self.load().value;
+        let mut value = self.read(true)?.value;
         change(&mut value);
         self.save(&value)
     }
