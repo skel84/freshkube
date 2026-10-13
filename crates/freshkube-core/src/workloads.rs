@@ -76,6 +76,64 @@ pub struct WorkloadInfo {
     pub issues: Vec<String>,
 }
 
+impl WorkloadInfo {
+    pub(crate) fn from_deployment(deployment: &Deployment) -> Self {
+        let namespace = resource_namespace(&deployment.metadata.namespace);
+        let status = deployment.status.as_ref();
+        let desired = status.and_then(|status| status.replicas).unwrap_or(0);
+        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
+        let available = status
+            .and_then(|status| status.available_replicas)
+            .unwrap_or(0);
+        let (health, issues) = classify_workload_health(ready, desired, available);
+        Self {
+            name: resource_name(&deployment.metadata.name),
+            namespace,
+            kind: WorkloadKind::Deployment,
+            ready,
+            desired,
+            health,
+            issues,
+        }
+    }
+
+    pub(crate) fn from_statefulset(statefulset: &StatefulSet) -> Self {
+        let namespace = resource_namespace(&statefulset.metadata.namespace);
+        let status = statefulset.status.as_ref();
+        let desired = status.map(|status| status.replicas).unwrap_or(0);
+        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
+        let (health, issues) = classify_workload_health(ready, desired, ready);
+        Self {
+            name: resource_name(&statefulset.metadata.name),
+            namespace,
+            kind: WorkloadKind::StatefulSet,
+            ready,
+            desired,
+            health,
+            issues,
+        }
+    }
+
+    pub(crate) fn from_daemonset(daemonset: &DaemonSet) -> Self {
+        let namespace = resource_namespace(&daemonset.metadata.namespace);
+        let status = daemonset.status.as_ref();
+        let desired = status
+            .map(|status| status.desired_number_scheduled)
+            .unwrap_or(0);
+        let ready = status.map(|status| status.number_ready).unwrap_or(0);
+        let (health, issues) = classify_workload_health(ready, desired, ready);
+        Self {
+            name: resource_name(&daemonset.metadata.name),
+            namespace,
+            kind: WorkloadKind::DaemonSet,
+            ready,
+            desired,
+            health,
+            issues,
+        }
+    }
+}
+
 impl HasHealth for WorkloadInfo {
     fn health(&self) -> HealthIndicator {
         self.health.health()

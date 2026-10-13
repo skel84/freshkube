@@ -192,16 +192,7 @@ impl SummaryResource for Node {
     }
 }
 
-fn workload<K: Resource>(object: &K, snapshot: workloads::WorkloadSnapshot) -> RetainedObject {
-    let info = snapshot
-        .namespaces
-        .into_iter()
-        .next()
-        .expect("one namespace")
-        .workloads
-        .into_iter()
-        .next()
-        .expect("one workload");
+fn workload<K: Resource>(object: &K, info: WorkloadInfo) -> RetainedObject {
     let bytes = size_of::<WorkloadInfo>()
         + info.name.capacity()
         + info.namespace.capacity()
@@ -213,28 +204,19 @@ fn workload<K: Resource>(object: &K, snapshot: workloads::WorkloadSnapshot) -> R
 impl SummaryResource for Deployment {
     const SOURCE: Source = Source::Deployments;
     fn retain(&self) -> RetainedObject {
-        workload(
-            self,
-            workloads::build_snapshot(String::new(), vec![self.clone()], vec![], vec![], vec![]),
-        )
+        workload(self, WorkloadInfo::from_deployment(self))
     }
 }
 impl SummaryResource for DaemonSet {
     const SOURCE: Source = Source::DaemonSets;
     fn retain(&self) -> RetainedObject {
-        workload(
-            self,
-            workloads::build_snapshot(String::new(), vec![], vec![], vec![self.clone()], vec![]),
-        )
+        workload(self, WorkloadInfo::from_daemonset(self))
     }
 }
 impl SummaryResource for StatefulSet {
     const SOURCE: Source = Source::StatefulSets;
     fn retain(&self) -> RetainedObject {
-        workload(
-            self,
-            workloads::build_snapshot(String::new(), vec![], vec![self.clone()], vec![], vec![]),
-        )
+        workload(self, WorkloadInfo::from_statefulset(self))
     }
 }
 impl SummaryResource for PersistentVolumeClaim {
