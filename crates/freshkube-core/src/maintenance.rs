@@ -1501,13 +1501,13 @@ where
     let (credentials_source, kubernetes_client) =
         match kubernetes_client_for_probe(&request.paths, &target, &talos_client).await {
             Ok(value) => value,
-            Err((credentials_source, reason)) => {
+            Err((credentials_source, failure)) => {
                 return Ok(BootstrapReadinessEvidence {
                     target,
                     talos: TalosReadinessEvidence::Available { versions, etcd },
                     kubernetes: KubernetesReadinessEvidence::Unavailable {
                         credentials_source,
-                        reason,
+                        reason: failure.message,
                     },
                 });
             }
@@ -1592,7 +1592,7 @@ async fn kubernetes_client_for_probe(
     paths: &BootstrapPaths,
     target: &AuthenticatedTarget,
     talos_client: &TalosClient,
-) -> Result<(KubernetesCredentialsSource, Client), (KubernetesCredentialsSource, String)> {
+) -> Result<(KubernetesCredentialsSource, Client), (KubernetesCredentialsSource, Failure)> {
     let source = paths
         .kubeconfig_path
         .as_ref()
@@ -1604,7 +1604,7 @@ async fn kubernetes_client_for_probe(
         .with_node(target.node.address())
         .kubeconfig()
         .await
-        .map_err(|error| (source.clone(), format_talos_error(&error)))?;
+        .map_err(|error| (source.clone(), Failure::from_talos_formatted(&error)))?;
     let path = paths.kubeconfig_path.clone();
     let node = target.node.address().to_string();
     let prepared = run_roster_setup(move || {
@@ -1612,7 +1612,7 @@ async fn kubernetes_client_for_probe(
             .map_err(crate::cluster_overview::K8sError::ClientCreate)
     })
     .await
-    .map_err(|error| (source.clone(), error.to_string()))?;
+    .map_err(|error| (source.clone(), config_failure(&error)))?;
     let runtime = tokio::runtime::Handle::current();
     let client = run_roster_setup(move || {
         runtime.block_on(async {
@@ -1631,8 +1631,13 @@ async fn kubernetes_client_for_probe(
         })
     })
     .await
-    .map_err(|error| (source.clone(), error.to_string()))?;
+    .map_err(|error| (source.clone(), config_failure(&error)))?;
     Ok((source, client))
+}
+
+/// A kubeconfig or client that couldn't be made: nothing was read yet, so it is Config.
+fn config_failure(error: &crate::cluster_overview::K8sError) -> Failure {
+    Failure::new(FailureKind::Config, error.to_string())
 }
 
 fn prepare_probe_kubeconfig(
@@ -2464,6 +2469,20 @@ users:
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
+    }
+
+    /// The readiness source's setup failures read as the error does, and are Config.
+    #[test]
+    fn readiness_client_setup_failures_keep_their_words_and_are_config() {
+        use crate::cluster_overview::K8sError;
+        let failure = config_failure(&K8sError::ClientCreate(
+            "Could not load credentials for verified readiness source".into(),
+        ));
+        assert_eq!(failure.kind, FailureKind::Config);
+        assert_eq!(
+            failure.message,
+            "Failed to create K8s client: Could not load credentials for verified readiness source"
+        );
     }
 
     #[test]
