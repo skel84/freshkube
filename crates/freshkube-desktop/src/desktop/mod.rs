@@ -1481,7 +1481,6 @@ impl Pilot {
     /// empty. The screens hear first, then the entities beside the pages,
     /// then the other pages, in key order.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sync_node_metrics(window, cx);
         self.deliver_summary_nodes(cx);
         let source = self.page_source();
         for (_, screen) in self.pages.iter().filter(|(id, _)| id.is_screen()) {
