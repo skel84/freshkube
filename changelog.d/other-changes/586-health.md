@@ -1,0 +1,1 @@
+- **Internal:** one `health_tone` maps a health to its tone and icon, and the presentation `Health` reports its health like the other health enums. Nothing changes on screen.

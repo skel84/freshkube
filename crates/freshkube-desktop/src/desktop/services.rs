@@ -6,6 +6,7 @@ use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::presentation::{self, Health};
 use crate::ui::{self, MONO_FONT, Tone, dp};
+use freshkube_core::HasHealth;
 use freshkube_core::diagnostic_runner::{DiagnosticFix, DiagnosticFixAction, DiagnosticTarget};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -406,7 +407,7 @@ impl Pilot {
                 .into_any_element();
         };
         let health = presentation::service_health(&service);
-        let tone = ui::health_tone(health);
+        let tone = ui::health_tone(health.health()).0;
         let message = service
             .health
             .as_ref()

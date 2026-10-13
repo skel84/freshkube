@@ -1,6 +1,7 @@
 //! The services table as a `TableSource`: its columns, sized from the rows
 //! when they change, and the cells of each row.
 use super::*;
+use freshkube_core::HasHealth;
 use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, TableState};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -174,7 +175,7 @@ impl TableSource for SystemServices {
             table::GroupRow::new(
                 self.table
                     .id(&format!("group-{}", label.to_lowercase().replace(' ', "-"))),
-                ui::health_tone(health),
+                ui::health_tone(health.health()).0,
                 label,
                 table::ROW_HEIGHT,
             )
