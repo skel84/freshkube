@@ -20,7 +20,7 @@ mod discovery;
 mod events;
 mod exec;
 // Moved to `crate::failure`; kept so `resources::failure` paths still resolve.
-pub(crate) use crate::failure;
+use crate::failure;
 mod forward;
 mod kinds;
 mod metadata;

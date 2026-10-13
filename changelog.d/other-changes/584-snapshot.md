@@ -1,1 +1,1 @@
-- **Talos errors:** a refusal from a node reads "Forbidden · ⟨the node's message⟩" instead of saying the class twice, and a refused, timed-out or reset Talos connection is worded by the kind of network error behind it, not by searching its text.
+- **Talos errors:** a Talos node that refuses, times out or resets a connection now says so ("Connection refused - is the node reachable?") instead of "Transport error: transport error".

@@ -34,7 +34,7 @@ impl FailureKind {
     }
 }
 
-/// A failed Kubernetes read, already classified.
+/// A failed Kubernetes or Talos read, already classified.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Failure {
     pub kind: FailureKind,
