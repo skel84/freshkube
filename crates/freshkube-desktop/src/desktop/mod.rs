@@ -255,14 +255,6 @@ fn cached_page_style() -> StyleRefinement {
     StyleRefinement::default().size_full()
 }
 
-/// What the shell hears beside the page map: Nodes and its pane, whose
-/// own events aren't [`PageEvent`]s yet, the dock and the custom kinds.
-struct PageEntities<'a> {
-    nodes: &'a Entity<nodes::Nodes>,
-    dock: &'a Entity<dock::Dock>,
-    custom: &'a Entity<CustomResources>,
-}
-
 pub(crate) struct Pilot {
     runtime: Handle,
     connection_store: Option<ConnectionStore>,
@@ -617,24 +609,29 @@ impl Pilot {
         })
     }
 
-    /// Hears every page: each in the map through its handle, as a
-    /// [`PageEvent`] (`hear_page`), then the events of what the map doesn't
-    /// hold. Nodes' own events and its Services tab's aren't `PageEvent`s
-    /// yet, so they keep their arms; the node pane's Pods list and the dock
-    /// turn theirs into one.
+    /// Hears every page: when Logs starts and stops, then each page in the
+    /// map through its handle, as a [`PageEvent`] (`hear_page`), then the
+    /// events of what the map doesn't hold. Nodes' own events and its
+    /// Services tab's aren't `PageEvent`s yet, so they keep their arms; the
+    /// node pane's Pods list and the dock turn theirs into one.
     fn subscribe_page_events(
-        pages: &BTreeMap<PageId, ScreenHandle>,
-        others: PageEntities<'_>,
+        pages: &page_map::Pages,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
-        let PageEntities {
-            nodes,
+        let page_map::Pages {
+            map,
+            logs,
+            node_workspace: nodes,
             dock,
             custom,
-        } = others;
+            ..
+        } = pages;
         let mut subscriptions = Vec::new();
-        for page in pages.values() {
+        // Batches arriving while Logs is hidden never notify; the shell
+        // shows only what start, stop and the visible page change.
+        subscriptions.push(cx.observe(logs, |_, _, cx| cx.notify()));
+        for page in map.values() {
             subscriptions.extend(Self::hear_page(page, window, cx));
         }
         subscriptions.push(cx.subscribe_in(
@@ -773,19 +770,7 @@ impl Pilot {
         let mut subscriptions = Self::subscribe_shell(window, cx);
         let pages = page_map::Pages::new(&options, &runtime, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
-        // Batches arriving while Logs is hidden never notify; the shell
-        // shows only what start, stop and the visible page change.
-        subscriptions.push(cx.observe(&pages.logs, |_, _, cx| cx.notify()));
-        subscriptions.extend(Self::subscribe_page_events(
-            &pages.map,
-            PageEntities {
-                nodes: &pages.node_workspace,
-                dock: &pages.dock,
-                custom: &pages.custom,
-            },
-            window,
-            cx,
-        ));
+        subscriptions.extend(Self::subscribe_page_events(&pages, window, cx));
         let page_map::Pages {
             map: pages,
             logs,
