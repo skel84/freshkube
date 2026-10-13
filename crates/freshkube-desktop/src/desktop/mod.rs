@@ -732,19 +732,6 @@ impl Pilot {
                 cx,
             )
         });
-        let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
-        // Overview is the first page; logs collect in the background until
-        // Logs is shown.
-        logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let age_label = cx.new(|_| switch::AgeLabel::new());
-        let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
-        let node_workspace = cx.new(|cx| {
-            let mut nodes =
-                nodes::Nodes::new(runtime.clone(), logs.clone(), hold.lists, window, cx);
-            // The header the loading rows sit under before anything answers.
-            nodes.rebuild_columns(!options.kubernetes_only);
-            nodes
-        });
         let mut subscriptions = Vec::new();
         // Overview and Nodes hear where things stand whenever the shell
         // notifies, and redraw only when that changed; the countdown tick
@@ -764,6 +751,19 @@ impl Pilot {
         window.on_window_should_close(cx, |window, cx| {
             mutation::may_close(window, cx)
                 && pod_shell::may_close(window, cx, |window, _| window.remove_window())
+        });
+        let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
+        // Overview is the first page; logs collect in the background until
+        // Logs is shown.
+        logs.update(cx, |logs, cx| logs.set_visible(false, cx));
+        let age_label = cx.new(|_| switch::AgeLabel::new());
+        let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
+        let node_workspace = cx.new(|cx| {
+            let mut nodes =
+                nodes::Nodes::new(runtime.clone(), logs.clone(), hold.lists, window, cx);
+            // The header the loading rows sit under before anything answers.
+            nodes.rebuild_columns(!options.kubernetes_only);
+            nodes
         });
         let health = cx.new(|cx| WorkloadsScreen::new(runtime.clone(), window, cx));
         let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
