@@ -189,17 +189,6 @@ fn count(name: &'static str) -> usize {
     super::probe::count(name)
 }
 
-/// One countdown tick as the shell's timer applies it.
-fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        view.update(cx, |pilot, cx| {
-            pilot.elapsed += std::time::Duration::from_secs(1);
-            pilot.tick_countdown(cx);
-        });
-    });
-    cx.run_until_parked();
-}
-
 fn scratch(name: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("freshkube-tests-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

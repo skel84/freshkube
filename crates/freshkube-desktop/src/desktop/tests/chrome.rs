@@ -293,3 +293,14 @@ fn cached_system_services_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let cached = redrawn(&|view, cx| view.notify_cached(cx));
     assert_eq!([shell, nodes, reading, cached], [0, 1, 1, 1]);
 }
+
+/// One countdown tick as the shell's timer applies it.
+fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.elapsed += std::time::Duration::from_secs(1);
+            pilot.tick_countdown(cx);
+        });
+    });
+    cx.run_until_parked();
+}

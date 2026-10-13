@@ -36,6 +36,7 @@ use crate::entry::MAX_AT_ONCE;
 use crate::entry::pool::ENTRY_DEADLINE;
 use crate::entry::pool::{Place, Unread, Until, Via, reach};
 use crate::read::Reader;
+use freshkube_core::resources::Failure;
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 /// How long the whole read may take: two rounds of entries, well inside the
 /// page's own deadline. What answered by then is kept.
@@ -58,7 +59,7 @@ pub struct Open<'a, R> {
     /// How the workspace of one keys it ([`Chosen::Open`]).
     pub key: SessionKey,
     /// Its reader, or why there is none.
-    pub reader: Result<&'a R, String>,
+    pub reader: Result<&'a R, Failure>,
 }
 
 struct Target {
@@ -83,7 +84,7 @@ where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     let targets = targets(sources, open.as_ref());
     let shapes: Vec<(SessionKey, Asked)> = targets
@@ -106,12 +107,10 @@ where
                 (true, true) => Until::first(ends, BUDGET),
                 (true, false) => Until::destination(ends, BUDGET),
             };
-            let open = open
-                .as_ref()
-                .map(|open| open.reader.as_ref().map_err(|why| why.as_str()).copied());
+            let open = open.as_ref().map(|open| open.reader.as_ref().copied());
             let session = match reach(place, open, connect, &until).await {
                 Err(Unread::Missing(why)) => {
-                    SessionInputs::absent(key, asked, Absent::NotInWorkspace(why))
+                    SessionInputs::absent(key, asked, Absent::NotInWorkspace(why.message))
                 }
                 Err(unread) => {
                     SessionInputs::absent(key, asked, Absent::Unreachable(unread.why().to_owned()))
