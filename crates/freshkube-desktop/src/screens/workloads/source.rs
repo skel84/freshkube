@@ -170,9 +170,6 @@ pub(super) struct RowSettings {
 pub(super) struct Derived {
     data: Arc<WorkloadData>,
     settings: RowSettings,
-    /// What the tests read the rows by.
-    #[cfg(test)]
-    refs: Rc<Vec<RowRef>>,
     rows: Vec<WorkloadRow>,
     /// The Name column's width from its text, before any narrowing.
     name: f32,
@@ -338,8 +335,6 @@ impl WorkloadsScreen {
         self.derived = Some(Derived {
             data,
             settings,
-            #[cfg(test)]
-            refs: Rc::new(refs),
             rows,
             name,
             columns,
@@ -362,7 +357,27 @@ impl WorkloadsScreen {
     pub(super) fn rows(&self) -> Rc<Vec<RowRef>> {
         self.derived
             .as_ref()
-            .map(|derived| derived.refs.clone())
+            .map(|derived| {
+                let snapshot = &derived.data.snapshot;
+                let refs: std::collections::HashMap<_, _> = snapshot
+                    .namespaces
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(ns, namespace)| {
+                        std::iter::once(RowRef::Namespace(ns))
+                            .chain(
+                                (0..namespace.workloads.len())
+                                    .map(move |ix| RowRef::Workload(ns, ix)),
+                            )
+                            .chain(
+                                (0..namespace.problem_pods.len())
+                                    .map(move |ix| RowRef::Pod(ns, ix)),
+                            )
+                    })
+                    .map(|row| (row.key(snapshot), row))
+                    .collect();
+                Rc::new(derived.rows.iter().map(|row| refs[&row.key]).collect())
+            })
             .unwrap_or_default()
     }
 
