@@ -60,7 +60,6 @@ impl Pilot {
         }
     }
 
-    /// The node pane's attention card: every row of one node.
     /// The node pane's attention rows, from what the shell handed Nodes.
     pub(in crate::desktop) fn render_node_attention(
         &self,
