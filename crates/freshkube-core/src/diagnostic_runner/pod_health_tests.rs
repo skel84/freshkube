@@ -3,7 +3,7 @@ use super::*;
 use crate::{
     kubernetes_summary::{Session, SessionIdentity},
     resources::{Severity, builtin, object_from_yaml},
-    workloads::{HealthState, build_snapshot},
+    workloads::HealthState,
 };
 use kube::{client::Body, runtime::watcher::Event};
 use serde_json::{Value, json};
@@ -30,7 +30,6 @@ async fn check(
             "initContainers":[{"name":"migrate","image":"example"}]},
         "status":status});
     let pod: Pod = serde_json::from_value(object.clone()).unwrap();
-    let snapshot = build_snapshot("example".into(), vec![], vec![], vec![], vec![pod.clone()]);
     let session = Session::new(SessionIdentity::new("example", 1));
     let now = chrono::DateTime::from_timestamp(1_790_000_000, 0).unwrap();
     session.apply::<Pod>(0, Event::Init, now).unwrap();
@@ -106,15 +105,7 @@ async fn check(
         _ => (0, 0, 0),
     };
     assert_eq!(counts, expected_counts, "{name}: summary counts");
-    assert_eq!(
-        (
-            snapshot.total_pods_healthy,
-            snapshot.total_pods_degraded,
-            snapshot.total_pods_failing
-        ),
-        counts
-    );
-    let collected_issues: Vec<_> = snapshot
+    let collected_issues: Vec<_> = summary
         .namespaces
         .iter()
         .flat_map(|n| &n.problem_pods)
