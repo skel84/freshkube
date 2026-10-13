@@ -272,7 +272,7 @@ impl Nodes {
     pub(super) fn crumb(&self) -> Option<(SharedString, &'static str)> {
         self.open.then(|| {
             let name = self.row().map(|row| row.name.clone()).unwrap_or_default();
-            (name.into(), self.tab.label())
+            (name, self.tab.label())
         })
     }
 
