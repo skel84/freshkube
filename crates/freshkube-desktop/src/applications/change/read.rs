@@ -270,6 +270,7 @@ impl ChangePage {
             .is_none()
             .then(|| self.snapshot.error())
             .flatten()
+            .map(String::as_str)
     }
 
     /// The loading rows, until the first answer.

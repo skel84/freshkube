@@ -250,7 +250,7 @@ pub(crate) struct ApplicationsPage {
     variant: Variant,
     /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
     hold: bool,
-    snapshot: Snapshot<Read, Identity>,
+    snapshot: Snapshot<Read, Identity, String>,
     /// Whether a read is in flight; dropping its job and task stops it.
     pending: bool,
     job: Option<OwnedJob>,

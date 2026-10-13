@@ -238,7 +238,7 @@ pub(crate) struct ChangePage {
     /// What reads the change, and the read: its answer, its failure, and
     /// whether one is in flight.
     fetch: Fetch,
-    snapshot: Snapshot<Change, String>,
+    snapshot: Snapshot<Change, String, String>,
     pending: bool,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
