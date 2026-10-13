@@ -24,6 +24,9 @@ pub(super) fn mount(
     width: f32,
     height: f32,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    // Tests build clients against loopback servers, which the environment's
+    // proxy must not take, as in the app (core reads no environment itself).
+    crate::install_ambient_from_env();
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
