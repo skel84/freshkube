@@ -1477,7 +1477,7 @@ impl Pilot {
     }
 
     fn active_screen(&self) -> Option<ScreenHandle> {
-        let page = if self.page == Page::Nodes && self.node_workspace.open {
+        let page = if self.page == Page::Nodes {
             self.node_workspace.pane_screen()?
         } else {
             self.page.screen()?

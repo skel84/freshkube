@@ -152,7 +152,7 @@ pub(super) struct Nodes {
     /// The pane's System services tab.
     pub(super) services: Entity<super::services::NodeServices>,
     /// The pane's Logs tab: the shell's Talos log view.
-    pub(super) logs: Entity<crate::logs::LogPanel>,
+    logs: Entity<crate::logs::LogPanel>,
     /// The Talos screens the pane's tabs embed, by their pages.
     pub(super) screens:
         std::collections::BTreeMap<super::pages::PageId, crate::screens::ScreenHandle>,
@@ -296,7 +296,7 @@ impl Nodes {
     }
 
     /// The Talos screen the open pane shows, as its page's handle.
-    pub(super) fn pane_handle(&self) -> Option<&crate::screens::ScreenHandle> {
+    fn pane_handle(&self) -> Option<&crate::screens::ScreenHandle> {
         self.screens.get(&self.pane_screen()?)
     }
 
