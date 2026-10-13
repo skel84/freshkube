@@ -101,7 +101,7 @@ fn the_filter_narrows_the_table_beside_an_open_pane(cx: &mut TestAppContext) {
             window.render_frame(cx);
             window.click("nav-nodes", cx);
             window.render_frame(cx);
-            window.click("node-talos-wk-fra1-01", cx);
+            crate::desktop::tests::click_node(window, cx, "node-talos-wk-fra1-01");
             window.render_frame(cx);
             assert!(pilot.read(cx).node_workspace.read(cx).open);
             pilot
@@ -566,4 +566,24 @@ fn node_logs_startup_opens_a_folded_node_without_a_table_click(cx: &mut TestAppC
         assert!(window.find("node-talos-cp-fra1-01").visible());
     })
     .unwrap();
+}
+
+/// A row's click runs inside Nodes' own update, so it reaches the shell as
+/// an event once that update ends: the node opens and becomes the target.
+#[gpui_kit::test]
+fn a_row_click_opens_its_node_once_the_shell_hears_it(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        window.click("node-talos-wk-fra1-02", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    pilot.read_with(cx, |pilot, cx| {
+        assert!(pilot.node_workspace.read(cx).open);
+        assert_eq!(pilot.selected_node.as_deref(), Some("talos-wk-fra1-02"));
+    });
 }

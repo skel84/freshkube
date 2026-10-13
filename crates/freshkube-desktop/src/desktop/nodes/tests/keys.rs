@@ -62,7 +62,7 @@ fn enter_and_pane_clicks_move_the_keyboard_into_the_node_pane(cx: &mut TestAppCo
         // A click on a row opens the pane and leaves the keyboard on the
         // table; a click on a tab moves it into the tab's list.
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
         assert!(
             pilot
@@ -122,7 +122,7 @@ fn a_tab_without_keys_takes_the_keyboard_from_the_previous_tab(cx: &mut TestAppC
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
     })
     .unwrap();
@@ -182,7 +182,7 @@ fn arrows_from_a_hidden_open_node_move_to_the_visible_rows(cx: &mut TestAppConte
             window.click("nav-nodes", cx);
             window.render_frame(cx);
             crate::desktop::tests::expand_healthy_nodes(window, cx);
-            window.click("node-talos-cp-fra1-01", cx);
+            crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
             window.render_frame(cx);
             pilot
                 .read(cx)
@@ -339,7 +339,7 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
         window.press("secondary-shift-enter", cx);
         window.render_frame(cx);
@@ -478,7 +478,7 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
             window.click("nav-nodes", cx);
             window.render_frame(cx);
             crate::desktop::tests::expand_healthy_nodes(window, cx);
-            window.click("node-talos-cp-fra1-01", cx);
+            crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
             window.render_frame(cx);
             pilot
                 .read(cx)

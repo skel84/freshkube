@@ -33,7 +33,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use super::testing::{area, root_pilot};
-pub(super) use super::testing::{expand_healthy_nodes, mount};
+pub(super) use super::testing::{click_node, expand_healthy_nodes, mount};
 pub(crate) use super::testing::{
     fixture, open_kind, open_node_tab, pick_target, screen, start_shell,
 };

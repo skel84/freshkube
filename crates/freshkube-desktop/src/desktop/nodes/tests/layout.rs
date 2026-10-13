@@ -73,7 +73,7 @@ fn nodes_columns_preserve_row_identity(cx: &mut TestAppContext) {
             pilot.read(cx).node_workspace.read(cx).columns.len(),
             before_columns - 1
         );
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
         let key = pilot.read(cx).node_workspace.read(cx).selected.clone();
         assert_eq!(

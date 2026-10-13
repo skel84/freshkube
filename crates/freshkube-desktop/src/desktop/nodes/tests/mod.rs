@@ -102,6 +102,6 @@ fn open_first_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     window.click("nav-nodes", cx);
     window.render_frame(cx);
     crate::desktop::tests::expand_healthy_nodes(window, cx);
-    window.click("node-talos-cp-fra1-01", cx);
+    crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
     window.render_frame(cx);
 }

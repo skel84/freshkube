@@ -744,7 +744,7 @@ fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
         let built = attention::build(&rows, None, None, None, chrono::Utc::now());
         let mine = built.by_node["talos-wk-fra1-02"].clone();
         assert!(mine.len() > 8);
-        window.click("node-talos-wk-fra1-02", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-wk-fra1-02");
         window.render_frame(cx);
         pilot.update(cx, |pilot, cx| pilot.set_attention(built, cx));
         window.render_frame(cx);

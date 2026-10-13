@@ -25,7 +25,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             .find(|row| row.name == "talos-wk-fra1-03")
             .unwrap();
         assert_eq!(silent.talos_state, "No response");
-        window.click(bad.id.clone(), cx);
+        crate::desktop::tests::click_node(window, cx, &bad.id);
         window.render_frame(cx);
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
@@ -46,7 +46,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
         // Beside the pane, the table folds its healthy rows as it does
         // without one (#339).
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
         assert_eq!(
             pilot.read(cx).node_workspace.read(cx).tab,
@@ -125,7 +125,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
                     .is_some_and(|row| row.visible())
             })
             .expect("another row shows above the inspector");
-        window.click(other.id.clone(), cx);
+        crate::desktop::tests::click_node(window, cx, &other.id);
         window.render_frame(cx);
         let nodes = &pilot.read(cx).node_workspace.read(cx);
         assert_eq!(nodes.selected.as_ref(), Some(&other.key));
