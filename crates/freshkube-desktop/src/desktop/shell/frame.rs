@@ -65,7 +65,7 @@ impl Pilot {
                             .child(page)
                     })),
             )
-            .right(right.child(self.fps.clone()))
+            .right(right.child(self.chrome.fps.clone()))
             .into_any_element()
     }
 
@@ -194,7 +194,7 @@ impl Pilot {
                 .flex_none()
                 .gap_3()
                 .children(self.render_dock_button(cx))
-                .child(self.forwards.clone())
+                .child(self.chrome.forwards.clone())
                 .child(
                     div()
                         .id("kubernetes-only")
@@ -211,7 +211,7 @@ impl Pilot {
                 .gap_3()
                 .flex_none()
                 .children(self.render_dock_button(cx))
-                .child(self.forwards.clone())
+                .child(self.chrome.forwards.clone())
                 .children(
                     self.overview
                         .last_successful()
@@ -229,7 +229,7 @@ impl Pilot {
                         }),
                 )
                 .when(!compact, |this| {
-                    this.child(if self.automatic {
+                    this.child(if self.chrome.automatic {
                         "Talos refresh every 15 s"
                     } else {
                         "Talos auto-refresh off"
@@ -312,8 +312,8 @@ pub(super) fn settings_content(
             view.fixture,
             view.kubernetes_only.is_some(),
             view.config_loading,
-            view.automatic,
-            view.appearance,
+            view.chrome.automatic,
+            view.chrome.appearance,
         )
     };
     let text_size = text_size::current(cx);
@@ -431,8 +431,8 @@ pub(super) fn settings_content(
                         .on_click(move |checked, _, cx| {
                             let checked = *checked;
                             let _ = switch_pilot.update(cx, |view, cx| {
-                                view.automatic = checked;
-                                view.elapsed = std::time::Duration::ZERO;
+                                view.chrome.automatic = checked;
+                                view.chrome.elapsed = std::time::Duration::ZERO;
                                 cx.notify();
                             });
                         }),

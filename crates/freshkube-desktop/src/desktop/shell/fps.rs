@@ -301,7 +301,7 @@ mod tests {
     #[gpui_kit::test]
     fn the_shell_marks_each_frame_start(cx: &mut TestAppContext) {
         let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 880.);
-        let frames = view.read_with(cx, |view, cx| view.fps.read(cx).frames.clone());
+        let frames = view.read_with(cx, |view, cx| view.chrome.fps.read(cx).frames.clone());
         // A stale start 90 ms ago would make the next frame a slow one; the
         // shell's render replaces it with the frame's own, a quick one.
         let now = cx.executor().now();

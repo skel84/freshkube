@@ -346,7 +346,7 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
     let (_runtime, handle, pilot) = on_pods(cx);
     cx.update(|cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.menu_platform = Platform::MacOs;
+            pilot.chrome.menu_platform = Platform::MacOs;
             cx.notify();
         })
     });
@@ -359,7 +359,7 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
 
     cx.update(|cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.menu_platform = Platform::Linux;
+            pilot.chrome.menu_platform = Platform::Linux;
             cx.notify();
         })
     });
@@ -379,7 +379,7 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
         .unwrap();
     cx.run_until_parked();
     draw(handle, cx);
-    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_some()));
+    assert!(cx.update(|cx| pilot.read(cx).chrome.app_menu_popup.is_some()));
     assert_eq!(
         labels(cx),
         [
@@ -396,7 +396,7 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
         .unwrap();
     cx.run_until_parked();
     draw(handle, cx);
-    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_none()));
+    assert!(cx.update(|cx| pilot.read(cx).chrome.app_menu_popup.is_none()));
     cx.update_window(handle, |_, window, _| {
         assert_eq!(window.find("resource-body").focused(), Some(true));
     })
@@ -421,10 +421,10 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
     cx.run_until_parked();
     assert!(cx.update(|cx| pilot.read(cx).navigation.settings_open));
     draw(handle, cx);
-    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_none()));
+    assert!(cx.update(|cx| pilot.read(cx).chrome.app_menu_popup.is_none()));
 
     dispatch(handle, freshkube_ui::platform::OpenAppMenu, cx);
-    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_some()));
+    assert!(cx.update(|cx| pilot.read(cx).chrome.app_menu_popup.is_some()));
 }
 
 /// Settings… opens the header's Settings and About its dialog.
@@ -450,7 +450,7 @@ fn with_button(
     let (runtime, handle, pilot) = on_pods(cx);
     cx.update(|cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.menu_platform = Platform::Linux;
+            pilot.chrome.menu_platform = Platform::Linux;
             cx.notify();
         })
     });
@@ -499,7 +499,8 @@ fn the_buttons_menu_greys_what_the_view_does_not_handle(cx: &mut TestAppContext)
         })
         .unwrap()
     };
-    let open = |cx: &mut TestAppContext| cx.update(|cx| pilot.read(cx).app_menu_popup.is_some());
+    let open =
+        |cx: &mut TestAppContext| cx.update(|cx| pilot.read(cx).chrome.app_menu_popup.is_some());
 
     pick_from_edit(handle, "Paste", cx);
     assert!(open(cx), "Paste is grey over the table");
@@ -533,6 +534,7 @@ fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
     let popup = cx.update(|cx| {
         pilot
             .read(cx)
+            .chrome
             .app_menu_popup
             .as_ref()
             .map(|(popup, _)| popup.clone())
@@ -546,7 +548,7 @@ fn f10_puts_the_keyboard_on_the_menu(cx: &mut TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     draw(handle, cx);
-    assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_none()));
+    assert!(cx.update(|cx| pilot.read(cx).chrome.app_menu_popup.is_none()));
     cx.update_window(handle, |_, window, _| {
         assert_eq!(window.find("resource-body").focused(), Some(true));
     })

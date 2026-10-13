@@ -118,7 +118,7 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
         assert_eq!(window.find("auto-refresh").checked(), Some(true));
         window.click("auto-refresh", cx);
         window.render_frame(cx);
-        assert!(!view.read(cx).automatic);
+        assert!(!view.read(cx).chrome.automatic);
         assert_eq!(window.find("auto-refresh").checked(), Some(false));
     })
     .unwrap();
