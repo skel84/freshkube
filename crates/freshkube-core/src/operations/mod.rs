@@ -1779,6 +1779,10 @@ fn is_cancelled(context: &OperationContext<'_>) -> bool {
 /// The per-context audit file under `~/.freshkube`. The context name is
 /// sanitized so it can never point outside that directory.
 pub fn default_audit_path(context: &str) -> PathBuf {
+    default_audit_path_in(crate::ambient::get(), context)
+}
+
+fn default_audit_path_in(ambient: &crate::ambient::Ambient, context: &str) -> PathBuf {
     let safe: String = context
         .chars()
         .map(|c| {
@@ -1790,7 +1794,6 @@ pub fn default_audit_path(context: &str) -> PathBuf {
         })
         .take(128)
         .collect();
-    let ambient = crate::ambient::get();
     ambient
         .home_variable
         .clone()
@@ -1804,7 +1807,11 @@ pub fn default_audit_path(context: &str) -> PathBuf {
 }
 
 fn current_actor() -> String {
-    crate::ambient::get()
+    actor_in(crate::ambient::get())
+}
+
+fn actor_in(ambient: &crate::ambient::Ambient) -> String {
+    ambient
         .user
         .clone()
         .unwrap_or_else(|| "unknown".to_string())

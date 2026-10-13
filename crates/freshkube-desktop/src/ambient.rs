@@ -10,3 +10,22 @@ pub fn install_ambient_from_env() {
         std::env::home_dir(),
     ));
 }
+
+/// Installs a hermetic value for a test process: the real proxy pair, since
+/// kube reads it and the loopback test servers must be exempted from it, a
+/// temporary home, no kubeconfig variables and a fixed user. Tests never read
+/// the developer's `KUBECONFIG`, `~/.kube/config` or `~/.freshkube`, and the
+/// value is the same whichever test installs it first.
+#[cfg(test)]
+pub(crate) fn install_for_tests() {
+    let real = Ambient::from_lookup(|name| std::env::var_os(name), None);
+    let home = std::env::temp_dir().join(format!("freshkube-test-home-{}", std::process::id()));
+    ambient::install(Ambient {
+        https_proxy: real.https_proxy,
+        no_proxy: real.no_proxy,
+        home: Some(home.clone()),
+        home_variable: Some(home.into_os_string()),
+        user: Some("test".into()),
+        ..Ambient::default()
+    });
+}

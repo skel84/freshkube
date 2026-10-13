@@ -21,15 +21,15 @@ use kube::{Client, Config};
 /// kube's (rare: a plain-http API server) and leaks nothing. kube refuses
 /// other schemes, `socks5://` (a feature
 /// we don't build) and `https://` among them.
-pub fn client(mut config: Config) -> Result<Client, ClientError> {
-    let ambient = crate::ambient::get();
-    let environment = ambient.https_proxy.clone();
-    let no_proxy = ambient.no_proxy.clone();
-    let from_environment = skip_environment_proxy(
-        &mut config,
-        environment.as_deref(),
-        no_proxy.as_deref().unwrap_or(""),
-    );
+pub fn client(config: Config) -> Result<Client, ClientError> {
+    client_with(config, crate::ambient::get())
+}
+
+fn client_with(
+    mut config: Config,
+    ambient: &crate::ambient::Ambient,
+) -> Result<Client, ClientError> {
+    let from_environment = skip_ambient_proxy(&mut config, ambient);
     Client::try_from(config).map_err(|error| ClientError {
         error,
         from_environment,
@@ -95,6 +95,15 @@ fn redacted(proxy: &http::Uri) -> String {
         Some(port) => format!("{scheme}://{host}:{port}"),
         None => format!("{scheme}://{host}"),
     }
+}
+
+/// [`skip_environment_proxy`] with the proxy pair `ambient` holds.
+fn skip_ambient_proxy(config: &mut Config, ambient: &crate::ambient::Ambient) -> bool {
+    skip_environment_proxy(
+        config,
+        ambient.https_proxy.as_deref(),
+        ambient.no_proxy.as_deref().unwrap_or(""),
+    )
 }
 
 /// Drops the environment's proxy for a server Go wouldn't proxy, and says
@@ -258,6 +267,41 @@ mod tests {
 
     fn direct(no_proxy: &str, server: &str) -> bool {
         bypasses(no_proxy, &server.parse().unwrap())
+    }
+
+    #[test]
+    fn the_client_takes_its_proxy_decision_from_the_ambient_values() {
+        use crate::ambient::Ambient;
+        let ambient = Ambient {
+            https_proxy: Some("http://proxy.example.test:3128".into()),
+            no_proxy: Some("internal.example.test".into()),
+            ..Ambient::default()
+        };
+        let mut proxied = config(
+            "https://api.example.test:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        assert!(skip_ambient_proxy(&mut proxied, &ambient));
+        assert!(proxied.proxy_url.is_some());
+        let mut bypassed = config(
+            "https://internal.example.test:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        assert!(!skip_ambient_proxy(&mut bypassed, &ambient));
+        assert!(bypassed.proxy_url.is_none());
+        let mut loopback = config(
+            "https://127.0.0.1:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        skip_ambient_proxy(&mut loopback, &ambient);
+        assert!(loopback.proxy_url.is_none());
+        // Nothing installed: the proxy kube took from the real environment stays.
+        let mut unknown = config(
+            "https://127.0.0.1:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        skip_ambient_proxy(&mut unknown, &Ambient::default());
+        assert!(unknown.proxy_url.is_some());
     }
 
     #[test]

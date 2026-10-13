@@ -448,6 +448,8 @@ pub(crate) fn connection_unusable(endpoint_failed: bool, node_transport_failures
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn automatic_files_follow_kubeconfig_then_home() {
         use crate::ambient::Ambient;
@@ -475,8 +477,6 @@ mod tests {
         assert_eq!(paths, [PathBuf::from("/home/me/.kube/config")]);
         assert!(ambient_files_in(&Ambient::default()).is_empty());
     }
-
-    use super::*;
 
     struct Scratch(PathBuf);
 

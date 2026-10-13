@@ -28,6 +28,11 @@ use freshkube_core::resources::{
 
 #[tokio::main]
 async fn main() {
+    // Core reads no environment itself: hand it the one this process runs in.
+    freshkube_core::ambient::install(freshkube_core::ambient::Ambient::from_lookup(
+        |name| std::env::var_os(name),
+        std::env::home_dir(),
+    ));
     let mut args = std::env::args().skip(1);
     let key = args.next().unwrap_or_else(|| "pods".into());
     let seconds: u64 = args

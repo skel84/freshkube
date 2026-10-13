@@ -272,10 +272,8 @@ mod tests {
 
     #[test]
     fn an_explicit_path_beats_both_variables() {
-        let dir = std::env::temp_dir().join(format!("fk-sources-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let other = dir.join("other");
-        std::fs::write(&other, "").unwrap();
+        let scratch = Scratch::new("explicit");
+        let other = scratch.file("other", "");
         let ambient = Ambient {
             freshkube_kubeconfig: Some(other.clone().into()),
             kubeconfig: Some(other.into()),
@@ -286,28 +284,50 @@ mod tests {
             kubeconfig_sources_in(&ambient, Some(Path::new("~/chosen"))),
             [PathBuf::from("/home/me/chosen")]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn variables_name_existing_files_only_and_freshkube_wins() {
-        let dir = std::env::temp_dir().join(format!("fk-vars-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let (first, second) = (dir.join("first"), dir.join("second"));
-        std::fs::write(&first, "").unwrap();
-        std::fs::write(&second, "").unwrap();
+        let scratch = Scratch::new("variables");
+        let (first, second) = (scratch.file("first", ""), scratch.file("second", ""));
         let ambient = Ambient {
             freshkube_kubeconfig: Some(first.clone().into()),
             kubeconfig: Some(second.clone().into()),
             ..Ambient::default()
         };
         assert_eq!(kubeconfig_sources_in(&ambient, None), [first]);
-        let missing = Ambient {
-            freshkube_kubeconfig: Some(dir.join("missing").into()),
+    }
+
+    #[test]
+    fn a_missing_freshkube_file_does_not_fall_back_to_kubeconfig() {
+        let scratch = Scratch::new("missing");
+        let ambient = Ambient {
+            freshkube_kubeconfig: Some(scratch.0.join("missing").into()),
+            kubeconfig: Some(scratch.file("real", "").into()),
+            home: Some(scratch.0.clone()),
             ..Ambient::default()
         };
-        assert!(kubeconfig_sources_in(&missing, None).is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(kubeconfig_sources_in(&ambient, None).is_empty());
+    }
+
+    #[test]
+    fn a_kubeconfig_list_and_an_empty_variable_follow_kubectl() {
+        let scratch = Scratch::new("list");
+        let (one, two) = (scratch.file("one", ""), scratch.file("two", ""));
+        let list = std::env::join_paths([&one, &two]).unwrap();
+        let listed = Ambient {
+            kubeconfig: Some(list),
+            ..Ambient::default()
+        };
+        assert_eq!(kubeconfig_sources_in(&listed, None), [one, two]);
+        std::fs::create_dir_all(scratch.0.join(".kube")).unwrap();
+        let home_file = scratch.file(".kube/config", "");
+        let empty = Ambient {
+            kubeconfig: Some("".into()),
+            home: Some(scratch.0.clone()),
+            ..Ambient::default()
+        };
+        assert_eq!(kubeconfig_sources_in(&empty, None), [home_file]);
     }
 
     #[test]
