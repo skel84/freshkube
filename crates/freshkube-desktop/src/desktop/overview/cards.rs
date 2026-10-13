@@ -1,5 +1,5 @@
 //! Overview's cards, and what a click on one opens.
-use super::Pilot;
+use super::{super::Pilot, OverviewEvent, OverviewPage};
 use crate::presentation::overview::{Card, CardState, CardTarget};
 use crate::ui::{self, dp};
 use freshkube_ui::card::{self, CardHeader, Figure, StatCard};
@@ -7,13 +7,13 @@ use gpui_kit::component::{ThemeStyled, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-impl Pilot {
+impl OverviewPage {
     pub(super) fn render_cards(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let display = &self.overview_display;
+        let display = &self.display;
         div()
             .id("overview-cards")
             .test_support()
@@ -91,14 +91,19 @@ impl Pilot {
             .hover(|this| this.bg(crate::palette::palette(cx).hover))
             // A click opens the card without leaving a focus ring on it.
             .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .on_click(
-                cx.listener(move |this, _, window, cx| this.open_card(target.clone(), window, cx)),
-            )
+            .on_click(cx.listener(move |_, _, _, cx| cx.emit(OverviewEvent::Card(target.clone()))))
             .when(focused, |this| this.focus_ring_style(window, cx))
             .into_any_element()
     }
+}
 
-    fn open_card(&mut self, target: CardTarget, window: &mut Window, cx: &mut Context<Self>) {
+impl Pilot {
+    pub(super) fn open_card(
+        &mut self,
+        target: CardTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match target {
             CardTarget::Page(page) => {
                 self.navigate_from_keyboard(page, window, cx);

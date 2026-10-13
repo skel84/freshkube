@@ -15,7 +15,7 @@ use freshkube_core::{
 };
 use gpui_kit::SharedString;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum CardTarget {
     Page(Page),
     Kind(&'static str, String),
