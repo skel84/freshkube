@@ -265,15 +265,22 @@ impl EventList {
             }
             EventUpdate::Delete(uid) => self.events.retain(|event| event.uid != uid),
             EventUpdate::Failed { failure, .. } => {
-                self.read = match (&self.read, failure.kind) {
-                    (_, FailureKind::Forbidden) => {
+                self.read = match failure.kind {
+                    FailureKind::Forbidden => {
                         self.events.clear();
                         EventsRead::Refused(failure.message)
                     }
-                    (EventsRead::Loaded | EventsRead::Stale(_), _) => {
-                        EventsRead::Stale(failure.to_string())
-                    }
-                    _ => EventsRead::Failed(failure.to_string()),
+                    FailureKind::Config
+                    | FailureKind::Unreachable
+                    | FailureKind::Timeout
+                    | FailureKind::Unauthorized
+                    | FailureKind::NotFound
+                    | FailureKind::Other => match self.read {
+                        EventsRead::Loaded | EventsRead::Stale(_) => {
+                            EventsRead::Stale(failure.to_string())
+                        }
+                        _ => EventsRead::Failed(failure.to_string()),
+                    },
                 };
             }
         }

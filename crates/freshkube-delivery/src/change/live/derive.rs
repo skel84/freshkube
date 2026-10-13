@@ -17,6 +17,7 @@ use crate::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, Workload
 use crate::kargo::{self, Freight, Stage as KargoStage};
 use crate::observation::{ObjectRef, Observation};
 use crate::source::{Source, cap_note};
+use crate::words;
 use freshkube_core::indicators::HealthIndicator::{self, *};
 use freshkube_core::workspace::Part;
 
@@ -1489,15 +1490,15 @@ fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached)
         match source {
             Source::Refused(why) => Some(Missing::new(
                 Gap::Refused,
-                format!("{what} were refused on {entry}: {why}"),
+                words::were_refused(what, entry, why),
             )),
             Source::NotInstalled(_) => Some(Missing::new(
                 Gap::NotServed,
-                format!("{what} aren't served on {entry}"),
+                words::arent_served(what, entry),
             )),
             Source::Unreadable(why) => Some(Missing::new(
                 Gap::Unreadable,
-                format!("{what} couldn't be read on {entry}: {why}"),
+                words::unreadable(what, entry, why),
             )),
             Source::Read(_) | Source::Capped(..) => None,
         }

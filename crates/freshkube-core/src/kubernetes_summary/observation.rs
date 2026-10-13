@@ -309,8 +309,9 @@ impl Observation {
         self.status = match failure {
             ObservationFailure::Read(FailureKind::Forbidden) => ReadStatus::Refused,
             ObservationFailure::Capacity => ReadStatus::Limited,
-            _ if failure.is_permanent() => ReadStatus::Failed,
-            _ => ReadStatus::Retrying,
+            ObservationFailure::InvalidObject => ReadStatus::Failed,
+            ObservationFailure::Read(kind) if kind.is_permanent() => ReadStatus::Failed,
+            ObservationFailure::Read(_) => ReadStatus::Retrying,
         };
         self.failure = Some(failure);
         self.revision += 1;

@@ -4,11 +4,10 @@
 //! to the system's credential store ([`crate::secrets`]), named by the server.
 use super::*;
 use crate::secrets::{STORE_NAME, SecretStore, Secrets};
+use freshkube_prefs::{Document, Layout};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::{Value, json};
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Saved {
@@ -28,58 +27,68 @@ fn file(preferences: &Path) -> PathBuf {
     preferences.with_file_name("coroot.json")
 }
 
-/// Reads what was saved; anything unreadable counts as nothing saved.
+/// `coroot.json`: at most 64 KiB, a new file open to the user's umask. The
+/// key is never in it.
+fn document(path: &Path) -> Document<Option<Saved>> {
+    Document::at(path, Layout::Pretty, 0o666).limited_to(64 * 1024)
+}
+
+/// Reads what was saved; anything unreadable counts as nothing saved. A file
+/// that exists but can't be used is logged.
 pub(super) fn load(preferences: &Path) -> Option<Saved> {
-    let value = std::fs::read(file(preferences))
-        .ok()
-        .filter(|bytes| bytes.len() <= 64 * 1024)
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())?;
-    let url = value.get("url")?.as_str()?.to_owned();
-    let auth = value.get("auth")?.as_str()?;
-    let auth = AUTH.iter().position(|known| *known == auth)?;
-    let flag = |key: &str| value.get(key).and_then(Value::as_bool) == Some(true);
-    Some(Saved {
-        url,
-        auth,
-        project: value
-            .get("project")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        reconnect: flag("reconnect"),
-        remember: flag("remember"),
-    })
+    let loaded = document(&file(preferences)).load();
+    if let Some(problem) = &loaded.problem {
+        tracing::warn!("Coroot connection not restored: {problem}");
+    }
+    loaded.value
 }
 
 fn write(file: &Path, saved: &Saved) -> std::io::Result<()> {
-    let value = json!({
-        "url": saved.url,
-        "auth": AUTH[saved.auth.min(2)],
-        "project": saved.project,
-        "reconnect": saved.reconnect,
-        "remember": saved.remember,
-    });
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent)?;
+    document(file).save(&Some(saved.clone()))
+}
+
+/// `{url, auth, project, reconnect, remember}`; `project` is `null` when
+/// none. Nothing else, and no key.
+impl Serialize for Saved {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        json!({
+            "url": self.url,
+            "auth": AUTH[self.auth.min(2)],
+            "project": self.project,
+            "reconnect": self.reconnect,
+            "remember": self.remember,
+        })
+        .serialize(serializer)
     }
-    static NEXT_WRITE: AtomicU64 = AtomicU64::new(0);
-    let temporary = file.with_extension(format!(
-        "json.{}.{}.tmp",
-        std::process::id(),
-        NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| {
-        let mut output = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        output.write_all(format!("{value:#}\n").as_bytes())?;
-        output.sync_all()?;
-        std::fs::rename(&temporary, file)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(temporary);
+}
+
+/// The server and a known sign-in choice are required; the rest is lenient.
+/// Keys this build does not know are not kept.
+impl<'de> Deserialize<'de> for Saved {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        Self::from_json(&value)
+            .ok_or_else(|| D::Error::custom("no server, or an unknown sign-in choice"))
     }
-    result
+}
+
+impl Saved {
+    fn from_json(value: &Value) -> Option<Self> {
+        let url = value.get("url")?.as_str()?.to_owned();
+        let auth = value.get("auth")?.as_str()?;
+        let auth = AUTH.iter().position(|known| *known == auth)?;
+        let flag = |key: &str| value.get(key).and_then(Value::as_bool) == Some(true);
+        Some(Saved {
+            url,
+            auth,
+            project: value
+                .get("project")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            reconnect: flag("reconnect"),
+            remember: flag("remember"),
+        })
+    }
 }
 
 /// The credential store's name for a server's key.
@@ -476,6 +485,8 @@ impl ObservabilityPage {
 mod tests {
     use super::{Memory, Saved, file, load, write};
 
+    const EXAMPLE: &str = include_str!("../../freshkube-prefs/src/examples/coroot.json");
+
     #[test]
     fn saves_the_connection_without_its_key_and_reads_it_back() {
         let directory = tempfile::tempdir().unwrap();
@@ -504,5 +515,42 @@ mod tests {
         assert_eq!(memory.key_for("https://a.example"), Some("key"));
         assert_eq!(memory.key_for("https://b.example"), None);
         assert_eq!(memory.key_for("https://a.example/"), None);
+    }
+
+    /// The example file in `freshkube-prefs`, as the app writes it: what
+    /// loads from it saves back byte for byte.
+    #[test]
+    fn the_example_file_round_trips_byte_for_byte() {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = directory.path().join("preferences.json");
+        std::fs::write(file(&preferences), EXAMPLE).unwrap();
+        let saved = load(&preferences).expect("the example loads");
+        assert_eq!(saved.url, "https://coroot.example");
+        write(&file(&preferences), &saved).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(file(&preferences)).unwrap(),
+            EXAMPLE
+        );
+    }
+
+    #[test]
+    fn an_unusable_file_is_nothing_saved() {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = directory.path().join("preferences.json");
+        let padding = " ".repeat(64 * 1024);
+        for text in [
+            "not json",
+            "[]",
+            "null",
+            "{}",
+            r#"{"auth":"session"}"#,
+            &format!("{EXAMPLE}{padding}"),
+        ] {
+            std::fs::write(file(&preferences), text).unwrap();
+            assert_eq!(load(&preferences), None, "{text:.20}");
+        }
+        std::fs::remove_file(file(&preferences)).unwrap();
+        std::fs::create_dir(file(&preferences)).unwrap();
+        assert_eq!(load(&preferences), None);
     }
 }
