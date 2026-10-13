@@ -427,6 +427,14 @@ impl Pilot {
         self.show_row(next, window, cx);
     }
 
+    /// A page's key: opens it, but not a Talos page without Talos.
+    pub(super) fn show_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        if self.kubernetes_only.is_some() && page.needs_talos() {
+            return;
+        }
+        self.navigate_from_keyboard(page, window, cx);
+    }
+
     pub(super) fn show_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.kubernetes_only.is_some() && row >= 6 {
             return;

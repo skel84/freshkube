@@ -47,27 +47,35 @@ impl Render for Pilot {
             .key_context(freshkube_ui::page::SHELL_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
+            .on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
+                view.show_page(Page::Overview, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowNodes, window, cx| {
+                view.show_page(Page::Nodes, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowNamespaces, window, cx| {
+                view.open_builtin("namespaces", window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowEvents, window, cx| {
+                view.open_builtin("events", window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowHealth, window, cx| {
+                view.show_page(Page::Health, window, cx)
+            }))
             .on_action(
-                cx.listener(|view, _: &ShowOverview, window, cx| view.show_row(0, window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &ShowNodes, window, cx| view.show_row(1, window, cx)))
-            .on_action(
-                cx.listener(|view, _: &ShowNamespaces, window, cx| view.show_row(2, window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &ShowEvents, window, cx| view.show_row(3, window, cx)))
-            .on_action(cx.listener(|view, _: &ShowHealth, window, cx| view.show_row(4, window, cx)))
-            .on_action(cx.listener(|view, _: &ShowEtcd, window, cx| view.show_row(6, window, cx)))
-            .on_action(
-                cx.listener(|view, _: &ShowSystemServices, window, cx| {
-                    view.show_row(7, window, cx)
+                cx.listener(|view, _: &ShowEtcd, window, cx| {
+                    view.show_page(Page::Etcd, window, cx)
                 }),
             )
-            .on_action(
-                cx.listener(|view, _: &ShowSecurity, window, cx| view.show_row(8, window, cx)),
-            )
-            .on_action(
-                cx.listener(|view, _: &ShowLifecycle, window, cx| view.show_row(9, window, cx)),
-            )
+            .on_action(cx.listener(|view, _: &ShowSystemServices, window, cx| {
+                view.show_page(Page::SystemServices, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowSecurity, window, cx| {
+                view.show_page(Page::Security, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowLifecycle, window, cx| {
+                view.show_page(Page::Lifecycle, window, cx)
+            }))
             .on_action(
                 cx.listener(|view, _: &NextScreen, window, cx| view.adjacent_row(true, window, cx)),
             )
