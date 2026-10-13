@@ -279,6 +279,11 @@ async fn probe(
 
 #[tokio::main]
 async fn main() {
+    // Core reads no environment itself: hand it the one this process runs in.
+    freshkube_core::ambient::install(freshkube_core::ambient::Ambient::from_lookup(
+        |name| std::env::var_os(name),
+        std::env::home_dir(),
+    ));
     let args = parse();
     let sources = kubeconfig_sources(None);
     let need = |value: &Option<Named>, what: &str| -> Named {
