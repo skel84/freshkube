@@ -100,12 +100,8 @@ type StatusKey = (u64, Option<(SessionIdentity, u64)>, Option<(String, bool)>);
 
 impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 
-impl ScreenPanel for LifecycleScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl LifecycleScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -129,6 +125,12 @@ impl ScreenPanel for LifecycleScreen {
             status: None,
             status_key: None,
         }
+    }
+}
+
+impl ScreenPanel for LifecycleScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {

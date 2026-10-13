@@ -322,7 +322,7 @@ impl Pilot {
         let failure = self
             .config_error
             .as_deref()
-            .or_else(|| self.overview.error());
+            .or_else(|| self.overview.error().map(String::as_str));
         let reading = if self.kubernetes_only.is_some() || self.overview.data().is_some() {
             Reading::Answered
         } else if let Some(failure) = failure {
@@ -340,6 +340,7 @@ impl Pilot {
     }
 
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
+        let shown = self.shown_page();
         self.publish_reading(cx);
         self.column_changed();
         self.column_state.prepare(
@@ -385,9 +386,15 @@ impl Pilot {
                 .kubernetes_summary
                 .data()
                 .and_then(|summary| summary.nodes.error())
-                .or_else(|| self.registry.active().kubernetes_summary.error())
+                .or_else(|| {
+                    self.registry
+                        .active()
+                        .kubernetes_summary
+                        .error()
+                        .map(String::as_str)
+                })
                 .or(self.config_error.as_deref())
-                .or_else(|| self.overview.error());
+                .or_else(|| self.overview.error().map(String::as_str));
             Some(if let Some(error) = error {
                 Empty::Failed(error.to_owned().into())
             } else if kubernetes.is_some() {
@@ -403,6 +410,11 @@ impl Pilot {
         self.node_workspace
             .rebuild_columns(self.kubernetes_only.is_none());
         self.node_workspace.sync_tabs();
+        // A node that left closes the pane, and one that lost its Talos
+        // side drops its Talos tabs: the pane's screen hides.
+        if self.shown_page() != shown {
+            self.sync_visible_soon(cx);
+        }
         self.overview_display = crate::presentation::overview::Overview::build(
             &self.node_workspace.rows,
             &self.nodes,
@@ -416,7 +428,11 @@ impl Pilot {
             self.kubernetes_only.is_some(),
         );
         if self.overview.is_stale() {
-            let reason = self.overview.error().unwrap_or("The refresh failed.");
+            let reason = self
+                .overview
+                .error()
+                .map(String::as_str)
+                .unwrap_or("The refresh failed.");
             self.overview_display =
                 std::mem::take(&mut self.overview_display).talos_stale(reason.to_owned().into());
         }
@@ -555,6 +571,8 @@ impl Pilot {
             history.set_subject(subject, cx);
             history.set_visible(overview, cx);
         });
+        // The pane's Talos screens show with their tab.
+        self.sync_visible(window, cx);
     }
 
     fn activate_node_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {

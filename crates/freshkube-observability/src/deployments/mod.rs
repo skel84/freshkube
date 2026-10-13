@@ -320,7 +320,7 @@ impl ObservabilityPage {
                 _ => None,
             }
         } else {
-            self.live.revision.error().map(str::to_owned)
+            self.live.revision.error().cloned()
         }
     }
 

@@ -4,11 +4,12 @@
 //! Today the shell reaches its pages three ways, each with its own events
 //! and its own shape of source (#579). [`PageEvent`] gathers those events
 //! and [`PageSource`] what `push_source` hands them, so a page takes them
-//! through its [`ScreenHandle`] as the screens do. Until every page has
-//! moved, the shell still reaches each the old way.
+//! through its [`ScreenHandle`] as the screens do. The shell hears every
+//! page through [`PageEvent`] and tells each through its handle whether it
+//! shows; until #579's step 3 it still hands each its source the old way.
 #![expect(
     dead_code,
-    reason = "the shell reaches its pages through these from #579's step 2"
+    reason = "the shell hands its pages a PageSource from #579's step 3"
 )]
 
 use std::rc::Rc;
@@ -142,12 +143,19 @@ impl PageSource {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the shell uses these from #579's step 2")
-)]
+impl PartialEq for ScreenHandle {
+    /// The same page, by its entity.
+    fn eq(&self, other: &Self) -> bool {
+        self.view().entity_id() == other.view().entity_id()
+    }
+}
+
 impl ScreenHandle {
     /// Hands the page the shell's whole source; it takes what it reads.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the shell uses it from #579's step 3")
+    )]
     pub(crate) fn set_page_source(&self, source: PageSource, window: &mut Window, cx: &mut App) {
         (self.page_source)(source, window, cx)
     }
@@ -159,6 +167,7 @@ impl ScreenHandle {
 
     /// Hears the page's requests, as [`PageEvent`]s, while the
     /// subscriptions are kept.
+    #[must_use = "dropping the subscriptions stops the page's events"]
     pub(crate) fn subscribe(
         &self,
         window: &mut Window,
@@ -195,10 +204,6 @@ mod tests {
     }
 
     impl ScreenPanel for Fake {
-        fn new(_: tokio::runtime::Handle, _: &mut Window, _: &mut Context<Self>) -> Self {
-            Self(Vec::new())
-        }
-
         fn set_source(
             &mut self,
             source: Option<ScreenSource>,
@@ -240,11 +245,10 @@ mod tests {
     #[gpui_kit::test]
     fn a_page_registered_by_its_handle_hears_the_shell_and_is_heard(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
-        let runtime = tokio::runtime::Runtime::new().unwrap();
         let heard = Rc::new(RefCell::new(Vec::new()));
         let mut page = None;
         let window = cx.open_window(size(px(400.), px(300.)), |window, cx| {
-            let fake = cx.new(|cx| Fake::new(runtime.handle().clone(), window, cx));
+            let fake = cx.new(|_| Fake(Vec::new()));
             page = Some(fake.clone());
             Root::new(fake, window, cx)
         });
