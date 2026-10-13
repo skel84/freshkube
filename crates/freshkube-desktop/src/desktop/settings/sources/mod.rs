@@ -23,12 +23,14 @@ mod source;
 #[cfg(test)]
 mod tests;
 
-use crate::backend::{self, OwnedJob};
+use crate::backend;
 use crate::resources::{KubeAccess, KubeSource};
 use crate::ui::{self, dp};
 use freshkube_core::resources::{Failure, FailureKind};
+use freshkube_core::snapshot::Request;
 use freshkube_core::workspace::{Chosen, Part, Sources};
 use freshkube_delivery::entry::{self, Checked, Reach};
+use freshkube_reads::{Loader, OnShow};
 use freshkube_ui::{menu, page, table};
 use gpui_kit::component::{Disableable, Sizable, button::Button, v_flex};
 use gpui_kit::prelude::*;
@@ -89,6 +91,16 @@ enum Check {
     Failed(String),
 }
 
+/// The sources being checked and the access that reads them. The open
+/// connection's id includes its access session; it matters only when used.
+#[derive(Clone, PartialEq, Eq)]
+struct CheckIdentity {
+    sources: Sources,
+    kubeconfig: Option<std::path::PathBuf>,
+    open: Option<String>,
+    example: bool,
+}
+
 pub(crate) struct SourcesList {
     rows: Vec<SourceRow>,
     columns: Vec<Column>,
@@ -102,9 +114,8 @@ pub(crate) struct SourcesList {
     /// The open connection, which the workspace of one reads.
     source: Option<KubeSource>,
     check: Check,
-    generation: u64,
-    job: Option<OwnedJob>,
-    task: Option<Task<()>>,
+    /// Owns the check's completion and work; `check` keeps its display state.
+    read: Loader<(), CheckIdentity>,
     /// How long a check may take; shorter in tests.
     deadline: Duration,
     focus: FocusHandle,
@@ -127,9 +138,7 @@ impl SourcesList {
             example: false,
             source: None,
             check: Check::Never,
-            generation: 0,
-            job: None,
-            task: None,
+            read: Loader::default(),
             deadline: DEADLINE,
             focus: cx.focus_handle(),
             #[cfg(test)]
@@ -176,6 +185,7 @@ impl SourcesList {
     /// The page shows or hides. Hiding drops a check in flight, which says
     /// Not checked when the page shows again; a finished one is kept.
     pub(in crate::desktop) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.read.set_visible(visible, OnShow::Never, cx);
         if !visible && self.check == Check::Running {
             self.forget();
             self.derive_rows();
@@ -191,11 +201,23 @@ impl SourcesList {
             .any(|chosen| matches!(chosen, Chosen::Open))
     }
 
+    fn identity(&self) -> CheckIdentity {
+        CheckIdentity {
+            sources: self.sources.clone(),
+            kubeconfig: self.kubeconfig.clone(),
+            open: self
+                .reads_open()
+                .then(|| self.source.as_ref().map(|source| source.id.clone()))
+                .flatten(),
+            example: self.example,
+        }
+    }
+
     /// Drops the check in flight and what the last one found.
     fn forget(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        self.job = None;
-        self.task = None;
+        // Resolve instead of reset so even another check of the same
+        // identity cannot reuse a forgotten request's generation.
+        self.read.resolve(self.identity(), Ok(()));
         self.check = Check::Never;
     }
 
@@ -207,7 +229,6 @@ impl SourcesList {
             return;
         }
         self.forget();
-        let generation = self.generation;
         let example = self.example
             || (self.reads_open()
                 && matches!(
@@ -215,11 +236,13 @@ impl SourcesList {
                     Some(KubeAccess::Example)
                 ));
         if example {
+            self.read.resolve(self.identity(), Ok(()));
             self.check = Check::Done(self.example_check());
             self.derive_rows();
             cx.notify();
             return;
         }
+        let request = self.read.start(self.identity());
         let sources = self.sources.clone();
         let explicit = self.kubeconfig.clone();
         let open = self
@@ -253,25 +276,32 @@ impl SourcesList {
                 Ok(entry::check_all(&sources, &kubeconfigs, open).await)
             },
         );
-        self.job = Some(job);
         self.check = Check::Running;
-        self.task = Some(cx.spawn(async move |this, cx| {
+        let task = cx.spawn(async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("The check stopped".into()));
-            _ = this.update(cx, |list, cx| list.answer(generation, result, cx));
-        }));
+            _ = this.update(cx, |list, cx| list.answer(&request, result, cx));
+        });
+        self.read.run(Some(job), task);
         self.derive_rows();
         cx.notify();
     }
 
     /// A check's answer, kept only while it is the one in flight.
-    fn answer(&mut self, generation: u64, result: Result<Checked, String>, cx: &mut Context<Self>) {
-        if generation != self.generation {
+    fn answer(
+        &mut self,
+        request: &Request<CheckIdentity>,
+        result: Result<Checked, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.read.land(
+            request,
+            result.as_ref().map(|_| ()).map_err(Clone::clone),
+            cx,
+        ) {
             return;
         }
-        self.job = None;
-        self.task = None;
         self.check = match result {
             Ok(checked) => Check::Done(checked),
             Err(why) => Check::Failed(why),
@@ -371,7 +401,7 @@ impl SourcesList {
 
     #[cfg(test)]
     pub(super) fn is_checking(&self) -> bool {
-        self.job.is_some()
+        self.read.is_loading()
     }
 }
 
