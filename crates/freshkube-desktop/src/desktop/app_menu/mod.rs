@@ -276,9 +276,10 @@ fn entries(
 }
 
 /// The platform whose menu the window has ([`Pilot`]'s `menu_platform`).
-pub(super) fn menu_platform() -> Platform {
-    #[cfg(debug_assertions)]
-    if std::env::var("FRESHKUBE_APP_MENU").as_deref() == Ok("button") {
+/// `button` is `DebugOptions`' `FRESHKUBE_APP_MENU=button`, which a debug
+/// build shows as the Linux menu button.
+pub(super) fn menu_platform(button: bool) -> Platform {
+    if button {
         return Platform::Linux;
     }
     Platform::current()

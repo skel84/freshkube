@@ -154,7 +154,12 @@ pub(crate) struct ChangesPage {
 impl EventEmitter<ChangesEvent> for ChangesPage {}
 
 impl ChangesPage {
-    pub(crate) fn new(runtime: tokio::runtime::Handle, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        runtime: tokio::runtime::Handle,
+        hold: bool,
+        shape: Shape,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let display = Display::default();
@@ -163,8 +168,8 @@ impl ChangesPage {
             runtime,
             source: None,
             visible: false,
-            hold: crate::fixture::hold().applications,
-            shape: super::Variant::from_env().shape(),
+            hold,
+            shape,
             example_delay: Duration::ZERO,
             snapshot: Snapshot::default(),
             pending: false,

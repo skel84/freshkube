@@ -32,15 +32,25 @@ impl Global for TextSize {}
 /// Applies the size saved in `preferences`, or the default, and binds the
 /// shortcuts. Call it once, after `theme::install`.
 pub fn install(preferences: Option<PathBuf>, cx: &mut App) {
-    let size = preferences.as_deref().and_then(saved).unwrap_or(BASE_TEXT);
-    // Debug builds can start at a size, for visual checks, without
-    // saving it.
-    #[cfg(debug_assertions)]
-    let size = std::env::var("FRESHKUBE_TEXT_SIZE")
+    install_with(preferences, None, cx)
+}
+
+/// The step `FRESHKUBE_TEXT_SIZE` names: one of `STEPS`, else `None`.
+pub fn parse(value: &str) -> Option<f32> {
+    value
+        .parse::<f32>()
         .ok()
-        .and_then(|size| size.parse::<f32>().ok())
         .filter(|size| STEPS.contains(size))
-        .unwrap_or(size);
+}
+
+/// [`install`], starting at `start` instead of the saved size when given,
+/// for visual checks: the choice is not saved. The caller parses it from
+/// the debug knobs (`parse`); the filter here is defensive.
+pub fn install_with(preferences: Option<PathBuf>, start: Option<f32>, cx: &mut App) {
+    let size = start
+        .filter(|size| STEPS.contains(size))
+        .or_else(|| preferences.as_deref().and_then(saved))
+        .unwrap_or(BASE_TEXT);
     cx.set_global(TextSize { size, preferences });
     cx.bind_keys([
         // Command-Shift-= arrives as `+`. macOS's View menu shows the first
@@ -156,6 +166,36 @@ mod tests {
         assert_eq!(value["other"], true);
         assert_eq!(saved(&path), Some(20.));
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_start_beats_the_saved_size_and_is_not_saved(cx: &mut gpui_kit::TestAppContext) {
+        let directory = directory("start");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("preferences.json");
+        save(&path, 14.).unwrap();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            install_with(Some(path.clone()), Some(18.), cx);
+            assert_eq!(current(cx), 18.);
+            // A start outside `STEPS` falls back to the saved size.
+            install_with(Some(path.clone()), Some(15.), cx);
+            assert_eq!(current(cx), 14.);
+            install_with(Some(path.clone()), None, cx);
+            assert_eq!(current(cx), 14.);
+        });
+        assert_eq!(saved(&path), Some(14.));
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn parse_keeps_one_of_the_steps() {
+        assert_eq!(parse("16"), Some(16.));
+        assert_eq!(parse("16.0"), Some(16.));
+        for bad in ["15", "", "big", "-16"] {
+            assert_eq!(parse(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
