@@ -746,17 +746,6 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        #[cfg(any(debug_assertions, feature = "stress"))]
-        let debug = options.debug.clone();
-        let names_source =
-            options.fixture || options.named_source || options.maintenance_endpoint.is_some();
-        let launched = switch::Launched {
-            kubernetes_only: options.kubernetes_only,
-            kubeconfig: options.kubeconfig_path.clone(),
-            kube_context: options.kube_context.clone(),
-            talosconfig: options.config_path.clone(),
-            talos_context: options.context.clone(),
-        };
         // The window opens on Overview, which has no navigation column.
         crate::screens::set_chrome_width(RAIL_WIDTH);
         // Opened before the pages, which read their splits' sizes from it.
@@ -803,17 +792,36 @@ impl Pilot {
             window,
             cx,
         );
-        view.load_workspace(cx);
-        view.rebuild_switcher(cx);
-        let workspace_entry = view.launch_entry(names_source, cx);
+        view.start(options, window, cx);
+        view
+    }
+
+    /// Starts the shell once it is made: reads the workspace, opens the
+    /// first source, hears what needs the shell itself, takes focus and
+    /// gives Overview its first frame.
+    fn start(&mut self, options: GpuiOptions, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        let debug = options.debug.clone();
+        let names_source =
+            options.fixture || options.named_source || options.maintenance_endpoint.is_some();
+        let launched = switch::Launched {
+            kubernetes_only: options.kubernetes_only,
+            kubeconfig: options.kubeconfig_path.clone(),
+            kube_context: options.kube_context.clone(),
+            talosconfig: options.config_path.clone(),
+            talos_context: options.context.clone(),
+        };
+        self.load_workspace(cx);
+        self.rebuild_switcher(cx);
+        let workspace_entry = self.launch_entry(names_source, cx);
         let started_entry = workspace_entry.is_some();
         if let Some((id, note)) = workspace_entry {
-            view.activate_entry(&id, window, cx);
+            self.activate_entry(&id, window, cx);
             if let Some(note) = note {
                 gpui_kit::component::WindowExt::push_notification(window, note, cx);
             }
         } else {
-            view.open_initial_source(
+            self.open_initial_source(
                 options.kubernetes_only,
                 options.kubeconfig_path,
                 options.kube_context,
@@ -823,29 +831,28 @@ impl Pilot {
             );
         }
         if !started_entry {
-            view.adopt_launched_entry(&launched, cx);
+            self.adopt_launched_entry(&launched, cx);
         }
-        view._subscriptions
-            .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
-        view.watch_menus(window, cx);
-        view.publish_reading(cx);
-        view.chrome.parts.watch(&view, cx);
-        view.prepare_context_display(window, cx);
+        self._subscriptions
+            .push(cx.observe(&self.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
+        self.watch_menus(window, cx);
+        self.publish_reading(cx);
+        self.chrome.parts.watch(self, cx);
+        self.prepare_context_display(window, cx);
         // Initial shell focus makes contextual commands available without a click.
-        window.focus(&view.focus, cx);
+        window.focus(&self.focus, cx);
         // Without Talos, the one page that reads is the first one shown.
-        if view.kubernetes_only.is_some() {
-            view.navigate_from_keyboard(Page::Overview, window, cx);
+        if self.kubernetes_only.is_some() {
+            self.navigate_from_keyboard(Page::Overview, window, cx);
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
-        view.open_startup_page(&debug, window, cx);
+        self.open_startup_page(&debug, window, cx);
         #[cfg(feature = "stress")]
         crate::stress::start(window, cx);
         // Overview's first frame needs no notify of the shell to know where
         // things stand.
-        view.push_overview_state(cx);
-        view.push_attention_stale(cx);
-        view
+        self.push_overview_state(cx);
+        self.push_attention_stale(cx);
     }
 
     /// The shell around the owners `Pilot::new` made, with the session as
