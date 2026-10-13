@@ -1,0 +1,1 @@
+- **Delivery sources:** Settings uses the shared read owner for its source check, preserving its states and cancellation when the workspace changes or the page hides.
