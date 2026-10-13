@@ -84,7 +84,8 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     }
 
     /// Whether the owner shows it, as [`set_visible`](Self::set_visible)
-    /// last said; a new loader is shown.
+    /// last said; a new loader is shown. For tests: an owner keeps its own.
+    #[cfg(any(test, feature = "testing"))]
     pub fn is_visible(&self) -> bool {
         self.visible
     }

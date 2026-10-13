@@ -18,8 +18,8 @@ freshkube-core.workspace = true
 tokio.workspace = true
 
 [features]
-# Test hooks for crates whose screens own a loader (`begin`, `apply`,
-# `is_stale`); turned on from dev-dependencies.
+# Test hooks for crates whose screens own a loader or a watch (`begin`, `apply`,
+# `is_stale`, `is_visible`); turned on from dev-dependencies.
 testing = []
 
 [dev-dependencies]

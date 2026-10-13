@@ -80,7 +80,9 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
     /// items into, dropping any earlier stream. Each batch lands through
     /// `apply` only while this is still the latest start for that identity;
     /// `slot` finds the watch again inside the view. `apply` may stop or
-    /// start the watch again. When `work` returns, the watch stops.
+    /// start the watch again, but never replaces it with a new one, whose
+    /// generations start over and could match this start's. When `work`
+    /// returns, the watch stops.
     #[allow(clippy::too_many_arguments)]
     pub fn start<V: 'static, Work, Fut>(
         &mut self,
@@ -229,7 +231,8 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
     }
 
     /// Whether the owner shows it, as [`set_visible`](Self::set_visible)
-    /// last said; a new watch is shown.
+    /// last said; a new watch is shown. For tests: an owner keeps its own.
+    #[cfg(any(test, feature = "testing"))]
     pub fn is_visible(&self) -> bool {
         self.visible
     }
