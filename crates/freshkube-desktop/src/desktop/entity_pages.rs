@@ -2,11 +2,12 @@
 //! [`ScreenHandle`] as the Talos screens, and what the shell does with
 //! what every page asks of it.
 //!
-//! Resources, Monitoring, Observability, Applications and Settings hear
+//! Resources, Monitoring, Observability, Applications and Settings take
+//! their part of the shell's [`PageSource`] and hear
 //! [`set_visible`](ScreenPanel::set_visible) through their handle, which is
 //! where they drop their reads on hide, and the shell hears their events
-//! through it as [`PageEvent`]s. Their sources, refreshes and status still
-//! go the old way until #579's step 3 keeps every page in one map.
+//! through it as [`PageEvent`]s. Their refreshes and status still go the
+//! old way until #579's step 3 keeps every page in one map.
 
 use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
@@ -17,7 +18,7 @@ use crate::monitoring::page::{MonitoringEvent, MonitoringPage};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
 use crate::resources::{self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen};
 use crate::screens::{
-    PageEvent, PageEventFn, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
+    PageEvent, PageEventFn, PageSource, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
 };
 use freshkube_core::resources::builtin;
 use freshkube_ui::status::Segment;
@@ -43,9 +44,13 @@ impl EventEmitter<ScreenEvent> for ResourcesScreen {}
 
 /// Resources lists and watches only while shown.
 impl ScreenPanel for ResourcesScreen {
-    /// Resources reads no Talos target; its connection still arrives
-    /// through `push_source`'s own call.
+    /// Resources reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The Kubernetes connection it lists from.
+    fn set_page_source(&mut self, source: PageSource, window: &mut Window, cx: &mut Context<Self>) {
+        ResourcesScreen::set_source(self, source.kube, window, cx)
+    }
 
     fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
         ResourcesScreen::set_visible(self, visible, window, cx)
@@ -80,9 +85,13 @@ impl EventEmitter<ScreenEvent> for MonitoringPage {}
 
 /// Monitoring finds Prometheus and asks its panels only while shown.
 impl ScreenPanel for MonitoringPage {
-    /// Monitoring reads no Talos target; its cluster still arrives through
-    /// `push_source`'s own call.
+    /// Monitoring reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The cluster it finds Prometheus in.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        MonitoringPage::set_source(self, source.cluster(), cx)
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         MonitoringPage::set_visible(self, visible, cx)
@@ -109,9 +118,13 @@ impl EventEmitter<ScreenEvent> for ObservabilityPage {}
 
 /// Observability reads Coroot only while shown.
 impl ScreenPanel for ObservabilityPage {
-    /// Observability reads no Talos target; its access still arrives
-    /// through `push_source`'s own call.
+    /// Observability reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The connection's id, which it keys Coroot's access by.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        ObservabilityPage::set_source(self, source.access(), cx)
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         ObservabilityPage::set_visible(self, visible, cx)
@@ -143,9 +156,13 @@ impl EventEmitter<ScreenEvent> for ApplicationsPage {}
 /// Applications, its Changes list and its change page read only while
 /// shown.
 impl ScreenPanel for ApplicationsPage {
-    /// Applications reads no Talos target; its connection and entry still
-    /// arrive through `push_source`'s own call.
+    /// Applications reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The connection, and the workspace entry it is.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        ApplicationsPage::set_source(self, source.kube, source.entry, cx)
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         ApplicationsPage::set_visible(self, visible, cx)
@@ -181,9 +198,14 @@ impl EventEmitter<ScreenEvent> for SettingsPage {}
 
 /// Settings' Delivery sources drops a check in flight on hide.
 impl ScreenPanel for SettingsPage {
-    /// Settings reads no Talos target; its sources' connection still
-    /// arrives through `push_source`'s own call.
+    /// Settings reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The connection its Delivery sources check with.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        self.sources
+            .update(cx, |sources, cx| sources.set_source(source.kube, cx));
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.sources

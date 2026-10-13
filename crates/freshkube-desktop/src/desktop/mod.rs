@@ -58,8 +58,8 @@ use crate::{
     },
     screens::{
         DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
-        OperationsScreen, PageEvent, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel,
-        ScreenSource, SecurityScreen, StorageScreen, WorkloadsScreen,
+        OperationsScreen, PageEvent, PageSource, ProcessesScreen, ScreenEvent, ScreenHandle,
+        ScreenPanel, ScreenSource, SecurityScreen, StorageScreen, WorkloadsScreen,
     },
     state::Snapshot,
     text_size, theme,
@@ -1584,13 +1584,28 @@ impl Pilot {
             .map(|(_, handle)| handle.clone())
     }
 
-    /// Hands every screen the current source; the visible one loads if empty.
+    /// What every page is handed: the Talos target, and the Kubernetes
+    /// connection with the entry and access it is.
+    fn page_source(&self) -> PageSource {
+        PageSource {
+            screen: self.screen_source(),
+            kube: self.kube_source(),
+            // The entry the window is on is the one the source's connection
+            // is: both change together here.
+            entry: self.active_cluster().map(str::to_owned),
+            kube_identity: self.kube_identity(),
+        }
+    }
+
+    /// Hands every page the current source; the visible screen loads if
+    /// empty. The screens hear first, then the entities beside the pages,
+    /// then the entity pages, in the order they show and hide.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_node_metrics(window, cx);
         self.deliver_summary_nodes(cx);
-        let source = self.screen_source();
+        let source = self.page_source();
         for (_, screen) in &self.screens {
-            screen.set_source(source.clone(), window, cx);
+            screen.set_page_source(source.clone(), window, cx);
         }
         if let Some(data) = self.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);
@@ -1599,32 +1614,19 @@ impl Pilot {
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
         }
-        let source = self.kube_source();
-        self.sync_search_source(source.clone(), window, cx);
+        let kube = source.kube.clone();
+        self.sync_search_source(kube.clone(), window, cx);
         self.custom
-            .update(cx, |custom, cx| custom.set_source(source.clone(), cx));
+            .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
         self.node_pods.update(cx, |resources, cx| {
-            resources.set_source(source.clone(), window, cx)
+            resources.set_source(kube.clone(), window, cx)
         });
-        let cluster = source.as_ref().map(KubeSource::cluster);
-        self.monitoring
-            .update(cx, |monitoring, cx| monitoring.set_source(cluster, cx));
-        let id = source.as_ref().map(|source| source.id.clone());
-        self.observability
-            .update(cx, |page, cx| page.set_source(id, cx));
-        // The entry the window is on is the one the source's connection is:
-        // both change together here.
-        let entry = self.active_cluster().map(str::to_owned);
-        self.applications
-            .update(cx, |page, cx| page.set_source(source.clone(), entry, cx));
-        let sources = self.settings_page.read(cx).sources.clone();
-        sources.update(cx, |list, cx| list.set_source(source.clone(), cx));
-        let identity = self.kube_identity();
         self.dock.update(cx, |dock, cx| {
-            dock.set_source(source.clone(), identity.as_deref(), window, cx)
+            dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
         });
-        self.resources
-            .update(cx, |resources, cx| resources.set_source(source, window, cx));
+        for (_, page) in &self.pages {
+            page.set_page_source(source.clone(), window, cx);
+        }
     }
 
     /// Hands pod and node history the Monitoring page's Prometheus.
