@@ -24,6 +24,7 @@ use talos_rs::{EtcdAlarm, EtcdMemberInfo, EtcdMemberStatus};
 use tokio::runtime::Handle;
 
 use super::{Loader, Scope, ScreenEvent, ScreenPanel, ScreenSource, TableLoading, first_read};
+use crate::debug_options::EtcdExample as Example;
 use crate::presentation;
 use crate::ui::{self, Tone};
 
@@ -57,6 +58,9 @@ pub(crate) struct EtcdScreen {
     derived: Derived,
     /// The table's rows until the first answer.
     loading: TableLoading,
+    /// How the example is reshaped (`FRESHKUBE_ETCD`); `None` is the healthy
+    /// example.
+    example: Option<Example>,
 }
 
 /// One member as the table shows it.
@@ -214,7 +218,14 @@ impl EtcdScreen {
             state: None,
             derived: Derived::default(),
             loading: TableLoading::new(PREFIX, cx),
+            example: None,
         }
+    }
+
+    /// Reshapes the example data for captures (`DebugOptions`).
+    pub(crate) fn with_example(mut self, example: Option<Example>) -> Self {
+        self.example = example;
+        self
     }
 }
 
@@ -259,7 +270,8 @@ impl ScreenPanel for EtcdScreen {
             return;
         }
         let Some(live) = source.live.clone() else {
-            self.loader.resolve(source.target.clone(), example(&source));
+            self.loader
+                .resolve(source.target.clone(), example(&source, self.example));
             cx.notify();
             return;
         };
@@ -711,7 +723,7 @@ fn alarm_text(alarm: &EtcdAlarm) -> String {
 /// Example members for `--fixture`: the control planes of the example cluster,
 /// healthy, with one member whose database has grown and which trails the
 /// leader a little.
-fn example(source: &ScreenSource) -> Result<EtcdHealthSnapshot, String> {
+fn example(source: &ScreenSource, shape: Option<Example>) -> Result<EtcdHealthSnapshot, String> {
     let Some(node) = source.node() else {
         return Err("Example data has no such node".into());
     };
@@ -763,7 +775,7 @@ fn example(source: &ScreenSource) -> Result<EtcdHealthSnapshot, String> {
             }
         })
         .collect();
-    let (members, statuses, alarms) = example_state(members, statuses);
+    let (members, statuses, alarms) = example_state(members, statuses, shape);
     Ok(assemble_etcd_health(
         source.inspection_target(),
         members,
@@ -773,29 +785,26 @@ fn example(source: &ScreenSource) -> Result<EtcdHealthSnapshot, String> {
     ))
 }
 
-/// Debug builds reshape the example for captures with `FRESHKUBE_ETCD`:
+/// Debug builds reshape the example for captures with `FRESHKUBE_ETCD`
+/// (`DebugOptions`):
 /// `lost` (every member answers, none follows a leader), `single` (one
 /// member) or `alarms` (five, more than the banner lists).
 fn example_state(
     mut members: Vec<EtcdMemberInfo>,
     mut statuses: Vec<EtcdMemberStatus>,
+    shape: Option<Example>,
 ) -> (Vec<EtcdMemberInfo>, Vec<EtcdMemberStatus>, Vec<EtcdAlarm>) {
-    let state = if cfg!(debug_assertions) {
-        std::env::var("FRESHKUBE_ETCD").ok()
-    } else {
-        None
-    };
     let mut alarms = Vec::new();
-    match state.as_deref() {
-        Some("lost") => statuses.iter_mut().for_each(|status| status.leader_id = 0),
-        Some("single") => {
+    match shape {
+        Some(Example::Lost) => statuses.iter_mut().for_each(|status| status.leader_id = 0),
+        Some(Example::Single) => {
             members.truncate(1);
             statuses.truncate(1);
             if let Some(status) = statuses.first_mut() {
                 status.leader_id = status.member_id;
             }
         }
-        Some("alarms") => {
+        Some(Example::Alarms) => {
             alarms = statuses
                 .iter()
                 .map(|status| (status, talos_rs::EtcdAlarmType::NoSpace))

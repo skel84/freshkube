@@ -168,7 +168,7 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
         .run(move |cx| {
             gpui_kit::init(cx);
             theme::install(cx);
-            text_size::install(options.preferences.clone(), cx);
+            text_size::install_with(options.preferences.clone(), options.debug.text_size, cx);
             // Kit's animations draw still when the OS asks for reduced motion.
             // Tests never run this, so they keep the reduced motion they set.
             freshkube_ui::motion::follow_system(cx);
@@ -219,7 +219,9 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
                 #[cfg(debug_assertions)]
                 None if example_maintenance => {
                     gpui_kit::open_window(window_options, cx, |window, cx| {
-                        cx.new(|cx| MaintenanceView::example(runtime, window, cx))
+                        cx.new(|cx| {
+                            MaintenanceView::example(runtime, options.debug.theme, window, cx)
+                        })
                     })
                     .map(|_| ())
                 }
@@ -441,8 +443,8 @@ pub(crate) struct Pilot {
     /// Whether the settings popover is open; a page can open it too.
     settings_open: bool,
     /// The platform whose menu the window has: the one it runs on, but a
-    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`,
-    /// and tests choose.
+    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`
+    /// (`DebugOptions::app_menu_button`), and tests choose.
     menu_platform: freshkube_ui::platform::Platform,
     /// The menu button's menu while it's open, and its dismissal's
     /// subscription.
@@ -461,7 +463,7 @@ pub(crate) struct Pilot {
     elapsed: Duration,
     fixture: bool,
     /// Example data holds the Talos overview and the Kubernetes summary
-    /// (`fixture::hold`), so the pages that wait for them stay loading.
+    /// (`DebugOptions::hold`), so the pages that wait for them stay loading.
     fixture_hold: bool,
     fixture_tick: u64,
     focus: FocusHandle,
@@ -800,6 +802,7 @@ impl Pilot {
     ) -> Self {
         #[cfg(any(debug_assertions, feature = "stress"))]
         let debug = options.debug.clone();
+        let hold = options.debug.hold;
         let names_source =
             options.fixture || options.named_source || options.maintenance_endpoint.is_some();
         let launched = switch::Launched {
@@ -847,7 +850,8 @@ impl Pilot {
         let mut node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
         // The header the loading rows sit under before anything answers.
         node_workspace.rebuild_columns(!options.kubernetes_only);
-        let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        let node_pods =
+            cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx).holding(hold.lists));
         let mut subscriptions = Vec::new();
         // Nodes' host reads the shell's state, so whatever notifies the
         // shell redraws it; the countdown tick notifies only its ring.
@@ -883,7 +887,17 @@ impl Pilot {
                     PageId::Diagnostics => {
                         Self::screen(DiagnosticsScreen::new, runtime, window, cx)
                     }
-                    PageId::Etcd => Self::screen(EtcdScreen::new, runtime, window, cx),
+                    PageId::Etcd => {
+                        let etcd = options.debug.etcd;
+                        Self::screen(
+                            move |runtime, window, cx| {
+                                EtcdScreen::new(runtime, window, cx).with_example(etcd)
+                            },
+                            runtime,
+                            window,
+                            cx,
+                        )
+                    }
                     PageId::Health => ScreenHandle::new(health.clone()),
                     PageId::Security => Self::screen(SecurityScreen::new, runtime, window, cx),
                     PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
@@ -893,7 +907,8 @@ impl Pilot {
                 (page, handle)
             })
             .collect();
-        let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        let resources =
+            cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx).holding(hold.lists));
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
@@ -907,7 +922,7 @@ impl Pilot {
                 secrets.clone(),
                 cx,
             );
-            if crate::fixture::hold().monitoring {
+            if hold.monitoring {
                 page.hold_examples();
             }
             page
@@ -921,7 +936,7 @@ impl Pilot {
                 window,
                 cx,
             );
-            if crate::fixture::hold().coroot {
+            if hold.coroot {
                 page.hold_examples();
             }
             page
@@ -947,8 +962,15 @@ impl Pilot {
             // shows only what start, stop and the visible page change.
             cx.observe(&logs, |_, _, cx| cx.notify()),
         ]);
-        let applications =
-            cx.new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx));
+        let applications = cx.new(|cx| {
+            crate::applications::ApplicationsPage::new(
+                runtime.clone(),
+                options.debug.applications,
+                hold.applications,
+                window,
+                cx,
+            )
+        });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         pages.extend(Self::page_handles(
@@ -1060,7 +1082,7 @@ impl Pilot {
             age_label,
             switcher: Vec::new(),
             settings_open: false,
-            menu_platform: app_menu::menu_platform(),
+            menu_platform: app_menu::menu_platform(options.debug.app_menu_button),
             app_menu_popup: None,
             app_menu_focus: None,
             menu_state: None,
@@ -1071,7 +1093,7 @@ impl Pilot {
             automatic: true,
             elapsed: Duration::ZERO,
             fixture: options.fixture,
-            fixture_hold: options.fixture && options.hold_talos,
+            fixture_hold: options.fixture && (options.hold_talos || hold.talos),
             fixture_tick: 0,
             focus: cx.focus_handle(),
             node_focus: cx.focus_handle(),
