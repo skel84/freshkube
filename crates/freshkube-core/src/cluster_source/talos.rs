@@ -65,7 +65,7 @@ pub struct TalosAccess {
 }
 
 impl TalosAccess {
-    pub async fn client(&self) -> Result<kube::Client, String> {
+    pub(crate) async fn client(&self) -> Result<kube::Client, String> {
         pinned(
             self.live.config_path.clone(),
             self.selection.clone(),
@@ -75,7 +75,7 @@ impl TalosAccess {
         .await
     }
 
-    pub fn forget(&self) {
+    pub(crate) fn forget(&self) {
         self.live.forget_kubernetes();
     }
 }
