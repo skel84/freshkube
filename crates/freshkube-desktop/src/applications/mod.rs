@@ -230,6 +230,7 @@ pub(crate) struct Clusters {
 
 /// A part to open once the window has switched to the workspace entry its
 /// cluster is: the shell asks first.
+#[derive(Clone, Debug)]
 pub(crate) struct SwitchLink {
     pub(crate) entry: SharedString,
     pub(crate) link: ResourceLink,
