@@ -389,3 +389,65 @@ fn a_delivery_may_start_its_own_watch_again(cx: &mut TestAppContext) {
         "the old stream's 3 never lands"
     );
 }
+
+#[gpui_kit::test]
+fn a_sender_beside_the_work_feeds_the_same_delivery(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = start(&screen, &runtime, "a", cx);
+    let beside = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    runtime.block_on(feed.send(1)).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1]);
+    beside.try_send(2).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1, 2]);
+
+    // Stopping closes it with the stream, and the watch has none to give.
+    screen.update(cx, |screen, _| {
+        screen.watch.stop();
+        assert!(screen.watch.sender().is_none());
+    });
+    until(cx, |_| beside.is_closed());
+    assert!(beside.try_send(3).is_err());
+    assert_eq!(seen(&screen, cx), [1, 2]);
+}
+
+#[gpui_kit::test]
+fn a_sender_taken_before_starting_again_never_lands(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let _old = start(&screen, &runtime, "a", cx);
+    let old = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    let _new = start(&screen, &runtime, "b", cx);
+    until(cx, |_| old.is_closed());
+    assert!(old.try_send(1).is_err());
+    let new = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    new.try_send(2).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [2]);
+}
+
+#[gpui_kit::test]
+fn a_taken_sender_keeps_the_stream_open_and_the_watch_does_not(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = start(&screen, &runtime, "a", cx);
+    let beside = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    // The work ends, and the sender taken beside it still feeds.
+    drop(feed);
+    beside.try_send(1).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1]);
+    assert!(screen.read_with(cx, |screen, _| screen.watch.is_running()));
+    // Once it goes too, the stream ends: the watch held it only weakly.
+    drop(beside);
+    until(cx, |cx| {
+        screen.read_with(cx, |screen, _| !screen.watch.is_running())
+    });
+    assert!(screen.read_with(cx, |screen, _| screen.watch.sender().is_none()));
+}
+
+#[gpui_kit::test]
+fn each_start_and_stop_moves_the_generation(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let first = screen.read_with(cx, |screen, _| screen.watch.generation());
+    let _feed = start(&screen, &runtime, "a", cx);
+    let started = screen.read_with(cx, |screen, _| screen.watch.generation());
+    assert!(started > first);
+    screen.update(cx, |screen, _| screen.watch.stop());
+    assert!(screen.read_with(cx, |screen, _| screen.watch.generation()) > started);
+}

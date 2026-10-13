@@ -50,6 +50,9 @@ pub struct Watch<T, I> {
     generation: u64,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
+    /// The running stream's channel, held weakly so that it never keeps
+    /// the channel open by itself; see [`sender`](Self::sender).
+    sender: Option<mpsc::WeakSender<T>>,
     /// Rises with each batch delivered, so an owner derives its display
     /// data again only then.
     revision: u64,
@@ -67,6 +70,7 @@ impl<T, I> Default for Watch<T, I> {
             generation: 0,
             job: None,
             task: None,
+            sender: None,
             revision: 0,
             visible: true,
             stopped_by_hiding: false,
@@ -105,6 +109,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
             generation: self.generation,
         };
         let (sender, mut receiver) = mpsc::channel(pace.capacity.max(1));
+        self.sender = Some(sender.downgrade());
         self.job = Some(OwnedJob::new(runtime.spawn(work(sender))));
         self.task = Some(cx.spawn(async move |this, cx| {
             let mut last = None;
@@ -140,6 +145,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
                 let watch = slot(view);
                 if watch.is_current(&ticket) {
                     watch.job = None;
+                    watch.sender = None;
                     if let Some(task) = watch.task.take() {
                         // This runs in that task: let it finish.
                         task.detach();
@@ -191,6 +197,22 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         self.generation += 1;
         self.job = None;
         self.task = None;
+        self.sender = None;
+    }
+
+    /// Another sender into the running stream's channel, for work beside
+    /// the one `start` ran that feeds the same delivery: each container's
+    /// log among a workload's, or an example writer on the GPUI clock.
+    /// What it sends lands only while this start is current, as the
+    /// stream's own items do; once the watch stops or starts again,
+    /// nothing it sends lands, and its sends fail as soon as the old
+    /// delivery is gone. `None` when no stream runs.
+    ///
+    /// The watch holds the channel only weakly: while `start`'s work or a
+    /// sender taken here lives, the stream hasn't ended, so a writer that
+    /// takes one for each item lets it end.
+    pub fn sender(&self) -> Option<mpsc::Sender<T>> {
+        self.sender.as_ref()?.upgrade()
     }
 
     /// Whether a stream runs: started, and neither stopped nor ended.
@@ -205,6 +227,13 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
 
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Rises with each start and stop, so a test tells whether a stream
+    /// was dropped. For tests: an owner checks nothing by it.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Hiding stops a running stream and keeps what it sent as last known;
