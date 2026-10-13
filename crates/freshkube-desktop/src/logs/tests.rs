@@ -64,17 +64,10 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
             cx,
         );
         let offset = panel.read(cx).scroll_offset();
-        let (target, revision) = {
-            let view = panel.read(cx);
-            (
-                view.source().fixture_target.clone().unwrap(),
-                view.source().stream_revision,
-            )
-        };
+        let target = panel.read(cx).source().fixture_target.clone().unwrap();
         panel.update(cx, |view, cx| {
             assert!(view.apply_batch(
                 &target,
-                revision,
                 vec![StreamEvent {
                     target: target.clone(),
                     service: ServiceId::from("apid"),
@@ -94,7 +87,7 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
                     result: Ok(format!("info eviction {ix}")),
                 })
                 .collect();
-            assert!(view.apply_batch(&target, revision, batch, cx));
+            assert!(view.apply_batch(&target, batch, cx));
         });
         window.render_frame(cx);
         assert!(panel.read(cx).anchor_evicted());
@@ -105,7 +98,6 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
         panel.update(cx, |view, cx| {
             assert!(!view.apply_batch(
                 &target,
-                revision,
                 vec![StreamEvent {
                     target: target.clone(),
                     service: ServiceId::from("apid"),
@@ -140,8 +132,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             let initial_next_id = view.next_line_id();
             window.click("logs-collection", cx);
             assert!(panel.read(cx).source().collection_active);
-            assert!(panel.read(cx).source().job.is_some());
-            assert!(panel.read(cx).source().delivery.is_some());
+            assert!(panel.read(cx).source().stream.is_running());
             (collected, initial_next_id)
         })
         .unwrap();
@@ -215,8 +206,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             window.click("logs-collection", cx);
             let view = panel.read(cx);
             assert!(!view.source().collection_active);
-            assert!(view.source().job.is_none());
-            assert!(view.source().delivery.is_none());
+            assert!(!view.source().stream.is_running());
             assert!(!view.following());
             view.next_line_id()
         })
@@ -231,8 +221,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             // and observe six real producer ticks with GPUI still driven.
             assert_eq!(view.next_line_id(), stopped_next_id);
             assert!(!view.source().collection_active);
-            assert!(view.source().job.is_none());
-            assert!(view.source().delivery.is_none());
+            assert!(!view.source().stream.is_running());
             assert_eq!(
                 window.find("logs-collection").label(),
                 Some("Start collecting")
@@ -639,5 +628,56 @@ fn a_talos_download_is_named_by_its_node(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let name = TalosLogs::download_name(panel.read(cx), DownloadLines::Visible);
         assert!(name.starts_with("fixture-node-"), "{name}");
+    });
+}
+
+#[gpui_kit::test]
+async fn a_collection_whose_stream_ends_stops_and_lands_what_it_held(cx: &mut TestAppContext) {
+    // The stream runs on Tokio's thread.
+    cx.executor().allow_parking();
+    let (_runtime, panel, handle) = mount(cx);
+    let target = cx.update(|cx| panel.read(cx).source().fixture_target.clone().unwrap());
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.render_frame(cx);
+        panel.update(cx, |view, cx| {
+            view.set_visible(false, cx);
+            // A batch lands while hidden, so the next one is held.
+            assert!(view.apply_batch(
+                &target,
+                vec![StreamEvent {
+                    target: target.clone(),
+                    service: ServiceId::from("apid"),
+                    result: Ok("info landed while hidden".into()),
+                }],
+                cx,
+            ));
+            let line = StreamEvent {
+                target: target.clone(),
+                service: ServiceId::from("apid"),
+                result: Ok("info held until the stream ends".into()),
+            };
+            view.collect(
+                target.clone(),
+                move |sender| async move {
+                    let _ = sender.send(line).await;
+                },
+                cx,
+            );
+            assert!(view.source().collection_active);
+        });
+    })
+    .unwrap();
+    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+        !panel.read(cx).source().stream.is_running()
+    })
+    .await;
+    cx.update(|cx| {
+        let view = panel.read(cx);
+        assert!(!view.source().collection_active);
+        assert!(
+            view.retained()
+                .iter()
+                .any(|entry| entry.raw.contains("held until the stream ends"))
+        );
     });
 }
