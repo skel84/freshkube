@@ -60,6 +60,7 @@ use crate::{
     ui::clock,
 };
 use freshkube_core::cluster_overview::{ClusterOverview, KubeconfigSelection};
+use freshkube_core::cluster_source::Hold;
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::{ActiveTheme, Theme, TitleBar, input::InputState, v_flex};
 use gpui_kit::prelude::*;
@@ -338,9 +339,11 @@ pub(crate) struct Pilot {
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
     fixture: bool,
-    /// Example data holds the Talos overview and the Kubernetes summary
-    /// (`DebugOptions::hold`), so the pages that wait for them stay loading.
-    fixture_hold: bool,
+    /// What example data never answers (`DebugOptions::hold`), set once
+    /// here: the shell holds the Talos overview and the Kubernetes summary
+    /// with `talos`, and every page reads the rest from the example source
+    /// `source()` hands it. Nothing is held outside example data.
+    hold: Hold,
     fixture_tick: u64,
     focus: FocusHandle,
     /// The window the shell draws in, for what changes the shown page
@@ -386,6 +389,13 @@ impl Pilot {
     #[cfg(test)]
     pub(crate) fn opened_tab(&self, cx: &App) -> resources::Tab {
         self.resources.read(cx).detail_tab(cx)
+    }
+
+    /// What example sources hold from now on, as `FRESHKUBE_FIXTURE_HOLD`
+    /// says at launch; a page hears it with the next source.
+    #[cfg(test)]
+    pub(crate) fn set_hold(&mut self, hold: Hold) {
+        self.hold = hold;
     }
 
     /// Chooses another context, as the header's switcher does.
@@ -890,7 +900,11 @@ impl Pilot {
             kubeconfig_draft: Default::default(),
             navigation,
             fixture: options.fixture,
-            fixture_hold: options.fixture && (options.hold_talos || options.debug.hold.talos),
+            hold: if options.fixture {
+                options.debug.hold
+            } else {
+                Hold::NONE
+            },
             fixture_tick: 0,
             focus: cx.focus_handle(),
             window: window.window_handle(),
@@ -1203,7 +1217,7 @@ impl Pilot {
         self.chrome.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
         self.publish_reading(cx);
-        if self.fixture && self.fixture_hold {
+        if self.fixture && self.hold.talos {
             // Loading until the hold is released, which only a test does.
             cx.notify();
             return;

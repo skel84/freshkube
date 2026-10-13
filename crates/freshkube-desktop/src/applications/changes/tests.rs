@@ -485,12 +485,14 @@ fn another_connection_drops_the_read_in_flight_and_its_rows(cx: &mut TestAppCont
         changes(&view, cx).update(cx, |page, cx| {
             assert!(page.is_reading());
             // The next read stays in flight, so only the first could land.
-            page.set_hold(true);
             page.set_source(
                 Some(crate::resources::ClusterSource {
                     id: "example:other".into(),
                     context: "other".into(),
-                    access: crate::resources::ClusterAccess::EXAMPLE,
+                    access: crate::resources::ClusterAccess::Example(crate::fixture::Hold {
+                        applications: true,
+                        ..crate::fixture::Hold::NONE
+                    }),
                 }),
                 cx,
             );

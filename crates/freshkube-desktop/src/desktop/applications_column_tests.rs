@@ -405,10 +405,10 @@ fn a_read_without_the_open_application_moves_the_fill_back(cx: &mut TestAppConte
 #[gpui_kit::test]
 fn another_cluster_shows_reading_until_it_answers(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
     cx.update_window(handle, |_, window, cx| {
-        page.update(cx, |page, _| page.set_hold(true));
+        // dev-fra's example source holds its read.
         view.update(cx, |pilot, cx| {
+            pilot.hold.applications = true;
             pilot.switch_cluster("dev-fra".into(), window, cx)
         });
     })

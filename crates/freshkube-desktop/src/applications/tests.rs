@@ -1,6 +1,7 @@
 //! The Applications page in the real app, on example data.
 use super::{ApplicationsPage, Variant};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
+use crate::fixture::Hold;
 use std::time::Duration;
 
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, test::TestWindowExt};
@@ -365,8 +366,14 @@ fn another_context_drops_the_read_and_the_selection(cx: &mut TestAppContext) {
         window.click(CART, cx);
         window.render_frame(cx);
         assert!(window.find("applications-detail").visible());
-        page(&view, cx).update(cx, |page, _| page.set_hold(true));
-        view.update(cx, |view, cx| view.choose_context("staging-eu", window, cx));
+        // staging-eu's example source holds its read.
+        view.update(cx, |view, cx| {
+            view.set_hold(Hold {
+                applications: true,
+                ..Hold::NONE
+            });
+            view.choose_context("staging-eu", window, cx);
+        });
         window.render_frame(cx);
         let page = page(&view, cx);
         assert!(!page.read(cx).has_read(), "staging-eu's read is its own");

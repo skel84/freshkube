@@ -143,7 +143,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
     // is held), its last answer is there, stale and with the time it was read.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.fixture_hold = true;
+            pilot.hold.talos = true;
             pilot.activate_entry("core-fra", window, cx)
         });
         let pilot = view.read(cx);
@@ -186,7 +186,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
     // A new read replaces it, and the mark goes with it.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.fixture_hold = false;
+            pilot.hold.talos = false;
             // The held read still counts as in flight; let the refresh start one.
             pilot.overview = crate::state::Snapshot::default();
             pilot.refresh_now(window, cx);
@@ -226,7 +226,7 @@ async fn a_late_summary_from_the_cluster_just_left_is_dropped(cx: &mut TestAppCo
                 .clone();
             let late = old.derive(chrono::Utc::now());
             let health = crate::screens::WorkloadData::from_outcome(&late.summary.workloads);
-            pilot.fixture_hold = true;
+            pilot.hold.talos = true;
             pilot.activate_entry("cicd-fra", window, cx);
             pilot.apply_summary(late, health, window, cx);
             assert!(pilot.registry.active().kubernetes_summary.data().is_none());

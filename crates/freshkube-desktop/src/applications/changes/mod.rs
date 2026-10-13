@@ -102,8 +102,6 @@ pub(crate) struct ChangesPage {
     runtime: tokio::runtime::Handle,
     source: Option<ClusterSource>,
     visible: bool,
-    /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
-    hold: bool,
     /// What example data couldn't read (`FRESHKUBE_APPLICATIONS`).
     shape: Shape,
     /// Example data answers after this, in tests, so a read stays in
@@ -157,7 +155,6 @@ impl EventEmitter<ChangesEvent> for ChangesPage {}
 impl ChangesPage {
     pub(crate) fn new(
         runtime: tokio::runtime::Handle,
-        hold: bool,
         shape: Shape,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -172,7 +169,6 @@ impl ChangesPage {
             runtime,
             source: None,
             visible: false,
-            hold,
             shape,
             example_delay: Duration::ZERO,
             loader,
@@ -206,9 +202,17 @@ impl ChangesPage {
         self.example_delay = delay;
     }
 
+    /// Holds the example source the page has, or lets it answer again
+    /// (`Hold::applications`), as `FRESHKUBE_FIXTURE_HOLD` does at launch.
     #[cfg(test)]
     pub(crate) fn set_hold(&mut self, hold: bool) {
-        self.hold = hold;
+        if let Some(ClusterSource {
+            access: ClusterAccess::Example(held),
+            ..
+        }) = &mut self.source
+        {
+            held.applications = hold;
+        }
     }
 
     /// What example data can't read, as the Applications example's
@@ -330,10 +334,10 @@ impl ChangesPage {
         };
         let request = self.loader.start(source.id.clone());
         match &source.access {
-            ClusterAccess::Example(_) => {
+            ClusterAccess::Example(hold) => {
                 // Held, it stays in flight, so the page keeps its loading
                 // rows.
-                if self.hold {
+                if hold.applications {
                     cx.notify();
                     return;
                 }
