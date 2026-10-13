@@ -253,6 +253,8 @@ fn a_stale_read_is_read_again_when_shown(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// It reads again at 35 s under either rule for a cut refresh;
+/// `a_refresh_cut_short_by_hiding_reads_again_on_showing` tells them apart.
 #[gpui_kit::test]
 fn a_read_dropped_on_hide_leaves_the_last_answer_as_old_as_it_was(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
