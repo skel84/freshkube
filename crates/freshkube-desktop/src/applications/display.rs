@@ -8,12 +8,14 @@
 //! every source answered (or isn't served) is it the empty state.
 use std::collections::{BTreeMap, BTreeSet};
 
-use freshkube_core::applications::read::{ARGOCD, MAX_ARGO_NAMESPACES, PART_OF};
-use freshkube_core::applications::{
+use freshkube_core::resources::FailureKind;
+use freshkube_core::workloads::WorkloadKind;
+use freshkube_delivery::applications::read::{ARGOCD, MAX_ARGO_NAMESPACES, PART_OF};
+use freshkube_delivery::applications::{
     Application, ArgoFound, Coverage, CoverageState, Derived, Evidence, Member, MemberKind,
     MemberRef, Note, Rule, SessionKey, SourceKind,
 };
-use freshkube_core::workloads::WorkloadKind;
+use freshkube_delivery::words;
 use gpui_kit::SharedString;
 
 /// The rules in precedence order, as the table groups them.
@@ -491,14 +493,19 @@ impl Short {
                         .namespace_only
                         .insert(c.session.clone(), scope_words(namespaces, found));
                 }
-                state if state.is_unknown() => {
+                CoverageState::Capped(_)
+                | CoverageState::NamespaceNotFound(_)
+                | CoverageState::Refused(_)
+                | CoverageState::Unreadable(_)
+                | CoverageState::Unreachable(_)
+                | CoverageState::NotInWorkspace(_) => {
                     short
                         .unread
                         .entry(c.source.rule())
                         .or_default()
                         .insert(c.session.clone());
                 }
-                _ => {}
+                CoverageState::Read | CoverageState::NotInstalled(_) => {}
             }
         }
         short
@@ -648,7 +655,7 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
                 .iter()
                 .map(|words| format!("{words}; Applications in other namespaces aren't listed"))
                 .collect::<Vec<_>>(),
-            _ => scope.clone(),
+            Rule::Kargo | Rule::PartOf | Rule::Manual => scope.clone(),
         };
         fields.push(("Argo CD", capital(&read.join("\n")).into()));
     }
@@ -697,11 +704,15 @@ fn missing_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     let mut absent: Vec<(String, Vec<&'static str>)> = Vec::new();
     for c in coverage {
         let head = match &c.state {
-            CoverageState::Unreachable(why) => {
-                format!("Couldn't reach {}: {why}", labels.of(&c.session))
-            }
+            CoverageState::Unreachable(why) => words::unreachable(&labels.of(&c.session), why),
             CoverageState::NotInWorkspace(why) => why.clone(),
-            _ => continue,
+            CoverageState::Read
+            | CoverageState::Capped(_)
+            | CoverageState::NamespaceOnly { .. }
+            | CoverageState::NamespaceNotFound(_)
+            | CoverageState::NotInstalled(_)
+            | CoverageState::Refused(_)
+            | CoverageState::Unreadable(_) => continue,
         };
         let rule = rule_words(c.source.rule());
         match absent.iter_mut().find(|(seen, _)| *seen == head) {
@@ -780,7 +791,17 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
                     .or_default()
                     .insert(labels.of(&c.session));
             }
-            _ => {}
+            (CoverageState::NotInstalled(_), Rule::PartOf | Rule::Manual)
+            | (
+                CoverageState::Read
+                | CoverageState::Capped(_)
+                | CoverageState::NamespaceNotFound(_)
+                | CoverageState::Refused(_)
+                | CoverageState::Unreadable(_)
+                | CoverageState::Unreachable(_)
+                | CoverageState::NotInWorkspace(_),
+                _,
+            ) => {}
         }
     }
     let on = |clusters: &BTreeSet<String>| match clusters.len() {
@@ -789,10 +810,10 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     };
     let mut lines: Vec<SharedString> = Vec::new();
     if !kargo.is_empty() {
-        lines.push(format!("Kargo isn't served on {}", on(&kargo)).into());
+        lines.push(words::failed(FailureKind::NotFound, "Kargo", &on(&kargo), "").into());
     }
     if !argo.is_empty() {
-        lines.push(format!("Argo CD isn't served on {}", on(&argo)).into());
+        lines.push(words::failed(FailureKind::NotFound, "Argo CD", &on(&argo), "").into());
     }
     for (words, clusters) in namespace_only {
         lines.push(
@@ -840,7 +861,11 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
             | CoverageState::Unreadable(why)
             | CoverageState::Unreachable(why)
             | CoverageState::NotInWorkspace(why) => why.clone().into(),
-            _ => SharedString::default(),
+            CoverageState::Read
+            | CoverageState::Capped(_)
+            | CoverageState::NamespaceOnly { .. }
+            | CoverageState::NamespaceNotFound(_)
+            | CoverageState::NotInstalled(_) => SharedString::default(),
         }
     };
     if !refused.is_empty() {
@@ -999,8 +1024,8 @@ impl Display {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use freshkube_core::applications::{Inputs, Override, SessionInputs, derive, example};
-    use freshkube_core::delivery::source::{Source, Truncation};
+    use freshkube_delivery::applications::{Inputs, Override, SessionInputs, derive, example};
+    use freshkube_delivery::source::{Source, Truncation};
 
     fn labels() -> Labels {
         Labels::default()
@@ -1034,11 +1059,11 @@ mod tests {
         SessionInputs {
             key: SessionKey::new("acme-solo"),
             kargo: Source::NotInstalled("kargo.akuity.io is not served".into()),
-            argo_scope: freshkube_core::applications::ArgoScope::AllNamespaces,
+            argo_scope: freshkube_delivery::applications::ArgoScope::AllNamespaces,
             argo_applications: Source::NotInstalled("argoproj.io is not served".into()),
             argo_application_sets: Source::NotInstalled("argoproj.io is not served".into()),
             workloads: Source::Read(Vec::new()),
-            asked: freshkube_core::applications::Asked::ALL,
+            asked: freshkube_delivery::applications::Asked::ALL,
             absent: None,
         }
     }
@@ -1096,8 +1121,8 @@ mod tests {
     }
 
     /// A session asked only for Kargo, on `cicd-fra`.
-    fn kargo_only(absent: freshkube_core::applications::Absent) -> Inputs {
-        use freshkube_core::applications::Asked;
+    fn kargo_only(absent: freshkube_delivery::applications::Absent) -> Inputs {
+        use freshkube_delivery::applications::Asked;
         let asked = Asked {
             kargo: true,
             ..Asked::NONE
@@ -1111,7 +1136,7 @@ mod tests {
 
     #[test]
     fn an_unreachable_entry_with_nothing_found_names_it() {
-        use freshkube_core::applications::Absent;
+        use freshkube_delivery::applications::Absent;
         let display = shown(&kargo_only(Absent::Unreachable(
             "no answer within 5 s".into(),
         )));
@@ -1133,7 +1158,7 @@ mod tests {
 
     #[test]
     fn a_source_no_entry_holds_is_never_none_found() {
-        use freshkube_core::applications::Absent;
+        use freshkube_delivery::applications::Absent;
         let why = "No CI/CD or Core entry in the workspace";
         let display = shown(&kargo_only(Absent::NotInWorkspace(why.into())));
         let Body::Failed { title, reason, .. } = &display.body else {
@@ -1226,7 +1251,7 @@ mod tests {
     }
 
     fn scoped(inputs: &mut Inputs, namespaces: &[&str], found: ArgoFound) {
-        inputs.sessions[0].argo_scope = freshkube_core::applications::ArgoScope::Namespace {
+        inputs.sessions[0].argo_scope = freshkube_delivery::applications::ArgoScope::Namespace {
             namespaces: namespaces.iter().map(|n| n.to_string()).collect(),
             found,
         };
@@ -1380,7 +1405,7 @@ mod tests {
                     *session = SessionInputs::absent(
                         session.key.clone(),
                         session.asked,
-                        freshkube_core::applications::Absent::Unreachable(
+                        freshkube_delivery::applications::Absent::Unreachable(
                             "connection refused".into(),
                         ),
                     )

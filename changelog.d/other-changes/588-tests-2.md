@@ -1,0 +1,1 @@
+- **Tests:** the Nodes and Resources list tests now live in `desktop/nodes/tests/` and `resources/screen/tests/`, one file per subject, and the last shell tests left `desktop/tests/mod.rs`; no test changes.

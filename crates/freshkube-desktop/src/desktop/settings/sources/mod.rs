@@ -26,8 +26,9 @@ mod tests;
 use crate::backend::{self, OwnedJob};
 use crate::resources::{KubeAccess, KubeSource};
 use crate::ui::{self, dp};
-use freshkube_core::delivery::entry::{self, Checked, Reach};
+use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Chosen, Part, Sources};
+use freshkube_delivery::entry::{self, Checked, Reach};
 use freshkube_ui::{menu, page, table};
 use gpui_kit::component::{Disableable, Sizable, button::Button, v_flex};
 use gpui_kit::prelude::*;
@@ -237,7 +238,13 @@ impl SourcesList {
                     freshkube_core::resources::kubeconfig_sources(explicit.as_deref());
                 // The open connection's own error, so a failed one says why.
                 let open = match open {
-                    Some(access) => Some(access.client().await.map(entry::reader)),
+                    Some(access) => Some(
+                        access
+                            .client()
+                            .await
+                            .map(entry::reader)
+                            .map_err(|why| Failure::new(FailureKind::Unreachable, why)),
+                    ),
                     None => None,
                 };
                 let open = open
@@ -278,7 +285,7 @@ impl SourcesList {
     fn example_check(&self) -> Checked {
         let reach = |chosen: &Chosen, read: Read| match chosen {
             Chosen::NoEntry(_) | Chosen::Gone(_) => {
-                Reach::Missing(chosen.missing().unwrap_or_default())
+                Reach::missing(chosen.missing().unwrap_or_default())
             }
             Chosen::Open => Reach::Readable,
             Chosen::Entry { entry, .. } => self.example_answer(&entry.id, read),

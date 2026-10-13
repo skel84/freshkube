@@ -25,9 +25,19 @@ pub(crate) enum Page {
     Settings,
 }
 
-/// The retained inspection views, including those embedded in the node pane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ScreenKind {
+/// Every page by its key, in the order the shell tells them whether they
+/// show: the pages that aren't Talos screens, then the retained inspection
+/// views, including those embedded in the node pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum PageId {
+    Overview,
+    Nodes,
+    SystemServices,
+    Monitoring,
+    Observability,
+    Applications,
+    Settings,
+    Resources,
     Processes,
     Storage,
     Network,
@@ -39,8 +49,9 @@ pub(super) enum ScreenKind {
     Operations,
 }
 
-impl ScreenKind {
-    pub(super) const ALL: [Self; 9] = [
+impl PageId {
+    /// The Talos screens, the retained inspection views.
+    pub(super) const SCREENS: [Self; 9] = [
         Self::Processes,
         Self::Storage,
         Self::Network,
@@ -51,6 +62,45 @@ impl ScreenKind {
         Self::Lifecycle,
         Self::Operations,
     ];
+
+    /// Whether this is one of the [Talos screens](Self::SCREENS).
+    pub(super) fn is_screen(self) -> bool {
+        Self::SCREENS.contains(&self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PageId::{self, *};
+
+    /// The key order is what the shell tells pages in: every page that
+    /// isn't a screen sorts before every screen, and the screens keep
+    /// [`PageId::SCREENS`]' order.
+    #[test]
+    fn the_pages_sort_before_the_screens() {
+        // A new key fails to compile here until it is placed.
+        let screen = |id: PageId| match id {
+            Overview | Nodes | SystemServices | Monitoring | Observability | Applications
+            | Settings | Resources => false,
+            Processes | Storage | Network | Diagnostics | Etcd | Health | Security | Lifecycle
+            | Operations => true,
+        };
+        let pages = [
+            Overview,
+            Nodes,
+            SystemServices,
+            Monitoring,
+            Observability,
+            Applications,
+            Settings,
+            Resources,
+        ];
+        let keys: Vec<_> = pages.into_iter().chain(PageId::SCREENS).collect();
+        assert!(keys.is_sorted());
+        for id in keys {
+            assert_eq!(id.is_screen(), screen(id), "{id:?}");
+        }
+    }
 }
 
 /// A row of the navigation column to scroll into view; scrolling is
@@ -219,15 +269,44 @@ impl Page {
         Self::Settings,
     ];
 
-    pub(super) fn screen(self) -> Option<ScreenKind> {
+    /// The page's key.
+    pub(super) fn id(self) -> PageId {
         match self {
-            Self::Etcd => Some(ScreenKind::Etcd),
-            Self::Health => Some(ScreenKind::Health),
-            Self::Security => Some(ScreenKind::Security),
-            Self::Lifecycle => Some(ScreenKind::Lifecycle),
-            Self::Operations => Some(ScreenKind::Operations),
-            _ => None,
+            Self::Overview => PageId::Overview,
+            Self::Nodes => PageId::Nodes,
+            Self::Health => PageId::Health,
+            Self::Resources => PageId::Resources,
+            Self::Etcd => PageId::Etcd,
+            Self::SystemServices => PageId::SystemServices,
+            Self::Security => PageId::Security,
+            Self::Lifecycle => PageId::Lifecycle,
+            Self::Operations => PageId::Operations,
+            Self::Monitoring => PageId::Monitoring,
+            Self::Observability => PageId::Observability,
+            Self::Applications => PageId::Applications,
+            Self::Settings => PageId::Settings,
         }
+    }
+
+    /// Whether the page reads Talos alone, so that without a talosconfig
+    /// it shows how to add one instead.
+    pub(super) fn needs_talos(self) -> bool {
+        !matches!(
+            self,
+            Self::Overview
+                | Self::Nodes
+                | Self::Health
+                | Self::Resources
+                | Self::Monitoring
+                | Self::Observability
+                | Self::Applications
+                | Self::Settings
+        )
+    }
+
+    /// The page's key when a Talos screen draws it.
+    pub(super) fn screen(self) -> Option<PageId> {
+        Some(self.id()).filter(|id| id.is_screen())
     }
     pub(super) fn title(self) -> &'static str {
         match self {
@@ -409,17 +488,37 @@ impl Pilot {
         } else if self.page == Page::Monitoring {
             let focus = self.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
-        } else if self.page == Page::Nodes
-            && self.node_workspace.open
-            && self.node_workspace.tab == super::nodes::NodeTab::Logs
-        {
+        } else if self.page == Page::Nodes && self.node_workspace.shows_logs() {
             self.logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
         } else if let Some(screen) = self.active_screen() {
             screen.focus(window, cx);
         } else if self.page == Page::Nodes {
-            window.focus(&self.node_focus, cx);
+            window.focus(&self.node_workspace.focus, cx);
         }
+    }
+
+    /// Tells every page with a handle whether it shows: those
+    /// [`shown_pages`](Self::shown_pages) names show and every other hides,
+    /// so a node pane's screen shows only while Nodes is up with its tab
+    /// selected, and Nodes shows around it. A page drops its reads on hide;
+    /// one told what it already knows does nothing.
+    pub(super) fn sync_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = self.shown_pages();
+        for handle in self.pages.values() {
+            handle.set_visible(shown.contains(handle), window, cx);
+        }
+    }
+
+    /// [`sync_visible`](Self::sync_visible) for a change made without the
+    /// window at hand, once the update that made it ends.
+    pub(super) fn sync_visible_soon(&self, cx: &mut Context<Self>) {
+        let (window, pilot) = (self.window, cx.weak_entity());
+        cx.defer(move |cx| {
+            _ = window.update(cx, |_, window, cx| {
+                _ = pilot.update(cx, |this, cx| this.sync_visible(window, cx));
+            });
+        });
     }
 
     pub(super) fn navigate_from_keyboard(
@@ -460,25 +559,11 @@ impl Pilot {
         if page == Page::Resources {
             self.column_reveal = Some(ColumnReveal::Kind(self.resource_kind.key()));
         }
-        self.monitoring.update(cx, |monitoring, cx| {
-            monitoring.set_visible(page == Page::Monitoring, cx)
-        });
-        self.observability.update(cx, |observability, cx| {
-            observability.set_visible(page == Page::Observability, cx)
-        });
-        self.applications.update(cx, |applications, cx| {
-            applications.set_visible(page == Page::Applications, cx)
-        });
-        let sources = self.settings_page.read(cx).sources.clone();
-        sources.update(cx, |sources, cx| {
-            sources.set_visible(page == Page::Settings, cx)
-        });
-        self.resources.update(cx, |resources, cx| {
-            resources.set_visible(page == Page::Resources, window, cx);
-            if page == Page::Resources {
-                resources.focus(window, cx);
-            }
-        });
+        // `sync_node_visibility` has told every page whether it shows.
+        if page == Page::Resources {
+            self.resources
+                .update(cx, |resources, cx| resources.focus(window, cx));
+        }
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
             screen.focus(window, cx);
@@ -623,7 +708,7 @@ impl Pilot {
     }
 
     pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(service) = self.selected_service.clone() {
+        if let Some(service) = self.selected_service(cx) {
             if let Some(name) = self.selected_node.clone() {
                 self.open_node_by_name(&name, super::nodes::NodeTab::Logs, window, cx);
             }

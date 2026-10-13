@@ -1,157 +1,104 @@
-//! Cluster cards and shared attention subjects.
-use super::{Pilot, clock, shell::Connection};
+//! Overview: the cluster's cards and what needs attention, drawn from what
+//! the shell hands it.
+use super::shell::Connection;
+use super::states::{self, ConfigAction, OnConfigAction, StaleTalos};
+use super::switch::AgeLabel;
 use crate::palette::palette;
+use crate::presentation::attention::{Attention, Destination};
+use crate::presentation::overview::{CardTarget, Overview};
 use crate::ui::{self, dp};
-use gpui_kit::assets::IconName;
-use gpui_kit::component::{
-    Sizable,
-    button::{Button, ButtonVariants},
-    tooltip::Tooltip,
-};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use std::rc::Rc;
+use std::sync::Arc;
 
 mod attention;
 mod cards;
 
-impl Pilot {
-    pub(super) fn page_scroll(&self, id: &'static str) -> Stateful<Div> {
-        div()
-            .id(id)
-            .size_full()
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
-    }
+/// What Overview asks of the shell.
+#[derive(Clone, Debug)]
+pub(crate) enum OverviewEvent {
+    /// A card's target: a page, a kind, a destination or System services.
+    Card(CardTarget),
+    /// An attention row's Open, Logs or Open node.
+    Open(Destination),
+    /// A state's button.
+    Config(ConfigAction),
+}
 
-    /// The talosconfig couldn't be read; shown on every screen. Without
-    /// Talos it is the kubeconfig that couldn't be read.
-    pub(super) fn config_error_state(&self, error: String, cx: &mut Context<Self>) -> AnyElement {
-        if self.kubernetes_only.is_some() {
-            return self.kubeconfig_error_state(error, cx);
+/// Where the Talos overview, the summary and the connection stand, as
+/// Overview's states, banner and heading say. The shell hands it over
+/// whenever it changes; an equal one redraws nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct OverviewState {
+    context: SharedString,
+    config_error: Option<String>,
+    kubernetes_only: bool,
+    /// The Talos overview failed with nothing kept and isn't loading.
+    unreachable: Option<String>,
+    stale_talos: Option<StaleTalos>,
+    /// The Talos overview or the summary is stale.
+    stale: bool,
+    /// Why the attention list may be out of date.
+    attention_stale: Option<SharedString>,
+    connection: Connection,
+    /// The restored summary shows its age instead of the connection.
+    last_known: bool,
+}
+
+pub(super) struct OverviewPage {
+    display: Arc<Overview>,
+    attention: Arc<Attention>,
+    state: OverviewState,
+    /// Show all on the attention list.
+    expanded: bool,
+    age_label: Entity<AgeLabel>,
+    on_config: OnConfigAction,
+}
+
+impl EventEmitter<OverviewEvent> for OverviewPage {}
+
+impl OverviewPage {
+    pub(super) fn new(age_label: Entity<AgeLabel>, cx: &mut Context<Self>) -> Self {
+        let page = cx.weak_entity();
+        let on_config: OnConfigAction = Rc::new(move |action, _, cx| {
+            _ = page.update(cx, |_, cx| cx.emit(OverviewEvent::Config(action)));
+        });
+        Self {
+            display: Default::default(),
+            attention: Default::default(),
+            state: Default::default(),
+            expanded: false,
+            age_label,
+            on_config,
         }
-        ui::empty_state(
-            IconName::FolderOpen,
-            "Freshkube can't read your talosconfig",
-            "Choose a talosconfig file, or set the TALOSCONFIG environment variable and retry.",
-            Some(error),
-            vec![
-                Button::new("browse-config-empty")
-                    .primary()
-                    .icon(IconName::FolderOpen)
-                    .label("Browse…")
-                    .on_click(cx.listener(|view, _, window, cx| view.browse_config(window, cx)))
-                    .into_any_element(),
-                Button::new("retry-config")
-                    .outline()
-                    .label("Retry")
-                    .on_click(
-                        cx.listener(|view, _, window, cx| view.load_configuration(window, cx)),
-                    )
-                    .into_any_element(),
-                Button::new("use-kubernetes-only")
-                    .outline()
-                    .icon(IconName::Boxes)
-                    .label("Use Kubernetes only")
-                    .tooltip(
-                        "Choose a kubeconfig file and a context; nothing connects before you do",
-                    )
-                    .on_click(
-                        cx.listener(|view, _, window, cx| view.choose_kubernetes_only(window, cx)),
-                    )
-                    .into_any_element(),
-            ],
-            cx,
-        )
-        .into_any_element()
     }
 
-    /// The kubeconfig couldn't be read or has no contexts, in Kubernetes-only
-    /// mode.
-    fn kubeconfig_error_state(&self, error: String, cx: &mut Context<Self>) -> AnyElement {
-        ui::empty_state(
-            IconName::FolderOpen,
-            "Freshkube can't read your kubeconfig",
-            "Choose a kubeconfig file, or set the KUBECONFIG environment variable and retry.",
-            Some(error),
-            vec![
-                Button::new("browse-kubeconfig-empty")
-                    .primary()
-                    .icon(IconName::FolderOpen)
-                    .label("Browse…")
-                    .on_click(cx.listener(|view, _, window, cx| view.browse_kubeconfig(window, cx)))
-                    .into_any_element(),
-                Button::new("retry-kubeconfig")
-                    .outline()
-                    .label("Retry")
-                    .on_click(
-                        cx.listener(|view, _, window, cx| view.load_kube_contexts(window, cx)),
-                    )
-                    .into_any_element(),
-            ],
-            cx,
-        )
-        .into_any_element()
+    /// The cards and heading texts, derived with the joined nodes.
+    pub(super) fn set_display(&mut self, display: Arc<Overview>, cx: &mut Context<Self>) {
+        self.display = display;
+        cx.notify();
     }
 
-    /// Unreachable cluster with no earlier snapshot to fall back to.
-    pub(super) fn unreachable_state(&self, error: String, cx: &mut Context<Self>) -> AnyElement {
-        let context = self.applied.context.clone().unwrap_or_default();
-        ui::empty_state(
-            IconName::Unplug,
-            format!("Can't reach {context}"),
-            "Check the selected talosconfig, context and network access to the Talos API (port 50000), then retry.",
-            Some(error),
-            vec![
-                Button::new("retry")
-                    .primary()
-                    .icon(IconName::RefreshCw)
-                    .label("Retry")
-                    .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
-                    .into_any_element(),
-                Button::new("browse-config-unreachable")
-                    .outline()
-                    .icon(IconName::FolderOpen)
-                    .label("Choose talosconfig…")
-                    .on_click(cx.listener(|view, _, window, cx| view.browse_config(window, cx)))
-                    .into_any_element(),
-            ],
-            cx,
-        )
-        .into_any_element()
+    pub(super) fn set_attention(&mut self, attention: Arc<Attention>, cx: &mut Context<Self>) {
+        self.attention = attention;
+        cx.notify();
     }
 
-    pub(super) fn stale_banner(&self, cx: &mut Context<Self>) -> Option<Div> {
-        if !self.overview.is_stale() {
-            return None;
+    pub(super) fn set_state(&mut self, state: OverviewState, cx: &mut Context<Self>) {
+        if self.state != state {
+            self.state = state;
+            cx.notify();
         }
-        let failed = self
-            .overview
-            .last_failure()
-            .map(clock)
-            .unwrap_or_else(|| "the last attempt".into());
-        let kept = self
-            .overview
-            .last_successful()
-            .map(clock)
-            .unwrap_or_else(|| "earlier".into());
-        let reason = self
-            .overview
-            .error()
-            .unwrap_or("The refresh failed.")
-            .to_owned();
-        Some(ui::warning_banner(
-            Some(format!("Refresh failed at {failed}.").into()),
-            format!("You're looking at the snapshot from {kept}. {reason}"),
-            Some(
-                Button::new("retry")
-                    .small()
-                    .icon(IconName::RefreshCw)
-                    .label("Retry")
-                    .on_click(cx.listener(|view, _, window, cx| view.refresh(window, cx)))
-                    .into_any_element(),
-            ),
-            cx,
-        ))
+    }
+
+    /// Folds the attention list again, as a new context does.
+    pub(super) fn collapse(&mut self, cx: &mut Context<Self>) {
+        if self.expanded {
+            self.expanded = false;
+            cx.notify();
+        }
     }
 
     /// The context as the title, with the connection state, any version
@@ -159,10 +106,7 @@ impl Pilot {
     /// the meta line. The texts are derived with the cards.
     fn overview_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
-        let display = &self.overview_display;
-        let context = self.applied.context.clone().unwrap_or_default();
-        let stale =
-            self.overview.is_stale() || self.registry.active().kubernetes_summary.is_stale();
+        let display = &self.display;
         let separator = || div().flex_none().px(dp(5.)).child("·");
         let drift = display.drift.clone().map(|drift| {
             let tip = display.drift_tip.clone();
@@ -187,14 +131,13 @@ impl Pilot {
                 .child(display.roster.clone())
         });
         // The header's switcher reads the same state, so the two agree.
-        let (connection, ink) = match self.context_display.state {
-            _ if stale => ("Stale snapshot", Some(p.warn_ink)),
+        let (connection, ink) = match self.state.connection {
+            _ if self.state.stale => ("Stale snapshot", Some(p.warn_ink)),
             Connection::Connected => ("Connected", None),
             Connection::Failed => ("Couldn't connect", Some(p.crit_ink)),
             Connection::Connecting => ("Connecting…", None),
         };
-        let last_known = self.last_known_since().is_some();
-        let connection_part = if last_known {
+        let connection_part = if self.state.last_known {
             // The restored summary says how old it is, on its own timer.
             self.age_label.clone().into_any_element()
         } else {
@@ -228,49 +171,158 @@ impl Pilot {
                     .into_any_element(),
             );
         }
-        freshkube_ui::page::PageHeader::new("overview", context)
+        freshkube_ui::page::PageHeader::new("overview", self.state.context.clone())
             .meta(meta)
             .render(window, cx)
     }
 
-    pub(super) fn render_overview(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        if let Some(error) = self.config_error.clone() {
-            return self.config_error_state(error, cx);
+    fn render_attention(&self, cx: &mut Context<Self>) -> AnyElement {
+        let page = cx.weak_entity();
+        let on_open: attention::OnOpen = Rc::new(move |destination, _, cx| {
+            _ = page.update(cx, |_, cx| cx.emit(OverviewEvent::Open(destination)));
+        });
+        let page = cx.weak_entity();
+        let on_show_all: attention::OnShowAll = Rc::new(move |_, cx| {
+            _ = page.update(cx, |page, cx| {
+                page.expanded = true;
+                cx.notify();
+            });
+        });
+        attention::render_attention(
+            &self.attention,
+            None,
+            self.expanded,
+            self.state.attention_stale.clone(),
+            &on_open,
+            Some(&on_show_all),
+            cx,
+        )
+    }
+}
+
+impl Render for OverviewPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::probe::hit("overview");
+        let state = &self.state;
+        if let Some(error) = state.config_error.clone() {
+            return states::config_error_state(error, state.kubernetes_only, &self.on_config, cx);
         }
-        if self.kubernetes_only.is_none()
-            && self.overview.data().is_none()
-            && let Some(error) = self
-                .overview
-                .error()
-                .filter(|_| !self.overview.is_loading())
-        {
-            return self.unreachable_state(error.to_owned(), cx);
+        if let Some(error) = state.unreachable.clone() {
+            return states::unreachable_state(&state.context, error, &self.on_config, cx);
         }
         let header = self.overview_header(window, cx);
-        let display = &self.overview_display;
         let cards = self.render_cards(window, cx);
-        let warnings = display
+        let warnings = self
+            .display
             .warnings
             .iter()
             .map(|warning| ui::warning_banner(None, warning.clone(), None, cx))
             .collect::<Vec<_>>();
-        let attention = self.render_attention(None, cx);
+        let attention = self.render_attention(cx);
         // The shared frame, at its content's height inside the scrolling page.
         let body = freshkube_ui::page::padded("overview-frame")
             .h_auto()
-            .children(self.stale_banner(cx))
+            .children(states::stale_banner(
+                self.state.stale_talos.as_ref(),
+                &self.on_config,
+                cx,
+            ))
             .child(header)
             .children(warnings)
             .child(cards)
             .child(attention);
-        self.page_scroll("overview-page")
+        states::page_scroll("overview-page")
             .test_support()
             .child(body)
             .into_any_element()
+    }
+}
+
+impl super::Pilot {
+    /// Where the Talos overview, the summary and the connection stand, for
+    /// Overview.
+    pub(super) fn overview_state(&self) -> OverviewState {
+        let summary = &self.registry.active().kubernetes_summary;
+        let unreachable = (self.kubernetes_only.is_none()
+            && self.overview.data().is_none()
+            && !self.overview.is_loading())
+        .then(|| self.overview.error().cloned())
+        .flatten();
+        OverviewState {
+            context: self.applied.context.clone().unwrap_or_default().into(),
+            config_error: self.config_error.clone(),
+            kubernetes_only: self.kubernetes_only.is_some(),
+            unreachable,
+            stale_talos: StaleTalos::of(&self.overview),
+            stale: self.overview.is_stale() || summary.is_stale(),
+            attention_stale: self.attention_stale(),
+            connection: self.context_display.state,
+            last_known: self.last_known_since().is_some(),
+        }
+    }
+
+    /// Why the attention list may be out of date: the Talos overview's or
+    /// the summary's failed refresh. Overview and the node pane show it.
+    pub(super) fn attention_stale(&self) -> Option<SharedString> {
+        let summary = &self.registry.active().kubernetes_summary;
+        let error = if self.overview.is_stale() {
+            self.overview.error()
+        } else if summary.is_stale() {
+            summary.error()
+        } else {
+            None
+        };
+        error.map(|error| error.clone().into())
+    }
+
+    /// Hands Overview where things stand; it redraws only for a change.
+    pub(super) fn push_overview_state(&self, cx: &mut App) {
+        let state = self.overview_state();
+        self.overview_page
+            .update(cx, |page, cx| page.set_state(state, cx));
+    }
+
+    /// What Overview asks of the shell.
+    pub(super) fn overview_event(
+        &mut self,
+        event: &OverviewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            OverviewEvent::Card(target) => self.open_card(target.clone(), window, cx),
+            OverviewEvent::Open(destination) => {
+                self.open_destination(destination.clone(), window, cx)
+            }
+            OverviewEvent::Config(action) => self.config_action(*action, window, cx),
+        }
+    }
+}
+
+/// What tests read and set of Overview through the shell.
+#[cfg(test)]
+impl super::Pilot {
+    pub(super) fn overview_display(&self, cx: &App) -> Arc<Overview> {
+        self.overview_page.read(cx).display.clone()
+    }
+
+    pub(super) fn attention_expanded(&self, cx: &App) -> bool {
+        self.overview_page.read(cx).expanded
+    }
+
+    pub(super) fn expand_attention(&self, cx: &mut App) {
+        self.overview_page.update(cx, |page, cx| {
+            page.expanded = true;
+            cx.notify();
+        });
+    }
+
+    /// Hands the node pane and Overview this attention list.
+    pub(super) fn set_attention(&mut self, attention: Attention, cx: &mut App) {
+        self.node_workspace.attention = Arc::new(attention);
+        let attention = self.node_workspace.attention.clone();
+        self.overview_page
+            .update(cx, |page, cx| page.set_attention(attention, cx));
     }
 }
 

@@ -285,3 +285,56 @@ fn kubeconfig_choice_is_unavailable_for_example_data(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext) {
+    // Configuration loads on Tokio; let GPUI park for its completion.
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path().to_path_buf();
+    let chosen = directory.join("config");
+    std::fs::write(
+        &chosen,
+        "context: alpha\ncontexts:\n  alpha: &entry\n    endpoints: [192.0.2.1]\n    ca: YQ==\n    crt: Yg==\n    key: Yw==\n  beta: *entry\n",
+    )
+    .unwrap();
+    // Never the user's default talosconfig: start from a missing file.
+    let options = GpuiOptions::new(Some(directory.join("missing")), None, 100);
+    let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).config_error.is_some()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The error screen offers Browse directly; cancelling changes nothing.
+        window.click("browse-config-empty", cx);
+    })
+    .unwrap();
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|_| None);
+    cx.run_until_parked();
+    cx.update(|cx| assert!(view.read(cx).config_error.is_some()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings", cx);
+        window.render_frame(cx);
+        window.click("browse-config", cx);
+    })
+    .unwrap();
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|options| {
+        assert!(options.files && !options.directories && !options.multiple);
+        Some(vec![chosen.clone()])
+    });
+    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+        view.read(cx).contexts == ["alpha", "beta"]
+    })
+    .await;
+    cx.update(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applied.path.as_deref(), Some(chosen.as_path()));
+        assert_eq!(pilot.path.read(cx).value(), chosen.display().to_string());
+        assert!(pilot.config_error.is_none());
+    });
+}

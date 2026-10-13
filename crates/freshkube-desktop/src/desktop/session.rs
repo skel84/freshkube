@@ -25,7 +25,7 @@ use crate::{
 /// derives its pages from, and the session and tasks that keep it current.
 /// Selecting a Talos node never replaces any of it.
 pub(super) struct ClusterSession {
-    pub(super) kubernetes_summary: Snapshot<Arc<KubernetesSummary>>,
+    pub(super) kubernetes_summary: Snapshot<Arc<KubernetesSummary>, AppliedConfig, String>,
     pub(super) summary_health: Option<Result<Arc<WorkloadData>, String>>,
     pub(super) summary_session: Option<SummarySession>,
     pub(super) summary_job: Option<OwnedJob>,
@@ -252,7 +252,7 @@ impl Registry {
             applied.clone(),
             summary,
             parked.taken,
-            freshkube_core::kubernetes_summary::LAST_KNOWN,
+            freshkube_core::kubernetes_summary::LAST_KNOWN.to_owned(),
         );
         true
     }
@@ -367,7 +367,7 @@ mod tests {
         assert!(summary.is_stale());
         assert_eq!(summary.last_successful(), taken);
         assert_eq!(
-            summary.error(),
+            summary.error().map(String::as_str),
             Some(freshkube_core::kubernetes_summary::LAST_KNOWN)
         );
         // Every part is readable and none is current.

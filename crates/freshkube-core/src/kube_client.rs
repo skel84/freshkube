@@ -21,7 +21,7 @@ use kube::{Client, Config};
 /// kube's (rare: a plain-http API server) and leaks nothing. kube refuses
 /// other schemes, `socks5://` (a feature
 /// we don't build) and `https://` among them.
-pub(crate) fn client(mut config: Config) -> Result<Client, ClientError> {
+pub fn client(mut config: Config) -> Result<Client, ClientError> {
     let environment = environment_proxy();
     let no_proxy = environment_no_proxy();
     let from_environment = skip_environment_proxy(
@@ -38,7 +38,7 @@ pub(crate) fn client(mut config: Config) -> Result<Client, ClientError> {
 /// Why a client couldn't be made. Its message names a proxy kube refused by its
 /// scheme, host and port alone: kube's own message prints the whole URL,
 /// with any credentials in it, so neither `Display` nor `Debug` shows it.
-pub(crate) struct ClientError {
+pub struct ClientError {
     error: kube::Error,
     /// The proxy came from `HTTPS_PROXY`, so `NO_PROXY` can bypass it.
     from_environment: bool,
@@ -47,12 +47,12 @@ pub(crate) struct ClientError {
 impl ClientError {
     /// Whether the context's exec plugin, or another credential source,
     /// failed while the client was made.
-    pub(crate) fn is_exec(&self) -> bool {
+    pub fn is_exec(&self) -> bool {
         matches!(self.error, kube::Error::Auth(_))
     }
 
     /// `fallback`, with the proxy that failed the client when one did.
-    pub(crate) fn message(&self, fallback: &str) -> String {
+    pub fn message(&self, fallback: &str) -> String {
         let proxy = match &self.error {
             kube::Error::ProxyProtocolDisabled { proxy_url, .. }
             | kube::Error::ProxyProtocolUnsupported { proxy_url } => proxy_url,

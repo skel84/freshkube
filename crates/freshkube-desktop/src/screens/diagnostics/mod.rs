@@ -8,6 +8,7 @@
 //! Checks come from the core's diagnostic runner. A source that didn't answer
 //! arrives as an unknown check (and is named in the partial notice), never as
 //! a failure, and a Kubernetes failure never hides the Talos checks.
+use freshkube_core::HasHealth;
 use freshkube_core::diagnostic_runner::{
     AddonPresence, AddonSnapshot, DiagnosticCheck, DiagnosticCollector, DiagnosticFix,
     DiagnosticFixAction, DiagnosticSnapshot, DiagnosticTarget, EtcdSnapshot, FileProbe,
@@ -95,13 +96,14 @@ fn section_title(category: CheckCategory, snapshot: &DiagnosticSnapshot) -> Stri
 }
 
 fn status_tone(status: &CheckStatus) -> (Tone, &'static str) {
-    match status {
-        CheckStatus::Pass => (Tone::Good, "Pass"),
-        CheckStatus::Warn => (Tone::Warn, "Warn"),
-        CheckStatus::Fail => (Tone::Crit, "Fail"),
-        CheckStatus::Unknown => (Tone::Unknown, "Unknown"),
-        CheckStatus::Checking => (Tone::Unknown, "Checking"),
-    }
+    let label = match status {
+        CheckStatus::Pass => "Pass",
+        CheckStatus::Warn => "Warn",
+        CheckStatus::Fail => "Fail",
+        CheckStatus::Unknown => "Unknown",
+        CheckStatus::Checking => "Checking",
+    };
+    (ui::health_tone(status.health()).0, label)
 }
 
 fn is_problem(check: &DiagnosticCheck) -> bool {
@@ -292,16 +294,8 @@ pub(crate) struct DiagnosticsScreen {
 
 impl EventEmitter<ScreenEvent> for DiagnosticsScreen {}
 
-impl ScreenPanel for DiagnosticsScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
-        self.embedded = embedded;
-        cx.notify();
-    }
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl DiagnosticsScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextCheck, Some(CONTEXT)),
             KeyBinding::new("up", PreviousCheck, Some(CONTEXT)),
@@ -322,6 +316,17 @@ impl ScreenPanel for DiagnosticsScreen {
             table: table::TableState::new("diagnostic"),
             derived: None,
         }
+    }
+}
+
+impl ScreenPanel for DiagnosticsScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
+    }
+
+    fn set_embedded(&mut self, embedded: bool, cx: &mut Context<Self>) {
+        self.embedded = embedded;
+        cx.notify();
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {

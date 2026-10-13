@@ -8,12 +8,12 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use freshkube_core::delivery::change::Change;
-use freshkube_core::delivery::change::example::Shape;
-use freshkube_core::delivery::change::live::{self, Place};
-use freshkube_core::delivery::changes::example as changes_example;
-use freshkube_core::delivery::entry::{self, pool};
 use freshkube_core::snapshot::Request;
+use freshkube_delivery::change::Change;
+use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::change::live::{self, Place};
+use freshkube_delivery::changes::example as changes_example;
+use freshkube_delivery::entry::{self, pool};
 
 use super::*;
 use crate::applications::across::{Across, Alone};
@@ -109,7 +109,7 @@ impl ChangePage {
             } => {
                 let result = changes_example::change_of(&project, &freight, now)
                     .ok_or_else(|| format!("Example data has no change for Freight {freight}"))
-                    .and_then(|change| shape.apply(change));
+                    .and_then(|change| shape.apply(change).map_err(|failure| failure.message));
                 match window {
                     Some(window) if delay.is_zero() => self.answer(&request, result, window, cx),
                     _ => {
@@ -148,7 +148,9 @@ impl ChangePage {
                             |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
                             live::BUDGET,
                         );
-                        live::read_in(&pool, &place, Utc::now()).await
+                        live::read_in(&pool, &place, Utc::now())
+                            .await
+                            .map_err(|failure| failure.message)
                     },
                 );
                 self.job = Some(job);
@@ -268,6 +270,7 @@ impl ChangePage {
             .is_none()
             .then(|| self.snapshot.error())
             .flatten()
+            .map(String::as_str)
     }
 
     /// The loading rows, until the first answer.

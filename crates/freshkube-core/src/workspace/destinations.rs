@@ -10,7 +10,22 @@
 use serde::{Deserialize, Serialize};
 
 use super::Invalid;
-use crate::delivery::argocd::{IN_CLUSTER_NAME, IN_CLUSTER_SERVER, normalize_server};
+
+/// The name Argo CD gives the cluster it runs in.
+pub const IN_CLUSTER_NAME: &str = "in-cluster";
+/// The address Argo CD gives the cluster it runs in, as seen from inside it.
+pub const IN_CLUSTER_SERVER: &str = "https://kubernetes.default.svc";
+
+/// `https://Host:443/` and `https://host` name the same server.
+pub fn normalize_server(server: &str) -> String {
+    let lower = server.trim().to_ascii_lowercase();
+    let trimmed = lower.trim_end_matches('/');
+    trimmed
+        .strip_suffix(":443")
+        .filter(|rest| rest.starts_with("https://"))
+        .unwrap_or(trimmed)
+        .to_owned()
+}
 
 /// The most destinations one workspace maps.
 pub const MAX_DESTINATIONS: usize = 256;

@@ -72,6 +72,7 @@ use view::*;
 /// The time range a page opens with, in hours.
 const DEFAULT_HOURS: u32 = 3;
 
+#[derive(Clone, Debug)]
 pub enum ObservabilityEvent {
     Navigation,
     OpenObject {

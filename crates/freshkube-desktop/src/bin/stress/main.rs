@@ -256,14 +256,18 @@ fn main() -> color_eyre::Result<()> {
         _ => None,
     };
     if let Some(workload) = terminal {
-        return freshkube_desktop::run_terminal(workload);
+        return freshkube_desktop::run_terminal(
+            workload,
+            freshkube_desktop::DebugOptions::from_env(),
+        );
     }
     let runtime = tokio::runtime::Runtime::new()?;
     if let Scenario::TalosLogs { .. } | Scenario::WorkloadLogs { .. } | Scenario::Loading { .. } =
         scenario
     {
         return freshkube_desktop::run(
-            freshkube_desktop::GpuiOptions::fixture(),
+            freshkube_desktop::GpuiOptions::fixture()
+                .with_debug(freshkube_desktop::DebugOptions::from_env()),
             runtime.handle().clone(),
         );
     }
@@ -284,7 +288,8 @@ fn main() -> color_eyre::Result<()> {
         Some(kubeconfig),
         Some("stress".into()),
         100,
-    );
+    )
+    .with_debug(freshkube_desktop::DebugOptions::from_env());
     if let Scenario::Monitoring { .. } = world.scenario {
         // Monitoring reads its folder and remembered Service beside the
         // preferences, which HOME puts in the run's own directory.

@@ -6,10 +6,10 @@ use super::super::tests::launch;
 use super::Check;
 use super::Read;
 use crate::desktop::{Page, layout_check, tests::fixture};
-#[cfg(unix)]
-use freshkube_core::delivery::entry::Checked;
-use freshkube_core::delivery::entry::Reach;
 use freshkube_core::workspace::{self, Destination, Entry, Key, Loaded, Part, Role, Workspace};
+#[cfg(unix)]
+use freshkube_delivery::entry::Checked;
+use freshkube_delivery::entry::Reach;
 use gpui_kit::{
     AppContext, TestAppContext,
     test::{TestAppContextExt, TestWindowExt},
@@ -143,17 +143,17 @@ fn check_sources_finds_each_state(cx: &mut TestAppContext) {
         open(window, cx, &view);
         to_the_bottom(window, cx);
         list(&view, cx).update(cx, |list, _| {
-            list.set_example_answer("cicd-fra", KARGO, Reach::Refused("forbidden".into()));
+            list.set_example_answer("cicd-fra", KARGO, Reach::refused("forbidden"));
             list.set_example_answer(
                 "cicd-fra",
                 BUILDS,
-                Reach::Unreachable("no answer within 5 s".into()),
+                Reach::unreachable("no answer within 5 s"),
             );
-            list.set_example_answer("core-fra", ARGOCD, Reach::NotServed("not served".into()));
+            list.set_example_answer("core-fra", ARGOCD, Reach::not_served("not served"));
             list.set_example_answer(
                 "prod-ams",
                 WORKLOADS,
-                Reach::Unreachable("no answer within 5 s".into()),
+                Reach::unreachable("no answer within 5 s"),
             );
         });
         window.click("settings-sources-check", cx);

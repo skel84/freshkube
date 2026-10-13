@@ -37,19 +37,19 @@ mod table;
 mod tests;
 mod view;
 
-use freshkube_core::delivery::change::live::Mapping;
+use freshkube_delivery::change::live::Mapping;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
-use freshkube_core::applications::across::{Open, read_workspace};
-use freshkube_core::applications::{
-    ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
-};
-use freshkube_core::delivery::entry;
 use freshkube_core::resources::kubeconfig_sources;
 use freshkube_core::snapshot::{Request, Snapshot};
 use freshkube_core::workspace::{Chosen, Part as PartKind, Sources};
+use freshkube_delivery::applications::across::{Open, read_workspace};
+use freshkube_delivery::applications::{
+    ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
+};
+use freshkube_delivery::entry;
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self as kit, TableState};
@@ -230,6 +230,7 @@ pub(crate) struct Clusters {
 
 /// A part to open once the window has switched to the workspace entry its
 /// cluster is: the shell asks first.
+#[derive(Clone, Debug)]
 pub(crate) struct SwitchLink {
     pub(crate) entry: SharedString,
     pub(crate) link: ResourceLink,
@@ -249,7 +250,7 @@ pub(crate) struct ApplicationsPage {
     variant: Variant,
     /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
     hold: bool,
-    snapshot: Snapshot<Read, Identity>,
+    snapshot: Snapshot<Read, Identity, String>,
     /// Whether a read is in flight; dropping its job and task stops it.
     pending: bool,
     job: Option<OwnedJob>,
@@ -314,6 +315,8 @@ impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 impl ApplicationsPage {
     pub(crate) fn new(
         runtime: tokio::runtime::Handle,
+        variant: Variant,
+        hold: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -327,7 +330,7 @@ impl ApplicationsPage {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let split = InspectorSplit::new(PREFIX, cx);
-        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), cx));
+        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), hold, variant.shape(), cx));
         // The change page's links, from a change the list opened.
         let links = cx.subscribe(&changes, |_, _, event, cx| match event {
             ChangesEvent::Open(link) => cx.emit(link.as_ref().clone()),
@@ -341,8 +344,8 @@ impl ApplicationsPage {
             runtime,
             source: None,
             visible: false,
-            variant: Variant::from_env(),
-            hold: crate::fixture::hold().applications,
+            variant,
+            hold,
             entry: None,
             snapshot: Snapshot::default(),
             pending: false,

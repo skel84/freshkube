@@ -8,11 +8,11 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::constants::HIGH_RESTART_THRESHOLD;
-use freshkube_core::pluralize;
 use freshkube_core::workloads::{
     HealthState, NamespaceSummary, PodInfo, PodIssue, WorkloadCollectionOutcome, WorkloadInfo,
     WorkloadKind, WorkloadSnapshot, WorkloadSource, WorkloadSourceError,
 };
+use freshkube_core::{HasHealth, pluralize};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, Selectable, Sizable,
@@ -161,22 +161,13 @@ fn health_label(health: HealthState) -> &'static str {
     }
 }
 
-fn health_tone(health: HealthState) -> Tone {
-    match health {
-        HealthState::Failing => Tone::Crit,
-        HealthState::Degraded => Tone::Warn,
-        HealthState::Pending => Tone::Unknown,
-        HealthState::Healthy => Tone::Good,
-    }
-}
-
 /// A pod's tone: the skull when a container ran and stopped, otherwise its
 /// severity's.
 fn pod_tone(issue: &PodIssue) -> Tone {
     if issue.died() {
         Tone::Died
     } else {
-        health_tone(issue.severity())
+        ui::health_tone(issue.severity().health()).0
     }
 }
 
@@ -268,8 +259,8 @@ impl WorkloadData {
     }
 }
 
-impl ScreenPanel for WorkloadsScreen {
-    fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+impl WorkloadsScreen {
+    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -322,7 +313,9 @@ impl ScreenPanel for WorkloadsScreen {
             _subscription: subscription,
         }
     }
+}
 
+impl ScreenPanel for WorkloadsScreen {
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);
@@ -351,9 +344,9 @@ impl ScreenPanel for WorkloadsScreen {
         window.focus(&self.focus, cx);
     }
 
-    fn status(&mut self) -> Option<&Segment> {
+    fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync_status();
-        self.status.as_ref().map(|(_, line)| line)
+        self.status.as_ref().map(|(_, line)| line.clone())
     }
 
     fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
@@ -479,7 +472,7 @@ impl WorkloadsScreen {
                 let issues = issues_in(namespace);
                 RowView {
                     health: namespace.health,
-                    tone: health_tone(namespace.health),
+                    tone: ui::health_tone(namespace.health.health()).0,
                     nested: false,
                     chevron: Some(if self.collapsed.contains(&namespace.name) {
                         IconName::ChevronRight
@@ -500,7 +493,7 @@ impl WorkloadsScreen {
                 let workload = &namespaces[ns].workloads[ix];
                 RowView {
                     health: workload.health,
-                    tone: health_tone(workload.health),
+                    tone: ui::health_tone(workload.health.health()).0,
                     nested: true,
                     chevron: None,
                     name: workload.name.clone(),

@@ -100,12 +100,8 @@ type StatusKey = (u64, Option<(SessionIdentity, u64)>, Option<(String, bool)>);
 
 impl EventEmitter<ScreenEvent> for LifecycleScreen {}
 
-impl ScreenPanel for LifecycleScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl LifecycleScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -129,6 +125,12 @@ impl ScreenPanel for LifecycleScreen {
             status: None,
             status_key: None,
         }
+    }
+}
+
+impl ScreenPanel for LifecycleScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
@@ -154,9 +156,9 @@ impl ScreenPanel for LifecycleScreen {
         window.focus(&self.focus, cx);
     }
 
-    fn status(&mut self) -> Option<&Segment> {
+    fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync_status();
-        self.status.as_ref()
+        self.status.clone()
     }
 
     fn manual_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -834,14 +836,18 @@ fn unavailable_sources(view: &LifecycleView, rows: &[NodeRow]) -> Vec<String> {
     out
 }
 
-fn health_tone(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static str) {
-    match health {
-        HealthIndicator::Healthy => (Tone::Good, None, "OK"),
-        HealthIndicator::Warning => (Tone::Warn, None, "Warning"),
-        HealthIndicator::Error => (Tone::Crit, None, "Error"),
-        HealthIndicator::Info => (Tone::Accent, Some(IconName::Info), "Info"),
-        _ => (Tone::Unknown, None, "Unknown"),
-    }
+/// An alert's tone and icon from the shared health look, with the word
+/// Lifecycle calls it.
+fn alert_look(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static str) {
+    let (tone, icon) = ui::health_tone(*health);
+    let label = match health {
+        HealthIndicator::Healthy => "OK",
+        HealthIndicator::Warning => "Warning",
+        HealthIndicator::Error => "Error",
+        HealthIndicator::Info => "Info",
+        HealthIndicator::Pending | HealthIndicator::Unknown => "Unknown",
+    };
+    (tone, icon, label)
 }
 
 /// A roster's glyph: listed is good, missing is worth a look rather than a

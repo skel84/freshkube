@@ -108,11 +108,11 @@ impl Pilot {
             .icon(IconName::RefreshCw)
             .accessibility_label("Refresh nodes")
             .tooltip_with_action("Refresh nodes", &page::Refresh, Some(page::SHELL_CONTEXT))
-            .on_click(page::dispatch(page::Refresh, &self.node_focus));
+            .on_click(page::dispatch(page::Refresh, &self.node_workspace.focus));
         header
             .foldable(
                 button,
-                page::action_item("Refresh", page::Refresh, &self.node_focus),
+                page::action_item("Refresh", page::Refresh, &self.node_workspace.focus),
             )
             .render(window, cx)
     }
@@ -148,7 +148,10 @@ impl Pilot {
 }
 
 /// A source's state as the status bar words it: `Talos · current 14:02:11`.
-fn source_status<T, I: Clone + Eq>(name: &str, snapshot: &crate::state::Snapshot<T, I>) -> Part {
+fn source_status<T, I: Clone + Eq, E: std::fmt::Display>(
+    name: &str,
+    snapshot: &crate::state::Snapshot<T, I, E>,
+) -> Part {
     let state = if snapshot.is_loading() {
         "loading"
     } else if snapshot.is_stale() {

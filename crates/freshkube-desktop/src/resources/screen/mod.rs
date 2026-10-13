@@ -218,10 +218,11 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 
 /// The kind shown isn't served (404), so the sidebar's discovery of its
 /// group may be out of date.
+#[derive(Clone, Debug)]
 pub(crate) struct NotServed(pub(crate) ResourceKind);
 
 pub(crate) struct ResourcesScreen {
-    /// Example lists hold their answers (`fixture::hold`), so the page
+    /// Example lists hold their answers (`DebugOptions`), so the page
     /// stays on its loading rows.
     pub(crate) hold: bool,
     field_selector: Option<String>,
@@ -295,6 +296,17 @@ pub(crate) struct ResourcesScreen {
 }
 
 impl ResourcesScreen {
+    /// Example lists hold their answers (`fixture::Hold::lists`).
+    pub(crate) fn holding(mut self, hold: bool) -> Self {
+        self.hold = hold;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_holding(&self) -> bool {
+        self.hold
+    }
+
     pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
@@ -438,7 +450,7 @@ impl ResourcesScreen {
             projection: ResourceProjection::new(),
             layout: TableLayout::default(),
             layout_for: None,
-            hold: crate::fixture::hold().lists,
+            hold: false,
             hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
@@ -1474,6 +1486,7 @@ async fn watch(
 
 impl EventEmitter<NotServed> for ResourcesScreen {}
 
+#[derive(Clone, Debug)]
 pub(crate) enum NodePodsEvent {
     Open(ResourceIdentity),
     Back,

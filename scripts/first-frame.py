@@ -110,16 +110,20 @@ def main():
     parser.add_argument("--timeout", type=int, default=120, help="seconds to wait (default 120)")
     args = parser.parse_args()
     verify(args.archive)
-    with tempfile.TemporaryDirectory(prefix="freshkube-first-frame-") as temporary:
+    # Windows can hold the executable briefly after the app exits, so removing
+    # the directory may fail; that must not fail a good measurement. Python
+    # 3.10 or later, on both runners, ignores such errors.
+    with tempfile.TemporaryDirectory(prefix="freshkube-first-frame-", ignore_cleanup_errors=True) as temporary:
         temporary = Path(temporary)
         (temporary / "home").mkdir()
         executable = extract(args.archive, temporary / "files")
         ms = first_frame(executable, temporary / "home", args.timeout)
-    line = f"{args.archive.name}: first frame after {ms} ms with --fixture"
-    print(line)
-    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(summary, "a") as out:
-            out.write(f"- {line}\n")
+        # Report the measurement before the cleanup runs.
+        line = f"{args.archive.name}: first frame after {ms} ms with --fixture"
+        print(line, flush=True)
+        if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+            with open(summary, "a") as out:
+                out.write(f"- {line}\n")
 
 
 if __name__ == "__main__":

@@ -80,8 +80,8 @@ pub(crate) struct SecurityScreen {
 
 impl EventEmitter<ScreenEvent> for SecurityScreen {}
 
-impl ScreenPanel for SecurityScreen {
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl SecurityScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -103,7 +103,9 @@ impl ScreenPanel for SecurityScreen {
             loading: TableLoading::new(PREFIX, cx),
         }
     }
+}
 
+impl ScreenPanel for SecurityScreen {
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
         let changed = self.source.as_ref().map(|source| &source.target)
             != source.as_ref().map(|source| &source.target);
@@ -125,9 +127,9 @@ impl ScreenPanel for SecurityScreen {
         window.focus(&self.focus, cx);
     }
 
-    fn status(&mut self) -> Option<&Segment> {
+    fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync_status();
-        self.status.as_ref().map(|(_, line)| line)
+        self.status.as_ref().map(|(_, line)| line.clone())
     }
 
     fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {

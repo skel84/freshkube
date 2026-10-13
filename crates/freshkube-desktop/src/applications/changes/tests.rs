@@ -2,7 +2,7 @@
 //! and `cart`, opened from the Applications column.
 use std::time::Duration;
 
-use freshkube_core::delivery::changes::{Changes, Gap, Note};
+use freshkube_delivery::changes::{Changes, Gap, Note};
 
 use super::super::ApplicationsPage;
 use super::ChangesPage;
@@ -401,8 +401,8 @@ fn a_failed_read_offers_retry(cx: &mut TestAppContext) {
 fn a_refused_project_beside_rows_is_a_banner(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
-        let mut read = freshkube_core::delivery::changes::derive(
-            &freshkube_core::delivery::changes::example::read(chrono::Utc::now()),
+        let mut read = freshkube_delivery::changes::derive(
+            &freshkube_delivery::changes::example::read(chrono::Utc::now()),
         );
         read.notes.push(Note {
             gap: Gap::Refused,
@@ -465,8 +465,8 @@ fn answered_live(
         changes(&view, cx).update(cx, |page, cx| {
             page.set_source(Some(live_source("homelab")), cx);
             assert!(page.is_reading(), "a shown page reads its new source");
-            let read = freshkube_core::delivery::changes::derive(
-                &freshkube_core::delivery::changes::example::read(chrono::Utc::now()),
+            let read = freshkube_delivery::changes::derive(
+                &freshkube_delivery::changes::example::read(chrono::Utc::now()),
             );
             page.read_answer(read, cx);
             assert!(!page.is_reading());
@@ -561,7 +561,7 @@ fn a_remap_reads_a_live_list_again(cx: &mut TestAppContext) {
         changes(&view, cx).update(cx, |page, cx| {
             let connections = super::super::links::Connections::default();
             let remapped = super::super::across::Across {
-                mapping: freshkube_core::delivery::change::live::Mapping {
+                mapping: freshkube_delivery::change::live::Mapping {
                     entries: vec!["homelab".into()],
                     ..Default::default()
                 },
@@ -569,8 +569,8 @@ fn a_remap_reads_a_live_list_again(cx: &mut TestAppContext) {
             };
             page.set_clusters(connections.clone(), remapped.clone(), cx);
             assert!(page.is_reading(), "its Stages resolve by the new mapping");
-            let read = freshkube_core::delivery::changes::derive(
-                &freshkube_core::delivery::changes::example::read(chrono::Utc::now()),
+            let read = freshkube_delivery::changes::derive(
+                &freshkube_delivery::changes::example::read(chrono::Utc::now()),
             );
             page.read_answer(read, cx);
             page.set_clusters(connections, remapped, cx);

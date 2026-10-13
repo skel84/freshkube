@@ -17,7 +17,7 @@ use crate::OnShow;
 /// One read's data for one identity, such as a screen's target: a
 /// [`Snapshot`] plus the work that fills it.
 pub struct Loader<T, I> {
-    state: Snapshot<T, I>,
+    state: Snapshot<T, I, String>,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
     /// Rises whenever what [`data`](Self::data) or [`error`](Self::error)
@@ -173,7 +173,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
     }
 
     pub fn error(&self) -> Option<&str> {
-        self.state.error()
+        self.state.error().map(String::as_str)
     }
 
     pub fn is_loading(&self) -> bool {

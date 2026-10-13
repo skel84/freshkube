@@ -2,6 +2,7 @@
 use super::*;
 use crate::desktop::nodes::{NodeRow, NodeTab};
 use crate::resources::{ResourceLink, model::ObjectRef};
+use freshkube_core::HasHealth;
 use freshkube_core::resources::{ContainerState, ObjectDocument, Owner, PodLinks};
 use std::sync::Arc;
 
@@ -126,7 +127,7 @@ fn node_link(name: &str, row: Option<&NodeRow>) -> NodeLink {
                 Some(service) => {
                     let health = crate::presentation::service_health(service);
                     (
-                        crate::ui::health_tone(health),
+                        crate::ui::health_tone(health.health()).0,
                         format!(
                             "kubelet {} · {}",
                             service.state.to_lowercase(),
@@ -377,7 +378,7 @@ impl DetailPane {
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
             Duration::from_secs(15),
-            "Reading pod relationships timed out".into(),
+            "Reading pod relationships timed out".to_owned(),
             async move {
                 let client = access.client().await?;
                 Ok(freshkube_core::resources::collect_pod_links(&client, &document).await)

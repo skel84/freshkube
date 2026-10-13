@@ -1,0 +1,1 @@
+- **Tests:** the observability fake-server tests now live in `fake_tests/`, one file per subject, and two Nodes tests, one Resources test and one shell test helper moved to closer files; no test changes.

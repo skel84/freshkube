@@ -738,7 +738,7 @@ fn no_target_sits_under_the_header_without_a_segment(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "prod-fra", 50);
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        assert!(screen.update(cx, |screen, _| screen.status().is_some()));
+        assert!(screen.update(cx, |screen, cx| screen.status(cx).is_some()));
         screen.update(cx, |screen, cx| screen.set_source(None, window, cx));
         window.render_frame(cx);
         let toolbar = window.find("ops-toolbar").bounds();
@@ -753,7 +753,7 @@ fn no_target_sits_under_the_header_without_a_segment(cx: &mut TestAppContext) {
         assert!(window.try_find("ops-loading").is_none());
         assert!(screen.read(cx).loading_motion(cx).is_none());
         assert!(window.try_find("ops-body").is_none());
-        assert!(screen.update(cx, |screen, _| screen.status().is_none()));
+        assert!(screen.update(cx, |screen, cx| screen.status(cx).is_none()));
     })
     .unwrap();
 }

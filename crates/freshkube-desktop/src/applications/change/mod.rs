@@ -27,14 +27,12 @@ use std::collections::BTreeSet;
 use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
-use freshkube_core::applications::SessionKey;
-use freshkube_core::delivery::change::{
-    Change, Destination, Object, Phase, Reach, Shows, Stage, Target,
-};
-use freshkube_core::delivery::join::Confidence;
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
 use freshkube_core::snapshot::Snapshot;
+use freshkube_delivery::applications::SessionKey;
+use freshkube_delivery::change::{Change, Destination, Object, Phase, Reach, Shows, Stage, Target};
+use freshkube_delivery::join::Confidence;
 use freshkube_ui::inspector::{self, InspectorSplit, Pane, Stacked};
 use freshkube_ui::table::{self as kit, TableState};
 use freshkube_ui::ui::Tone;
@@ -240,7 +238,7 @@ pub(crate) struct ChangePage {
     /// What reads the change, and the read: its answer, its failure, and
     /// whether one is in flight.
     fetch: Fetch,
-    snapshot: Snapshot<Change, String>,
+    snapshot: Snapshot<Change, String, String>,
     pending: bool,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,

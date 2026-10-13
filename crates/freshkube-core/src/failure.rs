@@ -34,7 +34,7 @@ impl FailureKind {
     }
 }
 
-/// A failed Kubernetes read, already classified.
+/// A failed Kubernetes or Talos read, already classified.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Failure {
     pub kind: FailureKind,
@@ -67,10 +67,21 @@ impl Failure {
             | TalosError::ConfigParse(_)
             | TalosError::ConfigInvalid(_)
             | TalosError::ContextNotFound(_)
-            | TalosError::NoEndpoints(_) => FailureKind::Config,
-            _ => FailureKind::Other,
+            | TalosError::NoEndpoints(_)
+            | TalosError::Base64Decode(_)
+            | TalosError::Tls(_)
+            | TalosError::NoHomeDirectory => FailureKind::Config,
+            TalosError::Io(_) => FailureKind::Other,
         };
-        Self::new(kind, crate::errors::format_talos_error(error))
+        // A status keeps the server's own message as the detail, since the
+        // kind's label already says what the code means; the words
+        // `format_talos_error` adds for a code are the fallback for a status
+        // with no message.
+        let message = match error {
+            TalosError::Grpc(status) if !status.message().is_empty() => status.message().to_owned(),
+            _ => crate::errors::format_talos_error(error),
+        };
+        Self::new(kind, message)
     }
 
     pub fn from_kube(error: kube::Error) -> Self {
@@ -115,6 +126,29 @@ impl Failure {
             }
             other => Self::new(FailureKind::Other, other.to_string()),
         }
+    }
+
+    /// Classifies a kube error as [`Failure::from_kube`] does but keeps the
+    /// error's own `Display` text as the message, for a read that worded its
+    /// failure that way before it carried a kind.
+    pub(crate) fn from_kube_text(error: kube::Error) -> Self {
+        let text = error.to_string();
+        Self::new(Self::from_kube(error).kind, text)
+    }
+
+    /// Classifies a Talos error as [`Failure::from_talos`] does but words it
+    /// with the error's own `Display` text.
+    pub(crate) fn from_talos_text(error: &TalosError) -> Self {
+        Self::new(Self::from_talos(error).kind, error.to_string())
+    }
+
+    /// Classifies a Talos error as [`Failure::from_talos`] does but words it
+    /// with `format_talos_error` whole, status message included.
+    pub(crate) fn from_talos_formatted(error: &TalosError) -> Self {
+        Self::new(
+            Self::from_talos(error).kind,
+            crate::errors::format_talos_error(error),
+        )
     }
 
     pub fn timeout(what: &str) -> Self {
@@ -208,6 +242,17 @@ mod tests {
     }
 
     #[test]
+    fn display_text_keeps_the_kind_of_the_classification() {
+        let failure = Failure::from_kube_text(api(403, "pods is forbidden"));
+        assert_eq!(failure.kind, FailureKind::Forbidden);
+        assert_eq!(failure.message, api(403, "pods is forbidden").to_string());
+        let status = TalosError::Grpc(tonic::Status::unavailable("down"));
+        let failure = Failure::from_talos_formatted(&status);
+        assert_eq!(failure.kind, FailureKind::Unreachable);
+        assert_eq!(failure.message, crate::errors::format_talos_error(&status));
+    }
+
+    #[test]
     fn a_body_that_is_not_a_status_reads_as_its_text() {
         let unparsed = |message: &str| {
             Failure::from_kube(kube::Error::Api(ErrorResponse {
@@ -284,6 +329,24 @@ mod tests {
     }
 
     #[test]
+    fn a_talos_status_keeps_the_servers_message_as_its_detail() {
+        let denied = TalosError::Grpc(tonic::Status::permission_denied(
+            "validate configuration on cp-1: proxy denied",
+        ));
+        let failure = Failure::from(&denied);
+        assert_eq!(
+            failure.to_string(),
+            "Forbidden · validate configuration on cp-1: proxy denied",
+            "the class is said once"
+        );
+        let bare = TalosError::Grpc(tonic::Status::permission_denied(""));
+        assert_eq!(
+            Failure::from(&bare).to_string(),
+            "Forbidden · Permission denied - check RBAC/credentials"
+        );
+    }
+
+    #[test]
     fn talos_grpc_codes_map_to_kinds_never_by_message() {
         use tonic::Code;
         for (code, kind) in [
@@ -301,6 +364,13 @@ mod tests {
         }
         let misleading = TalosError::Grpc(tonic::Status::new(Code::Internal, "permission denied"));
         assert_eq!(Failure::from(&misleading).kind, FailureKind::Other);
+        for config in [
+            TalosError::Tls("handshake".into()),
+            TalosError::NoHomeDirectory,
+            TalosError::Base64Decode(base64::DecodeError::InvalidLength(1)),
+        ] {
+            assert_eq!(Failure::from(&config).kind, FailureKind::Config);
+        }
         let refused = TalosError::Connection("connection refused".into());
         assert_eq!(Failure::from(&refused).kind, FailureKind::Unreachable);
     }

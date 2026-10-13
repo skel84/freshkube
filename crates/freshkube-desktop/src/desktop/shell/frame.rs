@@ -24,9 +24,7 @@ impl Pilot {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
             named = names.then(|| context.clone());
             status
-        } else if (self.page == Page::Nodes
-            && self.node_workspace.open
-            && self.node_workspace.tab == crate::desktop::nodes::NodeTab::Logs)
+        } else if (self.page == Page::Nodes && self.node_workspace.shows_logs())
             && self.config_error.is_none()
         {
             self.render_logs_status(cx)
@@ -254,39 +252,22 @@ impl Pilot {
     }
 
     /// The visible page's segment of the status bar, and its id. A page
-    /// derives its segment when its data changes, so this only reads it.
+    /// derives its segment when its data changes, so this only reads it;
+    /// only the visible page is read, so a hidden one's never shows.
     fn page_segment(&mut self, cx: &mut Context<Self>) -> Option<(SharedString, Segment)> {
-        match self.page {
-            Page::Resources => Some((
-                "resource-scope".into(),
-                self.resources.update(cx, |page, _| page.status().clone()),
-            )),
-            Page::Observability => Some((
-                "obs-scope".into(),
-                self.observability
-                    .update(cx, |page, _| page.status().clone()),
-            )),
-            Page::Nodes => Some(("nodes-scope".into(), self.node_workspace.status.clone())),
-            Page::Applications => Some((
-                "applications-scope".into(),
-                self.applications.read(cx).status(cx),
-            )),
-            Page::Settings => Some((
-                "settings-scope".into(),
-                self.settings_page.read(cx).status.clone(),
-            )),
-            Page::SystemServices if self.kubernetes_only.is_none() => Some((
-                "system-services-scope".into(),
-                self.system_services.read(cx).status.clone(),
-            )),
-            // A page drawn by a screen: only the visible page's screen is
-            // read, so a hidden one's segment never shows.
-            page => {
-                let kind = page.screen()?;
-                let (_, screen) = self.screens.iter().find(|(screen, _)| *screen == kind)?;
-                Some((format!("{}-scope", page.slug()).into(), screen.status(cx)?))
+        let id: SharedString = match self.page {
+            Page::Resources => "resource-scope".into(),
+            Page::Observability => "obs-scope".into(),
+            // The workspace is the shell's until it is an entity (#579's
+            // step 4).
+            Page::Nodes => {
+                return Some(("nodes-scope".into(), self.node_workspace.status.clone()));
             }
-        }
+            Page::SystemServices if self.kubernetes_only.is_some() => return None,
+            page => format!("{}-scope", page.slug()).into(),
+        };
+        let page = self.pages.get(&self.page.id())?.clone();
+        Some((id, page.status(cx)?))
     }
 }
 

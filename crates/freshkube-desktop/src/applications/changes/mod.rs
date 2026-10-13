@@ -21,13 +21,11 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use freshkube_core::delivery::change::example::Shape;
-use freshkube_core::delivery::change::live::Place;
-use freshkube_core::delivery::changes::{
-    self as core_changes, Changes as Derived, Fold, live::Where,
-};
-use freshkube_core::delivery::entry::{self, pool};
 use freshkube_core::snapshot::{Request, Snapshot};
+use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::change::live::Place;
+use freshkube_delivery::changes::{self as core_changes, Changes as Derived, Fold, live::Where};
+use freshkube_delivery::entry::{self, pool};
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self as kit, TableState};
@@ -108,7 +106,7 @@ pub(crate) struct ChangesPage {
     /// Example data answers after this, in tests, so a read stays in
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
-    snapshot: Snapshot<Read, String>,
+    snapshot: Snapshot<Read, String, String>,
     pending: bool,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
@@ -156,7 +154,12 @@ pub(crate) struct ChangesPage {
 impl EventEmitter<ChangesEvent> for ChangesPage {}
 
 impl ChangesPage {
-    pub(crate) fn new(runtime: tokio::runtime::Handle, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(
+        runtime: tokio::runtime::Handle,
+        hold: bool,
+        shape: Shape,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let display = Display::default();
@@ -165,8 +168,8 @@ impl ChangesPage {
             runtime,
             source: None,
             visible: false,
-            hold: crate::fixture::hold().applications,
-            shape: super::Variant::from_env().shape(),
+            hold,
+            shape,
             example_delay: Duration::ZERO,
             snapshot: Snapshot::default(),
             pending: false,
@@ -449,7 +452,7 @@ impl ChangesPage {
         let first = self.display.rows.is_empty();
         self.display = Display::new(
             self.snapshot.data().map(|read| &read.changes),
-            self.snapshot.error(),
+            self.snapshot.error().map(String::as_str),
             cluster.as_deref().unwrap_or_default(),
             Utc::now(),
         );

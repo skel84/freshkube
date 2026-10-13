@@ -4,12 +4,12 @@
 //! workloads labelled as Argo CD's run, `argocd`), and the environments'
 //! labelled workloads.
 //! Debug builds reshape it for captures with `FRESHKUBE_APPLICATIONS`.
-use freshkube_core::applications::read::{ARGOCD, argo_namespaces};
-use freshkube_core::applications::{
+use freshkube_delivery::applications::read::{ARGOCD, argo_namespaces};
+use freshkube_delivery::applications::{
     Absent, ArgoFound, ArgoScope, Asked, Inputs, SessionInputs, SessionKey, example as acme,
 };
-use freshkube_core::delivery::change::example::Shape;
-use freshkube_core::delivery::source::{Source, Truncation};
+use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::source::{Source, Truncation};
 
 use super::display::Labels;
 use super::links::Connections;
@@ -61,27 +61,24 @@ impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
     /// `spread`, `not-found`, `unlabelled`, `stages`, `workloads`,
     /// `unreachable`, `argo-refused` or `destination` from
-    /// `FRESHKUBE_APPLICATIONS`;
-    /// debug and stress builds only.
-    pub(crate) fn from_env() -> Self {
-        if !cfg!(any(debug_assertions, feature = "stress")) {
-            return Self::default();
-        }
-        match std::env::var("FRESHKUBE_APPLICATIONS").as_deref() {
-            Ok("single") => Self::Single,
-            Ok("partial") => Self::Partial,
-            Ok("refused") => Self::Refused,
-            Ok("unserved") => Self::Unserved,
-            Ok("failed") => Self::Failed,
-            Ok("capped") => Self::Capped,
-            Ok("spread") => Self::Spread,
-            Ok("not-found") => Self::NotFound,
-            Ok("unlabelled") => Self::Unlabelled,
-            Ok("stages") => Self::Stages,
-            Ok("workloads") => Self::Workloads,
-            Ok("unreachable") => Self::Unreachable,
-            Ok("argo-refused") => Self::ArgoRefused,
-            Ok("destination") => Self::Destination,
+    /// `FRESHKUBE_APPLICATIONS`, parsed into `DebugOptions` (debug and
+    /// stress builds only); anything else is `Acme`.
+    pub(crate) fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("single") => Self::Single,
+            Some("partial") => Self::Partial,
+            Some("refused") => Self::Refused,
+            Some("unserved") => Self::Unserved,
+            Some("failed") => Self::Failed,
+            Some("capped") => Self::Capped,
+            Some("spread") => Self::Spread,
+            Some("not-found") => Self::NotFound,
+            Some("unlabelled") => Self::Unlabelled,
+            Some("stages") => Self::Stages,
+            Some("workloads") => Self::Workloads,
+            Some("unreachable") => Self::Unreachable,
+            Some("argo-refused") => Self::ArgoRefused,
+            Some("destination") => Self::Destination,
             _ => Self::Acme,
         }
     }
@@ -263,7 +260,7 @@ mod tests {
     /// the open cluster while its parts are refused.
     #[test]
     fn no_acme_cluster_is_named_as_an_example_context() {
-        let inputs = freshkube_core::applications::example::acme();
+        let inputs = freshkube_delivery::applications::example::acme();
         for session in &inputs.sessions {
             assert!(
                 !crate::fixture::CONTEXTS.contains(&session.key.0.as_str()),

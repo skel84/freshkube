@@ -365,7 +365,7 @@ impl TableSource for Pilot {
         if !foldable {
             return Some(line.into_any_element());
         }
-        let focus = self.node_focus.clone();
+        let focus = self.node_workspace.focus.clone();
         let label = if collapsed {
             "Expand healthy nodes"
         } else {
@@ -416,7 +416,7 @@ impl TableSource for Pilot {
     }
     /// The table's rows have a menu; the cards don't.
     fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
-        (self.node_workspace.view != NodeView::Cards).then(|| self.node_focus.clone())
+        (self.node_workspace.view != NodeView::Cards).then(|| self.node_workspace.focus.clone())
     }
     /// A right-click selects the node as an arrow does: an open pane
     /// shows it, a closed one stays closed, so the table keeps its width
@@ -436,7 +436,7 @@ impl TableSource for Pilot {
                 cx.notify();
             }
         }
-        window.focus(&self.node_focus, cx);
+        window.focus(&self.node_workspace.focus, cx);
         let mut actions = vec![menu::MenuAction::new("Open", OpenNode)];
         if self.node_workspace.folds_healthy() {
             actions.push(menu::MenuAction::Separator);

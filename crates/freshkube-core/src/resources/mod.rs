@@ -20,7 +20,7 @@ mod discovery;
 mod events;
 mod exec;
 // Moved to `crate::failure`; kept so `resources::failure` paths still resolve.
-pub use crate::failure;
+use crate::failure;
 mod forward;
 mod kinds;
 mod metadata;
@@ -34,7 +34,9 @@ mod watch;
 mod workload_pods;
 
 pub use connection::{Connection, connect};
-pub use contexts::{KubeContext, KubeconfigReport, discover_contexts, kubeconfig_sources};
+pub use contexts::{
+    KubeContext, KubeconfigReport, discover_contexts, kubeconfig_sources, load as load_kubeconfigs,
+};
 pub use discovery::{ApiGroup, GroupKinds, list_custom_groups, list_group_kinds};
 pub use events::{EventScope, EventUpdate, ObjectEvent, watch_object_events};
 pub use exec::{

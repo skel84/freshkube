@@ -5,7 +5,7 @@ use super::shell::ColumnKey;
 use super::tests::{chrome_redrawn, fixture};
 use super::{Area, Page, Pilot};
 use crate::applications::{Column, ColumnApp, ColumnSection, Variant};
-use freshkube_core::applications::Rule;
+use freshkube_delivery::applications::Rule;
 use freshkube_ui::source_list::Line;
 use freshkube_ui::table::TableSource as _;
 use gpui_kit::AppContext as _;

@@ -13,7 +13,7 @@
 //! changes; drawing only lays it out.
 use super::*;
 use crate::ui::{self, MONO_FONT, dp};
-use freshkube_core::delivery::change::{
+use freshkube_delivery::change::{
     Action, Check, Destination, Eligible, Field, HopDetail, LinkDetail, Promotion, Stage, Target,
     Upstream, Value,
 };

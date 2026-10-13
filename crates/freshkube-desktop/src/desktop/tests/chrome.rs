@@ -253,3 +253,213 @@ fn cached_overview_redraws_after_data_and_theme_change(cx: &mut TestAppContext) 
         "theme change must redraw it"
     );
 }
+
+/// Overview is a view of its own: a notify of the shell that changes none
+/// of what it shows leaves it as drawn, while its cards, its attention
+/// list, a change of state, Show all, the theme and the text size redraw it
+/// once each.
+#[gpui_kit::test]
+fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+        let before = count("overview");
+        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        count("overview") - before
+    };
+    let shell = redrawn(&|_, cx| cx.notify());
+    let cards = redrawn(&|view, cx| view.rebuild_joined_nodes(cx));
+    // A refresh that fails through the shell: the observer hands Overview
+    // the stale state, with the joined nodes rebuilt in the same frame.
+    let stale = redrawn(&|view, cx| view.simulate_failure(cx));
+    let after_stale = redrawn(&|_, cx| cx.notify());
+    let attention = redrawn(&|view, cx| {
+        let attention = view.node_workspace.attention.clone();
+        view.overview_page
+            .update(cx, |page, cx| page.set_attention(attention, cx));
+    });
+    let state = redrawn(&|view, cx| {
+        view.config_error = Some("unreadable".into());
+        cx.notify();
+    });
+    let unchanged = redrawn(&|_, cx| cx.notify());
+    let show_all = redrawn(&|view, cx| view.expand_attention(cx));
+    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let text_size = redrawn(&|_, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
+    assert_eq!(
+        [
+            shell,
+            cards,
+            stale,
+            after_stale,
+            attention,
+            state,
+            unchanged,
+            show_all,
+            cached,
+            text_size
+        ],
+        [0, 1, 1, 0, 1, 1, 0, 1, 1, 1]
+    );
+    let before = count("overview");
+    cx.update_window(handle, |_, window, cx| {
+        Theme::change(ThemeMode::Dark, Some(window), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| draw(window, cx))
+        .unwrap();
+    assert_eq!(count("overview") - before, 1, "a theme change redraws it");
+}
+
+/// The pointer moving onto a card and off it again redraws Overview once
+/// each way for the card's hover tint. The shell draws again as its
+/// ancestor, as it did around the host; the cached header stays as drawn.
+#[gpui_kit::test]
+fn overview_card_hover_redraws_only_overview(cx: &mut TestAppContext) {
+    use gpui_kit::{InputEvent, MouseMoveEvent};
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut moved = |onto_card: bool| {
+        let (overview, header) = (count("overview"), count("chrome.header"));
+        cx.update_window(handle, |_, window, cx| {
+            let card = window.find("tile-nodes").bounds();
+            let position = if onto_card {
+                card.center()
+            } else {
+                card.origin - gpui_kit::point(gpui_kit::px(4.), gpui_kit::px(4.))
+            };
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position,
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        (
+            count("overview") - overview,
+            count("chrome.header") - header,
+        )
+    };
+    let onto = moved(true);
+    let off = moved(false);
+    assert_eq!([onto, off], [(1, 0), (1, 0)]);
+}
+
+/// System services is a cached view of its own: a notify of the shell
+/// leaves it as drawn, while its nodes, a changed Talos reading and the
+/// global redraw each draw it again.
+#[gpui_kit::test]
+fn cached_system_services_redraws_for_its_own_changes(cx: &mut TestAppContext) {
+    use crate::screens::Reading;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.navigate(Page::SystemServices, window, cx)
+        });
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+        let before = count("system-services");
+        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        count("system-services") - before
+    };
+    let shell = redrawn(&|_, cx| cx.notify());
+    let nodes = redrawn(&|view, cx| {
+        let nodes = view.nodes.clone();
+        view.system_services
+            .update(cx, |page, cx| page.set_nodes(&nodes, cx));
+    });
+    let reading = redrawn(&|view, cx| {
+        let reading = Reading::Failed("no answer".into());
+        view.system_services
+            .update(cx, |page, cx| page.set_reading(reading, cx));
+    });
+    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    assert_eq!([shell, nodes, reading, cached], [0, 1, 1, 1]);
+}
+
+/// One countdown tick as the shell's timer applies it.
+fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.elapsed += std::time::Duration::from_secs(1);
+            pilot.tick_countdown(cx);
+        });
+    });
+    cx.run_until_parked();
+}
+
+/// The node pane's System services tab draws inside the Nodes host, so a
+/// notify of the shell still draws it again; its own changes draw it once.
+/// A restart's notice no longer notifies the shell, so the tab draws it
+/// only because it hears the notice itself. A theme change redraws the
+/// cached tab. PR 3 of #579 takes the host away and changes the first
+/// count.
+#[gpui_kit::test]
+fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1700., 1200.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_node_by_name(
+                "talos-wk-fra1-02",
+                super::super::nodes::NodeTab::Services,
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+        let before = count("node-services");
+        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        count("node-services") - before
+    };
+    let shell = redrawn(&|_, cx| cx.notify());
+    let selection = redrawn(&|view, cx| view.select_service(Some("kubelet".into()), cx));
+    let services = redrawn(&|view, cx| view.push_services(cx));
+    let notice = redrawn(&|view, cx| view.note_restart("kubelet", cx));
+    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    assert_eq!(
+        [shell, selection, services, notice, cached],
+        [1, 1, 1, 1, 1]
+    );
+}

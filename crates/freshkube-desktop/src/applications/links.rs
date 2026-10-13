@@ -14,10 +14,10 @@
 //! asks before switching to it and then opens the part there.
 use std::collections::{BTreeMap, BTreeSet};
 
-use freshkube_core::applications::{MemberKind, MemberRef, SessionKey};
-use freshkube_core::delivery::{argocd, kargo};
 use freshkube_core::resources::ResourceKind;
 use freshkube_core::workloads::WorkloadKind;
+use freshkube_delivery::applications::{MemberKind, MemberRef, SessionKey};
+use freshkube_delivery::{argocd, kargo};
 
 use crate::resources::{ResourceLink, Tab, model::ObjectRef};
 

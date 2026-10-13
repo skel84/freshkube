@@ -1,5 +1,9 @@
 //! Debug and stress entry points for fixture visual checks.
 use super::*;
+use crate::{
+    DebugOptions,
+    debug_options::{Sidebar, Theme},
+};
 
 pub(super) fn window_size(value: Option<&str>) -> Size<Pixels> {
     value
@@ -16,49 +20,32 @@ pub(super) fn window_size(value: Option<&str>) -> Size<Pixels> {
         .unwrap_or_else(|| size(px(1320.), px(860.)))
 }
 impl Pilot {
-    pub(super) fn open_startup_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let page = std::env::var("FRESHKUBE_PAGE").ok();
-        let kind = std::env::var("FRESHKUBE_KIND").ok();
-        let theme = std::env::var("FRESHKUBE_THEME").ok();
-        let sidebar = std::env::var("FRESHKUBE_SIDEBAR").ok();
-        // A dashboard of the Monitoring folder, by its path.
-        let dashboard = std::env::var_os("FRESHKUBE_DASHBOARD").map(std::path::PathBuf::from);
-        // Text typed into the startup page's log search.
-        let log_search = std::env::var("FRESHKUBE_LOG_SEARCH").ok();
+    pub(super) fn open_startup_page(
+        &mut self,
+        debug: &DebugOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Reduced or full motion, whatever the OS says.
-        let motion = match std::env::var("FRESHKUBE_MOTION").as_deref() {
-            Ok("reduced") => Some(freshkube_ui::motion::Choice::Reduced),
-            Ok("full") => Some(freshkube_ui::motion::Choice::Full),
-            _ => None,
-        };
-        if let Some(choice) = motion {
+        if let Some(choice) = debug.motion {
             freshkube_ui::motion::choose(choice, cx);
         }
+        let debug = debug.clone();
         cx.defer_in(window, move |this, window, cx| {
-            this.startup_selection(
-                page.as_deref(),
-                kind.as_deref(),
-                theme.as_deref(),
-                window,
-                cx,
-            );
-            let collapsed = match sidebar.as_deref() {
-                Some("collapsed") => Some(true),
-                Some("expanded") => Some(false),
-                _ => None,
-            };
+            this.startup_selection(&debug, window, cx);
+            let collapsed = debug.sidebar.map(|sidebar| sidebar == Sidebar::Collapsed);
             if let Some(collapsed) = collapsed {
                 this.column_state.preview(collapsed);
                 this.notify_cached(cx);
                 cx.notify();
             }
-            if let Some(path) = dashboard {
+            if let Some(path) = debug.dashboard.clone() {
                 this.monitoring.update(cx, |monitoring, cx| {
                     monitoring.open(crate::monitoring::page::EntryId::File(path), cx)
                 });
             }
-            if let Some(query) = log_search {
-                this.search_startup_log(page.as_deref(), query, window, cx);
+            if let Some(query) = debug.log_search.clone() {
+                this.search_startup_log(debug.page(), query, window, cx);
             }
         });
     }
@@ -121,16 +108,15 @@ impl Pilot {
     }
     pub(super) fn startup_selection(
         &mut self,
-        page: Option<&str>,
-        kind: Option<&str>,
-        theme: Option<&str>,
+        debug: &DebugOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match theme {
-            Some("light") => self.set_appearance(Appearance::Light, window, cx),
-            Some("dark") => self.set_appearance(Appearance::Dark, window, cx),
-            _ => {}
+        let (page, kind) = (debug.page(), debug.kind.as_deref());
+        match debug.theme {
+            Some(Theme::Light) => self.set_appearance(Appearance::Light, window, cx),
+            Some(Theme::Dark) => self.set_appearance(Appearance::Dark, window, cx),
+            None => {}
         }
         if let Some(page) =
             page.and_then(|slug| Page::ALL.into_iter().find(|page| page.slug() == slug))
@@ -176,7 +162,8 @@ impl Pilot {
                     );
                 }
                 if self.fixture {
-                    self.node_history
+                    self.node_workspace
+                        .history
                         .update(cx, |history, cx| history.answer_example_now(cx));
                 }
             }
