@@ -4,6 +4,12 @@
 //!
 //! The desktop app builds one from its own connection type, so a page that
 //! takes a [`ClusterSource`] depends on neither that type nor the UI.
+//!
+//! The access the shell hands its pages lives here too: [`KubeAccess`]
+//! (example data, the Kubernetes client the Talos side sets up, or a
+//! kubeconfig context), [`LiveSource`] (Talos access for a connected
+//! context), [`TalosAccess`], [`AppliedAccess`] and [`DirectAccess`].
+//! Desktop names them by their old paths.
 
 use futures::future::BoxFuture;
 use std::fmt;
