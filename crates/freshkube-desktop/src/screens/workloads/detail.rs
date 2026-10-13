@@ -75,7 +75,7 @@ fn item(
             Some(Item {
                 name: namespace.name.clone(),
                 health: namespace.health,
-                tone: health_tone(namespace.health),
+                tone: ui::health_tone(namespace.health.health()).0,
                 fields: vec![
                     ("Kind", text("Namespace".into())),
                     (
@@ -116,7 +116,7 @@ fn item(
             Some(Item {
                 name: workload.name.clone(),
                 health: workload.health,
-                tone: health_tone(workload.health),
+                tone: ui::health_tone(workload.health.health()).0,
                 fields: vec![
                     ("Namespace", text(workload.namespace.clone())),
                     ("Kind", text(workload.kind.label().into())),
