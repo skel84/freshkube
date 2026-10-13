@@ -60,10 +60,21 @@ impl Dir {
 pub struct Document<T> {
     path: PathBuf,
     layout: Layout,
-    /// Read only where a file has a Unix mode.
-    #[cfg_attr(not(unix), allow(dead_code))]
     mode: u32,
     value: PhantomData<fn() -> T>,
+}
+
+impl<T> Document<T> {
+    /// The file at `path`, holding a `T`, for a caller that has the whole
+    /// path and not a directory and a name ([`Dir::document`]).
+    pub fn at(path: &Path, layout: Layout, mode: u32) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            layout,
+            mode,
+            value: PhantomData,
+        }
+    }
 }
 
 /// What a load found.
@@ -114,9 +125,9 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// temporary file is removed.
     ///
     /// The file keeps its permissions when it exists, and takes the
-    /// document's mode, less the umask, when it is new. A path that is a symlink stays one:
-    /// the temporary file goes beside its target and is renamed over the
-    /// target.
+    /// document's mode, less the umask, when it is new. A path that is a
+    /// symlink stays one: the temporary file goes beside its target and is
+    /// renamed over the target.
     pub fn save(&self, value: &T) -> std::io::Result<()> {
         let mut text = match self.layout {
             Layout::Compact => serde_json::to_string(value),
@@ -177,9 +188,7 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         file.write_all(bytes)?;
         file.sync_all()
     }
-}
 
-impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// Loads the file, lets `change` edit its value and saves it back. A
     /// writer that owns some keys of a shared document sets those and leaves
     /// the rest as it found it, so a `Document<Map<String, Value>>` keeps
@@ -187,7 +196,9 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// starts from the default, as [`load`](Self::load) says.
     ///
     /// Updates in this process run one at a time, so two of them never lose
-    /// each other's change. Another process is not excluded.
+    /// each other's change. Another process is not excluded. `change` must
+    /// not call `update`, on this document or any other: the lock is not
+    /// re-entrant.
     pub fn update(&self, change: impl FnOnce(&mut T)) -> std::io::Result<()> {
         static UPDATING: Mutex<()> = Mutex::new(());
         let _one_at_a_time = UPDATING

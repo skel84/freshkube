@@ -346,10 +346,15 @@ fn an_update_of_a_missing_or_unusable_file_starts_from_the_default() {
 fn updates_from_several_threads_lose_none() {
     let directory = tempfile::tempdir().unwrap();
     let document = std::sync::Arc::new(shared(&directory));
+    // Behind a barrier, so the updates overlap: without the lock, some of
+    // them would load the same file and lose each other's key.
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
     let threads: Vec<_> = (0..8)
         .map(|n| {
             let document = document.clone();
+            let barrier = barrier.clone();
             std::thread::spawn(move || {
+                barrier.wait();
                 document
                     .update(|map| {
                         map.insert(format!("key{n}"), n.into());

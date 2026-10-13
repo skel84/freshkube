@@ -8,9 +8,9 @@
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use freshkube_prefs::{Dir, Document, Layout};
+use freshkube_prefs::{Document, Layout};
 use gpui_kit::component::Theme;
 use gpui_kit::{App, Global, KeyBinding};
 
@@ -31,6 +31,10 @@ struct TextSize {
     /// Whether the last save failed, so a folder that stays unwritable is
     /// logged once, not on every step.
     save_failed: Arc<AtomicBool>,
+    /// The size last chosen, as `f32` bits. A save writes this, not the size
+    /// it was spawned for, so whichever save takes the file's lock last
+    /// still writes the newest choice.
+    latest: Arc<AtomicU32>,
 }
 
 impl Global for TextSize {}
@@ -61,6 +65,7 @@ pub fn install_with(preferences: Option<PathBuf>, start: Option<f32>, cx: &mut A
         size,
         preferences,
         save_failed: Arc::default(),
+        latest: Arc::new(AtomicU32::new(size.to_bits())),
     });
     cx.bind_keys([
         // Command-Shift-= arrives as `+`. macOS's View menu shows the first
@@ -94,13 +99,15 @@ pub fn set(size: f32, cx: &mut App) {
     text.size = size;
     let preferences = text.preferences.clone();
     let save_failed = text.save_failed.clone();
+    let latest = text.latest.clone();
+    latest.store(size.to_bits(), Ordering::Relaxed);
     apply(cx);
     if let Some(path) = preferences {
         cx.background_executor()
             .spawn(async move {
                 // A failed save only means the next launch starts at the
                 // default; say so once.
-                match save(&path, size) {
+                match save(&path, &latest) {
                     Ok(()) => save_failed.store(false, Ordering::Relaxed),
                     Err(error) => {
                         if !save_failed.swap(true, Ordering::Relaxed) {
@@ -140,12 +147,11 @@ fn apply(cx: &mut App) {
 
 /// `preferences.json`, whose other keys belong to no one here: the size is
 /// the only key this module sets, and a save keeps every other key. New
-/// files are created `0o666` less the umask, as `std::fs::write` did.
+/// files are created `0o666` less the umask, as `std::fs::write` did. The
+/// app's file is always `preferences.json`; the path comes from
+/// `GpuiOptions.preferences`.
 fn document(path: &Path) -> Document<serde_json::Map<String, serde_json::Value>> {
-    let name = path
-        .file_name()
-        .map_or("preferences.json".into(), |name| name.to_string_lossy());
-    Dir::beside(path).document(&name, Layout::Pretty, 0o666)
+    Document::at(path, Layout::Pretty, 0o666)
 }
 
 /// The size saved in a preferences file, if it holds one of `STEPS`.
@@ -158,9 +164,11 @@ fn saved(path: &Path) -> Option<f32> {
     STEPS.contains(&size).then_some(size)
 }
 
-/// Sets `text_size` in the preferences file, keeping anything else in it.
-fn save(path: &Path, size: f32) -> std::io::Result<()> {
+/// Sets `text_size` in the preferences file to the size last chosen
+/// (`latest`, read under the file's lock), keeping anything else in it.
+fn save(path: &Path, latest: &AtomicU32) -> std::io::Result<()> {
     document(path).update(|map| {
+        let size = f32::from_bits(latest.load(Ordering::Relaxed));
         map.insert("text_size".into(), serde_json::json!(size));
     })
 }
@@ -168,6 +176,10 @@ fn save(path: &Path, size: f32) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn save_size(path: &Path, size: f32) -> std::io::Result<()> {
+        save(path, &AtomicU32::new(size.to_bits()))
+    }
 
     fn directory(name: &str) -> PathBuf {
         let directory =
@@ -181,10 +193,10 @@ mod tests {
         let directory = directory("round-trip");
         let path = directory.join("nested").join("preferences.json");
         assert_eq!(saved(&path), None);
-        save(&path, 18.).unwrap();
+        save_size(&path, 18.).unwrap();
         assert_eq!(saved(&path), Some(18.));
         std::fs::write(&path, r#"{"other": true, "text_size": 16}"#).unwrap();
-        save(&path, 20.).unwrap();
+        save_size(&path, 20.).unwrap();
         let value: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["other"], true);
@@ -197,7 +209,7 @@ mod tests {
         let directory = directory("start");
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("preferences.json");
-        save(&path, 14.).unwrap();
+        save_size(&path, 14.).unwrap();
         cx.update(|cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
@@ -238,34 +250,35 @@ mod tests {
         }
         // A file that isn't an object is replaced, not merged into.
         std::fs::write(&path, "[]").unwrap();
-        save(&path, 12.).unwrap();
+        save_size(&path, 12.).unwrap();
         assert_eq!(saved(&path), Some(12.));
         std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
     fn a_save_writes_the_example_file_byte_for_byte() {
-        let directory = directory("example");
+        let scratch = tempfile::tempdir().unwrap();
+        let directory = scratch.path().to_path_buf();
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("preferences.json");
         let example = include_str!("../../freshkube-prefs/src/examples/preferences.json");
         // From the older compact form, an unknown key and another size.
         std::fs::write(&path, r#"{"other":true,"text_size":12}"#).unwrap();
-        save(&path, 16.).unwrap();
+        save_size(&path, 16.).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), example);
         // A first save into a missing folder writes the same layout.
         let fresh = directory.join("nested").join("preferences.json");
-        save(&fresh, 16.).unwrap();
+        save_size(&fresh, 16.).unwrap();
         assert_eq!(
             std::fs::read_to_string(&fresh).unwrap(),
             "{\n  \"text_size\": 16.0\n}\n"
         );
-        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
     fn a_save_keeps_every_other_key_unknown_ones_included() {
-        let directory = directory("keys");
+        let scratch = tempfile::tempdir().unwrap();
+        let directory = scratch.path().to_path_buf();
         std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("preferences.json");
         std::fs::write(
@@ -273,25 +286,37 @@ mod tests {
             "{\n  \"a_future_key\": {\"nested\": [1, \"two\", null]},\n  \"other\": true,\n  \"text_size\": 12.0\n}\n",
         )
         .unwrap();
-        save(&path, 20.).unwrap();
+        save_size(&path, 20.).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "{\n  \"a_future_key\": {\n    \"nested\": [\n      1,\n      \"two\",\n      null\n    ]\n  },\n  \"other\": true,\n  \"text_size\": 20.0\n}\n"
         );
-        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
     fn a_missing_file_is_the_default_and_saves_leave_no_temporary_file() {
-        let directory = directory("missing");
+        let scratch = tempfile::tempdir().unwrap();
+        let directory = scratch.path().to_path_buf();
         let path = directory.join("preferences.json");
         assert_eq!(saved(&path), None);
-        save(&path, 14.).unwrap();
+        save_size(&path, 14.).unwrap();
         let names: Vec<_> = std::fs::read_dir(&directory)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(names, ["preferences.json"]);
-        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_save_that_runs_late_still_writes_the_newest_size() {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("preferences.json");
+        let latest = AtomicU32::new(16f32.to_bits());
+        // 18 is chosen after a save for 16 was spawned; 18's save runs
+        // first and the stale one for 16 runs last.
+        latest.store(18f32.to_bits(), Ordering::Relaxed);
+        save(&path, &latest).unwrap();
+        save(&path, &latest).unwrap();
+        assert_eq!(saved(&path), Some(18.));
     }
 }
