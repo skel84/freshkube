@@ -208,7 +208,7 @@ fn kubelet_links_to_its_scoped_pods(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.open_node_by_name("talos-wk-fra1-02", NodeTab::Services, window, cx);
-            pilot.selected_service = Some("kubelet".into());
+            pilot.select_service(Some("kubelet".into()), cx);
             cx.notify();
         });
         window.render_frame(cx);
@@ -220,6 +220,11 @@ fn kubelet_links_to_its_scoped_pods(cx: &mut TestAppContext) {
                 .contains("Pods on this node")
         );
         window.click("kubelet-node-pods", cx);
+    })
+    .unwrap();
+    // The tab asks the shell, which hears it once the click's effects run.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Pods);
         assert_eq!(
