@@ -111,7 +111,10 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
         let pilot = view.read(cx);
         let summary = &pilot.registry.active().kubernetes_summary;
         assert!(!summary.is_stale());
-        (summary.last_successful(), pilot.node_workspace.rows.len())
+        (
+            summary.last_successful(),
+            pilot.node_workspace.read(cx).rows.len(),
+        )
     });
     assert!(before.is_some() && rows > 0);
 

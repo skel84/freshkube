@@ -24,7 +24,7 @@ impl Pilot {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
             named = names.then(|| context.clone());
             status
-        } else if (self.page == Page::Nodes && self.node_workspace.shows_logs())
+        } else if (self.page == Page::Nodes && self.node_workspace.read(cx).shows_logs())
             && self.config_error.is_none()
         {
             self.render_logs_status(cx)
@@ -258,10 +258,9 @@ impl Pilot {
         let id: SharedString = match self.page {
             Page::Resources => "resource-scope".into(),
             Page::Observability => "obs-scope".into(),
-            // The workspace is the shell's until it is an entity (#579's
-            // step 4).
             Page::Nodes => {
-                return Some(("nodes-scope".into(), self.node_workspace.status.clone()));
+                let status = self.node_workspace.read(cx).status.clone();
+                return Some(("nodes-scope".into(), status));
             }
             Page::SystemServices if self.kubernetes_only.is_some() => return None,
             page => format!("{}-scope", page.slug()).into(),

@@ -72,6 +72,7 @@ fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
                 assert_eq!(view.page, Page::Nodes);
                 assert_eq!(
                     view.node_workspace
+                        .read(cx)
                         .selected
                         .as_ref()
                         .unwrap()

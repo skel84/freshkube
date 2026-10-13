@@ -97,7 +97,11 @@ pub async fn run_selection(
         on_event,
         move |kubernetes, targets| {
             let (client, endpoint) = (client.clone(), endpoint.clone());
-            async move { preflight_nodes(&kubernetes, client, endpoint, &targets).await }
+            async move {
+                preflight_nodes(&kubernetes, client, endpoint, &targets)
+                    .await
+                    .map_err(|failure| failure.message)
+            }
         },
     )
     .await

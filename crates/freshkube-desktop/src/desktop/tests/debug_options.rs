@@ -60,13 +60,13 @@ fn the_list_hold_reaches_both_resources_screens(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let pilot = pilot.read(cx);
         assert!(pilot.resources.read(cx).is_holding());
-        assert!(pilot.node_workspace.pods.read(cx).is_holding());
+        assert!(pilot.node_workspace.read(cx).pods.read(cx).is_holding());
     });
     let (_runtime, _handle, pilot) = mount(cx, options(DebugOptions::default()), 1280., 880.);
     cx.update(|cx| {
         let pilot = pilot.read(cx);
         assert!(!pilot.resources.read(cx).is_holding());
-        assert!(!pilot.node_workspace.pods.read(cx).is_holding());
+        assert!(!pilot.node_workspace.read(cx).pods.read(cx).is_holding());
     });
 }
 

@@ -144,11 +144,7 @@ fn a_kind_no_longer_served_says_so_and_closes_its_details(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn a_watch_burst_applies_at_most_once_per_coalesce_window(cx: &mut TestAppContext) {
     let (_runtime, screen, _handle) = mount(cx, Some("homelab"));
-    let (sender, receiver) = tokio::sync::mpsc::channel(8);
-    let _task = screen.update(cx, |screen, cx| {
-        let epoch = screen.store.epoch();
-        screen.receive(epoch, receiver, cx)
-    });
+    let sender = feed(&screen, cx);
     let rows = |cx: &mut TestAppContext| screen.read_with(cx, |screen, _| screen.store.len());
     let upsert = |n| vec![ResourceEvent::Upsert(example::inserted_pod(n))];
     let listed = rows(cx);
@@ -173,6 +169,71 @@ fn a_watch_burst_applies_at_most_once_per_coalesce_window(cx: &mut TestAppContex
     sender.try_send(upsert(4)).unwrap();
     cx.run_until_parked();
     assert_eq!(rows(cx), listed + 4);
+}
+
+/// Starts the list's watch for the current session on a stream that only
+/// holds its sender open, and returns that sender: what the test sends
+/// lands as the watch's batches, with no Tokio work between.
+fn feed(
+    screen: &Entity<ResourcesScreen>,
+    cx: &mut TestAppContext,
+) -> tokio::sync::mpsc::Sender<Vec<ResourceEvent>> {
+    let mut feed = None;
+    screen.update(cx, |screen, cx| {
+        let epoch = screen.store.epoch();
+        screen.start_watch(
+            epoch,
+            |sender| {
+                feed = Some(sender);
+                async {}
+            },
+            cx,
+        );
+    });
+    feed.unwrap()
+}
+
+#[gpui_kit::test]
+fn a_running_watch_stops_on_hide_and_on_restart(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let rows = |cx: &mut TestAppContext| screen.read_with(cx, |screen, _| screen.store.len());
+    let upsert = |n| vec![ResourceEvent::Upsert(example::inserted_pod(n))];
+    let listed = rows(cx);
+
+    // Hiding stops the stream: what it sends next never lands.
+    let sender = feed(&screen, cx);
+    sender.try_send(upsert(1)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.set_visible(false, window, cx));
+    })
+    .unwrap();
+    assert!(!screen.read_with(cx, |screen, _| screen.watch.is_running()));
+    // The dropped delivery lets its receiver go once GPUI runs again.
+    cx.run_until_parked();
+    assert!(sender.try_send(upsert(2)).is_err());
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+
+    // Showing lists again, as the example answers.
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.set_visible(true, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed);
+
+    // A restarted read drops the old stream's batches.
+    let sender = feed(&screen, cx);
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.refresh(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(sender.try_send(upsert(3)).is_err());
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed);
 }
 
 #[gpui_kit::test]

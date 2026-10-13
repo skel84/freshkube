@@ -64,7 +64,7 @@ fn nothing_in_the_chrome_moves_while_talos_loads(cx: &mut TestAppContext) {
     }
     cx.update(|cx| {
         assert!(view.read(cx).loading());
-        assert!(view.read(cx).nodes_wait());
+        assert!(view.read(cx).nodes_wait(cx));
     });
     let motion = probe::count("table.loading-motion");
     assert!(frames_redrawing(cx, handle, "nodes") <= 1);
@@ -203,7 +203,7 @@ fn cached_screen_redraws_after_data_and_theme_change(cx: &mut TestAppContext) {
         draw(window, cx);
         assert_eq!(count("processes"), drawn, "nothing changed, nothing drawn");
         // New data.
-        let screen = view.read(cx).active_screen().unwrap();
+        let screen = view.read(cx).active_screen(cx).unwrap();
         screen.refresh(window, cx);
         draw(window, cx);
         let after_data = count("processes");
@@ -283,7 +283,7 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let stale = redrawn(&|view, cx| view.simulate_failure(cx));
     let after_stale = redrawn(&|_, cx| cx.notify());
     let attention = redrawn(&|view, cx| {
-        let attention = view.node_workspace.attention.clone();
+        let attention = view.node_workspace.read(cx).attention.clone();
         view.overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     });
@@ -418,14 +418,13 @@ fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
-/// The node pane's System services tab draws inside the Nodes host, so a
-/// notify of the shell still draws it again; its own changes draw it once.
-/// A restart's notice no longer notifies the shell, so the tab draws it
-/// only because it hears the notice itself. A theme change redraws the
-/// cached tab. PR 3 of #579 takes the host away and changes the first
-/// count.
+/// The node pane's System services tab draws inside Nodes, a view of its
+/// own, so a notify of the shell leaves it as drawn; its own changes draw
+/// it once. A restart's notice doesn't notify the shell, so the tab draws
+/// it only because it hears the notice itself. A theme change redraws the
+/// cached tab.
 #[gpui_kit::test]
-fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
+fn node_services_redraws_inside_nodes(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1700., 1200.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
@@ -460,6 +459,6 @@ fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
     let cached = redrawn(&|view, cx| view.notify_cached(cx));
     assert_eq!(
         [shell, selection, services, notice, cached],
-        [1, 1, 1, 1, 1]
+        [0, 1, 1, 1, 1]
     );
 }

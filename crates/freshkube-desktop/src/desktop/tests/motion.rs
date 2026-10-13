@@ -8,7 +8,7 @@ fn a_cold_nodes_table_draws_its_header_over_the_loading_rows(cx: &mut TestAppCon
         window.press("secondary-2", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Nodes);
-        assert!(view.read(cx).nodes_wait());
+        assert!(view.read(cx).nodes_wait(cx));
         assert!(window.find("nodes-loading").visible());
         let header: Vec<_> = (0usize..12)
             .filter_map(|ix| window.try_find(("nodes-sort", ix)))
@@ -359,4 +359,81 @@ fn the_cached_rail_draws_the_marks_the_first_answer_brings(cx: &mut TestAppConte
         assert!(window.within("nav-nodes").find("rail-mark").visible());
     })
     .unwrap();
+}
+
+/// The shell mounts Nodes' loading motion from Nodes' view, so a
+/// Cards/Table switch, which Nodes makes itself, tells the shell to draw
+/// again: the motion goes with the cards and comes back with the table.
+#[gpui_kit::test]
+fn a_nodes_view_switch_redraws_the_shell(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    cx.update(|cx| cx.set_reduce_motion(false));
+    cx.update_window(handle, |_, window, cx| window.press("secondary-2", cx))
+        .unwrap();
+    cx.run_until_parked();
+    motion_frame(cx, handle);
+    let clicked = |id: &'static str, cx: &mut TestAppContext| {
+        let before = probe::count("shell");
+        cx.update_window(handle, |_, window, cx| window.click(id, cx))
+            .unwrap();
+        cx.run_until_parked();
+        motion_frame(cx, handle);
+        probe::count("shell") - before
+    };
+    assert!(
+        clicked("nodes-view-cards", cx) > 0,
+        "the cards redraw the shell"
+    );
+    let motion = probe::count("table.loading-motion");
+    for _ in 0..3 {
+        motion_frame(cx, handle);
+    }
+    assert_eq!(probe::count("table.loading-motion"), motion, "the cards");
+    assert!(
+        clicked("nodes-view-table", cx) > 0,
+        "the table redraws the shell"
+    );
+    motion_frame(cx, handle);
+    assert!(motion_frame(cx, handle) > 0, "the table's rows move again");
+    assert!(
+        probe::count("table.loading-motion") > motion,
+        "the motion draws again"
+    );
+}
+
+/// An Expand, which Nodes makes itself, tells the shell to draw again: the
+/// expanded pane replaces the table, and the shell mounts the motion only
+/// over a drawn table. The next frame draws only a dirty window, so the
+/// shell's count rises only if the Expand dirtied it; a settled window
+/// draws nothing.
+#[gpui_kit::test]
+fn a_node_expand_redraws_the_shell(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("nav-nodes", cx);
+        window.render_frame(cx);
+        crate::desktop::tests::expand_healthy_nodes(window, cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for _ in 0..3 {
+        next_frame(cx, handle);
+    }
+    let settled = probe::count("shell");
+    next_frame(cx, handle);
+    assert_eq!(probe::count("shell"), settled, "settled, nothing draws");
+    for expanded in [true, false] {
+        let before = probe::count("shell");
+        // Straight on Nodes, as no click's frame would draw the shell anyway.
+        cx.update(|cx| {
+            let nodes = view.read(cx).node_workspace.clone();
+            nodes.update(cx, |nodes, cx| nodes.toggle_expanded(cx));
+        });
+        next_frame(cx, handle);
+        cx.update(|cx| assert_eq!(view.read(cx).node_workspace.read(cx).expanded, expanded));
+        assert!(probe::count("shell") > before, "expanded {expanded}");
+    }
 }

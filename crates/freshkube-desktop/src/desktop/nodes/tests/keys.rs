@@ -14,68 +14,86 @@ fn enter_and_pane_clicks_move_the_keyboard_into_the_node_pane(cx: &mut TestAppCo
         pilot
             .read(cx)
             .node_workspace
+            .read(cx)
             .pane_focus
             .contains_focused(window, cx)
     };
-    cx.update_window(handle, |_, window, cx| {
+    step(cx, handle, |window, cx| {
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         window.press("down", cx);
-        window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.open);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(!pilot.read(cx).node_workspace.read(cx).open);
         window.press("enter", cx);
-        window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.open);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Overview);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
+        assert_eq!(
+            pilot.read(cx).node_workspace.read(cx).tab,
+            NodeTab::Overview
+        );
         assert!(in_pane(&pilot, window, cx));
         window.press("escape", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.open);
-        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
+    });
+    step(cx, handle, |window, cx| {
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
         window.press("escape", cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.open);
-
-        // A click on a row opens the pane and leaves the keyboard on the
-        // table; a click on a tab moves it into the tab's list.
+    });
+    // A click on a row opens the pane and leaves the keyboard on the
+    // table; a click on a tab moves it into the tab's list.
+    step(cx, handle, |window, cx| {
+        assert!(!pilot.read(cx).node_workspace.read(cx).open);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
         window.click("node-talos-cp-fra1-01", cx);
-        window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
+    });
+    step(cx, handle, |window, cx| {
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
         window.click("node-tab-pods", cx);
-        window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Pods);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, NodeTab::Pods);
         assert!(in_pane(&pilot, window, cx));
-
         // A click on the pane's content takes it from the table too.
         window.click("node-tab-overview", cx);
-        window.render_frame(cx);
+    });
+    step(cx, handle, |window, cx| {
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         window.click("node-pane", cx);
-        window.render_frame(cx);
+    });
+    // From the filter, a click on a tab whose screen takes no keys moves
+    // the keyboard to the tab strip, not leaving it in the filter.
+    let query = step(cx, handle, |window, cx| {
         assert!(in_pane(&pilot, window, cx));
-
-        // From the filter, a click on a tab whose screen takes no keys
-        // moves the keyboard to the tab strip, not leaving it in the filter.
-        let query = pilot.read(cx).node_workspace.query.clone();
+        let query = pilot.read(cx).node_workspace.read(cx).query.clone();
         window.focus(&query.read(cx).focus_handle(cx), cx);
         window.render_frame(cx);
         window.click("node-tab-overview", cx);
-        window.render_frame(cx);
+        query
+    });
+    cx.update_window(handle, |_, window, cx| {
         assert!(in_pane(&pilot, window, cx));
         assert!(!query.read(cx).focus_handle(cx).is_focused(window));
         // The strip's mouse-down took it there; asked straight from the
@@ -104,7 +122,7 @@ fn a_tab_without_keys_takes_the_keyboard_from_the_previous_tab(cx: &mut TestAppC
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
     })
     .unwrap();
@@ -116,8 +134,8 @@ fn a_tab_without_keys_takes_the_keyboard_from_the_previous_tab(cx: &mut TestAppC
                     pilot.focus_node_pane(window, cx);
                 });
                 window.render_frame(cx);
-                let tab_strip = pilot.read(cx).node_workspace.tab_focus.clone();
-                let pane = pilot.read(cx).node_workspace.pane_focus.clone();
+                let tab_strip = pilot.read(cx).node_workspace.read(cx).tab_focus.clone();
+                let pane = pilot.read(cx).node_workspace.read(cx).pane_focus.clone();
                 assert!(pane.contains_focused(window, cx), "{from:?}");
                 assert!(!tab_strip.is_focused(window), "{from:?}");
                 pilot.update(cx, |pilot, cx| {
@@ -125,7 +143,7 @@ fn a_tab_without_keys_takes_the_keyboard_from_the_previous_tab(cx: &mut TestAppC
                     pilot.focus_node_pane(window, cx);
                 });
                 window.render_frame(cx);
-                assert_eq!(pilot.read(cx).node_workspace.tab, to);
+                assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, to);
                 assert!(tab_strip.is_focused(window), "{from:?} → {to:?}");
                 window.press("escape", cx);
             })
@@ -133,9 +151,17 @@ fn a_tab_without_keys_takes_the_keyboard_from_the_previous_tab(cx: &mut TestAppC
             cx.run_until_parked();
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
-                assert!(pilot.read(cx).node_workspace.open, "{from:?} → {to:?}");
                 assert!(
-                    pilot.read(cx).node_workspace.focus.is_focused(window),
+                    pilot.read(cx).node_workspace.read(cx).open,
+                    "{from:?} → {to:?}"
+                );
+                assert!(
+                    pilot
+                        .read(cx)
+                        .node_workspace
+                        .read(cx)
+                        .focus
+                        .is_focused(window),
                     "{from:?} → {to:?}"
                 );
             })
@@ -156,56 +182,64 @@ fn arrows_from_a_hidden_open_node_move_to_the_visible_rows(cx: &mut TestAppConte
             window.click("nav-nodes", cx);
             window.render_frame(cx);
             crate::desktop::tests::expand_healthy_nodes(window, cx);
-            window.click("node-talos-cp-fra1-01", cx);
+            crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
             window.render_frame(cx);
-            pilot.read(cx).node_workspace.selected.clone().unwrap()
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .selected
+                .clone()
+                .unwrap()
         })
         .unwrap();
     cx.update_window(handle, |_, window, cx| {
-        let query = pilot.read(cx).node_workspace.query.clone();
+        let query = pilot.read(cx).node_workspace.read(cx).query.clone();
         window.focus(&query.read(cx).focus_handle(cx), cx);
         window.input("wk", cx);
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let visible: Vec<_> = {
-            let pilot = pilot.read(cx);
+    let visible: Vec<_> = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let pilot = pilot.read(cx).node_workspace.read(cx);
             (0..pilot.line_count())
                 .filter_map(|line| match pilot.line(line, cx)? {
                     Line::Row(row) => Some(row.key),
                     Line::Group(_) => None,
                 })
                 .collect()
-        };
-        assert!(
-            visible.len() > 1 && !visible.contains(&hidden),
-            "{visible:?}"
-        );
-        for (key, first) in [("down", true), ("up", false)] {
+        })
+        .unwrap();
+    assert!(
+        visible.len() > 1 && !visible.contains(&hidden),
+        "{visible:?}"
+    );
+    for (key, first) in [("down", true), ("up", false)] {
+        step(cx, handle, |window, cx| {
             pilot.update(cx, |pilot, cx| {
                 pilot.open_node(hidden.clone(), window, cx);
-                window.focus(&pilot.node_workspace.focus, cx);
+                window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx);
             });
             window.render_frame(cx);
             assert_eq!(
-                pilot.read(cx).node_workspace.selected.as_ref(),
+                pilot.read(cx).node_workspace.read(cx).selected.as_ref(),
                 Some(&hidden)
             );
             window.press(key, cx);
-            window.render_frame(cx);
-            let expected = if first {
-                visible.first()
-            } else {
-                visible.last()
-            };
-            let nodes = &pilot.read(cx).node_workspace;
+        });
+        let expected = if first {
+            visible.first()
+        } else {
+            visible.last()
+        };
+        pilot.read_with(cx, |pilot, cx| {
+            let nodes = pilot.node_workspace.read(cx);
             assert!(nodes.open, "{key}");
             assert_eq!(nodes.selected.as_ref(), expected, "{key}");
-        }
-    })
-    .unwrap();
+        });
+    }
 }
 
 /// The Processes find in the node pane (#347): Escape clears it, then
@@ -219,7 +253,7 @@ fn escape_steps_back_from_the_processes_find_in_the_node_pane(cx: &mut TestAppCo
         crate::desktop::tests::open_node_tab(window, cx, NodeTab::Processes);
         window.render_frame(cx);
         pilot.update(cx, |pilot, cx| {
-            pilot.active_screen().unwrap().focus(window, cx)
+            pilot.active_screen(cx).unwrap().focus(window, cx)
         });
         window.press("/", cx);
         for key in ["e", "t", "c", "d"] {
@@ -246,9 +280,16 @@ fn escape_steps_back_from_the_processes_find_in_the_node_pane(cx: &mut TestAppCo
     escape(cx);
     cx.update_window(handle, |_, window, cx| {
         assert!(init_shown(window, cx), "the find is clear");
-        let nodes = &pilot.read(cx).node_workspace;
+        let nodes = &pilot.read(cx).node_workspace.read(cx);
         assert!(nodes.open && nodes.tab == NodeTab::Processes);
-        assert!(!pilot.read(cx).node_workspace.focus.is_focused(window));
+        assert!(
+            !pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
     })
     .unwrap();
     escape(cx);
@@ -258,18 +299,36 @@ fn escape_steps_back_from_the_processes_find_in_the_node_pane(cx: &mut TestAppCo
             pilot
                 .read(cx)
                 .node_workspace
+                .read(cx)
                 .pane_focus
                 .contains_focused(window, cx)
         );
-        assert!(!pilot.read(cx).node_workspace.focus.is_focused(window));
+        assert!(
+            !pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
     })
     .unwrap();
     escape(cx);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.open);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
-        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
+        assert_eq!(
+            pilot.read(cx).node_workspace.read(cx).tab,
+            NodeTab::Processes
+        );
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
     })
     .unwrap();
 }
@@ -277,32 +336,38 @@ fn escape_steps_back_from_the_processes_find_in_the_node_pane(cx: &mut TestAppCo
 #[gpui_kit::test]
 fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
-    cx.update_window(handle, |_, window, cx| {
+    step(cx, handle, |window, cx| {
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
         window.press("secondary-shift-enter", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.expanded);
+        assert!(pilot.read(cx).node_workspace.read(cx).expanded);
         window.press("secondary-shift-enter", cx);
         window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.expanded);
+        assert!(!pilot.read(cx).node_workspace.read(cx).expanded);
         window.click("node-tab-processes", cx);
-        window.render_frame(cx);
+    });
+    step(cx, handle, |window, cx| {
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.tab_focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).tab_focus.clone(), cx)
         });
         window.press("right", cx);
-        window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Storage);
+    });
+    step(cx, handle, |window, cx| {
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, NodeTab::Storage);
         window.press("secondary-{", cx);
-        window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
+    });
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(
+            pilot.read(cx).node_workspace.read(cx).tab,
+            NodeTab::Processes
+        );
         pilot.update(cx, |pilot, cx| {
-            pilot.active_screen().unwrap().focus(window, cx)
+            pilot.active_screen(cx).unwrap().focus(window, cx)
         });
         window.press("escape", cx);
     })
@@ -312,29 +377,51 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
         // Escape steps back as on Resources (#334): the pane hands the
         // keyboard to the table and stays open on its tab.
         window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace;
+        let nodes = &pilot.read(cx).node_workspace.read(cx);
         assert!(nodes.open);
         assert_eq!(nodes.tab, NodeTab::Processes);
-        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
         // Expanded from the table, the pane first gives the table its room
         // back.
         window.press("secondary-shift-enter", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.expanded);
-        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
+        assert!(pilot.read(cx).node_workspace.read(cx).expanded);
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
         window.press("escape", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace;
+        let nodes = &pilot.read(cx).node_workspace.read(cx);
         assert!(nodes.open && !nodes.expanded);
-        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
         window.focus(
             &pilot
                 .read(cx)
                 .node_workspace
+                .read(cx)
                 .query
                 .read(cx)
                 .focus_handle(cx),
@@ -346,20 +433,22 @@ fn node_keys_expand_switch_tabs_and_step_back(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.query_text, "fra1");
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).query_text, "fra1");
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         // The table clears its filter, then closes the pane.
         window.press("escape", cx);
-        window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.query_text.is_empty());
-        assert!(pilot.read(cx).node_workspace.open);
-        window.press("escape", cx);
-        window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.open);
     })
     .unwrap();
+    step(cx, handle, |window, cx| {
+        assert!(pilot.read(cx).node_workspace.read(cx).query_text.is_empty());
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
+        window.press("escape", cx);
+    });
+    pilot.read_with(cx, |pilot, cx| {
+        assert!(!pilot.node_workspace.read(cx).open);
+    });
 }
 
 /// Escape steps back from each kind of tab as on Resources (#334): the
@@ -376,8 +465,8 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
             window.render_frame(cx);
             let pilot = pilot.read(cx);
             (
-                pilot.node_workspace.open,
-                pilot.node_workspace.focus.is_focused(window),
+                pilot.node_workspace.read(cx).open,
+                pilot.node_workspace.read(cx).focus.is_focused(window),
             )
         })
         .unwrap()
@@ -396,9 +485,15 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
             window.click("nav-nodes", cx);
             window.render_frame(cx);
             crate::desktop::tests::expand_healthy_nodes(window, cx);
-            window.click("node-talos-cp-fra1-01", cx);
+            crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
             window.render_frame(cx);
-            pilot.read(cx).node_workspace.selected.clone().unwrap()
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .selected
+                .clone()
+                .unwrap()
         })
         .unwrap();
 
@@ -409,7 +504,9 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
         pilot.update(cx, |pilot, cx| {
             pilot
                 .node_workspace
+                .read(cx)
                 .pods
+                .clone()
                 .update(cx, |pods, cx| pods.focus(window, cx))
         });
         window.press("/", cx);
@@ -421,7 +518,7 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
     assert_eq!(press(cx, "escape"), (true, false), "the filter leaves");
     assert_eq!(press(cx, "escape"), (true, true), "the list steps back");
     assert_eq!(
-        pilot.read_with(cx, |p, _| p.node_workspace.tab),
+        pilot.read_with(cx, |p, cx| p.node_workspace.read(cx).tab),
         NodeTab::Pods
     );
 
@@ -432,7 +529,9 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
         pilot.update(cx, |pilot, cx| {
             pilot
                 .node_workspace
+                .read(cx)
                 .document
+                .clone()
                 .update(cx, |pane, cx| pane.focus(window, cx))
         });
         window.press("secondary-f", cx);
@@ -444,7 +543,7 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
     assert_eq!(press(cx, "escape"), (true, false), "find leaves");
     assert_eq!(press(cx, "escape"), (true, true), "the document steps back");
     assert_eq!(
-        pilot.read_with(cx, |p, _| p.node_workspace.tab),
+        pilot.read_with(cx, |p, cx| p.node_workspace.read(cx).tab),
         NodeTab::Yaml
     );
 
@@ -452,7 +551,12 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
     show(cx, NodeTab::Logs);
     assert!(
         !cx.update_window(handle, |_, window, cx| {
-            pilot.read(cx).node_workspace.focus.is_focused(window)
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
         })
         .unwrap()
     );
@@ -460,8 +564,8 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
 
     // The table closes the pane and keeps the node selected.
     assert_eq!(press(cx, "escape"), (false, true));
-    pilot.read_with(cx, |pilot, _| {
-        assert_eq!(pilot.node_workspace.selected.as_ref(), Some(&key));
+    pilot.read_with(cx, |pilot, cx| {
+        assert_eq!(pilot.node_workspace.read(cx).selected.as_ref(), Some(&key));
         assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
     });
 }
@@ -470,7 +574,7 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
 fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut TestAppContext) {
     use freshkube_ui::table::TableSource;
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
-    cx.update_window(handle, |_, window, cx| {
+    let target = step(cx, handle, |window, cx| {
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
@@ -478,40 +582,49 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
         window.click("nodes-tally-failing", cx);
         window.render_frame(cx);
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         window.press("down", cx);
-        window.render_frame(cx);
-        let row = pilot.read(cx).node_workspace.row().unwrap();
+        target
+    });
+    step(cx, handle, |window, cx| {
+        let row = pilot.read(cx).node_workspace.read(cx).row().unwrap();
         assert_eq!(row.ready, "NotReady");
         assert_eq!(pilot.read(cx).selected_node, target);
         window.press("enter", cx);
-        window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.open);
+    });
+    step(cx, handle, |window, cx| {
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
         // The table beside the pane keeps its filter (#339): the failing
         // group's heading and its two rows.
-        assert_eq!(pilot.read(cx).line_count(), 3);
-        assert_eq!(pilot.read(cx).node_workspace.lines.len(), 2);
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).line_count(), 3);
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).lines.len(), 2);
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-wk-fra1-02")
         );
         window.click("node-tab-processes", cx);
-        window.render_frame(cx);
+    });
+    step(cx, handle, |window, cx| {
         pilot.update(cx, |pilot, cx| pilot.step_joined_node(1, window, cx));
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
+        assert_eq!(
+            pilot.read(cx).node_workspace.read(cx).tab,
+            NodeTab::Processes
+        );
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-wk-fra1-03")
         );
         window.click("node-close", cx);
-        window.render_frame(cx);
+    });
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!pilot.read(cx).node_workspace.read(cx).open);
         assert_eq!(
-            pilot.read(cx).node_workspace.filter,
+            pilot.read(cx).node_workspace.read(cx).filter,
             Some(super::super::projection::Status::Failing)
         );
-        assert_eq!(pilot.read(cx).node_workspace.lines.len(), 2);
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).lines.len(), 2);
         assert!(window.find("node-talos-wk-fra1-03").visible());
     })
     .unwrap();
@@ -563,18 +676,19 @@ fn enter_in_a_node_logs_search_steps_through_its_matches(cx: &mut TestAppContext
 #[gpui_kit::test]
 fn enter_opens_a_node_from_the_list_and_presses_a_focused_button(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
-    cx.update_window(handle, |_, window, cx| {
+    step(cx, handle, |window, cx| {
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         // On the list, Enter opens the selected node.
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         window.press("down", cx);
-        window.press("enter", cx);
-        window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.open);
+    });
+    step(cx, handle, |window, cx| window.press("enter", cx));
+    cx.update_window(handle, |_, window, cx| {
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
         let node = pilot.read(cx).selected_node.clone();
         assert!(node.is_some());
         pilot.update(cx, |pilot, cx| {
@@ -593,7 +707,7 @@ fn enter_opens_a_node_from_the_list_and_presses_a_focused_button(cx: &mut TestAp
         assert_ne!(window.find("logs-wrap").checked(), wrapped);
         assert_eq!(window.find("logs-wrap").focused(), Some(true));
         assert_eq!(pilot.read(cx).selected_node, node);
-        assert!(pilot.read(cx).node_workspace.open);
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
     })
     .unwrap();
 }
@@ -616,15 +730,22 @@ fn enter_in_the_filter_moves_to_the_list_and_opens_nothing(cx: &mut TestAppConte
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
-        assert!(!pilot.read(cx).node_workspace.open);
+        assert!(
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
+        assert!(!pilot.read(cx).node_workspace.read(cx).open);
         window.press("enter", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.open);
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
         let node = pilot.read(cx).selected_node.clone().unwrap_or_default();
         assert!(node.contains("-wk-"), "{node} isn't a filtered node");
     })
@@ -637,17 +758,17 @@ fn h_folds_the_healthy_nodes_from_the_list_and_the_filter_types_it(cx: &mut Test
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         window.press("h", cx);
         window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.healthy_collapsed());
+        assert!(!pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
         assert!(window.find("node-talos-cp-fra1-01").visible());
         window.press("h", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
 
         window.click("nodes-filter", cx);
         window.render_frame(cx);
@@ -655,7 +776,7 @@ fn h_folds_the_healthy_nodes_from_the_list_and_the_filter_types_it(cx: &mut Test
     })
     .unwrap();
     cx.run_until_parked();
-    cx.read(|cx| assert_eq!(pilot.read(cx).node_workspace.query_text, "h"));
+    cx.read(|cx| assert_eq!(pilot.read(cx).node_workspace.read(cx).query_text, "h"));
 }
 
 #[gpui_kit::test]
@@ -667,16 +788,16 @@ fn h_leaves_the_fold_alone_on_the_cards(cx: &mut TestAppContext) {
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
         assert_eq!(
-            pilot.read(cx).node_workspace.view,
+            pilot.read(cx).node_workspace.read(cx).view,
             super::super::NodeView::Cards
         );
-        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         window.press("h", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.healthy_collapsed());
+        assert!(pilot.read(cx).node_workspace.read(cx).healthy_collapsed());
     })
     .unwrap();
 }
