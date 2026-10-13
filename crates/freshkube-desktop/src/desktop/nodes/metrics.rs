@@ -68,6 +68,7 @@ impl Metrics {
 }
 
 impl Pilot {
+    /// Nodes reads its nodes' use while its page shows.
     pub(in crate::desktop) fn sync_node_metrics(
         &mut self,
         window: &mut Window,
@@ -75,8 +76,22 @@ impl Pilot {
     ) {
         let visible = self.page == Page::Nodes;
         let source = self.kube_source();
+        self.node_workspace.update(cx, |nodes, cx| {
+            nodes.sync_metrics(visible, source, window, cx)
+        });
+    }
+}
+
+impl Nodes {
+    fn sync_metrics(
+        &mut self,
+        visible: bool,
+        source: Option<crate::resources::KubeSource>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let id = source.as_ref().map(|source| source.id.clone());
-        let metrics = &mut self.node_workspace.metrics;
+        let metrics = &mut self.metrics;
         if metrics.source == id && metrics.visible == visible {
             return;
         }
@@ -89,34 +104,28 @@ impl Pilot {
         metrics.example = source
             .as_ref()
             .is_some_and(|source| matches!(source.access, KubeAccess::Example));
-        self.node_workspace.rebuild_resource_cells();
+        self.rebuild_resource_cells();
         if !visible {
             return;
         }
         let Some(source) = source else {
             return;
         };
-        let generation = self.node_workspace.metrics.generation;
+        let generation = self.metrics.generation;
         let example = matches!(source.access, KubeAccess::Example);
         if example {
-            let request = self
-                .node_workspace
-                .metrics
-                .snapshot
-                .begin(source.id.clone());
-            let rows = self.node_workspace.example_node_usage();
-            self.node_workspace
-                .metrics
-                .apply(generation, &request, Ok(rows));
-            self.node_workspace.rebuild_resource_cells();
+            let request = self.metrics.snapshot.begin(source.id.clone());
+            let rows = self.example_node_usage();
+            self.metrics.apply(generation, &request, Ok(rows));
+            self.rebuild_resource_cells();
         }
-        self.node_workspace.metrics.delivery = Some(cx.spawn_in(window, async move |this, cx| {
+        self.metrics.delivery = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
                 if example {
                     cx.background_executor().timer(INTERVAL).await;
                 }
-                let started = this.update(cx, |pilot, cx| {
-                    let metrics = &mut pilot.node_workspace.metrics;
+                let started = this.update(cx, |nodes, cx| {
+                    let metrics = &mut nodes.metrics;
                     if !metrics.visible
                         || metrics.generation != generation
                         || metrics.source.as_ref() != Some(&source.id)
@@ -125,12 +134,9 @@ impl Pilot {
                     }
                     let request = metrics.snapshot.begin(source.id.clone());
                     if example {
-                        let rows = pilot.node_workspace.example_node_usage();
-                        pilot
-                            .node_workspace
-                            .metrics
-                            .apply(generation, &request, Ok(rows));
-                        pilot.node_workspace.rebuild_resource_cells();
+                        let rows = nodes.example_node_usage();
+                        nodes.metrics.apply(generation, &request, Ok(rows));
+                        nodes.rebuild_resource_cells();
                         cx.notify();
                         return Some(None);
                     }
@@ -164,15 +170,11 @@ impl Pilot {
                     let result = receiver
                         .await
                         .unwrap_or_else(|_| Err("Reading nodes' use stopped".into()));
-                    let applied = this.update(cx, |pilot, cx| {
-                        if !pilot
-                            .node_workspace
-                            .metrics
-                            .apply(generation, &request, result)
-                        {
+                    let applied = this.update(cx, |nodes, cx| {
+                        if !nodes.metrics.apply(generation, &request, result) {
                             return false;
                         }
-                        pilot.node_workspace.rebuild_resource_cells();
+                        nodes.rebuild_resource_cells();
                         cx.notify();
                         true
                     });

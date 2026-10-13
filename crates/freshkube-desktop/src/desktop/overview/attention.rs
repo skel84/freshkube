@@ -59,42 +59,17 @@ impl Pilot {
             }
         }
     }
-
-    /// The node pane's attention rows, from what the shell handed Nodes.
-    pub(in crate::desktop) fn render_node_attention(
-        &self,
-        node: &str,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let pilot = cx.weak_entity();
-        let on_open: OnOpen = Rc::new(move |destination, window, cx| {
-            _ = pilot.update(cx, |pilot, cx| {
-                pilot.open_destination(destination, window, cx)
-            });
-        });
-        let nodes = &self.node_workspace;
-        let stale = nodes.attention_stale.clone();
-        render_attention(
-            &nodes.attention,
-            Some(node),
-            true,
-            stale,
-            &on_open,
-            None,
-            cx,
-        )
-    }
 }
 
 /// Opens an attention row's destination.
-pub(super) type OnOpen = Rc<dyn Fn(Destination, &mut Window, &mut App)>;
+pub(in crate::desktop) type OnOpen = Rc<dyn Fn(Destination, &mut Window, &mut App)>;
 /// Unfolds Overview's list.
 pub(super) type OnShowAll = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// Needs attention as a card of compact rows grouped by severity:
 /// eight on Overview until Show all, at most fifty, and every row of a
 /// node in its pane.
-pub(super) fn render_attention(
+pub(in crate::desktop) fn render_attention(
     attention: &Attention,
     node: Option<&str>,
     expanded: bool,

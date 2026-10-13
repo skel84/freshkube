@@ -179,7 +179,7 @@ impl Pilot {
             )
             .when_some(
                 (self.page == Page::Nodes)
-                    .then(|| self.node_workspace.crumb())
+                    .then(|| self.node_workspace.read(cx).crumb())
                     .flatten(),
                 |this, (node, tab)| {
                     this.child(div().text_color(p.faint).child("/"))

@@ -45,9 +45,7 @@ impl Nodes {
             }));
         let filter = div()
             .key_context("NodeWorkspaceFilter")
-            .on_action(
-                cx.listener(|view, _: &BackNode, window, cx| view.leave_filter(window, cx)),
-            )
+            .on_action(cx.listener(|view, _: &BackNode, window, cx| view.leave_filter(window, cx)))
             .child(
                 Input::new(&self.query)
                     .id(header.id("filter"))
@@ -76,8 +74,7 @@ impl Nodes {
                     };
                     view.rebuild_lines();
                     view.table.reveal(0, ScrollStrategy::Top);
-                    view.scroll
-                        .scroll_to_item(0, ScrollStrategy::Top);
+                    view.scroll.scroll_to_item(0, ScrollStrategy::Top);
                     cx.notify();
                 }))
             }),

@@ -141,6 +141,7 @@ impl Pilot {
             Some("node-logs" | "node-overview") => {
                 let name = if page == Some("node-overview") {
                     self.node_workspace
+                        .read(cx)
                         .rows
                         .iter()
                         .find(|row| !row.problems.is_empty())
@@ -162,9 +163,8 @@ impl Pilot {
                     );
                 }
                 if self.fixture {
-                    self.node_workspace
-                        .history
-                        .update(cx, |history, cx| history.answer_example_now(cx));
+                    let history = self.node_workspace.read(cx).history.clone();
+                    history.update(cx, |history, cx| history.answer_example_now(cx));
                 }
             }
             Some("pod-overview") if self.fixture => {

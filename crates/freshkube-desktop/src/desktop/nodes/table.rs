@@ -151,13 +151,12 @@ impl Nodes {
 }
 
 impl Pilot {
-    pub(in crate::desktop) fn sync_nodes_source_mode(&mut self) {
+    pub(in crate::desktop) fn sync_nodes_source_mode(&mut self, cx: &mut App) {
         let talos = self.kubernetes_only.is_none();
         self.node_workspace
             .update(cx, |nodes, _| nodes.rebuild_columns(talos));
         self.rebuild_nodes_meta(cx);
     }
-
 }
 
 impl Nodes {
@@ -320,8 +319,7 @@ impl TableSource for Nodes {
     fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let status = *projection::Status::ALL.get(group)?;
         let count = self.group_counts[status.index()];
-        let collapsed =
-            status == projection::Status::Healthy && self.healthy_collapsed();
+        let collapsed = status == projection::Status::Healthy && self.healthy_collapsed();
         let mut detail = vec![pluralize(count, "node", "nodes")];
         if collapsed {
             detail.push("collapsed".into());
@@ -399,22 +397,14 @@ impl TableSource for Nodes {
     }
     fn line_of(&self, key: &NodeKey) -> Option<usize> {
         if self.view == NodeView::Cards {
-            self.lines
-                .iter()
-                .position(|ix| &self.rows[*ix].key == key)
+            self.lines.iter().position(|ix| &self.rows[*ix].key == key)
         } else {
-            self.items.iter().position(|item| {
-                matches!(item, projection::Item::Row(ix) if &self.rows[*ix].key == key)
-            })
+            self.items.iter().position(
+                |item| matches!(item, projection::Item::Row(ix) if &self.rows[*ix].key == key),
+            )
         }
     }
-    fn click(
-        &mut self,
-        key: &NodeKey,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn click(&mut self, key: &NodeKey, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         cx.emit(NodesEvent::Open {
             key: key.clone(),
             focus: false,
@@ -461,8 +451,7 @@ impl TableSource for Nodes {
         actions
     }
     fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
-        matches!(self.empty, Some(Empty::Loading))
-            .then_some(&self.loading)
+        matches!(self.empty, Some(Empty::Loading)).then_some(&self.loading)
     }
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
         if self.lines.is_empty() {

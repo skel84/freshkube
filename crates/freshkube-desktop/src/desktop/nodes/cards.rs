@@ -135,35 +135,30 @@ impl Nodes {
                         ),
                 )
                 .child(div().text_color(p.muted).child(row.address.clone()))
-                .when_some(
-                    self.resource_cells.get(&row.key),
-                    |this, resources| {
-                        use freshkube_ui::meters::Resource;
-                        // One label width, so a card's two bullets line up.
-                        let line = |label: &'static str, cell: AnyElement| {
-                            h_flex()
-                                .gap(dp(10.))
-                                .child(div().w(dp(60.)).flex_none().child(label))
-                                .child(cell)
-                        };
-                        this.child(line(
-                            "CPU",
-                            resources.cpu.render(
-                                Resource::Cpu,
-                                (row.id.clone(), 20usize).into(),
-                                &p,
-                            ),
-                        ))
-                        .child(line(
-                            "Memory",
-                            resources.memory.render(
-                                Resource::Memory,
-                                (row.id.clone(), 21usize).into(),
-                                &p,
-                            ),
-                        ))
-                    },
-                )
+                .when_some(self.resource_cells.get(&row.key), |this, resources| {
+                    use freshkube_ui::meters::Resource;
+                    // One label width, so a card's two bullets line up.
+                    let line = |label: &'static str, cell: AnyElement| {
+                        h_flex()
+                            .gap(dp(10.))
+                            .child(div().w(dp(60.)).flex_none().child(label))
+                            .child(cell)
+                    };
+                    this.child(line(
+                        "CPU",
+                        resources
+                            .cpu
+                            .render(Resource::Cpu, (row.id.clone(), 20usize).into(), &p),
+                    ))
+                    .child(line(
+                        "Memory",
+                        resources.memory.render(
+                            Resource::Memory,
+                            (row.id.clone(), 21usize).into(),
+                            &p,
+                        ),
+                    ))
+                })
                 .child(div().text_color(p.muted).child(row.services.clone()))
                 .child(
                     Button::new(row.open_id.clone())
@@ -223,14 +218,12 @@ impl Nodes {
             })
             .cursor_pointer()
             .child(content)
-            .on_click(
-                cx.listener(move |_, _, _, cx| {
-                    cx.emit(NodesEvent::Open {
-                        key: key.clone(),
-                        focus: false,
-                    })
-                }),
-            )
+            .on_click(cx.listener(move |_, _, _, cx| {
+                cx.emit(NodesEvent::Open {
+                    key: key.clone(),
+                    focus: false,
+                })
+            }))
             .into_any_element()
     }
 }

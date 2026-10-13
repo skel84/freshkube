@@ -60,14 +60,7 @@ impl Nodes {
                 .child(table)
                 .into_any_element();
             let detail = pane.then(|| self.render_node_pane(window, cx));
-            inspector::split(
-                "nodes-split",
-                &self.split,
-                beside,
-                table,
-                detail,
-                window,
-            )
+            inspector::split("nodes-split", &self.split, beside, table, detail, window)
         } else if pane {
             // Beside the inspector the cards give way to the roster, one
             // to a row, in their inset.
@@ -98,28 +91,28 @@ impl Nodes {
             })
             .key_context("NodeWorkspace")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|_, _: &super::super::NextNode, _, cx| {
-                cx.emit(NodesEvent::Step(1))
-            }))
-            .on_action(cx.listener(|_, _: &super::super::PreviousNode, _, cx| {
-                cx.emit(NodesEvent::Step(-1))
-            }))
+            .on_action(
+                cx.listener(|_, _: &super::super::NextNode, _, cx| cx.emit(NodesEvent::Step(1))),
+            )
+            .on_action(
+                cx.listener(|_, _: &super::super::PreviousNode, _, cx| {
+                    cx.emit(NodesEvent::Step(-1))
+                }),
+            )
             .on_action(cx.listener(|view, _: &ExpandNode, _, cx| view.toggle_expanded(cx)))
             .on_action(cx.listener(|_, _: &CloseNode, _, cx| cx.emit(NodesEvent::Close)))
-            .on_action(cx.listener(|_, _: &crate::logs::ClearSelection, _, cx| {
-                cx.emit(NodesEvent::Back)
-            }))
+            .on_action(
+                cx.listener(|_, _: &crate::logs::ClearSelection, _, cx| cx.emit(NodesEvent::Back)),
+            )
             .on_action(cx.listener(|_, _: &BackNode, _, cx| cx.emit(NodesEvent::Back)))
             .on_action(cx.listener(|_, _: &NextNodeTab, _, cx| cx.emit(NodesEvent::StepTab(1))))
-            .on_action(cx.listener(|_, _: &PreviousNodeTab, _, cx| {
-                cx.emit(NodesEvent::StepTab(-1))
-            }))
+            .on_action(
+                cx.listener(|_, _: &PreviousNodeTab, _, cx| cx.emit(NodesEvent::StepTab(-1))),
+            )
             .on_action(cx.listener(|view, _: &ToggleHealthyNodes, window, cx| {
                 // H is the table's; the filter and the pane type it, and
                 // the cards show no fold to flip.
-                if !view.focus.is_focused(window)
-                    || view.view == NodeView::Cards
-                {
+                if !view.focus.is_focused(window) || view.view == NodeView::Cards {
                     return cx.propagate();
                 }
                 view.toggle_healthy();
@@ -185,9 +178,7 @@ impl Nodes {
                         Button::new("nodes-retry")
                             .primary()
                             .label("Retry")
-                            .on_click(
-                                cx.listener(|_, _, _, cx| cx.emit(NodesEvent::Refresh)),
-                            )
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(NodesEvent::Refresh)))
                             .into_any_element(),
                     ],
                     cx,
@@ -238,10 +229,7 @@ impl Nodes {
         let inspector = Inspector::new("node-inspector")
             .heading(self.render_node_heading(&row, cx))
             .banner(chips)
-            .tabs(
-                &self.tab_strip,
-                self.render_node_tabs(&row, cx),
-            )
+            .tabs(&self.tab_strip, self.render_node_tabs(&row, cx))
             .content(body)
             .render(cx);
         div()
@@ -358,17 +346,11 @@ impl Nodes {
                             .px(dp(PANE_PADDING))
                             .pt(dp(freshkube_ui::page::PANE_PADDING_Y))
                             .pb(dp(PANE_PADDING))
-                            .child(
-                                self.logs
-                                    .clone()
-                                    .cached(super::super::cached_page_style()),
-                            ),
+                            .child(self.logs.clone().cached(super::super::cached_page_style())),
                     )
                     .into_any_element()
             }
-            NodeTab::Events | NodeTab::Yaml => {
-                self.document.clone().into_any_element()
-            }
+            NodeTab::Events | NodeTab::Yaml => self.document.clone().into_any_element(),
             _ => inset(
                 self.pane_handle()
                     .map(|screen| screen.view().into_any_element())
@@ -399,11 +381,7 @@ impl Nodes {
                 Button::new("node-expand")
                     .small()
                     .outline()
-                    .label(if self.expanded {
-                        "Collapse"
-                    } else {
-                        "Expand"
-                    })
+                    .label(if self.expanded { "Collapse" } else { "Expand" })
                     .on_click(cx.listener(|view, _, _, cx| view.toggle_expanded(cx))),
             )
             .child(
@@ -482,13 +460,11 @@ impl Nodes {
                                         },
                                     ))
                                     .item(
-                                        PopupMenuItem::new("YAML").on_click(
-                                            move |_, _, cx| {
-                                                let _ = yaml.update(cx, |_, cx| {
-                                                    cx.emit(NodesEvent::Tab(NodeTab::Yaml))
-                                                });
-                                            },
-                                        ),
+                                        PopupMenuItem::new("YAML").on_click(move |_, _, cx| {
+                                            let _ = yaml.update(cx, |_, cx| {
+                                                cx.emit(NodesEvent::Tab(NodeTab::Yaml))
+                                            });
+                                        }),
                                     )
                                 }
                             }),
@@ -534,9 +510,29 @@ fn measure_log_body(
     }
 }
 
+impl Nodes {
+    /// The node pane's attention rows, from what the shell handed Nodes.
+    fn render_node_attention(&self, node: &str, cx: &Context<Self>) -> AnyElement {
+        let nodes = cx.weak_entity();
+        let on_open: super::super::overview::attention::OnOpen =
+            std::rc::Rc::new(move |destination, _, cx| {
+                _ = nodes.update(cx, |_, cx| cx.emit(NodesEvent::Destination(destination)));
+            });
+        super::super::overview::attention::render_attention(
+            &self.attention,
+            Some(node),
+            true,
+            self.attention_stale.clone(),
+            &on_open,
+            None,
+            cx,
+        )
+    }
+}
+
 impl Render for Nodes {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        probe::hit(Page::Nodes.slug());
+        super::super::probe::hit(Page::Nodes.slug());
         self.render_nodes(window, cx)
     }
 }
