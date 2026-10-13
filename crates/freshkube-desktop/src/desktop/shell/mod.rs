@@ -194,7 +194,7 @@ impl Pilot {
 }
 
 mod chrome;
-pub(super) use chrome::ChromeParts;
+pub(super) use chrome::Chrome;
 mod column;
 pub(super) use column::Room;
 #[cfg(test)]

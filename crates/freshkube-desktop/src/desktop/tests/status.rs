@@ -388,7 +388,7 @@ fn quarter_seconds(
 ) -> (usize, u64) {
     let (header, elapsed) = (
         count("chrome.header"),
-        cx.update(|cx| view.read(cx).elapsed),
+        cx.update(|cx| view.read(cx).chrome.elapsed),
     );
     for _ in 0..steps {
         cx.executor()
@@ -397,7 +397,7 @@ fn quarter_seconds(
         cx.update_window(handle, |_, window, cx| draw(window, cx))
             .unwrap();
     }
-    let elapsed = cx.update(|cx| view.read(cx).elapsed) - elapsed;
+    let elapsed = cx.update(|cx| view.read(cx).chrome.elapsed) - elapsed;
     (count("chrome.header") - header, elapsed.as_secs())
 }
 

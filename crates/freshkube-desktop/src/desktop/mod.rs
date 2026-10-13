@@ -46,7 +46,6 @@ use crate::{
     backend::{self, AppliedConfig, OwnedJob, Target},
     connection_preferences::ConnectionStore,
     fixture,
-    forwards::ForwardsIndicator,
     logs::{LogPanel, TalosPanel},
     maintenance::MaintenanceView,
     monitoring::page::{MonitoringPage, TalosNodes},
@@ -69,7 +68,7 @@ use freshkube_core::cluster_overview::{
     ClusterOverview, ClusterOverviewCollector, KubeconfigSelection,
 };
 use freshkube_core::resources::{ResourceKind, builtin};
-use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, TitleBar, input::InputState, v_flex};
+use gpui_kit::component::{ActiveTheme, Theme, TitleBar, input::InputState, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
@@ -245,29 +244,6 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
     Ok(())
 }
 
-/// The countdown ring in the title bar. It is its own view so the one-second
-/// tick redraws only the ring, not the page behind it.
-pub(crate) struct Countdown {
-    remaining: f32,
-    visible: bool,
-}
-
-impl Countdown {
-    /// Sets what the next render draws; returns whether that differs.
-    fn set(&mut self, remaining: f32, visible: bool) -> bool {
-        let changed = self.visible != visible || (visible && self.remaining != remaining);
-        self.remaining = remaining;
-        self.visible = visible;
-        changed
-    }
-}
-
-impl Render for Countdown {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::ui::countdown_ring(self.remaining, self.visible, cx)
-    }
-}
-
 /// Puts the window's controls on the header at the current text size: the
 /// header is in dp and grows with it, macOS's traffic lights don't.
 pub(crate) fn place_window_controls(window: &mut Window, cx: &App) {
@@ -332,12 +308,7 @@ pub(crate) struct Pilot {
     nodes: Vec<NodeSummary>,
     selected_node: Option<String>,
     logs: Entity<LogPanel>,
-    countdown: Entity<Countdown>,
-    fps: Entity<shell::fps::Fps>,
-    /// The header, rail and column, each cached beside the page.
-    chrome: shell::ChromeParts,
-    /// The status bar's port forwards, which redraw on their own.
-    forwards: Entity<ForwardsIndicator>,
+    chrome: shell::Chrome,
     /// Logs under the page, in tabs; app-wide, like the forwards.
     pub(crate) dock: Entity<dock::Dock>,
     overview_page: Entity<overview::OverviewPage>,
@@ -367,24 +338,9 @@ pub(crate) struct Pilot {
     /// Set without Talos: contexts come from a kubeconfig and only the
     /// Resources page reads.
     kubernetes_only: Option<kubernetes_only::KubernetesOnly>,
-    /// The platform whose menu the window has: the one it runs on, but a
-    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`
-    /// (`DebugOptions::app_menu_button`), and tests choose.
-    menu_platform: freshkube_ui::platform::Platform,
-    /// The menu button's menu while it's open, and its dismissal's
-    /// subscription.
-    app_menu_popup: Option<(Entity<gpui_kit::component::menu::PopupMenu>, Subscription)>,
-    /// What had the keyboard when the menu button was pressed, before its
-    /// popover took it: the view the menu's entries act on.
-    app_menu_focus: Option<FocusHandle>,
-    /// What the installed menus state, to set them again only on a change.
-    menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
-    appearance: Appearance,
-    automatic: bool,
-    elapsed: Duration,
     fixture: bool,
     /// Example data holds the Talos overview and the Kubernetes summary
     /// (`DebugOptions::hold`), so the pages that wait for them stay loading.
@@ -661,10 +617,10 @@ impl Pilot {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 if this
                     .update_in(cx, |view, window, cx| {
-                        view.elapsed += Duration::from_secs(1);
-                        if view.automatic
+                        view.chrome.elapsed += Duration::from_secs(1);
+                        if view.chrome.automatic
                             && view.kubernetes_only.is_none()
-                            && view.elapsed >= AUTO_REFRESH
+                            && view.chrome.elapsed >= AUTO_REFRESH
                             && !view.overview.is_loading()
                             && !view.config_loading
                         {
@@ -758,10 +714,6 @@ impl Pilot {
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
         logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let countdown = cx.new(|_| Countdown {
-            remaining: 1.,
-            visible: false,
-        });
         let age_label = cx.new(|_| switch::AgeLabel::new());
         let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
         let node_workspace = cx.new(|cx| {
@@ -892,7 +844,7 @@ impl Pilot {
                 view.node_services_event(event, window, cx)
             }),
             cx.observe_window_appearance(window, |this, window, cx| {
-                if this.appearance == Appearance::System {
+                if this.chrome.appearance == Appearance::System {
                     Theme::sync_system_appearance(Some(window), cx);
                 }
             }),
@@ -958,10 +910,7 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            countdown,
-            fps: cx.new(shell::fps::Fps::new),
-            chrome: shell::ChromeParts::new(cx),
-            forwards: cx.new(ForwardsIndicator::new),
+            chrome: shell::Chrome::new(app_menu::menu_platform(options.debug.app_menu_button), cx),
             dock,
             overview_page,
             node_workspace,
@@ -993,15 +942,8 @@ impl Pilot {
             restored_taken: None,
             age_label,
             switcher: Vec::new(),
-            menu_platform: app_menu::menu_platform(options.debug.app_menu_button),
-            app_menu_popup: None,
-            app_menu_focus: None,
-            menu_state: None,
             kubeconfig_draft: Default::default(),
             navigation: shell::Navigation::new(navigation_file, cx),
-            appearance: Appearance::System,
-            automatic: true,
-            elapsed: Duration::ZERO,
             fixture: options.fixture,
             fixture_hold: options.fixture && (options.hold_talos || hold.talos),
             fixture_tick: 0,
@@ -1042,7 +984,7 @@ impl Pilot {
             .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
         view.watch_menus(window, cx);
         view.publish_reading(cx);
-        view.chrome.watch(&view, cx);
+        view.chrome.parts.watch(&view, cx);
         view.prepare_context_display(window, cx);
         // Initial shell focus makes contextual commands available without a click.
         window.focus(&view.focus, cx);
@@ -1481,7 +1423,7 @@ impl Pilot {
         if self.config_loading || self.overview.is_loading() {
             return;
         }
-        self.elapsed = Duration::ZERO;
+        self.chrome.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
         self.publish_reading(cx);
         if self.fixture && self.fixture_hold {
@@ -1565,12 +1507,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.appearance = appearance;
-        match appearance {
-            Appearance::System => Theme::sync_system_appearance(Some(window), cx),
-            Appearance::Light => Theme::change(ThemeMode::Light, Some(window), cx),
-            Appearance::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
-        }
+        self.chrome.set_appearance(appearance, window, cx);
         cx.notify();
     }
 
@@ -1643,8 +1580,8 @@ impl Pilot {
     fn countdown_state(&self) -> (f32, bool) {
         let loading = self.loading();
         (
-            1. - self.elapsed.as_secs_f32() / AUTO_REFRESH.as_secs_f32(),
-            self.automatic
+            1. - self.chrome.elapsed.as_secs_f32() / AUTO_REFRESH.as_secs_f32(),
+            self.chrome.automatic
                 && self.kubernetes_only.is_none()
                 && self.overview.data().is_some()
                 && !loading,
@@ -1654,7 +1591,7 @@ impl Pilot {
     /// Moves the ring on without redrawing anything else.
     fn tick_countdown(&self, cx: &mut Context<Self>) {
         let (remaining, visible) = self.countdown_state();
-        self.countdown.update(cx, |countdown, cx| {
+        self.chrome.countdown.update(cx, |countdown, cx| {
             if countdown.set(remaining, visible) {
                 cx.notify();
             }

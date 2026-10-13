@@ -77,5 +77,5 @@ fn the_app_menu_button_reaches_the_shell(cx: &mut TestAppContext) {
         ..DebugOptions::default()
     };
     let (_runtime, _handle, pilot) = mount(cx, options(debug), 1280., 880.);
-    cx.update(|cx| assert_eq!(pilot.read(cx).menu_platform, Platform::Linux));
+    cx.update(|cx| assert_eq!(pilot.read(cx).chrome.menu_platform, Platform::Linux));
 }

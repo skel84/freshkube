@@ -227,11 +227,16 @@ pub(super) fn give_history(chart: &mut api::AppChart, group: Option<&str>) {
 /// began refusing it, inside the charts' hour, 1.8.1 days before it, and
 /// 1.7.4 longer ago than the example keeps data for.
 pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
-    let (_, to_ms) = hour();
-    let revision = |hash: &str, at_ms: i64, image: &str| api::DeploymentRevision {
-        id: format!("{hash}:{}", at_ms / 1000),
+    revisions_at(chrono::Utc::now())
+}
+
+fn revisions_at(now: chrono::DateTime<chrono::Utc>) -> Vec<api::DeploymentRevision> {
+    let (_, to_ms) = hour_at(now);
+    // Identity uses the fixed rollout offset; only its shown time follows now.
+    let revision = |hash: &str, offset_ms: i64, image: &str| api::DeploymentRevision {
+        id: format!("{hash}:{}", offset_ms / 1000),
         hash: hash.into(),
-        started_at: chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_default(),
+        started_at: chrono::DateTime::from_timestamp_millis(to_ms + offset_ms).unwrap_or_default(),
         version: format!("{hash}: example.test/payments/{image}"),
         status: api::Status::Unknown,
         findings: vec![],
@@ -244,11 +249,14 @@ pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
         time: chrono::DateTime::from_timestamp_millis(at_ms),
     };
     let previous = to_ms - 3 * 24 * 3_600_000;
-    let oldest = to_ms - 45 * 24 * 3_600_000;
     vec![
         api::DeploymentRevision {
             note: Some("Collecting data...".into()),
-            ..revision("4f2a9c", rollout_ms(), "worker:1.8.2")
+            ..revision(
+                "4f2a9c",
+                -(FAILING_MINUTES as i64 + 6) * 60_000,
+                "worker:1.8.2",
+            )
         },
         api::DeploymentRevision {
             status: api::Status::Ok,
@@ -256,12 +264,12 @@ pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
                 finding("SLO", true, "Availability: 100% (objective: 99%)", previous),
                 finding("CPU", true, "CPU usage: no change", previous),
             ],
-            ..revision("b71e03", previous, "worker:1.8.1")
+            ..revision("b71e03", -3 * 24 * 3_600_000, "worker:1.8.1")
         },
         api::DeploymentRevision {
             status: api::Status::Ok,
             note: Some("No notable changes".into()),
-            ..revision("9e0d57", oldest, "worker:1.7.4")
+            ..revision("9e0d57", -45 * 24 * 3_600_000, "worker:1.7.4")
         },
     ]
 }
@@ -270,12 +278,16 @@ pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
 /// ReplicaSet the change page's example change runs on dev-fra and
 /// stage-fra, an hour into the charts, and 1.42.3 the week before.
 pub(crate) fn checkout_revisions() -> Vec<api::DeploymentRevision> {
+    checkout_revisions_at(chrono::Utc::now())
+}
+
+fn checkout_revisions_at(now: chrono::DateTime<chrono::Utc>) -> Vec<api::DeploymentRevision> {
     use freshkube_delivery::change::example::POD_HASH;
-    let (from_ms, to_ms) = hour();
-    let revision = |hash: &str, at_ms: i64, image: &str, note: &str| api::DeploymentRevision {
-        id: format!("{hash}:{}", at_ms / 1000),
+    let (from_ms, to_ms) = hour_at(now);
+    let revision = |hash: &str, offset_ms: i64, image: &str, note: &str| api::DeploymentRevision {
+        id: format!("{hash}:{}", offset_ms / 1000),
         hash: hash.into(),
-        started_at: chrono::DateTime::from_timestamp_millis(at_ms).unwrap_or_default(),
+        started_at: chrono::DateTime::from_timestamp_millis(to_ms + offset_ms).unwrap_or_default(),
         version: format!("{hash}: example.test/checkout/{image}"),
         status: api::Status::Ok,
         findings: vec![],
@@ -284,13 +296,13 @@ pub(crate) fn checkout_revisions() -> Vec<api::DeploymentRevision> {
     vec![
         revision(
             POD_HASH,
-            (from_ms + to_ms) / 2,
+            (from_ms - to_ms) / 2,
             "checkout-api:1.43.0",
             "No notable changes",
         ),
         revision(
             "84c6d7f9b",
-            to_ms - 6 * 24 * 3_600_000,
+            -6 * 24 * 3_600_000,
             "checkout-api:1.42.3",
             "No notable changes",
         ),
@@ -472,7 +484,11 @@ const POINTS: usize = 60;
 /// The example's last hour, ending on the current minute: `POINTS`
 /// minutes, the first and the last included.
 fn hour() -> (i64, i64) {
-    let to = chrono::Utc::now().timestamp() / 60 * 60_000;
+    hour_at(chrono::Utc::now())
+}
+
+fn hour_at(now: chrono::DateTime<chrono::Utc>) -> (i64, i64) {
+    let to = now.timestamp() / 60 * 60_000;
     (to - (POINTS as i64 - 1) * 60_000, to)
 }
 
@@ -501,13 +517,6 @@ fn series(name: &str, points: impl Fn(usize, bool) -> Option<f32>) -> api::Serie
 /// A gentle repeating swing around 1, so lines don't sit flat.
 fn wave(point: usize, phase: usize) -> f32 {
     1. + 0.15 * ((point + phase) % 7) as f32 / 6. - 0.075
-}
-
-/// When the worker's 1.8.2 rolled out: a little before ledger-db began
-/// refusing it.
-fn rollout_ms() -> i64 {
-    let (_, to_ms) = hour();
-    to_ms - (FAILING_MINUTES as i64 + 6) * 60_000
 }
 
 fn slo_charts() -> [api::AppChart; 2] {
@@ -853,5 +862,30 @@ fn map(
         } else {
             vec![]
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{checkout_revisions_at, revisions_at};
+
+    #[test]
+    fn revision_ids_stay_the_same_across_a_minute_edge() {
+        let before = chrono::DateTime::from_timestamp(1_800_000_000 - 1, 999_999_999).unwrap();
+        let after = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+        for (before, after) in [
+            (revisions_at(before), revisions_at(after)),
+            (checkout_revisions_at(before), checkout_revisions_at(after)),
+        ] {
+            assert_eq!(before.len(), after.len());
+            for (before, after) in before.iter().zip(&after) {
+                assert_eq!(before.id, after.id, "the same rollout keeps its identity");
+                assert_eq!(
+                    after.started_at - before.started_at,
+                    chrono::Duration::minutes(1),
+                    "shown times still follow the clock"
+                );
+            }
+        }
     }
 }
