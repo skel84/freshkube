@@ -221,6 +221,71 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
     });
 }
 
+/// The shell's keys on macOS, where `secondary` is Command.
+#[cfg(target_os = "macos")]
+const SHELL_KEYS: [&str; 26] = [
+    "alt-cmd-i inspector::ToggleInspector ",
+    "cmd-+ text_size::LargerText ",
+    "cmd-= text_size::LargerText ",
+    "cmd-- text_size::SmallerText ",
+    "cmd-0 text_size::DefaultText ",
+    "cmd-r pilot::Refresh Freshkube",
+    "cmd-b pilot::ToggleColumn Freshkube",
+    "cmd-1 pilot::ShowOverview Freshkube",
+    "cmd-2 pilot::ShowNodes Freshkube",
+    "cmd-3 pilot::ShowNamespaces Freshkube",
+    "cmd-4 pilot::ShowEvents Freshkube",
+    "cmd-5 pilot::ShowHealth Freshkube",
+    "cmd-6 pilot::ShowEtcd Freshkube",
+    "cmd-7 pilot::ShowSystemServices Freshkube",
+    "cmd-8 pilot::ShowSecurity Freshkube",
+    "cmd-9 pilot::ShowLifecycle Freshkube",
+    // The Tab character, which GPUI parses as no key.
+    "ctrl- pilot::NextScreen MenuBarOnly",
+    "ctrl-shift- pilot::PreviousScreen MenuBarOnly",
+    "ctrl-tab pilot::NextScreen Freshkube",
+    "ctrl-shift-tab pilot::PreviousScreen Freshkube",
+    "alt-up pilot::PreviousContext Freshkube",
+    "alt-down pilot::NextContext Freshkube",
+    "cmd-k pilot::GoToKind Freshkube",
+    "ctrl-. dock::NextDockTab Freshkube",
+    "ctrl-, dock::PreviousDockTab Freshkube",
+    "shift-escape dock::MinimizeDock Freshkube",
+];
+
+/// The shell's keys on Linux and Windows, where `secondary` is Control
+/// and Kit's inspector takes Control-Shift-I.
+#[cfg(not(target_os = "macos"))]
+const SHELL_KEYS: [&str; 26] = [
+    "ctrl-shift-i inspector::ToggleInspector ",
+    "ctrl-+ text_size::LargerText ",
+    "ctrl-= text_size::LargerText ",
+    "ctrl-- text_size::SmallerText ",
+    "ctrl-0 text_size::DefaultText ",
+    "ctrl-r pilot::Refresh Freshkube",
+    "ctrl-b pilot::ToggleColumn Freshkube",
+    "ctrl-1 pilot::ShowOverview Freshkube",
+    "ctrl-2 pilot::ShowNodes Freshkube",
+    "ctrl-3 pilot::ShowNamespaces Freshkube",
+    "ctrl-4 pilot::ShowEvents Freshkube",
+    "ctrl-5 pilot::ShowHealth Freshkube",
+    "ctrl-6 pilot::ShowEtcd Freshkube",
+    "ctrl-7 pilot::ShowSystemServices Freshkube",
+    "ctrl-8 pilot::ShowSecurity Freshkube",
+    "ctrl-9 pilot::ShowLifecycle Freshkube",
+    // The Tab character, which GPUI parses as no key.
+    "ctrl- pilot::NextScreen MenuBarOnly",
+    "ctrl-shift- pilot::PreviousScreen MenuBarOnly",
+    "ctrl-tab pilot::NextScreen Freshkube",
+    "ctrl-shift-tab pilot::PreviousScreen Freshkube",
+    "alt-up pilot::PreviousContext Freshkube",
+    "alt-down pilot::NextContext Freshkube",
+    "ctrl-k pilot::GoToKind Freshkube",
+    "ctrl-. dock::NextDockTab Freshkube",
+    "ctrl-, dock::PreviousDockTab Freshkube",
+    "shift-escape dock::MinimizeDock Freshkube",
+];
+
 /// The shell's keys and the actions its root answers, as they stood before
 /// #580 moved each to its owner. The bindings are those in the shell's and
 /// the menu bar's contexts and the context-free ones, in the order they
@@ -259,38 +324,7 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
             })
             .collect()
     });
-    assert_eq!(
-        bindings,
-        [
-            "alt-cmd-i inspector::ToggleInspector ",
-            "cmd-+ text_size::LargerText ",
-            "cmd-= text_size::LargerText ",
-            "cmd-- text_size::SmallerText ",
-            "cmd-0 text_size::DefaultText ",
-            "cmd-r pilot::Refresh Freshkube",
-            "cmd-b pilot::ToggleColumn Freshkube",
-            "cmd-1 pilot::ShowOverview Freshkube",
-            "cmd-2 pilot::ShowNodes Freshkube",
-            "cmd-3 pilot::ShowNamespaces Freshkube",
-            "cmd-4 pilot::ShowEvents Freshkube",
-            "cmd-5 pilot::ShowHealth Freshkube",
-            "cmd-6 pilot::ShowEtcd Freshkube",
-            "cmd-7 pilot::ShowSystemServices Freshkube",
-            "cmd-8 pilot::ShowSecurity Freshkube",
-            "cmd-9 pilot::ShowLifecycle Freshkube",
-            // The Tab character, which GPUI parses as no key.
-            "ctrl- pilot::NextScreen MenuBarOnly",
-            "ctrl-shift- pilot::PreviousScreen MenuBarOnly",
-            "ctrl-tab pilot::NextScreen Freshkube",
-            "ctrl-shift-tab pilot::PreviousScreen Freshkube",
-            "alt-up pilot::PreviousContext Freshkube",
-            "alt-down pilot::NextContext Freshkube",
-            "cmd-k pilot::GoToKind Freshkube",
-            "ctrl-. dock::NextDockTab Freshkube",
-            "ctrl-, dock::PreviousDockTab Freshkube",
-            "shift-escape dock::MinimizeDock Freshkube",
-        ]
-    );
+    assert_eq!(bindings, SHELL_KEYS);
     let answered = |cx: &mut TestAppContext| {
         cx.update_window(handle, |_, window, cx| {
             view.read(cx).focus.clone().focus(window, cx);
@@ -305,6 +339,13 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
         })
         .unwrap()
     };
+    // The window starts with macOS's bar on every platform, so the actions
+    // are the same wherever the test runs; the menu button comes last.
+    cx.update(|cx| {
+        view.update(cx, |pilot, _| {
+            pilot.chrome.menu_platform = freshkube_ui::platform::Platform::MacOs
+        })
+    });
     let mut expected = vec![
         "app::About",
         "app::OpenSettings",
