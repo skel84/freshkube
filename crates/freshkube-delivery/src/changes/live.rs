@@ -32,6 +32,7 @@ use crate::entry::pool::{Open, Pool};
 use crate::kargo::{Freight, parse_freight, parse_stage, read_kind, read_project_names};
 use crate::read::Reader;
 use crate::source::{Source, Truncation};
+use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 
 /// How many projects, then changes, are read at once.
@@ -92,9 +93,10 @@ pub async fn read<R: Reader>(
             reader: Ok(reader),
         }),
         |_: Entry| {
-            std::future::ready(Err::<Never, _>(
-                "the workspace of one reads the open cluster alone".to_owned(),
-            ))
+            std::future::ready(Err::<Never, _>(Failure::new(
+                FailureKind::Config,
+                "the workspace of one reads the open cluster alone",
+            )))
         },
         budget,
     );
@@ -120,7 +122,7 @@ where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     let deadline = Instant::now() + budget;
     let reader = match pool.part(Part::Kargo).await {
@@ -233,7 +235,7 @@ where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     let running: BTreeSet<&String> = project
         .stages
@@ -278,7 +280,10 @@ where
     for (freight, change) in read {
         let change = change.unwrap_or_else(|_| {
             cut += 1;
-            Err(format!("It wasn't followed: {}", late(turns.budget)))
+            Err(Failure::new(
+                FailureKind::Timeout,
+                format!("It wasn't followed: {}", late(turns.budget)),
+            ))
         });
         project.followed.insert(freight, change.map(Arc::new));
     }

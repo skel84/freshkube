@@ -253,3 +253,14 @@ fn cached_overview_redraws_after_data_and_theme_change(cx: &mut TestAppContext) 
         "theme change must redraw it"
     );
 }
+
+/// One countdown tick as the shell's timer applies it.
+fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.elapsed += std::time::Duration::from_secs(1);
+            pilot.tick_countdown(cx);
+        });
+    });
+    cx.run_until_parked();
+}

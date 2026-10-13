@@ -11,7 +11,7 @@ use crate::applications::{CoverageState, Inputs, Override, SourceKind, derive, e
 use crate::fixtures::FixtureReader;
 use crate::read::{ListRequest, Listing, Resource, ServedGroup};
 use crate::source::Source;
-use freshkube_core::resources::Failure;
+use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Destination, Key, Role, Workspace};
 
 fn entry(id: &str, role: Role) -> Entry {
@@ -126,7 +126,7 @@ async fn each_part_is_read_from_its_own_entry_and_nothing_else_there() {
     let connect = |entry: Entry| {
         let reader = Rc::new(everything());
         readers.borrow_mut().insert(entry.id, reader.clone());
-        async move { Ok::<_, String>(Shared(reader)) }
+        async move { Ok::<_, Failure>(Shared(reader)) }
     };
     let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
     let keys: Vec<&str> = sessions.iter().map(|s| s.key.0.as_str()).collect();
@@ -208,7 +208,10 @@ async fn each_source_says_why_it_wasnt_read_in_its_entrys_name() {
     let sources = Sources::of(&workspace);
     let connect = |entry: Entry| async move {
         match entry.id.as_str() {
-            "cluster-b" | "cluster-d" => Err("no answer within 5 s".to_owned()),
+            "cluster-b" | "cluster-d" => Err(Failure::new(
+                FailureKind::Unreachable,
+                "no answer within 5 s",
+            )),
             "cluster-a" => Ok(everything().refusing("applications")),
             _ => Ok(everything()),
         }
@@ -243,7 +246,7 @@ async fn each_source_says_why_it_wasnt_read_in_its_entrys_name() {
     let sources = Sources::of(&Workspace::new(vec![entry("cluster-b", Role::Cicd)]));
     let covered = coverage(
         read_workspace(&sources, None::<Open<'_, FixtureReader>>, |_| async {
-            Ok::<_, String>(everything())
+            Ok::<_, Failure>(everything())
         })
         .await,
     );
@@ -265,7 +268,7 @@ async fn each_source_says_why_it_wasnt_read_in_its_entrys_name() {
     // With neither, each part is missing under its own name.
     let sources = Sources::of(&Workspace::new(vec![entry("cluster-c", Role::Environment)]));
     let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, |_| async {
-        Ok::<_, String>(everything())
+        Ok::<_, Failure>(everything())
     })
     .await;
     let keys: Vec<&str> = sessions.iter().map(|s| s.key.0.as_str()).collect();
@@ -321,7 +324,7 @@ async fn kargo_and_argo_cd_come_first_then_at_most_four_destinations_at_once() {
         order.borrow_mut().push(entry.id);
         let live = live.clone();
         async move {
-            Ok::<_, String>(Counted {
+            Ok::<_, Failure>(Counted {
                 reader: everything(),
                 live,
             })
@@ -346,7 +349,9 @@ async fn the_workspace_of_one_reads_the_open_connection_as_before() {
         key: SessionKey::new("connection-1"),
         reader: Ok(&reader),
     };
-    let never = |_: Entry| async { Err::<FixtureReader, _>("not asked".to_owned()) };
+    let never = |_: Entry| async {
+        Err::<FixtureReader, _>(Failure::new(FailureKind::Unreachable, "not asked"))
+    };
     let sessions = read_workspace(&sources, Some(open), never).await;
     let alone = read_session(&everything(), SessionKey::new("connection-1")).await;
     assert_eq!(sessions, vec![alone]);
@@ -373,7 +378,7 @@ async fn the_open_entry_is_read_through_the_open_connection() {
     let connected = RefCell::new(Vec::new());
     let connect = |entry: Entry| {
         connected.borrow_mut().push(entry.id);
-        async { Ok::<_, String>(everything()) }
+        async { Ok::<_, Failure>(everything()) }
     };
     let sessions = read_workspace(&sources, Some(open), connect).await;
     assert_eq!(connected.into_inner(), ["cluster-b", "cluster-c"]);
@@ -405,7 +410,7 @@ async fn an_entry_holding_two_sources_is_read_once_for_all_it_holds() {
     let connected = RefCell::new(Vec::new());
     let connect = |entry: Entry| {
         connected.borrow_mut().push(entry.id);
-        async { Ok::<_, String>(everything()) }
+        async { Ok::<_, Failure>(everything()) }
     };
     let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
     assert_eq!(connected.into_inner(), ["cluster-a", "cluster-c"]);
@@ -457,7 +462,7 @@ async fn read_example(open: Option<&str>) -> crate::applications::Derived {
         reader: Ok(reader),
     });
     let sessions = read_workspace(&sources, open, |entry: Entry| async move {
-        Ok::<_, String>(example_reader(&entry.id))
+        Ok::<_, Failure>(example_reader(&entry.id))
     })
     .await;
     derive(
@@ -531,7 +536,7 @@ async fn one_entry_that_hangs_keeps_no_other_waiting() {
         if entry.id == "env-2" {
             std::future::pending::<()>().await;
         }
-        Ok::<_, String>(match entry.id.as_str() {
+        Ok::<_, Failure>(match entry.id.as_str() {
             // The first connects, then never answers its listing.
             "env-1" => everything().hanging("deployments"),
             _ => everything(),
@@ -580,7 +585,7 @@ async fn the_read_keeps_what_answered_within_its_budget() {
     let sources = Sources::of(&workspace(&names));
     let started = tokio::time::Instant::now();
     let connect = |entry: Entry| async move {
-        Ok::<_, String>(match entry.id.starts_with("env-") {
+        Ok::<_, Failure>(match entry.id.starts_with("env-") {
             true => everything().hanging("deployments"),
             false => everything(),
         })
@@ -616,7 +621,7 @@ async fn the_read_keeps_what_answered_within_its_budget() {
 async fn a_source_its_entry_doesnt_serve_says_so_in_its_name() {
     let sources = Sources::of(&workspace(&["cluster-c"]));
     let connect = |entry: Entry| async move {
-        Ok::<_, String>(match entry.id.as_str() {
+        Ok::<_, Failure>(match entry.id.as_str() {
             // Kargo isn't installed on its entry.
             "cluster-b" => FixtureReader::default(),
             _ => everything(),
@@ -706,7 +711,7 @@ async fn a_large_kargo_far_away_is_read_in_full() {
             ),
             _ => (everything(), Rc::new(Cell::new(0))),
         };
-        async move { Ok::<_, String>(Distant { reader, requests }) }
+        async move { Ok::<_, Failure>(Distant { reader, requests }) }
     };
     let started = tokio::time::Instant::now();
     let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
@@ -745,7 +750,7 @@ async fn kargo_has_the_budget_and_a_destination_its_deadline() {
     // Two listings one after another: past a destination's deadline.
     let slow = Duration::from_secs(ENTRY_DEADLINE.as_secs() / 2 + 1);
     let connect = |entry: Entry| async move {
-        Ok::<_, String>(match entry.id.as_str() {
+        Ok::<_, Failure>(match entry.id.as_str() {
             "cluster-b" | "env-1" => everything().slow(slow),
             _ => everything(),
         })
@@ -793,7 +798,7 @@ async fn a_kargo_with_no_projects_discovers_nothing_more() {
             ),
             _ => (everything(), Rc::new(Cell::new(0))),
         };
-        async move { Ok::<_, String>(Distant { reader, requests }) }
+        async move { Ok::<_, Failure>(Distant { reader, requests }) }
     };
     let sessions = read_workspace(&sources, None::<Open<'_, FixtureReader>>, connect).await;
     let session = sessions

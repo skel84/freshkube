@@ -41,6 +41,7 @@ use super::pods::RunningImage;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
 use super::tekton::{Build, CommitNames, EvidenceResult};
+use freshkube_core::resources::Failure;
 
 /// How sure a link is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -194,7 +195,7 @@ pub struct Evidence {
     /// Each environment cluster asked, by context: its Rollouts,
     /// Deployments and pods, or why it couldn't be read. An Application's
     /// workloads are read, and judged, only in its own destination's.
-    pub environments: BTreeMap<String, Result<Workloads, String>>,
+    pub environments: BTreeMap<String, Result<Workloads, Failure>>,
     /// Pull requests GitHub associates with the commit; `None` when GitHub
     /// wasn't asked.
     pub pull_requests: Option<Source<Vec<PullRequest>>>,
@@ -224,7 +225,7 @@ impl Evidence {
     pub fn workloads_of(&self, app_id: &str) -> Option<Result<&Workloads, &str>> {
         let context = self.destination_of(app_id)?;
         let read = self.environments.get(context)?;
-        Some(read.as_ref().map_err(String::as_str))
+        Some(read.as_ref().map_err(|why| why.message.as_str()))
     }
 
     /// Whether the Application's destination is an environment cluster

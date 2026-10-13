@@ -1,3 +1,4 @@
+use freshkube_core::resources::FailureKind;
 use serde_json::{Value, json};
 
 use super::super::{
@@ -304,7 +305,7 @@ async fn a_freight_that_cant_be_read_says_why() {
         .await
         .expect_err("no such Freight");
     assert!(
-        missing.contains("f-gone") && missing.contains("wasn't found"),
+        missing.message.contains("f-gone") && missing.message.contains("wasn't found"),
         "{missing}"
     );
 
@@ -314,7 +315,8 @@ async fn a_freight_that_cant_be_read_says_why() {
     let refused = read(&reader, &place("f-new"), observed_at())
         .await
         .expect_err("refused");
-    assert!(refused.contains("refused"), "{refused}");
+    assert_eq!(refused.kind, FailureKind::Forbidden);
+    assert!(refused.message.contains("refused"), "{refused}");
 }
 
 fn row<'a>(change: &'a Change, key: &str) -> &'a Row {
