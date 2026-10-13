@@ -6,8 +6,13 @@ use gpui_kit::{AppContext, Context, Entity, Window};
 use std::collections::BTreeMap;
 use tokio::runtime::Handle;
 
+use super::overview::OverviewPage;
 use super::pages::PageId;
+use super::settings::SettingsPage;
+use super::system_services::SystemServices;
 use super::{Pilot, dock, nodes, overview, settings, switch, system_services};
+use crate::applications::ApplicationsPage;
+use crate::observability::ObservabilityPage;
 use crate::{
     GpuiOptions,
     logs::{LogPanel, TalosPanel},
@@ -150,7 +155,7 @@ impl Pages {
         });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
-        pages.extend(Pilot::page_handles(
+        pages.extend(page_handles(
             &overview_page,
             &node_workspace,
             &system_services,
@@ -189,4 +194,35 @@ fn screen<T: ScreenPanel>(
     cx: &mut Context<Pilot>,
 ) -> ScreenHandle {
     ScreenHandle::new(cx.new(|cx| new(runtime, window, cx)))
+}
+
+/// The handles of the pages that aren't Talos screens, by their keys:
+/// one argument a page.
+#[allow(clippy::too_many_arguments)]
+fn page_handles(
+    overview: &Entity<OverviewPage>,
+    nodes: &Entity<nodes::Nodes>,
+    services: &Entity<SystemServices>,
+    monitoring: &Entity<MonitoringPage>,
+    observability: &Entity<ObservabilityPage>,
+    applications: &Entity<ApplicationsPage>,
+    settings: &Entity<SettingsPage>,
+    resources: &Entity<ResourcesScreen>,
+) -> [(PageId, ScreenHandle); 8] {
+    [
+        (PageId::Overview, ScreenHandle::new(overview.clone())),
+        (PageId::Nodes, ScreenHandle::new(nodes.clone())),
+        (PageId::SystemServices, ScreenHandle::new(services.clone())),
+        (PageId::Monitoring, ScreenHandle::new(monitoring.clone())),
+        (
+            PageId::Observability,
+            ScreenHandle::new(observability.clone()),
+        ),
+        (
+            PageId::Applications,
+            ScreenHandle::new(applications.clone()),
+        ),
+        (PageId::Settings, ScreenHandle::new(settings.clone())),
+        (PageId::Resources, ScreenHandle::new(resources.clone())),
+    ]
 }
