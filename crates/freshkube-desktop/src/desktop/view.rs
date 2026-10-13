@@ -41,48 +41,15 @@ impl Render for Pilot {
                 .map(|page| page.view().cached(cached_page_style()).into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
         };
-        v_flex()
+        let root = v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .key_context(freshkube_ui::page::SHELL_CONTEXT)
-            .track_focus(&self.focus)
+            .track_focus(&self.focus);
+        self.navigation
+            .listen(root, cx)
             .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
-            .on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
-                view.show_page(Page::Overview, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowNodes, window, cx| {
-                view.show_page(Page::Nodes, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowNamespaces, window, cx| {
-                view.open_builtin("namespaces", window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowEvents, window, cx| {
-                view.open_builtin("events", window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowHealth, window, cx| {
-                view.show_page(Page::Health, window, cx)
-            }))
-            .on_action(
-                cx.listener(|view, _: &ShowEtcd, window, cx| {
-                    view.show_page(Page::Etcd, window, cx)
-                }),
-            )
-            .on_action(cx.listener(|view, _: &ShowSystemServices, window, cx| {
-                view.show_page(Page::SystemServices, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowSecurity, window, cx| {
-                view.show_page(Page::Security, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowLifecycle, window, cx| {
-                view.show_page(Page::Lifecycle, window, cx)
-            }))
-            .on_action(
-                cx.listener(|view, _: &NextScreen, window, cx| view.adjacent_row(true, window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &PreviousScreen, window, cx| {
-                view.adjacent_row(false, window, cx)
-            }))
             .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
                 view.adjacent_context(false, window, cx)
             }))
@@ -92,13 +59,6 @@ impl Render for Pilot {
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
             // Each handler is there only while it can act, so the menus grey
             // it otherwise and its key goes on to whatever else binds it.
-            .when(self.navigation.area.has_column(), |this| {
-                this.on_action(
-                    cx.listener(|view, _: &ToggleColumn, window, cx| {
-                        view.toggle_column(window, cx)
-                    }),
-                )
-            })
             .when(self.dock.read(cx).has_tabs(), |this| {
                 this.on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
                     view.dock.update(cx, |dock, cx| dock.step(1, window, cx))

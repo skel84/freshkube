@@ -2,6 +2,10 @@
 //! group, and the column and rail scroll state. A plain struct the `Pilot`
 //! owns once; what needs other shell state stays on `Pilot`.
 use super::*;
+use crate::desktop::{
+    MENU_BAR_ONLY, NextScreen, PreviousScreen, ShowEtcd, ShowEvents, ShowHealth, ShowLifecycle,
+    ShowNamespaces, ShowNodes, ShowOverview, ShowSecurity, ShowSystemServices, ToggleColumn,
+};
 use crate::navigation_file::NavigationFile;
 use freshkube_core::resources::{ResourceKind, builtin};
 use std::collections::BTreeMap;
@@ -170,6 +174,132 @@ impl Navigation {
                 .find(|group| group.slug == slug)
                 .and_then(|group| group.items.first())
                 .map(|(_, key)| (*key).to_owned())
+        })
+    }
+}
+
+impl Navigation {
+    /// The keys that move the shell: the pages' numbers, the screens in
+    /// turn and the column.
+    pub(in crate::desktop) fn bind_keys(cx: &mut App) {
+        cx.bind_keys([
+            KeyBinding::new(
+                "secondary-b",
+                ToggleColumn,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-1",
+                ShowOverview,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-2",
+                ShowNodes,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-3",
+                ShowNamespaces,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-4",
+                ShowEvents,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-5",
+                ShowHealth,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-6",
+                ShowEtcd,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-7",
+                ShowSystemServices,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-8",
+                ShowSecurity,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "secondary-9",
+                ShowLifecycle,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            // macOS's bar shows and binds an action's first binding, and
+            // GPUI hands AppKit the name `tab`, of which AppKit keeps the
+            // T: ⌃T would switch screens. The Tab character itself, in a
+            // context nothing draws, binds nothing here, and AppKit shows
+            // no key for it, since Control-Tab moves its focus.
+            KeyBinding::new("ctrl-\t", NextScreen, Some(MENU_BAR_ONLY)),
+            KeyBinding::new("ctrl-shift-\t", PreviousScreen, Some(MENU_BAR_ONLY)),
+            // Reaches the screens without a number of their own.
+            KeyBinding::new(
+                "ctrl-tab",
+                NextScreen,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+            KeyBinding::new(
+                "ctrl-shift-tab",
+                PreviousScreen,
+                Some(freshkube_ui::page::SHELL_CONTEXT),
+            ),
+        ]);
+    }
+
+    /// Adds navigation's actions to the shell's root. Their handlers run on
+    /// `Pilot`, which shows the page.
+    pub(in crate::desktop) fn listen(&self, root: Div, cx: &mut Context<Pilot>) -> Div {
+        root.on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
+            view.show_page(Page::Overview, window, cx)
+        }))
+        .on_action(
+            cx.listener(|view, _: &ShowNodes, window, cx| view.show_page(Page::Nodes, window, cx)),
+        )
+        .on_action(cx.listener(|view, _: &ShowNamespaces, window, cx| {
+            view.open_builtin("namespaces", window, cx)
+        }))
+        .on_action(
+            cx.listener(|view, _: &ShowEvents, window, cx| view.open_builtin("events", window, cx)),
+        )
+        .on_action(
+            cx.listener(|view, _: &ShowHealth, window, cx| {
+                view.show_page(Page::Health, window, cx)
+            }),
+        )
+        .on_action(
+            cx.listener(|view, _: &ShowEtcd, window, cx| view.show_page(Page::Etcd, window, cx)),
+        )
+        .on_action(cx.listener(|view, _: &ShowSystemServices, window, cx| {
+            view.show_page(Page::SystemServices, window, cx)
+        }))
+        .on_action(cx.listener(|view, _: &ShowSecurity, window, cx| {
+            view.show_page(Page::Security, window, cx)
+        }))
+        .on_action(cx.listener(|view, _: &ShowLifecycle, window, cx| {
+            view.show_page(Page::Lifecycle, window, cx)
+        }))
+        .on_action(
+            cx.listener(|view, _: &NextScreen, window, cx| view.adjacent_row(true, window, cx)),
+        )
+        .on_action(
+            cx.listener(|view, _: &PreviousScreen, window, cx| {
+                view.adjacent_row(false, window, cx)
+            }),
+        )
+        // Each handler is there only while it can act, so the menus grey
+        // it otherwise and its key goes on to whatever else binds it.
+        .when(self.area.has_column(), |this| {
+            this.on_action(
+                cx.listener(|view, _: &ToggleColumn, window, cx| view.toggle_column(window, cx)),
+            )
         })
     }
 }
