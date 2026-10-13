@@ -83,7 +83,7 @@ async fn read_across(
     workspace: &Workspace,
     edit: fn(&mut World),
     unreachable: &[&str],
-) -> Result<Change, String> {
+) -> Result<Change, Failure> {
     let place = place(workspace);
     let pool = Pool::new(
         &place.sources,
@@ -156,7 +156,7 @@ async fn kargos_entry_unreachable_is_said_in_its_name() {
         .await
         .expect_err("no Freight");
     assert_eq!(
-        why,
+        why.message,
         "Freight f-new of storefront couldn't be read: Couldn't reach cicd-b: connection \
          refused"
     );
@@ -171,7 +171,10 @@ async fn no_kargo_entry_says_the_workspace_has_none() {
     let why = read_across(&workspace, |_| {}, &[])
         .await
         .expect_err("no Freight");
-    let Some(why) = why.strip_prefix("Freight f-new of storefront couldn't be read: ") else {
+    let Some(why) = why
+        .message
+        .strip_prefix("Freight f-new of storefront couldn't be read: ")
+    else {
         panic!("{why}");
     };
     assert!(
@@ -351,8 +354,9 @@ async fn a_freight_that_never_answers_ends_with_the_budget() {
     )
     .await
     .expect_err("no Freight");
+    assert_eq!(why.kind, FailureKind::Timeout);
     assert_eq!(
-        why,
+        why.message,
         format!(
             "Freight f-new of storefront couldn't be read: cicd-b didn't finish reading within \
              the read's {} s",
@@ -374,7 +378,8 @@ async fn an_unreadable_freight_names_kargos_entry() {
     .await
     .expect_err("no Freight");
     assert!(
-        why.starts_with("Freight f-new of storefront couldn't be read on cicd-b: "),
+        why.message
+            .starts_with("Freight f-new of storefront couldn't be read on cicd-b: "),
         "{why}"
     );
 }
@@ -388,8 +393,9 @@ async fn kargo_not_served_on_its_entry_says_so_in_its_name() {
     )
     .await
     .expect_err("no Freight");
+    assert_eq!(why.kind, FailureKind::NotFound);
     assert_eq!(
-        why,
+        why.message,
         "Freight f-new of storefront couldn't be read: it wasn't found on cicd-b"
     );
 }

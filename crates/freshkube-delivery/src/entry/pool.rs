@@ -106,6 +106,15 @@ impl Unread {
         }
     }
 
+    /// What kind of failure it was.
+    pub fn kind(&self) -> FailureKind {
+        match self {
+            Unread::Missing(why)
+            | Unread::Unreachable { why, .. }
+            | Unread::Unfinished { why, .. } => why.kind,
+        }
+    }
+
     /// The state in a sentence that names the entry.
     pub fn words(&self) -> String {
         match self {

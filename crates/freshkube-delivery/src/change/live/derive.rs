@@ -512,7 +512,7 @@ fn elsewhere<'a>(place: &Place, evidence: &'a Evidence, app_id: &str) -> Option<
     }
     let why = match evidence.environments.get(entry) {
         Some(Ok(_)) => return None,
-        Some(Err(why)) => Some(why.as_str()),
+        Some(Err(why)) => Some(why.message.as_str()),
         None => None,
     };
     let app = evidence
@@ -1537,7 +1537,7 @@ fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached)
     for (context, read) in &evidence.environments {
         let at = place.at_context(context);
         match read {
-            Err(why) => lines.push(Missing::new(Gap::Unreadable, why.clone())),
+            Err(why) => lines.push(Missing::new(Gap::Unreadable, why.message.clone())),
             Ok(workloads) => {
                 let pods = workloads
                     .pods

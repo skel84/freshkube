@@ -27,6 +27,7 @@ use super::change::{self, Change, Reach};
 use super::join::Confidence;
 use super::kargo::{Freight, Stage, promotion_order};
 use super::source::Source;
+use freshkube_core::resources::{Failure, FailureKind};
 
 /// The most Freight a project lists, newest first. Those a Stage runs are
 /// always listed, and the rest are counted in a note.
@@ -40,7 +41,7 @@ pub struct Project {
     pub stages: Source<Vec<Stage>>,
     /// The change of each Freight a Stage runs, by the Freight's name, as
     /// the change page reads it, or why it couldn't be read.
-    pub followed: BTreeMap<String, Result<Arc<Change>, String>>,
+    pub followed: BTreeMap<String, Result<Arc<Change>, Failure>>,
 }
 
 /// What the list reads: the projects of the cluster that runs Kargo.
@@ -117,7 +118,7 @@ pub struct Row {
     pub fold: Fold,
     /// Its change, which the Inspector shows as a trail, when a Stage runs
     /// it; else why there's none.
-    pub trail: Result<Arc<Change>, String>,
+    pub trail: Result<Arc<Change>, Failure>,
 }
 
 /// One Stage of a row.
@@ -340,8 +341,14 @@ fn row(project: &Project, freight: &Freight) -> Row {
     let stages = project.stages.read();
     let trail = match project.followed.get(&freight.name) {
         Some(change) => change.clone(),
-        None if stages.is_none() => Err("Its Stages weren't read, so it wasn't followed".into()),
-        None => Err("No Stage runs it, so it wasn't followed".into()),
+        None if stages.is_none() => Err(Failure::new(
+            FailureKind::Other,
+            "Its Stages weren't read, so it wasn't followed",
+        )),
+        None => Err(Failure::new(
+            FailureKind::Other,
+            "No Stage runs it, so it wasn't followed",
+        )),
     };
     let cell = |stage: &Stage| -> Reach {
         if !stage.current_freight.contains(&freight.name) {

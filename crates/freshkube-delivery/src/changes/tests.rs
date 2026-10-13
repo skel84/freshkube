@@ -316,8 +316,13 @@ fn a_change_that_couldnt_be_read_is_unknown_where_it_runs() {
             stage("shop-api", "prod", &["int"], None),
         ],
     );
-    shop.followed
-        .insert("a".into(), Err("Freight a couldn't be read".into()));
+    shop.followed.insert(
+        "a".into(),
+        Err(Failure::new(
+            FailureKind::Other,
+            "Freight a couldn't be read",
+        )),
+    );
     let changes = derive(&read(vec![shop]));
     let row = &changes.rows[0];
     assert_eq!(reaches(row), [UNKNOWN, Reach::NotReached]);

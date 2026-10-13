@@ -11,6 +11,7 @@
 //! page shown again doesn't move them.
 
 use chrono::{DateTime, Duration, Utc};
+use freshkube_core::resources::{Failure, FailureKind};
 
 use super::*;
 use crate::applications::example::{CICD, CORE};
@@ -1030,16 +1031,19 @@ impl Shape {
 
     /// `change` as this shape reads it: an error when its Freight couldn't
     /// be read at all.
-    pub fn apply(self, mut change: Change) -> Result<Change, String> {
+    pub fn apply(self, mut change: Change) -> Result<Change, Failure> {
         let Some(why) = self.words() else {
             return Ok(change);
         };
         match self {
             Self::Whole => {}
             Self::KargoUnreachable => {
-                return Err(format!(
-                    "Freight {} of {} couldn't be read: {why}",
-                    change.freight, change.project
+                return Err(Failure::new(
+                    FailureKind::Unreachable,
+                    format!(
+                        "Freight {} of {} couldn't be read: {why}",
+                        change.freight, change.project
+                    ),
                 ));
             }
             Self::ArgoRefused => {

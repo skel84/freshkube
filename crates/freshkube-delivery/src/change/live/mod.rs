@@ -43,7 +43,7 @@ use crate::github::{GitHub, PullRequest};
 use crate::join::{Evidence, candidate_applications, candidate_deployments, candidate_rollouts};
 use crate::kargo::{Freight, read_freight};
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
-use crate::source::Source;
+use crate::source::printable;
 use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{self, Chosen, Entry, Key, Part, Sources};
 
@@ -260,7 +260,7 @@ pub async fn read<R: Reader>(
     reader: &R,
     place: &Place,
     observed_at: DateTime<Utc>,
-) -> Result<Change, String> {
+) -> Result<Change, Failure> {
     let alone = Place {
         sources: Sources::default(),
         ..place.clone()
@@ -312,22 +312,25 @@ pub async fn read_in<R, C, F, Fut>(
     pool: &Pool<'_, R, C, F>,
     place: &Place,
     observed_at: DateTime<Utc>,
-) -> Result<Change, String>
+) -> Result<Change, Failure>
 where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
     Fut: Future<Output = Result<C, Failure>>,
 {
-    let couldnt = |why: String| {
-        format!(
-            "Freight {} of {} couldn't be read: {why}",
-            place.freight, place.project
+    let couldnt = |kind: FailureKind, why: String| {
+        Failure::new(
+            kind,
+            format!(
+                "Freight {} of {} couldn't be read: {why}",
+                place.freight, place.project
+            ),
         )
     };
     let kargo = match part(pool, place, Part::Kargo).await {
         Ok((kargo, _)) => kargo,
-        Err(unread) => return Err(couldnt(unread.words())),
+        Err(unread) => return Err(couldnt(unread.kind(), unread.words())),
     };
     let at = place.at(Part::Kargo);
     // The Freight is the first round's too, so it ends with the budget.
@@ -336,21 +339,29 @@ where
     let freight = match read.await {
         Some(Ok(freight)) => freight,
         Some(Err(failure)) => {
-            return Err(couldnt(match Source::<()>::from_failure(failure) {
-                Source::NotInstalled(_) => format!("it wasn't found on {}", at.label),
-                Source::Refused(why) => format!("refused on {}: {why}", at.label),
-                Source::Unreadable(why) => {
-                    return Err(format!(
+            let why = printable(&failure);
+            return Err(match failure.kind {
+                FailureKind::NotFound => {
+                    couldnt(failure.kind, format!("it wasn't found on {}", at.label))
+                }
+                FailureKind::Forbidden | FailureKind::Unauthorized => {
+                    couldnt(failure.kind, format!("refused on {}: {why}", at.label))
+                }
+                FailureKind::Config
+                | FailureKind::Unreachable
+                | FailureKind::Timeout
+                | FailureKind::Other => Failure::new(
+                    failure.kind,
+                    format!(
                         "Freight {} of {} couldn't be read on {}: {why}",
                         place.freight, place.project, at.label
-                    ));
-                }
-                Source::Read(()) | Source::Capped(..) => String::new(),
-            }));
+                    ),
+                ),
+            });
         }
         None => {
             let unread = Unread::unfinished(at.label, &until);
-            return Err(couldnt(unread.words()));
+            return Err(couldnt(unread.kind(), unread.words()));
         }
     };
     Ok(follow_in(pool, place, &freight, observed_at).await)
@@ -478,18 +489,19 @@ async fn read_environments<R, C, F, Fut>(
                     .await
                     .ok_or_else(|| {
                         let entry = place.at_context(context).label;
-                        Unread::unfinished(entry, &until).words()
+                        let unread = Unread::unfinished(entry, &until);
+                        Failure::new(unread.kind(), unread.words())
                     }),
                 Err(unread) => Err(match unread {
                     // The open cluster is named as the page names it.
                     Unread::Unreachable { why, .. } if place.is_here(context) => {
-                        Unread::Unreachable {
+                        let unread = Unread::Unreachable {
                             entry: place.label.clone(),
                             why,
-                        }
-                        .words()
+                        };
+                        Failure::new(unread.kind(), unread.words())
                     }
-                    unread => unread.words(),
+                    unread => Failure::new(unread.kind(), unread.words()),
                 }),
             };
             (context.to_owned(), workloads)

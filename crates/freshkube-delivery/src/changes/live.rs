@@ -280,7 +280,10 @@ where
     for (freight, change) in read {
         let change = change.unwrap_or_else(|_| {
             cut += 1;
-            Err(format!("It wasn't followed: {}", late(turns.budget)))
+            Err(Failure::new(
+                FailureKind::Timeout,
+                format!("It wasn't followed: {}", late(turns.budget)),
+            ))
         });
         project.followed.insert(freight, change.map(Arc::new));
     }
