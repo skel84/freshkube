@@ -11,6 +11,7 @@ use crate::{
         CheckCategory, CheckStatus, CniInfo, CniPodInfo, CniType, PodHealthInfo, UnhealthyPodInfo,
     },
     errors::format_talos_error,
+    failure::Failure,
     formatting::{format_bytes, format_bytes_signed},
 };
 use k8s_openapi::{
@@ -1136,7 +1137,7 @@ async fn collect_kubernetes(
     let pod_health = match client {
         Some(client) => match collect_pod_health(client).await {
             Ok(health) => SourceState::Available(health),
-            Err(error) => SourceState::unavailable("Kubernetes Pod API", error),
+            Err(error) => SourceState::unavailable("Kubernetes Pod API", error.message),
         },
         None => unavailable_from_access(access, "Kubernetes Pod API"),
     };
@@ -1144,12 +1145,12 @@ async fn collect_kubernetes(
     KubernetesSnapshot { pod_health }
 }
 
-async fn collect_pod_health(client: &Client) -> Result<PodHealthInfo, String> {
+async fn collect_pod_health(client: &Client) -> Result<PodHealthInfo, Failure> {
     let pods: Api<Pod> = Api::all(client.clone());
     let pod_list = pods
         .list(&ListParams::default())
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(Failure::from_kube_text)?;
 
     let mut health = PodHealthInfo {
         total_pods: pod_list.items.len(),
@@ -1200,7 +1201,7 @@ async fn collect_cni(
     let pods = match k8s_client {
         Some(client) => match collect_cni_info(client).await {
             Ok(info) => SourceState::Available(info),
-            Err(error) => SourceState::unavailable("Kubernetes CNI pod API", error),
+            Err(error) => SourceState::unavailable("Kubernetes CNI pod API", error.message),
         },
         None => unavailable_from_access(access, "Kubernetes CNI pod API"),
     };
@@ -1296,12 +1297,12 @@ fn is_kube_not_found(error: &kube::Error) -> bool {
     matches!(error, kube::Error::Api(response) if response.code == 404)
 }
 
-async fn collect_cni_info(client: &Client) -> Result<CniInfo, String> {
+async fn collect_cni_info(client: &Client) -> Result<CniInfo, Failure> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), "kube-system");
     let pod_list = pods
         .list(&ListParams::default())
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(Failure::from_kube_text)?;
 
     let mut cni_info = CniInfo::default();
     for pod in pod_list.items {
@@ -1819,6 +1820,44 @@ mod tests {
                 requires_reboot: false,
             }
         ));
+    }
+
+    /// A fake API server answering every request with a 403 Status.
+    fn forbidden_client() -> Client {
+        use kube::client::Body;
+        let service = tower::service_fn(|_: http::Request<Body>| async {
+            Ok::<_, std::convert::Infallible>(
+                http::Response::builder()
+                    .status(403)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        br#"{"kind":"Status","apiVersion":"v1","status":"Failure","message":"pods is forbidden","reason":"Forbidden","code":403}"#.to_vec(),
+                    ))
+                    .unwrap(),
+            )
+        });
+        Client::new(service, "default")
+    }
+
+    /// The Diagnostics reason for a refused Pod read is the kube error's own
+    /// text, as it was before the read carried a `Failure`.
+    #[tokio::test]
+    async fn a_refused_pod_read_keeps_the_kube_error_text() {
+        let client = forbidden_client();
+        let expected = Api::<Pod>::all(client.clone())
+            .list(&ListParams::default())
+            .await
+            .unwrap_err()
+            .to_string();
+        let access = SourceState::unavailable("Kubernetes", "unused");
+        let kubernetes = collect_kubernetes(Some(&client), &access).await;
+        assert_eq!(
+            kubernetes.pod_health.unavailable_info().unwrap().reason,
+            expected
+        );
+        let failure = collect_cni_info(&client).await.unwrap_err();
+        assert_eq!(failure.kind, crate::failure::FailureKind::Forbidden);
+        assert_eq!(failure.message, expected);
     }
 
     #[tokio::test]

@@ -128,6 +128,29 @@ impl Failure {
         }
     }
 
+    /// Classifies a kube error as [`Failure::from_kube`] does but keeps the
+    /// error's own `Display` text as the message, for a read that worded its
+    /// failure that way before it carried a kind.
+    pub(crate) fn from_kube_text(error: kube::Error) -> Self {
+        let text = error.to_string();
+        Self::new(Self::from_kube(error).kind, text)
+    }
+
+    /// Classifies a Talos error as [`Failure::from_talos`] does but words it
+    /// with the error's own `Display` text.
+    pub(crate) fn from_talos_text(error: &TalosError) -> Self {
+        Self::new(Self::from_talos(error).kind, error.to_string())
+    }
+
+    /// Classifies a Talos error as [`Failure::from_talos`] does but words it
+    /// with `format_talos_error` whole, status message included.
+    pub(crate) fn from_talos_formatted(error: &TalosError) -> Self {
+        Self::new(
+            Self::from_talos(error).kind,
+            crate::errors::format_talos_error(error),
+        )
+    }
+
     pub fn timeout(what: &str) -> Self {
         Self::new(FailureKind::Timeout, format!("{what} timed out"))
     }
@@ -216,6 +239,17 @@ mod tests {
         assert_eq!(Failure::from_kube(api(504, "x")).kind, FailureKind::Timeout);
         assert_eq!(Failure::from_kube(api(500, "x")).kind, FailureKind::Other);
         assert!(!FailureKind::Unreachable.is_permanent());
+    }
+
+    #[test]
+    fn display_text_keeps_the_kind_of_the_classification() {
+        let failure = Failure::from_kube_text(api(403, "pods is forbidden"));
+        assert_eq!(failure.kind, FailureKind::Forbidden);
+        assert_eq!(failure.message, api(403, "pods is forbidden").to_string());
+        let status = TalosError::Grpc(tonic::Status::unavailable("down"));
+        let failure = Failure::from_talos_formatted(&status);
+        assert_eq!(failure.kind, FailureKind::Unreachable);
+        assert_eq!(failure.message, crate::errors::format_talos_error(&status));
     }
 
     #[test]
