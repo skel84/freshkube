@@ -977,10 +977,9 @@ impl ResourcesScreen {
     ) where
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let runtime = self.runtime.clone();
         self.watch.start(
             epoch,
-            &runtime,
+            &self.runtime,
             WATCH_PACE,
             work,
             |view: &mut Self| &mut view.watch,
