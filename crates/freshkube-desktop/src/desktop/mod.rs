@@ -833,6 +833,11 @@ impl Pilot {
             window,
             |pilot, _, event: &nodes::NodesEvent, window, cx| pilot.nodes_event(event, window, cx),
         ));
+        let shell = cx.weak_entity();
+        let on_nodes: nodes::OnNodes = std::rc::Rc::new(move |event, window, cx| {
+            _ = shell.update(cx, |pilot, cx| pilot.nodes_event(&event, window, cx));
+        });
+        node_workspace.update(cx, |nodes, _| nodes.shell = Some(on_nodes));
         // The status bar shows the running operation; the window refuses to
         // close under it. Cached screens may read the slot too.
         let operations = Operations::global(cx);

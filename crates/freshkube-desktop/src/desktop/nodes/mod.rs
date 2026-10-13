@@ -161,7 +161,16 @@ pub(super) struct Nodes {
     pub(super) attention: Arc<crate::presentation::attention::Attention>,
     /// Why that list may be out of date.
     pub(super) attention_stale: Option<SharedString>,
+    /// The shell's handler for events from plain listeners. A listener
+    /// inside Nodes' own update, such as a table row's click, emits
+    /// instead.
+    pub(super) shell: Option<OnNodes>,
 }
+
+/// Hands an event to the shell at once, from a listener that runs
+/// outside Nodes' own update, so the click or key has its effect before
+/// the frame ends. The shell sets it when it builds Nodes.
+pub(in crate::desktop) type OnNodes = std::rc::Rc<dyn Fn(NodesEvent, &mut Window, &mut App)>;
 
 /// What a click or key in Nodes asks of the shell, which owns the node's
 /// selection across pages, the Talos reads and navigation.
@@ -306,6 +315,19 @@ impl Nodes {
             screens: Default::default(),
             attention: Default::default(),
             attention_stale: None,
+            shell: None,
+        }
+    }
+    /// A listener that hands `event` to the shell.
+    pub(super) fn send<E: 'static>(
+        &self,
+        event: NodesEvent,
+    ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+        let shell = self.shell.clone();
+        move |_, window, cx| {
+            if let Some(shell) = &shell {
+                shell(event.clone(), window, cx);
+            }
         }
     }
     /// The motion over the table's loading rows, which the shell mounts

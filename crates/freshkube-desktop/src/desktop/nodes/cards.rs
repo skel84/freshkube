@@ -165,14 +165,9 @@ impl Nodes {
                         .small()
                         .outline()
                         .label("Open")
-                        .on_click(cx.listener({
-                            let key = key.clone();
-                            move |_, _, _, cx| {
-                                cx.emit(NodesEvent::Open {
-                                    key: key.clone(),
-                                    focus: false,
-                                })
-                            }
+                        .on_click(self.send(NodesEvent::Open {
+                            key: key.clone(),
+                            focus: false,
                         })),
                 )
                 .into_any_element()
@@ -218,11 +213,9 @@ impl Nodes {
             })
             .cursor_pointer()
             .child(content)
-            .on_click(cx.listener(move |_, _, _, cx| {
-                cx.emit(NodesEvent::Open {
-                    key: key.clone(),
-                    focus: false,
-                })
+            .on_click(self.send(NodesEvent::Open {
+                key: key.clone(),
+                focus: false,
             }))
             .into_any_element()
     }
