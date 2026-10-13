@@ -1123,6 +1123,9 @@ impl Pilot {
         view.open_startup_page(&debug, window, cx);
         #[cfg(feature = "stress")]
         crate::stress::start(window, cx);
+        // Overview's first frame needs no notify of the shell to know where
+        // things stand.
+        view.push_overview_state(cx);
         view
     }
 

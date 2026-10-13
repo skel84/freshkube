@@ -72,20 +72,20 @@ impl Pilot {
                 pilot.open_destination(destination, window, cx)
             });
         });
-        let stale = self.overview_state().attention_stale;
+        let stale = self.attention_stale();
         render_attention(&self.attention, Some(node), true, stale, &on_open, None, cx)
     }
 }
 
 /// Opens an attention row's destination.
-pub(crate) type OnOpen = Rc<dyn Fn(Destination, &mut Window, &mut App)>;
+pub(super) type OnOpen = Rc<dyn Fn(Destination, &mut Window, &mut App)>;
 /// Unfolds Overview's list.
-pub(crate) type OnShowAll = Rc<dyn Fn(&mut Window, &mut App)>;
+pub(super) type OnShowAll = Rc<dyn Fn(&mut Window, &mut App)>;
 
 /// Needs attention as a card of compact rows grouped by severity:
 /// eight on Overview until Show all, at most fifty, and every row of a
 /// node in its pane.
-pub(crate) fn render_attention(
+pub(super) fn render_attention(
     attention: &Attention,
     node: Option<&str>,
     expanded: bool,
