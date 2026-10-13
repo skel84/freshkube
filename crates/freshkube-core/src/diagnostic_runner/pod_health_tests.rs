@@ -259,8 +259,8 @@ async fn init_image_and_other_waiting_errors() {
             json!({"phase":"Pending","initContainerStatuses":[waiting(reason)]}),
             Some((HealthState::Failing, reason)),
             Some((Severity::Failing, reason)),
-            Some(("image_pull_errors", reason))
-                .filter(|_| matches!(reason, "ImagePullBackOff" | "ErrImagePull")),
+            matches!(reason, "ImagePullBackOff" | "ErrImagePull")
+                .then_some(("image_pull_errors", reason)),
         )
         .await;
     }
@@ -305,8 +305,7 @@ async fn nonzero_init_termination_and_failed_app_termination() {
             status[key] = json!([container(
                 json!({"terminated":{"exitCode":1,"reason":reason}})
             )]);
-            let diagnostic =
-                Some(("crashing", state)).filter(|_| matches!(state, "Error" | "OOMKilled"));
+            let diagnostic = matches!(state, "Error" | "OOMKilled").then_some(("crashing", state));
             check(
                 "nonzero-termination",
                 status,
