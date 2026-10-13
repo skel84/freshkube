@@ -96,7 +96,7 @@ impl Navigation {
         self.column_state.collapsed_in(window)
     }
     /// The column's width, when the area has one.
-    pub(in crate::desktop) fn column_width(&self, window: &Window) -> Option<f32> {
+    fn column_width(&self, window: &Window) -> Option<f32> {
         self.area.has_column().then(|| {
             if self.column_collapsed(window) {
                 52.
@@ -105,8 +105,20 @@ impl Navigation {
             }
         })
     }
-    pub(in crate::desktop) fn layout_chrome(&self, window: &Window) {
+    fn layout_chrome(&self, window: &Window) {
         crate::screens::set_chrome_width(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
+    }
+
+    /// Lays out the rail and the column for this frame and returns the
+    /// column's width, when the area has one.
+    pub(in crate::desktop) fn lay_out(&mut self, window: &Window) -> Option<f32> {
+        self.layout_chrome(window);
+        let column = self.column_width(window);
+        if column.is_none() {
+            // A kind outside every column has no row to reveal.
+            self.column_reveal = None;
+        }
+        column
     }
 
     /// Says that what the column shows changed: its next draw derives its

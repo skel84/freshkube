@@ -17,12 +17,7 @@ impl Render for Pilot {
         if WINDOW.pending() {
             window.on_next_frame(|_, _| WINDOW.mark());
         }
-        self.navigation.layout_chrome(window);
-        let column = self.navigation.column_width(window);
-        if column.is_none() {
-            // A kind outside every column has no row to reveal.
-            self.navigation.column_reveal = None;
-        }
+        let column = self.navigation.lay_out(window);
         let page = match self.navigation.page {
             // Not cached: a cached view that draws again makes every cached
             // view inside it draw again, so a cursor moving over one chart
