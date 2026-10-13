@@ -17,9 +17,6 @@ mod security;
 mod storage;
 mod workloads;
 
-#[cfg(test)]
-mod health_tone_table;
-
 pub(crate) use diagnostics::DiagnosticsScreen;
 pub(crate) use etcd::EtcdScreen;
 pub(crate) use lifecycle::LifecycleScreen;

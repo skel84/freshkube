@@ -838,14 +838,14 @@ fn unavailable_sources(view: &LifecycleView, rows: &[NodeRow]) -> Vec<String> {
 
 /// An alert's tone and icon from the shared health look, with the word
 /// Lifecycle calls it.
-pub(super) fn alert_look(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static str) {
+fn alert_look(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static str) {
     let (tone, icon) = ui::health_tone(*health);
     let label = match health {
         HealthIndicator::Healthy => "OK",
         HealthIndicator::Warning => "Warning",
         HealthIndicator::Error => "Error",
         HealthIndicator::Info => "Info",
-        _ => "Unknown",
+        HealthIndicator::Pending | HealthIndicator::Unknown => "Unknown",
     };
     (tone, icon, label)
 }

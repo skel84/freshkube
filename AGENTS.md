@@ -330,9 +330,9 @@ impl HasHealth for MyStatus {
     }
 }
 
-// In freshkube-desktop - a presentation::Health maps to a tone and icon for a tag
-let (tone, icon) = ui::health_tone(health);
-let tag = ui::tag(tone, Some(icon), "Healthy", cx);
+// In freshkube-desktop - any HasHealth value maps to a tone and icon for a tag
+let (tone, icon) = ui::health_tone(health.health());
+let tag = ui::tag(tone, icon, "Healthy", cx);
 ```
 
 ### Diagnostic Checks

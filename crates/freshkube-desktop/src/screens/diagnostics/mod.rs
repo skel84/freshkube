@@ -8,6 +8,7 @@
 //! Checks come from the core's diagnostic runner. A source that didn't answer
 //! arrives as an unknown check (and is named in the partial notice), never as
 //! a failure, and a Kubernetes failure never hides the Talos checks.
+use freshkube_core::HasHealth;
 use freshkube_core::diagnostic_runner::{
     AddonPresence, AddonSnapshot, DiagnosticCheck, DiagnosticCollector, DiagnosticFix,
     DiagnosticFixAction, DiagnosticSnapshot, DiagnosticTarget, EtcdSnapshot, FileProbe,
@@ -95,13 +96,14 @@ fn section_title(category: CheckCategory, snapshot: &DiagnosticSnapshot) -> Stri
 }
 
 fn status_tone(status: &CheckStatus) -> (Tone, &'static str) {
-    match status {
-        CheckStatus::Pass => (Tone::Good, "Pass"),
-        CheckStatus::Warn => (Tone::Warn, "Warn"),
-        CheckStatus::Fail => (Tone::Crit, "Fail"),
-        CheckStatus::Unknown => (Tone::Unknown, "Unknown"),
-        CheckStatus::Checking => (Tone::Unknown, "Checking"),
-    }
+    let label = match status {
+        CheckStatus::Pass => "Pass",
+        CheckStatus::Warn => "Warn",
+        CheckStatus::Fail => "Fail",
+        CheckStatus::Unknown => "Unknown",
+        CheckStatus::Checking => "Checking",
+    };
+    (ui::health_tone(status.health()).0, label)
 }
 
 fn is_problem(check: &DiagnosticCheck) -> bool {

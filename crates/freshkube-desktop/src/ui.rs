@@ -12,7 +12,9 @@ use crate::palette::palette;
 use crate::presentation::{Health, MemoryLevel};
 
 /// The tone and icon a health draws with, for tags, glyphs and group rows.
-/// Only informational health has an icon; Pending reads as unknown.
+/// Only informational health has an icon, which is why it is an `Option`:
+/// every caller but Lifecycle's alerts takes the tone alone. Pending reads
+/// as unknown.
 pub(crate) fn health_tone(health: HealthIndicator) -> (Tone, Option<IconName>) {
     match health {
         HealthIndicator::Healthy => (Tone::Good, None),
@@ -57,4 +59,55 @@ pub(crate) fn meter(percent: f64, level: MemoryLevel, cx: &App) -> Div {
                 .rounded(px(3.))
                 .bg(fill_color),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use freshkube_core::workloads::HealthState;
+
+    use super::*;
+
+    fn look(health: impl HasHealth) -> (Tone, Option<IconName>) {
+        health_tone(health.health())
+    }
+
+    /// Every health enum that reaches a tag keeps the tone and icon it drew
+    /// before the three maps became one.
+    #[test]
+    fn every_health_variant_keeps_its_tone_and_icon() {
+        let rows = [
+            (Health::Healthy, Tone::Good),
+            (Health::Unhealthy, Tone::Crit),
+            (Health::Unknown, Tone::Unknown),
+        ];
+        for (health, tone) in rows {
+            assert_eq!(look(health), (tone, None), "{health:?}");
+        }
+        let rows = [
+            (HealthState::Failing, Tone::Crit),
+            (HealthState::Degraded, Tone::Warn),
+            (HealthState::Pending, Tone::Unknown),
+            (HealthState::Healthy, Tone::Good),
+        ];
+        for (state, tone) in rows {
+            assert_eq!(look(state), (tone, None), "{state:?}");
+        }
+        let rows = [
+            (HealthIndicator::Healthy, Tone::Good, None),
+            (HealthIndicator::Warning, Tone::Warn, None),
+            (HealthIndicator::Error, Tone::Crit, None),
+            (HealthIndicator::Pending, Tone::Unknown, None),
+            (HealthIndicator::Info, Tone::Accent, Some(IconName::Info)),
+            (HealthIndicator::Unknown, Tone::Unknown, None),
+        ];
+        for (indicator, tone, icon) in rows {
+            let (got_tone, got_icon) = health_tone(indicator);
+            assert_eq!(got_tone, tone, "{indicator:?}");
+            assert_eq!(
+                got_icon.map(|icon| format!("{icon:?}")),
+                icon.map(|icon| format!("{icon:?}")),
+                "{indicator:?}"
+            );
+        }
+    }
 }
