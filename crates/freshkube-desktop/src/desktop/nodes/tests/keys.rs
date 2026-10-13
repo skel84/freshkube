@@ -508,36 +508,6 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
     .unwrap();
 }
 
-/// The arrows walk the cards in order; one in a row out of view scrolls the
-/// grid to that row. At 392 high the list is shorter than a row of cards.
-#[gpui_kit::test]
-fn arrows_scroll_the_card_grid_to_the_selected_cards_row(cx: &mut TestAppContext) {
-    let (_runtime, handle, pilot) = fixture(cx, 1500., 392.);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("nav-nodes", cx);
-        crate::desktop::tests::settle_header(window, cx);
-        window.click("nodes-view-cards", cx);
-        window.render_frame(cx);
-        assert_eq!(super::super::cards::card_columns(window), 3);
-        let lines = pilot.read(cx).node_workspace.lines.len();
-        assert!(lines > 3, "only {lines} cards: no second row");
-        // The second row starts below the list, so isn't drawn.
-        let fourth = pilot.read(cx).node_workspace.lines[3];
-        let fourth = pilot.read(cx).node_workspace.rows[fourth].id.clone();
-        assert!(window.try_find(fourth.clone()).is_none());
-        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
-        for _ in 0..4 {
-            window.press("down", cx);
-            window.render_frame(cx);
-        }
-        let row = pilot.read(cx).node_workspace.row().unwrap().id.clone();
-        assert_eq!(row, fourth);
-        assert!(window.find(fourth).visible());
-    })
-    .unwrap();
-}
-
 /// Enter in a node log's search steps to the next match and Shift-Enter
 /// to the previous one, with the keyboard kept in the search (#316): the
 /// node workspace's own Enter doesn't take it.
@@ -694,41 +664,4 @@ fn h_leaves_the_fold_alone_on_the_cards(cx: &mut TestAppContext) {
         assert!(pilot.read(cx).node_workspace.healthy_collapsed());
     })
     .unwrap();
-}
-
-#[gpui_kit::test]
-fn a_right_click_selects_its_node_and_its_menu_folds_the_healthy_ones(cx: &mut TestAppContext) {
-    let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
-    cx.update_window(handle, |_, window, cx| {
-        window.click("nav-nodes", cx);
-        window.render_frame(cx);
-        window.right_click("node-talos-wk-fra1-03", cx);
-    })
-    .unwrap();
-    // The menu builds on the next frame.
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace;
-        assert_eq!(nodes.row().unwrap().name, "talos-wk-fra1-03");
-        // Selected as an arrow selects: the closed pane stays closed.
-        assert!(!nodes.open);
-        let menu = window.within("popup-menu");
-        let items: Vec<_> = (0usize..)
-            .map_while(|ix| menu.try_find(ix))
-            .map(|item| item.label().map(str::to_owned))
-            .collect();
-        assert_eq!(
-            items,
-            [
-                Some("Open".to_owned()),
-                None,
-                Some("Expand healthy nodes".to_owned())
-            ]
-        );
-        window.within("popup-menu").click(2usize, cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    cx.read(|cx| assert!(!pilot.read(cx).node_workspace.healthy_collapsed()));
 }

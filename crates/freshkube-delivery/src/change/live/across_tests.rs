@@ -83,14 +83,14 @@ async fn read_across(
     workspace: &Workspace,
     edit: fn(&mut World),
     unreachable: &[&str],
-) -> Result<Change, String> {
+) -> Result<Change, Failure> {
     let place = place(workspace);
     let pool = Pool::new(
         &place.sources,
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| {
             let result = match unreachable.contains(&entry.id.as_str()) {
-                true => Err("connection refused".to_owned()),
+                true => Err(Failure::new(FailureKind::Unreachable, "connection refused")),
                 false => Ok(entry_reader(&entry.id, world(edit))),
             };
             async move { result }
@@ -156,7 +156,7 @@ async fn kargos_entry_unreachable_is_said_in_its_name() {
         .await
         .expect_err("no Freight");
     assert_eq!(
-        why,
+        why.message,
         "Freight f-new of storefront couldn't be read: Couldn't reach cicd-b: connection \
          refused"
     );
@@ -171,7 +171,10 @@ async fn no_kargo_entry_says_the_workspace_has_none() {
     let why = read_across(&workspace, |_| {}, &[])
         .await
         .expect_err("no Freight");
-    let Some(why) = why.strip_prefix("Freight f-new of storefront couldn't be read: ") else {
+    let Some(why) = why
+        .message
+        .strip_prefix("Freight f-new of storefront couldn't be read: ")
+    else {
         panic!("{why}");
     };
     assert!(
@@ -194,7 +197,7 @@ async fn builds_unreachable_keep_the_rest_and_say_so() {
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| {
             let result = match entry.id.as_str() {
-                "ci-d" => Err("connection refused".to_owned()),
+                "ci-d" => Err(Failure::new(FailureKind::Unreachable, "connection refused")),
                 id => Ok(entry_reader(id, world(|_| {}))),
             };
             async move { result }
@@ -351,8 +354,9 @@ async fn a_freight_that_never_answers_ends_with_the_budget() {
     )
     .await
     .expect_err("no Freight");
+    assert_eq!(why.kind, FailureKind::Timeout);
     assert_eq!(
-        why,
+        why.message,
         format!(
             "Freight f-new of storefront couldn't be read: cicd-b didn't finish reading within \
              the read's {} s",
@@ -374,7 +378,8 @@ async fn an_unreadable_freight_names_kargos_entry() {
     .await
     .expect_err("no Freight");
     assert!(
-        why.starts_with("Freight f-new of storefront couldn't be read on cicd-b: "),
+        why.message
+            .starts_with("Freight f-new of storefront couldn't be read on cicd-b: "),
         "{why}"
     );
 }
@@ -388,8 +393,9 @@ async fn kargo_not_served_on_its_entry_says_so_in_its_name() {
     )
     .await
     .expect_err("no Freight");
+    assert_eq!(why.kind, FailureKind::NotFound);
     assert_eq!(
-        why,
+        why.message,
         "Freight f-new of storefront couldn't be read: it wasn't found on cicd-b"
     );
 }
@@ -425,7 +431,7 @@ async fn the_open_entry_is_read_through_the_open_connection() {
         |entry: Entry| {
             connected.borrow_mut().push(entry.id.clone());
             let reader = entry_reader(&entry.id, world(edit));
-            async move { Ok::<_, String>(reader) }
+            async move { Ok::<_, Failure>(reader) }
         },
         BUDGET,
     );
@@ -450,11 +456,14 @@ async fn the_open_entry_unreached_is_named_by_its_context() {
         &place.sources,
         Some(Open::<'_, FixtureReader> {
             entry: Some("core-a"),
-            reader: Err("no answer within 5 s".into()),
+            reader: Err(Failure::new(
+                FailureKind::Unreachable,
+                "no answer within 5 s",
+            )),
         }),
         |entry: Entry| {
             let reader = entry_reader(&entry.id, world(|_| {}));
-            async move { Ok::<_, String>(reader) }
+            async move { Ok::<_, Failure>(reader) }
         },
         BUDGET,
     );
@@ -497,7 +506,7 @@ async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| {
             let reader = entry_reader(&entry.id, world());
-            async move { Ok::<_, String>(reader) }
+            async move { Ok::<_, Failure>(reader) }
         },
         list::BUDGET,
     );

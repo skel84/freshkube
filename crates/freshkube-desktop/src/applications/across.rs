@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Chosen, Sources};
 use freshkube_delivery::change::live::Mapping;
 use freshkube_delivery::entry::{self, Deadline, EntryReader};
@@ -38,7 +39,7 @@ impl Across {
         &self,
         access: &KubeAccess,
         alone: Alone,
-    ) -> Result<Result<EntryReader, String>, String> {
+    ) -> Result<Result<EntryReader, Failure>, String> {
         open_reader(access, self.alone().then_some(alone)).await
     }
 
@@ -65,19 +66,28 @@ pub(crate) enum Alone {
 pub(crate) async fn open_reader(
     access: &KubeAccess,
     alone: Option<Alone>,
-) -> Result<Result<EntryReader, String>, String> {
+) -> Result<Result<EntryReader, Failure>, String> {
     if alone.is_some() {
         return access.client().await.map(|client| Ok(wrap(client, alone)));
     }
-    let client = tokio::time::timeout(entry::CONNECT_DEADLINE, access.client())
+    let client = tokio::time::timeout(entry::CONNECT_DEADLINE, client_or_failure(access))
         .await
         .unwrap_or_else(|_| {
-            Err(format!(
-                "no answer within {} s",
-                entry::CONNECT_DEADLINE.as_secs()
+            Err(Failure::new(
+                FailureKind::Timeout,
+                format!("no answer within {} s", entry::CONNECT_DEADLINE.as_secs()),
             ))
         });
     Ok(client.map(|client| wrap(client, None)))
+}
+
+/// The open connection's client, or why it couldn't be had. The kind is a
+/// guess, `Unreachable`, until `KubeAccess` returns a `Failure` of its own.
+async fn client_or_failure(access: &KubeAccess) -> Result<kube::Client, Failure> {
+    access
+        .client()
+        .await
+        .map_err(|why| Failure::new(FailureKind::Unreachable, why))
 }
 
 /// The reader over the open connection's client.

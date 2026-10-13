@@ -8,6 +8,7 @@ use crate::change::Phase;
 use crate::fixtures::FixtureReader;
 use crate::kargo::{GROUP, parse_freight, parse_stage};
 use crate::source::Truncation;
+use freshkube_core::resources::{Failure, FailureKind};
 
 fn now() -> DateTime<Utc> {
     DateTime::from_timestamp(1_760_000_000, 0).unwrap()
@@ -315,8 +316,13 @@ fn a_change_that_couldnt_be_read_is_unknown_where_it_runs() {
             stage("shop-api", "prod", &["int"], None),
         ],
     );
-    shop.followed
-        .insert("a".into(), Err("Freight a couldn't be read".into()));
+    shop.followed.insert(
+        "a".into(),
+        Err(Failure::new(
+            FailureKind::Other,
+            "Freight a couldn't be read",
+        )),
+    );
     let changes = derive(&read(vec![shop]));
     let row = &changes.rows[0];
     assert_eq!(reaches(row), [UNKNOWN, Reach::NotReached]);
@@ -712,7 +718,7 @@ async fn read_across(at: &live::Where, unreachable: &'static str) -> Read {
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| async move {
             match entry.id == unreachable {
-                true => Err("connection refused".to_owned()),
+                true => Err(Failure::new(FailureKind::Unreachable, "connection refused")),
                 false => Ok(two_projects(None)),
             }
         },

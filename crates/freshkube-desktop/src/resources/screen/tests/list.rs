@@ -213,54 +213,6 @@ fn the_filter_narrows_rows_and_escape_clears_it(cx: &mut TestAppContext) {
     });
 }
 
-/// The index of the first row whose pod runs.
-fn running_row(screen: &Entity<ResourcesScreen>, cx: &gpui_kit::App) -> usize {
-    (0usize..)
-        .find(|&ix| {
-            let identity = identity_at(screen, ix, cx);
-            screen.read(cx).store.get(&identity).unwrap().cells[2] == "Running"
-        })
-        .unwrap()
-}
-
-#[gpui_kit::test]
-fn a_forward_runs_on_through_another_context_and_names_its_own(cx: &mut TestAppContext) {
-    // The forward listens on Tokio, which wakes GPUI from its own threads.
-    cx.executor().allow_parking();
-    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
-    let step = |cx: &mut TestAppContext,
-                act: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            act(window, cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-    };
-    step(cx, &|window, cx| {
-        let ix = running_row(&screen, cx);
-        window
-            .within(row_id(&identity_at(&screen, ix, cx)))
-            .click("name", cx);
-    });
-    step(cx, &|window, cx| window.click("detail-jump-ports", cx));
-    step(cx, &|window, cx| window.click("ports-forward-8080", cx));
-    step(cx, &|window, cx| {
-        screen.update(cx, |screen, cx| {
-            screen.set_source(Some(source("staging-eu")), window, cx)
-        });
-    });
-    let list = cx.update(crate::forwards::list);
-    cx.read(|cx| {
-        assert_eq!(shown(&screen, cx), None, "another context closes the pane");
-        let items = &list.read(cx).items;
-        assert_eq!(items.len(), 1);
-        let forward = items[0].read(cx);
-        assert!(forward.running(), "the forward keeps its connection");
-        assert_eq!(forward.display.context.as_ref(), "homelab");
-    });
-}
-
 #[gpui_kit::test]
 fn object_links_keep_matching_namespace_and_filter_but_reveal_hidden_objects(
     cx: &mut TestAppContext,

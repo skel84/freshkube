@@ -11,10 +11,11 @@
 //! page shown again doesn't move them.
 
 use chrono::{DateTime, Duration, Utc};
+use freshkube_core::resources::{Failure, FailureKind};
 
 use super::*;
 use crate::applications::example::{CICD, CORE};
-use crate::{argocd, deployments, kargo};
+use crate::{argocd, deployments, kargo, words};
 use freshkube_core::indicators::HealthIndicator::{self, *};
 
 pub(crate) const PROJECT: &str = "checkout";
@@ -1009,14 +1010,14 @@ impl Shape {
     fn words(self) -> Option<String> {
         match self {
             Self::Whole => None,
-            Self::KargoUnreachable => Some(format!("Couldn't reach {CICD}: {NO_ANSWER}")),
+            Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
                  forbidden for this identity"
             )),
-            Self::DestinationUnreachable => Some(format!(
-                "Couldn't reach {0}: connection refused by {0}.example.test:6443",
-                UNREACHED.1
+            Self::DestinationUnreachable => Some(words::unreachable(
+                UNREACHED.1,
+                &format!("connection refused by {}.example.test:6443", UNREACHED.1),
             )),
         }
     }
@@ -1030,16 +1031,19 @@ impl Shape {
 
     /// `change` as this shape reads it: an error when its Freight couldn't
     /// be read at all.
-    pub fn apply(self, mut change: Change) -> Result<Change, String> {
+    pub fn apply(self, mut change: Change) -> Result<Change, Failure> {
         let Some(why) = self.words() else {
             return Ok(change);
         };
         match self {
             Self::Whole => {}
             Self::KargoUnreachable => {
-                return Err(format!(
-                    "Freight {} of {} couldn't be read: {why}",
-                    change.freight, change.project
+                return Err(Failure::new(
+                    FailureKind::Unreachable,
+                    format!(
+                        "Freight {} of {} couldn't be read: {why}",
+                        change.freight, change.project
+                    ),
                 ));
             }
             Self::ArgoRefused => {

@@ -133,7 +133,7 @@ impl SourcesList {
                 .find(|(checked, _)| *checked == part)
                 .map(|(_, reach)| reach.clone())
         });
-        let reach = chosen.missing().map(Reach::Missing).or(found);
+        let reach = chosen.missing().map(Reach::missing).or(found);
         let (state, tone, sentence) = match &reach {
             Some(reach) => (
                 reach.label().to_owned(),
@@ -191,7 +191,7 @@ impl SourcesList {
             .iter()
             .zip(&ids)
             .map(|(chosen, id)| {
-                chosen.missing().map(Reach::Missing).or_else(|| {
+                chosen.missing().map(Reach::missing).or_else(|| {
                     self.checked()?
                         .workloads
                         .iter()
