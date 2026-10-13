@@ -398,3 +398,46 @@ fn a_failed_refresh_reads_again_on_showing(cx: &mut TestAppContext) {
         assert_eq!(screen.loader.data(), Some(&1));
     });
 }
+
+#[gpui_kit::test]
+fn a_read_after_showing_again_lands(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let delivered = Rc::new(Cell::new(0));
+    let (cut, answer) = oneshot::channel();
+    load(
+        &screen,
+        &runtime,
+        "a",
+        DEADLINE,
+        answer,
+        delivered.clone(),
+        cx,
+    );
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    let hidden = screen.update(cx, |screen, cx| {
+        screen.loader.set_visible(false, policy, cx);
+        assert!(!screen.loader.is_loading());
+        screen.loader.revision()
+    });
+    until(cx, || cut.is_closed());
+    let reads_again = screen.update(cx, |screen, cx| screen.loader.set_visible(true, policy, cx));
+    assert!(reads_again);
+    let (send, answer) = oneshot::channel();
+    load(
+        &screen,
+        &runtime,
+        "a",
+        DEADLINE,
+        answer,
+        delivered.clone(),
+        cx,
+    );
+    screen.read_with(cx, |screen, _| assert!(screen.loader.is_loading()));
+    send.send(Ok(4)).unwrap();
+    until(cx, || delivered.get() == 1);
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.loader.data(), Some(&4));
+        assert!(!screen.loader.is_loading());
+        assert!(screen.loader.revision() > hidden);
+    });
+}

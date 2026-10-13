@@ -1,7 +1,10 @@
 use std::time::Duration;
 
-use gpui_kit::{AppContext, Entity, TestAppContext};
-use tokio::{runtime::Runtime, sync::mpsc};
+use gpui_kit::{AppContext, Context, Entity, TestAppContext};
+use tokio::{
+    runtime::{Handle, Runtime},
+    sync::mpsc,
+};
 
 use super::{Pace, Ticket, Watch};
 
@@ -11,43 +14,38 @@ const PACE: Pace = Pace {
     every: Duration::ZERO,
 };
 
+/// The least time between batches, where a test paces them.
+const EVERY: Duration = Duration::from_millis(100);
+
 /// A view that owns one watch and keeps what it sent, as a list keeps its
 /// rows.
 struct Screen {
+    runtime: Handle,
+    pace: Pace,
     watch: Watch<u32, &'static str>,
     seen: Vec<u32>,
-    batches: usize,
+    /// Each batch's length, in order.
+    sizes: Vec<usize>,
     /// Stops the watch from its own delivery on this item, as a tab's pod
     /// watch ends when its pod goes.
     stop_on: Option<u32>,
+    /// Starts the watch again for "b" from its own delivery on this item,
+    /// keeping the new stream's feed in `restarted`.
+    restart_on: Option<u32>,
+    restarted: Option<mpsc::Sender<u32>>,
 }
 
-fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<Screen>) {
-    // Tokio sends from its own threads.
-    cx.executor().allow_parking();
-    let screen = cx.new(|_| Screen {
-        watch: Watch::default(),
-        seen: Vec::new(),
-        batches: 0,
-        stop_on: None,
-    });
-    (Runtime::new().unwrap(), screen)
-}
-
-/// Starts the watch for `identity` on a stream that sends what the returned
-/// sender is given, and closes when the stream's work is dropped.
-fn start(
-    screen: &Entity<Screen>,
-    runtime: &Runtime,
-    identity: &'static str,
-    cx: &mut TestAppContext,
-) -> mpsc::Sender<u32> {
-    let (feed, mut items) = mpsc::channel::<u32>(16);
-    screen.update(cx, |screen, cx| {
-        screen.watch.start(
+impl Screen {
+    /// Starts the watch for `identity` on a stream that sends what the
+    /// returned sender is given, and closes when the stream's work is
+    /// dropped.
+    fn begin(&mut self, identity: &'static str, cx: &mut Context<Self>) -> mpsc::Sender<u32> {
+        let (feed, mut items) = mpsc::channel::<u32>(16);
+        let runtime = self.runtime.clone();
+        self.watch.start(
             identity,
-            runtime.handle(),
-            PACE,
+            &runtime,
+            self.pace,
             move |sender| async move {
                 while let Some(item) = items.recv().await {
                     if sender.send(item).await.is_err() {
@@ -56,19 +54,72 @@ fn start(
                 }
             },
             |screen: &mut Screen| &mut screen.watch,
-            |screen: &mut Screen, batch, _| {
-                screen.batches += 1;
-                for item in batch {
-                    screen.seen.push(item);
-                    if screen.stop_on == Some(item) {
-                        screen.watch.stop();
-                    }
-                }
-            },
+            Self::apply,
             cx,
         );
+        feed
+    }
+
+    fn apply(&mut self, batch: Vec<u32>, cx: &mut Context<Self>) {
+        self.sizes.push(batch.len());
+        for item in batch {
+            self.seen.push(item);
+            if self.stop_on == Some(item) {
+                self.watch.stop();
+            }
+            if self.restart_on == Some(item) {
+                self.restarted = Some(self.begin("b", cx));
+            }
+        }
+    }
+}
+
+fn mount(cx: &mut TestAppContext) -> (Runtime, Entity<Screen>) {
+    mount_paced(PACE, cx)
+}
+
+fn mount_paced(pace: Pace, cx: &mut TestAppContext) -> (Runtime, Entity<Screen>) {
+    // Tokio sends from its own threads.
+    cx.executor().allow_parking();
+    let runtime = Runtime::new().unwrap();
+    let handle = runtime.handle().clone();
+    let screen = cx.new(|_| Screen {
+        runtime: handle,
+        pace,
+        watch: Watch::default(),
+        seen: Vec::new(),
+        sizes: Vec::new(),
+        stop_on: None,
+        restart_on: None,
+        restarted: None,
     });
-    feed
+    (runtime, screen)
+}
+
+fn start(
+    screen: &Entity<Screen>,
+    _runtime: &Runtime,
+    identity: &'static str,
+    cx: &mut TestAppContext,
+) -> mpsc::Sender<u32> {
+    screen.update(cx, |screen, cx| screen.begin(identity, cx))
+}
+
+/// Sends `items` and waits, without running GPUI, until the stream has
+/// passed them all on to the watch's channel.
+fn queue(feed: &mpsc::Sender<u32>, runtime: &Runtime, items: &[u32]) {
+    for item in items {
+        runtime.block_on(feed.send(*item)).unwrap();
+    }
+    for _ in 0..500 {
+        if feed.capacity() == feed.max_capacity() {
+            // Taken from the feed; give the last one time to be sent on.
+            std::thread::sleep(Duration::from_millis(20));
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("the stream never took its items");
 }
 
 /// Runs GPUI's executor until `done`, while Tokio works on its own threads,
@@ -104,7 +155,7 @@ fn batches_land_for_the_latest_start(cx: &mut TestAppContext) {
     screen.read_with(cx, |screen, _| {
         assert!(screen.watch.is_running());
         // One revision a batch.
-        assert_eq!(screen.watch.revision(), started + screen.batches as u64);
+        assert_eq!(screen.watch.revision(), started + screen.sizes.len() as u64);
     });
 }
 
@@ -224,4 +275,94 @@ fn showing_starts_again_whatever_the_age(cx: &mut TestAppContext) {
         screen.watch.set_visible(false);
         assert!(!screen.watch.set_visible(true));
     });
+}
+
+#[gpui_kit::test]
+fn batches_wait_for_their_pace(cx: &mut TestAppContext) {
+    let pace = Pace {
+        every: EVERY,
+        ..PACE
+    };
+    let (runtime, screen) = mount_paced(pace, cx);
+    let feed = start(&screen, &runtime, "a", cx);
+    // The first batch doesn't wait.
+    runtime.block_on(feed.send(1)).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1]);
+
+    // What arrives sooner waits, then lands as one batch.
+    queue(&feed, &runtime, &[2, 3, 4]);
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [1]);
+    cx.executor().advance_clock(EVERY);
+    cx.run_until_parked();
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.seen, [1, 2, 3, 4]);
+        assert_eq!(screen.sizes, [1, 3]);
+    });
+
+    queue(&feed, &runtime, &[5]);
+    cx.executor()
+        .advance_clock(EVERY - Duration::from_millis(1));
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [1, 2, 3, 4], "not yet");
+    cx.executor().advance_clock(Duration::from_millis(1));
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [1, 2, 3, 4, 5]);
+}
+
+#[gpui_kit::test]
+fn a_batch_carries_at_most_its_cap(cx: &mut TestAppContext) {
+    let pace = Pace {
+        most: 2,
+        every: EVERY,
+        ..PACE
+    };
+    let (runtime, screen) = mount_paced(pace, cx);
+    let feed = start(&screen, &runtime, "a", cx);
+    runtime.block_on(feed.send(1)).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1]);
+    queue(&feed, &runtime, &[2, 3, 4, 5, 6]);
+    for _ in 0..3 {
+        cx.executor().advance_clock(EVERY);
+        cx.run_until_parked();
+    }
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.seen, [1, 2, 3, 4, 5, 6]);
+        assert_eq!(screen.sizes, [1, 2, 2, 1]);
+    });
+}
+
+#[gpui_kit::test]
+fn a_delivery_may_start_its_own_watch_again(cx: &mut TestAppContext) {
+    let pace = Pace {
+        most: 1,
+        every: EVERY,
+        ..PACE
+    };
+    let (runtime, screen) = mount_paced(pace, cx);
+    screen.update(cx, |screen, _| screen.restart_on = Some(2));
+    let old = start(&screen, &runtime, "a", cx);
+    runtime.block_on(old.send(1)).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1]);
+    // 3 is queued behind 2, whose delivery starts the watch again.
+    queue(&old, &runtime, &[2, 3]);
+    cx.executor().advance_clock(EVERY);
+    cx.run_until_parked();
+    until(cx, |_| old.is_closed());
+    let new = screen.update(cx, |screen, _| {
+        assert_eq!(screen.watch.identity(), Some(&"b"));
+        assert!(screen.watch.is_running());
+        screen.restarted.take().expect("started again")
+    });
+    runtime.block_on(new.send(10)).unwrap();
+    until(cx, |cx| seen(&screen, cx).ends_with(&[10]));
+    for _ in 0..3 {
+        cx.executor().advance_clock(EVERY);
+        cx.run_until_parked();
+    }
+    assert_eq!(
+        seen(&screen, cx),
+        [1, 2, 10],
+        "the old stream's 3 never lands"
+    );
 }
