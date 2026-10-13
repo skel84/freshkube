@@ -15,6 +15,8 @@
 mod feed;
 mod saved;
 #[cfg(test)]
+pub(crate) use saved::SavedDock;
+#[cfg(test)]
 mod tests;
 mod view;
 

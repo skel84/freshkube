@@ -1,1 +1,1 @@
-{"collapsed":true,"dock":{"height":320.0,"open":true},"drawer":{"resources":480.0},"inspector":{"nodes":360.0},"workspace":{"active":"cluster-a"}}
+{"collapsed":true,"dock":{"open":true,"maximized":false,"selected":0,"tabs":[{"kind":"pods","context":"cluster-a","namespace":"shop","name":"shop-api-7d9f","container":"api"}],"height":320.0},"drawer":{"resources":480.0},"inspector":{"nodes":360.0},"workspace":{"active":"cluster-a"}}

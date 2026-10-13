@@ -9,7 +9,9 @@ description = "Reading and writing freshkube's preferences files"
 
 [dependencies]
 serde.workspace = true
-serde_json.workspace = true
+# The app builds with insertion order (a dependency turns it on), and the
+# files are written in it; say so here so this crate alone builds the same.
+serde_json = { workspace = true, features = ["preserve_order"] }
 tracing.workspace = true
 
 [dev-dependencies]

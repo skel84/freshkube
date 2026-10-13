@@ -11,6 +11,7 @@
 //! keys it doesn't know, and a file it wrote without a split's size gives
 //! that split its default here. Keys this build doesn't know are kept.
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use freshkube_prefs::{Dir, Document, Layout};
@@ -37,6 +38,9 @@ struct File {
     value: Mutex<Map<String, Value>>,
     /// Keeps two saves from writing at once.
     writer: Mutex<()>,
+    /// Whether the last save failed, so a directory that can't be written
+    /// logs once, not on every drag.
+    save_failed: std::sync::atomic::AtomicBool,
     /// How many split sizes were saved, for tests that count a drag's
     /// writes.
     #[cfg(test)]
@@ -53,15 +57,13 @@ impl NavigationFile {
             return Self(None);
         };
         let document = Dir::beside(preferences).document("navigation.json", Layout::Compact);
-        let loaded = document.load();
-        if let Some(problem) = &loaded.problem {
-            tracing::warn!("{problem}; starting from the defaults");
-        }
-        let value = loaded.value;
+        // A file that can't be used is logged by the load.
+        let value = document.load().value;
         Self(Some(Arc::new(File {
             document,
             value: Mutex::new(value),
             writer: Mutex::new(()),
+            save_failed: Default::default(),
             #[cfg(test)]
             sizes_saved: Default::default(),
         })))
@@ -164,12 +166,20 @@ impl NavigationFile {
                     return;
                 };
                 // The latest snapshot, which a later change may have moved on.
-                let Ok(value) = file.value.lock() else {
+                // Copied so the lock is not held while the file is written.
+                let Ok(snapshot) = file.value.lock().map(|value| value.clone()) else {
                     return;
                 };
-                if let Err(error) = file.document.save(&value) {
-                    tracing::warn!("{} not saved: {error}", file.document.path().display());
-                }
+                let failed = match file.document.save(&snapshot) {
+                    Ok(()) => false,
+                    Err(error) => {
+                        if !file.save_failed.load(Ordering::Relaxed) {
+                            tracing::warn!("{} not saved: {error}", file.document.path().display());
+                        }
+                        true
+                    }
+                };
+                file.save_failed.store(failed, Ordering::Relaxed);
             })
             .detach();
     }
@@ -408,6 +418,41 @@ mod tests {
         assert_eq!(reopened.collapsed(), Some(true));
         let text = std::fs::read_to_string(directory.join("navigation.json")).unwrap();
         assert!(text.contains("\"future\":1"), "{text}");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// The bytes the app writes for one state of the user's choices, as the
+    /// example `navigation.json` that `freshkube-prefs` round-trips.
+    #[gpui_kit::test]
+    fn the_file_the_app_writes_is_the_committed_example(cx: &mut TestAppContext) {
+        let directory = directory("navigation-example");
+        let preferences = directory.join("preferences.json");
+        let file = NavigationFile::open(Some(&preferences));
+        let dock: crate::desktop::dock::SavedDock = serde_json::from_value(serde_json::json!({
+            "open": true,
+            "selected": 0,
+            "tabs": [{
+                "kind": "pods",
+                "context": "cluster-a",
+                "namespace": "shop",
+                "name": "shop-api-7d9f",
+                "container": "api"
+            }]
+        }))
+        .unwrap();
+        cx.update(|cx| {
+            file.set_collapsed(true, cx);
+            file.set_dock(&dock, cx);
+            file.save(DOCK_HEIGHT, 320., cx);
+            file.save(DRAWER_WIDTH, 480., cx);
+            file.save(width_key("nodes"), 360., cx);
+            file.set_active_cluster("cluster-a", cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            std::fs::read_to_string(directory.join("navigation.json")).unwrap(),
+            include_str!("../../freshkube-prefs/src/examples/navigation.json")
+        );
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

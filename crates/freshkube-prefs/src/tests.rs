@@ -52,7 +52,7 @@ fn a_missing_file_is_the_default_without_a_problem() {
 }
 
 #[test]
-fn a_corrupt_file_is_the_default_and_reported_once() {
+fn a_corrupt_file_is_the_default_and_reported() {
     let directory = tempfile::tempdir().unwrap();
     let document = sample(&directory);
     std::fs::write(document.path(), "{\"name\": ").unwrap();
@@ -60,7 +60,25 @@ fn a_corrupt_file_is_the_default_and_reported_once() {
     assert_eq!(loaded.value, Sample::default());
     let problem = loaded.problem.expect("a problem");
     assert!(problem.contains("sample.json"), "{problem}");
-    assert!(problem.contains("could not be parsed"), "{problem}");
+    assert!(problem.contains("ends early"), "{problem}");
+}
+
+#[test]
+fn a_problem_never_quotes_the_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    for text in [
+        "\"/home/acme/.kube/shop-api-config\"",
+        "{\"name\": \"shop-api\", \"count\": \"/home/acme/secret\"}",
+        "{\"name\": 42}",
+        "shop-api",
+    ] {
+        std::fs::write(document.path(), text).unwrap();
+        let problem = document.load().problem.expect("a problem");
+        for word in ["acme", "shop-api", "secret"] {
+            assert!(!problem.contains(word.trim()), "{problem} quotes {word}");
+        }
+    }
 }
 
 #[test]
@@ -71,6 +89,8 @@ fn a_file_of_the_wrong_shape_is_reported() {
     assert!(document.load().problem.is_some());
 }
 
+// Unix only: on Windows a directory's read-only attribute doesn't stop
+// creating files in it.
 #[cfg(unix)]
 #[test]
 fn a_save_into_a_read_only_directory_keeps_the_old_file() {
@@ -135,4 +155,105 @@ fn navigation_json_round_trips_byte_for_byte() {
         Layout::Compact,
         include_str!("examples/navigation.json"),
     );
+}
+
+#[test]
+fn a_failed_rename_leaves_the_target_and_no_temporary_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    // A non-empty directory where the file should go: the rename can't
+    // replace it.
+    std::fs::create_dir(document.path()).unwrap();
+    std::fs::write(document.path().join("keep"), "kept").unwrap();
+    assert!(document.save(&Sample::default()).is_err());
+    assert_eq!(
+        std::fs::read_to_string(document.path().join("keep")).unwrap(),
+        "kept"
+    );
+    let names: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["sample.json"]);
+}
+
+#[cfg(unix)]
+mod unix {
+    use super::*;
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+
+    fn mode(path: &std::path::Path) -> u32 {
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    /// What the process's umask leaves of `wanted`.
+    fn after_umask(directory: &std::path::Path, wanted: u32) -> u32 {
+        let probe = directory.join("umask-probe");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o777)
+            .open(&probe)
+            .unwrap();
+        let allowed = mode(&probe);
+        std::fs::remove_file(probe).unwrap();
+        wanted & allowed
+    }
+
+    #[test]
+    fn a_new_file_takes_the_mode_its_document_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let plain = sample(&directory);
+        plain.save(&Sample::default()).unwrap();
+        assert_eq!(mode(plain.path()), after_umask(directory.path(), 0o644));
+        let private = Dir::beside(&directory.path().join("preferences.json"))
+            .document::<Sample>("private.json", Layout::Compact)
+            .new_file_mode(0o600);
+        private.save(&Sample::default()).unwrap();
+        assert_eq!(mode(private.path()), 0o600);
+    }
+
+    #[test]
+    fn a_file_that_exists_keeps_its_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let document = sample(&directory);
+        document.save(&Sample::default()).unwrap();
+        std::fs::set_permissions(document.path(), std::fs::Permissions::from_mode(0o640)).unwrap();
+        document
+            .save(&Sample {
+                name: "acme".into(),
+                count: 1,
+            })
+            .unwrap();
+        assert_eq!(mode(document.path()), 0o640);
+    }
+
+    #[test]
+    fn a_symlinked_file_is_written_through_and_stays_a_link() {
+        let directory = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let real = elsewhere.path().join("dotfiles.json");
+        std::fs::write(&real, "{\"name\":\"old\",\"count\":0}\n").unwrap();
+        let document = sample(&directory);
+        std::os::unix::fs::symlink(&real, document.path()).unwrap();
+        document
+            .save(&Sample {
+                name: "shop-api".into(),
+                count: 2,
+            })
+            .unwrap();
+        assert!(
+            std::fs::symlink_metadata(document.path())
+                .unwrap()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&real).unwrap(),
+            "{\"name\":\"shop-api\",\"count\":2}\n"
+        );
+        let in_link_directory: Vec<_> = std::fs::read_dir(directory.path()).unwrap().collect();
+        assert_eq!(in_link_directory.len(), 1);
+        let in_target_directory: Vec<_> = std::fs::read_dir(elsewhere.path()).unwrap().collect();
+        assert_eq!(in_target_directory.len(), 1);
+    }
 }

@@ -1,5 +1,6 @@
 //! The preferences files beside `preferences.json`: where they live and how
-//! one is read and written.
+//! one is read and written. No GPUI and nothing of the app's own types, so
+//! any crate may use it.
 //!
 //! A [`Dir`] is resolved once from the preferences path the app already uses
 //! (`GpuiOptions.preferences`). It names each file in that directory, and a
@@ -8,7 +9,11 @@
 //! and the load says why once, in [`Loaded::problem`], for the caller to log.
 //! A save writes a temporary file in the same directory and renames it into
 //! place, so a reader never sees half a file and a failed save leaves the old
-//! one.
+//! one. A file that exists keeps its permissions; a new one takes the mode
+//! its `Document` names (`0o644` unless [`Document::new_file_mode`] says
+//! otherwise; Unix only). A `preferences.json` that is a symlink is written
+//! through: the temporary file goes beside the link's target and replaces the
+//! target, so the link stays.
 //!
 //! Which keys a file holds, and who may write them, stays with the file's
 //! owner; this module owns only the reading and the writing.
@@ -35,7 +40,12 @@ pub struct Dir(PathBuf);
 impl Dir {
     /// The directory of `preferences`, the path of `preferences.json`.
     pub fn beside(preferences: &Path) -> Self {
-        Self(preferences.with_file_name(""))
+        Self(
+            preferences
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default(),
+        )
     }
 
     /// The file called `name` in this directory, holding a `T`.
@@ -43,6 +53,7 @@ impl Dir {
         Document {
             path: self.0.join(name),
             layout,
+            mode: 0o644,
             value: PhantomData,
         }
     }
@@ -53,6 +64,8 @@ impl Dir {
 pub struct Document<T> {
     path: PathBuf,
     layout: Layout,
+    /// The mode a new file is created with, before the umask.
+    mode: u32,
     value: PhantomData<fn() -> T>,
 }
 
@@ -71,6 +84,14 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         &self.path
     }
 
+    /// The mode a file that doesn't exist yet is created with, before the
+    /// umask: `0o600` for a file that names a credential's place. Ignored
+    /// off Unix. A file that exists keeps the mode it has.
+    pub fn new_file_mode(mut self, mode: u32) -> Self {
+        self.mode = mode;
+        self
+    }
+
     /// The file's value, read once.
     pub fn load(&self) -> Loaded<T> {
         let bytes = match std::fs::read(&self.path) {
@@ -81,21 +102,23 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
                     problem: None,
                 };
             }
-            Err(error) => return self.unusable(format!("could not be read: {error}")),
+            Err(error) => return self.unusable(format!("could not be read ({})", error.kind())),
         };
         match serde_json::from_slice(&bytes) {
             Ok(value) => Loaded {
                 value,
                 problem: None,
             },
-            Err(error) => self.unusable(format!("could not be parsed: {error}")),
+            Err(error) => self.unusable(describe(&error)),
         }
     }
 
     fn unusable(&self, why: String) -> Loaded<T> {
+        let problem = format!("{} {why}", self.path.display());
+        tracing::warn!("{problem}; using the defaults");
         Loaded {
             value: T::default(),
-            problem: Some(format!("{} {why}", self.path.display())),
+            problem: Some(problem),
         }
     }
 
@@ -109,39 +132,74 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         }
         .map_err(std::io::Error::other)?;
         text.push('\n');
-        let directory = self.path.parent().unwrap_or(Path::new(""));
+        let target = self.target();
+        let directory = target.parent().unwrap_or(Path::new(""));
         if !directory.as_os_str().is_empty() {
             std::fs::create_dir_all(directory)?;
         }
-        let temporary = self.temporary();
-        let result = write_synced(&temporary, text.as_bytes())
-            .and_then(|()| std::fs::rename(&temporary, &self.path));
+        let existing = std::fs::metadata(&target).ok().map(|m| m.permissions());
+        let temporary = Self::temporary(&target);
+        let result = self
+            .write_synced(&temporary, text.as_bytes())
+            .and_then(|()| match existing {
+                Some(permissions) => std::fs::set_permissions(&temporary, permissions),
+                None => Ok(()),
+            })
+            .and_then(|()| std::fs::rename(&temporary, &target));
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
         }
         result
     }
 
-    /// A name no other save of this process, or another process, uses.
-    fn temporary(&self) -> PathBuf {
+    /// The file a save replaces: the path, or what it links to when it is
+    /// a symlink, so that the link stays a link.
+    fn target(&self) -> PathBuf {
+        let linked = std::fs::symlink_metadata(&self.path).is_ok_and(|m| m.is_symlink());
+        linked
+            .then(|| std::fs::canonicalize(&self.path).ok())
+            .flatten()
+            .unwrap_or_else(|| self.path.clone())
+    }
+
+    /// A name no other save of this process, or another process, uses,
+    /// beside the file and visible there if a crash leaves it.
+    fn temporary(target: &Path) -> PathBuf {
         static SAVES: AtomicU64 = AtomicU64::new(0);
-        let name = self.path.file_name().unwrap_or_default().to_string_lossy();
-        self.path.with_file_name(format!(
-            ".{name}.{}.{}.tmp",
+        let name = target.file_name().unwrap_or_default().to_string_lossy();
+        target.with_file_name(format!(
+            "{name}.{}.{}.tmp",
             std::process::id(),
             SAVES.fetch_add(1, Ordering::Relaxed)
         ))
     }
+
+    fn write_synced(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(self.mode);
+        }
+        let mut file = options.open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    }
 }
 
-fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
+/// What a parse error says about the file, without its contents: serde_json's
+/// own message can quote a value, and a value may be a path or an endpoint.
+fn describe(error: &serde_json::Error) -> String {
+    use serde_json::error::Category;
+    let place = format!("line {}, column {}", error.line(), error.column());
+    match error.classify() {
+        Category::Io => "could not be read".into(),
+        Category::Syntax => format!("is not valid JSON ({place})"),
+        Category::Eof => format!("ends early ({place})"),
+        Category::Data => format!("does not have the expected shape ({place})"),
+    }
 }
 
 #[cfg(test)]

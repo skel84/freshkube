@@ -13,11 +13,11 @@ doctest = false
 base64.workspace = true
 fastrand = "2"
 gpui-kit = "=0.7.0"
+tracing.workspace = true
 freshkube-core.workspace = true
 freshkube-prefs.workspace = true
 freshkube-delivery.workspace = true
 freshkube-logs.workspace = true
-tracing.workspace = true
 freshkube-monitoring.workspace = true
 freshkube-observability.workspace = true
 freshkube-probe.workspace = true
