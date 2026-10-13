@@ -40,6 +40,7 @@ use crate::backend::{self, OwnedJob};
 use crate::palette::palette;
 use crate::screens::{SCREEN_DEADLINE, page_width};
 use crate::ui::{self, clock, dp};
+use freshkube_reads::{Pace, Watch};
 use freshkube_ui::{page, table};
 use layout::TableLayout;
 use pods::{ListView, NotReady, UsageState};
@@ -56,6 +57,13 @@ const AGE_TICK: Duration = Duration::from_secs(5);
 /// gathered and applied together, so a churning list re-sorts and redraws at
 /// most ten times a second instead of once per batch core sends.
 const WATCH_COALESCE: Duration = Duration::from_millis(100);
+/// How the list's watch hands its batches to the screen: every batch that
+/// arrived, at most once per `WATCH_COALESCE`.
+const WATCH_PACE: Pace = Pace {
+    capacity: 8,
+    most: usize::MAX,
+    every: WATCH_COALESCE,
+};
 /// The namespace picker's width in the toolbar.
 const NAMESPACE_WIDTH: f32 = 132.;
 /// The table's header and a couple of rows.
@@ -271,7 +279,9 @@ pub(crate) struct ResourcesScreen {
     /// The dock's height under the page when it last drew, in dp: when the
     /// dock takes more, the shorter list keeps its selected row in sight.
     below: f32,
-    watch: Option<(OwnedJob, Task<()>)>,
+    /// The list and watch of the current read session, for the store's
+    /// epoch that session started.
+    watch: Watch<Vec<ResourceEvent>, u64>,
     namespace_job: Option<(OwnedJob, Task<()>)>,
     tick: Option<Task<()>>,
     /// The selected object in full, in the drawer over the list.
@@ -465,7 +475,7 @@ impl ResourcesScreen {
             flash_rows: None,
             page_scroll: ScrollHandle::new(),
             below: 0.,
-            watch: None,
+            watch: Watch::default(),
             namespace_job: None,
             tick: None,
             detail,
@@ -739,6 +749,9 @@ impl ResourcesScreen {
         self.visible = visible;
         self.detail
             .update(cx, |detail, cx| detail.set_active(visible, cx));
+        // Showing always lists again, whether or not hiding stopped the
+        // watch: a list's rows have no age to keep them.
+        self.watch.set_visible(visible);
         if visible {
             self.restart(window, cx);
             self.tick = Some(cx.spawn(async move |this, cx| {
@@ -750,7 +763,6 @@ impl ResourcesScreen {
                 }
             }));
         } else {
-            self.watch = None;
             self.tick = None;
             self.clear_flash(cx);
             self.usage = None;
@@ -873,7 +885,7 @@ impl ResourcesScreen {
     /// Starts a new read session: forgets the rows, and when visible lists
     /// and watches the kind for the current connection and namespace.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.watch = None;
+        self.watch.stop();
         self.clear_flash(cx);
         self.usage = None;
         self.usage_generation = self.usage_generation.wrapping_add(1);
@@ -932,50 +944,49 @@ impl ResourcesScreen {
             self.poll_usage(window, cx);
             return;
         }
-        let (sender, receiver) = mpsc::channel(8);
-        let job = OwnedJob::new(self.runtime.spawn(watch(
-            source.access,
-            kind,
-            namespace,
-            self.field_selector.clone(),
-            source.id,
-            sender,
-        )));
-        let task = self.receive(epoch, receiver, cx);
-        self.watch = Some((job, task));
+        let field_selector = self.field_selector.clone();
+        self.start_watch(
+            epoch,
+            move |sender| {
+                watch(
+                    source.access,
+                    kind,
+                    namespace,
+                    field_selector,
+                    source.id,
+                    sender,
+                )
+            },
+            cx,
+        );
         self.poll_usage(window, cx);
     }
 
-    /// Applies what a read sends until it stops, at most once per
+    /// Applies what the read `work` sends until it stops, at most once per
     /// `WATCH_COALESCE`: a batch arriving sooner waits, and everything sent
     /// meanwhile is applied with it, each watch batch kept as its own part
-    /// so the flash counts bursts as the watch sent them.
-    fn receive(
-        &self,
+    /// so the flash counts bursts as the watch sent them. The watch drops
+    /// whatever an earlier session still sends; the store's own epoch check
+    /// stays for the example data and the tests' deliveries, which apply
+    /// without a stream.
+    fn start_watch<Fut>(
+        &mut self,
         epoch: u64,
-        mut receiver: mpsc::Receiver<Vec<ResourceEvent>>,
+        work: impl FnOnce(mpsc::Sender<Vec<ResourceEvent>>) -> Fut,
         cx: &mut Context<Self>,
-    ) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            let mut last_applied = None;
-            while let Some(events) = receiver.recv().await {
-                if let Some(due) = last_applied.map(|at| at + WATCH_COALESCE) {
-                    let now = cx.background_executor().now();
-                    if now < due {
-                        cx.background_executor().timer(due - now).await;
-                    }
-                }
-                let mut parts = vec![events];
-                while let Ok(more) = receiver.try_recv() {
-                    parts.push(more);
-                }
-                let applied = this.update(cx, |view, cx| view.apply(epoch, parts, cx));
-                if applied.is_err() {
-                    break;
-                }
-                last_applied = Some(cx.background_executor().now());
-            }
-        })
+    ) where
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let runtime = self.runtime.clone();
+        self.watch.start(
+            epoch,
+            &runtime,
+            WATCH_PACE,
+            work,
+            |view: &mut Self| &mut view.watch,
+            move |view, parts, cx| view.apply(epoch, parts, cx),
+            cx,
+        );
     }
 
     fn apply(&mut self, epoch: u64, parts: Vec<Vec<ResourceEvent>>, cx: &mut Context<Self>) {
