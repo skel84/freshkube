@@ -35,6 +35,7 @@ pub(crate) mod shared;
 pub mod source;
 pub(crate) mod tekton;
 pub(crate) mod versions;
+pub mod words;
 
 #[cfg(test)]
 mod deployment_tests;
