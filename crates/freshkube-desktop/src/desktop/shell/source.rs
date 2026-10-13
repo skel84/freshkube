@@ -5,7 +5,7 @@ use super::rail::RowTarget;
 use super::*;
 use crate::monitoring::page::EntryId;
 use crate::observability::Destination;
-use freshkube_core::applications::Rule;
+use freshkube_delivery::applications::Rule;
 use freshkube_ui::source_list::{Line, Menu, Note, Prose, Row, Section, SourceListHost};
 
 /// What a row of the column opens.

@@ -6,10 +6,10 @@ use super::super::tests::launch;
 use super::Check;
 use super::Read;
 use crate::desktop::{Page, layout_check, tests::fixture};
-#[cfg(unix)]
-use freshkube_core::delivery::entry::Checked;
-use freshkube_core::delivery::entry::Reach;
 use freshkube_core::workspace::{self, Destination, Entry, Key, Loaded, Part, Role, Workspace};
+#[cfg(unix)]
+use freshkube_delivery::entry::Checked;
+use freshkube_delivery::entry::Reach;
 use gpui_kit::{
     AppContext, TestAppContext,
     test::{TestAppContextExt, TestWindowExt},
