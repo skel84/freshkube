@@ -54,7 +54,7 @@ impl Mounted {
             .unwrap();
         self.step(cx, |_, cx| {
             self.shell.update(cx, |shell, cx| {
-                shell.show_pod(Some(identity), Some(ClusterAccess::Example), cx);
+                shell.show_pod(Some(identity), Some(ClusterAccess::EXAMPLE), cx);
                 shell.set_containers(containers, cx);
             })
         });

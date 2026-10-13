@@ -85,7 +85,7 @@ impl Pilot {
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session) = &self.registry.active().summary_session {
             session.core.relist();
-            if self.fixture && !self.fixture_hold {
+            if self.fixture && !self.hold.talos {
                 self.publish_fixture(window, cx);
             }
         } else {
@@ -129,7 +129,7 @@ impl Pilot {
             applied_revision: 0,
         });
         self.sync_unread_health(cx);
-        if matches!(source.access, ClusterAccess::Example) {
+        if matches!(source.access, ClusterAccess::Example(_)) {
             self.start_fixture_summary(window, cx);
             return;
         }
@@ -149,7 +149,7 @@ impl Pilot {
     /// The example session: nothing publishes while the hold keeps its data
     /// back, otherwise it is seeded and watched.
     fn start_fixture_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fixture_hold {
+        if self.hold.talos {
             return;
         }
         self.publish_fixture(window, cx);

@@ -19,7 +19,7 @@ fn example_source() -> ClusterSource {
     ClusterSource {
         id: "example".into(),
         context: "prod-fra".into(),
-        access: ClusterAccess::Example,
+        access: ClusterAccess::EXAMPLE,
     }
 }
 

@@ -309,7 +309,7 @@ impl CustomResources {
         };
         self.groups = Some(Discovery::Reading);
         let epoch = self.epoch;
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             self.finish_groups(epoch, Ok(example::custom_groups()), cx);
             return;
         }
@@ -375,7 +375,7 @@ impl CustomResources {
         entry.kinds = Some(Discovery::Reading);
         let group = entry.group.clone();
         let epoch = self.epoch;
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             let result = example::group_kinds(&group.name);
             self.finish_kinds(epoch, name, result, cx);
             return;
@@ -473,7 +473,7 @@ mod tests {
         ClusterSource {
             id: example::connection(context),
             context: context.into(),
-            access: ClusterAccess::Example,
+            access: ClusterAccess::EXAMPLE,
         }
     }
 

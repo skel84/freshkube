@@ -163,7 +163,7 @@ impl ResourcesScreen {
             self.source.as_ref().map(|source| {
                 (
                     source.context.as_str(),
-                    matches!(source.access, ClusterAccess::Example),
+                    matches!(source.access, ClusterAccess::Example(_)),
                 )
             }),
             self.read_label(),
@@ -178,7 +178,7 @@ impl ResourcesScreen {
         let example = self
             .source
             .as_ref()
-            .is_some_and(|source| matches!(source.access, ClusterAccess::Example));
+            .is_some_and(|source| matches!(source.access, ClusterAccess::Example(_)));
         match self.store.read_state() {
             ReadState::Loading => ("loading", None),
             ReadState::Loaded if example => ("example data", None),
@@ -205,7 +205,7 @@ impl ResourcesScreen {
         let Some(source) = &self.source else {
             return Segment::new(None::<SharedString>, ["Not connected"]);
         };
-        let example = matches!(source.access, ClusterAccess::Example);
+        let example = matches!(source.access, ClusterAccess::Example(_));
         let (state, tone) = self.read_label();
         let state = tone.into_iter().fold(Part::new(state), Part::tone);
         let (total, shown) = (self.store.len(), self.shown());

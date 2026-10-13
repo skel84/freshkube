@@ -256,8 +256,6 @@ impl Nodes {
     pub(super) fn new(
         runtime: tokio::runtime::Handle,
         logs: Entity<crate::logs::LogPanel>,
-        // Example data keeps the Pods tab's list loading.
-        hold: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -361,9 +359,7 @@ impl Nodes {
             split: freshkube_ui::inspector::InspectorSplit::new("nodes", cx),
             document,
             focus: cx.focus_handle(),
-            pods: cx.new(|cx| {
-                crate::resources::ResourcesScreen::new(runtime.clone(), window, cx).holding(hold)
-            }),
+            pods: cx.new(|cx| crate::resources::ResourcesScreen::new(runtime.clone(), window, cx)),
             history,
             load_history: Default::default(),
             services: cx.new(|cx| super::services::NodeServices::new(window, cx)),

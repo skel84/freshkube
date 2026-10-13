@@ -164,9 +164,6 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 pub(crate) struct NotServed(pub(crate) ResourceKind);
 
 pub(crate) struct ResourcesScreen {
-    /// Example lists hold their answers (`DebugOptions`), so the page
-    /// stays on its loading rows.
-    pub(crate) hold: bool,
     field_selector: Option<String>,
     embedded: bool,
     runtime: Handle,
@@ -240,15 +237,12 @@ pub(crate) struct ResourcesScreen {
 }
 
 impl ResourcesScreen {
-    /// Example lists hold their answers (`fixture::Hold::lists`).
-    pub(crate) fn holding(mut self, hold: bool) -> Self {
-        self.hold = hold;
-        self
-    }
-
+    /// Whether the example source holds its lists (`Hold::lists`).
     #[cfg(test)]
     pub(crate) fn is_holding(&self) -> bool {
-        self.hold
+        self.source.as_ref().is_some_and(
+            |source| matches!(source.access, ClusterAccess::Example(hold) if hold.lists),
+        )
     }
 
     pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -394,7 +388,6 @@ impl ResourcesScreen {
             projection: ResourceProjection::new(),
             layout: TableLayout::default(),
             layout_for: None,
-            hold: false,
             hidden_columns: BTreeSet::new(),
             visible: false,
             restore: None,
@@ -857,8 +850,9 @@ impl ResourcesScreen {
         }
         let kind = self.kind.clone();
         let namespace = self.namespace.clone().filter(|_| kind.namespaced);
-        if let ClusterAccess::Example = source.access {
-            if self.hold {
+        if let ClusterAccess::Example(hold) = source.access {
+            // Held example lists stay on their loading rows.
+            if hold.lists {
                 return;
             }
             let events = match example::read_filtered(
@@ -1147,7 +1141,7 @@ impl ResourcesScreen {
         self.namespace_generation = self.namespace_generation.wrapping_add(1);
         let generation = self.namespace_generation;
         let access = match source.access {
-            ClusterAccess::Example => {
+            ClusterAccess::Example(_) => {
                 self.namespaces = example::namespaces();
                 self.sync_namespace_choices(window, cx);
                 return;

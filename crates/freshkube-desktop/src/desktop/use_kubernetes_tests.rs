@@ -300,7 +300,7 @@ fn an_open_forward_is_not_asked_about_and_keeps_running(cx: &mut TestAppContext)
         ForwardTarget::of(&builtin("pods").unwrap(), &identity.name, &identity.uid).unwrap();
     let spec = ForwardSpec {
         runtime: runtime.handle().clone(),
-        access: ClusterAccess::Example,
+        access: ClusterAccess::EXAMPLE,
         identity,
         target,
         context,

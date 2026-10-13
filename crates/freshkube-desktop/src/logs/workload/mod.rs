@@ -902,7 +902,7 @@ impl Streams for WorkloadLogView {
         source.describe();
         cx.notify();
         let identity = (workload.clone(), selector.clone());
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             // Example pods don't come and go: the watch is open, and
             // nothing writes into it.
             self.source_mut().pod_watch.open(

@@ -229,7 +229,16 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
             assert_eq!(all, None, "{variant:?}: no count of nothing");
             if retry {
                 let page = view.read(cx).applications.clone();
-                page.update(cx, |page, _| page.set_hold(true));
+                view.update(cx, |pilot, cx| {
+                    pilot.set_hold(
+                        crate::fixture::Hold {
+                            applications: true,
+                            ..crate::fixture::Hold::NONE
+                        },
+                        window,
+                        cx,
+                    )
+                });
                 window.click("nav-applications-status-retry", cx);
                 assert!(page.read(cx).is_reading(), "Retry reads again");
             }
@@ -253,11 +262,17 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
     }
     // Held, the first read never answers.
     let (_runtime, _handle, view) = fixture(cx, 1280., 880.);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
-    cx.update(|cx| page.update(cx, |page, _| page.set_hold(true)));
     let handle = _handle;
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
+            pilot.set_hold(
+                crate::fixture::Hold {
+                    applications: true,
+                    ..crate::fixture::Hold::NONE
+                },
+                window,
+                cx,
+            );
             pilot.show_area(Area::Applications, window, cx)
         });
         window.render_frame(cx);
@@ -405,10 +420,10 @@ fn a_read_without_the_open_application_moves_the_fill_back(cx: &mut TestAppConte
 #[gpui_kit::test]
 fn another_cluster_shows_reading_until_it_answers(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
     cx.update_window(handle, |_, window, cx| {
-        page.update(cx, |page, _| page.set_hold(true));
+        // dev-fra's example source holds its read.
         view.update(cx, |pilot, cx| {
+            pilot.hold.applications = true;
             pilot.switch_cluster("dev-fra".into(), window, cx)
         });
     })

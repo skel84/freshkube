@@ -87,7 +87,7 @@ pub(super) fn open(
 ) {
     let target = target.clone();
     pane.update(cx, |pane, cx| {
-        pane.open(target, ClusterAccess::Example, "1", delay, cx)
+        pane.open(target, ClusterAccess::EXAMPLE, "1", delay, cx)
     });
 }
 

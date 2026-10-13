@@ -236,7 +236,7 @@ impl ResourcesScreen {
         let generation = self.usage_generation;
         // Example use applies at once, as example rows do; later ticks
         // drift it.
-        let example = matches!(source.access, ClusterAccess::Example);
+        let example = matches!(source.access, ClusterAccess::Example(_));
         if example {
             self.apply_usage(generation, Ok(example::pod_usage(&source.context, 0)), cx);
         }
@@ -248,7 +248,7 @@ impl ResourcesScreen {
                     cx.background_executor().timer(USAGE_INTERVAL).await;
                 }
                 let result = match &source.access {
-                    ClusterAccess::Example => Ok(example::pod_usage(&source.context, tick)),
+                    ClusterAccess::Example(_) => Ok(example::pod_usage(&source.context, tick)),
                     access => {
                         let access = access.clone();
                         let namespace = namespace.clone();

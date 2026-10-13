@@ -88,11 +88,12 @@ fn the_change_flash_redraws_neither_the_chrome_nor_the_page(cx: &mut TestAppCont
 fn the_loading_motion_stops_on_the_first_answer(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = loading_pods(cx);
     cx.update_window(handle, |_, window, cx| {
-        let resources = view.read(cx).resources.clone();
-        resources.update(cx, |resources, cx| {
-            resources.hold = false;
-            resources.refresh(window, cx);
+        view.update(cx, |pilot, cx| {
+            pilot.hold.lists = false;
+            pilot.push_source(window, cx);
         });
+        let resources = view.read(cx).resources.clone();
+        resources.update(cx, |resources, cx| resources.refresh(window, cx));
     })
     .unwrap();
     cx.run_until_parked();
@@ -273,7 +274,7 @@ fn screen_tables_show_the_shared_loading_rows_until_the_first_answer(cx: &mut Te
     }
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.fixture_hold = false;
+            view.hold.talos = false;
             // The held read still counts as in flight; let the refresh start one.
             view.overview = crate::state::Snapshot::default();
             view.refresh_now(window, cx);
@@ -347,7 +348,7 @@ fn the_cached_rail_draws_the_marks_the_first_answer_brings(cx: &mut TestAppConte
     let rail = probe::count("chrome.rail");
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.fixture_hold = false;
+            view.hold.talos = false;
             view.refresh_now(window, cx);
         })
     })

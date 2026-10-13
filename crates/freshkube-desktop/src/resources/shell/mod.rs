@@ -348,7 +348,7 @@ impl ShellView {
         window.focus(&self.terminal.focus_handle(cx), cx);
         let size = self.terminal.read(cx).size();
         let seq = self.seq;
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             let shell = ExampleShell::new(&pod.name, &container, size);
             let greeting = shell.start();
             self.session = Some(Session::Example(shell));

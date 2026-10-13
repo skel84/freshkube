@@ -43,7 +43,7 @@ impl Pilot {
                     .map(|(context, id)| ClusterSource {
                         id,
                         context,
-                        access: ClusterAccess::Example,
+                        access: ClusterAccess::Example(self.hold),
                     });
                 (self.screen_on(None), kube, id)
             }

@@ -25,9 +25,6 @@ pub struct GpuiOptions {
     named_source: bool,
     preferences: Option<PathBuf>,
     keyring: bool,
-    /// Example data holds the Talos overview and the summary
-    /// (`fixture::Hold`).
-    hold_talos: bool,
     /// The debug knobs the binary parsed (`DebugOptions::from_env`); startup
     /// reads them here, never from the environment.
     #[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
@@ -49,7 +46,6 @@ impl GpuiOptions {
             named_source: false,
             preferences: None,
             keyring: false,
-            hold_talos: false,
             debug: DebugOptions::default(),
         }
     }
@@ -119,7 +115,7 @@ impl GpuiOptions {
     /// Example data that never answers Talos, as `FRESHKUBE_FIXTURE_HOLD=talos`.
     #[cfg(test)]
     pub(crate) fn holding_talos(mut self) -> Self {
-        self.hold_talos = true;
+        self.debug.hold.talos = true;
         self
     }
     /// Remembers preferences between launches. A saved Talos selection is

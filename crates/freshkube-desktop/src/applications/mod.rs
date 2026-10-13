@@ -251,8 +251,6 @@ pub(crate) struct ApplicationsPage {
     visible: bool,
     /// The example's shape, in example data.
     variant: Variant,
-    /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
-    hold: bool,
     /// The read, its answer and the work in flight. It is hidden while
     /// the page is, and its answer's age decides whether showing reads.
     loader: Loader<Read, Identity>,
@@ -315,7 +313,6 @@ impl ApplicationsPage {
     pub(crate) fn new(
         runtime: tokio::runtime::Handle,
         variant: Variant,
-        hold: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -329,7 +326,7 @@ impl ApplicationsPage {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let split = InspectorSplit::new(PREFIX, cx);
-        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), hold, variant.shape(), cx));
+        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), variant.shape(), cx));
         // The page starts hidden, and so does its read.
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
@@ -347,7 +344,6 @@ impl ApplicationsPage {
             source: None,
             visible: false,
             variant,
-            hold,
             entry: None,
             loader,
             example_delay: Duration::ZERO,
@@ -384,11 +380,6 @@ impl ApplicationsPage {
     #[cfg(test)]
     pub(crate) fn set_variant(&mut self, variant: Variant) {
         self.variant = variant;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_hold(&mut self, hold: bool) {
-        self.hold = hold;
     }
 
     #[cfg(test)]
@@ -450,7 +441,7 @@ impl ApplicationsPage {
         let live = self
             .source
             .as_ref()
-            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example));
+            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example(_)));
         if reads_elsewhere && live {
             self.loader.expire();
             if self.visible {
@@ -486,7 +477,7 @@ impl ApplicationsPage {
             return Connections::default();
         };
         let connections = match &source.access {
-            ClusterAccess::Example => {
+            ClusterAccess::Example(_) => {
                 example::connections(&source.id, self.clusters.active.as_deref())
             }
             _ => Connections::new(
@@ -520,7 +511,7 @@ impl ApplicationsPage {
     /// whichever arrives first, the switch or the read.
     fn connections(&self, read: &Read) -> Connections {
         let connections = match &self.source {
-            Some(source) if matches!(source.access, ClusterAccess::Example) => {
+            Some(source) if matches!(source.access, ClusterAccess::Example(_)) => {
                 example::connections(&source.id, self.clusters.active.as_deref())
             }
             _ => read.connections.clone(),
@@ -588,10 +579,10 @@ impl ApplicationsPage {
         };
         let request = self.loader.start((source.id.clone(), self.entry.clone()));
         match &source.access {
-            ClusterAccess::Example => {
+            ClusterAccess::Example(hold) => {
                 // Held, it stays in flight, so the page keeps its loading
                 // rows.
-                if self.hold {
+                if hold.applications {
                     self.derive_column();
                     cx.notify();
                     return;

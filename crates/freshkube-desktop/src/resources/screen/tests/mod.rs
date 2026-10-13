@@ -30,7 +30,7 @@ fn source(context: &str) -> ClusterSource {
     ClusterSource {
         id: example::connection(context),
         context: context.into(),
-        access: ClusterAccess::Example,
+        access: ClusterAccess::EXAMPLE,
     }
 }
 
