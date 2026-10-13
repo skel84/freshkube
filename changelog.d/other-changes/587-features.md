@@ -1,0 +1,1 @@
+- **Docs:** the Resources, Nodes and frame behaviour moved from [AGENTS.md](AGENTS.md) to [docs/features/](docs/features/), one doc each, beside the Applications doc.
