@@ -16,8 +16,8 @@ use gpui_kit::{App, FocusHandle, Subscription, Window};
 
 use super::{ScreenEvent, ScreenHandle, ScreenSource};
 use crate::applications::SwitchLink;
-use crate::desktop::ServiceEvent;
 use crate::desktop::dock::DockEvent;
+use crate::desktop::{OverviewEvent, ServiceEvent};
 use crate::monitoring::page::MonitoringEvent;
 use crate::observability::{ObservabilityEvent, RevisionLink};
 use crate::resources::{KubeSource, NodePodsEvent, NotServed, ResourceLink};
@@ -52,6 +52,8 @@ pub(crate) enum PageEvent {
     NotServed(ResourceKind),
     /// A service's logs, or its node on the Services tab.
     Service(ServiceEvent),
+    /// Overview's cards, attention rows and state buttons.
+    Overview(OverviewEvent),
 }
 
 impl From<ScreenEvent> for PageEvent {
@@ -110,6 +112,12 @@ impl From<MonitoringEvent> for PageEvent {
 impl From<ServiceEvent> for PageEvent {
     fn from(event: ServiceEvent) -> Self {
         Self::Service(event)
+    }
+}
+
+impl From<OverviewEvent> for PageEvent {
+    fn from(event: OverviewEvent) -> Self {
+        Self::Overview(event)
     }
 }
 
