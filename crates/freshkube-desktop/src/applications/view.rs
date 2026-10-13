@@ -169,7 +169,7 @@ impl ApplicationsPage {
             } => (
                 "applications-refused",
                 ui::empty_state(
-                    IconName::ShieldX,
+                    IconName::Lock,
                     title.clone(),
                     description.clone(),
                     Some(reason.to_string()),

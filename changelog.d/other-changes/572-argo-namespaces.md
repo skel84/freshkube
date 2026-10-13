@@ -1,0 +1,1 @@
+- **Changes:** follow Argo CD Applications in all discovered namespaces, up to three, and name namespaces skipped at the cap.

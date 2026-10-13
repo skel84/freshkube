@@ -800,3 +800,37 @@ fn every_example_shape_says_what_it_couldnt_read() {
         "{destination:#?}"
     );
 }
+
+#[test]
+fn the_spread_example_follows_applications_in_later_namespaces() {
+    use crate::change::{Target, example::Shape};
+    let changes = derive(&example::read_shaped(now(), Shape::Spread));
+    let checkout = row(&changes, "wonky-otter");
+    assert_eq!(
+        reaches(checkout),
+        [CONFIRMED, CONFIRMED, Reach::NotReached, CONFIRMED]
+    );
+    let trail = checkout.trail.as_ref().unwrap();
+    for (stage, namespace) in [("dev", "gitops"), ("stage", "platform")] {
+        let hop = trail
+            .hops
+            .iter()
+            .find(|hop| hop.key == format!("{stage}-argocd"))
+            .unwrap();
+        assert!(hop.detail.contains(namespace), "{}", hop.detail);
+        let crate::change::Shows::Hop(detail) = &hop.shows else {
+            panic!("Application details")
+        };
+        assert!(detail.actions.iter().any(|action| matches!(&action.target,
+            Target::Resource { object, .. } if object.kind == "Application" && object.namespace == namespace
+        )));
+        assert!(detail.actions.iter().any(|action| matches!(&action.target,
+            Target::Browser { address: Some(address), .. }
+                if address.as_str().ends_with(&format!("/applications/{namespace}/checkout-{stage}"))
+        )));
+    }
+    assert_eq!(changes.notes.len(), 1, "the shared omission is shown once");
+    assert!(changes.notes[0].text.contains("sandbox, tenants"));
+    assert!(changes.notes[0].text.contains("namespace cap"));
+    assert_eq!(trail.missing[0].text, changes.notes[0].text);
+}
