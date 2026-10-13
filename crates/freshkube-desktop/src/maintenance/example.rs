@@ -11,6 +11,7 @@ use gpui_kit::component::{Theme, ThemeMode};
 use talos_rs::{DiskInfo, InsecureVersionInfo, VolumeStatus};
 
 use super::*;
+use crate::debug_options::Theme as DebugTheme;
 
 /// A documentation address (RFC 5737): it names no real node.
 const NODE: &str = "192.0.2.10";
@@ -19,7 +20,12 @@ const DISK: &str = "/dev/nvme0n1";
 
 impl MaintenanceView {
     /// The view on the example node, walking itself to the review.
-    pub(crate) fn example(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn example(
+        runtime: Handle,
+        theme: Option<DebugTheme>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // A fixed path, so captures show nothing of the machine they ran on.
         let output = if cfg!(unix) {
             std::path::PathBuf::from("/tmp")
@@ -28,14 +34,13 @@ impl MaintenanceView {
         }
         .join("freshkube-maintenance-example");
         _ = std::fs::remove_dir_all(&output);
-        // The shell applies FRESHKUBE_THEME; maintenance mode replaces it.
+        // The shell applies the debug theme; maintenance mode replaces it.
         // Deferred, as the shell does, so the window's first appearance
         // doesn't override it.
-        let mode = match std::env::var("FRESHKUBE_THEME").as_deref() {
-            Ok("light") => Some(ThemeMode::Light),
-            Ok("dark") => Some(ThemeMode::Dark),
-            _ => None,
-        };
+        let mode = theme.map(|theme| match theme {
+            DebugTheme::Light => ThemeMode::Light,
+            DebugTheme::Dark => ThemeMode::Dark,
+        });
         if let Some(mode) = mode {
             cx.defer_in(window, move |_, window, cx| {
                 Theme::change(mode, Some(window), cx)

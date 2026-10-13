@@ -33,7 +33,7 @@ pub(crate) const LIST_WIDTH: f32 = source_list::WIDTH;
 
 /// Opens the workbench window on the first story, or in a debug build on
 /// `FRESHKUBE_STORY`, at `FRESHKUBE_THEME` and `FRESHKUBE_WINDOW_SIZE` as the
-/// app takes them (`FRESHKUBE_TEXT_SIZE` is read by `text_size::install`).
+/// app takes them (`FRESHKUBE_TEXT_SIZE` too, parsed by `text_size::parse`).
 /// Nothing is saved.
 pub fn run() {
     gpui_kit::application()
@@ -41,7 +41,14 @@ pub fn run() {
         .run(|cx| {
             gpui_kit::init(cx);
             theme::install(cx);
-            text_size::install(None, cx);
+            // A debug build starts at `FRESHKUBE_TEXT_SIZE`, unsaved.
+            #[cfg(debug_assertions)]
+            let start = std::env::var("FRESHKUBE_TEXT_SIZE")
+                .ok()
+                .and_then(|size| text_size::parse(&size));
+            #[cfg(not(debug_assertions))]
+            let start = None;
+            text_size::install_with(None, start, cx);
             motion::follow_system(cx);
             cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
             source_list::bind_keys(cx);

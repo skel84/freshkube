@@ -13,8 +13,8 @@ use talos_rs::{
 /// Kubernetes summary (Nodes, System services, Operations), `lists` the
 /// Resources lists, `coroot` Observability's applications, incidents and
 /// traces, `monitoring` the dashboard's panels, `applications` the
-/// Applications list, `all` every one. Debug and
-/// stress builds only; a release build ignores it.
+/// Applications list, `all` every one. Parsed into `DebugOptions`, which
+/// debug and stress builds fill and a release build leaves empty.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Hold {
     pub(crate) talos: bool,
@@ -24,17 +24,17 @@ pub(crate) struct Hold {
     pub(crate) applications: bool,
 }
 
-pub(crate) fn hold() -> Hold {
-    if !cfg!(any(debug_assertions, feature = "stress")) {
-        return Hold::default();
-    }
-    let value = std::env::var("FRESHKUBE_FIXTURE_HOLD").unwrap_or_default();
-    Hold {
-        talos: matches!(value.as_str(), "talos" | "all"),
-        lists: matches!(value.as_str(), "lists" | "all"),
-        coroot: matches!(value.as_str(), "coroot" | "all"),
-        monitoring: matches!(value.as_str(), "monitoring" | "all"),
-        applications: matches!(value.as_str(), "applications" | "all"),
+impl Hold {
+    /// The holds a `FRESHKUBE_FIXTURE_HOLD` value names; an unknown or
+    /// missing one holds nothing.
+    pub(crate) fn parse(value: &str) -> Self {
+        Self {
+            talos: matches!(value, "talos" | "all"),
+            lists: matches!(value, "lists" | "all"),
+            coroot: matches!(value, "coroot" | "all"),
+            monitoring: matches!(value, "monitoring" | "all"),
+            applications: matches!(value, "applications" | "all"),
+        }
     }
 }
 

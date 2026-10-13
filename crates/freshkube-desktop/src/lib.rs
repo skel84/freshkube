@@ -25,7 +25,7 @@ pub struct GpuiOptions {
     preferences: Option<PathBuf>,
     keyring: bool,
     /// Example data holds the Talos overview and the summary
-    /// (`fixture::hold`).
+    /// (`fixture::Hold`).
     hold_talos: bool,
     /// The debug knobs the binary parsed (`DebugOptions::from_env`); startup
     /// reads them here, never from the environment.
@@ -111,7 +111,6 @@ impl GpuiOptions {
     pub fn fixture() -> Self {
         Self {
             fixture: true,
-            hold_talos: fixture::hold().talos,
             ..Self::new(None, None, 100)
         }
     }
@@ -348,8 +347,8 @@ pub use stress::TerminalWorkload;
 /// Opens a window with only a terminal, fed a synthetic stream, for the
 /// stress harness and visual checks.
 #[cfg(feature = "stress")]
-pub fn run_terminal(workload: TerminalWorkload) -> color_eyre::Result<()> {
-    stress::run_terminal(workload)
+pub fn run_terminal(workload: TerminalWorkload, debug: DebugOptions) -> color_eyre::Result<()> {
+    stress::run_terminal(workload, debug)
 }
 
 #[cfg(test)]
