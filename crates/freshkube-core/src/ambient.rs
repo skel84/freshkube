@@ -100,15 +100,18 @@ fn set_once(cell: &OnceLock<Ambient>, ambient: Ambient) -> Result<(), ()> {
 
 /// The Talos configuration file used when none is named: `TALOSCONFIG`, else
 /// `~/.talos/config` (`TalosConfig::default_path`, from the installed values).
+#[allow(clippy::result_large_err)] // talos-rs's error, as its own API
 pub fn default_talosconfig_path() -> Result<PathBuf, talos_rs::TalosError> {
     default_talosconfig_path_in(get())
 }
 
+#[allow(clippy::result_large_err)] // talos-rs's error, as its own API
 fn default_talosconfig_path_in(ambient: &Ambient) -> Result<PathBuf, talos_rs::TalosError> {
     talos_rs::TalosConfig::default_path_in(ambient.talosconfig.as_deref(), ambient.home.as_deref())
 }
 
 /// Loads the Talos configuration at the default path.
+#[allow(clippy::result_large_err)] // talos-rs's error, as its own API
 pub fn load_default_talosconfig() -> Result<talos_rs::TalosConfig, talos_rs::TalosError> {
     talos_rs::TalosConfig::load_from(&default_talosconfig_path()?)
 }
