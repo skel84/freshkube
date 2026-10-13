@@ -119,7 +119,8 @@ An owner subscribes to what is its own in its constructor: `Chrome::new` to the 
 
 `--fixture` builds `GpuiOptions::fixture()` (`crates/freshkube-desktop/src/lib.rs`), which sets `Pilot.fixture`; no credentials or cluster are touched. Pages then resolve from example data instead of reading:
 
-- Talos side: `crates/freshkube-desktop/src/fixture.rs` (the cluster and its nodes, and the hold knobs), plus `screens/<name>/example.rs` for each screen but etcd, whose example is in `screens/etcd/mod.rs`; `crates/freshkube-desktop/examples/fixture.rs` runs it standalone.
+- Talos side: `crates/freshkube-desktop/src/fixture.rs` (the cluster and its nodes), plus `screens/<name>/example.rs` for each screen but etcd, whose example is in `screens/etcd/mod.rs`; `crates/freshkube-desktop/examples/fixture.rs` runs it standalone. Node-inspection example builders live in `crates/freshkube-core/src/example/`; Processes uses `ExampleNode` and `example::processes`, with the source checks kept in desktop's `screens/processes/example.rs`.
+- What example data holds back: `cluster_source::Hold` (`crates/freshkube-core/src/cluster_source/hold.rs`), carried on `ClusterAccess::Example` ([the debug knobs](#where-the-debug-knobs-are-parsed)).
 - Resources: `crates/freshkube-desktop/src/resources/example/` (objects, the acme workspace's Kargo and Argo CD kinds); `resources/shell/example.rs` (a local shell); `crates/freshkube-desktop/src/forwards/example.rs` (a loopback listener).
 - Applications and changes: `crates/freshkube-desktop/src/applications/example.rs`; in delivery, `crates/freshkube-delivery/src/applications/example.rs`, `change/example.rs` and `changes/example.rs`. Its `fixtures.rs` is a fake cluster for tests only (`#[cfg(test)]`), not example data.
 - Monitoring and Observability: `crates/freshkube-core/src/monitoring/example.rs`; `crates/freshkube-observability/src/example.rs`, `application/example.rs`, `logs/example.rs`.
