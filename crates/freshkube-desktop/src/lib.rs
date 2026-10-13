@@ -3,6 +3,7 @@
 //! The caller owns Tokio and keeps it alive for the native event loop.
 use std::path::{Path, PathBuf};
 
+pub use ambient::install_ambient_from_env;
 pub use debug_options::DebugOptions;
 
 #[derive(Clone, Debug)]
@@ -130,7 +131,7 @@ impl GpuiOptions {
     /// A terminal's `KUBECONFIG` beats the remembered kubeconfig, as
     /// `TALOSCONFIG` beats the remembered talosconfig.
     pub fn with_preferences(self, path: Option<PathBuf>) -> Self {
-        let environment = std::env::var_os("KUBECONFIG").is_some_and(|value| !value.is_empty());
+        let environment = freshkube_core::ambient::get().has_kubeconfig();
         self.with_preferences_in(path, environment)
     }
 
@@ -230,6 +231,7 @@ fn default_talosconfig_present(path: &std::path::Path) -> bool {
 }
 
 #[cfg(test)]
+mod ambient;
 mod default_talosconfig_tests {
     use super::default_talosconfig_present;
     use std::path::PathBuf;

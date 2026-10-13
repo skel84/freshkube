@@ -22,8 +22,9 @@ use kube::{Client, Config};
 /// other schemes, `socks5://` (a feature
 /// we don't build) and `https://` among them.
 pub fn client(mut config: Config) -> Result<Client, ClientError> {
-    let environment = environment_proxy();
-    let no_proxy = environment_no_proxy();
+    let ambient = crate::ambient::get();
+    let environment = ambient.https_proxy.clone();
+    let no_proxy = ambient.no_proxy.clone();
     let from_environment = skip_environment_proxy(
         &mut config,
         environment.as_deref(),
@@ -94,23 +95,6 @@ fn redacted(proxy: &http::Uri) -> String {
         Some(port) => format!("{scheme}://{host}:{port}"),
         None => format!("{scheme}://{host}"),
     }
-}
-
-/// The proxy kube takes from the environment, in kube's order.
-fn environment_proxy() -> Option<String> {
-    first_set(&["HTTPS_PROXY", "https_proxy"])
-}
-
-/// `NO_PROXY`, else `no_proxy`, as Go reads them.
-fn environment_no_proxy() -> Option<String> {
-    first_set(&["NO_PROXY", "no_proxy"])
-}
-
-fn first_set(names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find(|value| !value.is_empty())
 }
 
 /// Drops the environment's proxy for a server Go wouldn't proxy, and says

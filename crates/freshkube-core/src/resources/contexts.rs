@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use kube::config::Kubeconfig;
 
+use crate::ambient::Ambient;
 use crate::kubeconfig_selection::read_selected_file;
 
 /// One context as kubectl would see it after merging every source.
@@ -54,13 +55,17 @@ impl KubeconfigReport {
 /// variables take a path list, as kubectl does. Missing files are skipped,
 /// except an explicit one, which is reported when read.
 pub fn kubeconfig_sources(explicit: Option<&Path>) -> Vec<PathBuf> {
+    kubeconfig_sources_in(crate::ambient::get(), explicit)
+}
+
+fn kubeconfig_sources_in(ambient: &Ambient, explicit: Option<&Path>) -> Vec<PathBuf> {
     if let Some(path) = explicit {
-        return vec![expand_home(path, std::env::home_dir().as_deref())];
+        return vec![expand_home(path, ambient.home.as_deref())];
     }
     sources_from(
-        std::env::var_os("FRESHKUBE_KUBECONFIG"),
-        std::env::var_os("KUBECONFIG"),
-        std::env::home_dir().as_deref(),
+        ambient.freshkube_kubeconfig.clone(),
+        ambient.kubeconfig.clone(),
+        ambient.home.as_deref(),
     )
     .into_iter()
     .filter(|path| path.is_file())
@@ -263,5 +268,50 @@ mod tests {
             kubeconfig_sources(Some(Path::new("/explicit/missing"))),
             [PathBuf::from("/explicit/missing")]
         );
+    }
+
+    #[test]
+    fn an_explicit_path_beats_both_variables() {
+        let dir = std::env::temp_dir().join(format!("fk-sources-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let other = dir.join("other");
+        std::fs::write(&other, "").unwrap();
+        let ambient = Ambient {
+            freshkube_kubeconfig: Some(other.clone().into()),
+            kubeconfig: Some(other.into()),
+            home: Some("/home/me".into()),
+            ..Ambient::default()
+        };
+        assert_eq!(
+            kubeconfig_sources_in(&ambient, Some(Path::new("~/chosen"))),
+            [PathBuf::from("/home/me/chosen")]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn variables_name_existing_files_only_and_freshkube_wins() {
+        let dir = std::env::temp_dir().join(format!("fk-vars-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (first, second) = (dir.join("first"), dir.join("second"));
+        std::fs::write(&first, "").unwrap();
+        std::fs::write(&second, "").unwrap();
+        let ambient = Ambient {
+            freshkube_kubeconfig: Some(first.clone().into()),
+            kubeconfig: Some(second.clone().into()),
+            ..Ambient::default()
+        };
+        assert_eq!(kubeconfig_sources_in(&ambient, None), [first]);
+        let missing = Ambient {
+            freshkube_kubeconfig: Some(dir.join("missing").into()),
+            ..Ambient::default()
+        };
+        assert!(kubeconfig_sources_in(&missing, None).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn nothing_installed_reads_no_kubeconfig() {
+        assert!(kubeconfig_sources_in(&Ambient::default(), None).is_empty());
     }
 }

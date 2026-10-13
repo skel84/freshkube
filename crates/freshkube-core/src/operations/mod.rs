@@ -1790,7 +1790,10 @@ pub fn default_audit_path(context: &str) -> PathBuf {
         })
         .take(128)
         .collect();
-    std::env::var_os("HOME")
+    let ambient = crate::ambient::get();
+    ambient
+        .home_variable
+        .clone()
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".freshkube")
@@ -1801,9 +1804,10 @@ pub fn default_audit_path(context: &str) -> PathBuf {
 }
 
 fn current_actor() -> String {
-    std::env::var("USER")
-        .or_else(|_| std::env::var("USERNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
+    crate::ambient::get()
+        .user
+        .clone()
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 // ---------------------------------------------------------------------------

@@ -298,9 +298,15 @@ enum SelectionKey {
 }
 
 fn ambient_files() -> Vec<(PathBuf, u64)> {
-    let paths = match std::env::var_os("KUBECONFIG") {
-        Some(value) if !value.is_empty() => std::env::split_paths(&value).collect(),
-        _ => std::env::home_dir()
+    ambient_files_in(crate::ambient::get())
+}
+
+fn ambient_files_in(ambient: &crate::ambient::Ambient) -> Vec<(PathBuf, u64)> {
+    let paths = match &ambient.kubeconfig {
+        Some(value) if !value.is_empty() => std::env::split_paths(value).collect(),
+        _ => ambient
+            .home
+            .as_ref()
             .map(|home| vec![home.join(".kube").join("config")])
             .unwrap_or_default(),
     };
@@ -442,6 +448,34 @@ pub(crate) fn connection_unusable(endpoint_failed: bool, node_transport_failures
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automatic_files_follow_kubeconfig_then_home() {
+        use crate::ambient::Ambient;
+        let listed = std::env::join_paths(["/a/one", "/a/two"]).unwrap();
+        let ambient = Ambient {
+            kubeconfig: Some(listed),
+            freshkube_kubeconfig: Some("/ignored".into()),
+            home: Some("/home/me".into()),
+            ..Ambient::default()
+        };
+        let paths: Vec<_> = ambient_files_in(&ambient)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(paths, [PathBuf::from("/a/one"), PathBuf::from("/a/two")]);
+        let empty = Ambient {
+            kubeconfig: Some("".into()),
+            home: Some("/home/me".into()),
+            ..Ambient::default()
+        };
+        let paths: Vec<_> = ambient_files_in(&empty)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(paths, [PathBuf::from("/home/me/.kube/config")]);
+        assert!(ambient_files_in(&Ambient::default()).is_empty());
+    }
+
     use super::*;
 
     struct Scratch(PathBuf);
