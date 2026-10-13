@@ -194,7 +194,7 @@ impl Pilot {
                 .flex_none()
                 .gap_3()
                 .children(self.render_dock_button(cx))
-                .child(self.forwards.clone())
+                .child(self.chrome.forwards.clone())
                 .child(
                     div()
                         .id("kubernetes-only")
@@ -211,7 +211,7 @@ impl Pilot {
                 .gap_3()
                 .flex_none()
                 .children(self.render_dock_button(cx))
-                .child(self.forwards.clone())
+                .child(self.chrome.forwards.clone())
                 .children(
                     self.overview
                         .last_successful()

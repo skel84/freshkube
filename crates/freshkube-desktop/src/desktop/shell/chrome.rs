@@ -17,6 +17,7 @@
 //! again draws every cached view inside it again.
 use super::*;
 use crate::desktop::probe;
+use crate::forwards::ForwardsIndicator;
 use std::time::Duration;
 
 pub(in crate::desktop) struct Chrome {
@@ -30,6 +31,8 @@ pub(in crate::desktop) struct Chrome {
     pub(in crate::desktop) elapsed: Duration,
     /// The frame-rate readout in the status bar.
     pub(in crate::desktop) fps: Entity<super::fps::Fps>,
+    /// The status bar's port forwards, which redraw on their own.
+    pub(in crate::desktop) forwards: Entity<ForwardsIndicator>,
 }
 
 impl Chrome {
@@ -43,6 +46,7 @@ impl Chrome {
             automatic: true,
             elapsed: Duration::ZERO,
             fps: cx.new(super::fps::Fps::new),
+            forwards: cx.new(ForwardsIndicator::new),
         }
     }
 }

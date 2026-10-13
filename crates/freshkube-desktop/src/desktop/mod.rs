@@ -46,7 +46,6 @@ use crate::{
     backend::{self, AppliedConfig, OwnedJob, Target},
     connection_preferences::ConnectionStore,
     fixture,
-    forwards::ForwardsIndicator,
     logs::{LogPanel, TalosPanel},
     maintenance::MaintenanceView,
     monitoring::page::{MonitoringPage, TalosNodes},
@@ -310,8 +309,6 @@ pub(crate) struct Pilot {
     selected_node: Option<String>,
     logs: Entity<LogPanel>,
     chrome: shell::Chrome,
-    /// The status bar's port forwards, which redraw on their own.
-    forwards: Entity<ForwardsIndicator>,
     /// Logs under the page, in tabs; app-wide, like the forwards.
     pub(crate) dock: Entity<dock::Dock>,
     overview_page: Entity<overview::OverviewPage>,
@@ -927,7 +924,6 @@ impl Pilot {
             selected_node: None,
             logs,
             chrome: shell::Chrome::new(cx),
-            forwards: cx.new(ForwardsIndicator::new),
             dock,
             overview_page,
             node_workspace,
