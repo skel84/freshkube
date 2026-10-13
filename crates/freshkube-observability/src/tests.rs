@@ -1,6 +1,7 @@
 use super::{Destination, MatrixRow, ObservabilityPage, Report, example};
+use freshkube_ui::real_io::RealIo;
 use gpui_kit::component::{Root, Theme, ThemeMode};
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AnyWindowHandle, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled,
     TestAppContext, Window, div, px, size,
@@ -423,15 +424,11 @@ async fn hidden_page_cancels_tokio_work_and_rejects_a_queued_answer(cx: &mut Tes
             );
         })
     });
-    cx.wait_for(handle, std::time::Duration::from_secs(3), move |_, _| {
-        started.load(Ordering::SeqCst)
-    })
-    .await;
+    cx.wait_for_io(handle, move |_, _| started.load(Ordering::SeqCst))
+        .await;
     cx.update(|cx| page.update(cx, |page, cx| page.set_visible(false, cx)));
-    cx.wait_for(handle, std::time::Duration::from_secs(3), move |_, _| {
-        dropped.load(Ordering::SeqCst)
-    })
-    .await;
+    cx.wait_for_io(handle, move |_, _| dropped.load(Ordering::SeqCst))
+        .await;
     cx.update(|cx| {
         assert!(page.read(cx).applications.is_empty());
         assert!(page.read(cx).live.jobs.is_empty());

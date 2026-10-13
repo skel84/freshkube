@@ -2,8 +2,9 @@ use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, KubeClientSou
 use freshkube_core::monitoring::{
     Candidate, Discovery, ErrorKind, PrometheusService, QueryError, Rank, Tried,
 };
+use freshkube_ui::real_io::RealIo;
 use gpui_kit::component::{Root, Theme, ThemeMode};
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AnyWindowHandle, AppContext, Bounds, Entity, Pixels, Point, ScrollDelta, SharedString,
     TestAppContext, point, px, size,
@@ -1256,7 +1257,7 @@ fn test_said(cx: &mut TestAppContext, page: &Entity<MonitoringPage>) -> Option<S
 
 async fn tested(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<MonitoringPage>) {
     let observed = page.clone();
-    cx.wait_for(handle, Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         !matches!(
             observed.read(cx).form.as_ref().map(|form| &form.test),
             Some(source::Test::Testing(_))
@@ -1267,7 +1268,7 @@ async fn tested(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<
 
 async fn settled(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<MonitoringPage>) {
     let observed = page.clone();
-    cx.wait_for(handle, Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         !matches!(
             observed.read(cx).connection,
             Connection::Looking { .. } | Connection::None
@@ -1354,7 +1355,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
         ));
     });
     let account = crate::store::token_account(&url);
-    cx.wait_for(handle, Duration::from_secs(5), {
+    cx.wait_for_io(handle, {
         let store = store.clone();
         let account = account.clone();
         move |_, _| store.keys.lock().unwrap().contains_key(&account)
@@ -1365,7 +1366,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
         Some("s3cret")
     );
     let file = directory.join("monitoring.json");
-    cx.wait_for(handle, Duration::from_secs(5), {
+    cx.wait_for_io(handle, {
         let file = file.clone();
         move |_, _| std::fs::read_to_string(&file).is_ok_and(|text| text.contains("sources"))
     })
@@ -1396,7 +1397,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
     .unwrap();
     settled(cx, relaunched_handle, &relaunched).await;
     cx.read(|cx| assert_eq!(relaunched.read(cx).connection_name(), "refused"));
-    cx.wait_for(relaunched_handle, Duration::from_secs(5), {
+    cx.wait_for_io(relaunched_handle, {
         let store = store.clone();
         move |_, _| store.keys.lock().unwrap().is_empty()
     })
@@ -1689,6 +1690,14 @@ fn held_example_data_leaves_the_table_on_its_loading_rows_with_their_motion(
 /// `FakeCluster` reaches it. Lists are empty, a variable's values are
 /// `a`, and every other read through the proxy answers `panels`.
 fn fake_api(runtime: &tokio::runtime::Runtime, panels: u16) -> String {
+    fake_api_with_discovery(runtime, panels, false)
+}
+
+fn fake_api_with_discovery(
+    runtime: &tokio::runtime::Runtime,
+    panels: u16,
+    advertise_prometheus: bool,
+) -> String {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = runtime
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
@@ -1707,7 +1716,9 @@ fn fake_api(runtime: &tokio::runtime::Runtime, panels: u16) -> String {
                 }
                 let head = String::from_utf8_lossy(&buffer[..read]);
                 let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
-                let (status, body) = if path.contains("/proxy/api/v1/label/") {
+                let (status, body) = if advertise_prometheus && path.starts_with("/api/v1/services?") {
+                    (200, r#"{"apiVersion":"v1","kind":"ServiceList","metadata":{},"items":[{"metadata":{"namespace":"monitoring","name":"prometheus-operated"},"spec":{"ports":[{"name":"web","port":9090}]}}]}"#)
+                } else if path.contains("/proxy/api/v1/label/") {
                     (200, r#"{"status":"success","data":["a"]}"#)
                 } else if path.contains("/proxy/api/v1/series") {
                     (
@@ -1731,6 +1742,69 @@ fn fake_api(runtime: &tokio::runtime::Runtime, panels: u16) -> String {
         }
     });
     format!("http://{address}")
+}
+
+async fn discovery_failure_is_shown(cx: &mut TestAppContext, code: u16, kind: ErrorKind) {
+    use super::connection::Connection;
+    use freshkube_core::monitoring::discover;
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let cluster = FakeCluster::new(fake_api_with_discovery(&runtime, code, true));
+    let result = runtime.block_on(async {
+        let client = cluster.client().await.unwrap();
+        discover(&client, None).await
+    });
+    match result {
+        Err(error) => {
+            assert_eq!(code, 403);
+            assert_eq!(error.kind, kind);
+            assert_eq!(
+                error.message,
+                "Not allowed to query Prometheus (services/proxy)"
+            );
+        }
+        Ok(Discovery::Missing { tried, .. }) => {
+            assert_eq!(code, 404);
+            assert_eq!(tried.len(), 1);
+            assert_eq!(tried[0].error.kind, kind);
+            assert_eq!(tried[0].error.message, "Not found: the proxy says no");
+        }
+        _ => panic!("a failed proxy must not discover a ready Prometheus"),
+    }
+    let source = ClusterSource {
+        id: "cluster-a".into(),
+        context: "cluster-a".into(),
+        access: ClusterAccess::Live(cluster),
+    };
+    let (handle, page) = mount_with(cx, &runtime, Some(source), None, None);
+    show(cx, handle, &page);
+    settled(cx, handle, &page).await;
+    cx.read(|cx| match &page.read(cx).connection {
+        Connection::Refused(words) if code == 403 => assert_eq!(
+            words.as_ref(),
+            "Not allowed to query Prometheus (services/proxy)"
+        ),
+        Connection::Missing(missing) if code == 404 => assert_eq!(
+            missing.tried.as_deref(),
+            Some("monitoring/prometheus-operated:9090: Not found: the proxy says no")
+        ),
+        _ => panic!("discovery must retain a refusal or the failed candidate's words"),
+    });
+    assert!(shown(cx, handle, "monitoring-retry"));
+    assert!(!shown(cx, handle, "monitoring-grid"));
+    if code == 404 {
+        assert!(shown(cx, handle, "monitoring-candidate-0"));
+    }
+}
+
+#[gpui_kit::test]
+async fn a_discovery_403_shows_the_refusal_words(cx: &mut TestAppContext) {
+    discovery_failure_is_shown(cx, 403, ErrorKind::Refused).await;
+}
+
+#[gpui_kit::test]
+async fn a_discovery_404_shows_the_failed_candidate_words(cx: &mut TestAppContext) {
+    discovery_failure_is_shown(cx, 404, ErrorKind::NotFound).await;
 }
 
 /// A live cluster at `fake_api`, counting what it was told to forget.
@@ -1807,7 +1881,7 @@ async fn panels_answered(
     forgot: usize,
 ) {
     let (observed, cluster) = (page.clone(), cluster.clone());
-    cx.wait_for(handle, Duration::from_secs(10), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let page = observed.read(cx);
         let Some(board) = &page.board else {
             return false;

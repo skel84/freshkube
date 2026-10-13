@@ -8,7 +8,6 @@ use crate::screens::{
 use freshkube_ui::status::Segment;
 use gpui_kit::{App, Context, EventEmitter, Subscription, Window};
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 
 use super::super::pages::PageId;
 
@@ -80,7 +79,7 @@ impl ScreenPanel for Heard {
 }
 
 /// Puts a fake page in each slot, as the shell registers its own: in the
-/// map, heard through `subscribe_pages`.
+/// map, heard through `hear_page`.
 fn register(
     view: &Entity<Pilot>,
     handle: AnyWindowHandle,
@@ -94,8 +93,7 @@ fn register(
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |view, cx| {
                 let page = ScreenHandle::new(page);
-                let heard = BTreeMap::from([(id, page.clone())]);
-                let subscriptions = Pilot::subscribe_pages(&heard, window, cx);
+                let subscriptions = Pilot::hear_page(&page, window, cx);
                 view._subscriptions.extend(subscriptions);
                 crate::desktop::testing::put_page(view, id, page, cx);
             })
@@ -179,7 +177,10 @@ fn a_page_in_the_map_hears_the_shell_in_key_order_and_is_heard(cx: &mut TestAppC
         .filter(|line| line.ends_with("refresh"))
         .collect();
     assert_eq!(refreshed, ["settings refresh"]);
-    assert_eq!(cx.update(|cx| view.read(cx).page), Page::Monitoring);
+    assert_eq!(
+        cx.update(|cx| view.read(cx).navigation.page),
+        Page::Monitoring
+    );
     let told: Vec<_> = heard
         .iter()
         .filter(|line| line.ends_with("shown") || line.ends_with("hidden"))

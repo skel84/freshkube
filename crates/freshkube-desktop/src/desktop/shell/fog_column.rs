@@ -27,11 +27,11 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if self.area == Area::Observability {
+        if self.navigation.area == Area::Observability {
             return self.render_observability_column(window, cx);
         }
         let mut column = self.compact_column().child(self.expand_toggle(cx));
-        match self.area {
+        match self.navigation.area {
             Area::Group(slug) => {
                 if slug == "workloads" {
                     column = column.child(
@@ -39,8 +39,8 @@ impl Pilot {
                             .ghost()
                             .size(dp(36.))
                             .icon(super::column::page_icon(Page::Health))
-                            .toggled(self.page == Page::Health)
-                            .selected(self.page == Page::Health)
+                            .toggled(self.navigation.page == Page::Health)
+                            .selected(self.navigation.page == Page::Health)
                             .tooltip("Health · ⌘5")
                             .tooltip_placement(Placement::Right)
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -48,20 +48,19 @@ impl Pilot {
                             })),
                     );
                 }
-                if let Some(group) = navigation::NAVIGATION
-                    .iter()
-                    .find(|group| group.slug == slug)
-                {
+                if let Some(group) = kinds::NAVIGATION.iter().find(|group| group.slug == slug) {
                     column = column.children(group.items.iter().map(|(label, key)| {
                         Button::new(SharedString::from(format!("nav-k8s-{key}")))
                             .ghost()
                             .size(dp(36.))
                             .icon(kind_icon(key))
                             .toggled(
-                                self.page == Page::Resources && self.resource_kind.key() == *key,
+                                self.navigation.page == Page::Resources
+                                    && self.navigation.resource_kind.key() == *key,
                             )
                             .selected(
-                                self.page == Page::Resources && self.resource_kind.key() == *key,
+                                self.navigation.page == Page::Resources
+                                    && self.navigation.resource_kind.key() == *key,
                             )
                             .tooltip(*label)
                             .tooltip_placement(Placement::Right)
@@ -100,8 +99,8 @@ impl Pilot {
                             .ghost()
                             .size(dp(36.))
                             .icon(super::column::page_icon(page))
-                            .selected(self.page == page)
-                            .toggled(self.page == page)
+                            .selected(self.navigation.page == page)
+                            .toggled(self.navigation.page == page)
                             .tooltip(page.title())
                             .tooltip_placement(Placement::Right)
                             .on_click(cx.listener(move |this, _, window, cx| {
@@ -111,7 +110,7 @@ impl Pilot {
                 }
             }
             Area::Applications => {
-                let listing = self.page == Page::Applications
+                let listing = self.navigation.page == Page::Applications
                     && self.applications.read(cx).open_page().is_none();
                 column = column.child(
                     Button::new("nav-all-applications")
@@ -146,7 +145,7 @@ impl Pilot {
         }
         column::icon_strip(
             column,
-            &self.compact_column_scroll,
+            &self.navigation.compact_column_scroll,
             "nav-column-scrollbar",
             cx.theme().background,
         )
@@ -166,7 +165,7 @@ impl Pilot {
             .items_center()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
-            .track_scroll(&self.compact_column_scroll)
+            .track_scroll(&self.navigation.compact_column_scroll)
             .py(dp(14.))
             .gap(dp(6.))
     }
@@ -197,16 +196,16 @@ impl Pilot {
             item == destination
                 || (item == Destination::Applications && destination == Destination::Application)
         });
-        if self.obs_column_revealed != revealed
+        if self.navigation.obs_column_revealed != revealed
             && column::reveal_item(
                 scroll,
-                &mut self.obs_column_reveal_pass,
+                &mut self.navigation.obs_column_reveal_pass,
                 key,
                 active,
                 window,
             )
         {
-            self.obs_column_revealed = revealed;
+            self.navigation.obs_column_revealed = revealed;
         }
     }
 
@@ -223,7 +222,7 @@ impl Pilot {
             item == destination
                 || (item == Destination::Applications && destination == Destination::Application)
         };
-        let scroll = self.obs_column_scroll.clone();
+        let scroll = self.navigation.obs_column_scroll.clone();
         self.reveal_destination(true, &scroll, window, cx);
         let incidents = self.observability.read(cx).incident_count();
         let mut rows = v_flex()
@@ -232,7 +231,7 @@ impl Pilot {
             .size_full()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
-            .track_scroll(&self.obs_column_scroll)
+            .track_scroll(&self.navigation.obs_column_scroll)
             .gap(dp(4.));
         for item in self.obs_destinations() {
             rows = rows.child(self.render_obs_destination(item, active(item), incidents, cx));
@@ -253,7 +252,7 @@ impl Pilot {
             .child(
                 column::icon_strip(
                     rows,
-                    &self.obs_column_scroll,
+                    &self.navigation.obs_column_scroll,
                     "obs-navigation-scrollbar",
                     cx.theme().background,
                 )
@@ -346,7 +345,7 @@ impl Pilot {
     }
     /// The collapsed Workloads column's namespaces, as a menu.
     fn namespace_menu(&self, cx: &Context<Self>) -> AnyElement {
-        let namespaces = self.column_state.namespaces.clone();
+        let namespaces = self.navigation.column_state.namespaces.clone();
         let pilot = cx.weak_entity();
         Button::new("nav-all-namespaces")
             .ghost()
@@ -386,8 +385,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.page == Page::Resources
-            && self.resource_kind.is_pod()
+        if self.navigation.page == Page::Resources
+            && self.navigation.resource_kind.is_pod()
             && self.resources.read(cx).namespace() == namespace.as_deref()
         {
             return;

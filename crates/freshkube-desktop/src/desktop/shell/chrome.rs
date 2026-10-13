@@ -1,4 +1,9 @@
-//! The chrome's parts as cached views beside the page: the header, the
+//! The shell's chrome: what the header, the rail, the column and the
+//! status bar show beside the page, held in one plain struct, `Chrome`,
+//! that `Pilot` owns once. What needs the pages, the session or
+//! `Navigation` too stays on `Pilot`.
+//!
+//! The chrome's parts are cached views beside the page: the header, the
 //! rail and the column. A frame that only the page or the loading motion
 //! asks for redraws the shell's frame around them and reuses each part as
 //! it was drawn. The status bar stays with the shell: it reads the pages,
@@ -12,9 +17,113 @@
 //! again draws every cached view inside it again.
 use super::*;
 use crate::desktop::probe;
+use crate::forwards::ForwardsIndicator;
+use gpui_kit::component::{Theme, ThemeMode};
+use std::time::Duration;
+
+pub(in crate::desktop) struct Chrome {
+    /// The header, rail and column, each cached beside the page.
+    pub(in crate::desktop) parts: ChromeParts,
+    /// The countdown ring in the header.
+    pub(in crate::desktop) countdown: Entity<Countdown>,
+    /// Whether Talos refreshes by itself every `AUTO_REFRESH`.
+    pub(in crate::desktop) automatic: bool,
+    /// The time since the last refresh, which the ring counts down.
+    pub(in crate::desktop) elapsed: Duration,
+    /// The frame-rate readout in the status bar.
+    pub(in crate::desktop) fps: Entity<super::fps::Fps>,
+    /// The status bar's port forwards, which redraw on their own.
+    pub(super) forwards: Entity<ForwardsIndicator>,
+    /// The theme the user chose: the system's, light or dark.
+    pub(in crate::desktop) appearance: Appearance,
+    /// The platform whose menu the window has: the one it runs on, but a
+    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`
+    /// (`DebugOptions::app_menu_button`), and tests choose.
+    pub(in crate::desktop) menu_platform: freshkube_ui::platform::Platform,
+    /// The menu button's menu while it's open, and its dismissal's
+    /// subscription.
+    pub(in crate::desktop) app_menu_popup:
+        Option<(Entity<gpui_kit::component::menu::PopupMenu>, Subscription)>,
+    /// What had the keyboard when the menu button was pressed, before its
+    /// popover took it: the view the menu's entries act on.
+    pub(in crate::desktop) app_menu_focus: Option<FocusHandle>,
+    /// What the installed menus state, to set them again only on a change.
+    pub(in crate::desktop) menu_state: Option<crate::desktop::app_menu::MenuState>,
+    /// Follows the system's light or dark while `appearance` is the
+    /// system's.
+    _appearance: Subscription,
+}
+
+impl Chrome {
+    pub(in crate::desktop) fn new(
+        menu_platform: freshkube_ui::platform::Platform,
+        window: &mut Window,
+        cx: &mut Context<Pilot>,
+    ) -> Self {
+        Self {
+            parts: ChromeParts::new(cx),
+            countdown: cx.new(|_| Countdown {
+                remaining: 1.,
+                visible: false,
+            }),
+            automatic: true,
+            elapsed: Duration::ZERO,
+            fps: cx.new(super::fps::Fps::new),
+            forwards: cx.new(ForwardsIndicator::new),
+            appearance: Appearance::System,
+            menu_platform,
+            app_menu_popup: None,
+            app_menu_focus: None,
+            menu_state: None,
+            _appearance: cx.observe_window_appearance(window, |pilot, window, cx| {
+                if pilot.chrome.appearance == Appearance::System {
+                    Theme::sync_system_appearance(Some(window), cx);
+                }
+            }),
+        }
+    }
+
+    /// Follows `appearance`: the system's, or a theme of its own.
+    pub(in crate::desktop) fn set_appearance(
+        &mut self,
+        appearance: Appearance,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.appearance = appearance;
+        match appearance {
+            Appearance::System => Theme::sync_system_appearance(Some(window), cx),
+            Appearance::Light => Theme::change(ThemeMode::Light, Some(window), cx),
+            Appearance::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
+        }
+    }
+}
+
+/// The countdown ring in the title bar. It is its own view so the one-second
+/// tick redraws only the ring, not the page behind it.
+pub(in crate::desktop) struct Countdown {
+    pub(in crate::desktop) remaining: f32,
+    visible: bool,
+}
+
+impl Countdown {
+    /// Sets what the next render draws; returns whether that differs.
+    pub(in crate::desktop) fn set(&mut self, remaining: f32, visible: bool) -> bool {
+        let changed = self.visible != visible || (visible && self.remaining != remaining);
+        self.remaining = remaining;
+        self.visible = visible;
+        changed
+    }
+}
+
+impl Render for Countdown {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::ui::countdown_ring(self.remaining, self.visible, cx)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::desktop) enum Part {
+enum Part {
     Header,
     Rail,
     Column,
@@ -30,18 +139,15 @@ impl Part {
     }
 }
 
-pub(in crate::desktop) struct Chrome {
+/// One cached part: the header, the rail or the column.
+pub(in crate::desktop) struct CachedPart {
     pilot: WeakEntity<Pilot>,
     part: Part,
     _subscriptions: Vec<Subscription>,
 }
 
-impl Chrome {
-    pub(in crate::desktop) fn new(
-        pilot: &Entity<Pilot>,
-        part: Part,
-        cx: &mut Context<Self>,
-    ) -> Self {
+impl CachedPart {
+    fn new(pilot: &Entity<Pilot>, part: Part, cx: &mut Context<Self>) -> Self {
         Self {
             pilot: pilot.downgrade(),
             part,
@@ -53,13 +159,15 @@ impl Chrome {
     /// it shows changed.
     fn redraw(&mut self, cx: &mut Context<Self>) {
         if self.part == Part::Column {
-            _ = self.pilot.update(cx, |pilot, _| pilot.column_changed());
+            _ = self
+                .pilot
+                .update(cx, |pilot, _| pilot.navigation.column_changed());
         }
         cx.notify();
     }
 }
 
-impl Chrome {
+impl CachedPart {
     /// Draws again when `entity` notifies while the shell's area is one
     /// `shows`.
     fn watch<T: 'static>(
@@ -73,7 +181,7 @@ impl Chrome {
                 if chrome
                     .pilot
                     .upgrade()
-                    .is_some_and(|pilot| shows(pilot.read(cx).area))
+                    .is_some_and(|pilot| shows(pilot.read(cx).navigation.area))
                 {
                     chrome.redraw(cx);
                 }
@@ -81,7 +189,7 @@ impl Chrome {
     }
 }
 
-impl Render for Chrome {
+impl Render for CachedPart {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit(self.part.probe());
         let _span = crate::perf::span(self.part.probe());
@@ -102,15 +210,15 @@ impl Render for Chrome {
 
 /// The shell's cached parts, made once with the shell.
 pub(in crate::desktop) struct ChromeParts {
-    pub(in crate::desktop) header: Entity<Chrome>,
-    pub(in crate::desktop) rail: Entity<Chrome>,
-    pub(in crate::desktop) column: Entity<Chrome>,
+    pub(in crate::desktop) header: Entity<CachedPart>,
+    pub(in crate::desktop) rail: Entity<CachedPart>,
+    pub(in crate::desktop) column: Entity<CachedPart>,
 }
 
 impl ChromeParts {
-    pub(in crate::desktop) fn new(cx: &mut Context<Pilot>) -> Self {
+    fn new(cx: &mut Context<Pilot>) -> Self {
         let pilot = cx.entity();
-        let mut part = |part| cx.new(|cx| Chrome::new(&pilot, part, cx));
+        let mut part = |part| cx.new(|cx| CachedPart::new(&pilot, part, cx));
         Self {
             header: part(Part::Header),
             rail: part(Part::Rail),
@@ -149,7 +257,7 @@ impl ChromeParts {
                     let shows = column
                         .pilot
                         .upgrade()
-                        .is_some_and(|pilot| pilot.read(cx).area == Area::Applications);
+                        .is_some_and(|pilot| pilot.read(cx).navigation.area == Area::Applications);
                     if shows {
                         column.redraw(cx);
                     }

@@ -23,13 +23,13 @@ use freshkube_core::resources::{
     Container, ContainerRole, ContainerState, Failure, FailureKind, LogPosition, LogRequest,
     PodContainers, PodLogUpdate, Termination, follow_pod_log,
 };
+use freshkube_reads::{Pace, Watch};
 use gpui_kit::{AnyElement, Context, SharedString, Task, Window};
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
 
 use super::streams::{self, Clock, MAX_STREAMS, StreamKey, StreamSet, StreamSource};
 use super::{Columns, DownloadLines, LogSource, LogView};
-use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
+use crate::backend::STREAM_QUEUE_CAPACITY;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, LogsAt, example, live};
 use crate::stream_status::Status;
@@ -42,6 +42,14 @@ pub(crate) type PodLogView = LogView<PodLogs>;
 /// How many lines from the end a new stream starts with; `None` is all.
 pub(super) const TAILS: [Option<i64>; 5] = [Some(100), Some(500), Some(1_000), Some(5_000), None];
 const DEFAULT_TAIL: Option<i64> = Some(500);
+
+/// The stream's delivery: at most a full queue a turn, however busy the
+/// container, and no sooner than 16 ms after the last.
+const PACE: Pace = Pace {
+    capacity: STREAM_QUEUE_CAPACITY,
+    most: STREAM_QUEUE_CAPACITY,
+    every: Duration::from_millis(16),
+};
 /// How often an example container writes another line.
 const EXAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 /// A container that restarted this recently, after failing, is shown as
@@ -125,10 +133,11 @@ pub(crate) struct PodLogs {
     lines: usize,
     /// When the connection was lost, while reconnecting.
     lost_at: Option<DateTime<Utc>>,
-    /// Advances with each stream; updates from an older one are dropped.
-    stream: u64,
-    job: Option<OwnedJob>,
-    delivery: Option<Task<()>>,
+    /// The chosen container's stream, for the pod and container it reads;
+    /// updates from an older one are dropped.
+    stream: Watch<PodLogUpdate, (ResourceIdentity, String)>,
+    /// Writes a running example container's lines on the GPUI clock.
+    example_writer: Option<Task<()>>,
     pub(super) status: Status,
     /// Says the container keeps crashing; Previous shows the instance
     /// before.
@@ -163,9 +172,8 @@ impl PodLogs {
             position: LogPosition::default(),
             lines: 0,
             lost_at: None,
-            stream: 0,
-            job: None,
-            delivery: None,
+            stream: Watch::default(),
+            example_writer: None,
             status: Status::default(),
             hint: None,
             note: None,
@@ -245,12 +253,17 @@ impl PodLogs {
             .then(|| format!("Reading {MAX_STREAMS} of {wanted} containers, in the pod's order."))
     }
 
+    /// Whether the chosen container's stream is open, for the dock's tests.
+    #[cfg(test)]
+    pub(crate) fn stream_open(&self) -> bool {
+        self.stream.is_running()
+    }
+
     /// Drops the stream and its delivery, and every container's stream;
     /// anything still on the way is dropped with them.
     fn drop_stream(&mut self) {
-        self.stream += 1;
-        self.job = None;
-        self.delivery = None;
+        self.stream.stop();
+        self.example_writer = None;
         self.reads.drop_streams();
     }
 
@@ -651,6 +664,10 @@ impl StreamSource for PodLogs {
         self.access.clone()
     }
 
+    fn identity(&self) -> Option<ResourceIdentity> {
+        self.pod.clone()
+    }
+
     /// The container's name, which a single container's lines carry too.
     fn tag(key: &StreamKey) -> ServiceId {
         ServiceId::new(key.container.as_str())
@@ -921,14 +938,9 @@ trait Stream: Sized + 'static {
     /// Reads on from the last line, after Stop or a failure.
     fn resume(&mut self, cx: &mut Context<Self>);
 
-    /// Applies updates from `stream`, if it is still the current one.
-    /// Returns false when it isn't, which ends its delivery.
-    fn apply_updates(
-        &mut self,
-        stream: u64,
-        updates: Vec<PodLogUpdate>,
-        cx: &mut Context<Self>,
-    ) -> bool;
+    /// Applies updates from the current stream; its watch drops an older
+    /// one's.
+    fn apply_updates(&mut self, updates: Vec<PodLogUpdate>, cx: &mut Context<Self>);
 
     /// Starts a fresh view of the chosen log, once it is wanted.
     fn restart(&mut self, cx: &mut Context<Self>);
@@ -1053,15 +1065,7 @@ impl Stream for PodLogView {
         }
     }
 
-    fn apply_updates(
-        &mut self,
-        stream: u64,
-        updates: Vec<PodLogUpdate>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if stream != self.source().stream {
-            return false;
-        }
+    fn apply_updates(&mut self, updates: Vec<PodLogUpdate>, cx: &mut Context<Self>) {
         let name = self.source().container.clone().unwrap_or_default();
         let mut lines = Vec::new();
         for update in updates {
@@ -1098,20 +1102,13 @@ impl Stream for PodLogView {
                         source.marker(format!("{name} restarted{how}, showing the new instance")),
                     );
                 }
-                PodLogUpdate::Ended(ended) => {
-                    source.job = None;
-                    source.state = StreamState::Ended(ended);
-                }
-                PodLogUpdate::Failed(failure) => {
-                    source.job = None;
-                    source.state = StreamState::Failed(failure);
-                }
+                PodLogUpdate::Ended(ended) => source.state = StreamState::Ended(ended),
+                PodLogUpdate::Failed(failure) => source.state = StreamState::Failed(failure),
             }
         }
         self.source_mut().describe();
         self.ingest(lines, cx);
         cx.notify();
-        true
     }
 
     fn restart(&mut self, cx: &mut Context<Self>) {
@@ -1169,7 +1166,6 @@ impl Stream for PodLogView {
         source.state = StreamState::Connecting;
         source.describe();
         cx.notify();
-        let stream = self.source().stream;
         let resume = self
             .source()
             .position
@@ -1187,40 +1183,26 @@ impl Stream for PodLogView {
             tail: self.source().tail,
             resume,
         };
-        let (sender, mut receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
-        let job = self.source().runtime.spawn(async move {
-            match access.client().await {
-                Ok(client) => follow_pod_log(client, request, sender).await,
-                Err(error) => {
-                    access.forget();
-                    let failure = Failure::new(FailureKind::Other, error);
-                    let _ = sender.send(PodLogUpdate::Failed(failure)).await;
+        let identity = (pod, request.container.clone());
+        let source = self.source_mut();
+        source.stream.start(
+            identity,
+            &source.runtime,
+            PACE,
+            move |sender| async move {
+                match access.client().await {
+                    Ok(client) => follow_pod_log(client, request, sender).await,
+                    Err(error) => {
+                        access.forget();
+                        let failure = Failure::new(FailureKind::Other, error);
+                        let _ = sender.send(PodLogUpdate::Failed(failure)).await;
+                    }
                 }
-            }
-        });
-        self.source_mut().job = Some(OwnedJob::new(job));
-        self.source_mut().delivery = Some(cx.spawn(async move |weak, cx| {
-            while let Some(first) = receiver.recv().await {
-                let mut batch = vec![first];
-                // At most a full queue per turn, then yield, however busy
-                // the container.
-                for _ in 1..STREAM_QUEUE_CAPACITY {
-                    let Ok(update) = receiver.try_recv() else {
-                        break;
-                    };
-                    batch.push(update);
-                }
-                let applied = weak
-                    .update(cx, |view, cx| view.apply_updates(stream, batch, cx))
-                    .unwrap_or(false);
-                if !applied {
-                    return;
-                }
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
-            }
-        }));
+            },
+            |view: &mut Self| &mut view.source_mut().stream,
+            |view, batch, cx| view.apply_updates(batch, cx),
+            cx,
+        );
     }
 
     fn start_example(
@@ -1230,7 +1212,6 @@ impl Stream for PodLogView {
         reading_on: bool,
         cx: &mut Context<Self>,
     ) {
-        let stream = self.source().stream;
         let (mut updates, writes_on) =
             example::pod_log(pod, container, self.source().previous, live::now());
         if reading_on {
@@ -1239,20 +1220,25 @@ impl Stream for PodLogView {
             // lines written since, and an example writes none while stopped.
             updates.retain(|update| !matches!(update, PodLogUpdate::Line(_)));
         }
-        self.apply_updates(stream, updates, cx);
-        if !writes_on || self.source().stream != stream {
+        self.apply_updates(updates, cx);
+        if !writes_on {
             return;
         }
-        self.source_mut().delivery = Some(cx.spawn(async move |weak, cx| {
+        // The stream has no work of its own: the example writes into it on
+        // the GPUI clock.
+        let source = self.source_mut();
+        let sender = source.stream.open(
+            (pod.clone(), container.to_owned()),
+            PACE,
+            |view: &mut Self| &mut view.source_mut().stream,
+            |view, batch, cx| view.apply_updates(batch, cx),
+            cx,
+        );
+        source.example_writer = Some(cx.spawn(async move |_, cx| {
             for sequence in 0u64.. {
                 cx.background_executor().timer(EXAMPLE_INTERVAL).await;
                 let line = example::pod_log_line(sequence, Utc::now());
-                let applied = weak
-                    .update(cx, |view, cx| {
-                        view.apply_updates(stream, vec![PodLogUpdate::Line(line)], cx)
-                    })
-                    .unwrap_or(false);
-                if !applied {
+                if sender.send(PodLogUpdate::Line(line)).await.is_err() {
                     return;
                 }
             }

@@ -8,7 +8,7 @@ use crate::monitoring::page::{Entry, FolderState};
 use crate::mutation::Operations;
 use crate::palette::palette;
 use crate::resources::custom::{CustomGroup, Discovery};
-use crate::resources::navigation;
+use crate::resources::navigation as kinds;
 use crate::text_size;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::resources::{Failure, FailureKind};
@@ -194,7 +194,7 @@ impl Pilot {
 }
 
 mod chrome;
-pub(super) use chrome::ChromeParts;
+pub(super) use chrome::Chrome;
 mod column;
 pub(super) use column::Room;
 #[cfg(test)]
@@ -212,6 +212,8 @@ pub(super) use rail::RailMarks;
 
 mod column_state;
 pub(super) use column_state::ColumnState;
+mod navigation;
+pub(super) use navigation::Navigation;
 mod fog_column;
 mod source;
 pub(super) use source::ColumnKey;

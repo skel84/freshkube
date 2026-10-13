@@ -247,15 +247,15 @@ fn a_refused_log_fails_with_retry_and_no_lines(cx: &mut TestAppContext) {
         assert_eq!(window.find("logs-empty").label(), Some("Nothing was read."));
 
         // Retry reads again, and is refused again.
-        let stream = view.read(cx).source().stream;
+        let stream = view.read(cx).source().stream.generation();
         window.click("pod-logs-retry", cx);
-        assert!(view.read(cx).source().stream > stream);
+        assert!(view.read(cx).source().stream.generation() > stream);
         assert!(matches!(state(&view, cx), StreamState::Failed(_)));
 
         // Stop and Resume have nothing to do; Retry is the way on.
-        let stream = view.read(cx).source().stream;
+        let stream = view.read(cx).source().stream.generation();
         window.click("pod-logs-stream", cx);
-        assert_eq!(view.read(cx).source().stream, stream);
+        assert_eq!(view.read(cx).source().stream.generation(), stream);
         assert_eq!(lines(&view, cx), 0);
     })
     .unwrap();
@@ -322,9 +322,9 @@ fn a_crash_loop_marks_the_restart_and_offers_the_previous_instance(cx: &mut Test
         assert!(!note.contains("Previous shows"), "{note}");
 
         // A log read to its end has nothing to stop or resume.
-        let stream = view.read(cx).source().stream;
+        let stream = view.read(cx).source().stream.generation();
         window.click("pod-logs-stream", cx);
-        assert_eq!(view.read(cx).source().stream, stream);
+        assert_eq!(view.read(cx).source().stream.generation(), stream);
 
         // Previous again goes back to the current instance, read afresh.
         window.click("pod-logs-previous", cx);
@@ -341,10 +341,10 @@ fn without_a_restart_there_is_no_previous_instance(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         show(&view, &running_pod(), cx);
         window.render_frame(cx);
-        let stream = view.read(cx).source().stream;
+        let stream = view.read(cx).source().stream.generation();
         window.click("pod-logs-previous", cx);
         assert!(!view.read(cx).source().previous);
-        assert_eq!(view.read(cx).source().stream, stream);
+        assert_eq!(view.read(cx).source().stream.generation(), stream);
     })
     .unwrap();
 }
@@ -521,7 +521,7 @@ fn hiding_the_page_stops_the_stream_and_showing_it_reads_on(cx: &mut TestAppCont
         show(&view, &running_pod(), cx);
         view.update(cx, |view, cx| view.set_active(false, cx));
         let source = &view.read(cx).source();
-        assert!(source.job.is_none() && source.delivery.is_none());
+        assert!(!source.stream.is_running());
         assert!(source.suspended && !source.running());
     })
     .unwrap();
@@ -533,7 +533,7 @@ fn hiding_the_page_stops_the_stream_and_showing_it_reads_on(cx: &mut TestAppCont
         view.update(cx, |view, cx| view.set_active(true, cx));
         assert_eq!(state(&view, cx), StreamState::Streaming);
         assert_eq!(view.read(cx).generation(), generation);
-        assert!(view.read(cx).source().delivery.is_some());
+        assert!(view.read(cx).source().stream.is_running());
     })
     .unwrap();
 }
@@ -549,14 +549,14 @@ fn another_pod_or_none_cancels_the_stream_and_starts_over(cx: &mut TestAppContex
             view.set_tail(Some(1_000), cx);
             view.set_timestamps(false, cx);
         });
-        let stream = view.read(cx).source().stream;
+        let stream = view.read(cx).source().stream.generation();
 
         view.update(cx, |view, cx| {
             view.show_pod(Some(crashing.clone()), None, cx)
         });
         let source = &view.read(cx).source();
-        assert!(source.stream > stream);
-        assert!(source.delivery.is_none());
+        assert!(source.stream.generation() > stream);
+        assert!(!source.stream.is_running());
         assert_eq!(source.state, StreamState::Idle);
         // Nothing streams for the new pod until it is wanted, and the
         // tail and time column carry over.

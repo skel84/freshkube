@@ -7,7 +7,8 @@ impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
         let _span = crate::perf::span("shell.render");
-        self.fps
+        self.chrome
+            .fps
             .read(cx)
             .frame_started(cx.background_executor().now());
         // `FRESHKUBE_FIRST_FRAME=1` prints when the window first draws,
@@ -17,13 +18,13 @@ impl Render for Pilot {
         if WINDOW.pending() {
             window.on_next_frame(|_, _| WINDOW.mark());
         }
-        self.layout_chrome(window);
-        let column = self.column_width(window);
+        self.navigation.layout_chrome(window);
+        let column = self.navigation.column_width(window);
         if column.is_none() {
             // A kind outside every column has no row to reveal.
-            self.column_reveal = None;
+            self.navigation.column_reveal = None;
         }
-        let page = match self.page {
+        let page = match self.navigation.page {
             // Not cached: a cached view that draws again makes every cached
             // view inside it draw again, so a cursor moving over one chart
             // would redraw all the panels. Drawn with the shell, the page
@@ -47,27 +48,35 @@ impl Render for Pilot {
             .key_context(freshkube_ui::page::SHELL_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
+            .on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
+                view.show_page(Page::Overview, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowNodes, window, cx| {
+                view.show_page(Page::Nodes, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowNamespaces, window, cx| {
+                view.open_builtin("namespaces", window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowEvents, window, cx| {
+                view.open_builtin("events", window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowHealth, window, cx| {
+                view.show_page(Page::Health, window, cx)
+            }))
             .on_action(
-                cx.listener(|view, _: &ShowOverview, window, cx| view.show_row(0, window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &ShowNodes, window, cx| view.show_row(1, window, cx)))
-            .on_action(
-                cx.listener(|view, _: &ShowNamespaces, window, cx| view.show_row(2, window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &ShowEvents, window, cx| view.show_row(3, window, cx)))
-            .on_action(cx.listener(|view, _: &ShowHealth, window, cx| view.show_row(4, window, cx)))
-            .on_action(cx.listener(|view, _: &ShowEtcd, window, cx| view.show_row(6, window, cx)))
-            .on_action(
-                cx.listener(|view, _: &ShowSystemServices, window, cx| {
-                    view.show_row(7, window, cx)
+                cx.listener(|view, _: &ShowEtcd, window, cx| {
+                    view.show_page(Page::Etcd, window, cx)
                 }),
             )
-            .on_action(
-                cx.listener(|view, _: &ShowSecurity, window, cx| view.show_row(8, window, cx)),
-            )
-            .on_action(
-                cx.listener(|view, _: &ShowLifecycle, window, cx| view.show_row(9, window, cx)),
-            )
+            .on_action(cx.listener(|view, _: &ShowSystemServices, window, cx| {
+                view.show_page(Page::SystemServices, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowSecurity, window, cx| {
+                view.show_page(Page::Security, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &ShowLifecycle, window, cx| {
+                view.show_page(Page::Lifecycle, window, cx)
+            }))
             .on_action(
                 cx.listener(|view, _: &NextScreen, window, cx| view.adjacent_row(true, window, cx)),
             )
@@ -83,7 +92,7 @@ impl Render for Pilot {
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
             // Each handler is there only while it can act, so the menus grey
             // it otherwise and its key goes on to whatever else binds it.
-            .when(self.area.has_column(), |this| {
+            .when(self.navigation.area.has_column(), |this| {
                 this.on_action(
                     cx.listener(|view, _: &ToggleColumn, window, cx| {
                         view.toggle_column(window, cx)
@@ -107,7 +116,7 @@ impl Render for Pilot {
                 ))
             })
             .on_action(cx.listener(|view, _: &OpenSettings, _, cx| {
-                view.settings_open = true;
+                view.navigation.settings_open = true;
                 cx.notify();
             }))
             .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
@@ -126,13 +135,16 @@ impl Render for Pilot {
                     view.set_appearance(Appearance::Dark, window, cx)
                 }),
             )
-            .when(self.menu_platform.app_menu() == AppMenu::Button, |this| {
-                this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
-                    view.open_app_menu(false, window, cx)
-                }))
-            })
+            .when(
+                self.chrome.menu_platform.app_menu() == AppMenu::Button,
+                |this| {
+                    this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
+                        view.open_app_menu(false, window, cx)
+                    }))
+                },
+            )
             .child(
-                self.chrome.header.clone().cached(
+                self.chrome.parts.header.clone().cached(
                     StyleRefinement::default()
                         .w_full()
                         .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
@@ -146,7 +158,7 @@ impl Render for Pilot {
                     .flex_1()
                     .min_h_0()
                     .child(
-                        self.chrome.rail.clone().cached(
+                        self.chrome.parts.rail.clone().cached(
                             StyleRefinement::default()
                                 .w(dp(RAIL_WIDTH))
                                 .h_full()
@@ -155,6 +167,7 @@ impl Render for Pilot {
                     )
                     .children(column.map(|width| {
                         self.chrome
+                            .parts
                             .column
                             .clone()
                             .cached(StyleRefinement::default().w(dp(width)).h_full().flex_none())
@@ -178,7 +191,7 @@ impl Pilot {
         cx: &App,
     ) -> Option<Entity<freshkube_ui::table::FlashLayer<crate::resources::model::ResourceIdentity>>>
     {
-        match self.page {
+        match self.navigation.page {
             Page::Resources => self.resources.read(cx).flash_layer(),
             _ => None,
         }
@@ -194,7 +207,7 @@ impl Pilot {
         &self,
         cx: &App,
     ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        match self.page {
+        match self.navigation.page {
             Page::Resources => self.resources.read(cx).loading_motion(),
             Page::Observability => self.observability.read(cx).loading_motion(cx),
             Page::Applications => self.applications.read(cx).loading_motion(cx),

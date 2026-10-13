@@ -106,7 +106,7 @@ impl Pilot {
         if self.loading() {
             "Refreshing…".into()
         } else if self.countdown_state().1 {
-            let next_in = AUTO_REFRESH.saturating_sub(self.elapsed).as_secs();
+            let next_in = AUTO_REFRESH.saturating_sub(self.chrome.elapsed).as_secs();
             format!("Refresh now · next Talos refresh in {next_in} s").into()
         } else {
             "Refresh now".into()

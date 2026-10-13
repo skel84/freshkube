@@ -157,6 +157,7 @@ Headless UI tests render the real app, find elements by id and click or type int
 - A page's event reaches the shell, and the shell's push reaches a page, only after the current update ends. A test that clicks something a page turns into an event, or changes what the shell hands a page, calls `cx.run_until_parked()` outside `update_window` before asserting the result.
 - Setting an input's value from code does not emit its change event. Type into it with real input events (`window.input`) when the change handler matters.
 - Tests write only under a fresh temporary directory, never into the crate or the user's home.
+- A test that waits on work in a real Tokio runtime or socket (a fake server, a worker thread) waits through `freshkube_ui::real_io` (`RealIo::wait_for_io`, `until_io`), on the drawn element, the fake's recorded request or the state it then asserts: `wait_for`'s timeout runs on the test clock and can pass before the real work answers, and `run_until_parked` alone can return before it does. The helper's one allowance is 30 s of real time.
 - Time anything a test depends on with the executor's clock (`cx.background_executor().now()`), not `Instant::now()`, so tests step it with `advance_clock` instead of sleeping. Example data dated from the wall clock must not be generated again for a stream already read: a second later it passes for new lines. Both made tests fail on a loaded machine.
 
 ### Smoke tests

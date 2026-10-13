@@ -32,7 +32,6 @@ use crate::screens::{
 };
 use freshkube_core::resources::builtin;
 use freshkube_ui::status::Segment;
-use std::collections::BTreeMap;
 
 /// Hears one event type of a page's and hands it on as a [`PageEvent`].
 fn hear<P, E>(
@@ -312,25 +311,20 @@ impl Pilot {
         ]
     }
 
-    /// Hears the pages through their handles. A handle hands its events no
-    /// shell, so each goes back through a weak one, gone with the window.
+    /// Hears a page through its handle. A handle hands its events no
+    /// shell, so they go back through a weak one, gone with the window.
     /// Called while the shell is made, before anything it starts can emit:
     /// a subscription hears only what is emitted after the update it was
     /// made in.
-    pub(super) fn subscribe_pages(
-        pages: &BTreeMap<PageId, ScreenHandle>,
+    pub(super) fn hear_page(
+        page: &ScreenHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
         let pilot = cx.weak_entity();
-        let mut subscriptions = Vec::new();
-        for page in pages.values() {
-            let pilot = pilot.clone();
-            subscriptions.extend(page.subscribe(window, cx, move |event, window, cx| {
-                let _ = pilot.update(cx, |this, cx| this.page_event(event, window, cx));
-            }));
-        }
-        subscriptions
+        page.subscribe(window, cx, move |event, window, cx| {
+            let _ = pilot.update(cx, |this, cx| this.page_event(event, window, cx));
+        })
     }
 
     /// The handle of the page that shows: the node pane's selected tab
@@ -343,7 +337,7 @@ impl Pilot {
     /// names and, when that is the node pane's screen, Nodes around it.
     pub(super) fn shown_pages(&self, cx: &App) -> Vec<ScreenHandle> {
         let id = self.shown_id(cx);
-        let around = (id != self.page.id()).then(|| self.page.id());
+        let around = (id != self.navigation.page.id()).then(|| self.navigation.page.id());
         [Some(id), around]
             .into_iter()
             .flatten()
@@ -352,10 +346,10 @@ impl Pilot {
     }
 
     fn shown_id(&self, cx: &App) -> PageId {
-        (self.page == Page::Nodes)
+        (self.navigation.page == Page::Nodes)
             .then(|| self.node_workspace.read(cx).pane_screen())
             .flatten()
-            .unwrap_or(self.page.id())
+            .unwrap_or(self.navigation.page.id())
     }
 
     /// What a page asks of the shell.
@@ -398,7 +392,7 @@ impl Pilot {
                 MonitoringEvent::History => self.push_history(cx),
                 // The column lists the dashboards; an open one stays open.
                 MonitoringEvent::Dashboards => {
-                    if self.column_collapsed(window) {
+                    if self.navigation.column_collapsed(window) {
                         self.toggle_column(window, cx);
                     }
                 }

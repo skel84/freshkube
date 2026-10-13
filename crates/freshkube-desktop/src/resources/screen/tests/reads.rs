@@ -1,5 +1,70 @@
 use super::*;
 
+fn api_list_failure_is_shown(
+    cx: &mut TestAppContext,
+    code: u16,
+    kind: freshkube_core::failure::FailureKind,
+    message: &str,
+    placeholder: &'static str,
+) {
+    use freshkube_core::failure::Failure;
+    use freshkube_core::resources::WatchEvent;
+    let (_runtime, screen, handle) = mount(cx, None);
+    let failure = Failure::from_kube(kube::Error::Api(kube::core::ErrorResponse {
+        status: "Failure".into(),
+        reason: "Synthetic".into(),
+        message: message.into(),
+        code,
+    }));
+    assert_eq!(failure.kind, kind);
+    assert_eq!(failure.message, message);
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_visible(false, window, cx);
+            screen.set_source(Some(source("cluster-a")), window, cx);
+        });
+        let events = crate::resources::live::convert(
+            "cluster-a", "pods", &mut Vec::new(),
+            vec![WatchEvent::Failed { failure, retrying: false }],
+        );
+        deliver(&screen, events, cx);
+        window.render_frame(cx);
+        assert!(window.find(placeholder).visible());
+        assert!(window.try_find("resource-list").is_none());
+        let state = screen.read(cx).store.read_state();
+        match state {
+            ReadState::Refused(words) | ReadState::Missing(words) => assert_eq!(words, message),
+            other => panic!("a refusal or unserved API must not look empty: {other:?}"),
+        }
+        if code == 404 {
+            assert_eq!(screen.read(cx).not_served("cluster-a"),
+                "The API server of cluster-a doesn't serve pods at v1. The server may predate that version, or no longer serve it.");
+        }
+    }).unwrap();
+}
+
+#[gpui_kit::test]
+fn a_list_403_shows_the_refusal_words(cx: &mut TestAppContext) {
+    api_list_failure_is_shown(
+        cx,
+        403,
+        freshkube_core::failure::FailureKind::Forbidden,
+        "pods is forbidden",
+        "resource-refused",
+    );
+}
+
+#[gpui_kit::test]
+fn a_list_404_shows_the_not_served_words(cx: &mut TestAppContext) {
+    api_list_failure_is_shown(
+        cx,
+        404,
+        freshkube_core::failure::FailureKind::NotFound,
+        "the server could not find the requested resource",
+        "resource-not-served",
+    );
+}
+
 #[gpui_kit::test]
 fn reads_show_refusals_failures_and_stale_rows(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));

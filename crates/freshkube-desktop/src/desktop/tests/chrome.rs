@@ -42,7 +42,7 @@ fn the_cached_chrome_acts_on_the_shell(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert_eq!(view.read(cx).area, Area::ControlPlane));
+    cx.update(|cx| assert_eq!(view.read(cx).navigation.area, Area::ControlPlane));
     let dark = cx.update(|cx| cx.theme().mode.is_dark());
     cx.update_window(handle, |_, window, cx| window.click("theme-toggle", cx))
         .unwrap();
@@ -153,7 +153,7 @@ fn tick_does_not_redraw_the_active_screen(cx: &mut TestAppContext) {
     let (screen, ring) = cx.update(|cx| {
         (
             count("processes"),
-            view.read(cx).countdown.read(cx).remaining,
+            view.read(cx).chrome.countdown.read(cx).remaining,
         )
     });
     assert!(screen > 0);
@@ -164,7 +164,7 @@ fn tick_does_not_redraw_the_active_screen(cx: &mut TestAppContext) {
     }
     cx.update(|cx| {
         assert_ne!(
-            view.read(cx).countdown.read(cx).remaining,
+            view.read(cx).chrome.countdown.read(cx).remaining,
             ring,
             "ring moves"
         );
@@ -411,7 +411,7 @@ fn cached_system_services_redraws_for_its_own_changes(cx: &mut TestAppContext) {
 fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
     cx.update(|cx| {
         view.update(cx, |pilot, cx| {
-            pilot.elapsed += std::time::Duration::from_secs(1);
+            pilot.chrome.elapsed += std::time::Duration::from_secs(1);
             pilot.tick_countdown(cx);
         });
     });

@@ -5,7 +5,8 @@
 use crate::error::TalosError;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 /// Talos client configuration (matches talosconfig format)
 #[derive(Debug, Clone, Deserialize)]
@@ -65,16 +66,32 @@ impl TalosConfig {
     }
 
     /// Get the default config path (from $TALOSCONFIG env var or ~/.talos/config)
+    ///
+    /// Reads the process environment; a caller that holds the values already
+    /// uses [`Self::default_path_in`].
     pub fn default_path() -> Result<PathBuf, TalosError> {
-        // Check if TALOSCONFIG environment variable is set
-        if let Ok(talosconfig) = std::env::var("TALOSCONFIG") {
+        let talosconfig = std::env::var_os("TALOSCONFIG");
+        Self::default_path_in(talosconfig.as_deref(), std::env::home_dir().as_deref())
+    }
+
+    /// The default config path from the values `default_path` reads: the
+    /// `TALOSCONFIG` variable, and the home directory for `~/.talos/config`.
+    ///
+    /// A `TALOSCONFIG` that is set wins even when empty, which yields an empty
+    /// path; one that is not valid UTF-8 counts as unset. With neither a usable
+    /// variable nor a home directory the path is unknown.
+    pub fn default_path_in(
+        talosconfig: Option<&OsStr>,
+        home: Option<&Path>,
+    ) -> Result<PathBuf, TalosError> {
+        if let Some(talosconfig) = talosconfig.and_then(OsStr::to_str) {
             tracing::debug!("TALOSCONFIG env var found: {}", talosconfig);
             return Ok(PathBuf::from(talosconfig));
         }
 
         tracing::debug!("TALOSCONFIG env var not set, using default path");
         // Fallback to default location
-        let home = std::env::home_dir().ok_or(TalosError::NoHomeDirectory)?;
+        let home = home.ok_or(TalosError::NoHomeDirectory)?;
         Ok(home.join(".talos").join("config"))
     }
 
@@ -423,38 +440,62 @@ contexts:
         assert_eq!(ctx.endpoint_urls().into_iter().next(), None);
     }
 
-    // Note: These tests manipulate environment variables and must run sequentially.
-    // They are combined into a single test to avoid race conditions in parallel execution.
     #[test]
-    fn test_default_path_env_handling() {
-        use std::sync::Mutex;
-        static ENV_MUTEX: Mutex<()> = Mutex::new(());
-
-        let _guard = ENV_MUTEX.lock().unwrap();
-
-        // Test 1: With env var set
-        unsafe {
-            std::env::set_var("TALOSCONFIG", "/custom/path/to/talosconfig");
-        }
-        let path = TalosConfig::default_path().unwrap();
+    fn default_path_in_uses_talosconfig_when_set() {
+        let path = TalosConfig::default_path_in(
+            Some(OsStr::new("/custom/path/to/talosconfig")),
+            Some(Path::new("/home/ana")),
+        )
+        .unwrap();
         assert_eq!(path, PathBuf::from("/custom/path/to/talosconfig"));
+    }
 
-        // Test 2: Env var takes precedence (different path)
-        let custom_path = "/tmp/my-talos-config.yaml";
-        unsafe {
-            std::env::set_var("TALOSCONFIG", custom_path);
-        }
-        let path = TalosConfig::default_path().unwrap();
-        assert_eq!(path, PathBuf::from(custom_path));
-        assert!(!path.to_string_lossy().contains(".talos"));
+    #[test]
+    fn default_path_in_falls_back_to_the_home_directory() {
+        let path = TalosConfig::default_path_in(None, Some(Path::new("/home/ana"))).unwrap();
+        assert_eq!(path, PathBuf::from("/home/ana/.talos/config"));
+    }
 
-        // Test 3: Without env var - falls back to default
-        unsafe {
-            std::env::remove_var("TALOSCONFIG");
-        }
-        let path = TalosConfig::default_path().unwrap();
-        let home = std::env::home_dir().unwrap();
-        let expected = home.join(".talos").join("config");
-        assert_eq!(path, expected);
+    #[test]
+    fn default_path_in_keeps_an_empty_talosconfig() {
+        let path = TalosConfig::default_path_in(Some(OsStr::new("")), Some(Path::new("/home/ana")))
+            .unwrap();
+        assert_eq!(path, PathBuf::new());
+    }
+
+    #[test]
+    fn default_path_in_without_home_or_variable_is_an_error() {
+        assert!(matches!(
+            TalosConfig::default_path_in(None, None),
+            Err(TalosError::NoHomeDirectory)
+        ));
+        // A variable still answers when there is no home.
+        assert_eq!(
+            TalosConfig::default_path_in(Some(OsStr::new("/t")), None).unwrap(),
+            PathBuf::from("/t")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_path_in_treats_a_talosconfig_that_is_not_utf8_as_unset() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = TalosConfig::default_path_in(
+            Some(OsStr::from_bytes(&[0xff, 0xfe])),
+            Some(Path::new("/home/ana")),
+        )
+        .unwrap();
+        assert_eq!(path, PathBuf::from("/home/ana/.talos/config"));
+    }
+
+    /// The wrapper reads the real environment; it never sets any.
+    #[test]
+    fn default_path_reads_the_process_environment() {
+        let expected = TalosConfig::default_path_in(
+            std::env::var_os("TALOSCONFIG").as_deref(),
+            std::env::home_dir().as_deref(),
+        )
+        .ok();
+        assert_eq!(TalosConfig::default_path().ok(), expected);
     }
 }
