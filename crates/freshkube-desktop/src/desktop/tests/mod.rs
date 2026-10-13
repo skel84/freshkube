@@ -43,7 +43,12 @@ pub(crate) use super::testing::{
 fn open_services_with_room(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     open_node_tab(window, cx, super::nodes::NodeTab::Services);
     window.render_frame(cx);
-    if !root_pilot(window, cx).read(cx).node_workspace.expanded {
+    if !root_pilot(window, cx)
+        .read(cx)
+        .node_workspace
+        .read(cx)
+        .expanded
+    {
         window.click("node-expand", cx);
         window.render_frame(cx);
     }

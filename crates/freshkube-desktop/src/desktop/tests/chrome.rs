@@ -64,7 +64,7 @@ fn nothing_in_the_chrome_moves_while_talos_loads(cx: &mut TestAppContext) {
     }
     cx.update(|cx| {
         assert!(view.read(cx).loading());
-        assert!(view.read(cx).nodes_wait());
+        assert!(view.read(cx).nodes_wait(cx));
     });
     let motion = probe::count("table.loading-motion");
     assert!(frames_redrawing(cx, handle, "nodes") <= 1);
@@ -203,7 +203,7 @@ fn cached_screen_redraws_after_data_and_theme_change(cx: &mut TestAppContext) {
         draw(window, cx);
         assert_eq!(count("processes"), drawn, "nothing changed, nothing drawn");
         // New data.
-        let screen = view.read(cx).active_screen().unwrap();
+        let screen = view.read(cx).active_screen(cx).unwrap();
         screen.refresh(window, cx);
         draw(window, cx);
         let after_data = count("processes");
@@ -283,7 +283,7 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let stale = redrawn(&|view, cx| view.simulate_failure(cx));
     let after_stale = redrawn(&|_, cx| cx.notify());
     let attention = redrawn(&|view, cx| {
-        let attention = view.node_workspace.attention.clone();
+        let attention = view.node_workspace.read(cx).attention.clone();
         view.overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     });

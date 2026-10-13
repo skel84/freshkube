@@ -13,7 +13,7 @@ fn a_right_click_selects_its_node_and_its_menu_folds_the_healthy_ones(cx: &mut T
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace;
+        let nodes = &pilot.read(cx).node_workspace.read(cx);
         assert_eq!(nodes.row().unwrap().name, "talos-wk-fra1-03");
         // Selected as an arrow selects: the closed pane stays closed.
         assert!(!nodes.open);
@@ -34,5 +34,5 @@ fn a_right_click_selects_its_node_and_its_menu_folds_the_healthy_ones(cx: &mut T
     })
     .unwrap();
     cx.run_until_parked();
-    cx.read(|cx| assert!(!pilot.read(cx).node_workspace.healthy_collapsed()));
+    cx.read(|cx| assert!(!pilot.read(cx).node_workspace.read(cx).healthy_collapsed()));
 }

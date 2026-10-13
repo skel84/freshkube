@@ -78,7 +78,7 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
         expand_healthy_nodes(window, cx);
         window.click("nodes-view-table", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).node_workspace.view, NodeView::Table);
+        assert_eq!(view.read(cx).node_workspace.read(cx).view, NodeView::Table);
         assert_eq!(
             window
                 .within("nodes-page")
@@ -98,7 +98,7 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).node_workspace.view, NodeView::Cards);
+        assert_eq!(view.read(cx).node_workspace.read(cx).view, NodeView::Cards);
         assert_eq!(
             window
                 .within("nodes-page")

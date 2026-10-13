@@ -26,8 +26,8 @@ fn hover_first_card(
             crate::desktop::tests::settle_header(window, cx);
             window.click("nodes-view-cards", cx);
             window.render_frame(cx);
-            let first = pilot.read(cx).node_workspace.lines[0];
-            let row = &pilot.read(cx).node_workspace.rows[first];
+            let first = pilot.read(cx).node_workspace.read(cx).lines[0];
+            let row = &pilot.read(cx).node_workspace.read(cx).rows[first];
             let (first, name) = (row.id.clone(), row.name.clone());
             let card = window.find(first.clone()).bounds();
             let position = at(card, window.find("nodes-cards").bounds());
@@ -123,20 +123,29 @@ fn arrows_scroll_the_card_grid_to_the_selected_cards_row(cx: &mut TestAppContext
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
         assert_eq!(super::super::cards::card_columns(window), 3);
-        let lines = pilot.read(cx).node_workspace.lines.len();
+        let lines = pilot.read(cx).node_workspace.read(cx).lines.len();
         assert!(lines > 3, "only {lines} cards: no second row");
         // The second row starts below the list, so isn't drawn.
-        let fourth = pilot.read(cx).node_workspace.lines[3];
-        let fourth = pilot.read(cx).node_workspace.rows[fourth].id.clone();
+        let fourth = pilot.read(cx).node_workspace.read(cx).lines[3];
+        let fourth = pilot.read(cx).node_workspace.read(cx).rows[fourth]
+            .id
+            .clone();
         assert!(window.try_find(fourth.clone()).is_none());
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.focus, cx)
+            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
         });
         for _ in 0..4 {
             window.press("down", cx);
             window.render_frame(cx);
         }
-        let row = pilot.read(cx).node_workspace.row().unwrap().id.clone();
+        let row = pilot
+            .read(cx)
+            .node_workspace
+            .read(cx)
+            .row()
+            .unwrap()
+            .id
+            .clone();
         assert_eq!(row, fourth);
         assert!(window.find(fourth).visible());
     })

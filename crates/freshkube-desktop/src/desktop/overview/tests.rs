@@ -65,8 +65,11 @@ fn every_overview_card_opens_its_target_and_filter(cx: &mut TestAppContext) {
                 assert_eq!(pilot.read(cx).resources.read(cx).filter_value(cx), filter);
             }
             if id == "tile-memory" {
-                assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
-                assert!(pilot.read(cx).node_workspace.open);
+                assert_eq!(
+                    pilot.read(cx).node_workspace.read(cx).tab,
+                    NodeTab::Processes
+                );
+                assert!(pilot.read(cx).node_workspace.read(cx).open);
             }
             if id == "tile-services" {
                 assert!(
@@ -89,7 +92,13 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
         .update_window(handle, |_, window, cx| {
             pilot.update(cx, |pilot, cx| pilot.expand_attention(cx));
             window.render_frame(cx);
-            pilot.read(cx).node_workspace.attention.rows.clone()
+            pilot
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .attention
+                .rows
+                .clone()
         })
         .unwrap();
     assert!(rows.iter().any(|row| row.kind == "Node"));
@@ -145,7 +154,10 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
                 }
                 if id == "attention-open-node" {
                     assert_eq!(pilot.read(cx).page, Page::Nodes);
-                    assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Services);
+                    assert_eq!(
+                        pilot.read(cx).node_workspace.read(cx).tab,
+                        NodeTab::Services
+                    );
                 }
             });
         }
@@ -168,7 +180,7 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
     let (_runtime, handle, pilot) = fixture(cx, 1600., 1000.);
     let rows = cx
         .update_window(handle, |_, window, cx| {
-            let mut rows = pilot.read(cx).node_workspace.rows.as_ref().clone();
+            let mut rows = pilot.read(cx).node_workspace.read(cx).rows.as_ref().clone();
             let bad = rows
                 .iter_mut()
                 .find(|row| row.name == "talos-wk-fra1-02")
@@ -621,7 +633,13 @@ fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
         window.click("nav-overview", cx);
         pilot.update(cx, |pilot, cx| pilot.expand_attention(cx));
         window.render_frame(cx);
-        let rows = pilot.read(cx).node_workspace.attention.rows.clone();
+        let rows = pilot
+            .read(cx)
+            .node_workspace
+            .read(cx)
+            .attention
+            .rows
+            .clone();
         let mut expected = Vec::new();
         for row in &rows {
             let header = gpui_kit::ElementId::from(gpui_kit::SharedString::from(row.group.id()));
@@ -633,7 +651,13 @@ fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
         assert!(expected.len() > rows.len());
         assert_eq!(attention_lines(window, "needs-attention-rows"), expected);
         let failing = window.find(AttentionGroup::Failing.id());
-        let details = pilot.read(cx).node_workspace.attention.details.clone();
+        let details = pilot
+            .read(cx)
+            .node_workspace
+            .read(cx)
+            .attention
+            .details
+            .clone();
         assert!(
             failing
                 .label()
@@ -661,7 +685,7 @@ fn needs_attention_shows_eight_then_fifty_and_says_how_many_are_left(cx: &mut Te
     let (_runtime, handle, pilot) = fixture(cx, 1280., 1600.);
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-overview", cx);
-        let template = pilot.read(cx).node_workspace.rows[0].clone();
+        let template = pilot.read(cx).node_workspace.read(cx).rows[0].clone();
         let many: Vec<_> = (0..80)
             .map(|ix| {
                 let mut row = template.clone();
@@ -704,7 +728,7 @@ fn a_node_pane_shows_all_its_attention_rows_grouped(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        let mut rows = pilot.read(cx).node_workspace.rows.as_ref().clone();
+        let mut rows = pilot.read(cx).node_workspace.read(cx).rows.as_ref().clone();
         let node = rows
             .iter_mut()
             .find(|row| row.name == "talos-wk-fra1-02")
@@ -791,7 +815,7 @@ fn attention_rows_name_the_open_cluster(cx: &mut TestAppContext) {
         let open = pilot.kube_identity();
         assert!(open.is_some());
         let mut seen = 0;
-        for row in &pilot.node_workspace.attention.rows {
+        for row in &pilot.node_workspace.read(cx).attention.rows {
             for destination in [Some(&row.open), row.logs.as_ref(), row.open_node.as_ref()]
                 .into_iter()
                 .flatten()

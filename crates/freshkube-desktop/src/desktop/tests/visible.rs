@@ -203,8 +203,11 @@ fn a_node_pane_screen_hides_when_its_node_leaves(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(fakes.take().0, "processes hidden");
-    let pilot = view.read_with(cx, |pilot, _| {
-        (pilot.node_workspace.open, pilot.node_workspace.tab)
+    let pilot = view.read_with(cx, |pilot, cx| {
+        (
+            pilot.node_workspace.read(cx).open,
+            pilot.node_workspace.read(cx).tab,
+        )
     });
     assert_ne!(pilot, (true, NodeTab::Processes));
 }
@@ -217,8 +220,8 @@ fn nodes_stays_shown_around_its_pane_screen(cx: &mut TestAppContext) {
     use super::super::pages::PageId;
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let shown = |cx: &mut TestAppContext| {
-        view.read_with(cx, |pilot, _| {
-            let shown = pilot.shown_pages();
+        view.read_with(cx, |pilot, cx| {
+            let shown = pilot.shown_pages(cx);
             let mut ids = pilot
                 .pages
                 .iter()

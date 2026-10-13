@@ -8,7 +8,7 @@ fn a_cold_nodes_table_draws_its_header_over_the_loading_rows(cx: &mut TestAppCon
         window.press("secondary-2", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Nodes);
-        assert!(view.read(cx).nodes_wait());
+        assert!(view.read(cx).nodes_wait(cx));
         assert!(window.find("nodes-loading").visible());
         let header: Vec<_> = (0usize..12)
             .filter_map(|ix| window.try_find(("nodes-sort", ix)))

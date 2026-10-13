@@ -96,7 +96,7 @@ pub(super) fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entit
 /// Folding itself is exercised separately by Nodes' projection/entry-point tests.
 pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     let pilot = root_pilot(window, cx);
-    let nodes = &pilot.read(cx).node_workspace;
+    let nodes = &pilot.read(cx).node_workspace.read(cx);
     if nodes.healthy_collapsed() && nodes.view == NodeView::Table {
         window.click("nodes-healthy-toggle", cx);
         window.render_frame(cx);
@@ -118,15 +118,15 @@ pub(crate) fn screen<T: 'static>(pilot: &Entity<Pilot>, cx: &gpui_kit::App) -> E
 pub(crate) fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
     let view = root_pilot(window, cx);
     let page = view.read(cx).page;
-    let tab = view.read(cx).node_workspace.tab;
+    let tab = view.read(cx).node_workspace.read(cx).tab;
     window.click("nav-nodes", cx);
     window.render_frame(cx);
-    if view.read(cx).node_workspace.open {
+    if view.read(cx).node_workspace.read(cx).open {
         window.click("node-close", cx);
         window.render_frame(cx);
     }
     expand_healthy_nodes(window, cx);
-    let id = view.read(cx).node_workspace.rows[ix].id.clone();
+    let id = view.read(cx).node_workspace.read(cx).rows[ix].id.clone();
     window.click(id, cx);
     window.render_frame(cx);
     if page == Page::Nodes {
@@ -153,11 +153,12 @@ pub(crate) fn open_node_tab(
     let view = root_pilot(window, cx);
     let name = view.read(cx).selected_node.clone().unwrap();
     area(window, cx, "nav-nodes");
-    if !view.read(cx).node_workspace.open {
+    if !view.read(cx).node_workspace.read(cx).open {
         expand_healthy_nodes(window, cx);
         let id = view
             .read(cx)
             .node_workspace
+            .read(cx)
             .rows
             .iter()
             .find(|row| row.key.talos.as_ref() == Some(&name))
@@ -176,7 +177,7 @@ pub(crate) fn open_node_tab(
         window.click(tab.id(), cx);
     } else {
         for _ in 0..10 {
-            if view.read(cx).node_workspace.tab == tab {
+            if view.read(cx).node_workspace.read(cx).tab == tab {
                 break;
             }
             window.press("secondary-}", cx);
