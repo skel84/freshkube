@@ -1,6 +1,7 @@
 mod cards;
 mod keys;
 mod layout;
+mod menu;
 mod metrics;
 mod pane;
 mod projection;
