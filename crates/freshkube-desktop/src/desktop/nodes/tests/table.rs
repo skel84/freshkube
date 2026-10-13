@@ -140,7 +140,7 @@ fn nodes_empty_states_keep_the_shared_header_and_keyboard_context(cx: &mut TestA
             pilot.node_workspace.rows = std::sync::Arc::new(Vec::new());
             pilot.node_workspace.empty = Some(super::super::Empty::Loading);
             pilot.node_workspace.rebuild_lines();
-            window.focus(&pilot.node_focus, cx);
+            window.focus(&pilot.node_workspace.focus, cx);
             cx.notify();
         });
         window.render_frame(cx);
@@ -272,7 +272,9 @@ fn groups_tallies_and_glyphs_agree_and_arrows_skip_folded_healthy_rows(cx: &mut 
             Some("Failing · 2 nodes")
         );
         assert!(window.try_find("node-talos-cp-fra1-01").is_none());
-        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        pilot.update(cx, |pilot, cx| {
+            window.focus(&pilot.node_workspace.focus, cx)
+        });
         for name in ["talos-wk-fra1-02", "talos-wk-fra1-03", "talos-wk-fra1-01"] {
             window.press("down", cx);
             window.render_frame(cx);
@@ -356,10 +358,10 @@ fn text_filter_and_cards_empty_state_preserve_selection_and_target(cx: &mut Test
         window.render_frame(cx);
         assert!(pilot.read(cx).node_workspace.query_text.is_empty());
         assert!(window.find("nodes-cards").visible());
-        assert!(!pilot.read(cx).node_focus.is_focused(window));
+        assert!(!pilot.read(cx).node_workspace.focus.is_focused(window));
         window.press("escape", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_focus.is_focused(window));
+        assert!(pilot.read(cx).node_workspace.focus.is_focused(window));
         window.focus(
             &pilot
                 .read(cx)

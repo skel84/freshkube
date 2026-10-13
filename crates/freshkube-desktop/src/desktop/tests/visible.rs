@@ -53,8 +53,10 @@ impl ScreenPanel for Shown {
     fn refresh(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
 }
 
-/// Fake pages in the Etcd, Processes and Monitoring slots, writing to one
-/// log and one count.
+/// Fake pages in the Nodes, Etcd, Processes and Monitoring slots, writing
+/// to one log and one count. Nodes' fake hears the hooks while the shell
+/// keeps its workspace, so a node opens from code, not with a click on a
+/// row the fake doesn't draw.
 struct Fakes {
     log: Rc<RefCell<Vec<String>>>,
     told: Rc<Cell<usize>>,
@@ -77,13 +79,15 @@ impl Fakes {
             });
             ScreenHandle::new(page)
         };
-        let (etcd, processes, monitoring) = (
+        let (nodes, etcd, processes, monitoring) = (
+            fake("nodes", cx),
             fake("etcd", cx),
             fake("processes", cx),
             fake("monitoring", cx),
         );
         cx.update(|cx| {
             view.update(cx, |view, _| {
+                view.pages.insert(PageId::Nodes, nodes.clone());
                 view.pages.insert(PageId::Etcd, etcd.clone());
                 view.pages.insert(PageId::Processes, processes.clone());
                 view.pages.insert(PageId::Monitoring, monitoring.clone());
@@ -97,6 +101,20 @@ impl Fakes {
     fn take(&self) -> (String, usize) {
         let heard = std::mem::take(&mut *self.log.borrow_mut());
         (heard.join(", "), self.told.replace(0))
+    }
+}
+
+/// Opens the selected node's pane on Processes from code, as a link to a
+/// node's tab does.
+fn open_processes(
+    view: &Entity<Pilot>,
+) -> impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) + use<> {
+    let view = view.clone();
+    move |window, cx| {
+        let name = view.read(cx).selected_node.clone().unwrap();
+        view.update(cx, |view, cx| {
+            view.open_node_by_name(&name, super::super::nodes::NodeTab::Processes, window, cx)
+        })
     }
 }
 
@@ -133,13 +151,11 @@ fn a_page_hears_it_show_and_hide_as_the_user_navigates(cx: &mut TestAppContext) 
     let steps = [
         step("etcd", &navigate(Page::Etcd)),
         step("monitoring", &navigate(Page::Monitoring)),
-        step("processes tab", &|window, cx| {
-            open_node_tab(window, cx, NodeTab::Processes)
-        }),
+        step("processes tab", &open_processes(&view)),
         step("storage tab", &tab(NodeTab::Storage)),
         step("processes again", &tab(NodeTab::Processes)),
         step("pane closed", &|window, cx| {
-            window.click("node-close", cx);
+            view.update(cx, |view, cx| view.close_node(window, cx))
         }),
         step("overview", &navigate(Page::Overview)),
         step("monitoring again", &navigate(Page::Monitoring)),
@@ -149,11 +165,11 @@ fn a_page_hears_it_show_and_hide_as_the_user_navigates(cx: &mut TestAppContext) 
         [
             "etcd: etcd shown",
             "monitoring: monitoring shown, etcd hidden",
-            "processes tab: monitoring hidden, processes shown",
+            "processes tab: nodes shown, monitoring hidden, processes shown",
             "storage tab: processes hidden",
             "processes again: processes shown",
             "pane closed: processes hidden",
-            "overview: ",
+            "overview: nodes hidden",
             "monitoring again: monitoring shown",
         ]
     );
@@ -174,11 +190,10 @@ fn a_node_pane_screen_hides_when_its_node_leaves(cx: &mut TestAppContext) {
     use super::super::nodes::NodeTab;
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let fakes = Fakes::mount(&view, cx);
-    cx.update_window(handle, |_, window, cx| {
-        open_node_tab(window, cx, NodeTab::Processes)
-    })
-    .unwrap();
-    assert_eq!(fakes.take().0, "processes shown");
+    let open = open_processes(&view);
+    cx.update_window(handle, |_, window, cx| open(window, cx))
+        .unwrap();
+    assert_eq!(fakes.take().0, "nodes shown, processes shown");
     cx.update(|cx| {
         view.update(cx, |pilot, cx| {
             pilot.nodes.clear();
@@ -192,4 +207,45 @@ fn a_node_pane_screen_hides_when_its_node_leaves(cx: &mut TestAppContext) {
         (pilot.node_workspace.open, pilot.node_workspace.tab)
     });
     assert_ne!(pilot, (true, NodeTab::Processes));
+}
+
+/// Nodes shows around its pane's screen: while the pane shows Processes,
+/// both are shown, and the pane's other tabs leave Nodes alone shown.
+#[gpui_kit::test]
+fn nodes_stays_shown_around_its_pane_screen(cx: &mut TestAppContext) {
+    use super::super::nodes::NodeTab;
+    use super::super::pages::PageId;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let shown = |cx: &mut TestAppContext| {
+        view.read_with(cx, |pilot, _| {
+            let shown = pilot.shown_pages();
+            let mut ids = pilot
+                .pages
+                .iter()
+                .filter(|(_, handle)| shown.contains(handle))
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        })
+    };
+    cx.update_window(handle, |_, window, cx| {
+        open_node_tab(window, cx, NodeTab::Processes)
+    })
+    .unwrap();
+    let mut processes = vec![PageId::Nodes, PageId::Processes];
+    processes.sort();
+    assert_eq!(shown(cx), processes);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.show_node_tab(NodeTab::Overview, window, cx)
+        })
+    })
+    .unwrap();
+    assert_eq!(shown(cx), [PageId::Nodes]);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx))
+    })
+    .unwrap();
+    assert_eq!(shown(cx), [PageId::Etcd]);
 }

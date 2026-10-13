@@ -177,9 +177,11 @@ impl Pilot {
                         )
                     }),
             )
-            .when(
-                self.page == Page::Nodes && self.node_workspace.open,
-                |this| {
+            .when_some(
+                (self.page == Page::Nodes)
+                    .then(|| self.node_workspace.crumb())
+                    .flatten(),
+                |this, (node, tab)| {
                     this.child(div().text_color(p.faint).child("/"))
                         .child(
                             div()
@@ -187,19 +189,10 @@ impl Pilot {
                                 .truncate()
                                 .font_family(MONO_FONT)
                                 .text_size(dp(12.))
-                                .child(
-                                    self.node_workspace
-                                        .row()
-                                        .map(|row| row.name.clone())
-                                        .unwrap_or_default(),
-                                ),
+                                .child(node),
                         )
                         .child(div().text_color(p.faint).child("/"))
-                        .child(
-                            div()
-                                .text_size(dp(12.))
-                                .child(self.node_workspace.tab.label()),
-                        )
+                        .child(div().text_size(dp(12.)).child(tab))
                 },
             )
             .into_any_element()

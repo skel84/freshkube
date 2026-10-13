@@ -228,7 +228,12 @@ fn kubelet_links_to_its_scoped_pods(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Pods);
         assert_eq!(
-            pilot.read(cx).node_pods.read(cx).field_selector_value(),
+            pilot
+                .read(cx)
+                .node_workspace
+                .pods
+                .read(cx)
+                .field_selector_value(),
             Some("spec.nodeName=talos-wk-fra1-02")
         );
     })

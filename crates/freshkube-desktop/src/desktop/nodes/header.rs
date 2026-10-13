@@ -108,11 +108,11 @@ impl Pilot {
             .icon(IconName::RefreshCw)
             .accessibility_label("Refresh nodes")
             .tooltip_with_action("Refresh nodes", &page::Refresh, Some(page::SHELL_CONTEXT))
-            .on_click(page::dispatch(page::Refresh, &self.node_focus));
+            .on_click(page::dispatch(page::Refresh, &self.node_workspace.focus));
         header
             .foldable(
                 button,
-                page::action_item("Refresh", page::Refresh, &self.node_focus),
+                page::action_item("Refresh", page::Refresh, &self.node_workspace.focus),
             )
             .render(window, cx)
     }

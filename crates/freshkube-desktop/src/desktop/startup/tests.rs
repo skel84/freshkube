@@ -356,7 +356,7 @@ fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppCont
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.show_node_tab(crate::desktop::nodes::NodeTab::Pods, window, cx);
-            assert!(!pilot.node_history.read(cx).reading());
+            assert!(!pilot.node_workspace.history.read(cx).reading());
         });
         window.render_frame(cx);
         assert!(window.try_find("node-history").is_none());

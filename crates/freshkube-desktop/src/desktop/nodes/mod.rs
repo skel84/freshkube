@@ -140,6 +140,27 @@ pub(super) struct Nodes {
     /// the log's toolbar and notices.
     pub(super) logs_height: Option<Pixels>,
     pub(super) document: Entity<DetailPane>,
+    /// The table's and the cards' keyboard focus.
+    pub(super) focus: FocusHandle,
+    /// The pane's Pods tab: the Pods list scoped to the node.
+    pub(super) pods: Entity<crate::resources::ResourcesScreen>,
+    /// The pane's Overview CPU and memory charts.
+    pub(super) history: Entity<crate::monitoring::history::HistoryView>,
+    /// Each node's load averages over the last refreshes, for the cards'
+    /// sparklines.
+    pub(super) load_history: crate::presentation::LoadHistory,
+    /// The pane's System services tab.
+    pub(super) services: Entity<super::services::NodeServices>,
+    /// The pane's Logs tab: the shell's Talos log view.
+    logs: Entity<crate::logs::LogPanel>,
+    /// The Talos screens the pane's tabs embed, by their pages.
+    pub(super) screens:
+        std::collections::BTreeMap<super::pages::PageId, crate::screens::ScreenHandle>,
+    /// What needs attention, as the shell last derived it, for the pane's
+    /// Overview.
+    pub(super) attention: Arc<crate::presentation::attention::Attention>,
+    /// Why that list may be out of date.
+    pub(super) attention_stale: Option<SharedString>,
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +173,9 @@ enum Empty {
 impl Nodes {
     pub(super) fn new(
         runtime: tokio::runtime::Handle,
+        logs: Entity<crate::logs::LogPanel>,
+        // Example data keeps the Pods tab's list loading.
+        hold: bool,
         window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
@@ -176,7 +200,7 @@ impl Nodes {
                             .scroll_to_item(0, ScrollStrategy::Top);
                         cx.notify();
                     }
-                    InputEvent::PressEnter { .. } => window.focus(&pilot.node_focus, cx),
+                    InputEvent::PressEnter { .. } => window.focus(&pilot.node_workspace.focus, cx),
                     _ => {}
                 },
             );
@@ -233,12 +257,47 @@ impl Nodes {
             logs_height: None,
             split: freshkube_ui::inspector::InspectorSplit::new("nodes", cx),
             document,
+            focus: cx.focus_handle(),
+            pods: cx.new(|cx| {
+                crate::resources::ResourcesScreen::new(runtime.clone(), window, cx).holding(hold)
+            }),
+            history: cx
+                .new(|_| crate::monitoring::history::HistoryView::new(runtime.clone(), "node")),
+            load_history: Default::default(),
+            services: cx.new(|cx| super::services::NodeServices::new(window, cx)),
+            logs,
+            screens: Default::default(),
+            attention: Default::default(),
+            attention_stale: None,
         }
     }
     /// The motion over the table's loading rows, which the shell mounts
     /// beside the cached page, so its frames redraw neither.
     pub(super) fn loading_motion(&self) -> &Entity<freshkube_ui::table::LoadingMotion> {
         &self.loading_motion
+    }
+
+    /// The Talos screen the open pane shows, when its tab is one.
+    pub(super) fn pane_screen(&self) -> Option<super::pages::PageId> {
+        self.open.then(|| self.tab.screen()).flatten()
+    }
+
+    /// Whether the open pane shows the node's Talos log.
+    pub(super) fn shows_logs(&self) -> bool {
+        self.open && self.tab == NodeTab::Logs
+    }
+
+    /// The header's breadcrumb after Nodes: the open node and its tab.
+    pub(super) fn crumb(&self) -> Option<(SharedString, &'static str)> {
+        self.open.then(|| {
+            let name = self.row().map(|row| row.name.clone()).unwrap_or_default();
+            (name, self.tab.label())
+        })
+    }
+
+    /// The Talos screen the open pane shows, as its page's handle.
+    fn pane_handle(&self) -> Option<&crate::screens::ScreenHandle> {
+        self.screens.get(&self.pane_screen()?)
     }
 
     pub(super) fn row(&self) -> Option<&NodeRow> {
@@ -438,7 +497,7 @@ impl Pilot {
         self.column_changed();
         self.rail_marks =
             crate::desktop::shell::RailMarks::from_cards(&display.cards, self.fixture);
-        self.attention = Arc::new(crate::presentation::attention::build(
+        self.node_workspace.attention = Arc::new(crate::presentation::attention::build(
             &self.node_workspace.rows,
             self.registry
                 .active()
@@ -449,7 +508,7 @@ impl Pilot {
             self.kube_identity().as_deref(),
             chrono::Utc::now(),
         ));
-        let attention = self.attention.clone();
+        let attention = self.node_workspace.attention.clone();
         self.overview_page.update(cx, |overview, cx| {
             overview.set_display(Arc::new(display), cx);
             overview.set_attention(attention, cx);
@@ -505,7 +564,7 @@ impl Pilot {
             freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
         }
         self.sync_node_visibility(window, cx);
-        window.focus(&self.node_focus, cx);
+        window.focus(&self.node_workspace.focus, cx);
         cx.notify();
     }
 
@@ -547,7 +606,7 @@ impl Pilot {
     pub(super) fn sync_node_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_node_metrics(window, cx);
         let shown = self.page == Page::Nodes && self.node_workspace.open;
-        self.node_pods.update(cx, |pods, cx| {
+        self.node_workspace.pods.update(cx, |pods, cx| {
             pods.set_visible(
                 shown && self.node_workspace.tab == NodeTab::Pods,
                 window,
@@ -569,7 +628,7 @@ impl Pilot {
             .and_then(|row| row.key.kubernetes.clone())
             .map(|name| Subject::Node { name });
         let overview = shown && self.node_workspace.tab == NodeTab::Overview;
-        self.node_history.update(cx, |history, cx| {
+        self.node_workspace.history.update(cx, |history, cx| {
             history.set_subject(subject, cx);
             history.set_visible(overview, cx);
         });
@@ -579,7 +638,7 @@ impl Pilot {
 
     fn activate_node_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(row) = self.node_workspace.row().cloned() {
-            self.node_pods.update(cx, |pods, cx| {
+            self.node_workspace.pods.update(cx, |pods, cx| {
                 pods.set_node(row.key.kubernetes.as_deref(), window, cx)
             });
             if matches!(self.node_workspace.tab, NodeTab::Events | NodeTab::Yaml)
@@ -618,7 +677,7 @@ impl Pilot {
         } else if let Some(screen) = self.active_screen() {
             screen.focus(window, cx);
         } else {
-            window.focus(&self.node_focus, cx);
+            window.focus(&self.node_workspace.focus, cx);
         }
     }
 
@@ -630,7 +689,10 @@ impl Pilot {
             NodeTab::Logs => self
                 .logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx)),
-            NodeTab::Pods => self.node_pods.update(cx, |pods, cx| pods.focus(window, cx)),
+            NodeTab::Pods => self
+                .node_workspace
+                .pods
+                .update(cx, |pods, cx| pods.focus(window, cx)),
             NodeTab::Events | NodeTab::Yaml => self
                 .node_workspace
                 .document
@@ -713,11 +775,11 @@ impl Pilot {
     /// clears the filter, then closes the pane.
     pub(super) fn node_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let nodes = &self.node_workspace;
-        if nodes.open && (nodes.expanded || !self.node_focus.is_focused(window)) {
+        if nodes.open && (nodes.expanded || !self.node_workspace.focus.is_focused(window)) {
             if nodes.expanded {
                 self.toggle_node_expanded(cx);
             }
-            window.focus(&self.node_focus, cx);
+            window.focus(&self.node_workspace.focus, cx);
             cx.notify();
         } else if !nodes.query_text.is_empty() {
             self.clear_node_filter(window, cx);
@@ -730,7 +792,7 @@ impl Pilot {
     /// keyboard back to the table.
     pub(super) fn leave_node_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.node_workspace.query_text.is_empty() {
-            window.focus(&self.node_focus, cx);
+            window.focus(&self.node_workspace.focus, cx);
         } else {
             self.clear_node_filter(window, cx);
         }
