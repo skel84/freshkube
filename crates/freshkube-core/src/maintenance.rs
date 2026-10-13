@@ -30,6 +30,7 @@ use talos_rs::{
 use tokio::process::Command;
 
 use crate::errors::format_talos_error;
+use crate::failure::{Failure, FailureKind};
 use crate::kubeconfig_selection::{
     KubeconfigSelection, parse_pinned_kubeconfig, prepare_kubeconfig, run_roster_setup,
 };
@@ -1421,10 +1422,12 @@ where
     let target = request.target.clone();
     let talos_client = match load_talos_client(&request.paths, &target).await {
         Ok(client) => client,
-        Err(reason) => {
+        Err(failure) => {
             return Ok(BootstrapReadinessEvidence {
                 target,
-                talos: TalosReadinessEvidence::Unavailable { reason },
+                talos: TalosReadinessEvidence::Unavailable {
+                    reason: failure.message,
+                },
                 kubernetes: KubernetesReadinessEvidence::NotChecked,
             });
         }
@@ -1531,9 +1534,9 @@ where
                 }
             }
         }
-        Err(reason) => KubernetesReadinessEvidence::Unavailable {
+        Err(failure) => KubernetesReadinessEvidence::Unavailable {
             credentials_source,
-            reason,
+            reason: failure.message,
         },
     };
 
@@ -1555,22 +1558,23 @@ fn ensure_not_cancelled(is_cancelled: &impl Fn() -> bool) -> Result<(), Maintena
 async fn load_talos_client(
     paths: &BootstrapPaths,
     target: &AuthenticatedTarget,
-) -> Result<TalosClient, String> {
+) -> Result<TalosClient, Failure> {
     let path = paths.talosconfig_path.clone();
     let name = target.talos_context.clone();
     let context = tokio::task::spawn_blocking(move || {
-        let config = TalosConfig::load_from(&path).map_err(|error| format_talos_error(&error))?;
+        let config = TalosConfig::load_from(&path)
+            .map_err(|error| Failure::from_talos_formatted(&error))?;
         config
             .get_context(&name)
             .cloned()
-            .map_err(|error| format_talos_error(&error))
+            .map_err(|error| Failure::from_talos_formatted(&error))
     })
     .await
-    .map_err(|_| "Talos credential worker failed".to_string())??;
+    .map_err(|_| Failure::new(FailureKind::Other, "Talos credential worker failed"))??;
     let context = pinned_talos_context(context, &target.node);
     TalosClient::from_context(&context)
         .await
-        .map_err(|error| format_talos_error(&error))
+        .map_err(|error| Failure::from_talos_formatted(&error))
 }
 
 fn pinned_talos_context(
@@ -1665,22 +1669,25 @@ fn prepare_probe_kubeconfig(
 
 async fn collect_kubernetes_node_evidence(
     client: Client,
-) -> Result<Vec<KubernetesNodeEvidence>, String> {
+) -> Result<Vec<KubernetesNodeEvidence>, Failure> {
     let nodes: Api<Node> = Api::all(client);
     let response = nodes
         .list(&ListParams::default().limit(256))
         .await
-        .map_err(|error| format!("Kubernetes Node API request failed: {error}"))?;
+        .map_err(|error| {
+            let text = format!("Kubernetes Node API request failed: {error}");
+            Failure::new(Failure::from_kube(error).kind, text)
+        })?;
     if response
         .metadata
         .continue_
         .as_deref()
         .is_some_and(|value| !value.is_empty())
     {
-        return Err(
-            "Kubernetes node list exceeded the 256-node evidence limit; readiness is unknown"
-                .into(),
-        );
+        return Err(Failure::new(
+            FailureKind::Other,
+            "Kubernetes node list exceeded the 256-node evidence limit; readiness is unknown",
+        ));
     }
     Ok(response
         .items
@@ -1982,6 +1989,36 @@ impl ProgressLog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refused Node list reads as it did before the read carried a kind:
+    /// the sentence plus the kube error's text.
+    #[tokio::test]
+    async fn a_refused_node_list_keeps_its_sentence_and_gains_a_kind() {
+        use kube::client::Body;
+        let service = tower::service_fn(|_: http::Request<Body>| async {
+            Ok::<_, std::convert::Infallible>(
+                http::Response::builder()
+                    .status(403)
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        br#"{"kind":"Status","apiVersion":"v1","status":"Failure","message":"nodes is forbidden","reason":"Forbidden","code":403}"#.to_vec(),
+                    ))
+                    .unwrap(),
+            )
+        });
+        let client = Client::new(service, "default");
+        let expected = Api::<Node>::all(client.clone())
+            .list(&ListParams::default())
+            .await
+            .unwrap_err()
+            .to_string();
+        let failure = collect_kubernetes_node_evidence(client).await.unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Forbidden);
+        assert_eq!(
+            failure.message,
+            format!("Kubernetes Node API request failed: {expected}")
+        );
+    }
 
     fn disk(path: &str, readonly: bool, cdrom: bool) -> DiskInfo {
         DiskInfo {
