@@ -570,6 +570,10 @@ impl StreamSource for WorkloadLogs {
         self.access.clone()
     }
 
+    fn identity(&self) -> Option<ResourceIdentity> {
+        self.workload.clone()
+    }
+
     fn tag(key: &StreamKey) -> ServiceId {
         key.service()
     }

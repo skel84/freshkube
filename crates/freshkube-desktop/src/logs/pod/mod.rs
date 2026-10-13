@@ -651,6 +651,10 @@ impl StreamSource for PodLogs {
         self.access.clone()
     }
 
+    fn identity(&self) -> Option<ResourceIdentity> {
+        self.pod.clone()
+    }
+
     /// The container's name, which a single container's lines carry too.
     fn tag(key: &StreamKey) -> ServiceId {
         ServiceId::new(key.container.as_str())

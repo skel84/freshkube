@@ -2,12 +2,14 @@
 //! stream, the channel they all feed, and their retries. A workload's tab
 //! reads every container of its pods this way.
 //!
-//! Every stream feeds one channel, which one delivery task drains a frame
-//! at a time into a single `ingest`, however many containers write; the
-//! view places each line by its time among the retained lines. A stream
-//! that fails is read again with the watcher's backoff, jittered, while
-//! its container is still wanted. One refused for good (403, or 404) waits
-//! instead until its source reads it again.
+//! Every stream feeds one channel, which one delivery drains a frame at a
+//! time into a single `ingest`, however many containers write; the view
+//! places each line by its time among the retained lines. That channel and
+//! its delivery are a [`Watch`]: the containers' jobs send through senders
+//! taken from it, so a batch lands only while the feed it was sent into is
+//! still the set's. A stream that fails is read again with the watcher's
+//! backoff, jittered, while its container is still wanted. One refused for
+//! good (403, or 404) waits instead until its source reads it again.
 //!
 //! A source keeps a [`StreamSet`] and says, through [`StreamSource`], what
 //! its lines are tagged and how far back they start; [`StreamReads`] does
@@ -21,6 +23,7 @@ use freshkube_core::logs::{LogEvent, ServiceId};
 use freshkube_core::resources::{
     Failure, FailureKind, LogPosition, LogRequest, PodLogUpdate, Termination, follow_pod_log,
 };
+use freshkube_reads::{Pace, Watch};
 use gpui_kit::{App, Context, Task};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
@@ -41,6 +44,13 @@ pub(super) const EXAMPLE_INTERVAL: Duration = Duration::from_millis(1_500);
 const EXAMPLE_TICK: Duration = Duration::from_millis(250);
 /// How often the delivery task hands what the streams sent to the view.
 const DELIVERY_INTERVAL: Duration = Duration::from_millis(16);
+/// The feed's delivery: at most a full queue a turn, however busy the
+/// containers, and no sooner than [`DELIVERY_INTERVAL`] after the last.
+const FEED_PACE: Pace = Pace {
+    capacity: STREAM_QUEUE_CAPACITY,
+    most: STREAM_QUEUE_CAPACITY,
+    every: DELIVERY_INTERVAL,
+};
 /// A failed stream's first retry, doubling up to the last, as the pod
 /// watch backs off.
 pub(super) const RETRY_FIRST: Duration = Duration::from_secs(1);
@@ -150,12 +160,6 @@ pub(super) struct Fed {
     pub(super) update: PodLogUpdate,
 }
 
-/// The channel every stream sends into, and the one task that drains it.
-struct Feed {
-    sender: mpsc::Sender<Fed>,
-    _delivery: Task<()>,
-}
-
 /// Wall time by the executor's clock: anchored once, then stepped by it,
 /// so tests advance it with the clock instead of sleeping.
 #[derive(Clone, Copy)]
@@ -186,7 +190,9 @@ pub(super) struct StreamSet {
     pub(super) runtime: Handle,
     pub(super) clock: Clock,
     pub(super) streams: BTreeMap<StreamKey, Stream>,
-    feed: Option<Feed>,
+    /// The channel every stream sends into and its one delivery, for the
+    /// object the set reads.
+    feed: Watch<Fed, Option<ResourceIdentity>>,
     /// Writes the example containers' lines while any stream writes on.
     example_writer: Option<Task<()>>,
     /// Failures in a row of each container, for its retry's backoff.
@@ -207,7 +213,7 @@ impl StreamSet {
             runtime,
             clock,
             streams: BTreeMap::new(),
-            feed: None,
+            feed: Watch::default(),
             example_writer: None,
             failures: BTreeMap::new(),
             jitter: Jitter::new(),
@@ -221,7 +227,7 @@ impl StreamSet {
     /// far each was read.
     pub(super) fn drop_streams(&mut self) {
         self.streams.clear();
-        self.feed = None;
+        self.feed.stop();
         self.example_writer = None;
     }
 
@@ -245,6 +251,9 @@ pub(super) trait StreamSource: LogSource + Sized + 'static {
     fn reads_mut(&mut self) -> &mut StreamSet;
 
     fn access(&self) -> Option<KubeAccess>;
+
+    /// The object whose containers the set reads, which the feed is for.
+    fn identity(&self) -> Option<ResourceIdentity>;
 
     /// The tag a container's lines carry.
     fn tag(key: &StreamKey) -> ServiceId;
@@ -286,8 +295,8 @@ pub(super) trait StreamReads: Sized + 'static {
         cx: &mut Context<Self>,
     ) -> bool;
 
-    /// The channel every stream sends into, opened with its delivery task
-    /// on first use.
+    /// The channel every stream sends into, opened with its delivery on
+    /// first use.
     fn feed(&mut self, cx: &mut Context<Self>) -> mpsc::Sender<Fed>;
 
     /// Applies what every stream sent since the last delivery: one ingest,
@@ -420,35 +429,21 @@ impl<S: StreamSource> StreamReads for LogView<S> {
     }
 
     fn feed(&mut self, cx: &mut Context<Self>) -> mpsc::Sender<Fed> {
-        if let Some(feed) = &self.source().reads().feed {
-            return feed.sender.clone();
+        if let Some(sender) = self.source().reads().feed.sender() {
+            return sender;
         }
-        let (sender, mut receiver) = mpsc::channel::<Fed>(STREAM_QUEUE_CAPACITY);
-        let delivery = cx.spawn(async move |weak, cx| {
-            while let Some(first) = receiver.recv().await {
-                let mut batch = vec![first];
-                // At most a full queue per turn, then yield, however busy
-                // the containers.
-                while batch.len() < STREAM_QUEUE_CAPACITY {
-                    let Ok(fed) = receiver.try_recv() else {
-                        break;
-                    };
-                    batch.push(fed);
-                }
-                if weak
-                    .update(cx, |view, cx| view.apply_fed(batch, cx))
-                    .is_err()
-                {
-                    return;
-                }
-                cx.background_executor().timer(DELIVERY_INTERVAL).await;
-            }
-        });
-        self.source_mut().reads_mut().feed = Some(Feed {
-            sender: sender.clone(),
-            _delivery: delivery,
-        });
-        sender
+        let identity = self.source().identity();
+        let reads = self.source_mut().reads_mut();
+        // The feed has no work of its own: the streams send through senders
+        // taken from it, and example containers write on the GPUI clock.
+        reads.feed.open(
+            identity,
+            FEED_PACE,
+            |view: &mut Self| &mut view.source_mut().reads_mut().feed,
+            |view, batch, cx| view.apply_fed(batch, cx),
+            cx,
+        );
+        reads.feed.sender().expect("an open feed holds its channel")
     }
 
     fn apply_fed(&mut self, batch: Vec<Fed>, cx: &mut Context<Self>) {
