@@ -266,7 +266,11 @@ impl ResourcesScreen {
                                         FailureKind::Forbidden => {
                                             "Not permitted to read pods' use".to_owned()
                                         }
-                                        _ => failure.to_string(),
+                                        FailureKind::Config
+                                        | FailureKind::Unreachable
+                                        | FailureKind::Timeout
+                                        | FailureKind::Unauthorized
+                                        | FailureKind::Other => failure.to_string(),
                                     },
                                 )
                             },
