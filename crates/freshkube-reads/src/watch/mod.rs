@@ -53,6 +53,9 @@ pub struct Watch<T, I> {
     /// The running stream's channel, held weakly so that it never keeps
     /// the channel open by itself; see [`sender`](Self::sender).
     sender: Option<mpsc::WeakSender<T>>,
+    /// The sender that holds an [`open`](Self::open)ed stream's channel
+    /// open, as `start`'s work holds its own.
+    held: Option<mpsc::Sender<T>>,
     /// Rises with each batch delivered, so an owner derives its display
     /// data again only then.
     revision: u64,
@@ -71,6 +74,7 @@ impl<T, I> Default for Watch<T, I> {
             job: None,
             task: None,
             sender: None,
+            held: None,
             revision: 0,
             visible: true,
             stopped_by_hiding: false,
@@ -101,6 +105,36 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         Work: FnOnce(mpsc::Sender<T>) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
+        let sender = self.begin(identity, pace, slot, apply, cx);
+        self.job = Some(OwnedJob::new(runtime.spawn(work(sender))));
+    }
+
+    /// Opens a stream for `identity` with no work of its own, fed only
+    /// through [`sender`](Self::sender), and delivered as `start`'s is:
+    /// many containers' jobs that share one delivery, or example data
+    /// written on the GPUI clock, which no Tokio thread should wake. It
+    /// stays open until the watch stops or starts again.
+    pub fn open<V: 'static>(
+        &mut self,
+        identity: I,
+        pace: Pace,
+        slot: impl Fn(&mut V) -> &mut Self + 'static,
+        apply: impl Fn(&mut V, Vec<T>, &mut Context<V>) + 'static,
+        cx: &mut Context<V>,
+    ) {
+        self.held = Some(self.begin(identity, pace, slot, apply, cx));
+    }
+
+    /// Drops any earlier stream and starts the delivery of a new one for
+    /// `identity`, returning the sender that feeds it.
+    fn begin<V: 'static>(
+        &mut self,
+        identity: I,
+        pace: Pace,
+        slot: impl Fn(&mut V) -> &mut Self + 'static,
+        apply: impl Fn(&mut V, Vec<T>, &mut Context<V>) + 'static,
+        cx: &mut Context<V>,
+    ) -> mpsc::Sender<T> {
         self.stop();
         self.stopped_by_hiding = false;
         self.identity = Some(identity.clone());
@@ -110,7 +144,6 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         };
         let (sender, mut receiver) = mpsc::channel(pace.capacity.max(1));
         self.sender = Some(sender.downgrade());
-        self.job = Some(OwnedJob::new(runtime.spawn(work(sender))));
         self.task = Some(cx.spawn(async move |this, cx| {
             let mut last = None;
             while let Some(first) = receiver.recv().await {
@@ -146,6 +179,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
                 if watch.is_current(&ticket) {
                     watch.job = None;
                     watch.sender = None;
+                    watch.held = None;
                     if let Some(task) = watch.task.take() {
                         // This runs in that task: let it finish.
                         task.detach();
@@ -154,6 +188,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
                 }
             });
         }));
+        sender
     }
 
     /// Lands one batch if `ticket` is still the latest start. Returns
@@ -198,6 +233,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         self.job = None;
         self.task = None;
         self.sender = None;
+        self.held = None;
     }
 
     /// Another sender into the running stream's channel, for work beside
@@ -215,9 +251,10 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         self.sender.as_ref()?.upgrade()
     }
 
-    /// Whether a stream runs: started, and neither stopped nor ended.
+    /// Whether a stream runs: started or opened, and neither stopped nor
+    /// ended.
     pub fn is_running(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.held.is_some()
     }
 
     /// The identity of the last start, kept after the stream stops.

@@ -71,6 +71,17 @@ impl Screen {
         feed
     }
 
+    /// Opens the watch for `identity` with no work of its own.
+    fn open(&mut self, identity: &'static str, cx: &mut Context<Self>) {
+        self.watch.open(
+            identity,
+            self.pace,
+            |screen: &mut Screen| &mut screen.watch,
+            Self::apply,
+            cx,
+        );
+    }
+
     fn apply(&mut self, batch: Vec<u32>, cx: &mut Context<Self>) {
         self.sizes.push(batch.len());
         for item in batch {
@@ -450,4 +461,70 @@ fn each_start_and_stop_moves_the_generation(cx: &mut TestAppContext) {
     assert!(started > first);
     screen.update(cx, |screen, _| screen.watch.stop());
     assert!(screen.read_with(cx, |screen, _| screen.watch.generation()) > started);
+}
+
+#[gpui_kit::test]
+fn an_opened_watch_is_fed_only_through_its_senders(cx: &mut TestAppContext) {
+    let pace = Pace {
+        every: EVERY,
+        ..PACE
+    };
+    let (_runtime, screen) = mount_paced(pace, cx);
+    screen.update(cx, |screen, cx| screen.open("a", cx));
+    let feed = screen.read_with(cx, |screen, _| {
+        assert!(screen.watch.is_running());
+        assert_eq!(screen.watch.identity(), Some(&"a"));
+        screen.watch.sender().expect("open")
+    });
+    // Sent on the GPUI thread, as an example writer does, and paced as a
+    // started stream's items are.
+    feed.try_send(1).unwrap();
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [1]);
+    feed.try_send(2).unwrap();
+    feed.try_send(3).unwrap();
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [1], "not yet");
+    cx.executor().advance_clock(EVERY);
+    cx.run_until_parked();
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.seen, [1, 2, 3]);
+        assert_eq!(screen.sizes, [1, 2]);
+    });
+
+    // No sender taken keeps it open: dropping this one ends nothing.
+    drop(feed);
+    cx.run_until_parked();
+    assert!(screen.read_with(cx, |screen, _| screen.watch.is_running()));
+}
+
+#[gpui_kit::test]
+fn an_opened_watch_closes_when_it_stops_or_starts_again(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    screen.update(cx, |screen, cx| screen.open("a", cx));
+    let first = screen.read_with(cx, |screen, _| screen.watch.sender().expect("open"));
+    screen.update(cx, |screen, cx| screen.open("b", cx));
+    // A dropped delivery lets its channel go once the executor runs.
+    cx.run_until_parked();
+    assert!(first.is_closed(), "opening again dropped the first");
+    assert!(first.try_send(1).is_err());
+
+    let second = screen.read_with(cx, |screen, _| screen.watch.sender().expect("open"));
+    second.try_send(2).unwrap();
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [2]);
+    screen.update(cx, |screen, _| {
+        screen.watch.stop();
+        assert!(!screen.watch.is_running());
+        assert!(screen.watch.sender().is_none());
+    });
+    cx.run_until_parked();
+    assert!(second.is_closed());
+
+    // A start replaces an opened stream too.
+    screen.update(cx, |screen, cx| screen.open("a", cx));
+    let opened = screen.read_with(cx, |screen, _| screen.watch.sender().expect("open"));
+    let _feed = start(&screen, &runtime, "a", cx);
+    cx.run_until_parked();
+    assert!(opened.is_closed());
 }
