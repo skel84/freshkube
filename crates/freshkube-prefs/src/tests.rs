@@ -438,3 +438,22 @@ fn a_limited_document_refuses_a_large_file_and_a_directory() {
     std::fs::create_dir(document.path()).unwrap();
     assert!(document.load().problem.unwrap().contains("regular file"));
 }
+
+#[test]
+fn an_update_of_a_file_a_limited_document_refuses_returns_the_error_and_saves_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory).limited_to(16);
+    let big = "{\"keep\": \"0123456789abcdef\"}\n";
+    std::fs::write(document.path(), big).unwrap();
+    let mut called = false;
+    let result = document.update(|_| called = true);
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    assert!(!called, "change must not run on a refused file");
+    assert_eq!(std::fs::read_to_string(document.path()).unwrap(), big);
+
+    std::fs::remove_file(document.path()).unwrap();
+    std::fs::create_dir(document.path()).unwrap();
+    assert!(document.update(|_| called = true).is_err());
+    assert!(!called);
+    assert!(document.path().is_dir());
+}
