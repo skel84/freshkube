@@ -151,6 +151,16 @@ pub(super) struct Nodes {
     pub(super) load_history: crate::presentation::LoadHistory,
     /// The pane's System services tab.
     pub(super) services: Entity<super::services::NodeServices>,
+    /// The pane's Logs tab: the shell's Talos log view.
+    pub(super) logs: Entity<crate::logs::LogPanel>,
+    /// The Talos screens the pane's tabs embed, by their pages.
+    pub(super) screens:
+        std::collections::BTreeMap<super::pages::PageId, crate::screens::ScreenHandle>,
+    /// What needs attention, as the shell last derived it, for the pane's
+    /// Overview.
+    pub(super) attention: Arc<crate::presentation::attention::Attention>,
+    /// Why that list may be out of date.
+    pub(super) attention_stale: Option<SharedString>,
 }
 
 #[derive(Clone, Debug)]
@@ -163,6 +173,7 @@ enum Empty {
 impl Nodes {
     pub(super) fn new(
         runtime: tokio::runtime::Handle,
+        logs: Entity<crate::logs::LogPanel>,
         window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
@@ -250,6 +261,10 @@ impl Nodes {
                 .new(|_| crate::monitoring::history::HistoryView::new(runtime.clone(), "node")),
             load_history: Default::default(),
             services: cx.new(|cx| super::services::NodeServices::new(window, cx)),
+            logs,
+            screens: Default::default(),
+            attention: Default::default(),
+            attention_stale: None,
         }
     }
     /// The motion over the table's loading rows, which the shell mounts
@@ -274,6 +289,11 @@ impl Nodes {
             let name = self.row().map(|row| row.name.clone()).unwrap_or_default();
             (name, self.tab.label())
         })
+    }
+
+    /// The Talos screen the open pane shows, as its page's handle.
+    pub(super) fn pane_handle(&self) -> Option<&crate::screens::ScreenHandle> {
+        self.screens.get(&self.pane_screen()?)
     }
 
     pub(super) fn row(&self) -> Option<&NodeRow> {
@@ -473,7 +493,7 @@ impl Pilot {
         self.column_changed();
         self.rail_marks =
             crate::desktop::shell::RailMarks::from_cards(&display.cards, self.fixture);
-        self.attention = Arc::new(crate::presentation::attention::build(
+        self.node_workspace.attention = Arc::new(crate::presentation::attention::build(
             &self.node_workspace.rows,
             self.registry
                 .active()
@@ -484,7 +504,7 @@ impl Pilot {
             self.kube_identity().as_deref(),
             chrono::Utc::now(),
         ));
-        let attention = self.attention.clone();
+        let attention = self.node_workspace.attention.clone();
         self.overview_page.update(cx, |overview, cx| {
             overview.set_display(Arc::new(display), cx);
             overview.set_attention(attention, cx);

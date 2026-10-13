@@ -61,7 +61,8 @@ impl Pilot {
     }
 
     /// The node pane's attention card: every row of one node.
-    pub(in crate::desktop) fn render_attention(
+    /// The node pane's attention rows, from what the shell handed Nodes.
+    pub(in crate::desktop) fn render_node_attention(
         &self,
         node: &str,
         cx: &Context<Self>,
@@ -72,8 +73,17 @@ impl Pilot {
                 pilot.open_destination(destination, window, cx)
             });
         });
-        let stale = self.attention_stale();
-        render_attention(&self.attention, Some(node), true, stale, &on_open, None, cx)
+        let nodes = &self.node_workspace;
+        let stale = nodes.attention_stale.clone();
+        render_attention(
+            &nodes.attention,
+            Some(node),
+            true,
+            stale,
+            &on_open,
+            None,
+            cx,
+        )
     }
 }
 

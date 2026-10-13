@@ -283,7 +283,7 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let stale = redrawn(&|view, cx| view.simulate_failure(cx));
     let after_stale = redrawn(&|_, cx| cx.notify());
     let attention = redrawn(&|view, cx| {
-        let attention = view.attention.clone();
+        let attention = view.node_workspace.attention.clone();
         view.overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     });

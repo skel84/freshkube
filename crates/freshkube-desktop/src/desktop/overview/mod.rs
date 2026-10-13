@@ -319,8 +319,8 @@ impl super::Pilot {
 
     /// Hands the node pane and Overview this attention list.
     pub(super) fn set_attention(&mut self, attention: Attention, cx: &mut App) {
-        self.attention = Arc::new(attention);
-        let attention = self.attention.clone();
+        self.node_workspace.attention = Arc::new(attention);
+        let attention = self.node_workspace.attention.clone();
         self.overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     }

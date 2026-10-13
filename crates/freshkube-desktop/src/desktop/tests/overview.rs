@@ -75,6 +75,7 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
         assert!(window.find("tile-services").visible());
         assert!(
             view.read(cx)
+                .node_workspace
                 .attention
                 .rows
                 .iter()

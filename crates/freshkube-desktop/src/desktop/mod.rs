@@ -447,8 +447,6 @@ pub(crate) struct Pilot {
     menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     page: Page,
-    /// What needs attention, for a node's pane; Overview holds the same.
-    attention: Arc<crate::presentation::attention::Attention>,
     appearance: Appearance,
     automatic: bool,
     elapsed: Duration,
@@ -835,7 +833,7 @@ impl Pilot {
             pilot,
             page: Page::Nodes,
         });
-        let mut node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
+        let mut node_workspace = nodes::Nodes::new(runtime.clone(), logs.clone(), window, cx);
         // The header the loading rows sit under before anything answers.
         node_workspace.rebuild_columns(!options.kubernetes_only);
         let node_pods = node_workspace.pods.clone();
@@ -849,6 +847,7 @@ impl Pilot {
         subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
             pilot.push_overview_state(cx);
             pilot.push_node_services_state(cx);
+            pilot.node_workspace.attention_stale = pilot.attention_stale();
             hosted.update(cx, |_, cx| cx.notify());
         }));
         // The status bar shows the running operation; the window refuses to
@@ -885,6 +884,17 @@ impl Pilot {
                 (page, handle)
             })
             .collect();
+        // The node pane embeds four of them.
+        node_workspace.screens = [
+            nodes::NodeTab::Processes,
+            nodes::NodeTab::Storage,
+            nodes::NodeTab::Network,
+            nodes::NodeTab::Diagnostics,
+        ]
+        .into_iter()
+        .filter_map(nodes::NodeTab::screen)
+        .filter_map(|id| Some((id, pages.get(&id)?.clone())))
+        .collect();
         let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
         // Its height and whether it shows are laid out by the shell.
@@ -1054,7 +1064,6 @@ impl Pilot {
             menu_state: None,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
-            attention: Default::default(),
             appearance: Appearance::System,
             automatic: true,
             elapsed: Duration::ZERO,
@@ -1113,6 +1122,7 @@ impl Pilot {
         // Overview's first frame needs no notify of the shell to know where
         // things stand.
         view.push_overview_state(cx);
+        view.node_workspace.attention_stale = view.attention_stale();
         view
     }
 

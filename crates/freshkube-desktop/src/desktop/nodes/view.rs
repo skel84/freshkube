@@ -305,7 +305,7 @@ impl Pilot {
                 .child(
                     v_flex()
                         .gap(dp(12.))
-                        .child(self.render_attention(row.name.as_ref(), cx))
+                        .child(self.render_node_attention(row.name.as_ref(), cx))
                         .children(
                             row.problems
                                 .iter()
@@ -351,7 +351,7 @@ impl Pilot {
                     .min_h_0()
                     .track_scroll(&self.node_workspace.logs_scroll)
                     .when(short, |this| {
-                        let logs = self.logs.downgrade();
+                        let logs = self.node_workspace.logs.downgrade();
                         let pilot = cx.entity().downgrade();
                         this.overflow_y_scroll()
                             .restrict_scroll_to_axis()
@@ -366,7 +366,12 @@ impl Pilot {
                             .px(dp(PANE_PADDING))
                             .pt(dp(freshkube_ui::page::PANE_PADDING_Y))
                             .pb(dp(PANE_PADDING))
-                            .child(self.logs.clone().cached(super::super::cached_page_style())),
+                            .child(
+                                self.node_workspace
+                                    .logs
+                                    .clone()
+                                    .cached(super::super::cached_page_style()),
+                            ),
                     )
                     .into_any_element()
             }
@@ -374,7 +379,8 @@ impl Pilot {
                 self.node_workspace.document.clone().into_any_element()
             }
             _ => inset(
-                self.active_screen()
+                self.node_workspace
+                    .pane_handle()
                     .map(|screen| screen.view().into_any_element())
                     .unwrap_or_else(|| div().into_any_element()),
             ),
@@ -422,7 +428,7 @@ impl Pilot {
 
     fn render_node_tabs(&self, row: &NodeRow, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let collecting = self.logs.read(cx).collecting_count() > 0;
+        let collecting = self.node_workspace.logs.read(cx).collecting_count() > 0;
         let workspace = &self.node_workspace;
         // Events and YAML sit in More, so while one shows, More is the
         // strip's active place.
