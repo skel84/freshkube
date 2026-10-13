@@ -331,7 +331,7 @@ impl Pilot {
             Reading::Waiting
         };
         if crate::screens::set_reading(reading.clone(), cx) {
-            for (_, screen) in &self.screens {
+            for (_, screen) in self.pages.iter().filter(|(id, _)| id.is_screen()) {
                 App::notify(cx, screen.view().entity_id());
             }
         }

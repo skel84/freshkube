@@ -2,19 +2,20 @@
 //! [`ScreenHandle`] as the Talos screens, and what the shell does with
 //! what every page asks of it.
 //!
-//! Overview, Nodes and System services have handles too, whose hooks do
-//! nothing but hear System services' row actions: the shell feeds what
-//! they draw.
-//!
+//! Every page's handle sits in the shell's one map (`Pilot::pages`).
 //! Resources, Monitoring, Observability, Applications and Settings take
-//! their part of the shell's [`PageSource`] and hear
-//! [`set_visible`](ScreenPanel::set_visible) through their handle, which is
-//! where they drop their reads on hide, and the shell hears their events
-//! through it as [`PageEvent`]s. Their refreshes and status still go the
-//! old way until #579's step 3 keeps every page in one map.
+//! their part of the shell's [`PageSource`] through it, hear
+//! [`set_visible`](ScreenPanel::set_visible), which is where they drop
+//! their reads on hide, refresh and give their status line through it, and
+//! the shell hears their events through it as [`PageEvent`]s.
+//!
+//! Overview, Nodes and System services have handles too. The shell feeds
+//! what they draw, so their hooks do nothing, but for System services'
+//! status line and row actions.
 
 use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
+use super::pages::PageId;
 use super::settings::SettingsPage;
 use super::system_services::{ServiceEvent, SystemServices};
 use super::{Page, PageHost, Pilot, nodes};
@@ -27,6 +28,7 @@ use crate::screens::{
 };
 use freshkube_core::resources::builtin;
 use freshkube_ui::status::Segment;
+use std::collections::BTreeMap;
 
 /// Hears one event type of a page's and hands it on as a [`PageEvent`].
 fn hear<P, E>(
@@ -265,10 +267,7 @@ impl ScreenPanel for SettingsPage {
 }
 
 impl Pilot {
-    /// The handles of the pages that aren't Talos screens: Overview, Nodes
-    /// and System services, whose hooks do nothing, then the entity pages in
-    /// the order the shell told them they showed or hid before they had
-    /// them.
+    /// The handles of the pages that aren't Talos screens, by their keys.
     pub(super) fn page_handles(
         [overview, nodes]: [&Entity<PageHost>; 2],
         services: &Entity<SystemServices>,
@@ -277,19 +276,22 @@ impl Pilot {
         applications: &Entity<ApplicationsPage>,
         settings: &Entity<SettingsPage>,
         resources: &Entity<ResourcesScreen>,
-    ) -> Vec<(Page, ScreenHandle)> {
-        vec![
-            (Page::Overview, ScreenHandle::new(overview.clone())),
-            (Page::Nodes, ScreenHandle::new(nodes.clone())),
-            (Page::SystemServices, ScreenHandle::new(services.clone())),
-            (Page::Monitoring, ScreenHandle::new(monitoring.clone())),
+    ) -> [(PageId, ScreenHandle); 8] {
+        [
+            (PageId::Overview, ScreenHandle::new(overview.clone())),
+            (PageId::Nodes, ScreenHandle::new(nodes.clone())),
+            (PageId::SystemServices, ScreenHandle::new(services.clone())),
+            (PageId::Monitoring, ScreenHandle::new(monitoring.clone())),
             (
-                Page::Observability,
+                PageId::Observability,
                 ScreenHandle::new(observability.clone()),
             ),
-            (Page::Applications, ScreenHandle::new(applications.clone())),
-            (Page::Settings, ScreenHandle::new(settings.clone())),
-            (Page::Resources, ScreenHandle::new(resources.clone())),
+            (
+                PageId::Applications,
+                ScreenHandle::new(applications.clone()),
+            ),
+            (PageId::Settings, ScreenHandle::new(settings.clone())),
+            (PageId::Resources, ScreenHandle::new(resources.clone())),
         ]
     }
 
@@ -299,13 +301,13 @@ impl Pilot {
     /// a subscription hears only what is emitted after the update it was
     /// made in.
     pub(super) fn subscribe_pages(
-        pages: &[(Page, ScreenHandle)],
+        pages: &BTreeMap<PageId, ScreenHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
         let pilot = cx.weak_entity();
         let mut subscriptions = Vec::new();
-        for (_, page) in pages {
+        for page in pages.values() {
             let pilot = pilot.clone();
             subscriptions.extend(page.subscribe(window, cx, move |event, window, cx| {
                 let _ = pilot.update(cx, |this, cx| this.page_event(event, window, cx));
@@ -314,15 +316,15 @@ impl Pilot {
         subscriptions
     }
 
-    /// The handle of the page that shows: a Talos screen, on its own page
-    /// or in the node pane's selected tab, or an entity page.
+    /// The handle of the page that shows: the node pane's selected tab
+    /// when it is a Talos screen and Nodes shows it, or else the page's.
     pub(super) fn shown_page(&self) -> Option<ScreenHandle> {
-        self.active_screen().or_else(|| {
-            self.pages
-                .iter()
-                .find(|(page, _)| *page == self.page)
-                .map(|(_, handle)| handle.clone())
-        })
+        let pane = self.page == Page::Nodes && self.node_workspace.open;
+        let id = pane
+            .then(|| self.node_workspace.tab.screen())
+            .flatten()
+            .unwrap_or(self.page.id());
+        self.pages.get(&id).cloned()
     }
 
     /// What a page asks of the shell.

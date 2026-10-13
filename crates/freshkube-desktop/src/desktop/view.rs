@@ -24,57 +24,20 @@ impl Render for Pilot {
             self.column_reveal = None;
         }
         let page = match self.page {
-            Page::Observability => self
-                .observability
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
             // Not cached: a cached view that draws again makes every cached
             // view inside it draw again, so a cursor moving over one chart
             // would redraw all the panels. Drawn with the shell, the page
             // only places its cached panels, and only the one under the
             // pointer draws again.
             Page::Monitoring => self.monitoring.clone().into_any_element(),
-            Page::Settings => self
-                .settings_page
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            Page::Applications => self
-                .applications
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            Page::Resources => self
-                .resources
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            _ if self.kubernetes_only.is_some()
-                && !matches!(self.page, Page::Overview | Page::Health | Page::Nodes) =>
-            {
+            page if self.kubernetes_only.is_some() && page.needs_talos() => {
                 self.render_needs_talosconfig(cx)
             }
-            Page::Nodes => self
-                .nodes_page
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            Page::Overview => self
-                .overview_page
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-            Page::SystemServices => self
-                .services_page
-                .clone()
-                .cached(cached_page_style())
-                .into_any_element(),
-
-            // Screens redraw when their own state changes, not with the shell.
-            _ => self
-                .active_screen()
-                .map(|screen| screen.view().cached(cached_page_style()).into_any_element())
+            // Pages redraw when their own state changes, not with the shell.
+            page => self
+                .pages
+                .get(&page.id())
+                .map(|page| page.view().cached(cached_page_style()).into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
         };
         v_flex()

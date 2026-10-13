@@ -84,19 +84,9 @@ impl Fakes {
         );
         cx.update(|cx| {
             view.update(cx, |view, _| {
-                for (kind, handle) in view.screens.iter_mut() {
-                    match kind {
-                        PageId::Etcd => *handle = etcd.clone(),
-                        PageId::Processes => *handle = processes.clone(),
-                        _ => {}
-                    }
-                }
-                let (_, slot) = view
-                    .pages
-                    .iter_mut()
-                    .find(|(page, _)| *page == Page::Monitoring)
-                    .expect("Monitoring has a handle");
-                *slot = monitoring.clone();
+                view.pages.insert(PageId::Etcd, etcd.clone());
+                view.pages.insert(PageId::Processes, processes.clone());
+                view.pages.insert(PageId::Monitoring, monitoring.clone());
             })
         });
         fakes

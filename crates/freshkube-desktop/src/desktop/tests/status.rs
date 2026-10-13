@@ -128,11 +128,10 @@ fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContex
     cx.update(|cx| {
         view.update(cx, |view, _| {
             let slot = view
-                .screens
-                .iter_mut()
-                .find(|(kind, _)| *kind == PageId::Etcd)
+                .pages
+                .get_mut(&PageId::Etcd)
                 .expect("etcd has a screen");
-            slot.1 = crate::screens::ScreenHandle::new(screen.clone());
+            *slot = crate::screens::ScreenHandle::new(screen.clone());
         })
     });
     cx.update_window(handle, |_, window, cx| {

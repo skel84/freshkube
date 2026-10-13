@@ -254,6 +254,22 @@ impl Page {
         }
     }
 
+    /// Whether the page reads Talos alone, so that without a talosconfig
+    /// it shows how to add one instead.
+    pub(super) fn needs_talos(self) -> bool {
+        !matches!(
+            self,
+            Self::Overview
+                | Self::Nodes
+                | Self::Health
+                | Self::Resources
+                | Self::Monitoring
+                | Self::Observability
+                | Self::Applications
+                | Self::Settings
+        )
+    }
+
     /// The page's key when a Talos screen draws it.
     pub(super) fn screen(self) -> Option<PageId> {
         Some(self.id()).filter(|id| id.is_screen())
@@ -458,8 +474,7 @@ impl Pilot {
     /// knows does nothing.
     pub(super) fn sync_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let shown = self.shown_page();
-        let pages = self.pages.iter().map(|(_, handle)| handle);
-        for handle in pages.chain(self.screens.iter().map(|(_, handle)| handle)) {
+        for handle in self.pages.values() {
             handle.set_visible(shown.as_ref() == Some(handle), window, cx);
         }
     }
