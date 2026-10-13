@@ -17,6 +17,7 @@ mod menu_tests;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
+mod page_map;
 mod pages;
 #[cfg(test)]
 mod proof_tests;
@@ -56,9 +57,8 @@ use crate::{
         shell as pod_shell,
     },
     screens::{
-        DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
-        OperationsScreen, PageSource, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel,
-        ScreenSource, SecurityScreen, StorageScreen, WorkloadsScreen,
+        LifecycleScreen, LiveSource, PageSource, ScreenEvent, ScreenHandle, ScreenSource,
+        WorkloadsScreen,
     },
     state::Snapshot,
     text_size, theme,
@@ -771,133 +771,38 @@ impl Pilot {
             )
         });
         let mut subscriptions = Self::subscribe_shell(window, cx);
-        let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
-        // Overview is the first page; logs collect in the background until
-        // Logs is shown.
-        logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let age_label = cx.new(|_| switch::AgeLabel::new());
-        let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
-        let node_workspace = cx.new(|cx| {
-            let mut nodes =
-                nodes::Nodes::new(runtime.clone(), logs.clone(), hold.lists, window, cx);
-            // The header the loading rows sit under before anything answers.
-            nodes.rebuild_columns(!options.kubernetes_only);
-            nodes
-        });
-        let health = cx.new(|cx| WorkloadsScreen::new(runtime.clone(), window, cx));
-        let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
-        let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
-            .into_iter()
-            .map(|page| {
-                let runtime = runtime.clone();
-                let handle = match page {
-                    PageId::Processes => Self::screen(ProcessesScreen::new, runtime, window, cx),
-                    PageId::Storage => Self::screen(StorageScreen::new, runtime, window, cx),
-                    PageId::Network => Self::screen(NetworkScreen::new, runtime, window, cx),
-                    PageId::Diagnostics => {
-                        Self::screen(DiagnosticsScreen::new, runtime, window, cx)
-                    }
-                    PageId::Etcd => {
-                        let etcd = options.debug.etcd;
-                        Self::screen(
-                            move |runtime, window, cx| {
-                                EtcdScreen::new(runtime, window, cx).with_example(etcd)
-                            },
-                            runtime,
-                            window,
-                            cx,
-                        )
-                    }
-                    PageId::Health => ScreenHandle::new(health.clone()),
-                    PageId::Security => Self::screen(SecurityScreen::new, runtime, window, cx),
-                    PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
-                    PageId::Operations => Self::screen(OperationsScreen::new, runtime, window, cx),
-                    _ => unreachable!("SCREENS holds the Talos screens alone"),
-                };
-                (page, handle)
-            })
-            .collect();
-        // The node pane embeds four of them.
-        let screens = [
-            nodes::NodeTab::Processes,
-            nodes::NodeTab::Storage,
-            nodes::NodeTab::Network,
-            nodes::NodeTab::Diagnostics,
-        ]
-        .into_iter()
-        .filter_map(nodes::NodeTab::screen)
-        .filter_map(|id| Some((id, pages.get(&id)?.clone())))
-        .collect();
-        node_workspace.update(cx, |nodes, _| nodes.screens = screens);
-        let resources =
-            cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx).holding(hold.lists));
-        let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
-        // Its height and whether it shows are laid out by the shell.
-        let custom = cx.new(|_| CustomResources::new(runtime.clone()));
-        let secrets = options.keyring.then(|| -> crate::secrets::Secrets {
-            std::sync::Arc::new(crate::secrets::SystemStore)
-        });
-        let monitoring = cx.new(|cx| {
-            let mut page = MonitoringPage::new(
-                runtime.clone(),
-                options.preferences.as_deref(),
-                secrets.clone(),
-                cx,
-            );
-            if hold.monitoring {
-                page.hold_examples();
-            }
-            page
-        });
-        let observability = cx.new(|cx| {
-            let mut page = crate::observability::ObservabilityPage::new(
-                options.fixture,
-                runtime.clone(),
-                options.preferences.as_deref(),
-                secrets,
-                window,
-                cx,
-            );
-            if hold.coroot {
-                page.hold_examples();
-            }
-            page
-        });
-        let applications = cx.new(|cx| {
-            crate::applications::ApplicationsPage::new(
-                runtime.clone(),
-                options.debug.applications,
-                hold.applications,
-                window,
-                cx,
-            )
-        });
-        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
-        let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
-        pages.extend(Self::page_handles(
-            &overview_page,
-            &node_workspace,
-            &system_services,
-            &monitoring,
-            &observability,
-            &applications,
-            &settings_page,
-            &resources,
-        ));
+        let pages = page_map::Pages::new(&options, &runtime, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
         // Batches arriving while Logs is hidden never notify; the shell
         // shows only what start, stop and the visible page change.
-        subscriptions.push(cx.observe(&logs, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&pages.logs, |_, _, cx| cx.notify()));
         subscriptions.extend(Self::subscribe_page_events(
-            &pages,
+            &pages.map,
             PageEntities {
-                nodes: &node_workspace,
-                dock: &dock,
-                custom: &custom,
+                nodes: &pages.node_workspace,
+                dock: &pages.dock,
+                custom: &pages.custom,
             },
             window,
             cx,
         ));
+        let page_map::Pages {
+            map: pages,
+            logs,
+            age_label,
+            overview_page,
+            node_workspace,
+            health,
+            lifecycle,
+            resources,
+            dock,
+            custom,
+            monitoring,
+            observability,
+            applications,
+            settings_page,
+            system_services,
+        } = pages;
         let tick = Self::start_tick(window, cx);
         let mut view = Self {
             runtime: runtime.clone(),
@@ -1203,17 +1108,6 @@ impl Pilot {
             },
             cluster.client.clone()?,
         ))
-    }
-
-    /// A Talos screen's handle; the shell hears it with every other page
-    /// (`subscribe_page_events`).
-    fn screen<T: ScreenPanel>(
-        new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
-        runtime: Handle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ScreenHandle {
-        ScreenHandle::new(cx.new(|cx| new(runtime, window, cx)))
     }
 
     /// What a Talos screen asks of the shell.
