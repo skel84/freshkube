@@ -51,6 +51,7 @@ pub struct PcapFraming {
 }
 
 impl PcapFraming {
+    // String exception: PCAP framing errors describe invalid bytes, not cluster read failures.
     pub fn advance(&mut self, bytes: &[u8]) -> Result<(), String> {
         if self.endian.is_none() {
             if bytes.len() < 4 {
@@ -124,6 +125,7 @@ pub struct CaptureState {
 }
 
 impl CaptureState {
+    // String exception: capture-state and byte-limit validation messages are displayed without classification.
     pub fn start(&mut self, max_bytes: usize) -> Result<(), String> {
         if self.active || self.save == SaveState::Saving {
             return Err("Capture/save already running".into());
