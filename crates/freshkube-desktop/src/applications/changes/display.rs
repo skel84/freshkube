@@ -407,7 +407,7 @@ fn row(row: &Row, now: DateTime<Utc>) -> ChangeRow {
         tooltip: format!("{title} · {} · Freight {}", row.project, row.freight).into(),
         trail: match &row.trail {
             Ok(change) => Ok(trail(change)),
-            Err(why) => Err(why.clone().into()),
+            Err(why) => Err(why.message.clone().into()),
         },
     }
 }

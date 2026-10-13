@@ -109,7 +109,7 @@ impl ChangePage {
             } => {
                 let result = changes_example::change_of(&project, &freight, now)
                     .ok_or_else(|| format!("Example data has no change for Freight {freight}"))
-                    .and_then(|change| shape.apply(change));
+                    .and_then(|change| shape.apply(change).map_err(|failure| failure.message));
                 match window {
                     Some(window) if delay.is_zero() => self.answer(&request, result, window, cx),
                     _ => {
@@ -148,7 +148,9 @@ impl ChangePage {
                             |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
                             live::BUDGET,
                         );
-                        live::read_in(&pool, &place, Utc::now()).await
+                        live::read_in(&pool, &place, Utc::now())
+                            .await
+                            .map_err(|failure| failure.message)
                     },
                 );
                 self.job = Some(job);
