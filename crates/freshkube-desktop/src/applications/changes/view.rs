@@ -20,7 +20,7 @@ use gpui_kit::component::{
 impl ChangesPage {
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let header = PageHeader::new(PREFIX, "Changes");
-        let reading = self.pending;
+        let reading = self.loader.is_loading();
         let label = "Read the changes again";
         let refresh = Button::new(header.id("refresh"))
             .ghost()
@@ -74,7 +74,7 @@ impl ChangesPage {
     /// With no rows: refused and failed say what wasn't read; only when
     /// Kargo answered is it empty.
     fn render_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let retrying = self.pending;
+        let retrying = self.loader.is_loading();
         let retry = || {
             let label = if retrying { "Retrying…" } else { "Retry" };
             Button::new("changes-retry")

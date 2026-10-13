@@ -18,14 +18,15 @@ mod tests;
 mod view;
 
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use freshkube_core::snapshot::{Request, Snapshot};
+use freshkube_core::snapshot::Request;
 use freshkube_delivery::change::example::Shape;
 use freshkube_delivery::change::live::Place;
 use freshkube_delivery::changes::{self as core_changes, Changes as Derived, Fold, live::Where};
 use freshkube_delivery::entry::{self, pool};
+use freshkube_reads::{Loader, OnShow};
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self as kit, TableState};
@@ -36,7 +37,7 @@ use gpui_kit::*;
 use super::across::{Across, Alone};
 use super::change::{ChangeEvent, ChangePage, Fetch};
 use super::links::Connections;
-use crate::backend::{self, OwnedJob};
+use crate::backend;
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
 use display::{Body, ChangeRow, Display};
 
@@ -46,6 +47,8 @@ const PREFIX: &str = "changes";
 pub(crate) const CONTEXT: &str = "Changes";
 /// A read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
+/// Showing the list reads again once what it has is [`FRESH_FOR`] old.
+const ON_SHOW: OnShow = OnShow::ReadIfOlder(FRESH_FOR);
 /// How long one read may take before it fails whole: past core's budget,
 /// at which it answers with what was read in time.
 const DEADLINE: Duration = Duration::from_secs(core_changes::live::BUDGET.as_secs() + 30);
@@ -106,12 +109,10 @@ pub(crate) struct ChangesPage {
     /// Example data answers after this, in tests, so a read stays in
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
-    snapshot: Snapshot<Read, String, String>,
-    pending: bool,
-    job: Option<OwnedJob>,
-    task: Option<Task<()>>,
-    /// When the shown read's answer arrived, on the executor's clock.
-    read_at: Option<Instant>,
+    /// The read, its answer and the work in flight, keyed by the
+    /// connection. It is hidden while the list is, and its answer's age
+    /// decides whether showing reads.
+    loader: Loader<Read, String>,
     /// Which connection each cluster is, for the change page's links.
     connections: Connections,
     /// Where a live read reads each part, and how the workspace maps Argo
@@ -164,6 +165,9 @@ impl ChangesPage {
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let display = Display::default();
         let (columns, width) = table::columns(table::STAGES_MAX);
+        // The list starts hidden, and so does its read.
+        let mut loader = Loader::default();
+        loader.set_visible(false, ON_SHOW, cx);
         Self {
             runtime,
             source: None,
@@ -171,11 +175,7 @@ impl ChangesPage {
             hold,
             shape,
             example_delay: Duration::ZERO,
-            snapshot: Snapshot::default(),
-            pending: false,
-            job: None,
-            task: None,
-            read_at: None,
+            loader,
             connections: Connections::default(),
             across: Across::default(),
             argocd_namespace: "argocd".into(),
@@ -226,9 +226,7 @@ impl ChangesPage {
         if same {
             return;
         }
-        self.stop();
-        self.snapshot = Snapshot::default();
-        self.read_at = None;
+        self.loader.reset();
         self.read_namespace = None;
         self.argocd_namespace = "argocd".into();
         self.selected = None;
@@ -289,8 +287,8 @@ impl ChangesPage {
 
     /// What was read is no longer fresh: read the list now if shown.
     fn read_again(&mut self, cx: &mut Context<Self>) {
-        self.read_at = None;
-        if self.visible && (self.pending || self.snapshot.data().is_some()) {
+        self.loader.expire();
+        if self.visible && (self.loader.is_loading() || self.loader.data().is_some()) {
             self.read(cx);
         }
     }
@@ -305,18 +303,12 @@ impl ChangesPage {
         if let Some((change, _)) = &self.change {
             change.update(cx, |change, cx| change.set_visible(visible, cx));
         }
+        let reads_again = self.loader.set_visible(visible, ON_SHOW, cx);
         if !visible {
-            self.stop();
             cx.notify();
             return;
         }
-        let now = cx.background_executor().now();
-        let fresh = self.snapshot.data().is_some()
-            && !self.snapshot.is_stale()
-            && self
-                .read_at
-                .is_some_and(|at| now.saturating_duration_since(at) < FRESH_FOR);
-        if !fresh {
+        if reads_again {
             self.read(cx);
         }
     }
@@ -332,19 +324,11 @@ impl ChangesPage {
         self.read(cx);
     }
 
-    fn stop(&mut self) {
-        self.pending = false;
-        self.job = None;
-        self.task = None;
-    }
-
     fn read(&mut self, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.stop();
-        let request = self.snapshot.begin(source.id.clone());
-        self.pending = true;
+        let request = self.loader.start(source.id.clone());
         match &source.access {
             KubeAccess::Example => {
                 // Held, it stays in flight, so the page keeps its loading
@@ -364,10 +348,11 @@ impl ChangesPage {
                     self.answer(&request, Ok(read), cx);
                 } else {
                     let delay = self.example_delay;
-                    self.task = Some(cx.spawn(async move |this, cx| {
+                    let task = cx.spawn(async move |this, cx| {
                         cx.background_executor().timer(delay).await;
                         _ = this.update(cx, |page, cx| page.answer(&request, Ok(read), cx));
-                    }));
+                    });
+                    self.loader.run(None, task);
                 }
             }
             access => {
@@ -412,13 +397,13 @@ impl ChangesPage {
                         })
                     },
                 );
-                self.job = Some(job);
-                self.task = Some(cx.spawn(async move |this, cx| {
+                let task = cx.spawn(async move |this, cx| {
                     let result = receiver
                         .await
                         .unwrap_or_else(|_| Err("Reading the changes stopped".into()));
                     _ = this.update(cx, |page, cx| page.answer(&request, result, cx));
-                }));
+                });
+                self.loader.run(Some(job), task);
             }
         }
         cx.notify();
@@ -431,32 +416,24 @@ impl ChangesPage {
         result: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
-        let answered = result.is_ok();
-        if !self.pending || !self.snapshot.apply(request, result) {
-            return;
+        if self.loader.land(request, result, cx) {
+            self.show_read(cx);
         }
-        self.pending = false;
-        self.job = None;
-        self.task = None;
-        if answered {
-            self.read_at = Some(cx.background_executor().now());
-        }
-        self.show_read(cx);
     }
 
-    /// Derives the display from the snapshot. The first answer folds the
+    /// Derives the display from the loader. The first answer folds the
     /// groups that may fold while anything needs a look; a later one keeps
     /// the folds while something still does.
     fn show_read(&mut self, cx: &mut Context<Self>) {
         let cluster = self.source.as_ref().map(|s| s.context.clone());
         let first = self.display.rows.is_empty();
         self.display = Display::new(
-            self.snapshot.data().map(|read| &read.changes),
-            self.snapshot.error().map(String::as_str),
+            self.loader.data().map(|read| &read.changes),
+            self.loader.error(),
             cluster.as_deref().unwrap_or_default(),
             Utc::now(),
         );
-        self.stale = self.snapshot.data().and(self.snapshot.error()).map(|why| {
+        self.stale = self.loader.data().and(self.loader.error()).map(|why| {
             let text = format!("Showing the last read. {why}");
             let label = format!("Couldn't read again: {text}");
             (text.into(), label.into())
@@ -515,7 +492,7 @@ impl ChangesPage {
             }
             Body::Table | Body::Empty { .. } => {}
         }
-        if self.snapshot.data().is_none() {
+        if self.loader.data().is_none() {
             return Segment::default();
         }
         let total = self.display.rows.len();
@@ -532,7 +509,7 @@ impl ChangesPage {
         if looks > 0 {
             parts.push(Part::new(format!("{looks} not fully confirmed")).tone(Tone::Unknown));
         }
-        if self.snapshot.is_stale() {
+        if self.loader.is_stale() {
             parts.push(Part::new("last read").tone(Tone::Warn));
         }
         Segment::new(context, parts)
@@ -662,7 +639,7 @@ impl ChangesPage {
     /// reference time, or the open connection's.
     fn fetch(&self, project: &str, freight: &str) -> Option<Fetch> {
         let source = self.source.as_ref()?;
-        let read = self.snapshot.data()?;
+        let read = self.loader.data()?;
         Some(match (&source.access, read.example) {
             (KubeAccess::Example, Some(now)) => Fetch::Example {
                 project: project.to_owned(),
@@ -716,7 +693,7 @@ impl ChangesPage {
     }
 
     pub(crate) fn is_reading(&self) -> bool {
-        self.pending
+        self.loader.is_loading()
     }
 
     pub(crate) fn body(&self) -> &Body {
@@ -728,9 +705,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.stop();
-        let request = self.snapshot.begin(source.id);
-        self.pending = true;
+        let request = self.loader.start(source.id);
         let read = Read {
             changes,
             example: None,
@@ -743,9 +718,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.stop();
-        let request = self.snapshot.begin(source.id);
-        self.pending = true;
+        let request = self.loader.start(source.id);
         self.answer(&request, Err(why.into()), cx);
     }
 }

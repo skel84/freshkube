@@ -39,7 +39,7 @@ impl ChangePage {
             }),
             cx,
         );
-        let reading = self.pending;
+        let reading = self.loader.is_loading();
         let label = "Read the change again";
         let refresh = Button::new(header.id("refresh"))
             .ghost()
@@ -170,7 +170,7 @@ impl ChangePage {
     /// In place of the trail when nothing could be read: why, and Retry.
     fn render_failed(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let why = self.failure()?.to_owned();
-        let retrying = self.pending;
+        let retrying = self.loader.is_loading();
         let label = if retrying { "Retrying…" } else { "Retry" };
         let retry = Button::new("change-retry")
             .primary()
