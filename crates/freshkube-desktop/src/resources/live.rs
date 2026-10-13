@@ -135,7 +135,11 @@ pub(crate) fn convert(
                 let state = match failure.kind {
                     FailureKind::Forbidden => ReadState::Refused(failure.message),
                     FailureKind::NotFound => ReadState::Missing(failure.message),
-                    _ => ReadState::Failed(failure.to_string()),
+                    FailureKind::Config
+                    | FailureKind::Unreachable
+                    | FailureKind::Timeout
+                    | FailureKind::Unauthorized
+                    | FailureKind::Other => ReadState::Failed(failure.to_string()),
                 };
                 converted.push(ResourceEvent::Read(state));
             }
