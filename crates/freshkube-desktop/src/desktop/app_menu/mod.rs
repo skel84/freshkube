@@ -302,7 +302,7 @@ impl Pilot {
 
     fn sync_menus(&mut self, window: &Window, cx: &mut Context<Self>) {
         let state = MenuState {
-            sidebar: self.area.has_column() && !self.column_collapsed(window),
+            sidebar: self.navigation.area.has_column() && !self.navigation.column_collapsed(window),
             dock: self.dock.read(cx).is_open(),
             appearance: self.appearance,
         };

@@ -419,7 +419,7 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(cx.update(|cx| pilot.read(cx).settings_open));
+    assert!(cx.update(|cx| pilot.read(cx).navigation.settings_open));
     draw(handle, cx);
     assert!(cx.update(|cx| pilot.read(cx).app_menu_popup.is_none()));
 
@@ -433,8 +433,8 @@ fn settings_and_about_open_from_their_actions(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     draw(handle, cx);
     dispatch(handle, OpenSettings, cx);
-    assert!(cx.update(|cx| pilot.read(cx).settings_open));
-    cx.update(|cx| pilot.update(cx, |pilot, _| pilot.settings_open = false));
+    assert!(cx.update(|cx| pilot.read(cx).navigation.settings_open));
+    cx.update(|cx| pilot.update(cx, |pilot, _| pilot.navigation.settings_open = false));
     dispatch(handle, About, cx);
     cx.update_window(handle, |_, window, cx| {
         assert!(window.has_active_dialog(cx));

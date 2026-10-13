@@ -561,7 +561,7 @@ fn node_logs_startup_opens_a_folded_node_without_a_table_click(cx: &mut TestAppC
         });
         window.render_frame(cx);
         let view = pilot.read(cx);
-        assert_eq!(view.page, Page::Nodes);
+        assert_eq!(view.navigation.page, Page::Nodes);
         assert!(view.node_workspace.read(cx).open);
         assert_eq!(view.node_workspace.read(cx).tab, NodeTab::Logs);
         assert_eq!(

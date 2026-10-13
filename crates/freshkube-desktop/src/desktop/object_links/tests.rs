@@ -82,7 +82,7 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
         .unwrap();
         cx.run_until_parked();
         cx.update(|cx| {
-            assert_eq!(pilot.read(cx).page, Page::Nodes);
+            assert_eq!(pilot.read(cx).navigation.page, Page::Nodes);
             assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, tab);
             assert_eq!(
                 pilot
@@ -110,7 +110,10 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
     let deployment = cx
         .update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(pilot.read(cx).resource_kind.key(), "replicasets.apps");
+            assert_eq!(
+                pilot.read(cx).navigation.resource_kind.key(),
+                "replicasets.apps"
+            );
             let rs = example::document(
                 pilot
                     .read(cx)
@@ -131,7 +134,10 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
         .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(pilot.read(cx).resource_kind.key(), "deployments.apps");
+        assert_eq!(
+            pilot.read(cx).navigation.resource_kind.key(),
+            "deployments.apps"
+        );
         assert_eq!(
             pilot
                 .read(cx)
@@ -157,7 +163,7 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(pilot.read(cx).resource_kind.key(), "services");
+            assert_eq!(pilot.read(cx).navigation.resource_kind.key(), "services");
             assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), tab);
             if tab == Tab::Ports {
                 assert_landed(window, cx, "ports");
@@ -193,7 +199,7 @@ fn pod_node_link_goes_at_once_and_the_shell_runs_on(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).page, Page::Nodes);
+        assert_eq!(pilot.read(cx).navigation.page, Page::Nodes);
         assert_eq!(
             crate::resources::shell::running_anywhere(cx),
             [gpui_kit::SharedString::from(identity.name.clone())]
@@ -402,7 +408,7 @@ fn owner_and_service_links_go_at_once_while_a_shell_runs(cx: &mut TestAppContext
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).resource_kind.key(), "services");
+        assert_eq!(pilot.read(cx).navigation.resource_kind.key(), "services");
         assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), Tab::Ports);
         assert_landed(window, cx, "ports");
         assert_eq!(crate::resources::shell::running_anywhere(cx), running);
@@ -537,7 +543,7 @@ fn forward_lands_a_fresh_drawer_on_its_ports(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert_eq!(pilot.read(cx).resource_kind.key(), "services");
+        assert_eq!(pilot.read(cx).navigation.resource_kind.key(), "services");
         assert_landed(window, cx, "ports");
     })
     .unwrap();
@@ -728,7 +734,7 @@ fn a_link_made_in_another_cluster_opens_nothing_here_and_says_so(cx: &mut TestAp
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1000.);
     let (identity, _) = pod();
     cx.update_window(handle, |_, window, cx| {
-        let page = pilot.read(cx).page;
+        let page = pilot.read(cx).navigation.page;
         let before = notices(window, cx);
         // The same pod name exists here, in this cluster. The link names
         // another one, so it is not this pod.
@@ -738,7 +744,11 @@ fn a_link_made_in_another_cluster_opens_nothing_here_and_says_so(cx: &mut TestAp
         pilot.update(cx, |pilot, cx| pilot.resource_link(link, window, cx));
         window.render_frame(cx);
         assert_eq!(opened(&pilot, cx), None);
-        assert_eq!(pilot.read(cx).page, page, "no page change either");
+        assert_eq!(
+            pilot.read(cx).navigation.page,
+            page,
+            "no page change either"
+        );
         assert_eq!(notices(window, cx), before + 1, "the refusal says so");
     })
     .unwrap();
@@ -756,13 +766,17 @@ fn a_link_naming_a_cluster_is_refused_while_none_is_open(cx: &mut TestAppContext
             pilot.applied.context = None;
             assert!(pilot.kube_identity().is_none() && pilot.kube_source().is_none());
         });
-        let page = pilot.read(cx).page;
+        let page = pilot.read(cx).navigation.page;
         let before = notices(window, cx);
         let link = link_to(&identity, Some(identity.connection.clone()));
         pilot.update(cx, |pilot, cx| pilot.resource_link(link, window, cx));
         window.render_frame(cx);
         assert_eq!(opened(&pilot, cx), None);
-        assert_eq!(pilot.read(cx).page, page, "the page did not move");
+        assert_eq!(
+            pilot.read(cx).navigation.page,
+            page,
+            "the page did not move"
+        );
         assert_eq!(notices(window, cx), before + 1);
     })
     .unwrap();

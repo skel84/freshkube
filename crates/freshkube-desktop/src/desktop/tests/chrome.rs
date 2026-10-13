@@ -42,7 +42,7 @@ fn the_cached_chrome_acts_on_the_shell(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert_eq!(view.read(cx).area, Area::ControlPlane));
+    cx.update(|cx| assert_eq!(view.read(cx).navigation.area, Area::ControlPlane));
     let dark = cx.update(|cx| cx.theme().mode.is_dark());
     cx.update_window(handle, |_, window, cx| window.click("theme-toggle", cx))
         .unwrap();

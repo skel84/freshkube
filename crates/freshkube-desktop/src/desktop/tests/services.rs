@@ -44,7 +44,7 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
         assert_eq!(window.find(("context", 1usize)).selected(), Some(true));
         // Nothing is selected, so there is no logs action to trigger.
         assert!(window.try_find("service-logs").is_none());
-        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).navigation.page, Page::Nodes);
     })
     .unwrap();
 }
@@ -335,7 +335,7 @@ fn selected_service_opens_matching_log_collection(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).navigation.page, Page::Nodes);
         assert!(window.find("logs-viewport").visible());
         assert_eq!(
             window
@@ -388,7 +388,7 @@ fn log_collection_keeps_running_on_other_screens(cx: &mut TestAppContext) {
         assert!(view.read(cx).logs.read(cx).is_collecting());
         window.click("nav-overview", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Overview);
+        assert_eq!(view.read(cx).navigation.page, Page::Overview);
         assert!(view.read(cx).logs.read(cx).is_collecting());
         assert!(view.read(cx).logs.read(cx).collecting_count() > 0);
         open_node_tab(window, cx, super::super::nodes::NodeTab::Logs);
@@ -419,7 +419,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
         window.render_frame(cx);
         window.press("secondary-7", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::SystemServices);
+        assert_eq!(view.read(cx).navigation.page, Page::SystemServices);
         assert!(window.find(row).visible());
         assert!(window.try_find("restart-service").is_none());
         window.click(row, cx);
@@ -429,7 +429,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Nodes);
+        assert_eq!(view.read(cx).navigation.page, Page::Nodes);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
         assert_eq!(
             view.read(cx).selected_service(cx).as_deref(),

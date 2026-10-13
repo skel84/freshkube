@@ -28,7 +28,7 @@ fn system_services_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
         .unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
-            assert_eq!(view.read(cx).page, Page::SystemServices);
+            assert_eq!(view.read(cx).navigation.page, Page::SystemServices);
             // The unhealthy kubelet puts the rows under a header per health.
             let layout = layout_check::assert_table_page(window, cx, &SYSTEM_SERVICES);
             assert!(layout.group.is_some(), "{layout:#?}");
@@ -300,7 +300,7 @@ fn the_rows_carry_no_actions_and_the_toolbar_waits_for_a_selection(cx: &mut Test
             window.press("enter", cx);
             window.press("l", cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, Page::SystemServices);
+            assert_eq!(view.read(cx).navigation.page, Page::SystemServices);
         })
         .unwrap();
     }
@@ -342,7 +342,7 @@ fn the_filter_types_the_lists_keys(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         // l and o went into the filter, not to the selected row.
-        assert_eq!(view.read(cx).page, Page::SystemServices);
+        assert_eq!(view.read(cx).navigation.page, Page::SystemServices);
         assert_eq!(selected(&view, cx).as_deref(), Some(UNHEALTHY));
         assert!(window.try_find(HEALTHY).is_none());
     })
@@ -361,7 +361,7 @@ fn a_filter_that_hides_the_selected_row_clears_it(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(selected(&view, cx), None);
         window.click("system-service-open", cx);
-        assert_eq!(view.read(cx).page, Page::SystemServices);
+        assert_eq!(view.read(cx).navigation.page, Page::SystemServices);
     })
     .unwrap();
 }
@@ -401,7 +401,7 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.update_window(handle, |_, _, cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.page, Page::Nodes);
+        assert_eq!(pilot.navigation.page, Page::Nodes);
         assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
         assert_eq!(pilot.selected_service(cx).as_deref(), Some("apid"));
         assert_eq!(
