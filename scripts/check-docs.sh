@@ -9,10 +9,15 @@
 # path from the linking file's directory (a file or a directory that exists),
 # an `#anchor`, or both; an anchor in a Markdown file must match one of its
 # headings by GitHub's rules: lowercase, punctuation dropped, spaces to `-`,
-# and `-1`, `-2` for a heading the file already has. A path that leaves the
-# repository (docs/REFERENCES.md's sibling checkouts) is not checked or counted.
-# Prints each broken link
-# as `file:line target` and exits 1 if there is any. POSIX sh and awk only.
+# and `-1`, `-2` for a heading the file already has. Text in `<…>` is dropped
+# only where it is a well-formed HTML tag (`Loader<T>` loses `<T>`,
+# `Snapshot<T, I>` keeps its letters), as GitHub renders it; code spans keep it.
+#
+# The sibling checkouts docs/REFERENCES.md names (../../Kubeli/, ../../gpui-kit/,
+# ../../rubick/ from docs/) are outside the repository and are skipped; any
+# other path that leaves it is broken. Prints each broken link as
+# `file:line target`, the counts on stderr, and exits 1 if any is broken.
+# POSIX sh and awk only.
 set -eu
 
 root=.
@@ -35,8 +40,18 @@ slugs() {
       sub(/^ *#+[ \t]+/, "", s)
       sub(/[ \t]+#+[ \t]*$/, "", s)
       while (match(s, /\]\([^)]*\)/)) s = substr(s, 1, RSTART - 1) substr(s, RSTART + RLENGTH)
-      gsub(/<[^>]*>/, "", s)
+      # Code spans are literal: hide their angle brackets from the tag strip.
+      t = ""
+      while (match(s, /`[^`]*`/)) {
+        c = substr(s, RSTART, RLENGTH)
+        gsub(/</, "\001", c); gsub(/>/, "\002", c)
+        t = t substr(s, 1, RSTART - 1) c
+        s = substr(s, RSTART + RLENGTH)
+      }
+      s = t s
+      gsub(/<\/?[A-Za-z][A-Za-z0-9-]*([ \t]+[A-Za-z_:][^<>]*)?\/?>/, "", s)
       s = tolower(s)
+      sub(/[ \t]+$/, "", s)
       # Punctuation and symbols outside ASCII (Latin-1 signs, × ÷, dashes,
       # arrows, math) go as ASCII punctuation does; letters stay.
       gsub(/\302[\200-\277]|\303\227|\303\267|\342[\200-\257][\200-\277]/, "", s)
@@ -68,19 +83,22 @@ links() {
   ' "$1"
 }
 
-# Whether a path from the root climbs out of it with its `..` parts.
-leaves_repo() {
+# A path from the root with its `.` and `..` parts folded; leading `..` stay.
+normalize() {
   echo "$1" | awk -F/ '
-    { depth = 0
+    { n = 0
       for (i = 1; i <= NF; i++) {
-        if ($i == "..") depth--
-        else if ($i != "." && $i != "") depth++
-        if (depth < 0) exit 0 }
-      exit 1 }'
+        if ($i == "" || $i == ".") continue
+        if ($i == ".." && n > 0 && out[n] != "..") n--
+        else out[++n] = $i }
+      r = out[1]
+      for (i = 2; i <= n; i++) r = r "/" out[i]
+      print r }'
 }
 
 files=$(ls AGENTS.md; find docs -name '*.md' | sort)
 checked=0
+skipped=0
 broken=0
 list=$(mktemp)
 trap 'rm -f "$list"' EXIT
@@ -95,19 +113,19 @@ while read -r where target; do
   esac
   file=${where%%:*}
   path=${target%%#*}
-  if [ -n "$path" ] && leaves_repo "$(dirname "$file")/$path"; then
-    continue
-  fi
-  checked=$((checked + 1))
   anchor=
   case "$target" in *'#'*) anchor=${target#*#} ;; esac
   if [ -z "$path" ]; then
     dest=$file
   else
-    dest=$(dirname "$file")/$path
-    if [ ! -e "$dest" ]; then
-      echo "$where $target"; broken=$((broken + 1)); continue
-    fi
+    dest=$(normalize "$(dirname "$file")/$path")
+    case "$dest" in
+      ../Kubeli/*|../gpui-kit/*|../rubick/*) skipped=$((skipped + 1)); continue ;;
+    esac
+  fi
+  checked=$((checked + 1))
+  if [ -n "$path" ] && [ ! -e "$dest" ]; then
+    echo "$where $target"; broken=$((broken + 1)); continue
   fi
   case "$dest" in
     *.md) [ -f "$dest" ] || continue ;;
@@ -118,5 +136,5 @@ while read -r where target; do
   fi
 done < "$list"
 
-echo "check-docs: $checked links checked, $broken broken" >&2
+echo "check-docs: $checked links checked, $skipped in sibling checkouts skipped, $broken broken" >&2
 [ "$broken" -eq 0 ]
