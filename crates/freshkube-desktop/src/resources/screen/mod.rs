@@ -218,6 +218,7 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 
 /// The kind shown isn't served (404), so the sidebar's discovery of its
 /// group may be out of date.
+#[derive(Clone, Debug)]
 pub(crate) struct NotServed(pub(crate) ResourceKind);
 
 pub(crate) struct ResourcesScreen {
@@ -1474,6 +1475,7 @@ async fn watch(
 
 impl EventEmitter<NotServed> for ResourcesScreen {}
 
+#[derive(Clone, Debug)]
 pub(crate) enum NodePodsEvent {
     Open(ResourceIdentity),
     Back,

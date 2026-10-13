@@ -11,6 +11,7 @@ mod lifecycle;
 mod loader;
 mod network;
 mod operations;
+mod page;
 mod processes;
 mod security;
 mod storage;
@@ -22,6 +23,7 @@ pub(crate) use lifecycle::LifecycleScreen;
 pub(crate) use loader::Loader;
 pub(crate) use network::NetworkScreen;
 pub(crate) use operations::OperationsScreen;
+pub(crate) use page::{PageEventFn, PageSource};
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
@@ -181,6 +183,35 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
         cx: &mut Context<Self>,
     );
 
+    /// Everything the shell hands its pages; a screen reads the Talos
+    /// target alone, so by default this is [`set_source`](Self::set_source).
+    fn set_page_source(&mut self, source: PageSource, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_source(source.screen, window, cx);
+    }
+
+    /// The page showed or hid. Pages that own reads drop them on hide; the
+    /// screens' [`Loader`] gets its hook in #582 (#578's step 4), and until
+    /// then a screen does nothing here. The shell calls it before
+    /// [`activate`](Self::activate), which a shown screen still gets: it
+    /// doesn't replace it.
+    fn set_visible(&mut self, _visible: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+    /// Hears the page's requests as [`PageEvent`](page::PageEvent)s. A screen emits
+    /// [`ScreenEvent`] alone; a page that emits other types subscribes each
+    /// here and converts it.
+    fn subscribe_page(
+        this: &Entity<Self>,
+        on_event: PageEventFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<Subscription> {
+        vec![
+            window.subscribe(this, cx, move |_, event: &ScreenEvent, window, cx| {
+                on_event(&event.clone().into(), window, cx)
+            }),
+        ]
+    }
+
     /// The screen became visible, or its target changed while visible. Load
     /// when there is nothing for the current target yet.
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>);
@@ -214,6 +245,9 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 }
 
 type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
+type PageSourceFn = Rc<dyn Fn(PageSource, &mut Window, &mut App)>;
+type VisibleFn = Rc<dyn Fn(bool, &mut Window, &mut App)>;
+type SubscribeFn = Rc<dyn Fn(PageEventFn, &mut Window, &mut App) -> Vec<Subscription>>;
 type WindowFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type EmbeddedFn = Rc<dyn Fn(bool, &mut App)>;
 type StatusFn = Rc<dyn Fn(&mut App) -> Option<freshkube_ui::status::Segment>>;
@@ -221,9 +255,16 @@ type MotionFn = Rc<dyn Fn(&App) -> Option<Entity<freshkube_ui::table::LoadingMot
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the shell uses its page hooks from #579's step 2")
+)]
 pub(crate) struct ScreenHandle {
     view: AnyView,
     set_source: SourceFn,
+    page_source: PageSourceFn,
+    visible: VisibleFn,
+    subscribe: SubscribeFn,
     activate: WindowFn,
     refresh: WindowFn,
     focus: WindowFn,
@@ -241,7 +282,17 @@ impl ScreenHandle {
             entity.clone(),
         );
         let (embedded, status, motion) = (entity.clone(), entity.clone(), entity.clone());
+        let (paged, shown, heard) = (entity.clone(), entity.clone(), entity.clone());
         Self {
+            page_source: Rc::new(move |source, window, cx| {
+                paged.update(cx, |screen, cx| screen.set_page_source(source, window, cx))
+            }),
+            visible: Rc::new(move |visible, window, cx| {
+                shown.update(cx, |screen, cx| screen.set_visible(visible, window, cx))
+            }),
+            subscribe: Rc::new(move |on_event, window, cx| {
+                T::subscribe_page(&heard, on_event, window, cx)
+            }),
             motion: Rc::new(move |cx| motion.read(cx).loading_motion(cx)),
             status: Rc::new(move |cx| status.update(cx, |screen, _| screen.status().cloned())),
             embedded: Rc::new(move |value, cx| {
