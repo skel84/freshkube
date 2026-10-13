@@ -1,0 +1,4 @@
+# The preferences examples are compared byte for byte with what the app
+# writes, which ends lines with LF on every platform; keep Windows checkouts
+# from turning them into CRLF.
+crates/freshkube-prefs/src/examples/*.json text eol=lf
