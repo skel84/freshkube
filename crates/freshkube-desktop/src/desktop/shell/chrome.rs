@@ -53,7 +53,9 @@ impl Chrome {
     /// it shows changed.
     fn redraw(&mut self, cx: &mut Context<Self>) {
         if self.part == Part::Column {
-            _ = self.pilot.update(cx, |pilot, _| pilot.column_changed());
+            _ = self
+                .pilot
+                .update(cx, |pilot, _| pilot.navigation.column_changed());
         }
         cx.notify();
     }

@@ -417,21 +417,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current = match self.navigation.page {
-            Page::Overview => 0,
-            Page::Nodes => 1,
-            Page::Resources if self.navigation.resource_kind.key() == "namespaces" => 2,
-            Page::Resources if self.navigation.resource_kind.key() == "events" => 3,
-            // Between Events and Health, which has no row of its own.
-            Page::Monitoring | Page::Observability | Page::Applications | Page::Settings => 3,
-            Page::Health => 4,
-            Page::Resources => 5,
-            Page::Etcd => 6,
-            Page::SystemServices => 7,
-            Page::Security => 8,
-            Page::Lifecycle => 9,
-            Page::Operations => 10,
-        };
+        let current = self.navigation.current_row();
         let count = if self.kubernetes_only.is_some() {
             6
         } else {
@@ -553,7 +539,7 @@ impl Pilot {
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_object_open();
         self.navigation.page = page;
-        self.column_changed();
+        self.navigation.column_changed();
         self.deliver_summary_nodes(cx);
         let area = Area::of(page, &self.navigation.resource_kind);
         if area == Area::ControlPlane {
@@ -595,20 +581,9 @@ impl Pilot {
             self.navigate_from_keyboard(Page::Nodes, window, cx);
             return;
         }
-        if !matches!(kind.key().as_str(), "namespaces" | "events") {
-            self.navigation.last_kind = kind.clone();
-        }
-        let key = kind.key();
-        match navigation::group_of(&key) {
-            Some(group) => {
-                self.navigation.group_kinds.insert(group, key);
-            }
-            None if !matches!(key.as_str(), "namespaces" | "events") => {
-                self.navigation.last_custom = Some(kind.clone());
-                self.custom
-                    .update(cx, |custom, cx| custom.reveal(&kind, cx));
-            }
-            None => {}
+        if self.navigation.remember_kind(&kind) {
+            self.custom
+                .update(cx, |custom, cx| custom.reveal(&kind, cx));
         }
         self.navigation.resource_kind = kind.clone();
         self.resources
@@ -642,7 +617,7 @@ impl Pilot {
             return;
         }
         self.navigation.area = area;
-        self.column_changed();
+        self.navigation.column_changed();
         self.custom
             .update(cx, |custom, cx| custom.set_open(area == Area::Custom, cx));
         cx.notify();
@@ -662,14 +637,7 @@ impl Pilot {
             Area::Applications => self.navigate_from_keyboard(Page::Applications, window, cx),
             Area::Settings => self.navigate_from_keyboard(Page::Settings, window, cx),
             Area::Group(slug) => {
-                let key = self.navigation.group_kinds.get(slug).cloned().or_else(|| {
-                    navigation::NAVIGATION
-                        .iter()
-                        .find(|group| group.slug == slug)
-                        .and_then(|group| group.items.first())
-                        .map(|(_, key)| (*key).to_owned())
-                });
-                if let Some(key) = key {
+                if let Some(key) = self.navigation.group_key(slug) {
                     self.open_builtin(&key, window, cx);
                 }
             }
@@ -698,7 +666,7 @@ impl Pilot {
     pub(super) fn show_custom(&mut self, cx: &mut Context<Self>) {
         self.set_area(Area::Custom, cx);
         self.navigation.column_reveal = Some(ColumnReveal::Custom);
-        self.column_changed();
+        self.navigation.column_changed();
         cx.notify();
     }
 
@@ -708,16 +676,8 @@ impl Pilot {
         if self.custom.read(cx).is_group_open(name) {
             self.navigation.column_reveal = Some(ColumnReveal::ApiGroup(name.to_owned()));
         }
-        self.column_changed();
+        self.navigation.column_changed();
         cx.notify();
-    }
-
-    /// The title bar's name for the page shown.
-    pub(super) fn page_title(&self) -> SharedString {
-        match self.navigation.page {
-            Page::Resources => resources::title(&self.navigation.resource_kind),
-            page => page.title().into(),
-        }
     }
 
     pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {

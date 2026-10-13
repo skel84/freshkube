@@ -153,7 +153,7 @@ impl Pilot {
                 self.selected_node.as_deref().unwrap_or("None")
             )
         };
-        let applied = format!("{applied} · Page: {}", self.page_title());
+        let applied = format!("{applied} · Page: {}", self.navigation.page_title());
         h_flex()
             .id("applied-config")
             .test_support()
@@ -165,11 +165,11 @@ impl Pilot {
                 div()
                     .id("page-title")
                     .test_support()
-                    .aria_label(self.page_title())
+                    .aria_label(self.navigation.page_title())
                     .text_size(dp(13.))
                     .font_weight(ui::HEADING_WEIGHT)
                     .truncate()
-                    .child(self.page_title())
+                    .child(self.navigation.page_title())
                     .when(self.navigation.page == Page::Nodes, |this| {
                         this.cursor_pointer().on_mouse_down(
                             MouseButton::Left,

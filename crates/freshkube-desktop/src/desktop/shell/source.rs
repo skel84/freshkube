@@ -79,13 +79,6 @@ fn shortcut(key: &str) -> SharedString {
 }
 
 impl Pilot {
-    /// Says that what the column shows changed: its next draw derives its
-    /// lines again, and draws that only redraw it, such as a hover's, read
-    /// them as they are.
-    pub(in crate::desktop) fn column_changed(&mut self) {
-        self.navigation.column_stale = true;
-    }
-
     /// Derives the column's lines from what the shell and its pages show
     /// now, once after they change.
     pub(super) fn derive_column(&mut self, cx: &App) {
@@ -671,7 +664,7 @@ impl SourceListHost for Pilot {
     }
 
     fn open(&mut self, key: &ColumnKey, window: &mut Window, cx: &mut Context<Self>) {
-        self.column_changed();
+        self.navigation.column_changed();
         match key.clone() {
             ColumnKey::Page(page) => self.navigate_from_keyboard(page, window, cx),
             ColumnKey::Kind(key) => self.open_builtin(key, window, cx),

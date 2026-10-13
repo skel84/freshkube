@@ -106,4 +106,71 @@ impl Navigation {
     pub(in crate::desktop) fn layout_chrome(&self, window: &Window) {
         crate::screens::set_chrome_width(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
     }
+
+    /// Says that what the column shows changed: its next draw derives its
+    /// lines again, and draws that only redraw it, such as a hover's, read
+    /// them as they are.
+    pub(in crate::desktop) fn column_changed(&mut self) {
+        self.column_stale = true;
+    }
+
+    /// The title bar's name for the page shown.
+    pub(super) fn page_title(&self) -> SharedString {
+        match self.page {
+            Page::Resources => crate::resources::title(&self.resource_kind),
+            page => page.title().into(),
+        }
+    }
+
+    /// The fixed sidebar row the page shown sits on.
+    pub(in crate::desktop) fn current_row(&self) -> usize {
+        match self.page {
+            Page::Overview => 0,
+            Page::Nodes => 1,
+            Page::Resources if self.resource_kind.key() == "namespaces" => 2,
+            Page::Resources if self.resource_kind.key() == "events" => 3,
+            // Between Events and Health, which has no row of its own.
+            Page::Monitoring | Page::Observability | Page::Applications | Page::Settings => 3,
+            Page::Health => 4,
+            Page::Resources => 5,
+            Page::Etcd => 6,
+            Page::SystemServices => 7,
+            Page::Security => 8,
+            Page::Lifecycle => 9,
+            Page::Operations => 10,
+        }
+    }
+
+    /// Remembers the kind shown last, by its group; true for a custom kind,
+    /// which Custom Resources must reveal.
+    pub(in crate::desktop) fn remember_kind(&mut self, kind: &ResourceKind) -> bool {
+        let builtin_row = matches!(kind.key().as_str(), "namespaces" | "events");
+        if !builtin_row {
+            self.last_kind = kind.clone();
+        }
+        let key = kind.key();
+        match kinds::group_of(&key) {
+            Some(group) => {
+                self.group_kinds.insert(group, key);
+                false
+            }
+            None if !builtin_row => {
+                self.last_custom = Some(kind.clone());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The kind a group's rail button opens: the one it showed last, or its
+    /// first.
+    pub(in crate::desktop) fn group_key(&self, slug: &str) -> Option<String> {
+        self.group_kinds.get(slug).cloned().or_else(|| {
+            kinds::NAVIGATION
+                .iter()
+                .find(|group| group.slug == slug)
+                .and_then(|group| group.items.first())
+                .map(|(_, key)| (*key).to_owned())
+        })
+    }
 }

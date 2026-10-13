@@ -234,7 +234,7 @@ fn the_column_reaches_every_namespace(cx: &mut TestAppContext) {
                 .iter()
                 .map(|name| (name.clone(), "1".into()))
                 .collect();
-            pilot.column_changed();
+            pilot.navigation.column_changed();
             cx.notify();
         });
         window.render_frame(cx);

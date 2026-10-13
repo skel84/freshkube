@@ -501,7 +501,7 @@ impl Pilot {
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
         let shown = self.shown_page(cx);
         self.publish_reading(cx);
-        self.column_changed();
+        self.navigation.column_changed();
         self.navigation.column_state.prepare(
             self.registry
                 .active()
@@ -591,7 +591,7 @@ impl Pilot {
                 .unwrap_or("The refresh failed.");
             display = display.talos_stale(reason.to_owned().into());
         }
-        self.column_changed();
+        self.navigation.column_changed();
         self.navigation.rail_marks =
             crate::desktop::shell::RailMarks::from_cards(&display.cards, self.fixture);
         let attention = Arc::new(crate::presentation::attention::build(
