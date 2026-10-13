@@ -20,20 +20,20 @@ use gpui_kit::{
     prelude::*,
 };
 
-impl Pilot {
+impl Nodes {
     pub(in crate::desktop) fn render_nodes(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let _span = crate::perf::span("page.render");
-        let pane = self.node_workspace.open;
-        let expanded = pane && self.node_workspace.expanded;
+        let pane = self.open;
+        let expanded = pane && self.expanded;
         let beside = page_width(window) >= inspector::SPLIT_WIDTH;
         // The node's screens lay out by the inspector's width beside the
         // table; stacked or expanded, it has the page's.
         crate::screens::set_node_pane_width(if beside && !expanded {
-            self.node_workspace.split.live_width(cx)
+            self.split.live_width(cx)
         } else {
             f32::MAX
         });
@@ -48,7 +48,7 @@ impl Pilot {
         } else if let Some(state) = self.nodes_state(cx).filter(|_| !pane) {
             edge = false;
             state
-        } else if self.node_workspace.view == NodeView::Table {
+        } else if self.view == NodeView::Table {
             let table = freshkube_ui::table::data_table(self, window, cx)
                 .size_full()
                 .min_h_0();
@@ -62,7 +62,7 @@ impl Pilot {
             let detail = pane.then(|| self.render_node_pane(window, cx));
             inspector::split(
                 "nodes-split",
-                &self.node_workspace.split,
+                &self.split,
                 beside,
                 table,
                 detail,
@@ -80,7 +80,7 @@ impl Pilot {
             let detail = self.render_node_pane(window, cx);
             inspector::split(
                 "nodes-split",
-                &self.node_workspace.split,
+                &self.split,
                 beside,
                 roster,
                 Some(detail),
@@ -90,45 +90,39 @@ impl Pilot {
             edge = false;
             self.joined_node_list(false, window, cx)
         };
-        let least = self.node_workspace.split.short_height(beside, pane);
+        let least = self.split.short_height(beside, pane);
         freshkube_ui::page::page("nodes-page")
-            .track_scroll(&self.node_workspace.page_scroll)
+            .track_scroll(&self.page_scroll)
             .when(short, |this| {
                 this.overflow_y_scroll().restrict_scroll_to_axis()
             })
             .key_context("NodeWorkspace")
-            .track_focus(&self.node_workspace.focus)
-            .on_action(cx.listener(|view, _: &super::super::NextNode, window, cx| {
-                view.step_joined_node(1, window, cx)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|_, _: &super::super::NextNode, _, cx| {
+                cx.emit(NodesEvent::Step(1))
             }))
-            .on_action(
-                cx.listener(|view, _: &super::super::PreviousNode, window, cx| {
-                    view.step_joined_node(-1, window, cx)
-                }),
-            )
-            .on_action(cx.listener(|view, _: &ExpandNode, _, cx| view.toggle_node_expanded(cx)))
-            .on_action(cx.listener(|view, _: &CloseNode, window, cx| view.close_node(window, cx)))
-            .on_action(
-                cx.listener(|view, _: &crate::logs::ClearSelection, window, cx| {
-                    view.node_back(window, cx)
-                }),
-            )
-            .on_action(cx.listener(|view, _: &BackNode, window, cx| view.node_back(window, cx)))
-            .on_action(
-                cx.listener(|view, _: &NextNodeTab, window, cx| view.step_node_tab(1, window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &PreviousNodeTab, window, cx| {
-                view.step_node_tab(-1, window, cx)
+            .on_action(cx.listener(|_, _: &super::super::PreviousNode, _, cx| {
+                cx.emit(NodesEvent::Step(-1))
+            }))
+            .on_action(cx.listener(|view, _: &ExpandNode, _, cx| view.toggle_expanded(cx)))
+            .on_action(cx.listener(|_, _: &CloseNode, _, cx| cx.emit(NodesEvent::Close)))
+            .on_action(cx.listener(|_, _: &crate::logs::ClearSelection, _, cx| {
+                cx.emit(NodesEvent::Back)
+            }))
+            .on_action(cx.listener(|_, _: &BackNode, _, cx| cx.emit(NodesEvent::Back)))
+            .on_action(cx.listener(|_, _: &NextNodeTab, _, cx| cx.emit(NodesEvent::StepTab(1))))
+            .on_action(cx.listener(|_, _: &PreviousNodeTab, _, cx| {
+                cx.emit(NodesEvent::StepTab(-1))
             }))
             .on_action(cx.listener(|view, _: &ToggleHealthyNodes, window, cx| {
                 // H is the table's; the filter and the pane type it, and
                 // the cards show no fold to flip.
-                if !view.node_workspace.focus.is_focused(window)
-                    || view.node_workspace.view == NodeView::Cards
+                if !view.focus.is_focused(window)
+                    || view.view == NodeView::Cards
                 {
                     return cx.propagate();
                 }
-                view.node_workspace.toggle_healthy();
+                view.toggle_healthy();
                 cx.notify();
             }))
             .on_action(cx.listener(|view, _: &OpenNode, window, cx| {
@@ -136,18 +130,16 @@ impl Pilot {
                 // Enter opens a node from the list alone; anywhere else in
                 // the workspace, such as on a focused button, it keeps its
                 // own meaning.
-                if !view.node_workspace.focus.is_focused(window) {
+                if !view.focus.is_focused(window) {
                     return cx.propagate();
                 }
                 if let Some(key) = view
-                    .node_workspace
                     .selected
                     .clone()
                     .filter(|key| view.line_of(key).is_some())
                     .or_else(|| table::step(view, 1, cx))
                 {
-                    view.open_node(key, window, cx);
-                    view.focus_node_pane(window, cx);
+                    cx.emit(NodesEvent::Open { key, focus: true });
                 }
             }))
             .when(!expanded, |this| {
@@ -169,10 +161,10 @@ impl Pilot {
     }
 
     fn nodes_state(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let state = self.node_workspace.empty.as_ref()?;
+        let state = self.empty.as_ref()?;
         let (id, label, element) = match state {
             // The table draws its header over loading rows.
-            Empty::Loading if self.node_workspace.view == NodeView::Table => return None,
+            Empty::Loading if self.view == NodeView::Table => return None,
             Empty::Loading => (
                 "nodes-loading",
                 "Waiting for nodes".to_owned(),
@@ -194,7 +186,7 @@ impl Pilot {
                             .primary()
                             .label("Retry")
                             .on_click(
-                                cx.listener(|view, _, window, cx| view.refresh_now(window, cx)),
+                                cx.listener(|_, _, _, cx| cx.emit(NodesEvent::Refresh)),
                             )
                             .into_any_element(),
                     ],
@@ -225,7 +217,7 @@ impl Pilot {
     }
 
     fn render_node_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(row) = self.node_workspace.row().cloned() else {
+        let Some(row) = self.row().cloned() else {
             return div().into_any_element();
         };
         let body = self.render_node_body(&row, window, cx);
@@ -247,7 +239,7 @@ impl Pilot {
             .heading(self.render_node_heading(&row, cx))
             .banner(chips)
             .tabs(
-                &self.node_workspace.tab_strip,
+                &self.tab_strip,
                 self.render_node_tabs(&row, cx),
             )
             .content(body)
@@ -257,7 +249,7 @@ impl Pilot {
             .test_support()
             // Its own mouse-down below runs first and moves the keyboard to
             // the tab strip, so the pane itself never takes it.
-            .track_focus(&self.node_workspace.pane_focus)
+            .track_focus(&self.pane_focus)
             .size_full()
             .min_h_0()
             // A click in the pane that no field, list or log inside it
@@ -267,7 +259,7 @@ impl Pilot {
                 gpui_kit::MouseButton::Left,
                 cx.listener(|view, _, window, cx| {
                     if !window.default_prevented() {
-                        window.focus(&view.node_workspace.tab_focus, cx);
+                        window.focus(&view.tab_focus, cx);
                         window.prevent_default();
                     }
                 }),
@@ -295,7 +287,7 @@ impl Pilot {
                 .child(body)
                 .into_any_element()
         };
-        match self.node_workspace.tab {
+        match self.tab {
             NodeTab::Overview => div()
                 .id("node-overview")
                 .size_full()
@@ -313,7 +305,7 @@ impl Pilot {
                         )
                         .when_some(row.talos.as_ref(), |this, node| {
                             this.child(ui::sparkline(
-                                self.node_workspace.load_history.get(&node.name),
+                                self.load_history.get(&node.name),
                                 node.cores,
                                 cx,
                             ))
@@ -324,8 +316,8 @@ impl Pilot {
                                 this.child(ui::meter(memory.percent(), memory.level(), cx))
                             },
                         )
-                        .when(self.node_workspace.history.read(cx).shows(), |this| {
-                            this.child(self.node_workspace.history.clone())
+                        .when(self.history.read(cx).shows(), |this| {
+                            this.child(self.history.clone())
                         })
                         .children(row.facts.iter().map(|(label, value)| {
                             h_flex()
@@ -335,28 +327,28 @@ impl Pilot {
                         })),
                 )
                 .into_any_element(),
-            NodeTab::Pods => inset(self.node_workspace.pods.clone().into_any_element()),
-            NodeTab::Services => inset(self.node_workspace.services.clone().into_any_element()),
+            NodeTab::Pods => inset(self.pods.clone().into_any_element()),
+            NodeTab::Services => inset(self.services.clone().into_any_element()),
             NodeTab::Logs => {
                 // In a short window the body scrolls inside the inspector:
                 // it's as tall as its room and the log's toolbar and
                 // notices, so the lines fill the room once it has scrolled
                 // past them.
                 let short = freshkube_ui::page::is_short(window);
-                let height = self.node_workspace.logs_height.filter(|_| short);
+                let height = self.logs_height.filter(|_| short);
                 div()
                     .id("node-logs-scroll")
                     .test_support()
                     .size_full()
                     .min_h_0()
-                    .track_scroll(&self.node_workspace.logs_scroll)
+                    .track_scroll(&self.logs_scroll)
                     .when(short, |this| {
-                        let logs = self.node_workspace.logs.downgrade();
-                        let pilot = cx.entity().downgrade();
+                        let logs = self.logs.downgrade();
+                        let nodes = cx.entity().downgrade();
                         this.overflow_y_scroll()
                             .restrict_scroll_to_axis()
                             .on_prepaint(move |bounds, window, cx| {
-                                measure_log_body(&pilot, &logs, bounds.size.height, window, cx)
+                                measure_log_body(&nodes, &logs, bounds.size.height, window, cx)
                             })
                     })
                     .child(
@@ -367,8 +359,7 @@ impl Pilot {
                             .pt(dp(freshkube_ui::page::PANE_PADDING_Y))
                             .pb(dp(PANE_PADDING))
                             .child(
-                                self.node_workspace
-                                    .logs
+                                self.logs
                                     .clone()
                                     .cached(super::super::cached_page_style()),
                             ),
@@ -376,11 +367,10 @@ impl Pilot {
                     .into_any_element()
             }
             NodeTab::Events | NodeTab::Yaml => {
-                self.node_workspace.document.clone().into_any_element()
+                self.document.clone().into_any_element()
             }
             _ => inset(
-                self.node_workspace
-                    .pane_handle()
+                self.pane_handle()
                     .map(|screen| screen.view().into_any_element())
                     .unwrap_or_else(|| div().into_any_element()),
             ),
@@ -409,12 +399,12 @@ impl Pilot {
                 Button::new("node-expand")
                     .small()
                     .outline()
-                    .label(if self.node_workspace.expanded {
+                    .label(if self.expanded {
                         "Collapse"
                     } else {
                         "Expand"
                     })
-                    .on_click(cx.listener(|view, _, _, cx| view.toggle_node_expanded(cx))),
+                    .on_click(cx.listener(|view, _, _, cx| view.toggle_expanded(cx))),
             )
             .child(
                 Button::new("node-close")
@@ -422,14 +412,14 @@ impl Pilot {
                     .icon(IconName::X)
                     .tooltip("Close node pane")
                     .accessibility_label("Close node pane")
-                    .on_click(cx.listener(|view, _, window, cx| view.close_node(window, cx))),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(NodesEvent::Close))),
             )
     }
 
     fn render_node_tabs(&self, row: &NodeRow, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let collecting = self.node_workspace.logs.read(cx).collecting_count() > 0;
-        let workspace = &self.node_workspace;
+        let collecting = self.logs.read(cx).collecting_count() > 0;
+        let workspace = self;
         // Events and YAML sit in More, so while one shows, More is the
         // strip's active place.
         let active = workspace
@@ -444,13 +434,13 @@ impl Pilot {
             .track_focus(&workspace.tab_focus)
             .tab_index(0)
             .gap_1()
-            .children(self.node_workspace.inline_tabs.iter().map(|tab| {
+            .children(self.inline_tabs.iter().map(|tab| {
                 let label: SharedString = if *tab == NodeTab::Pods {
                     row.pod_label.clone()
                 } else {
                     tab.label().into()
                 };
-                inspector::tab(tab.id(), label, *tab == self.node_workspace.tab, cx)
+                inspector::tab(tab.id(), label, *tab == self.tab, cx)
                     .when(*tab == NodeTab::Logs && collecting, |this| {
                         this.child(
                             gpui_kit::component::Icon::new(IconName::Circle)
@@ -468,13 +458,10 @@ impl Pilot {
                     })
                     .on_click(cx.listener({
                         let tab = *tab;
-                        move |view, _, window, cx| {
-                            view.show_node_tab(tab, window, cx);
-                            view.focus_node_pane(window, cx);
-                        }
+                        move |_, _, _, cx| cx.emit(NodesEvent::Tab(tab))
                     }))
             }))
-            .when(self.node_workspace.more, |this| {
+            .when(self.more, |this| {
                 this.child(
                     div().flex_none().ml_1().child(
                         Button::new("node-more")
@@ -483,24 +470,22 @@ impl Pilot {
                             .label("More")
                             .dropdown_caret(true)
                             .dropdown_menu({
-                                let pilot = cx.weak_entity();
+                                let nodes = cx.weak_entity();
                                 move |menu, _, _| {
-                                    let events = pilot.clone();
-                                    let yaml = pilot.clone();
+                                    let events = nodes.clone();
+                                    let yaml = nodes.clone();
                                     menu.item(PopupMenuItem::new("Events").on_click(
-                                        move |_, window, cx| {
-                                            let _ = events.update(cx, |view, cx| {
-                                                view.show_node_tab(NodeTab::Events, window, cx);
-                                                view.focus_node_pane(window, cx);
+                                        move |_, _, cx| {
+                                            let _ = events.update(cx, |_, cx| {
+                                                cx.emit(NodesEvent::Tab(NodeTab::Events))
                                             });
                                         },
                                     ))
                                     .item(
                                         PopupMenuItem::new("YAML").on_click(
-                                            move |_, window, cx| {
-                                                let _ = yaml.update(cx, |view, cx| {
-                                                    view.show_node_tab(NodeTab::Yaml, window, cx);
-                                                    view.focus_node_pane(window, cx);
+                                            move |_, _, cx| {
+                                                let _ = yaml.update(cx, |_, cx| {
+                                                    cx.emit(NodesEvent::Tab(NodeTab::Yaml))
                                                 });
                                             },
                                         ),
@@ -517,7 +502,7 @@ impl Pilot {
 /// notices, and draws again when that changes: the room is known only once
 /// the body is laid out.
 fn measure_log_body(
-    pilot: &WeakEntity<Pilot>,
+    nodes: &WeakEntity<Nodes>,
     logs: &WeakEntity<crate::logs::LogPanel>,
     room: Pixels,
     window: &mut Window,
@@ -531,20 +516,27 @@ fn measure_log_body(
     else {
         return;
     };
-    let changed = pilot
-        .update(cx, |pilot, _| {
-            let last = pilot.node_workspace.logs_height;
+    let changed = nodes
+        .update(cx, |nodes, _| {
+            let last = nodes.logs_height;
             let changed = last.is_none_or(|last| (last - height).abs() > px(0.5));
             if changed {
-                pilot.node_workspace.logs_height = Some(height);
+                nodes.logs_height = Some(height);
             }
             changed
         })
         .unwrap_or(false);
     if changed {
-        let pilot = pilot.clone();
+        let nodes = nodes.clone();
         window.on_next_frame(move |_, cx| {
-            _ = pilot.update(cx, |_, cx| cx.notify());
+            _ = nodes.update(cx, |_, cx| cx.notify());
         });
+    }
+}
+
+impl Render for Nodes {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        probe::hit(Page::Nodes.slug());
+        self.render_nodes(window, cx)
     }
 }

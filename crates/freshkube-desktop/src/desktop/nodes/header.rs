@@ -17,7 +17,7 @@ use gpui_kit::{
     prelude::*,
 };
 
-impl Pilot {
+impl Nodes {
     pub(super) fn nodes_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let header = page::PageHeader::new("nodes", "Nodes");
         let segment = ButtonGroup::new("nodes-view")
@@ -27,16 +27,16 @@ impl Pilot {
                 Button::new("nodes-view-cards")
                     .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label("Cards")
-                    .selected(self.node_workspace.view == NodeView::Cards),
+                    .selected(self.view == NodeView::Cards),
             )
             .child(
                 Button::new("nodes-view-table")
                     .h(dp(crate::ui::CONTROL_HEIGHT))
                     .label("Table")
-                    .selected(self.node_workspace.view == NodeView::Table),
+                    .selected(self.view == NodeView::Table),
             )
             .on_click(cx.listener(|view, choice: &Vec<usize>, _, cx| {
-                view.node_workspace.view = if choice.first() == Some(&0) {
+                view.view = if choice.first() == Some(&0) {
                     NodeView::Cards
                 } else {
                     NodeView::Table
@@ -46,10 +46,10 @@ impl Pilot {
         let filter = div()
             .key_context("NodeWorkspaceFilter")
             .on_action(
-                cx.listener(|view, _: &BackNode, window, cx| view.leave_node_filter(window, cx)),
+                cx.listener(|view, _: &BackNode, window, cx| view.leave_filter(window, cx)),
             )
             .child(
-                Input::new(&self.node_workspace.query)
+                Input::new(&self.query)
                     .id(header.id("filter"))
                     .small()
                     .h(dp(crate::ui::CONTROL_HEIGHT))
@@ -63,21 +63,20 @@ impl Pilot {
                 table::status_chip(
                     status.id(),
                     status.tone(),
-                    self.node_workspace.counts[status.index()],
+                    self.counts[status.index()],
                     status.what(),
-                    self.node_workspace.filter == Some(status),
+                    self.filter == Some(status),
                     cx,
                 )
                 .on_click(cx.listener(move |view, _, _, cx| {
-                    view.node_workspace.filter = if view.node_workspace.filter == Some(status) {
+                    view.filter = if view.filter == Some(status) {
                         None
                     } else {
                         Some(status)
                     };
-                    view.node_workspace.rebuild_lines();
-                    view.node_workspace.table.reveal(0, ScrollStrategy::Top);
-                    view.node_workspace
-                        .scroll
+                    view.rebuild_lines();
+                    view.table.reveal(0, ScrollStrategy::Top);
+                    view.scroll
                         .scroll_to_item(0, ScrollStrategy::Top);
                     cx.notify();
                 }))
@@ -87,9 +86,9 @@ impl Pilot {
         let header = header.filter(filter).chips(Some(
             h_flex().gap(dp(8.)).flex_wrap().child(segment).child(chips),
         ));
-        let header = if self.node_workspace.view == NodeView::Table {
+        let header = if self.view == NodeView::Table {
             let items = self.nodes_columns_items(cx);
-            let hidden = &self.node_workspace.hidden_columns;
+            let hidden = &self.hidden_columns;
             header.foldable(
                 self.nodes_columns_menu(items.clone()),
                 page::columns_fold(
@@ -108,18 +107,18 @@ impl Pilot {
             .icon(IconName::RefreshCw)
             .accessibility_label("Refresh nodes")
             .tooltip_with_action("Refresh nodes", &page::Refresh, Some(page::SHELL_CONTEXT))
-            .on_click(page::dispatch(page::Refresh, &self.node_workspace.focus));
+            .on_click(page::dispatch(page::Refresh, &self.focus));
         header
             .foldable(
                 button,
-                page::action_item("Refresh", page::Refresh, &self.node_workspace.focus),
+                page::action_item("Refresh", page::Refresh, &self.focus),
             )
             .render(window, cx)
     }
 }
 
 impl Pilot {
-    pub(super) fn rebuild_nodes_meta(&mut self) {
+    pub(super) fn rebuild_nodes_meta(&mut self, cx: &mut App) {
         let (context, lead) = match (&self.applied.context, self.fixture) {
             (_, true) => (None, Some(Part::new("Example data"))),
             (Some(context), false) => (Some(context.clone()), None),
@@ -143,7 +142,9 @@ impl Pilot {
             .tone(Tone::Warn),
             _ => source_status("Kubernetes", &self.registry.active().kubernetes_summary),
         });
-        self.node_workspace.status = Segment::new(context, parts);
+        let status = Segment::new(context, parts);
+        self.node_workspace
+            .update(cx, |nodes, _| nodes.status = status);
     }
 }
 

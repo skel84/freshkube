@@ -152,18 +152,22 @@ impl Nodes {
 
 impl Pilot {
     pub(in crate::desktop) fn sync_nodes_source_mode(&mut self) {
+        let talos = self.kubernetes_only.is_none();
         self.node_workspace
-            .rebuild_columns(self.kubernetes_only.is_none());
-        self.rebuild_nodes_meta();
+            .update(cx, |nodes, _| nodes.rebuild_columns(talos));
+        self.rebuild_nodes_meta(cx);
     }
 
+}
+
+impl Nodes {
     /// The table's columns as checked items: the Columns menu, and its
     /// folded form.
     pub(super) fn nodes_columns_items(&self, cx: &Context<Self>) -> freshkube_ui::page::MenuItems {
         use gpui_kit::component::menu::PopupMenuItem;
         let owner = cx.entity().downgrade();
-        let columns = self.node_workspace.menu_columns.clone();
-        let hidden: BTreeSet<_> = self.node_workspace.hidden_columns.clone();
+        let columns = self.menu_columns.clone();
+        let hidden: BTreeSet<_> = self.hidden_columns.clone();
         std::rc::Rc::new(move |mut menu, _, _| {
             for (field, label) in columns.iter() {
                 let field = *field;
@@ -173,10 +177,10 @@ impl Pilot {
                         .checked(!hidden.contains(&field))
                         .on_click(move |_, _, cx| {
                             _ = owner.update(cx, |view, cx| {
-                                if !view.node_workspace.hidden_columns.remove(&field) {
-                                    view.node_workspace.hidden_columns.insert(field);
+                                if !view.hidden_columns.remove(&field) {
+                                    view.hidden_columns.insert(field);
                                 }
-                                view.node_workspace.show_columns();
+                                view.show_columns();
                                 cx.notify();
                             });
                         }),
@@ -188,7 +192,7 @@ impl Pilot {
 
     pub(super) fn nodes_columns_menu(&self, items: freshkube_ui::page::MenuItems) -> AnyElement {
         use gpui_kit::component::{Sizable, button::Button, menu::DropdownMenu};
-        Button::new(self.node_workspace.table.id("columns"))
+        Button::new(self.table.id("columns"))
             .outline()
             .small()
             .h(crate::ui::dp(crate::ui::CONTROL_HEIGHT))
@@ -199,20 +203,20 @@ impl Pilot {
     }
 }
 
-impl TableSource for Pilot {
+impl TableSource for Nodes {
     type Key = NodeKey;
     type Sort = ();
     type Column = Column;
     type Row<'a> = &'a NodeRow;
 
     fn table_state(&self) -> &TableState {
-        &self.node_workspace.table
+        &self.table
     }
     fn columns(&self) -> &[Column] {
-        &self.node_workspace.columns
+        &self.columns
     }
     fn width(&self) -> f32 {
-        self.node_workspace.table_width
+        self.table_width
     }
     fn list_label(&self) -> String {
         "Nodes; arrows select, Enter opens the selected node".into()
@@ -224,22 +228,22 @@ impl TableSource for Pilot {
     /// The filtered lines, whether or not a node's pane is open beside
     /// them (#339).
     fn line_count(&self) -> usize {
-        if self.node_workspace.view == NodeView::Cards {
-            self.node_workspace.lines.len()
+        if self.view == NodeView::Cards {
+            self.lines.len()
         } else {
-            self.node_workspace.items.len()
+            self.items.len()
         }
     }
     fn line(&self, line: usize, _: &App) -> Option<Line<NodeKey, &NodeRow>> {
-        let ix = if self.node_workspace.view == NodeView::Cards {
-            *self.node_workspace.lines.get(line)?
+        let ix = if self.view == NodeView::Cards {
+            *self.lines.get(line)?
         } else {
-            match self.node_workspace.items.get(line)? {
+            match self.items.get(line)? {
                 projection::Item::Group(status) => return Some(Line::Group(status.index())),
                 projection::Item::Row(ix) => *ix,
             }
         };
-        let row = self.node_workspace.rows.get(ix)?;
+        let row = self.rows.get(ix)?;
         Some(Line::Row(TableRow {
             key: row.key.clone(),
             id: row.id.clone().into(),
@@ -269,7 +273,7 @@ impl TableSource for Pilot {
                 .into_any_element(),
             Field::Kubernetes => table::cell(column).child(row.ready).into_any_element(),
             field @ (Field::Cpu | Field::Memory) => {
-                let Some(resources) = self.node_workspace.resource_cells.get(&row.key) else {
+                let Some(resources) = self.resource_cells.get(&row.key) else {
                     return table::cell(column).child("—").into_any_element();
                 };
                 let (resource, cell) = if field == Field::Cpu {
@@ -315,9 +319,9 @@ impl TableSource for Pilot {
     }
     fn group(&self, group: usize, cx: &mut Context<Self>) -> Option<AnyElement> {
         let status = *projection::Status::ALL.get(group)?;
-        let count = self.node_workspace.group_counts[status.index()];
+        let count = self.group_counts[status.index()];
         let collapsed =
-            status == projection::Status::Healthy && self.node_workspace.healthy_collapsed();
+            status == projection::Status::Healthy && self.healthy_collapsed();
         let mut detail = vec![pluralize(count, "node", "nodes")];
         if collapsed {
             detail.push("collapsed".into());
@@ -329,7 +333,7 @@ impl TableSource for Pilot {
             table::ROW_HEIGHT,
         )
         .detail(detail);
-        let foldable = status == projection::Status::Healthy && self.node_workspace.folds_healthy();
+        let foldable = status == projection::Status::Healthy && self.folds_healthy();
         let row = if foldable {
             use gpui_kit::component::{
                 Sizable,
@@ -349,7 +353,7 @@ impl TableSource for Pilot {
                     .accessibility_label(format!("{what} healthy nodes"))
                     .on_click(cx.listener(|view, _, _, cx| {
                         cx.stop_propagation();
-                        view.node_workspace.toggle_healthy();
+                        view.toggle_healthy();
                         cx.notify();
                     })),
             )
@@ -365,7 +369,7 @@ impl TableSource for Pilot {
         if !foldable {
             return Some(line.into_any_element());
         }
-        let focus = self.node_workspace.focus.clone();
+        let focus = self.focus.clone();
         let label = if collapsed {
             "Expand healthy nodes"
         } else {
@@ -391,17 +395,16 @@ impl TableSource for Pilot {
         Some(self.nodes_meter_legend(window, cx))
     }
     fn selected_key(&self) -> Option<&NodeKey> {
-        self.node_workspace.selected.as_ref()
+        self.selected.as_ref()
     }
     fn line_of(&self, key: &NodeKey) -> Option<usize> {
-        if self.node_workspace.view == NodeView::Cards {
-            self.node_workspace
-                .lines
+        if self.view == NodeView::Cards {
+            self.lines
                 .iter()
-                .position(|ix| &self.node_workspace.rows[*ix].key == key)
+                .position(|ix| &self.rows[*ix].key == key)
         } else {
-            self.node_workspace.items.iter().position(|item| {
-                matches!(item, projection::Item::Row(ix) if &self.node_workspace.rows[*ix].key == key)
+            self.items.iter().position(|item| {
+                matches!(item, projection::Item::Row(ix) if &self.rows[*ix].key == key)
             })
         }
     }
@@ -412,11 +415,14 @@ impl TableSource for Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_node(key.clone(), window, cx);
+        cx.emit(NodesEvent::Open {
+            key: key.clone(),
+            focus: false,
+        });
     }
     /// The table's rows have a menu; the cards don't.
     fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
-        (self.node_workspace.view != NodeView::Cards).then(|| self.node_workspace.focus.clone())
+        (self.view != NodeView::Cards).then(|| self.focus.clone())
     }
     /// A right-click selects the node as an arrow does: an open pane
     /// shows it, a closed one stays closed, so the table keeps its width
@@ -428,20 +434,23 @@ impl TableSource for Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<menu::MenuAction> {
-        if self.node_workspace.selected.as_ref() != Some(key) {
-            if self.node_workspace.open {
-                self.open_node(key.clone(), window, cx);
+        if self.selected.as_ref() != Some(key) {
+            if self.open {
+                cx.emit(NodesEvent::Open {
+                    key: key.clone(),
+                    focus: false,
+                });
             } else {
-                self.node_workspace.selected = Some(key.clone());
+                self.selected = Some(key.clone());
                 cx.notify();
             }
         }
-        window.focus(&self.node_workspace.focus, cx);
+        window.focus(&self.focus, cx);
         let mut actions = vec![menu::MenuAction::new("Open", OpenNode)];
-        if self.node_workspace.folds_healthy() {
+        if self.folds_healthy() {
             actions.push(menu::MenuAction::Separator);
             actions.push(menu::MenuAction::new(
-                if self.node_workspace.healthy_collapsed() {
+                if self.healthy_collapsed() {
                     "Expand healthy nodes"
                 } else {
                     "Collapse healthy nodes"
@@ -452,11 +461,11 @@ impl TableSource for Pilot {
         actions
     }
     fn loading(&self) -> Option<&freshkube_ui::table::LoadingRows> {
-        matches!(self.node_workspace.empty, Some(Empty::Loading))
-            .then_some(&self.node_workspace.loading)
+        matches!(self.empty, Some(Empty::Loading))
+            .then_some(&self.loading)
     }
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
-        if self.node_workspace.lines.is_empty() {
+        if self.lines.is_empty() {
             Some(
                 div()
                     .id("nodes-empty-message")
