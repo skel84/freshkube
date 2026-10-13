@@ -1722,3 +1722,46 @@ fn a_workload_download_is_named_by_the_workload_and_its_picked_pod(cx: &mut Test
         assert_eq!(name(DownloadLines::Retained, cx), workload);
     });
 }
+
+#[test]
+fn a_busy_pod_watch_hands_over_the_newest_listing_after_the_one_in_flight() {
+    use freshkube_core::resources::{Failure, FailureKind};
+    use tokio::sync::{mpsc, watch};
+
+    let listing = |name: &str| WorkloadPods {
+        listed: true,
+        failure: Some(Failure::new(FailureKind::Other, name)),
+        ..WorkloadPods::default()
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (latest, listings) = watch::channel(WorkloadPods::default());
+        let (sender, mut received) = mpsc::channel(1);
+        let forward = tokio::spawn(super::forward_listings(listings, sender));
+        let settle = || async {
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        };
+
+        latest.send_replace(listing("a"));
+        settle().await;
+        // "a" fills the slot; three more arrive before the owner takes it.
+        for name in ["b", "c", "d"] {
+            latest.send_replace(listing(name));
+            settle().await;
+        }
+
+        assert_eq!(received.recv().await, Some(listing("a")));
+        settle().await;
+        assert_eq!(received.recv().await, Some(listing("d")));
+        settle().await;
+        assert!(received.try_recv().is_err(), "b and c never land");
+
+        drop(latest);
+        forward.await.unwrap();
+    });
+}

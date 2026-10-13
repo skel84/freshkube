@@ -43,7 +43,7 @@ use freshkube_core::resources::{
 use freshkube_reads::{Pace, Watch};
 use gpui_kit::{AnyElement, Context, Pixels, SharedString, Window};
 use tokio::runtime::Handle;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 #[cfg(any(test, feature = "stress"))]
 use super::streams::Fed;
@@ -70,8 +70,8 @@ pub(crate) use super::streams::MAX_STREAMS;
 /// Lines from the end each container's log starts with.
 const TAIL: i64 = 100;
 
-/// The pods' watch hands over one listing at a time: the work keeps only
-/// the latest while one waits, so a busy watch coalesces.
+/// The pods' watch hands over one listing at a time; `forward_listings`
+/// takes the newest only once there is room for it.
 const POD_PACE: Pace = Pace {
     capacity: 1,
     most: 1,
@@ -824,8 +824,8 @@ trait Streams: Sized + 'static {
     /// Reads every refused stream again, as Retry asks.
     fn retry_refused(&mut self, cx: &mut Context<Self>);
 
-    /// Takes the latest of the current watch's listings; its watch drops
-    /// an older one's.
+    /// Takes the current watch's listing, one a batch; its watch drops an
+    /// older one's.
     fn apply_listings(&mut self, listings: Vec<WorkloadPods>, cx: &mut Context<Self>);
 
     /// Takes the pods as last seen by the watch.
@@ -933,10 +933,7 @@ impl Streams for WorkloadLogView {
             &source.reads.runtime,
             POD_PACE,
             move |sender| async move {
-                // follow_pods keeps only the latest listing; each is passed
-                // on once the last was taken, so a busy watch coalesces as
-                // before.
-                let (latest, mut listings) = watch::channel(WorkloadPods::default());
+                let (latest, listings) = watch::channel(WorkloadPods::default());
                 let follow = async move {
                     match access.client().await {
                         Ok(client) => {
@@ -953,15 +950,7 @@ impl Streams for WorkloadLogView {
                         }
                     }
                 };
-                let forward = async move {
-                    while listings.changed().await.is_ok() {
-                        let pods = listings.borrow_and_update().clone();
-                        if sender.send(pods).await.is_err() {
-                            return;
-                        }
-                    }
-                };
-                tokio::join!(follow, forward);
+                tokio::join!(follow, forward_listings(listings, sender));
             },
             |view: &mut Self| &mut view.source_mut().pod_watch,
             Self::apply_listings,
@@ -1115,6 +1104,21 @@ impl Streams for WorkloadLogView {
         self.clear_shown();
         self.source_mut().describe();
         cx.notify();
+    }
+}
+
+/// Hands `follow_pods`' listings to the watch's channel. It waits for room
+/// before it reads one, so a busy watch hands over the newest listing once
+/// the one in flight was taken; the listings between them never land.
+async fn forward_listings(
+    mut listings: watch::Receiver<WorkloadPods>,
+    sender: mpsc::Sender<WorkloadPods>,
+) {
+    while listings.changed().await.is_ok() {
+        let Ok(slot) = sender.reserve().await else {
+            return;
+        };
+        slot.send(listings.borrow_and_update().clone());
     }
 }
 
