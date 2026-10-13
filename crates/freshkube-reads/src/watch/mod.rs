@@ -11,6 +11,8 @@
 use std::{
     future::Future,
     marker::PhantomData,
+    pin::Pin,
+    task::{Context as TaskContext, Poll},
     time::{Duration, Instant},
 };
 
@@ -23,7 +25,9 @@ use tokio::{runtime::Handle, sync::mpsc};
 pub struct Pace {
     /// How many items the channel holds before the stream waits.
     pub capacity: usize,
-    /// The most items one batch carries; the rest wait for the next.
+    /// The most items one batch carries; the rest wait for the next. A
+    /// batch is drained on the UI thread, so a fast stream with no cap
+    /// holds it as long as the channel stays full.
     pub most: usize,
     /// The least time between two batches: one sent sooner waits, and
     /// whatever arrives meanwhile joins it.
@@ -125,6 +129,9 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
                     return;
                 }
                 last = Some(cx.background_executor().now());
+                // However busy the stream and short `every`, let a frame
+                // draw between two batches.
+                YieldNow(false).await;
             }
             // The stream ended by itself.
             _ = this.update(cx, |view, cx| {
@@ -225,6 +232,23 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
     /// last said; a new watch is shown.
     pub fn is_visible(&self) -> bool {
         self.visible
+    }
+}
+
+/// Gives the executor one turn before going on: a channel that is never
+/// empty would otherwise keep the delivery in one poll.
+struct YieldNow(bool);
+
+impl Future for YieldNow {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<()> {
+        if self.0 {
+            return Poll::Ready(());
+        }
+        self.0 = true;
+        cx.waker().wake_by_ref();
+        Poll::Pending
     }
 }
 
