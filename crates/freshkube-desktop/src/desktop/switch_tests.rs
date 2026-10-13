@@ -5,11 +5,11 @@ use super::{KubeconfigSelection, Page, Pilot};
 use crate::GpuiOptions;
 use crate::navigation_file::NavigationFile;
 use crate::resources::{example, live, shell};
+use freshkube_ui::real_io::RealIo;
 
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use std::path::Path;
-use std::time::Duration;
 
 fn key(id: &str) -> SessionKey {
     SessionKey::Entry(id.into())
@@ -98,7 +98,7 @@ fn picking_the_active_cluster_or_one_that_is_gone_changes_nothing(cx: &mut TestA
 async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     pick(cx, handle, &view, 0);
-    cx.wait_for(handle, Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx)
             .registry
             .active()
@@ -120,7 +120,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
 
     pick(cx, handle, &view, 1);
     assert_eq!(active(cx, &view), key("cicd-fra"));
-    cx.wait_for(handle, Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx)
             .registry
             .active()
@@ -193,7 +193,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
         });
     })
     .unwrap();
-    cx.wait_for(handle, Duration::from_secs(2), |window, cx| {
+    cx.wait_for_io(handle, |window, cx| {
         window.try_find("overview-last-known").is_none()
             && !view
                 .read(cx)
@@ -209,7 +209,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
 async fn a_late_summary_from_the_cluster_just_left_is_dropped(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     pick(cx, handle, &view, 0);
-    cx.wait_for(handle, Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).registry.active().summary_session.is_some()
     })
     .await;
@@ -349,7 +349,7 @@ async fn a_talosconfig_whose_current_context_names_nothing_still_opens_an_entry(
     let config = "context: gone\ncontexts:\n  acme-mgmt:\n    endpoints: [127.0.0.1]\n    ca: YQ==\n    crt: Yg==\n    key: Yw==\n";
     let guard = talos_folder_with(config, true);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         let pilot = view.read(cx);
         !pilot.config_loading && pilot.applied.context.as_deref() == Some("acme-mgmt")
     })
@@ -546,7 +546,7 @@ async fn switching_moves_between_a_talos_entry_and_a_kubeconfig_entry_and_rememb
     });
     // The choice reaches the file.
     let file = guard.path().join("navigation.json");
-    cx.wait_for(handle, Duration::from_secs(2), |_, _| {
+    cx.wait_for_io(handle, |_, _| {
         std::fs::read_to_string(&file).is_ok_and(|text| text.contains("\"mgmt\""))
     })
     .await;
@@ -595,10 +595,8 @@ async fn a_talos_entry_takes_the_context_it_names_never_the_files_current_one(
     let guard = talos_folder(TALOSCONFIG_OTHER_CURRENT);
     super::switch::search_kubeconfigs_in(vec![guard.path().join("none")]);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
-        view.read(cx).applied.context.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).applied.context.is_some())
+        .await;
     cx.read(|cx| {
         let pilot = view.read(cx);
         // `other` is the file's current context; the entry's `context` is used.
@@ -614,10 +612,8 @@ async fn a_talos_entry_the_file_has_no_context_for_opens_with_its_kubeconfig_con
 ) {
     let guard = talos_folder_with(TALOSCONFIG_ONLY_OTHER, true);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
-        view.read(cx).kubernetes_only.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).kubernetes_only.is_some())
+        .await;
     cx.read(|cx| {
         let pilot = view.read(cx);
         // The file's current context was not applied.
@@ -654,7 +650,7 @@ async fn a_talos_entry_without_a_workspace_kubeconfig_reads_the_file_that_define
     .unwrap();
     super::switch::search_kubeconfigs_in(vec![file.clone()]);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         matches!(
             view.read(cx).kubeconfig,
             freshkube_core::KubeconfigSelection::File { .. }
@@ -682,7 +678,7 @@ async fn a_context_no_default_kubeconfig_defines_is_said_and_never_replaced_by_t
     std::fs::write(&file, KUBECONFIG).unwrap();
     super::switch::search_kubeconfigs_in(vec![file]);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).settings_page.read(cx).note("mgmt").is_some()
     })
     .await;
@@ -839,13 +835,11 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
     start_on_dev_first(&guard);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
     assert_eq!(active(cx, &view), key("dev"));
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
-        !view.read(cx).config_loading
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| !view.read(cx).config_loading)
+        .await;
     open_and_hold_link(cx, handle, &view, "mgmt");
     let generation = cx.read(|cx| view.read(cx).entry_generation);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         matches!(
             &view.read(cx).kubeconfig,
             freshkube_core::KubeconfigSelection::File { path, .. } if *path == wanted
@@ -881,16 +875,12 @@ async fn a_held_link_is_dropped_when_the_entrys_kubeconfig_lacks_its_context(
     let (guard, _) = talos_folder_with_workspace_kubeconfig(KUBECONFIG);
     start_on_dev_first(&guard);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
-        !view.read(cx).config_loading
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| !view.read(cx).config_loading)
+        .await;
     open_and_hold_link(cx, handle, &view, "mgmt");
     let told = notice_count(cx, handle);
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
-        !view.read(cx).kubeconfig_draft.inspecting
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| !view.read(cx).kubeconfig_draft.inspecting)
+        .await;
     cx.run_until_parked();
     assert_eq!(notice_count(cx, handle), told + 1, "the entry is told why");
     cx.read(|cx| {
@@ -952,10 +942,8 @@ async fn an_entry_that_cannot_read_its_kubeconfig_drops_a_held_link(cx: &mut Tes
         });
     })
     .unwrap();
-    cx.wait_for(handle, Duration::from_secs(5), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.registry.active_key(), &key("dev"));

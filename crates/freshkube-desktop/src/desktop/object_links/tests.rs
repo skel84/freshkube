@@ -2,10 +2,8 @@ use crate::{
     desktop::{Page, nodes::NodeTab, tests::fixture},
     resources::{Tab, example, model::ResourceIdentity},
 };
-use gpui_kit::{
-    AppContext, TestAppContext,
-    test::{TestAppContextExt, TestWindowExt},
-};
+use freshkube_ui::real_io::RealIo;
+use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 
 /// Draws until the drawer settles, then asserts that Details landed on
 /// `section`: its top at the scroller's top, or, when what follows is too
@@ -624,10 +622,7 @@ async fn an_object_open_answer_is_applied_once_and_frees_its_job(cx: &mut TestAp
     let open = gated_open(cx, handle, &view, &applied, false);
     assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_some()));
     open.send(()).unwrap();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), |_, _| {
-        applied.get() == 1
-    })
-    .await;
+    cx.wait_for_io(handle, |_, _| applied.get() == 1).await;
     assert!(view.read_with(cx, |pilot, _| pilot.object_open_job.is_none()));
 }
 

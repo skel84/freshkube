@@ -320,20 +320,13 @@ fn wait_until(
     what: &str,
     ready: impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) -> bool,
 ) {
-    for _ in 0..300 {
-        cx.run_until_parked();
-        let done = cx
-            .update_window(handle.into(), |_, window, cx| {
-                window.render_frame(cx);
-                ready(window, cx)
-            })
-            .unwrap();
-        if done {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    panic!("timed out waiting for {what}");
+    freshkube_ui::real_io::until_io(cx, what, |cx| {
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.render_frame(cx);
+            ready(window, cx)
+        })
+        .unwrap()
+    });
 }
 
 fn status(window: &gpui_kit::Window) -> String {
