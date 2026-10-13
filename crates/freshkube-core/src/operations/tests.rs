@@ -319,3 +319,74 @@ fn partial_etcd_sample_is_unavailable_never_safe() {
         SafetyStatus::Unknown
     );
 }
+
+/// A fake API server: a Node get answers `node` (or `status` with a Status body), any other
+/// request answers `status`.
+fn preview_client(status: u16, node: Option<serde_json::Value>) -> kube::Client {
+    use kube::client::Body;
+    let service = tower::service_fn(move |request: http::Request<Body>| {
+        let node = node.clone();
+        async move {
+            let (status, body) = match node {
+                Some(node) if request.uri().path().ends_with("/nodes/node-a") => (200, node),
+                _ => (
+                    status,
+                    serde_json::json!({"kind":"Status","apiVersion":"v1","status":"Failure",
+                        "message":"denied by policy","reason":"Forbidden","code":status}),
+                ),
+            };
+            Ok::<_, std::convert::Infallible>(
+                http::Response::builder()
+                    .status(status)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string().into_bytes()))
+                    .unwrap(),
+            )
+        }
+    });
+    kube::Client::new(service, "default")
+}
+
+fn node_a(address: &str) -> serde_json::Value {
+    serde_json::json!({"apiVersion":"v1","kind":"Node","metadata":{"name":"node-a"},
+        "status":{"addresses":[{"type":"InternalIP","address":address}]}})
+}
+
+/// The Kubernetes reads of the preview keep their sentences and gain the kind the error implies.
+#[tokio::test]
+async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
+    let targets = [NodeTarget::new("node-a", "10.0.0.1")];
+    let refused = preview_client(403, None);
+    let expected = Api::<Node>::all(refused.clone())
+        .get("node-a")
+        .await
+        .unwrap_err()
+        .to_string();
+    let failure = preflight_kubernetes(&refused, &targets).await.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Forbidden);
+    assert_eq!(
+        failure.message,
+        format!("Kubernetes precheck for node-a: {expected}")
+    );
+
+    let pods_refused = preview_client(403, Some(node_a("10.0.0.1")));
+    let failure = preflight_kubernetes(&pods_refused, &targets)
+        .await
+        .unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Forbidden);
+    assert!(failure.message.starts_with("Pod precheck for node-a: "));
+
+    let mismatched = preview_client(403, Some(node_a("10.9.9.9")));
+    let failure = preflight_kubernetes(&mismatched, &targets)
+        .await
+        .unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Other);
+    assert_eq!(
+        failure.message,
+        "Kubernetes identity mismatch for node-a at 10.0.0.1; no mutation was made"
+    );
+
+    let failure = blocking_pdbs(&refused).await.unwrap_err();
+    assert_eq!(failure.kind, FailureKind::Forbidden);
+    assert!(failure.message.starts_with("PodDisruptionBudget check: "));
+}

@@ -21,6 +21,7 @@ use std::{
 use talos_rs::TalosClient;
 use thiserror::Error;
 
+use crate::failure::{Failure, FailureKind};
 use crate::indicators::SafetyStatus;
 use crate::inspection::EtcdHealthSnapshot;
 
@@ -1914,7 +1915,7 @@ pub async fn preflight_nodes(
     talos: TalosClient,
     endpoint: crate::inspection::InspectionTarget,
     targets: &[NodeTarget],
-) -> Result<Vec<NodePreflight>, String> {
+) -> Result<Vec<NodePreflight>, Failure> {
     let mut found = preflight_kubernetes(kubernetes, targets).await?;
     let etcd = crate::inspection::collect_etcd_health(
         talos,
@@ -1930,10 +1931,16 @@ pub async fn preflight_nodes(
     Ok(found)
 }
 
+/// A failed Kubernetes read worded `"{what}: {error}"`, classified by the error.
+fn read_failure(what: String, error: kube::Error) -> Failure {
+    let text = format!("{what}: {error}");
+    Failure::new(Failure::from_kube(error).kind, text)
+}
+
 async fn preflight_kubernetes(
     kubernetes: &Client,
     targets: &[NodeTarget],
-) -> Result<Vec<NodePreflight>, String> {
+) -> Result<Vec<NodePreflight>, Failure> {
     let nodes: Api<Node> = Api::all(kubernetes.clone());
     let pods: Api<Pod> = Api::all(kubernetes.clone());
     let mut found = Vec::with_capacity(targets.len());
@@ -1941,11 +1948,14 @@ async fn preflight_kubernetes(
         let node = nodes
             .get(&target.name)
             .await
-            .map_err(|e| format!("Kubernetes precheck for {}: {e}", target.name))?;
+            .map_err(|e| read_failure(format!("Kubernetes precheck for {}", target.name), e))?;
         if !node_matches_target(&node, target) {
-            return Err(format!(
-                "Kubernetes identity mismatch for {} at {}; no mutation was made",
-                target.name, target.address
+            return Err(Failure::new(
+                FailureKind::Other,
+                format!(
+                    "Kubernetes identity mismatch for {} at {}; no mutation was made",
+                    target.name, target.address
+                ),
             ));
         }
         let ready = node
@@ -1964,7 +1974,7 @@ async fn preflight_kubernetes(
                     .limit(POD_SAMPLE_LIMIT),
             )
             .await
-            .map_err(|e| format!("Pod precheck for {}: {e}", target.name))?
+            .map_err(|e| read_failure(format!("Pod precheck for {}", target.name), e))?
             .items
             .len();
         found.push(NodePreflight {
@@ -1993,13 +2003,13 @@ pub struct BlockingPdb {
 
 /// PodDisruptionBudgets across all namespaces that allow no disruption while pods are expected.
 /// These can stall a drain; the list is advisory and cluster-wide, not specific to one node.
-pub async fn blocking_pdbs(kubernetes: &Client) -> Result<Vec<BlockingPdb>, String> {
+pub async fn blocking_pdbs(kubernetes: &Client) -> Result<Vec<BlockingPdb>, Failure> {
     use k8s_openapi::api::policy::v1::PodDisruptionBudget;
     let api: Api<PodDisruptionBudget> = Api::all(kubernetes.clone());
     let list = api
         .list(&ListParams::default())
         .await
-        .map_err(|e| format!("PodDisruptionBudget check: {e}"))?;
+        .map_err(|e| read_failure("PodDisruptionBudget check".to_owned(), e))?;
     Ok(list
         .items
         .into_iter()
