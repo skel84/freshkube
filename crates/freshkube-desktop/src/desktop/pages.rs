@@ -488,10 +488,7 @@ impl Pilot {
         } else if self.page == Page::Monitoring {
             let focus = self.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
-        } else if self.page == Page::Nodes
-            && self.node_workspace.open
-            && self.node_workspace.tab == super::nodes::NodeTab::Logs
-        {
+        } else if self.page == Page::Nodes && self.node_workspace.shows_logs() {
             self.logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
         } else if let Some(screen) = self.active_screen() {

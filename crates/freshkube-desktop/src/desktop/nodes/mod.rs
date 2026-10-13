@@ -258,6 +258,24 @@ impl Nodes {
         &self.loading_motion
     }
 
+    /// The Talos screen the open pane shows, when its tab is one.
+    pub(super) fn pane_screen(&self) -> Option<super::pages::PageId> {
+        self.open.then(|| self.tab.screen()).flatten()
+    }
+
+    /// Whether the open pane shows the node's Talos log.
+    pub(super) fn shows_logs(&self) -> bool {
+        self.open && self.tab == NodeTab::Logs
+    }
+
+    /// The header's breadcrumb after Nodes: the open node and its tab.
+    pub(super) fn crumb(&self) -> Option<(SharedString, &'static str)> {
+        self.open.then(|| {
+            let name = self.row().map(|row| row.name.clone()).unwrap_or_default();
+            (name.into(), self.tab.label())
+        })
+    }
+
     pub(super) fn row(&self) -> Option<&NodeRow> {
         self.rows
             .iter()

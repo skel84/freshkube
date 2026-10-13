@@ -363,8 +363,8 @@ impl Pilot {
     }
 
     fn shown_id(&self) -> PageId {
-        let pane = self.page == Page::Nodes && self.node_workspace.open;
-        pane.then(|| self.node_workspace.tab.screen())
+        (self.page == Page::Nodes)
+            .then(|| self.node_workspace.pane_screen())
             .flatten()
             .unwrap_or(self.page.id())
     }

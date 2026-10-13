@@ -24,9 +24,7 @@ impl Pilot {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
             named = names.then(|| context.clone());
             status
-        } else if (self.page == Page::Nodes
-            && self.node_workspace.open
-            && self.node_workspace.tab == crate::desktop::nodes::NodeTab::Logs)
+        } else if (self.page == Page::Nodes && self.node_workspace.shows_logs())
             && self.config_error.is_none()
         {
             self.render_logs_status(cx)
