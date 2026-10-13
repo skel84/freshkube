@@ -105,7 +105,29 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         Work: FnOnce(mpsc::Sender<T>) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        let sender = self.begin(identity, pace, slot, apply, cx);
+        self.start_then(identity, runtime, pace, work, slot, apply, |_, _| {}, cx);
+    }
+
+    /// As [`start`](Self::start), and runs `ended` on the owner once the
+    /// stream ends by itself while this start is still current, after its
+    /// last batch landed: a log collection that runs out stops collecting.
+    /// Stopping or starting again runs nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_then<V: 'static, Work, Fut>(
+        &mut self,
+        identity: I,
+        runtime: &Handle,
+        pace: Pace,
+        work: Work,
+        slot: impl Fn(&mut V) -> &mut Self + 'static,
+        apply: impl Fn(&mut V, Vec<T>, &mut Context<V>) + 'static,
+        ended: impl FnOnce(&mut V, &mut Context<V>) + 'static,
+        cx: &mut Context<V>,
+    ) where
+        Work: FnOnce(mpsc::Sender<T>) -> Fut,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        let sender = self.begin(identity, pace, slot, apply, ended, cx);
         self.job = Some(OwnedJob::new(runtime.spawn(work(sender))));
     }
 
@@ -122,7 +144,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         apply: impl Fn(&mut V, Vec<T>, &mut Context<V>) + 'static,
         cx: &mut Context<V>,
     ) {
-        self.held = Some(self.begin(identity, pace, slot, apply, cx));
+        self.held = Some(self.begin(identity, pace, slot, apply, |_, _| {}, cx));
     }
 
     /// Drops any earlier stream and starts the delivery of a new one for
@@ -133,6 +155,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         pace: Pace,
         slot: impl Fn(&mut V) -> &mut Self + 'static,
         apply: impl Fn(&mut V, Vec<T>, &mut Context<V>) + 'static,
+        ended: impl FnOnce(&mut V, &mut Context<V>) + 'static,
         cx: &mut Context<V>,
     ) -> mpsc::Sender<T> {
         self.stop();
@@ -184,6 +207,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
                         // This runs in that task: let it finish.
                         task.detach();
                     }
+                    ended(view, cx);
                     cx.notify();
                 }
             });

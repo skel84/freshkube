@@ -41,6 +41,8 @@ struct Screen {
     restarted: Option<mpsc::Sender<u32>>,
     /// How many items the current stream has passed on to the watch.
     forwarded: Arc<AtomicUsize>,
+    /// What had landed each time a stream ended by itself.
+    ends: Vec<Vec<u32>>,
 }
 
 impl Screen {
@@ -66,6 +68,33 @@ impl Screen {
             },
             |screen: &mut Screen| &mut screen.watch,
             Self::apply,
+            cx,
+        );
+        feed
+    }
+
+    /// As `begin`, noting in `ends` what had landed when the stream ends by
+    /// itself.
+    fn begin_then(&mut self, identity: &'static str, cx: &mut Context<Self>) -> mpsc::Sender<u32> {
+        let (feed, mut items) = mpsc::channel::<u32>(16);
+        let runtime = self.runtime.clone();
+        self.watch.start_then(
+            identity,
+            &runtime,
+            self.pace,
+            move |sender| async move {
+                while let Some(item) = items.recv().await {
+                    if sender.send(item).await.is_err() {
+                        return;
+                    }
+                }
+            },
+            |screen: &mut Screen| &mut screen.watch,
+            Self::apply,
+            |screen: &mut Screen, _| {
+                assert!(!screen.watch.is_running(), "ended before its end runs");
+                screen.ends.push(screen.seen.clone());
+            },
             cx,
         );
         feed
@@ -115,6 +144,7 @@ fn mount_paced(pace: Pace, cx: &mut TestAppContext) -> (Runtime, Entity<Screen>)
         restart_on: None,
         restarted: None,
         forwarded: Arc::default(),
+        ends: Vec::new(),
     });
     (runtime, screen)
 }
@@ -527,4 +557,34 @@ fn an_opened_watch_closes_when_it_stops_or_starts_again(cx: &mut TestAppContext)
     let _feed = start(&screen, &runtime, "a", cx);
     cx.run_until_parked();
     assert!(opened.is_closed());
+}
+
+#[gpui_kit::test]
+fn a_stream_that_ends_by_itself_runs_its_end_after_its_last_batch(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = screen.update(cx, |screen, cx| screen.begin_then("a", cx));
+    runtime.block_on(feed.send(1)).unwrap();
+    runtime.block_on(feed.send(2)).unwrap();
+    drop(feed);
+    until(cx, |cx| {
+        screen.read_with(cx, |screen, _| !screen.watch.is_running())
+    });
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.seen, [1, 2]);
+        assert_eq!(screen.ends, [vec![1, 2]], "once, after the last batch");
+    });
+}
+
+#[gpui_kit::test]
+fn stopping_or_starting_again_runs_no_end(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = screen.update(cx, |screen, cx| screen.begin_then("a", cx));
+    screen.update(cx, |screen, _| screen.watch.stop());
+    until(cx, |_| feed.is_closed());
+
+    let feed = screen.update(cx, |screen, cx| screen.begin_then("a", cx));
+    let _new = start(&screen, &runtime, "b", cx);
+    until(cx, |_| feed.is_closed());
+    cx.run_until_parked();
+    assert!(screen.read_with(cx, |screen, _| screen.ends.is_empty()));
 }
