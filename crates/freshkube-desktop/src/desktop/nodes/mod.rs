@@ -96,7 +96,7 @@ pub(super) struct Nodes {
     query_text: String,
     search_keys: Vec<String>,
     /// The status bar's segment while Nodes shows.
-    pub(super) status: freshkube_ui::status::Segment,
+    status: freshkube_ui::status::Segment,
     _query_subscription: Subscription,
     /// The node document's Escape, stepping back from its last level.
     _document_subscription: Subscription,

@@ -13,7 +13,7 @@
 //! Overview, Nodes and System services have handles too. The shell feeds
 //! what they draw, so most of their hooks do nothing: System services and
 //! Nodes give their status lines, Nodes its loading motion and its read of
-//! its nodes' use (`desktop/nodes/mod.rs`), and System services and
+//! its nodes' use (`desktop/nodes/metrics.rs`), and System services and
 //! Overview ask the shell through their own events.
 
 use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
