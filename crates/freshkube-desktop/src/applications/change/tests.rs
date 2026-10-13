@@ -1817,3 +1817,33 @@ fn a_stage_whose_pods_are_only_claimed_never_folds(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_spread_fixture_follows_applications_and_names_the_skipped_namespaces(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, view) = on_stage_of(cx, 1280., 880., Variant::Spread);
+    cx.update_window(handle, |_, window, cx| {
+        window.press("f", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = change(&view, cx).expect("the change opens");
+        let data = page.read(cx).loader.data().expect("the example answered");
+        let dev = data
+            .hops
+            .iter()
+            .find(|hop| hop.key == "dev-argocd")
+            .unwrap();
+        assert!(dev.detail.contains("gitops"));
+        assert_eq!(dev.link, Some(freshkube_delivery::Confidence::Confirmed));
+        let missing = window.find("change-missing").label().unwrap().to_owned();
+        assert!(missing.contains("delivery, gitops, platform"), "{missing}");
+        assert!(missing.contains("sandbox, tenants"), "{missing}");
+        assert!(missing.contains("namespace cap"), "{missing}");
+    })
+    .unwrap();
+}
