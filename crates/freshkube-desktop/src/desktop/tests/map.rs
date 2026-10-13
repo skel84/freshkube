@@ -152,7 +152,7 @@ fn a_page_in_the_map_hears_the_shell_in_key_order_and_is_heard(cx: &mut TestAppC
     .unwrap();
 
     // The source reaches the screens first, then the other pages in key
-    // order; Etcd isn't shown, so it doesn't load.
+    // order; Etcd isn't shown, so it doesn't activate.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| view.push_source(window, cx))
     })
@@ -185,8 +185,31 @@ fn a_page_in_the_map_hears_the_shell_in_key_order_and_is_heard(cx: &mut TestAppC
         .filter(|line| line.ends_with("shown") || line.ends_with("hidden"))
         .cloned()
         .collect();
+    assert!(told.len() >= 3, "{told:?}");
     assert_eq!(
         told[..3],
         ["monitoring shown", "settings hidden", "etcd hidden"]
+    );
+
+    // With a screen shown, it activates between the two passes: after the
+    // screens have their source and before the other pages hear theirs.
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx))
+    })
+    .unwrap();
+    cx.run_until_parked();
+    take();
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.push_source(window, cx))
+    })
+    .unwrap();
+    assert_eq!(
+        take(),
+        [
+            format!("etcd source {context}"),
+            "etcd activate".into(),
+            format!("monitoring source {context}"),
+            format!("settings source {context}"),
+        ]
     );
 }
