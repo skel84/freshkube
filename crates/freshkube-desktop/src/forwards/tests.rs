@@ -6,12 +6,14 @@ use std::time::Duration;
 use std::sync::Arc;
 
 use freshkube_core::resources::{
-    ForwardFailure, ForwardFailureKind, ForwardTarget, builtin, listen_local,
+    ForwardEnd, ForwardFailure, ForwardFailureKind, ForwardState, ForwardStatus, ForwardTarget,
+    builtin, listen_local,
 };
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, size};
 use tokio::runtime::Runtime;
+use tokio::sync::watch;
 
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::view::Phase;
@@ -27,6 +29,22 @@ struct Mounted {
 }
 
 impl Mounted {
+    async fn with_status(
+        &self,
+        cx: &mut TestAppContext,
+        status: watch::Receiver<ForwardStatus>,
+    ) -> (u64, u64) {
+        let id = self
+            .start(cx, self.spec("pods", "grafana", 8080, None))
+            .await;
+        let seq = cx.update(|cx| {
+            let view = self.list.read(cx).get(id, cx).unwrap();
+            view.update(cx, |view, cx| view.run_with_status(status, cx))
+        });
+        cx.run_until_parked();
+        (id, seq)
+    }
+
     fn spec(&self, kind: &str, name: &str, port: u16, local_port: Option<u16>) -> ForwardSpec {
         let identity = object(kind, name);
         let resource = builtin(kind).unwrap();
@@ -184,6 +202,120 @@ fn freed(port: u16) -> bool {
         }
         refused
     })
+}
+
+fn status(state: ForwardState) -> ForwardStatus {
+    ForwardStatus {
+        state,
+        connections: 2,
+        last_error: None,
+    }
+}
+
+fn listening() -> ForwardStatus {
+    status(ForwardState::Listening {
+        pod: "example-pod".into(),
+        port: 8080,
+    })
+}
+
+#[gpui_kit::test]
+async fn initial_status_already_ended_with_a_closed_sender_offers_start_again(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let forwards = mount(cx);
+    let (sender, receiver) = watch::channel(status(ForwardState::Ended(ForwardEnd::PodGone(
+        "The example pod ended".into(),
+    ))));
+    drop(sender);
+    let (id, _) = forwards.with_status(cx, receiver).await;
+    assert_eq!(forwards.phase(cx, id), Phase::Ended);
+    assert_eq!(cx.read(running), 0);
+    assert_eq!(forwards.entry(cx).as_deref(), Some("⇄ Forwards"));
+    forwards.click(cx, "forwards");
+    let row = forwards.label(cx, &format!("forward-{id}")).unwrap();
+    assert!(row.contains("Ended, The example pod ended"), "{row}");
+    assert!(forwards.label(cx, &format!("forward-{id}-stop")).is_none());
+    forwards.click(cx, &format!("forward-{id}-again"));
+    forwards.settle(cx, id).await;
+    assert_eq!(forwards.phase(cx, id), Phase::Running);
+    assert_eq!(cx.read(running), 1);
+}
+
+#[gpui_kit::test]
+async fn initial_status_listening_starts_normally(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let forwards = mount(cx);
+    let (_sender, receiver) = watch::channel(listening());
+    let (id, _) = forwards.with_status(cx, receiver).await;
+    assert_eq!(forwards.phase(cx, id), Phase::Running);
+    assert_eq!(cx.read(running), 1);
+    assert_eq!(forwards.entry(cx).as_deref(), Some("⇄ 1 forward"));
+    forwards.click(cx, "forwards");
+    let row = forwards.label(cx, &format!("forward-{id}")).unwrap();
+    assert!(row.contains("Listening, 2 connections"), "{row}");
+    assert!(forwards.label(cx, &format!("forward-{id}-again")).is_none());
+    forwards.click(cx, &format!("forward-{id}-stop"));
+    assert_eq!(forwards.phase(cx, id), Phase::Ended);
+    assert_eq!(cx.read(running), 0);
+}
+
+#[gpui_kit::test]
+async fn initial_status_later_end_and_stop_finish(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let forwards = mount(cx);
+    let (sender, receiver) = watch::channel(listening());
+    let (id, _) = forwards.with_status(cx, receiver).await;
+    sender
+        .send(status(ForwardState::Ended(ForwardEnd::TargetDeleted(
+            "The example target was deleted".into(),
+        ))))
+        .unwrap();
+    drop(sender);
+    cx.run_until_parked();
+    assert_eq!(forwards.phase(cx, id), Phase::Ended);
+    assert_eq!(cx.read(running), 0);
+    forwards.click(cx, "forwards");
+    let row = forwards.label(cx, &format!("forward-{id}")).unwrap();
+    assert!(
+        row.contains("Ended, The example target was deleted"),
+        "{row}"
+    );
+    forwards.click(cx, &format!("forward-{id}-again"));
+    forwards.settle(cx, id).await;
+    forwards.click(cx, &format!("forward-{id}-stop"));
+    assert_eq!(forwards.phase(cx, id), Phase::Ended);
+    assert_eq!(cx.read(running), 0);
+    let row = forwards.label(cx, &format!("forward-{id}")).unwrap();
+    assert!(row.contains("Stopped, You stopped it"), "{row}");
+}
+
+#[gpui_kit::test]
+async fn initial_status_superseded_start_result_is_rejected(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let forwards = mount(cx);
+    let (_sender, receiver) = watch::channel(listening());
+    let (id, seq) = forwards.with_status(cx, receiver).await;
+    forwards.click(cx, "forwards");
+    forwards.click(cx, &format!("forward-{id}-stop"));
+    cx.update(|cx| {
+        forwards
+            .list
+            .update(cx, |list, cx| list.start_again(id, cx));
+        let view = forwards.list.read(cx).get(id, cx).unwrap();
+        view.update(cx, |view, cx| {
+            assert_eq!(view.phase, Phase::Starting);
+            view.deliver_start_failure(seq, cx);
+            assert_eq!(view.phase, Phase::Starting);
+        });
+    });
+    forwards.settle(cx, id).await;
+    assert_eq!(forwards.phase(cx, id), Phase::Running);
+    assert_eq!(cx.read(running), 1);
+    let row = forwards.label(cx, &format!("forward-{id}")).unwrap();
+    assert!(row.contains("Listening"), "{row}");
+    assert!(!row.contains("An earlier start ended"), "{row}");
 }
 
 #[gpui_kit::test]

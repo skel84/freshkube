@@ -1,0 +1,1 @@
+- **Port forwards:** a forward that ends while it starts now shows Ended with its reason and offers Start again.

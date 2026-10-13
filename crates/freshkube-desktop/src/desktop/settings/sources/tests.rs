@@ -41,6 +41,16 @@ fn list(view: &View, cx: &gpui_kit::App) -> List {
     view.read(cx).settings_page.read(cx).sources.clone()
 }
 
+/// A completion token for answering the pending check in the test, without
+/// replacing its work. Loader's test helper begins the synthetic answer.
+#[cfg(unix)]
+fn request(
+    list: &List,
+    cx: &mut gpui_kit::App,
+) -> freshkube_core::snapshot::Request<super::CheckIdentity> {
+    list.update(cx, |list, _| list.read.begin(list.identity()))
+}
+
 fn states(view: &View, cx: &gpui_kit::App) -> Vec<(Read, String, String)> {
     list(view, cx)
         .read(cx)
@@ -405,11 +415,12 @@ async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAp
         window.render_frame(cx);
         assert_eq!(state(&view, KARGO, cx), "Checking…");
         let sources = list(&view, cx);
-        let first = sources.read(cx).generation;
+        let first = sources.read(cx).read.revision();
+        let first_request = request(&sources, cx);
         // C while it runs starts nothing.
         window.click("settings-source-kargo", cx);
         window.press("c", cx);
-        assert_eq!(sources.read(cx).generation, first);
+        assert_eq!(sources.read(cx).read.revision(), first);
 
         // (a) A new workspace drops it, and its answer is ignored.
         let reloaded = view.read(cx).settings_page.read(cx).workspace().clone();
@@ -417,16 +428,17 @@ async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAp
         assert_eq!(state(&view, KARGO, cx), "Not checked");
         assert!(!sources.read(cx).is_checking());
         sources.update(cx, |list, cx| {
-            list.answer(first, Ok(Checked::default()), cx)
+            list.answer(&first_request, Ok(Checked::default()), cx)
         });
         assert_eq!(state(&view, KARGO, cx), "Not checked");
 
         // (b) Checked again, the first answer still never lands.
         window.click("settings-sources-check", cx);
-        let second = sources.read(cx).generation;
+        let second = sources.read(cx).read.revision();
+        let second_request = request(&sources, cx);
         assert_ne!(second, first);
         sources.update(cx, |list, cx| {
-            list.answer(first, Ok(Checked::default()), cx)
+            list.answer(&first_request, Ok(Checked::default()), cx)
         });
         assert_eq!(state(&view, KARGO, cx), "Checking…");
 
@@ -437,7 +449,7 @@ async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAp
         assert!(!sources.read(cx).is_checking());
         assert_eq!(sources.read(cx).check, Check::Never);
         sources.update(cx, |list, cx| {
-            list.answer(second, Ok(Checked::default()), cx)
+            list.answer(&second_request, Ok(Checked::default()), cx)
         });
         assert_eq!(state(&view, KARGO, cx), "Not checked");
     })

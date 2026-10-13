@@ -92,6 +92,11 @@ pub enum PodIssue {
     OOMKilled,
     Error,
     HighRestarts(i32),
+    NotReady,
+    /// A failure reason diagnosed from current pod or container evidence.
+    FailingReason(String),
+    /// A scheduling or startup reason diagnosed from current evidence.
+    WaitingReason(String),
     /// A container state that Kubernetes reports but this collector does not
     /// classify as one of the known failure reasons.
     Unknown(String),
@@ -108,6 +113,8 @@ impl PodIssue {
             Self::OOMKilled => "OOMKilled",
             Self::Error => "Error",
             Self::HighRestarts(_) => "High Restarts",
+            Self::NotReady => "Not ready",
+            Self::FailingReason(reason) | Self::WaitingReason(reason) => reason,
             Self::Unknown(_) => "Unknown",
         }
     }
@@ -126,9 +133,10 @@ impl PodIssue {
             | Self::ImagePullBackOff
             | Self::ErrImagePull
             | Self::OOMKilled
-            | Self::Error => HealthState::Failing,
-            Self::Pending => HealthState::Pending,
-            Self::HighRestarts(_) | Self::Unknown(_) => HealthState::Degraded,
+            | Self::Error
+            | Self::FailingReason(_) => HealthState::Failing,
+            Self::Pending | Self::WaitingReason(_) => HealthState::Pending,
+            Self::HighRestarts(_) | Self::Unknown(_) | Self::NotReady => HealthState::Degraded,
         }
     }
 }
@@ -482,64 +490,179 @@ fn classify_workload_health(
     (HealthState::Healthy, Vec::new())
 }
 
+/// Only current state enters the decision. Restart totals and last instances
+/// are history and belong to each consumer's display or advisory.
 #[derive(Clone, Copy)]
-struct ContainerState<'a> {
-    waiting_reason: Option<&'a str>,
-    terminated_reason: Option<&'a str>,
+pub(crate) struct ContainerState<'a> {
+    pub init: bool,
+    pub ready: bool,
+    pub waiting_reason: Option<&'a str>,
+    pub terminated: Option<(i64, &'a str)>,
+}
+
+/// Container indexes refer to init containers followed by app containers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PodEvidence {
+    Pod,
+    Waiting(usize),
+    Terminated(usize),
+    Unschedulable,
+    Pending,
+    NotReady(Option<usize>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PodDecision<'a> {
+    pub severity: HealthState,
+    pub reason: &'a str,
+    pub evidence: PodEvidence,
+}
+
+/// The detail pane's current-state policy, shared by all pod consumers.
+/// Absent Ready evidence is deliberately different from a non-True condition.
+pub(crate) fn decide_pod_health<'a>(
+    phase: &str,
+    reason: &'a str,
+    unschedulable: bool,
+    not_ready: bool,
+    containers: impl Iterator<Item = ContainerState<'a>> + Clone,
+) -> Option<PodDecision<'a>> {
+    let decision = |severity, reason, evidence| {
+        Some(PodDecision {
+            severity,
+            reason,
+            evidence,
+        })
+    };
+    if phase == "Failed" && !reason.is_empty() {
+        return decision(HealthState::Failing, reason, PodEvidence::Pod);
+    }
+    for (index, container) in containers.clone().enumerate() {
+        if let Some(reason) = container.waiting_reason
+            && crate::resources::is_error_reason(reason)
+        {
+            return decision(HealthState::Failing, reason, PodEvidence::Waiting(index));
+        }
+        if let Some((exit_code, reason)) = container.terminated
+            && exit_code != 0
+            && (phase == "Failed" || container.init)
+        {
+            let reason = if reason.is_empty() { "Error" } else { reason };
+            return decision(HealthState::Failing, reason, PodEvidence::Terminated(index));
+        }
+    }
+    if unschedulable {
+        return decision(
+            HealthState::Pending,
+            "Unschedulable",
+            PodEvidence::Unschedulable,
+        );
+    }
+    if phase == "Pending" {
+        return match containers
+            .clone()
+            .enumerate()
+            .find_map(|(index, container)| container.waiting_reason.map(|reason| (index, reason)))
+        {
+            Some((index, reason)) => {
+                decision(HealthState::Pending, reason, PodEvidence::Waiting(index))
+            }
+            None => decision(HealthState::Pending, "Pending", PodEvidence::Pending),
+        };
+    }
+    if phase == "Running" && not_ready {
+        let index = containers
+            .enumerate()
+            .find_map(|(index, container)| (!container.init && !container.ready).then_some(index));
+        return decision(
+            HealthState::Degraded,
+            "Not ready",
+            PodEvidence::NotReady(index),
+        );
+    }
+    None
+}
+
+/// Borrow the API pod's compact facts without constructing a detail model.
+pub(crate) fn pod_health(pod: &Pod) -> Option<PodDecision<'_>> {
+    let status = pod.status.as_ref()?;
+    let condition = |kind| {
+        status
+            .conditions
+            .iter()
+            .flatten()
+            .find(|condition| condition.type_ == kind)
+    };
+    let containers = [
+        (true, &status.init_container_statuses),
+        (false, &status.container_statuses),
+    ]
+    .into_iter()
+    .flat_map(|(init, statuses)| {
+        statuses.iter().flatten().map(move |container| {
+            let state = container.state.as_ref();
+            ContainerState {
+                init,
+                ready: container.ready,
+                waiting_reason: state
+                    .and_then(|s| s.waiting.as_ref())
+                    .map(|waiting| waiting.reason.as_deref().unwrap_or("")),
+                terminated: state.and_then(|s| s.terminated.as_ref()).map(|ended| {
+                    (
+                        i64::from(ended.exit_code),
+                        ended.reason.as_deref().unwrap_or(""),
+                    )
+                }),
+            }
+        })
+    });
+    decide_pod_health(
+        status.phase.as_deref().unwrap_or("Unknown"),
+        status.reason.as_deref().unwrap_or(""),
+        condition("PodScheduled").is_some_and(|c| c.status == "False"),
+        condition("Ready").is_some_and(|c| c.status != "True"),
+        containers,
+    )
+}
+
+fn decision_issue(decision: PodDecision<'_>) -> PodIssue {
+    match (decision.severity, decision.reason) {
+        (HealthState::Failing, "CrashLoopBackOff") => PodIssue::CrashLoopBackOff,
+        (HealthState::Failing, "ImagePullBackOff") => PodIssue::ImagePullBackOff,
+        (HealthState::Failing, "ErrImagePull") => PodIssue::ErrImagePull,
+        (HealthState::Failing, "OOMKilled") => PodIssue::OOMKilled,
+        (HealthState::Failing, "Error") => PodIssue::Error,
+        (HealthState::Failing, reason) => PodIssue::FailingReason(reason.into()),
+        (HealthState::Pending, "Pending") => PodIssue::Pending,
+        (HealthState::Pending, reason) => PodIssue::WaitingReason(reason.into()),
+        _ => PodIssue::NotReady,
+    }
 }
 
 pub(crate) fn analyze_pod(pod: &Pod) -> (i32, Option<PodIssue>) {
     let Some(status) = pod.status.as_ref() else {
         return (0, None);
     };
-    let phase = status.phase.as_deref().unwrap_or("Unknown");
+    // Keep today's app-container restart total as a summary-only advisory.
     let restarts = status
         .container_statuses
-        .as_ref()
-        .map(|statuses| statuses.iter().map(|status| status.restart_count).sum())
-        .unwrap_or(0);
-    let containers = status.container_statuses.iter().flatten().map(|status| {
-        let state = status.state.as_ref();
-        ContainerState {
-            waiting_reason: state
-                .and_then(|state| state.waiting.as_ref())
-                .and_then(|waiting| waiting.reason.as_deref()),
-            terminated_reason: state
-                .and_then(|state| state.terminated.as_ref())
-                .and_then(|terminated| terminated.reason.as_deref()),
+        .iter()
+        .flatten()
+        .map(|c| c.restart_count)
+        .sum();
+    let issue = pod_health(pod).map(decision_issue).or_else(|| {
+        if status.phase.as_deref() == Some("Failed") {
+            // Missing reasons keep the summary's existing phase fallback.
+            Some(PodIssue::Error)
+        } else {
+            summary_restart_advisory(restarts)
         }
     });
-    (restarts, classify_pod_status(phase, restarts, containers))
+    (restarts, issue)
 }
 
-fn classify_pod_status<'a>(
-    phase: &str,
-    restarts: i32,
-    containers: impl IntoIterator<Item = ContainerState<'a>>,
-) -> Option<PodIssue> {
-    for container in containers {
-        match container.waiting_reason {
-            Some("CrashLoopBackOff") => return Some(PodIssue::CrashLoopBackOff),
-            Some("ImagePullBackOff") => return Some(PodIssue::ImagePullBackOff),
-            Some("ErrImagePull") => return Some(PodIssue::ErrImagePull),
-            _ => {}
-        }
-        match container.terminated_reason {
-            Some("OOMKilled") => return Some(PodIssue::OOMKilled),
-            Some("Error") => return Some(PodIssue::Error),
-            _ => {}
-        }
-    }
-
-    if phase == "Pending" {
-        Some(PodIssue::Pending)
-    } else if phase == "Failed" {
-        Some(PodIssue::Error)
-    } else if restarts >= HIGH_RESTART_THRESHOLD {
-        Some(PodIssue::HighRestarts(restarts))
-    } else {
-        None
-    }
+fn summary_restart_advisory(restarts: i32) -> Option<PodIssue> {
+    (restarts >= HIGH_RESTART_THRESHOLD).then_some(PodIssue::HighRestarts(restarts))
 }
 
 #[cfg(test)]
@@ -574,13 +697,17 @@ mod tests {
 
     #[test]
     fn pod_waiting_failures_take_precedence_over_restart_counts() {
-        let containers = [ContainerState {
-            waiting_reason: Some("CrashLoopBackOff"),
-            terminated_reason: None,
-        }];
+        let pod = serde_json::from_value(serde_json::json!({
+            "status": {"phase": "Running", "containerStatuses": [{
+                "name": "app", "image": "example", "imageID": "example", "ready": false,
+                "restartCount": HIGH_RESTART_THRESHOLD,
+                "state": {"waiting": {"reason": "CrashLoopBackOff"}}
+            }]}
+        }))
+        .unwrap();
         assert_eq!(
-            classify_pod_status("Running", HIGH_RESTART_THRESHOLD, containers),
-            Some(PodIssue::CrashLoopBackOff)
+            analyze_pod(&pod),
+            (HIGH_RESTART_THRESHOLD, Some(PodIssue::CrashLoopBackOff))
         );
     }
 
@@ -608,11 +735,11 @@ mod tests {
     #[test]
     fn pod_pending_and_high_restarts_are_classified() {
         assert_eq!(
-            classify_pod_status("Pending", 0, []),
+            decide_pod_health("Pending", "", false, false, [].into_iter()).map(decision_issue),
             Some(PodIssue::Pending)
         );
         assert_eq!(
-            classify_pod_status("Running", HIGH_RESTART_THRESHOLD, []),
+            summary_restart_advisory(HIGH_RESTART_THRESHOLD),
             Some(PodIssue::HighRestarts(HIGH_RESTART_THRESHOLD))
         );
     }

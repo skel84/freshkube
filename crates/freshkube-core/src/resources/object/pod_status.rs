@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_yaml::Value;
 
 use super::{sequence, text, time};
+use crate::workloads::{ContainerState, HealthState, PodEvidence, decide_pod_health};
 
 /// The kubelet waits this long before the first restart of a crashed
 /// container, doubles it each time and stops doubling at `MAX_BACKOFF`.
@@ -155,95 +156,93 @@ impl PodStatus {
     /// status says so. Only what the status states counts: a running pod
     /// whose readiness passes isn't questioned.
     pub fn diagnose(&self) -> Option<Diagnosis> {
-        let pod = |severity, state: &str, message: &str| Diagnosis {
+        let decision = decide_pod_health(
+            &self.phase,
+            &self.reason,
+            self.unschedulable.is_some(),
+            self.not_ready.is_some(),
+            self.containers.iter().map(|container| ContainerState {
+                init: container.init,
+                ready: container.ready,
+                waiting_reason: container.waiting.as_ref().map(|waiting| waiting.0.as_str()),
+                terminated: container
+                    .ended
+                    .as_ref()
+                    .map(|ended| (ended.exit_code, ended.reason.as_str())),
+            }),
+        )?;
+        let severity = match decision.severity {
+            HealthState::Failing => Severity::Failing,
+            HealthState::Pending => Severity::Waiting,
+            HealthState::Degraded => Severity::NotReady,
+            HealthState::Healthy => unreachable!("a diagnosis needs problem evidence"),
+        };
+        let pod = |message: &str| Diagnosis {
             severity,
             container: None,
-            state: state.to_owned(),
+            state: decision.reason.to_owned(),
             message: message.to_owned(),
             last: None,
             restarts: 0,
             next_restart: None,
         };
-        if self.phase == "Failed" && !self.reason.is_empty() {
-            return Some(pod(Severity::Failing, &self.reason, &self.message));
-        }
-        for container in &self.containers {
-            let at_fault =
-                |severity, state: &str, message: &str, last: Option<&Instance>| Diagnosis {
-                    severity,
-                    container: Some(container.name.clone()),
-                    state: state.to_owned(),
-                    message: message.to_owned(),
-                    last: last.cloned(),
-                    restarts: container.restarts,
-                    next_restart: None,
-                };
-            if let Some((reason, message)) = &container.waiting
-                && is_error_reason(reason)
-            {
-                let last = container.last.as_ref();
-                let message = match (message.is_empty(), last) {
-                    (true, Some(last)) => last.message.as_str(),
-                    _ => message.as_str(),
-                };
-                let mut diagnosis = at_fault(Severity::Failing, reason, message, last);
-                if reason == "CrashLoopBackOff" {
-                    diagnosis.next_restart = last
-                        .and_then(|last| last.finished)
-                        .map(|finished| next_restart(finished, container.restarts));
-                }
-                return Some(diagnosis);
-            }
-            if let Some(ended) = &container.ended
-                && ended.exit_code != 0
-                && (self.phase == "Failed" || container.init)
-            {
-                let state = if ended.reason.is_empty() {
-                    "Error"
-                } else {
-                    &ended.reason
-                };
-                return Some(at_fault(
-                    Severity::Failing,
-                    state,
-                    &ended.message,
-                    Some(ended),
-                ));
-            }
-        }
-        if let Some(message) = &self.unschedulable {
-            return Some(pod(Severity::Waiting, "Unschedulable", message));
-        }
-        if self.phase == "Pending" {
-            let waiting = self.containers.iter().find_map(|container| {
-                container
+        Some(match decision.evidence {
+            PodEvidence::Pod | PodEvidence::Pending => pod(&self.message),
+            PodEvidence::Unschedulable => pod(self.unschedulable.as_deref().unwrap_or_default()),
+            PodEvidence::Waiting(index) => {
+                let container = &self.containers[index];
+                let (_, message) = container
                     .waiting
                     .as_ref()
-                    .map(|waiting| (container, waiting))
-            });
-            return Some(match waiting {
-                Some((container, (reason, message))) => Diagnosis {
+                    .expect("selected waiting evidence");
+                if severity == Severity::Failing {
+                    let last = container.last.as_ref();
+                    let message = match (message.is_empty(), last) {
+                        (true, Some(last)) => last.message.as_str(),
+                        _ => message.as_str(),
+                    };
+                    Diagnosis {
+                        container: Some(container.name.clone()),
+                        last: last.cloned(),
+                        restarts: container.restarts,
+                        next_restart: (decision.reason == "CrashLoopBackOff")
+                            .then(|| {
+                                last.and_then(|last| last.finished)
+                                    .map(|finished| next_restart(finished, container.restarts))
+                            })
+                            .flatten(),
+                        ..pod(message)
+                    }
+                } else {
+                    Diagnosis {
+                        container: Some(container.name.clone()),
+                        ..pod(message)
+                    }
+                }
+            }
+            PodEvidence::Terminated(index) => {
+                let container = &self.containers[index];
+                let ended = container
+                    .ended
+                    .as_ref()
+                    .expect("selected termination evidence");
+                Diagnosis {
                     container: Some(container.name.clone()),
-                    ..pod(Severity::Waiting, reason, message)
-                },
-                None => pod(Severity::Waiting, "Pending", &self.message),
-            });
-        }
-        if self.phase == "Running"
-            && let Some(message) = &self.not_ready
-        {
-            let unready = self
-                .containers
-                .iter()
-                .find(|container| !container.init && !container.ready);
-            return Some(Diagnosis {
-                container: unready.map(|container| container.name.clone()),
-                last: unready.and_then(|container| container.last.clone()),
-                restarts: unready.map_or(0, |container| container.restarts),
-                ..pod(Severity::NotReady, "Not ready", message)
-            });
-        }
-        None
+                    last: Some(ended.clone()),
+                    restarts: container.restarts,
+                    ..pod(&ended.message)
+                }
+            }
+            PodEvidence::NotReady(index) => {
+                let unready = index.map(|index| &self.containers[index]);
+                Diagnosis {
+                    container: unready.map(|container| container.name.clone()),
+                    last: unready.and_then(|container| container.last.clone()),
+                    restarts: unready.map_or(0, |container| container.restarts),
+                    ..pod(self.not_ready.as_deref().unwrap_or_default())
+                }
+            }
+        })
     }
 }
 
