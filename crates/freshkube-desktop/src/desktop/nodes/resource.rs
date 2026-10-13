@@ -200,16 +200,13 @@ impl ResourceCell {
 impl Nodes {
     pub(super) fn rebuild_resource_cells(&mut self) {
         let metrics = &self.metrics.snapshot;
-        let reason = metrics
-            .error()
-            .map(String::as_str)
-            .unwrap_or(if metrics.data().is_some() {
-                "node or resource missing from metrics answer"
-            } else if self.metrics.source.is_none() {
-                "no Kubernetes source"
-            } else {
-                "awaiting node metrics"
-            });
+        let reason = metrics.error().unwrap_or(if metrics.data().is_some() {
+            "node or resource missing from metrics answer"
+        } else if self.metrics.source.is_none() {
+            "no Kubernetes source"
+        } else {
+            "awaiting node metrics"
+        });
         let now = chrono::Utc::now();
         self.resource_cells = self
             .rows
