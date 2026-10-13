@@ -20,11 +20,7 @@ use gpui_kit::{
 };
 
 impl Nodes {
-    pub(in crate::desktop) fn render_nodes(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_nodes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let _span = crate::perf::span("page.render");
         let pane = self.open;
         let expanded = pane && self.expanded;

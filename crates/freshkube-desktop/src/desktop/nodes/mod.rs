@@ -172,7 +172,7 @@ pub(super) struct Nodes {
 /// What a click or key in Nodes asks of the shell, which owns the node's
 /// selection across pages, the Talos reads and navigation.
 #[derive(Clone, Debug)]
-pub(in crate::desktop) enum NodesEvent {
+pub(super) enum NodesEvent {
     /// Open a node's pane, and with `focus` move the keyboard into it.
     Open {
         key: NodeKey,

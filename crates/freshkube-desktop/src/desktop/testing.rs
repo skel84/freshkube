@@ -92,13 +92,6 @@ pub(super) fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entit
         .unwrap()
 }
 
-/// Test setup that needs a healthy table row follows the actual group control.
-/// Folding itself is exercised separately by Nodes' projection/entry-point tests.
-/// Opens the Nodes row `id` as its click does. The click reaches the
-/// shell as an event once the update ends, which a test inside one
-/// `update_window` never sees, so this hands the shell that event at once;
-/// `table::a_row_click_opens_its_node_once_the_shell_hears_it` proves the
-/// click itself.
 /// Puts `page` in the shell's map under `id`, and in the node pane's when
 /// the pane embeds that screen, so both draw and tell the same one.
 pub(super) fn put_page(
@@ -115,6 +108,11 @@ pub(super) fn put_page(
     view.pages.insert(id, page);
 }
 
+/// Opens the Nodes row `id` as its click does. The click reaches the
+/// shell as an event once the update ends, which a test inside one
+/// `update_window` never sees, so this hands the shell that event at once;
+/// `table::a_row_click_opens_its_node_once_the_shell_hears_it` proves the
+/// click itself.
 pub(super) fn click_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
     assert!(window.find(id.to_string()).visible(), "{id} is drawn");
     let pilot = root_pilot(window, cx);
@@ -136,6 +134,8 @@ pub(super) fn click_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, 
     });
 }
 
+/// Test setup that needs a healthy table row follows the actual group control.
+/// Folding itself is exercised separately by Nodes' projection/entry-point tests.
 pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     let pilot = root_pilot(window, cx);
     let nodes = &pilot.read(cx).node_workspace.read(cx);

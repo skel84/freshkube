@@ -418,14 +418,13 @@ fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
-/// The node pane's System services tab draws inside the Nodes host, so a
-/// notify of the shell still draws it again; its own changes draw it once.
-/// A restart's notice no longer notifies the shell, so the tab draws it
-/// only because it hears the notice itself. A theme change redraws the
-/// cached tab. PR 3 of #579 takes the host away and changes the first
-/// count.
+/// The node pane's System services tab draws inside Nodes, a view of its
+/// own, so a notify of the shell leaves it as drawn; its own changes draw
+/// it once. A restart's notice doesn't notify the shell, so the tab draws
+/// it only because it hears the notice itself. A theme change redraws the
+/// cached tab.
 #[gpui_kit::test]
-fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
+fn node_services_redraws_inside_nodes(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1700., 1200.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
@@ -458,7 +457,6 @@ fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
     let services = redrawn(&|view, cx| view.push_services(cx));
     let notice = redrawn(&|view, cx| view.note_restart("kubelet", cx));
     let cached = redrawn(&|view, cx| view.notify_cached(cx));
-    // Nodes is a view of its own: the shell's notify no longer redraws it.
     assert_eq!(
         [shell, selection, services, notice, cached],
         [0, 1, 1, 1, 1]
