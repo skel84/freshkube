@@ -1,6 +1,7 @@
 //! Node-scoped pages while the Talos overview hasn't answered: they wait or
 //! show the failure, and only an answered overview can say "No node selected".
 
+use crate::DebugOptions;
 use std::time::Duration;
 
 use super::pages::Page;
@@ -268,7 +269,11 @@ fn kubernetes_only_health(
     let (runtime, handle, view) = mount(cx, options, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("kubernetes-only"), None, None, window, cx)
+            pilot.startup_selection(
+                &DebugOptions::default().with_page("kubernetes-only"),
+                window,
+                cx,
+            )
         })
     })
     .unwrap();

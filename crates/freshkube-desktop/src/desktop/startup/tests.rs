@@ -1,4 +1,5 @@
 use crate::{
+    DebugOptions, Theme,
     desktop::{Area, Page, tests::fixture},
     resources::{KubeAccess, Tab},
 };
@@ -29,7 +30,7 @@ fn screenshot_sizes_are_bounded_and_invalid_values_keep_the_default() {
 fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
     for text_size in [12., 14., 20.] {
-        for theme in ["light", "dark"] {
+        for theme in [Theme::Light, Theme::Dark] {
             for (page, expected, id) in [
                 ("overview", Page::Overview, "tile-pods"),
                 ("nodes", Page::Nodes, "nodes-page"),
@@ -43,7 +44,11 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                 cx.update_window(handle, |_, window, cx| {
                     crate::text_size::set(text_size, cx);
                     pilot.update(cx, |pilot, cx| {
-                        pilot.startup_selection(Some(page), None, Some(theme), window, cx)
+                        pilot.startup_selection(
+                            &DebugOptions::default().with_page(page).with_theme(theme),
+                            window,
+                            cx,
+                        )
                     });
                 })
                 .unwrap();
@@ -69,7 +74,7 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                         }
                     }
                     let element = window.find(id);
-                    assert!(element.visible(), "{page} {theme} {text_size}: {id}");
+                    assert!(element.visible(), "{page} {theme:?} {text_size}: {id}");
                     let viewport = window.viewport_size();
                     let bounds = element.bounds();
                     assert!(bounds.size.width > gpui_kit::px(0.));
@@ -83,7 +88,7 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                         // The pane opens on why the pod fails.
                         assert!(
                             window.find("pod-cause").visible(),
-                            "{page} {theme} {text_size}: cause={:?} pane={:?} viewport={:?}",
+                            "{page} {theme:?} {text_size}: cause={:?} pane={:?} viewport={:?}",
                             window.find("pod-cause").bounds(),
                             window.find("resource-detail").bounds(),
                             window.viewport_size()
@@ -109,7 +114,13 @@ fn fixture_monitoring_opens_its_dashboard_from_example_data_and_hides_on_navigat
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("monitoring"), None, Some("dark"), window, cx)
+            pilot.startup_selection(
+                &DebugOptions::default()
+                    .with_page("monitoring")
+                    .with_theme(Theme::Dark),
+                window,
+                cx,
+            )
         });
         window.render_frame(cx);
     })
@@ -150,7 +161,13 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
     let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("kubernetes-only"), None, Some("dark"), window, cx)
+            pilot.startup_selection(
+                &DebugOptions::default()
+                    .with_page("kubernetes-only")
+                    .with_theme(Theme::Dark),
+                window,
+                cx,
+            )
         })
     })
     .unwrap();
@@ -202,7 +219,13 @@ fn short_resource_navigation_reveals_the_pane_and_returns_to_the_list(cx: &mut T
     cx.update_window(handle, |_, window, cx| {
         crate::text_size::set(20., cx);
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("pod-overview"), None, Some("light"), window, cx)
+            pilot.startup_selection(
+                &DebugOptions::default()
+                    .with_page("pod-overview")
+                    .with_theme(Theme::Light),
+                window,
+                cx,
+            )
         });
     })
     .unwrap();
@@ -248,7 +271,7 @@ fn card_contents_align_and_long_node_names_keep_to_one_row(cx: &mut TestAppConte
             );
         }
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("nodes"), None, None, window, cx)
+            pilot.startup_selection(&DebugOptions::default().with_page("nodes"), window, cx)
         });
     })
     .unwrap();
@@ -273,7 +296,7 @@ fn minimum_node_table_can_reveal_its_rightmost_column(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         crate::text_size::set(20., cx);
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("nodes"), None, None, window, cx)
+            pilot.startup_selection(&DebugOptions::default().with_page("nodes"), window, cx)
         });
     })
     .unwrap();
@@ -306,7 +329,7 @@ fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppCont
     ] {
         cx.update_window(handle, |_, window, cx| {
             pilot.update(cx, |pilot, cx| {
-                pilot.startup_selection(Some(page), None, None, window, cx)
+                pilot.startup_selection(&DebugOptions::default().with_page(page), window, cx)
             });
         })
         .unwrap();
@@ -351,7 +374,11 @@ fn workload_logs_controls_stay_above_the_log_at_minimum_size(cx: &mut TestAppCon
         cx.update_window(handle, |_, window, cx| {
             crate::text_size::set(text_size, cx);
             pilot.update(cx, |pilot, cx| {
-                pilot.startup_selection(Some("workload-logs"), None, None, window, cx)
+                pilot.startup_selection(
+                    &DebugOptions::default().with_page("workload-logs"),
+                    window,
+                    cx,
+                )
             });
         })
         .unwrap();

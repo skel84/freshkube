@@ -1,4 +1,5 @@
 use super::*;
+use crate::DebugOptions;
 
 /// Enter on a node, a click on a pane tab, or a click in the pane moves
 /// the keyboard into the node's pane, as Enter does on Resources (#340).
@@ -545,7 +546,7 @@ fn enter_in_a_node_logs_search_steps_through_its_matches(cx: &mut TestAppContext
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+            pilot.startup_selection(&DebugOptions::default().with_page("node-logs"), window, cx);
         });
         for _ in 0..3 {
             window.render_frame(cx);

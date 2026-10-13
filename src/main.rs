@@ -7,7 +7,7 @@
 
 use clap::Parser;
 use color_eyre::Result;
-use freshkube_desktop::GpuiOptions;
+use freshkube_desktop::{DebugOptions, GpuiOptions};
 use std::{fs::File, path::PathBuf};
 use tracing::Level;
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -193,6 +193,8 @@ fn main() -> Result<()> {
             .with_preferences(freshkube_desktop::preferences_path())
             .with_keyring()
     };
+    // The debug knobs are read here once; a release build gets the default.
+    let options = options.with_debug(DebugOptions::from_env());
     freshkube_desktop::run(options, runtime.handle().clone())?;
 
     tracing::info!("Goodbye!");

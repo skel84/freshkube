@@ -207,13 +207,12 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             #[cfg(not(any(debug_assertions, feature = "stress")))]
             let window_size = size(px(1320.), px(860.));
             #[cfg(any(debug_assertions, feature = "stress"))]
-            let window_size =
-                startup::window_size(std::env::var("FRESHKUBE_WINDOW_SIZE").ok().as_deref());
+            let window_size = startup::window_size(options.debug.window_size.as_deref());
             // Debug fixture checks open maintenance mode on an invented node
             // that stops at the review (`maintenance/example.rs`).
             #[cfg(debug_assertions)]
-            let example_maintenance = options.is_fixture()
-                && std::env::var("FRESHKUBE_PAGE").as_deref() == Ok("maintenance");
+            let example_maintenance =
+                options.is_fixture() && options.debug.page() == Some("maintenance");
             #[cfg(not(debug_assertions))]
             let example_maintenance = false;
             let window_options = WindowOptions {
@@ -962,6 +961,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        let debug = options.debug.clone();
         let names_source =
             options.fixture || options.named_source || options.maintenance_endpoint.is_some();
         let launched = switch::Launched {
@@ -1327,7 +1328,7 @@ impl Pilot {
             view.navigate_from_keyboard(Page::Overview, window, cx);
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
-        view.open_startup_page(window, cx);
+        view.open_startup_page(&debug, window, cx);
         #[cfg(feature = "stress")]
         crate::stress::start(window, cx);
         view
