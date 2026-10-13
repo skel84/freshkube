@@ -835,7 +835,7 @@ fn attention_rows_name_the_open_cluster(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update(|cx| {
         let pilot = pilot.read(cx);
-        let open = pilot.kube_identity();
+        let open = pilot.source().kube_identity;
         assert!(open.is_some());
         let mut seen = 0;
         for row in &pilot.node_workspace.read(cx).attention.rows {

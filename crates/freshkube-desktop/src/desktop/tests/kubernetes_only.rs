@@ -495,7 +495,7 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
     let (_runtime, handle, view) = mount_kubernetes_only(cx, config, Some("lab"));
     let observed = view.clone();
     cx.wait_for_io(handle, move |_, cx| {
-        observed.read(cx).kube_source().is_some()
+        observed.read(cx).source().kube.is_some()
     })
     .await;
     cx.update_window(handle, |_, window, cx| {

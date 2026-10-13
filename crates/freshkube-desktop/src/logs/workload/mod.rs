@@ -54,7 +54,7 @@ use super::{Columns, DownloadLines, LogSource, LogView};
 #[cfg(feature = "stress")]
 use crate::backend::OwnedJob;
 use crate::resources::model::ResourceIdentity;
-use crate::resources::{KubeAccess, example};
+use crate::resources::{ClusterAccess, example};
 use crate::stream_status::Status;
 use crate::ui::Tone;
 use controls::Controls;
@@ -117,7 +117,7 @@ pub(super) struct PodChoice {
 pub(crate) struct WorkloadLogs {
     /// The containers' streams, and how far each was read.
     pub(super) reads: StreamSet,
-    access: Option<KubeAccess>,
+    access: Option<ClusterAccess>,
     workload: Option<ResourceIdentity>,
     /// The selector from the workload's document: `None` until it is read,
     /// `Some(None)` when it selects nothing.
@@ -579,7 +579,7 @@ impl StreamSource for WorkloadLogs {
         &mut self.reads
     }
 
-    fn access(&self) -> Option<KubeAccess> {
+    fn access(&self) -> Option<ClusterAccess> {
         self.access.clone()
     }
 
@@ -675,14 +675,14 @@ pub(crate) trait WorkloadLogPanel: Sized + 'static {
     fn for_workloads(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
     /// Fresh handles for the same connection.
-    fn set_access(&mut self, access: KubeAccess);
+    fn set_access(&mut self, access: ClusterAccess);
 
     /// Shows the logs of `workload`, or of none. Another workload starts
     /// over: nothing is read until it is wanted and its selector is known.
     fn show_workload(
         &mut self,
         workload: Option<ResourceIdentity>,
-        access: Option<KubeAccess>,
+        access: Option<ClusterAccess>,
         cx: &mut Context<Self>,
     );
 
@@ -710,14 +710,14 @@ impl WorkloadLogPanel for WorkloadLogView {
         })
     }
 
-    fn set_access(&mut self, access: KubeAccess) {
+    fn set_access(&mut self, access: ClusterAccess) {
         self.source_mut().access = Some(access);
     }
 
     fn show_workload(
         &mut self,
         workload: Option<ResourceIdentity>,
-        access: Option<KubeAccess>,
+        access: Option<ClusterAccess>,
         cx: &mut Context<Self>,
     ) {
         if access.is_some() {
@@ -902,7 +902,7 @@ impl Streams for WorkloadLogView {
         source.describe();
         cx.notify();
         let identity = (workload.clone(), selector.clone());
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             // Example pods don't come and go: the watch is open, and
             // nothing writes into it.
             self.source_mut().pod_watch.open(

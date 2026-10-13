@@ -59,7 +59,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use crate::backend;
-use crate::resources::{KubeAccess, KubeSource, ResourceLink};
+use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
 use change::{ChangeEvent, ChangePage, Changes};
 use changes::ChangesEvent;
@@ -157,7 +157,7 @@ impl Read {
     /// session is keyed by the entry's id and maps to the open connection.
     /// The workspace of one has a session keyed by the connection's id,
     /// named by its context.
-    fn live(inputs: &Inputs, source: &KubeSource, entry: Option<&str>) -> Self {
+    fn live(inputs: &Inputs, source: &ClusterSource, entry: Option<&str>) -> Self {
         let key = SessionKey::new(source.id.clone());
         let open: Vec<SessionKey> = [Some(key.clone()), entry.map(SessionKey::new)]
             .into_iter()
@@ -244,7 +244,7 @@ type Identity = (String, Option<String>);
 
 pub(crate) struct ApplicationsPage {
     runtime: tokio::runtime::Handle,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
     entry: Option<String>,
@@ -401,7 +401,7 @@ impl ApplicationsPage {
     /// read and what is in flight; the page reads it again if shown.
     pub(crate) fn set_source(
         &mut self,
-        source: Option<KubeSource>,
+        source: Option<ClusterSource>,
         entry: Option<String>,
         cx: &mut Context<Self>,
     ) {
@@ -450,7 +450,7 @@ impl ApplicationsPage {
         let live = self
             .source
             .as_ref()
-            .is_some_and(|source| !matches!(source.access, KubeAccess::Example));
+            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example));
         if reads_elsewhere && live {
             self.loader.expire();
             if self.visible {
@@ -486,7 +486,7 @@ impl ApplicationsPage {
             return Connections::default();
         };
         let connections = match &source.access {
-            KubeAccess::Example => {
+            ClusterAccess::Example => {
                 example::connections(&source.id, self.clusters.active.as_deref())
             }
             _ => Connections::new(
@@ -520,7 +520,7 @@ impl ApplicationsPage {
     /// whichever arrives first, the switch or the read.
     fn connections(&self, read: &Read) -> Connections {
         let connections = match &self.source {
-            Some(source) if matches!(source.access, KubeAccess::Example) => {
+            Some(source) if matches!(source.access, ClusterAccess::Example) => {
                 example::connections(&source.id, self.clusters.active.as_deref())
             }
             _ => read.connections.clone(),
@@ -588,7 +588,7 @@ impl ApplicationsPage {
         };
         let request = self.loader.start((source.id.clone(), self.entry.clone()));
         match &source.access {
-            KubeAccess::Example => {
+            ClusterAccess::Example => {
                 // Held, it stays in flight, so the page keeps its loading
                 // rows.
                 if self.hold {

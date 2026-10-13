@@ -12,7 +12,7 @@ use tokio::runtime::Runtime;
 use super::{DetailEvent, DetailPane};
 use crate::resources::detail::{DetailTarget, DocumentRead, DocumentView, FOLLOW_INTERVAL, Reveal};
 use crate::resources::model::ResourceIdentity;
-use crate::resources::screen::KubeAccess;
+use crate::resources::screen::ClusterAccess;
 use crate::resources::{LogsAt, LogsRequest, ResourceLink, example, live};
 
 const CONTEXT: &str = "homelab";
@@ -87,7 +87,7 @@ pub(super) fn open(
 ) {
     let target = target.clone();
     pane.update(cx, |pane, cx| {
-        pane.open(target, KubeAccess::Example, "1", delay, cx)
+        pane.open(target, ClusterAccess::Example, "1", delay, cx)
     });
 }
 

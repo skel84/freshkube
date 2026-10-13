@@ -9,7 +9,7 @@ The first slice is implemented in `05d03ce`, with the Disconnect-state correctio
 | Step | Status and boundary |
 | --- | --- |
 | Preserve present signals | [corust PR #3](https://github.com/skel84/corust/pull/3), `605dced7850271668cf781e6589a0d3e7e66e5bc`, preserves empty healthy, empty unknown and absent signals. Freshkube keeps those distinctions. |
-| Access identity | Satisfied by [Freshkube PR #30](https://github.com/skel84/freshkube/pull/30), merged main `4bbc775b5361ac32d8f7876f470325da2e3df1c5`; #2 is closed. Desktop uses `KubeSource.id`, the opaque access-key adapter described in [ACCESS_IDENTITY.md](ACCESS_IDENTITY.md). |
+| Access identity | Satisfied by [Freshkube PR #30](https://github.com/skel84/freshkube/pull/30), merged main `4bbc775b5361ac32d8f7876f470325da2e3df1c5`; #2 is closed. Desktop uses `ClusterSource.id`, the opaque access-key adapter described in [ACCESS_IDENTITY.md](ACCESS_IDENTITY.md). |
 | Bounded responses | The dependency pins corust `5312f1efc4e68a286d42a0c5c1e58539ed2a243a` ([PR #11](https://github.com/skel84/corust/pull/11)): the incident audit of [PR #7](https://github.com/skel84/corust/pull/7), chart histories and deployment revisions from PRs #8 and #9, the decoders from one answer of PR #10, and the window around a revision of PR #11, with response bounds from [PR #4](https://github.com/skel84/corust/pull/4) and collection-shape validation from [PR #5](https://github.com/skel84/corust/pull/5). Freshkube sets an 8 MiB limit before REST/MCP decoding. No absolute local dependency path is committed. |
 | First live slice | Core provider, explicit connection/project/access association, Applications → map → supported reports, shared fixture/live projection and guarded object navigation, implemented in `05d03ce`. Validation is recorded below. |
 | Read-only Incidents | Latest-project sample → selected incident → source SLO/RCA → application reports; [contract and bounds below](#read-only-incidents-slice). |
@@ -31,7 +31,7 @@ API keys and existing `coroot_session` values are entered explicitly. Anonymous 
 
 Connecting lists accessible projects. It does not select the first project; until one is chosen, the page says "Choose a project" rather than "Connect Coroot". The project picker displays both name and server ID, so two projects with matching names stay distinct.
 
-Kubernetes navigation requires a separate explicit association between a Coroot cluster ID observed within that project and the current Freshkube access key. Matching context or cluster names never establish this relationship. Replacing access/configuration cancels reads, clears ordinary evidence and removes the association; the new access must be associated explicitly. A node change or compatible transport retry retaining `KubeSource.id` retains the association. External applications, unsupported kinds and unmapped clusters remain inspectable without Kubernetes links.
+Kubernetes navigation requires a separate explicit association between a Coroot cluster ID observed within that project and the current Freshkube access key. Matching context or cluster names never establish this relationship. Replacing access/configuration cancels reads, clears ordinary evidence and removes the association; the new access must be associated explicitly. A node change or compatible transport retry retaining `ClusterSource.id` retains the association. External applications, unsupported kinds and unmapped clusters remain inspectable without Kubernetes links.
 
 ## Ownership and request lifetime
 

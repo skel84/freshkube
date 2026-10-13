@@ -16,7 +16,7 @@ use tokio::task::JoinHandle;
 use super::example::{self, ExampleForward, ExampleGuard, Route};
 use super::{Listen, Watches};
 use crate::backend::{self, OwnedJob};
-use crate::resources::KubeAccess;
+use crate::resources::ClusterAccess;
 use crate::resources::model::ResourceIdentity;
 use crate::ui::Tone;
 
@@ -30,7 +30,7 @@ pub(super) const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 #[derive(Clone)]
 pub(crate) struct ForwardSpec {
     pub(crate) runtime: Handle,
-    pub(crate) access: KubeAccess,
+    pub(crate) access: ClusterAccess,
     /// The object forwarded; its connection is part of it.
     pub(crate) identity: ResourceIdentity,
     pub(crate) target: ForwardTarget,
@@ -254,7 +254,7 @@ impl ForwardView {
         self.phase = Phase::Starting;
         self.status = None;
         self.end = None;
-        if let KubeAccess::Example = self.spec.access {
+        if let ClusterAccess::Example = self.spec.access {
             return self.begin_example(seq, request, fallback, cx);
         }
         let access = self.spec.access.clone();

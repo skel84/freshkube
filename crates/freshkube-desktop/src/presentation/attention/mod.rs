@@ -174,7 +174,7 @@ fn name_cluster(rows: &mut [AttentionRow], connection: Option<&str>) {
     }
 }
 
-/// `connection` is the open cluster's `kube_identity()`, when it has one.
+/// `connection` is the open cluster's `kube_identity`, when it has one.
 pub(crate) fn build(
     nodes: &[NodeRow],
     kubernetes: Option<&KubernetesSummary>,

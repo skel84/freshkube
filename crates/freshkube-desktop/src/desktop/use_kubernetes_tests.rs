@@ -3,7 +3,7 @@ use super::tests::{fixture, mount, start_shell};
 use super::{Page, Pilot, kubernetes_only};
 use crate::GpuiOptions;
 use crate::forwards::{self, ForwardSpec};
-use crate::resources::{KubeAccess, example, live, shell};
+use crate::resources::{ClusterAccess, example, live, shell};
 use freshkube_core::resources::{ForwardTarget, builtin};
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::test::TestWindowExt;
@@ -300,7 +300,7 @@ fn an_open_forward_is_not_asked_about_and_keeps_running(cx: &mut TestAppContext)
         ForwardTarget::of(&builtin("pods").unwrap(), &identity.name, &identity.uid).unwrap();
     let spec = ForwardSpec {
         runtime: runtime.handle().clone(),
-        access: KubeAccess::Example,
+        access: ClusterAccess::Example,
         identity,
         target,
         context,

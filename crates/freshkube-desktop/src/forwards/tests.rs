@@ -18,7 +18,7 @@ use tokio::sync::watch;
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::view::Phase;
 use super::{ForwardList, ForwardSpec, ForwardsIndicator, Listen, list, running, stop_all};
-use crate::resources::KubeAccess;
+use crate::resources::ClusterAccess;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{example, live};
 
@@ -51,7 +51,7 @@ impl Mounted {
         let target = ForwardTarget::of(&resource, &identity.name, &identity.uid).unwrap();
         ForwardSpec {
             runtime: self.runtime.handle().clone(),
-            access: KubeAccess::Example,
+            access: ClusterAccess::Example,
             identity,
             target,
             context: "homelab".into(),

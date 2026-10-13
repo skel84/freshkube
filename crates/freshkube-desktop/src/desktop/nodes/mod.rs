@@ -602,7 +602,7 @@ impl Pilot {
                 .data()
                 .map(|summary| summary.as_ref()),
             self.overview.data(),
-            self.kube_identity().as_deref(),
+            self.source().kube_identity.as_deref(),
             chrono::Utc::now(),
         ));
         self.node_workspace
@@ -713,7 +713,7 @@ impl Pilot {
                 pods.set_node(row.key.kubernetes.as_deref(), window, cx)
             });
             if matches!(tab, NodeTab::Events | NodeTab::Yaml)
-                && let (Some(node), Some(source)) = (&row.kubernetes, self.kube_source())
+                && let (Some(node), Some(source)) = (&row.kubernetes, self.source().kube)
             {
                 let tab = if tab == NodeTab::Events {
                     Tab::Events
