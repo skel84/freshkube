@@ -193,3 +193,44 @@ fn a_node_pane_screen_hides_when_its_node_leaves(cx: &mut TestAppContext) {
     });
     assert_ne!(pilot, (true, NodeTab::Processes));
 }
+
+/// Nodes shows around its pane's screen: while the pane shows Processes,
+/// both are shown, and the pane's other tabs leave Nodes alone shown.
+#[gpui_kit::test]
+fn nodes_stays_shown_around_its_pane_screen(cx: &mut TestAppContext) {
+    use super::super::nodes::NodeTab;
+    use super::super::pages::PageId;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let shown = |cx: &mut TestAppContext| {
+        view.read_with(cx, |pilot, _| {
+            let shown = pilot.shown_pages();
+            let mut ids = pilot
+                .pages
+                .iter()
+                .filter(|(_, handle)| shown.contains(handle))
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>();
+            ids.sort();
+            ids
+        })
+    };
+    cx.update_window(handle, |_, window, cx| {
+        open_node_tab(window, cx, NodeTab::Processes)
+    })
+    .unwrap();
+    let mut processes = vec![PageId::Nodes, PageId::Processes];
+    processes.sort();
+    assert_eq!(shown(cx), processes);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.show_node_tab(NodeTab::Overview, window, cx)
+        })
+    })
+    .unwrap();
+    assert_eq!(shown(cx), [PageId::Nodes]);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx))
+    })
+    .unwrap();
+    assert_eq!(shown(cx), [PageId::Etcd]);
+}

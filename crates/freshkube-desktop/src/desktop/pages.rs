@@ -501,15 +501,15 @@ impl Pilot {
         }
     }
 
-    /// Tells every page with a handle whether it shows: the one
-    /// [`shown_page`](Self::shown_page) names shows and every other hides,
+    /// Tells every page with a handle whether it shows: those
+    /// [`shown_pages`](Self::shown_pages) names show and every other hides,
     /// so a node pane's screen shows only while Nodes is up with its tab
-    /// selected. A page drops its reads on hide; one told what it already
-    /// knows does nothing.
+    /// selected, and Nodes shows around it. A page drops its reads on hide;
+    /// one told what it already knows does nothing.
     pub(super) fn sync_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let shown = self.shown_page();
+        let shown = self.shown_pages();
         for handle in self.pages.values() {
-            handle.set_visible(shown.as_ref() == Some(handle), window, cx);
+            handle.set_visible(shown.contains(handle), window, cx);
         }
     }
 
