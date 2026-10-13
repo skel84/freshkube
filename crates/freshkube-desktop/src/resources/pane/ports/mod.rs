@@ -11,7 +11,7 @@ use gpui_kit::*;
 use tokio::runtime::Handle;
 
 use crate::forwards::{self, ForwardList, ForwardSpec, Row};
-use crate::resources::KubeAccess;
+use crate::resources::ClusterAccess;
 use crate::resources::model::ResourceIdentity;
 
 #[cfg(test)]
@@ -28,7 +28,7 @@ pub(crate) fn forwardable(kind: &ResourceKind) -> bool {
 struct Object {
     identity: ResourceIdentity,
     target: ForwardTarget,
-    access: KubeAccess,
+    access: ClusterAccess,
     context: String,
 }
 
@@ -104,7 +104,7 @@ impl PortsView {
         self.context = context;
     }
 
-    pub(crate) fn set_access(&mut self, access: KubeAccess) {
+    pub(crate) fn set_access(&mut self, access: ClusterAccess) {
         if let Some(object) = &mut self.object {
             object.access = access;
         }
@@ -114,7 +114,7 @@ impl PortsView {
     pub(crate) fn show(
         &mut self,
         target: Option<(ResourceIdentity, ResourceKind)>,
-        access: Option<KubeAccess>,
+        access: Option<ClusterAccess>,
         cx: &mut Context<Self>,
     ) {
         self.object = target.zip(access).and_then(|((identity, kind), access)| {

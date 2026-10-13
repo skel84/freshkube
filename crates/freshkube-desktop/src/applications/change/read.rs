@@ -19,7 +19,7 @@ use freshkube_reads::OnShow;
 use super::*;
 use crate::applications::across::{Across, Alone};
 use crate::backend;
-use crate::resources::KubeAccess;
+use crate::resources::ClusterAccess;
 
 /// A change read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
@@ -48,7 +48,7 @@ pub(in crate::applications) enum Fetch {
     /// A live read's, across the workspace from the open connection.
     Live {
         runtime: tokio::runtime::Handle,
-        access: KubeAccess,
+        access: ClusterAccess,
         place: Box<Place>,
         /// The workspace's kubeconfig, `None` for the automatic one.
         kubeconfig: Option<std::path::PathBuf>,

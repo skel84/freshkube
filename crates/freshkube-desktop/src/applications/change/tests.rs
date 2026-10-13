@@ -1265,16 +1265,16 @@ fn hiding_drops_a_late_answer(cx: &mut TestAppContext) {
 /// Another connection drops the change shown with the application page.
 #[gpui_kit::test]
 fn another_source_drops_the_change(cx: &mut TestAppContext) {
-    use crate::resources::{KubeAccess, KubeSource};
+    use crate::resources::{ClusterAccess, ClusterSource};
     let (_runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         assert!(change(&view, cx).is_some());
         list(&view, cx).update(cx, |page, cx| {
             page.set_source(
-                Some(KubeSource {
+                Some(ClusterSource {
                     id: "connection-other".into(),
                     context: "other".into(),
-                    access: KubeAccess::Example,
+                    access: ClusterAccess::Example,
                 }),
                 None,
                 cx,
@@ -1292,14 +1292,14 @@ fn another_source_drops_the_change(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) {
     use super::Fetch;
-    use crate::resources::KubeAccess;
+    use crate::resources::ClusterAccess;
     use freshkube_delivery::change::live::Place;
     let (runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         change(&view, cx).unwrap().update(cx, |page, _| {
             page.fetch = Fetch::Live {
                 runtime: runtime.handle().clone(),
-                access: KubeAccess::Example,
+                access: ClusterAccess::Example,
                 place: Box::new(Place {
                     // The open example cluster's key, as live objects carry.
                     cluster: "core-fra".into(),

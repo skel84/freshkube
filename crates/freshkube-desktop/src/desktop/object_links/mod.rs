@@ -73,7 +73,7 @@ impl Pilot {
                     }
                     return;
                 }
-                let Some(source) = self.kube_source() else {
+                let Some(source) = self.source().kube else {
                     return;
                 };
                 self.resolve_owner_remote(source, api_version, kind, object, window, cx);
@@ -85,7 +85,7 @@ impl Pilot {
     /// owner. A link made in another cluster is sent to it or refused first.
     pub(super) fn resolve_owner_remote(
         &mut self,
-        source: resources::KubeSource,
+        source: resources::ClusterSource,
         api_version: String,
         kind: String,
         object: resources::model::ObjectRef,

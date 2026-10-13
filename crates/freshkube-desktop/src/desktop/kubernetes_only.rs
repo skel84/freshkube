@@ -844,7 +844,7 @@ mod tests {
                     .identity()
                     .clone();
                 view.kubeconfig_checked(access.clone(), report, window, cx);
-                assert_eq!(view.kube_source().unwrap().id, access.id());
+                assert_eq!(view.source().kube.unwrap().id, access.id());
                 assert_eq!(
                     view.registry
                         .active()
@@ -903,7 +903,7 @@ mod tests {
                 let mut replacement = discover_contexts(std::slice::from_ref(&path));
                 replacement.current = Some("different-current".into());
                 view.kubeconfig_checked(access.clone(), replacement, window, cx);
-                let current = view.kube_source().unwrap().id;
+                let current = view.source().kube.unwrap().id;
                 assert_ne!(current, access.id());
                 assert_eq!(view.applied.context.as_deref(), Some("chosen"));
                 assert!(view.registry.active().kubernetes_summary.data().is_none());
@@ -985,7 +985,7 @@ mod tests {
                 std::fs::write(&path, "after!").unwrap();
                 let replacement = discover_contexts(std::slice::from_ref(&path));
                 view.kubeconfig_checked(access.clone(), replacement, window, cx);
-                assert_ne!(view.kube_source().unwrap().id, access.id());
+                assert_ne!(view.source().kube.unwrap().id, access.id());
                 assert!(view.registry.active().kubernetes_summary.data().is_none());
 
                 // Its answer arrives now, and finds nothing to apply to.

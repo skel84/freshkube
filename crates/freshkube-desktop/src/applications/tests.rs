@@ -856,7 +856,7 @@ fn an_unreachable_destination_says_so_by_name(cx: &mut TestAppContext) {
 #[test]
 fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
     use super::example;
-    use crate::resources::{KubeAccess, KubeSource};
+    use crate::resources::{ClusterAccess, ClusterSource};
     use freshkube_delivery::applications::{ArgoFound, ArgoScope};
 
     let mut inputs = example::inputs(Variant::Acme);
@@ -873,10 +873,10 @@ fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
         };
     }
     assert!(inputs.sessions.iter().any(|s| !s.asked.argo_cd));
-    let source = KubeSource {
+    let source = ClusterSource {
         id: "connection-1".into(),
         context: "homelab".into(),
-        access: KubeAccess::Example,
+        access: ClusterAccess::Example,
     };
     for entry in [None, Some("cicd-fra"), Some("core-fra"), Some("dev-fra")] {
         let read = super::Read::live(&inputs, &source, entry);
@@ -901,7 +901,7 @@ fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
 fn a_live_read_follows_each_stages_current_freight() {
     use super::change::{Changes, LiveChanges};
     use super::example;
-    use crate::resources::{KubeAccess, KubeSource};
+    use crate::resources::{ClusterAccess, ClusterSource};
     use freshkube_delivery::applications::{ArgoFound, ArgoScope, KargoProjectRead};
     use freshkube_delivery::source::Source;
     use freshkube_delivery::testing::parse_stage;
@@ -935,10 +935,10 @@ fn a_live_read_follows_each_stages_current_freight() {
         stages: Source::Read(vec![stage("dev", &["f-1"]), stage("prod", &[])]),
         warehouses: Source::Read(Vec::new()),
     }]);
-    let source = KubeSource {
+    let source = ClusterSource {
         id: "connection-1".into(),
         context: "core-fra".into(),
-        access: KubeAccess::Example,
+        access: ClusterAccess::Example,
     };
     let live = LiveChanges::of(&inputs, &source);
     assert_eq!(live.argocd_namespace, "gitops");
@@ -958,7 +958,7 @@ fn a_live_read_follows_each_stages_current_freight() {
 #[gpui_kit::test]
 fn a_live_read_follows_the_workspace_and_the_entry_it_is(cx: &mut TestAppContext) {
     use crate::resources::direct::DirectAccess;
-    use crate::resources::{KubeAccess, KubeSource};
+    use crate::resources::{ClusterAccess, ClusterSource};
     let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
     // Nothing answers it: the read stays in flight until it is ended here.
     let access = DirectAccess::new(
@@ -966,10 +966,10 @@ fn a_live_read_follows_the_workspace_and_the_entry_it_is(cx: &mut TestAppContext
         "cluster-a".into(),
         freshkube_core::ConfigurationRevision::default(),
     );
-    let source = KubeSource {
+    let source = ClusterSource {
         id: access.id(),
         context: "cluster-a".into(),
-        access: KubeAccess::Direct(access),
+        access: ClusterAccess::Direct(access),
     };
     let workspace = |entry: &str| {
         let mut workspace = freshkube_core::workspace::example();
@@ -1009,12 +1009,12 @@ fn a_live_read_follows_the_workspace_and_the_entry_it_is(cx: &mut TestAppContext
 /// to the open connection, and every other entry is a switch away.
 #[test]
 fn a_live_read_keys_each_entry_and_opens_the_open_one_here() {
-    use crate::resources::{KubeAccess, KubeSource};
+    use crate::resources::{ClusterAccess, ClusterSource};
     use freshkube_delivery::applications::{Asked, Inputs, SessionInputs, SessionKey};
-    let source = KubeSource {
+    let source = ClusterSource {
         id: "connection-1".into(),
         context: "admin@lab".into(),
-        access: KubeAccess::Example,
+        access: ClusterAccess::Example,
     };
     let inputs = Inputs {
         sessions: ["cicd-fra", "core-fra", "dev-fra"]

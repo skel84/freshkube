@@ -31,7 +31,7 @@ use tokio::sync::mpsc;
 use super::{LogSource, LogView};
 use crate::backend::{OwnedJob, STREAM_QUEUE_CAPACITY};
 use crate::resources::model::ResourceIdentity;
-use crate::resources::{KubeAccess, example};
+use crate::resources::{ClusterAccess, example};
 use crate::ui::Tone;
 
 /// The most container logs one tab reads at once; a source counts the rest
@@ -256,7 +256,7 @@ pub(super) trait StreamSource: LogSource + Sized + 'static {
 
     fn reads_mut(&mut self) -> &mut StreamSet;
 
-    fn access(&self) -> Option<KubeAccess>;
+    fn access(&self) -> Option<ClusterAccess>;
 
     /// The object whose containers the set reads, which labels the feed.
     /// Nothing compares it: the feed opens again only after `drop_streams`
@@ -364,7 +364,7 @@ impl<S: StreamSource> StreamReads for LogView<S> {
             },
         );
         S::stream_started(self, &key);
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             self.start_example(key, generation, cx);
             return;
         }

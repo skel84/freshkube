@@ -15,7 +15,7 @@ use super::{
 };
 use crate::backend::OwnedJob;
 use crate::resources::detail::DetailTarget;
-use crate::resources::screen::KubeAccess;
+use crate::resources::screen::ClusterAccess;
 use crate::resources::{example, live};
 use crate::terminal::TerminalSize;
 
@@ -54,7 +54,7 @@ impl Mounted {
             .unwrap();
         self.step(cx, |_, cx| {
             self.shell.update(cx, |shell, cx| {
-                shell.show_pod(Some(identity), Some(KubeAccess::Example), cx);
+                shell.show_pod(Some(identity), Some(ClusterAccess::Example), cx);
                 shell.set_containers(containers, cx);
             })
         });

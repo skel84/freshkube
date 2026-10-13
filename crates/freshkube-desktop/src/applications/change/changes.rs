@@ -12,7 +12,7 @@ use freshkube_delivery::change::{self as delivery_change, live::Place};
 
 use super::Fetch;
 use crate::applications::across::Across;
-use crate::resources::{KubeAccess, KubeSource};
+use crate::resources::{ClusterAccess, ClusterSource};
 
 /// Where a Stage's change comes from.
 #[derive(Clone, Debug)]
@@ -42,7 +42,7 @@ pub(in crate::applications) struct LiveChanges {
 }
 
 impl LiveChanges {
-    pub(in crate::applications) fn of(inputs: &Inputs, source: &KubeSource) -> Self {
+    pub(in crate::applications) fn of(inputs: &Inputs, source: &ClusterSource) -> Self {
         let mut current = BTreeMap::new();
         let mut argocd_namespace = None;
         for session in &inputs.sessions {
@@ -68,7 +68,7 @@ impl LiveChanges {
 
 impl Changes {
     /// A live read's: each Stage's current Freight on `source`.
-    pub(in crate::applications) fn live(inputs: &Inputs, source: &KubeSource) -> Self {
+    pub(in crate::applications) fn live(inputs: &Inputs, source: &ClusterSource) -> Self {
         Self::Live(Arc::new(LiveChanges::of(inputs, source)))
     }
 
@@ -95,7 +95,7 @@ impl Changes {
         project: &str,
         stage: &str,
         runtime: &tokio::runtime::Handle,
-        access: &KubeAccess,
+        access: &ClusterAccess,
         across: Across,
         delay: Duration,
     ) -> Option<Fetch> {

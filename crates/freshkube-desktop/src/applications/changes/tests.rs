@@ -442,17 +442,17 @@ fn the_inspector_says_why_each_stage_is_what_it_is(cx: &mut TestAppContext) {
 }
 
 /// A source that never connects: a kubeconfig context with no files.
-fn live_source(context: &str) -> crate::resources::KubeSource {
+fn live_source(context: &str) -> crate::resources::ClusterSource {
     use crate::resources::direct::DirectAccess;
     let access = DirectAccess::new(
         Vec::new(),
         context.into(),
         freshkube_core::ConfigurationRevision::default(),
     );
-    crate::resources::KubeSource {
+    crate::resources::ClusterSource {
         id: access.id(),
         context: context.into(),
-        access: crate::resources::KubeAccess::Direct(access),
+        access: crate::resources::ClusterAccess::Direct(access),
     }
 }
 
@@ -487,10 +487,10 @@ fn another_connection_drops_the_read_in_flight_and_its_rows(cx: &mut TestAppCont
             // The next read stays in flight, so only the first could land.
             page.set_hold(true);
             page.set_source(
-                Some(crate::resources::KubeSource {
+                Some(crate::resources::ClusterSource {
                     id: "example:other".into(),
                     context: "other".into(),
-                    access: crate::resources::KubeAccess::Example,
+                    access: crate::resources::ClusterAccess::Example,
                 }),
                 cx,
             );

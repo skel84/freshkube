@@ -5,7 +5,7 @@ fn coroot_links_resolve_real_subjects_and_reject_old_providers(cx: &mut TestAppC
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     let (pod, access) = cx.read(|cx| {
         let view = view.read(cx);
-        let source = view.kube_source().unwrap();
+        let source = view.source().kube.unwrap();
         let pod = crate::resources::example::read(
             &source.context,
             "pods",
@@ -57,7 +57,7 @@ fn coroot_links_open_without_asking_while_a_shell_runs(cx: &mut TestAppContext) 
     use crate::resources::{example, live, shell};
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     let (pods, access) = cx.read(|cx| {
-        let source = view.read(cx).kube_source().unwrap();
+        let source = view.read(cx).source().kube.unwrap();
         let pods: Vec<_> = example::read(&source.context, "pods", None, live::now())
             .unwrap()
             .1

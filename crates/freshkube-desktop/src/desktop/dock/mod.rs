@@ -33,7 +33,7 @@ use crate::navigation_file::DOCK_HEIGHT;
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::shell::{self, ShellEvent, ShellView};
-use crate::resources::{KubeAccess, KubeSource, LogsAt, LogsRequest, ShellRequest};
+use crate::resources::{ClusterAccess, ClusterSource, LogsAt, LogsRequest, ShellRequest};
 use crate::ui::dp_px;
 use feed::Feed;
 
@@ -196,7 +196,7 @@ impl DockTab {
         }
     }
 
-    fn set_access(&self, access: &KubeAccess, cx: &mut App) {
+    fn set_access(&self, access: &ClusterAccess, cx: &mut App) {
         match &self.kind {
             TabKind::Pod(view) => view.update(cx, |view, _| view.set_access(access.clone())),
             TabKind::Workload(view) => view.update(cx, |view, _| view.set_access(access.clone())),
@@ -241,7 +241,7 @@ impl DockTab {
 
 pub(crate) struct Dock {
     runtime: Handle,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     pub(crate) tabs: Vec<DockTab>,
     selected: Option<u64>,
     next_id: u64,
@@ -982,7 +982,7 @@ impl Dock {
     /// saved tabs when its context is theirs.
     pub(crate) fn set_source(
         &mut self,
-        source: Option<KubeSource>,
+        source: Option<ClusterSource>,
         identity: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,

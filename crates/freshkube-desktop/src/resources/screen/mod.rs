@@ -93,31 +93,7 @@ actions!(
 /// Where the Resources page reads from. `id` is part of every row's
 /// identity, so rows from one connection are never shown or selected as
 /// another's; the same `id` keeps a running watch across source updates.
-#[derive(Clone)]
-pub(crate) struct KubeSource {
-    pub(crate) id: String,
-    /// The context the scope line names.
-    pub(crate) context: String,
-    pub(crate) access: KubeAccess,
-}
-
-pub(crate) use freshkube_core::cluster_source::KubeAccess;
-
-impl KubeSource {
-    /// This connection as Monitoring and Observability take it.
-    pub(crate) fn cluster(&self) -> freshkube_core::cluster_source::ClusterSource {
-        use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
-        let access = match &self.access {
-            KubeAccess::Example => ClusterAccess::Example,
-            live => ClusterAccess::Live(std::sync::Arc::new(live.clone())),
-        };
-        ClusterSource {
-            id: self.id.clone(),
-            context: self.context.clone(),
-            access,
-        }
-    }
-}
+pub(crate) use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 
 /// One entry of the namespace picker; `None` lists every namespace.
 #[derive(Clone, Debug, PartialEq)]
@@ -194,7 +170,7 @@ pub(crate) struct ResourcesScreen {
     field_selector: Option<String>,
     embedded: bool,
     runtime: Handle,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     kind: ResourceKind,
     /// `None` lists every namespace. Kept across kinds and ignored for
     /// cluster-scoped ones.
@@ -624,7 +600,7 @@ impl ResourcesScreen {
     /// starts over, keeping nothing from the old connection.
     pub(crate) fn set_source(
         &mut self,
-        source: Option<KubeSource>,
+        source: Option<ClusterSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -881,7 +857,7 @@ impl ResourcesScreen {
         }
         let kind = self.kind.clone();
         let namespace = self.namespace.clone().filter(|_| kind.namespaced);
-        if let KubeAccess::Example = source.access {
+        if let ClusterAccess::Example = source.access {
             if self.hold {
                 return;
             }
@@ -1171,7 +1147,7 @@ impl ResourcesScreen {
         self.namespace_generation = self.namespace_generation.wrapping_add(1);
         let generation = self.namespace_generation;
         let access = match source.access {
-            KubeAccess::Example => {
+            ClusterAccess::Example => {
                 self.namespaces = example::namespaces();
                 self.sync_namespace_choices(window, cx);
                 return;
@@ -1409,7 +1385,7 @@ impl ResourcesScreen {
 /// Lists and watches one collection on Tokio, converting batches there so
 /// the UI thread only applies them. Stops when the receiver goes away.
 async fn watch(
-    access: KubeAccess,
+    access: ClusterAccess,
     kind: ResourceKind,
     namespace: Option<String>,
     field_selector: Option<String>,
