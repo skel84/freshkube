@@ -23,7 +23,7 @@ pub(crate) use lifecycle::LifecycleScreen;
 pub(crate) use loader::Loader;
 pub(crate) use network::NetworkScreen;
 pub(crate) use operations::OperationsScreen;
-pub(crate) use page::{PageEventFn, PageSource};
+pub(crate) use page::{PageEvent, PageEventFn, PageSource};
 pub(crate) use processes::ProcessesScreen;
 pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
@@ -44,7 +44,6 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use talos_rs::TalosClient;
-use tokio::runtime::Handle;
 
 use crate::backend::Target;
 use crate::palette::palette;
@@ -167,11 +166,11 @@ pub(crate) enum ScreenEvent {
 }
 
 /// Common lifecycle behavior between the shell and a screen. Feature-specific
-/// data is delivered through the screen's typed entity handle.
+/// data is delivered through the screen's typed entity handle. A page makes
+/// itself with its own `new`, which the shell's factory names, since pages
+/// take different things to start.
 pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     fn set_embedded(&mut self, _embedded: bool, _cx: &mut Context<Self>) {}
-
-    fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
     /// Called whenever the target or its cluster snapshot changes. A different
     /// `source.target` must drop in-flight work and data for the old target;
@@ -191,14 +190,15 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 
     /// The page showed or hid. Pages that own reads drop them on hide; the
     /// screens' [`Loader`] gets its hook in #582 (#578's step 4), and until
-    /// then a screen does nothing here. The shell calls it before
-    /// [`activate`](Self::activate), which a shown screen still gets: it
-    /// doesn't replace it.
+    /// then a screen does nothing here. From #579's step 2 the shell calls
+    /// it before [`activate`](Self::activate), which a shown screen still
+    /// gets: it doesn't replace it.
     fn set_visible(&mut self, _visible: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     /// Hears the page's requests as [`PageEvent`](page::PageEvent)s. A screen emits
     /// [`ScreenEvent`] alone; a page that emits other types subscribes each
     /// here and converts it.
+    #[must_use = "dropping the subscriptions stops the page's events"]
     fn subscribe_page(
         this: &Entity<Self>,
         on_event: PageEventFn,
@@ -257,7 +257,10 @@ type MotionFn = Rc<dyn Fn(&App) -> Option<Entity<freshkube_ui::table::LoadingMot
 #[derive(Clone)]
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the shell uses its page hooks from #579's step 2")
+    expect(
+        dead_code,
+        reason = "the shell hands its pages a source from #579's step 3"
+    )
 )]
 pub(crate) struct ScreenHandle {
     view: AnyView,

@@ -14,7 +14,7 @@ use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::px;
 use gpui_kit::size;
 use gpui_kit::test::{TestAppContextExt, TestWindowExt};
-use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, Window};
+use gpui_kit::{AnyWindowHandle, AppContext, Context, Entity, TestAppContext, Window};
 
 const PATIENCE: Duration = Duration::from_secs(5);
 /// What a page shows while its first answer is to come: its table's
@@ -164,7 +164,10 @@ fn only_an_answered_overview_without_a_node_says_no_node_selected(cx: &mut TestA
 
 /// The node pane's tabs can't open before a node's row exists, so each embedded
 /// screen is drawn alone: the same rule answers for it.
-fn pane_screen<T: ScreenPanel>(cx: &mut TestAppContext) {
+fn pane_screen<T: ScreenPanel>(
+    cx: &mut TestAppContext,
+    new: fn(tokio::runtime::Handle, &mut Window, &mut Context<T>) -> T,
+) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);
@@ -175,7 +178,7 @@ fn pane_screen<T: ScreenPanel>(cx: &mut TestAppContext) {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mounted = std::rc::Rc::new(std::cell::RefCell::new(None));
     let handle = cx.open_window(size(px(900.), px(700.)), |window, cx| {
-        let screen = cx.new(|cx| T::new(runtime.handle().clone(), window, cx));
+        let screen = cx.new(|cx| new(runtime.handle().clone(), window, cx));
         *mounted.borrow_mut() = Some(screen.clone());
         Root::new(screen, window, cx)
     });
@@ -199,10 +202,10 @@ fn pane_screen<T: ScreenPanel>(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn the_node_panes_screens_follow_the_same_rule(cx: &mut TestAppContext) {
-    pane_screen::<ProcessesScreen>(cx);
-    pane_screen::<StorageScreen>(cx);
-    pane_screen::<NetworkScreen>(cx);
-    pane_screen::<DiagnosticsScreen>(cx);
+    pane_screen(cx, ProcessesScreen::new);
+    pane_screen(cx, StorageScreen::new);
+    pane_screen(cx, NetworkScreen::new);
+    pane_screen(cx, DiagnosticsScreen::new);
 }
 
 /// Retry after a failed first read shows the loading state while the new

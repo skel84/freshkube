@@ -340,6 +340,7 @@ impl Pilot {
     }
 
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
+        let shown = self.shown_page();
         self.publish_reading(cx);
         self.column_changed();
         self.column_state.prepare(
@@ -409,6 +410,11 @@ impl Pilot {
         self.node_workspace
             .rebuild_columns(self.kubernetes_only.is_none());
         self.node_workspace.sync_tabs();
+        // A node that left closes the pane, and one that lost its Talos
+        // side drops its Talos tabs: the pane's screen hides.
+        if self.shown_page() != shown {
+            self.sync_visible_soon(cx);
+        }
         self.overview_display = crate::presentation::overview::Overview::build(
             &self.node_workspace.rows,
             &self.nodes,
@@ -565,6 +571,8 @@ impl Pilot {
             history.set_subject(subject, cx);
             history.set_visible(overview, cx);
         });
+        // The pane's Talos screens show with their tab.
+        self.sync_visible(window, cx);
     }
 
     fn activate_node_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {

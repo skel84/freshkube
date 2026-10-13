@@ -845,12 +845,8 @@ type StatusKey = (u64, Option<(String, bool)>);
 
 impl EventEmitter<ScreenEvent> for OperationsScreen {}
 
-impl ScreenPanel for OperationsScreen {
-    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        self.loading.motion(self.first_read(cx))
-    }
-
-    fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
+impl OperationsScreen {
+    pub(crate) fn new(runtime: Handle, _: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextNode, Some(CONTEXT)),
             KeyBinding::new("up", PreviousNode, Some(CONTEXT)),
@@ -891,6 +887,12 @@ impl ScreenPanel for OperationsScreen {
             _operations: cx.observe(&operations, |_, _, cx| cx.notify()),
             status: None,
         }
+    }
+}
+
+impl ScreenPanel for OperationsScreen {
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        self.loading.motion(self.first_read(cx))
     }
 
     fn set_source(&mut self, source: Option<ScreenSource>, _: &mut Window, cx: &mut Context<Self>) {
