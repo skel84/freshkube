@@ -1,0 +1,1 @@
+- **Observability filters:** trace and profile filters keep applying after the Coroot project changes.
