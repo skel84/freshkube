@@ -52,7 +52,7 @@ fn a_missing_file_is_the_default_without_a_problem() {
 }
 
 #[test]
-fn a_corrupt_file_is_the_default_and_reported_once() {
+fn a_corrupt_file_is_the_default_with_a_problem() {
     let directory = tempfile::tempdir().unwrap();
     let document = sample(&directory);
     std::fs::write(document.path(), "{\"name\": ").unwrap();
@@ -135,4 +135,25 @@ fn navigation_json_round_trips_byte_for_byte() {
         Layout::Compact,
         include_str!("examples/navigation.json"),
     );
+}
+
+#[test]
+fn a_problem_never_carries_the_files_contents() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = sample(&directory);
+    // serde_json's own message would say `invalid type: string "…"`.
+    std::fs::write(document.path(), "\"/home/someone/kube/config-acme\"").unwrap();
+    let problem = document.load().problem.expect("a problem");
+    assert!(!problem.contains("config-acme"), "{problem}");
+    assert!(!problem.contains("someone"), "{problem}");
+    assert!(problem.contains("wrong type or shape"), "{problem}");
+    assert!(problem.contains("line 1, column"), "{problem}");
+    // A wrong field type in an object, too.
+    std::fs::write(
+        document.path(),
+        "{\"name\": \"a\", \"count\": \"ten-acme\"}",
+    )
+    .unwrap();
+    let problem = document.load().problem.expect("a problem");
+    assert!(!problem.contains("ten-acme"), "{problem}");
 }

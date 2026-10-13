@@ -88,7 +88,7 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
                 value,
                 problem: None,
             },
-            Err(error) => self.unusable(format!("could not be parsed: {error}")),
+            Err(error) => self.unusable(format!("could not be parsed: {}", describe(&error))),
         }
     }
 
@@ -132,6 +132,21 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
             SAVES.fetch_add(1, Ordering::Relaxed)
         ))
     }
+}
+
+/// A parse error in words that never carry the file's contents: serde_json's
+/// own message echoes the value it did not expect, which in a typed document
+/// can be a path, a context name or an endpoint. Only the kind of error and
+/// where it is.
+fn describe(error: &serde_json::Error) -> String {
+    use serde_json::error::Category;
+    let kind = match error.classify() {
+        Category::Io => "a read error",
+        Category::Syntax => "invalid JSON",
+        Category::Data => "a value of the wrong type or shape",
+        Category::Eof => "the file ends too early",
+    };
+    format!("{kind} at line {}, column {}", error.line(), error.column())
 }
 
 fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
