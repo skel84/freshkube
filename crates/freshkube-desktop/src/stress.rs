@@ -260,7 +260,10 @@ pub enum TerminalWorkload {
 /// thread, as an exec stream would arrive. `FRESHKUBE_STRESS_APPEARANCE`
 /// (`light` or `dark`) picks the appearance; a debug build also takes
 /// `FRESHKUBE_TEXT_SIZE`.
-pub(crate) fn run_terminal(workload: TerminalWorkload) -> color_eyre::Result<()> {
+pub(crate) fn run_terminal(
+    workload: TerminalWorkload,
+    debug: crate::DebugOptions,
+) -> color_eyre::Result<()> {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -275,7 +278,7 @@ pub(crate) fn run_terminal(workload: TerminalWorkload) -> color_eyre::Result<()>
         .run(move |cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
-            crate::text_size::install_with(None, crate::DebugOptions::from_env().text_size, cx);
+            crate::text_size::install_with(None, debug.text_size, cx);
             match std::env::var("FRESHKUBE_STRESS_APPEARANCE").as_deref() {
                 Ok("light") => Theme::change(ThemeMode::Light, None, cx),
                 Ok("dark") => Theme::change(ThemeMode::Dark, None, cx),

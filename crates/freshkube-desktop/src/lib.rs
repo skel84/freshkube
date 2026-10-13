@@ -347,8 +347,8 @@ pub use stress::TerminalWorkload;
 /// Opens a window with only a terminal, fed a synthetic stream, for the
 /// stress harness and visual checks.
 #[cfg(feature = "stress")]
-pub fn run_terminal(workload: TerminalWorkload) -> color_eyre::Result<()> {
-    stress::run_terminal(workload)
+pub fn run_terminal(workload: TerminalWorkload, debug: DebugOptions) -> color_eyre::Result<()> {
+    stress::run_terminal(workload, debug)
 }
 
 #[cfg(test)]

@@ -302,6 +302,11 @@ impl ResourcesScreen {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_holding(&self) -> bool {
+        self.hold
+    }
+
     pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),

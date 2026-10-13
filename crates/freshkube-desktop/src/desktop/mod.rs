@@ -464,8 +464,8 @@ pub(crate) struct Pilot {
     /// Whether the settings popover is open; a page can open it too.
     settings_open: bool,
     /// The platform whose menu the window has: the one it runs on, but a
-    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`,
-    /// and tests choose.
+    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`
+    /// (`DebugOptions::app_menu_button`), and tests choose.
     menu_platform: freshkube_ui::platform::Platform,
     /// The menu button's menu while it's open, and its dismissal's
     /// subscription.
@@ -486,7 +486,7 @@ pub(crate) struct Pilot {
     elapsed: Duration,
     fixture: bool,
     /// Example data holds the Talos overview and the Kubernetes summary
-    /// (`fixture::hold`), so the pages that wait for them stay loading.
+    /// (`DebugOptions::hold`), so the pages that wait for them stay loading.
     fixture_hold: bool,
     fixture_tick: u64,
     focus: FocusHandle,

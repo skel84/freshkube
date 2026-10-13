@@ -256,7 +256,10 @@ fn main() -> color_eyre::Result<()> {
         _ => None,
     };
     if let Some(workload) = terminal {
-        return freshkube_desktop::run_terminal(workload);
+        return freshkube_desktop::run_terminal(
+            workload,
+            freshkube_desktop::DebugOptions::from_env(),
+        );
     }
     let runtime = tokio::runtime::Runtime::new()?;
     if let Scenario::TalosLogs { .. } | Scenario::WorkloadLogs { .. } | Scenario::Loading { .. } =

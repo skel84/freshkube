@@ -84,21 +84,24 @@ impl DebugOptions {
     pub fn from_env() -> Self {
         #[cfg(any(debug_assertions, feature = "stress"))]
         {
-            #[cfg_attr(debug_assertions, allow(unused_mut))]
-            let mut options = Self::parse(|name| std::env::var_os(name));
-            // Only debug builds ever honoured these three.
-            #[cfg(not(debug_assertions))]
-            {
-                options.etcd = None;
-                options.app_menu_button = false;
-                options.text_size = None;
-            }
-            options
+            Self::parse(|name| std::env::var_os(name)).debug_only()
         }
         #[cfg(not(any(debug_assertions, feature = "stress")))]
         {
             Self::default()
         }
+    }
+
+    /// Clears the three knobs only debug builds ever honoured, so a stress
+    /// build in release ignores them as before.
+    #[cfg(any(debug_assertions, feature = "stress"))]
+    fn debug_only(mut self) -> Self {
+        if !cfg!(debug_assertions) {
+            self.etcd = None;
+            self.app_menu_button = false;
+            self.text_size = None;
+        }
+        self
     }
 
     /// Parses the knobs from `var`, which answers a name with its value. A
