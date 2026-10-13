@@ -417,6 +417,38 @@ async fn a_refused_proxy_is_refused_not_missing() {
     assert_eq!(seen.lock().unwrap().len(), 2);
 }
 
+#[tokio::test]
+async fn a_discovery_proxy_403_keeps_the_refusal_kind_and_words() {
+    let (client, seen) = fake(|_, path, _| match path {
+        "/api/v1/services" => (200, list(vec![operated()])),
+        _ => (403, status(403, "the proxy says no")),
+    });
+    let error = discover(&client, None).await.err().unwrap();
+    assert_eq!(error.kind, ErrorKind::Refused);
+    assert_eq!(
+        error.message,
+        "Not allowed to query Prometheus (services/proxy)"
+    );
+    assert_eq!(seen.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_discovery_proxy_404_keeps_the_not_found_kind_and_words() {
+    let (client, seen) = fake(|_, path, _| match path {
+        "/api/v1/services" => (200, list(vec![operated()])),
+        _ => (404, "the proxy says no".into()),
+    });
+    let Discovery::Missing { candidates, tried } = discover(&client, None).await.unwrap() else {
+        panic!("an unserved endpoint must remain a discovery candidate, never ready");
+    };
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(tried.len(), 1);
+    assert_eq!(tried[0].error.kind, ErrorKind::NotFound);
+    assert_eq!(tried[0].error.message, "Not found: the proxy says no");
+    assert_eq!(tried[0].service, candidates[0].service);
+    assert_eq!(seen.lock().unwrap().len(), 2);
+}
+
 /// A cluster whose client never builds, counting what it was told to
 /// forget.
 #[derive(Default)]
