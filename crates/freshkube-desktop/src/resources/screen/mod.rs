@@ -27,7 +27,6 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use super::detail::DetailTarget;
-use super::direct::DirectAccess;
 use super::model::{
     ColumnKind, ReadState, ResourceIdentity, SortDirection, SortKey, StatusTone, natural_cmp,
     status_tone,
@@ -102,48 +101,7 @@ pub(crate) struct KubeSource {
     pub(crate) access: KubeAccess,
 }
 
-#[derive(Clone)]
-pub(crate) enum KubeAccess {
-    /// Made-up objects for `--fixture`; nothing is contacted.
-    Example,
-    /// The Kubernetes client the Talos side sets up for its cluster.
-    Talos(Box<super::talos::TalosAccess>),
-    /// A kubeconfig context, without Talos.
-    Direct(DirectAccess),
-}
-
-impl KubeAccess {
-    pub(crate) async fn client(&self) -> Result<kube::Client, String> {
-        match self {
-            KubeAccess::Example => Err("Example data has no Kubernetes client".into()),
-            KubeAccess::Talos(live) => live.client().await,
-            KubeAccess::Direct(direct) => {
-                direct.connect().await.map(|connection| connection.client)
-            }
-        }
-    }
-
-    /// Drops a reused client after a failure, so the next read rebuilds it.
-    pub(crate) fn forget(&self) {
-        match self {
-            KubeAccess::Example => {}
-            KubeAccess::Talos(live) => live.forget(),
-            KubeAccess::Direct(direct) => direct.forget(),
-        }
-    }
-}
-
-/// Pages outside Resources reach a live cluster through this, so a clone
-/// shares the client the Talos or kubeconfig access caches.
-impl freshkube_core::cluster_source::KubeClientSource for KubeAccess {
-    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
-        Box::pin(KubeAccess::client(self))
-    }
-
-    fn forget(&self) {
-        KubeAccess::forget(self);
-    }
-}
+pub(crate) use freshkube_core::cluster_source::KubeAccess;
 
 impl KubeSource {
     /// This connection as Monitoring and Observability take it.
