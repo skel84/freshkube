@@ -358,3 +358,43 @@ fn reset_keeps_whether_it_shows(cx: &mut TestAppContext) {
         assert!(!screen.loader.is_visible());
     });
 }
+
+#[gpui_kit::test]
+fn a_failed_refresh_reads_again_on_showing(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let delivered = Rc::new(Cell::new(0));
+    let (send, answer) = oneshot::channel();
+    load(
+        &screen,
+        &runtime,
+        "a",
+        DEADLINE,
+        answer,
+        delivered.clone(),
+        cx,
+    );
+    send.send(Ok(1)).unwrap();
+    until(cx, || delivered.get() == 1);
+    let (send, answer) = oneshot::channel();
+    load(
+        &screen,
+        &runtime,
+        "a",
+        DEADLINE,
+        answer,
+        delivered.clone(),
+        cx,
+    );
+    send.send(Err("offline".into())).unwrap();
+    until(cx, || delivered.get() == 2);
+    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
+    screen.update(cx, |screen, cx| {
+        screen.loader.set_visible(false, policy, cx)
+    });
+    cx.executor().advance_clock(Duration::from_secs(5));
+    screen.update(cx, |screen, cx| {
+        // The data is 5 s old, but the refresh failed: it isn't fresh.
+        assert!(screen.loader.set_visible(true, policy, cx));
+        assert_eq!(screen.loader.data(), Some(&1));
+    });
+}

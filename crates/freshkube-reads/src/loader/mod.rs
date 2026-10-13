@@ -29,8 +29,9 @@ pub struct Loader<T, I> {
     /// A read hiding dropped before it answered: the snapshot still waits
     /// for it, but nothing is loading.
     cut: bool,
-    /// When the last answer from [`load`](Self::load) landed, by the
-    /// executor's clock.
+    /// When the last successful answer from [`load`](Self::load) landed,
+    /// by the executor's clock. A failure clears it: a refresh that failed
+    /// doesn't make old data new.
     answered: Option<Instant>,
 }
 
@@ -60,18 +61,20 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
 
     /// Hiding drops the read in flight and keeps the data as last known;
     /// showing again returns whether the owner should read again, as
-    /// `on_show` says, by the age of the last answer. An answer from
-    /// [`resolve`](Self::resolve) has no age and counts as old, as does a
-    /// read hiding cut short. Returns false when nothing changed.
+    /// `on_show` says, by the age of the last successful answer. A failed
+    /// answer, an answer from [`resolve`](Self::resolve) and a read hiding
+    /// cut short have no age and count as old. Returns false when nothing
+    /// changed.
     pub fn set_visible(&mut self, visible: bool, on_show: OnShow, cx: &App) -> bool {
         if self.visible == visible {
             return false;
         }
         self.visible = visible;
         if !visible {
-            if self.job.take().is_some() || self.task.is_some() {
-                self.task = None;
-                self.cut = self.state.is_loading();
+            self.task = None;
+            if self.job.take().is_some() && self.state.is_loading() {
+                // Nothing loads any more: what shows it derives again.
+                self.cut = true;
                 self.revision += 1;
             }
             return false;
@@ -116,8 +119,9 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         self.task = Some(cx.spawn(async move |this, cx| {
             let result = receiver.await.unwrap_or_else(|_| Err(stopped));
             _ = this.update(cx, |view, cx| {
+                let ok = result.is_ok();
                 let loader = slot(view);
-                if loader.deliver(&request, result) {
+                if loader.deliver(&request, result) && ok {
                     loader.answered = Some(cx.background_executor().now());
                 }
                 cx.notify();
@@ -164,9 +168,14 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
 
     /// Lands `result` if `request` is still the latest for its identity.
     fn deliver(&mut self, request: &Request<I>, result: Result<T, String>) -> bool {
+        let failed = result.is_err();
         let applied = self.state.apply(request, result);
         if applied {
+            if failed {
+                self.answered = None;
+            }
             self.job = None;
+            self.cut = false;
             self.revision += 1;
         }
         applied
