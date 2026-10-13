@@ -1,16 +1,12 @@
 //! What every page will share with the shell: one kind of event and one
 //! source.
 //!
-//! Today the shell reaches its pages three ways, each with its own events
-//! and its own shape of source (#579). [`PageEvent`] gathers those events
-//! and [`PageSource`] what `push_source` hands them, so a page takes them
-//! through its [`ScreenHandle`] as the screens do. The shell hears every
-//! page through [`PageEvent`] and tells each through its handle whether it
-//! shows; until #579's step 3 it still hands each its source the old way.
-#![expect(
-    dead_code,
-    reason = "the shell hands its pages a PageSource from #579's step 3"
-)]
+//! The shell reached its pages three ways, each with its own events and
+//! its own shape of source (#579). [`PageEvent`] gathers those events and
+//! [`PageSource`] what `push_source` hands them, so a page takes them
+//! through its [`ScreenHandle`] as the screens do: the shell hears every
+//! page through [`PageEvent`], hands each the same [`PageSource`] and tells
+//! each whether it shows.
 
 use std::rc::Rc;
 
@@ -20,6 +16,7 @@ use gpui_kit::{App, FocusHandle, Subscription, Window};
 
 use super::{ScreenEvent, ScreenHandle, ScreenSource};
 use crate::applications::SwitchLink;
+use crate::desktop::ServiceEvent;
 use crate::desktop::dock::DockEvent;
 use crate::monitoring::page::MonitoringEvent;
 use crate::observability::{ObservabilityEvent, RevisionLink};
@@ -53,6 +50,8 @@ pub(crate) enum PageEvent {
     /// The kind Resources shows isn't served, so its group's discovery may
     /// be out of date.
     NotServed(ResourceKind),
+    /// A service's logs, or its node on the Services tab.
+    Service(ServiceEvent),
 }
 
 impl From<ScreenEvent> for PageEvent {
@@ -108,6 +107,12 @@ impl From<MonitoringEvent> for PageEvent {
     }
 }
 
+impl From<ServiceEvent> for PageEvent {
+    fn from(event: ServiceEvent) -> Self {
+        Self::Service(event)
+    }
+}
+
 impl From<NotServed> for PageEvent {
     fn from(NotServed(kind): NotServed) -> Self {
         Self::NotServed(kind)
@@ -152,10 +157,6 @@ impl PartialEq for ScreenHandle {
 
 impl ScreenHandle {
     /// Hands the page the shell's whole source; it takes what it reads.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the shell uses it from #579's step 3")
-    )]
     pub(crate) fn set_page_source(&self, source: PageSource, window: &mut Window, cx: &mut App) {
         (self.page_source)(source, window, cx)
     }

@@ -109,7 +109,9 @@ enum Act {
     Open,
 }
 
-pub(super) enum ServiceEvent {
+/// A row's action, which the shell takes to the service's node.
+#[derive(Clone, Debug)]
+pub(crate) enum ServiceEvent {
     Logs(String, String),
     Open(String, String),
 }
@@ -502,6 +504,7 @@ impl SystemServices {
 
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::desktop::probe::hit(PREFIX);
         let _span = crate::perf::span("page.render");
         // A short window scrolls the frame, so the list keeps some rows.
         let short = page::is_short(window);

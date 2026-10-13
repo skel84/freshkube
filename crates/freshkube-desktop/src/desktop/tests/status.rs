@@ -113,14 +113,14 @@ impl crate::screens::ScreenPanel for SegmentScreen {
 
     fn refresh(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
 
-    fn status(&mut self) -> Option<&freshkube_ui::status::Segment> {
-        self.0.as_ref()
+    fn status(&mut self, _: &gpui_kit::App) -> Option<freshkube_ui::status::Segment> {
+        self.0.clone()
     }
 }
 
 #[gpui_kit::test]
 fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContext) {
-    use super::super::pages::ScreenKind;
+    use super::super::pages::PageId;
     use freshkube_ui::status::Segment;
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     // etcd's page draws a screen that sets its segment as the test says.
@@ -128,11 +128,10 @@ fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContex
     cx.update(|cx| {
         view.update(cx, |view, _| {
             let slot = view
-                .screens
-                .iter_mut()
-                .find(|(kind, _)| *kind == ScreenKind::Etcd)
+                .pages
+                .get_mut(&PageId::Etcd)
                 .expect("etcd has a screen");
-            slot.1 = crate::screens::ScreenHandle::new(screen.clone());
+            *slot = crate::screens::ScreenHandle::new(screen.clone());
         })
     });
     cx.update_window(handle, |_, window, cx| {

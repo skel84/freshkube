@@ -231,8 +231,10 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     /// The page's line in the status bar, which the shell draws while the
     /// screen is the visible page. The shell reads it before the screen
     /// renders, so derive it here when its inputs changed, as Resources
-    /// does, and notify when they change; `None` draws no segment.
-    fn status(&mut self) -> Option<&freshkube_ui::status::Segment> {
+    /// does, and notify when they change; `None` draws no segment. A page
+    /// whose line is another entity's, as Applications' on its Changes
+    /// list, reads it through `cx`.
+    fn status(&mut self, _cx: &App) -> Option<freshkube_ui::status::Segment> {
         None
     }
 
@@ -244,7 +246,6 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     }
 }
 
-type SourceFn = Rc<dyn Fn(Option<ScreenSource>, &mut Window, &mut App)>;
 type PageSourceFn = Rc<dyn Fn(PageSource, &mut Window, &mut App)>;
 type VisibleFn = Rc<dyn Fn(bool, &mut Window, &mut App)>;
 type SubscribeFn = Rc<dyn Fn(PageEventFn, &mut Window, &mut App) -> Vec<Subscription>>;
@@ -255,16 +256,8 @@ type MotionFn = Rc<dyn Fn(&App) -> Option<Entity<freshkube_ui::table::LoadingMot
 
 /// A type-erased screen, so the shell can keep every screen in one list.
 #[derive(Clone)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the shell hands its pages a source from #579's step 3"
-    )
-)]
 pub(crate) struct ScreenHandle {
     view: AnyView,
-    set_source: SourceFn,
     page_source: PageSourceFn,
     visible: VisibleFn,
     subscribe: SubscribeFn,
@@ -278,12 +271,7 @@ pub(crate) struct ScreenHandle {
 
 impl ScreenHandle {
     pub(crate) fn new<T: ScreenPanel>(entity: Entity<T>) -> Self {
-        let (sourced, activated, refreshed, focused) = (
-            entity.clone(),
-            entity.clone(),
-            entity.clone(),
-            entity.clone(),
-        );
+        let (activated, refreshed, focused) = (entity.clone(), entity.clone(), entity.clone());
         let (embedded, status, motion) = (entity.clone(), entity.clone(), entity.clone());
         let (paged, shown, heard) = (entity.clone(), entity.clone(), entity.clone());
         Self {
@@ -297,16 +285,11 @@ impl ScreenHandle {
                 T::subscribe_page(&heard, on_event, window, cx)
             }),
             motion: Rc::new(move |cx| motion.read(cx).loading_motion(cx)),
-            status: Rc::new(move |cx| status.update(cx, |screen, _| screen.status().cloned())),
+            status: Rc::new(move |cx| status.update(cx, |screen, cx| screen.status(cx))),
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
             }),
             view: entity.into(),
-            set_source: Rc::new(
-                move |source: Option<ScreenSource>, window: &mut Window, cx: &mut App| {
-                    sourced.update(cx, |screen, cx| screen.set_source(source, window, cx))
-                },
-            ),
             activate: Rc::new(move |window: &mut Window, cx: &mut App| {
                 activated.update(cx, |screen, cx| screen.activate(window, cx))
             }),
@@ -338,15 +321,6 @@ impl ScreenHandle {
 
     pub(crate) fn view(&self) -> AnyView {
         self.view.clone()
-    }
-
-    pub(crate) fn set_source(
-        &self,
-        source: Option<ScreenSource>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        (self.set_source)(source, window, cx)
     }
 
     pub(crate) fn activate(&self, window: &mut Window, cx: &mut App) {
