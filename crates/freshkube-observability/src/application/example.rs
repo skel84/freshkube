@@ -270,7 +270,7 @@ pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
 /// ReplicaSet the change page's example change runs on dev-fra and
 /// stage-fra, an hour into the charts, and 1.42.3 the week before.
 pub(crate) fn checkout_revisions() -> Vec<api::DeploymentRevision> {
-    use freshkube_core::delivery::change::example::POD_HASH;
+    use freshkube_delivery::change::example::POD_HASH;
     let (from_ms, to_ms) = hour();
     let revision = |hash: &str, at_ms: i64, image: &str, note: &str| api::DeploymentRevision {
         id: format!("{hash}:{}", at_ms / 1000),

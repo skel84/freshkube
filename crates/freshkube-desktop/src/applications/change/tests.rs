@@ -250,7 +250,7 @@ fn a_stage_mapped_to_another_cluster_never_folds(cx: &mut TestAppContext) {
                 .iter_mut()
                 .find(|stage| stage.name == "stage")
                 .expect("the Stage stage");
-            stage.cluster = freshkube_core::delivery::change::Destination::Entry {
+            stage.cluster = freshkube_delivery::change::Destination::Entry {
                 entry: "stage-fra".into(),
                 via: "server https://stage-fra.example.test:6443".into(),
             };
@@ -778,7 +778,7 @@ fn a_tools_page_opens_in_the_browser_only_with_an_address(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn the_header_opens_and_copies_the_freights_kargo_page(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = open(cx, 1280., 880.);
-    let page = freshkube_core::delivery::change::example::kargo_page().to_string();
+    let page = freshkube_delivery::testing::kargo_page().to_string();
     assert_eq!(
         page,
         "https://kargo.example.test/project/checkout/freight/wonky-otter"
@@ -845,7 +845,7 @@ fn dock_tabs(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
 fn a_steps_logs_open_in_the_dock_on_the_open_cluster(cx: &mut TestAppContext) {
     use super::ChangeEvent;
     use crate::resources::{LogsAt, ResourceLink};
-    use freshkube_core::delivery::change::example::{RELEASE_NAMESPACE, VERIFY_TASK};
+    use freshkube_delivery::testing::{RELEASE_NAMESPACE, VERIFY_TASK};
     use std::{cell::RefCell, rc::Rc};
 
     let (_runtime, handle, view) = open_on(cx, 1280., 880., "cicd-fra");
@@ -1293,7 +1293,7 @@ fn another_source_drops_the_change(cx: &mut TestAppContext) {
 fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) {
     use super::Fetch;
     use crate::resources::KubeAccess;
-    use freshkube_core::delivery::change::live::Place;
+    use freshkube_delivery::change::live::Place;
     let (runtime, handle, view) = open(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         change(&view, cx).unwrap().update(cx, |page, _| {
@@ -1370,7 +1370,7 @@ fn detail_keeps_its_room_beside_the_inspector(cx: &mut TestAppContext) {
 /// inside the cell's padding, at the default text size and the largest.
 #[gpui_kit::test]
 fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
-    use freshkube_core::delivery::join::Confidence;
+    use freshkube_delivery::join::Confidence;
     use freshkube_ui::table::{CELL_PAD, TableColumn as _};
     use gpui_kit::{TextRun, font};
 
@@ -1493,7 +1493,7 @@ fn open_with(
 /// ReplicaSet that runs it.
 #[gpui_kit::test]
 fn a_deployments_revision_opens_in_observability_by_its_hash(cx: &mut TestAppContext) {
-    use freshkube_core::delivery::change::example::POD_HASH;
+    use freshkube_delivery::change::example::POD_HASH;
     let (_runtime, handle, view) = open_on_dev(cx);
     cx.update_window(handle, |_, window, cx| {
         // dev is fine, so it folds while prod needs a look.
@@ -1661,10 +1661,10 @@ fn with_cicd_fra_open_its_freight_opens_and_argo_cds_offer_a_switch(cx: &mut Tes
 
 /// The example's Stage `dev`, deploying to `cluster`, with `reach`.
 fn dev_with(
-    reach: freshkube_core::delivery::change::Reach,
-    cluster: freshkube_core::delivery::change::Destination,
-) -> freshkube_core::delivery::change::Stage {
-    let change = freshkube_core::delivery::change::example::change(chrono::Utc::now());
+    reach: freshkube_delivery::change::Reach,
+    cluster: freshkube_delivery::change::Destination,
+) -> freshkube_delivery::change::Stage {
+    let change = freshkube_delivery::testing::change(chrono::Utc::now());
     let mut dev = change
         .stages
         .into_iter()
@@ -1679,8 +1679,8 @@ fn dev_with(
 /// when that is less than Confirmed, with the weaker glyph.
 #[test]
 fn a_stage_group_row_names_a_reach_weaker_than_confirmed() {
-    use freshkube_core::delivery::change::{Destination, Reach};
-    use freshkube_core::delivery::join::Confidence;
+    use freshkube_delivery::change::{Destination, Reach};
+    use freshkube_delivery::join::Confidence;
     use freshkube_ui::ui::Tone;
     let cluster = || Destination::Cluster("dev-fra".into());
     let entry = || Destination::Entry {
@@ -1795,8 +1795,8 @@ fn a_stage_whose_pods_are_only_claimed_never_folds(cx: &mut TestAppContext) {
                 .iter_mut()
                 .find(|stage| stage.name == "stage")
                 .expect("the Stage stage")
-                .reach = freshkube_core::delivery::change::Reach::Linked(
-                freshkube_core::delivery::join::Confidence::Claimed,
+                .reach = freshkube_delivery::change::Reach::Linked(
+                freshkube_delivery::join::Confidence::Claimed,
             );
             page.rows.clear();
             page.show(change);

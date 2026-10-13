@@ -345,7 +345,7 @@ mod wanted {
     use crate::tests::mount;
     use crate::{Destination, ObservabilityPage};
     use freshkube_core::coroot as api;
-    use freshkube_core::delivery::change::example::POD_HASH;
+    use freshkube_delivery::change::example::POD_HASH;
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 

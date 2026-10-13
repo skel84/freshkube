@@ -75,11 +75,13 @@ coroot-rs = { git = "https://github.com/skel84/corust", rev = "5312f1efc4e68a286
 # Internal crates
 talos-rs = { path = "crates/talos-rs" }
 freshkube-core = { path = "crates/freshkube-core" }
+freshkube-delivery = { path = "crates/freshkube-delivery" }
 freshkube-graph = { path = "crates/freshkube-graph" }
 freshkube-logs = { path = "crates/freshkube-logs" }
 freshkube-monitoring = { path = "crates/freshkube-monitoring" }
 freshkube-observability = { path = "crates/freshkube-observability" }
 freshkube-probe = { path = "crates/freshkube-probe" }
+freshkube-reads = { path = "crates/freshkube-reads" }
 freshkube-terminal = { path = "crates/freshkube-terminal" }
 freshkube-desktop = { path = "crates/freshkube-desktop" }
 freshkube-ui = { path = "crates/freshkube-ui" }

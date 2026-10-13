@@ -6,10 +6,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use freshkube_core::delivery::change::live::Mapping;
-use freshkube_core::delivery::entry::{self, Deadline, EntryReader};
-use freshkube_core::delivery::read::ReadOnlyClient;
 use freshkube_core::workspace::{Chosen, Sources};
+use freshkube_delivery::change::live::Mapping;
+use freshkube_delivery::entry::{self, Deadline, EntryReader};
+use freshkube_delivery::read::ReadOnlyClient;
 
 use crate::resources::KubeAccess;
 
