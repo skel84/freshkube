@@ -27,6 +27,7 @@ use super::change::{self, Change, Reach};
 use super::join::Confidence;
 use super::kargo::{Freight, Stage, promotion_order};
 use super::source::Source;
+use super::words;
 use freshkube_core::resources::{Failure, FailureKind};
 
 /// The most Freight a project lists, newest first. Those a Stage runs are
@@ -247,15 +248,9 @@ fn followed_missing(rows: &[Row]) -> Vec<Note> {
 /// A source that wasn't read, as a note; none for one that was.
 fn unread<T>(source: &Source<T>, project: Option<&str>, what: &str, cluster: &str) -> Option<Note> {
     let (gap, text) = match source {
-        Source::NotInstalled(_) => (Gap::NotServed, format!("{what} aren't served on {cluster}")),
-        Source::Refused(why) => (
-            Gap::Refused,
-            format!("{what} were refused on {cluster}: {why}"),
-        ),
-        Source::Unreadable(why) => (
-            Gap::Unreadable,
-            format!("{what} couldn't be read on {cluster}: {why}"),
-        ),
+        Source::NotInstalled(_) => (Gap::NotServed, words::arent_served(what, cluster)),
+        Source::Refused(why) => (Gap::Refused, words::were_refused(what, cluster, why)),
+        Source::Unreadable(why) => (Gap::Unreadable, words::unreadable(what, cluster, why)),
         Source::Read(_) | Source::Capped(..) => return None,
     };
     Some(Note {

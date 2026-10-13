@@ -9,6 +9,45 @@ pub fn unreachable(entry: &str, why: &str) -> String {
     format!("Couldn't reach {entry}: {why}")
 }
 
+/// `refused on ⟨entry⟩: ⟨why⟩`: what a read the entry refused (401 or 403)
+/// came to, for a sentence that names its subject itself.
+pub fn refused_on(entry: &str, why: &str) -> String {
+    format!("refused on {entry}: {why}")
+}
+
+/// `⟨what⟩ refused on ⟨entry⟩: ⟨why⟩`: a read the entry refused (401 or 403).
+pub fn refused(what: &str, entry: &str, why: &str) -> String {
+    format!("{what} {}", refused_on(entry, why))
+}
+
+/// `it wasn't found on ⟨entry⟩`: the answer for one object the entry doesn't
+/// have (404).
+pub fn wasnt_found_on(entry: &str) -> String {
+    format!("it wasn't found on {entry}")
+}
+
+/// `⟨what⟩ isn't served on ⟨entry⟩`: a kind the entry doesn't serve (404).
+pub fn not_served(what: &str, entry: &str) -> String {
+    format!("{what} isn't served on {entry}")
+}
+
+/// `⟨what⟩ were refused on ⟨entry⟩: ⟨why⟩`, for a plural `what` that was
+/// asked for and refused.
+pub fn were_refused(what: &str, entry: &str, why: &str) -> String {
+    format!("{what} were refused on {entry}: {why}")
+}
+
+/// `⟨what⟩ aren't served on ⟨entry⟩`, for a plural `what`.
+pub fn arent_served(what: &str, entry: &str) -> String {
+    format!("{what} aren't served on {entry}")
+}
+
+/// `⟨what⟩ couldn't be read on ⟨entry⟩: ⟨why⟩`, for a plural `what` that
+/// was asked for and failed in some other way.
+pub fn unreadable(what: &str, entry: &str, why: &str) -> String {
+    format!("{what} couldn't be read on {entry}: {why}")
+}
+
 /// What reading `what` on `entry` came to, in a sentence, for a read that
 /// failed with `kind` and the words `why`. A [`FailureKind::Config`] is a
 /// part no entry holds, and says `why` alone.
@@ -18,10 +57,8 @@ pub fn failed(kind: FailureKind, what: &str, entry: &str, why: &str) -> String {
         FailureKind::Unreachable | FailureKind::Timeout | FailureKind::Other => {
             unreachable(entry, why)
         }
-        FailureKind::Unauthorized | FailureKind::Forbidden => {
-            format!("{what} refused on {entry}: {why}")
-        }
-        FailureKind::NotFound => format!("{what} isn't served on {entry}"),
+        FailureKind::Unauthorized | FailureKind::Forbidden => refused(what, entry, why),
+        FailureKind::NotFound => not_served(what, entry),
     }
 }
 
@@ -52,6 +89,22 @@ mod tests {
         assert_eq!(
             say(FailureKind::NotFound),
             "Kargo isn't served on cluster-a"
+        );
+    }
+
+    #[test]
+    fn plural_sentences_are_worded_here() {
+        assert_eq!(
+            were_refused("Kargo Projects", "cluster-a", "forbidden"),
+            "Kargo Projects were refused on cluster-a: forbidden"
+        );
+        assert_eq!(
+            arent_served("Kargo Projects", "cluster-a"),
+            "Kargo Projects aren't served on cluster-a"
+        );
+        assert_eq!(
+            unreadable("Kargo Projects", "cluster-a", "slow"),
+            "Kargo Projects couldn't be read on cluster-a: slow"
         );
     }
 
