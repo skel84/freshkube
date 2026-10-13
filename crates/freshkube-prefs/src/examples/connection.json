@@ -1,0 +1,4 @@
+{
+  "talosconfig": "/home/acme/.talos/config",
+  "context": "cluster-a"
+}

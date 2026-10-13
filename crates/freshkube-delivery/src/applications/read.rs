@@ -301,7 +301,12 @@ async fn read_workloads_by<R: Reader>(reader: &R, selector: &str) -> Source<Vec<
             .await
             .map_err(|failure| match failure.kind {
                 FailureKind::NotFound => Failure::new(FailureKind::Other, failure.message),
-                _ => failure,
+                FailureKind::Config
+                | FailureKind::Unreachable
+                | FailureKind::Timeout
+                | FailureKind::Unauthorized
+                | FailureKind::Forbidden
+                | FailureKind::Other => failure,
             }),
     )
 }

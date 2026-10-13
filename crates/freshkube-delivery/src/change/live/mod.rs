@@ -44,6 +44,7 @@ use crate::join::{Evidence, candidate_applications, candidate_deployments, candi
 use crate::kargo::{Freight, read_freight};
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use crate::source::printable;
+use crate::words;
 use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{self, Chosen, Entry, Key, Part, Sources};
 
@@ -341,11 +342,9 @@ where
         Some(Err(failure)) => {
             let why = printable(&failure);
             return Err(match failure.kind {
-                FailureKind::NotFound => {
-                    couldnt(failure.kind, format!("it wasn't found on {}", at.label))
-                }
+                FailureKind::NotFound => couldnt(failure.kind, words::wasnt_found_on(&at.label)),
                 FailureKind::Forbidden | FailureKind::Unauthorized => {
-                    couldnt(failure.kind, format!("refused on {}: {why}", at.label))
+                    couldnt(failure.kind, words::refused_on(&at.label, &why))
                 }
                 FailureKind::Config
                 | FailureKind::Unreachable

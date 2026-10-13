@@ -4,14 +4,12 @@
 //! overwrite each other. File I/O runs at startup or on a background executor.
 
 use std::{
-    fs::OpenOptions,
-    io::Write,
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
+
+use freshkube_prefs::{Document, Layout};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::SerializeMap};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Selection {
@@ -38,22 +36,71 @@ fn file(preferences: &Path) -> PathBuf {
     preferences.with_file_name("connection.json")
 }
 
+/// `connection.json`: at most 64 KiB, and only the owner's to read and write
+/// for a new file. It holds paths and a context name, never a credential.
+fn document(path: &Path) -> Document<Option<Remembered>> {
+    Document::at(path, Layout::Pretty, 0o600).limited_to(64 * 1024)
+}
+
+impl Remembered {
+    /// What a file holds, or none when it isn't an absolute path with a
+    /// non-empty context. `mode` picks Kubernetes-only; any other is Talos.
+    fn from_json(value: &serde_json::Value) -> Option<Self> {
+        let context = value.get("context")?.as_str()?.to_owned();
+        if context.is_empty() {
+            return None;
+        }
+        if value.get("mode").and_then(|mode| mode.as_str()) == Some("kubernetes") {
+            let path = PathBuf::from(value.get("kubeconfig")?.as_str()?);
+            return path
+                .is_absolute()
+                .then_some(Remembered::Kubernetes(KubeSelection { path, context }));
+        }
+        let path = PathBuf::from(value.get("talosconfig")?.as_str()?);
+        path.is_absolute()
+            .then_some(Remembered::Talos(Selection { path, context }))
+    }
+}
+
+/// Talos is `{talosconfig, context}`; Kubernetes-only is
+/// `{mode: "kubernetes", kubeconfig, context}`. Keys in that order.
+impl Serialize for Remembered {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Remembered::Talos(selection) => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("talosconfig", &selection.path)?;
+                map.serialize_entry("context", &selection.context)?;
+                map.end()
+            }
+            Remembered::Kubernetes(selection) => {
+                let mut map = serializer.serialize_map(Some(3))?;
+                map.serialize_entry("mode", "kubernetes")?;
+                map.serialize_entry("kubeconfig", &selection.path)?;
+                map.serialize_entry("context", &selection.context)?;
+                map.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Remembered {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Self::from_json(&value).ok_or_else(|| {
+            D::Error::custom("not a remembered connection: an absolute path and a context")
+        })
+    }
+}
+
+/// What the file holds. A missing, unreadable or unusable file is nothing
+/// remembered; a file that exists but isn't usable is logged.
 pub(crate) fn load_remembered(preferences: &Path) -> Option<Remembered> {
-    let bytes = freshkube_core::read_bounded_regular_file(&file(preferences), 64 * 1024).ok()?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let context = value.get("context")?.as_str()?.to_owned();
-    if context.is_empty() {
-        return None;
+    let loaded = document(&file(preferences)).load();
+    if let Some(problem) = &loaded.problem {
+        tracing::warn!("connection preference not used: {problem}");
     }
-    if value.get("mode").and_then(|mode| mode.as_str()) == Some("kubernetes") {
-        let path = PathBuf::from(value.get("kubeconfig")?.as_str()?);
-        return path
-            .is_absolute()
-            .then_some(Remembered::Kubernetes(KubeSelection { path, context }));
-    }
-    let path = PathBuf::from(value.get("talosconfig")?.as_str()?);
-    path.is_absolute()
-        .then_some(Remembered::Talos(Selection { path, context }))
+    loaded.value
 }
 
 /// The remembered Talos selection; a remembered Kubernetes-only choice is
@@ -110,43 +157,7 @@ impl ConnectionStore {
         let Some(selection) = latest else {
             return Ok(());
         };
-        let value = match selection {
-            Remembered::Talos(selection) => serde_json::json!({
-                "talosconfig": selection.path,
-                "context": selection.context,
-            }),
-            Remembered::Kubernetes(selection) => serde_json::json!({
-                "mode": "kubernetes",
-                "kubeconfig": selection.path,
-                "context": selection.context,
-            }),
-        };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        static NEXT_WRITE: AtomicU64 = AtomicU64::new(0);
-        let temporary = path.with_extension(format!(
-            "json.{}.{}.tmp",
-            std::process::id(),
-            NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let result = (|| {
-            let mut output = options.open(&temporary)?;
-            output.write_all(format!("{value:#}\n").as_bytes())?;
-            output.sync_all()?;
-            std::fs::rename(&temporary, path)
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(temporary);
-        }
-        result
+        document(path).save(&Some(selection))
     }
 }
 
@@ -254,5 +265,49 @@ mod tests {
             assert_eq!(load_remembered(&preferences), None);
         }
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    /// The example files in `freshkube-prefs`, as the app writes them: what
+    /// loads from one saves back byte for byte.
+    #[test]
+    fn the_example_files_round_trip_byte_for_byte() {
+        for example in [
+            include_str!("../../freshkube-prefs/src/examples/connection.json"),
+            include_str!("../../freshkube-prefs/src/examples/connection-kubernetes.json"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let preferences = directory.path().join("preferences.json");
+            std::fs::write(file(&preferences), example).unwrap();
+            let remembered = load_remembered(&preferences).expect("the example loads");
+            let store = ConnectionStore::new(&preferences);
+            match remembered {
+                Remembered::Talos(selection) => store.remember(selection),
+                Remembered::Kubernetes(selection) => store.remember_kubernetes(selection),
+            }
+            store.save_latest().unwrap();
+            assert_eq!(
+                std::fs::read_to_string(file(&preferences)).unwrap(),
+                example
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_past_its_limit_or_not_a_file_is_nothing_remembered() {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = directory.path().join("preferences.json");
+        let padding = " ".repeat(64 * 1024);
+        std::fs::write(
+            file(&preferences),
+            format!(
+                "{}{padding}",
+                include_str!("../../freshkube-prefs/src/examples/connection.json")
+            ),
+        )
+        .unwrap();
+        assert_eq!(load_remembered(&preferences), None);
+        std::fs::remove_file(file(&preferences)).unwrap();
+        std::fs::create_dir(file(&preferences)).unwrap();
+        assert_eq!(load_remembered(&preferences), None);
     }
 }
