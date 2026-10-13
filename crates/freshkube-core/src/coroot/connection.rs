@@ -167,7 +167,7 @@ impl Provider {
 }
 
 /// Explicit mapping of one Coroot cluster ID to the shell's canonical
-/// `KubeSource.id` (the AccessIdentity key), never a context/display name.
+/// `ClusterSource.id` (the AccessIdentity key), never a context/display name.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Association {
     access: String,
