@@ -266,6 +266,10 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
                     via_link.why
                 ),
             ),
+            None if member.via.is_some() => (
+                confidence.max(Confidence::Claimed),
+                format!("{why}, but that Application is no longer part of this application"),
+            ),
             _ => (confidence, why.to_owned()),
         }
     };
@@ -398,12 +402,19 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
                 "Only the same name in another cluster says so",
             )
         }
-        Basis::Override => claim(
-            Confidence::Claimed,
-            own(app),
-            Side::read(Fact::Declared, "Placed here by your override"),
-            "Placed by your override",
-        ),
+        Basis::Override => {
+            let why = if app.evidence.contains(&Evidence::Override("merge")) {
+                "Placed by your override. This application includes a merge"
+            } else {
+                "Placed by your override"
+            };
+            claim(
+                Confidence::Claimed,
+                own(app),
+                Side::read(Fact::Declared, "Placed here by your override"),
+                why,
+            )
+        }
     }
 }
 
