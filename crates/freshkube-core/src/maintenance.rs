@@ -1501,13 +1501,13 @@ where
     let (credentials_source, kubernetes_client) =
         match kubernetes_client_for_probe(&request.paths, &target, &talos_client).await {
             Ok(value) => value,
-            Err((credentials_source, reason)) => {
+            Err((credentials_source, failure)) => {
                 return Ok(BootstrapReadinessEvidence {
                     target,
                     talos: TalosReadinessEvidence::Available { versions, etcd },
                     kubernetes: KubernetesReadinessEvidence::Unavailable {
                         credentials_source,
-                        reason,
+                        reason: failure.message,
                     },
                 });
             }
@@ -1592,7 +1592,7 @@ async fn kubernetes_client_for_probe(
     paths: &BootstrapPaths,
     target: &AuthenticatedTarget,
     talos_client: &TalosClient,
-) -> Result<(KubernetesCredentialsSource, Client), (KubernetesCredentialsSource, String)> {
+) -> Result<(KubernetesCredentialsSource, Client), (KubernetesCredentialsSource, Failure)> {
     let source = paths
         .kubeconfig_path
         .as_ref()
@@ -1604,18 +1604,36 @@ async fn kubernetes_client_for_probe(
         .with_node(target.node.address())
         .kubeconfig()
         .await
-        .map_err(|error| (source.clone(), format_talos_error(&error)))?;
-    let path = paths.kubeconfig_path.clone();
-    let node = target.node.address().to_string();
+        .map_err(|error| (source.clone(), Failure::from_talos_formatted(&error)))?;
+    probe_client(
+        paths.kubeconfig_path.clone(),
+        pinned_yaml,
+        target.node.address().to_string(),
+    )
+    .await
+    .map(|client| (source.clone(), client))
+    .map_err(|failure| (source, failure))
+}
+
+/// The readiness client, from the pinned kubeconfig the Talos node returned. Each step
+/// is classified where its error is known: a worker that failed to join is Other, a
+/// kubeconfig or client that couldn't be made is Config. The credential load's own
+/// error is discarded (its sentence is fixed), so Config there is assumed, not read.
+async fn probe_client(
+    path: Option<PathBuf>,
+    pinned_yaml: String,
+    node: String,
+) -> Result<Client, Failure> {
     let prepared = run_roster_setup(move || {
-        prepare_probe_kubeconfig(path, &pinned_yaml, &node)
-            .map_err(crate::cluster_overview::K8sError::ClientCreate)
+        Ok(prepare_probe_kubeconfig(path, &pinned_yaml, &node)
+            .map_err(crate::cluster_overview::K8sError::ClientCreate))
     })
     .await
-    .map_err(|error| (source.clone(), error.to_string()))?;
+    .map_err(|error| worker_failure(&error))?
+    .map_err(|error| config_failure(&error))?;
     let runtime = tokio::runtime::Handle::current();
-    let client = run_roster_setup(move || {
-        runtime.block_on(async {
+    run_roster_setup(move || {
+        Ok(runtime.block_on(async {
             let config = Config::from_custom_kubeconfig(prepared.0, &prepared.1)
                 .await
                 .map_err(|_| {
@@ -1628,11 +1646,21 @@ async fn kubernetes_client_for_probe(
                     error.message("Could not create verified readiness client"),
                 )
             })
-        })
+        }))
     })
     .await
-    .map_err(|error| (source.clone(), error.to_string()))?;
-    Ok((source, client))
+    .map_err(|error| worker_failure(&error))?
+    .map_err(|error| config_failure(&error))
+}
+
+/// A kubeconfig or client that couldn't be made is configuration.
+fn config_failure(error: &crate::cluster_overview::K8sError) -> Failure {
+    Failure::new(FailureKind::Config, error.to_string())
+}
+
+/// A setup worker that didn't finish is neither the user's configuration nor a read.
+fn worker_failure(error: &crate::cluster_overview::K8sError) -> Failure {
+    Failure::new(FailureKind::Other, error.to_string())
 }
 
 fn prepare_probe_kubeconfig(
@@ -2464,6 +2492,35 @@ users:
         fn drop(&mut self) {
             let _ = std::fs::remove_file(&self.0);
         }
+    }
+
+    /// The readiness client's setup, on its real path: an unusable pinned kubeconfig is
+    /// Config, and says what it said before.
+    #[tokio::test]
+    async fn probe_client_refuses_an_unusable_kubeconfig_as_config() {
+        let failure = probe_client(None, "not yaml".into(), "10.0.0.1".into())
+            .await
+            .err()
+            .expect("an unparseable kubeconfig makes no client");
+        assert_eq!(failure.kind, FailureKind::Config);
+        assert_eq!(
+            failure.message,
+            "Failed to create K8s client: Authenticated Talos kubeconfig is unavailable or invalid"
+        );
+    }
+
+    /// A setup worker that panics is Other, with the worker's sentence.
+    #[tokio::test]
+    async fn a_setup_worker_that_fails_is_other() {
+        let error = run_roster_setup::<(), _>(|| panic!("worker down"))
+            .await
+            .expect_err("a panicking worker doesn't join");
+        let failure = worker_failure(&error);
+        assert_eq!(failure.kind, FailureKind::Other);
+        assert_eq!(
+            failure.message,
+            "Failed to create K8s client: Kubernetes credential setup worker failed"
+        );
     }
 
     #[test]
