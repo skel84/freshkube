@@ -1,0 +1,1 @@
+- **Read failures:** document the remaining string-error exceptions and verify refused and not-served responses through the Resources, summary, delivery and Monitoring readers without changing their displayed words.
