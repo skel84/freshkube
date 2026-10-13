@@ -229,7 +229,7 @@ impl Pilot {
                         }),
                 )
                 .when(!compact, |this| {
-                    this.child(if self.automatic {
+                    this.child(if self.chrome.automatic {
                         "Talos refresh every 15 s"
                     } else {
                         "Talos auto-refresh off"
@@ -312,7 +312,7 @@ pub(super) fn settings_content(
             view.fixture,
             view.kubernetes_only.is_some(),
             view.config_loading,
-            view.automatic,
+            view.chrome.automatic,
             view.appearance,
         )
     };
@@ -431,8 +431,8 @@ pub(super) fn settings_content(
                         .on_click(move |checked, _, cx| {
                             let checked = *checked;
                             let _ = switch_pilot.update(cx, |view, cx| {
-                                view.automatic = checked;
-                                view.elapsed = std::time::Duration::ZERO;
+                                view.chrome.automatic = checked;
+                                view.chrome.elapsed = std::time::Duration::ZERO;
                                 cx.notify();
                             });
                         }),

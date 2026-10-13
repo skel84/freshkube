@@ -17,17 +17,53 @@
 //! again draws every cached view inside it again.
 use super::*;
 use crate::desktop::probe;
+use std::time::Duration;
 
 pub(in crate::desktop) struct Chrome {
     /// The header, rail and column, each cached beside the page.
     pub(in crate::desktop) parts: ChromeParts,
+    /// The countdown ring in the header.
+    pub(in crate::desktop) countdown: Entity<Countdown>,
+    /// Whether Talos refreshes by itself every `AUTO_REFRESH`.
+    pub(in crate::desktop) automatic: bool,
+    /// The time since the last refresh, which the ring counts down.
+    pub(in crate::desktop) elapsed: Duration,
 }
 
 impl Chrome {
     pub(in crate::desktop) fn new(cx: &mut Context<Pilot>) -> Self {
         Self {
             parts: ChromeParts::new(cx),
+            countdown: cx.new(|_| Countdown {
+                remaining: 1.,
+                visible: false,
+            }),
+            automatic: true,
+            elapsed: Duration::ZERO,
         }
+    }
+}
+
+/// The countdown ring in the title bar. It is its own view so the one-second
+/// tick redraws only the ring, not the page behind it.
+pub(in crate::desktop) struct Countdown {
+    pub(in crate::desktop) remaining: f32,
+    visible: bool,
+}
+
+impl Countdown {
+    /// Sets what the next render draws; returns whether that differs.
+    pub(in crate::desktop) fn set(&mut self, remaining: f32, visible: bool) -> bool {
+        let changed = self.visible != visible || (visible && self.remaining != remaining);
+        self.remaining = remaining;
+        self.visible = visible;
+        changed
+    }
+}
+
+impl Render for Countdown {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::ui::countdown_ring(self.remaining, self.visible, cx)
     }
 }
 

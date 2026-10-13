@@ -245,29 +245,6 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
     Ok(())
 }
 
-/// The countdown ring in the title bar. It is its own view so the one-second
-/// tick redraws only the ring, not the page behind it.
-pub(crate) struct Countdown {
-    remaining: f32,
-    visible: bool,
-}
-
-impl Countdown {
-    /// Sets what the next render draws; returns whether that differs.
-    fn set(&mut self, remaining: f32, visible: bool) -> bool {
-        let changed = self.visible != visible || (visible && self.remaining != remaining);
-        self.remaining = remaining;
-        self.visible = visible;
-        changed
-    }
-}
-
-impl Render for Countdown {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::ui::countdown_ring(self.remaining, self.visible, cx)
-    }
-}
-
 /// Puts the window's controls on the header at the current text size: the
 /// header is in dp and grows with it, macOS's traffic lights don't.
 pub(crate) fn place_window_controls(window: &mut Window, cx: &App) {
@@ -332,7 +309,6 @@ pub(crate) struct Pilot {
     nodes: Vec<NodeSummary>,
     selected_node: Option<String>,
     logs: Entity<LogPanel>,
-    countdown: Entity<Countdown>,
     fps: Entity<shell::fps::Fps>,
     chrome: shell::Chrome,
     /// The status bar's port forwards, which redraw on their own.
@@ -382,8 +358,6 @@ pub(crate) struct Pilot {
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
     appearance: Appearance,
-    automatic: bool,
-    elapsed: Duration,
     fixture: bool,
     /// Example data holds the Talos overview and the Kubernetes summary
     /// (`DebugOptions::hold`), so the pages that wait for them stay loading.
@@ -660,10 +634,10 @@ impl Pilot {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 if this
                     .update_in(cx, |view, window, cx| {
-                        view.elapsed += Duration::from_secs(1);
-                        if view.automatic
+                        view.chrome.elapsed += Duration::from_secs(1);
+                        if view.chrome.automatic
                             && view.kubernetes_only.is_none()
-                            && view.elapsed >= AUTO_REFRESH
+                            && view.chrome.elapsed >= AUTO_REFRESH
                             && !view.overview.is_loading()
                             && !view.config_loading
                         {
@@ -757,10 +731,6 @@ impl Pilot {
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
         logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let countdown = cx.new(|_| Countdown {
-            remaining: 1.,
-            visible: false,
-        });
         let age_label = cx.new(|_| switch::AgeLabel::new());
         let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
         let node_workspace = cx.new(|cx| {
@@ -957,7 +927,6 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            countdown,
             fps: cx.new(shell::fps::Fps::new),
             chrome: shell::Chrome::new(cx),
             forwards: cx.new(ForwardsIndicator::new),
@@ -999,8 +968,6 @@ impl Pilot {
             kubeconfig_draft: Default::default(),
             navigation: shell::Navigation::new(navigation_file, cx),
             appearance: Appearance::System,
-            automatic: true,
-            elapsed: Duration::ZERO,
             fixture: options.fixture,
             fixture_hold: options.fixture && (options.hold_talos || hold.talos),
             fixture_tick: 0,
@@ -1480,7 +1447,7 @@ impl Pilot {
         if self.config_loading || self.overview.is_loading() {
             return;
         }
-        self.elapsed = Duration::ZERO;
+        self.chrome.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
         self.publish_reading(cx);
         if self.fixture && self.fixture_hold {
@@ -1642,8 +1609,8 @@ impl Pilot {
     fn countdown_state(&self) -> (f32, bool) {
         let loading = self.loading();
         (
-            1. - self.elapsed.as_secs_f32() / AUTO_REFRESH.as_secs_f32(),
-            self.automatic
+            1. - self.chrome.elapsed.as_secs_f32() / AUTO_REFRESH.as_secs_f32(),
+            self.chrome.automatic
                 && self.kubernetes_only.is_none()
                 && self.overview.data().is_some()
                 && !loading,
@@ -1653,7 +1620,7 @@ impl Pilot {
     /// Moves the ring on without redrawing anything else.
     fn tick_countdown(&self, cx: &mut Context<Self>) {
         let (remaining, visible) = self.countdown_state();
-        self.countdown.update(cx, |countdown, cx| {
+        self.chrome.countdown.update(cx, |countdown, cx| {
             if countdown.set(remaining, visible) {
                 cx.notify();
             }
