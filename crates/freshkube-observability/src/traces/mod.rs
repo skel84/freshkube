@@ -68,6 +68,15 @@ struct SpanRow {
 }
 
 impl Traces {
+    /// Nothing from the last connection, but the viewer's filter, which
+    /// the filter field still shows. Application and source choices reset.
+    pub(super) fn cleared(&mut self) -> Self {
+        Self {
+            query: std::mem::take(&mut self.query),
+            ..Self::default()
+        }
+    }
+
     /// A new application or window: start from its latest spans. The filter
     /// stays, since its field still shows it, and so does the heatmap's
     /// cursor, clamped when the new heatmap arrives. The columns stay too,

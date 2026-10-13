@@ -84,6 +84,84 @@ mod ui_tests {
         traces.rows[traces.shown[line]].id.clone()
     }
 
+    /// Change the real connection owner without starting any network reads.
+    fn change_project(page: &mut ObservabilityPage, cx: &mut gpui_kit::Context<ObservabilityPage>) {
+        use freshkube_core::coroot::{Credentials, ProjectInfo, Provider};
+        page.set_visible(false, cx);
+        page.fixture = false;
+        page.live.provider = Some(Provider::new("http://127.0.0.1:1", Credentials::None).unwrap());
+        page.select_project(
+            &ProjectInfo {
+                id: "new-project".into(),
+                name: "New project".into(),
+            },
+            cx,
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_trace_filter_keeps_applying_after_a_project_change(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = open_example(cx, 1260.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("obs-filter", cx);
+            window.input("AuTh", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            let before = page.read(cx).live_traces.shown.len();
+            assert!(before > 0 && before < page.read(cx).live_traces.rows.len());
+            page.update(cx, |page, cx| {
+                change_project(page, cx);
+                page.fixture = true;
+                page.selected_app = Some(crate::example::id(crate::example::WORKER));
+                page.read_traces(cx);
+            });
+            window.render_frame(cx);
+            assert_eq!(window.find("obs-filter").value(), Some("AuTh"));
+            let traces = &page.read(cx).live_traces;
+            assert_eq!(traces.shown.len(), before);
+            assert!(
+                traces
+                    .shown
+                    .iter()
+                    .all(|&ix| traces.rows[ix].search.contains("auth"))
+            );
+            assert!(window.find(row(&page, 0, cx)).visible());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_project_change_clears_trace_evidence_and_source_choices(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = open_example(cx, 1260.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("obs-trace-source-agent", cx);
+            window.click("obs-trace-failed", cx);
+            page.update(cx, |page, cx| {
+                assert_eq!(page.live_traces.source, "agent");
+                assert!(page.live_traces.app.is_some());
+                assert!(!page.live_traces.rows.is_empty());
+                assert!(page.live_traces.waterfall.is_some());
+                change_project(page, cx);
+                let traces = &page.live_traces;
+                assert!(page.selected_app.is_none());
+                assert!(traces.app.is_none());
+                assert!(traces.source.is_empty());
+                assert!(traces.default_source.is_none());
+                assert_eq!(traces.selection, TraceSelection::Recent);
+                assert!(traces.cell.is_none() && traces.cursor.is_none());
+                assert!(traces.trace.is_none() && traces.selected.is_none());
+                assert!(traces.rows.is_empty() && traces.shown.is_empty());
+                assert!(traces.sources.is_empty() && traces.heat.is_none());
+                assert!(traces.waterfall.is_none());
+            });
+        })
+        .unwrap();
+    }
+
     #[gpui_kit::test]
     fn heatmap_selection_and_error_filters_change_the_trace_view(cx: &mut TestAppContext) {
         let (_runtime, handle, page) = open_example(cx, 1260.);
