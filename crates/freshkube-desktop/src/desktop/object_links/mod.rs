@@ -161,7 +161,7 @@ impl Pilot {
     }
 
     pub(super) fn push_node_rows(&self, cx: &mut Context<Self>) {
-        let rows = self.node_workspace.rows.clone();
+        let rows = self.node_workspace.read(cx).rows.clone();
         self.resources
             .update(cx, |resources, cx| resources.set_node_rows(rows, cx));
     }

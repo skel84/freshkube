@@ -597,7 +597,7 @@ impl Pilot {
         if self.fixture {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
-            self.seed_fixture_history();
+            self.seed_fixture_history(cx);
             self.refresh(window, cx);
             self.prepare_context_display(window, cx);
             return;
@@ -608,7 +608,7 @@ impl Pilot {
             // control plane's kubeconfig is used, never the ambient files'.
             self.kubeconfig = KubeconfigSelection::TalosControlPlane;
             self.kubernetes_only = None;
-            self.sync_nodes_source_mode();
+            self.sync_nodes_source_mode(cx);
             self.applied.path = Some(talosconfig.clone());
             self.applied.context = entry.talos_context.clone();
             // Only an entry that names no Talos context needs the rule for one.
@@ -630,7 +630,7 @@ impl Pilot {
         } else {
             self.kubeconfig = KubeconfigSelection::Automatic;
             self.open_without_talos(entry.context.clone(), workspace.kubeconfig.clone(), cx);
-            self.sync_nodes_source_mode();
+            self.sync_nodes_source_mode(cx);
             self.load_kube_contexts(window, cx);
             if was_talos {
                 self.navigate(Page::Overview, window, cx);
@@ -681,7 +681,7 @@ impl Pilot {
         self.kubeconfig_draft = Default::default();
         self.kubeconfig = KubeconfigSelection::Automatic;
         self.open_without_talos(open.context, open.kubeconfig, cx);
-        self.sync_nodes_source_mode();
+        self.sync_nodes_source_mode(cx);
         self.load_kube_contexts(window, cx);
         self.navigate(Page::Overview, window, cx);
         self.note_entry(&open.id, note, window, cx);

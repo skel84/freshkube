@@ -3,59 +3,73 @@ use super::*;
 #[gpui_kit::test]
 fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("nav-nodes", cx);
-        window.render_frame(cx);
-        let rows = pilot.read(cx).node_workspace.rows.clone();
-        assert_eq!(rows.len(), 6);
-        let bad = rows
-            .iter()
-            .find(|row| row.name == "talos-wk-fra1-02")
-            .unwrap();
-        assert_eq!(bad.ready, "NotReady");
-        assert_eq!(bad.tone, Tone::Crit);
-        assert!(
-            bad.problems
+    let selected = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-nodes", cx);
+            window.render_frame(cx);
+            let rows = pilot.read(cx).node_workspace.read(cx).rows.clone();
+            assert_eq!(rows.len(), 6);
+            let bad = rows
                 .iter()
-                .any(|problem| problem == "kubelet unhealthy")
-        );
-        let silent = rows
-            .iter()
-            .find(|row| row.name == "talos-wk-fra1-03")
-            .unwrap();
-        assert_eq!(silent.talos_state, "No response");
-        window.click(bad.id.clone(), cx);
-        window.render_frame(cx);
-        assert_eq!(
-            pilot.read(cx).selected_node.as_deref(),
-            Some("talos-wk-fra1-02")
-        );
-        // Its unhealthy kubelet marks the Services tab with the warning glyph.
-        assert!(window.try_find("node-services-problem").is_some());
-        let selected = pilot.read(cx).node_workspace.selected.clone();
-        window.click("node-tab-processes", cx);
+                .find(|row| row.name == "talos-wk-fra1-02")
+                .unwrap();
+            assert_eq!(bad.ready, "NotReady");
+            assert_eq!(bad.tone, Tone::Crit);
+            assert!(
+                bad.problems
+                    .iter()
+                    .any(|problem| problem == "kubelet unhealthy")
+            );
+            let silent = rows
+                .iter()
+                .find(|row| row.name == "talos-wk-fra1-03")
+                .unwrap();
+            assert_eq!(silent.talos_state, "No response");
+            crate::desktop::tests::click_node(window, cx, &bad.id);
+            window.render_frame(cx);
+            assert_eq!(
+                pilot.read(cx).selected_node.as_deref(),
+                Some("talos-wk-fra1-02")
+            );
+            // Its unhealthy kubelet marks the Services tab with the warning glyph.
+            assert!(window.try_find("node-services-problem").is_some());
+            let selected = pilot.read(cx).node_workspace.read(cx).selected.clone();
+            window.click("node-tab-processes", cx);
+            selected
+        })
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("node-expand", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.expanded);
+        assert!(pilot.read(cx).node_workspace.read(cx).expanded);
         assert!(window.try_find("nodes-cards").is_none());
         window.click("node-expand", cx);
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.selected, selected);
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).selected, selected);
         // Beside the pane, the table folds its healthy rows as it does
         // without one (#339).
         crate::desktop::tests::expand_healthy_nodes(window, cx);
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Processes);
+        assert_eq!(
+            pilot.read(cx).node_workspace.read(cx).tab,
+            NodeTab::Processes
+        );
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-cp-fra1-01")
         );
         assert!(window.try_find("node-services-problem").is_none());
         window.click("node-close", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(!pilot.read(cx).node_workspace.read(cx).open);
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-cp-fra1-01")
@@ -80,7 +94,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
         window.render_frame(cx);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
         pilot.update(cx, |pilot, cx| {
-            let key = pilot.node_workspace.rows[0].key.clone();
+            let key = pilot.node_workspace.read(cx).rows[0].key.clone();
             pilot.open_node(key, window, cx);
         });
         window.render_frame(cx);
@@ -95,17 +109,29 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
         assert!(window.find("node-tab-pods").visible());
         assert!(window.try_find("node-tab-processes").is_none());
         window.click("node-tab-yaml", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.tab, NodeTab::Yaml);
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, NodeTab::Yaml);
 
         // Another row above opens its node on the same tab.
         pilot
             .read(cx)
             .node_workspace
+            .read(cx)
             .page_scroll
             .set_offset(point(px(0.), px(0.)));
         window.render_frame(cx);
-        let rows: Vec<_> = pilot.read(cx).node_workspace.rows.iter().cloned().collect();
+        let rows: Vec<_> = pilot
+            .read(cx)
+            .node_workspace
+            .read(cx)
+            .rows
+            .iter()
+            .cloned()
+            .collect();
         let other = rows[1..]
             .iter()
             .find(|row| {
@@ -114,16 +140,19 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
                     .is_some_and(|row| row.visible())
             })
             .expect("another row shows above the inspector");
-        window.click(other.id.clone(), cx);
+        crate::desktop::tests::click_node(window, cx, &other.id);
         window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace;
+        let nodes = &pilot.read(cx).node_workspace.read(cx);
         assert_eq!(nodes.selected.as_ref(), Some(&other.key));
         assert!(nodes.open);
         assert_eq!(nodes.tab, NodeTab::Yaml);
-
         window.click("node-close", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.open);
+        assert!(!pilot.read(cx).node_workspace.read(cx).open);
     })
     .unwrap();
 }
@@ -133,7 +162,7 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
     let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            let key = pilot.node_workspace.rows[0].key.clone();
+            let key = pilot.node_workspace.read(cx).rows[0].key.clone();
             pilot.open_node(key, window, cx);
             pilot.show_node_tab(NodeTab::Yaml, window, cx);
         });
@@ -142,6 +171,7 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
             pilot
                 .read(cx)
                 .node_workspace
+                .read(cx)
                 .document
                 .read(cx)
                 .target_identity()
@@ -152,16 +182,17 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
         });
         window.render_frame(cx);
         let read = pilot.read(cx);
-        assert!(!read.node_workspace.open);
+        assert!(!read.node_workspace.read(cx).open);
         assert!(
             read.node_workspace
+                .read(cx)
                 .document
                 .read(cx)
                 .target_identity()
                 .is_none()
         );
-        assert_eq!(read.node_workspace.rows.len(), 1);
-        assert_eq!(read.node_workspace.rows[0].name, "talos-home");
+        assert_eq!(read.node_workspace.read(cx).rows.len(), 1);
+        assert_eq!(read.node_workspace.read(cx).rows[0].name, "talos-home");
     })
     .unwrap();
 }
@@ -175,7 +206,7 @@ fn a_node_opens_in_the_inspector_beside_the_table_or_under_it(cx: &mut TestAppCo
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open_first_node(window, cx);
-        assert!(pilot.read(cx).node_workspace.open);
+        assert!(pilot.read(cx).node_workspace.read(cx).open);
         for text in [13., 20.] {
             crate::text_size::set(text, cx);
             window.render_frame(cx);
@@ -217,7 +248,7 @@ fn the_opened_row_shows_whole_above_the_stacked_inspector(cx: &mut TestAppContex
         window.render_frame(cx);
         // Each node in turn, from the table as it was before: the rows
         // under the stacked inspector's least table must scroll to show.
-        let rows: Vec<_> = (pilot.read(cx).node_workspace.rows.iter())
+        let rows: Vec<_> = (pilot.read(cx).node_workspace.read(cx).rows.iter())
             .map(|row| (row.key.clone(), row.id.clone()))
             .collect();
         for (key, id) in rows {
@@ -290,7 +321,13 @@ fn the_node_inspector_width_survives_reopening(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = crate::desktop::tests::mount(cx, options(), 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open_first_node(window, cx);
-        let state = pilot.read(cx).node_workspace.split.beside_state().clone();
+        let state = pilot
+            .read(cx)
+            .node_workspace
+            .read(cx)
+            .split
+            .beside_state()
+            .clone();
         state.update(cx, |state, cx| {
             state.resize_panel(1, crate::ui::dp_px(560., window), window, cx)
         });
@@ -325,46 +362,58 @@ fn the_node_inspector_width_survives_reopening(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_node_opened_from_the_cards_keeps_the_roster_beside_its_inspector(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let rows = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-nodes", cx);
+            window.render_frame(cx);
+            window.click("nodes-view-cards", cx);
+            window.render_frame(cx);
+            let key = pilot.read(cx).node_workspace.read(cx).rows[0].key.clone();
+            pilot.update(cx, |pilot, cx| pilot.open_node(key, window, cx));
+            window.render_frame(cx);
+            assert!(window.try_find("nodes-table-scroll").is_none());
+            let roster = window.find("nodes-cards").bounds();
+            let pane = window.find("node-inspector").bounds();
+            assert!(pane.left() >= roster.right(), "{pane:?} beside {roster:?}");
+            assert!(
+                window
+                    .find("nodes-split")
+                    .bounds()
+                    .contains(&roster.center())
+            );
+
+            // The opened node's row is marked, and the mark follows another.
+            let rows = pilot.read(cx).node_workspace.read(cx).rows.clone();
+            assert_eq!(marked(&rows, window), vec![rows[0].key.clone()]);
+            // The roster's rows open their node through the shell.
+            window.click(rows[1].id.clone(), cx);
+            rows
+        })
+        .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("nav-nodes", cx);
-        window.render_frame(cx);
-        window.click("nodes-view-cards", cx);
-        window.render_frame(cx);
-        let key = pilot.read(cx).node_workspace.rows[0].key.clone();
-        pilot.update(cx, |pilot, cx| pilot.open_node(key, window, cx));
-        window.render_frame(cx);
-        assert!(window.try_find("nodes-table-scroll").is_none());
-        let roster = window.find("nodes-cards").bounds();
-        let pane = window.find("node-inspector").bounds();
-        assert!(pane.left() >= roster.right(), "{pane:?} beside {roster:?}");
-        assert!(
-            window
-                .find("nodes-split")
-                .bounds()
-                .contains(&roster.center())
-        );
-
-        // The opened node's row is marked, and the mark follows another.
-        let rows = pilot.read(cx).node_workspace.rows.clone();
-        let marked = |window: &mut gpui_kit::Window| {
-            let mark = window.find("nodes-roster-selected").bounds();
-            rows.iter()
-                .filter(|row| {
-                    let element = window.find(row.id.clone());
-                    // Inside the row's bottom hairline.
-                    element.selected() == Some(true) && element.bounds().contains(&mark.center())
-                })
-                .map(|row| row.key.clone())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(marked(window), vec![rows[0].key.clone()]);
-        window.click(rows[1].id.clone(), cx);
-        window.render_frame(cx);
-        assert_eq!(marked(window), vec![rows[1].key.clone()]);
+        assert_eq!(marked(&rows, window), vec![rows[1].key.clone()]);
         assert_eq!(window.find(rows[0].id.clone()).selected(), Some(false));
     })
     .unwrap();
+}
+
+/// The keys of the roster rows marked as the opened node.
+fn marked(
+    rows: &[super::super::NodeRow],
+    window: &mut gpui_kit::Window,
+) -> Vec<super::super::NodeKey> {
+    let mark = window.find("nodes-roster-selected").bounds();
+    rows.iter()
+        .filter(|row| {
+            let element = window.find(row.id.clone());
+            // Inside the row's bottom hairline.
+            element.selected() == Some(true) && element.bounds().contains(&mark.center())
+        })
+        .map(|row| row.key.clone())
+        .collect::<Vec<_>>()
 }
 
 /// The node's Events and YAML draw in the inspector's content, in no card
@@ -384,7 +433,7 @@ fn node_events_and_yaml_draw_without_a_card(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(pilot.read(cx).node_workspace.tab, tab);
+            assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, tab);
             let content = window.find("node-inspector-content").bounds();
             let detail = window.find("resource-detail").bounds();
             assert!(
@@ -415,7 +464,13 @@ fn the_node_screens_follow_the_inspector_after_a_text_size_change(cx: &mut TestA
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open_first_node(window, cx);
-        let state = pilot.read(cx).node_workspace.split.beside_state().clone();
+        let state = pilot
+            .read(cx)
+            .node_workspace
+            .read(cx)
+            .split
+            .beside_state()
+            .clone();
         state.update(cx, |state, cx| {
             state.resize_panel(1, dp_px(800., window), window, cx)
         });
@@ -455,19 +510,23 @@ fn stepping_nodes_while_expanded_keeps_the_heading_in_view(cx: &mut TestAppConte
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        let key = pilot.read(cx).node_workspace.rows[0].key.clone();
+        let key = pilot.read(cx).node_workspace.read(cx).rows[0].key.clone();
         pilot.update(cx, |pilot, cx| pilot.open_node(key, window, cx));
         window.render_frame(cx);
         window.click("node-expand", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.expanded);
-        let frame = pilot.read(cx).node_workspace.page_scroll.clone();
-        let first = pilot.read(cx).node_workspace.selected.clone();
+        assert!(pilot.read(cx).node_workspace.read(cx).expanded);
+        let frame = pilot.read(cx).node_workspace.read(cx).page_scroll.clone();
+        let first = pilot.read(cx).node_workspace.read(cx).selected.clone();
         pilot.update(cx, |pilot, cx| pilot.step_joined_node(1, window, cx));
         for _ in 0..3 {
             window.render_frame(cx);
         }
-        assert_ne!(pilot.read(cx).node_workspace.selected, first, "no step");
+        assert_ne!(
+            pilot.read(cx).node_workspace.read(cx).selected,
+            first,
+            "no step"
+        );
         assert_eq!(frame.offset().y, px(0.));
         let page = window.find("nodes-page").bounds();
         let title = window.find("node-pane-title").bounds();

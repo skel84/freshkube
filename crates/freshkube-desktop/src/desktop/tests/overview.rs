@@ -13,9 +13,12 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         window
             .within("nodes-page")
             .click("node-talos-cp-fra1-01", cx);
-        window.press("down", cx);
     })
     .unwrap();
+    // The click reaches the shell once the update ends.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.press("down", cx))
+        .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -44,9 +47,22 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
                 .unwrap()
                 .contains("talos-cp-fra1-02")
         );
-        assert!(view.read(cx).node_workspace.focus.is_focused(window));
+        assert!(
+            view.read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
         window.press("tab", cx);
-        assert!(!view.read(cx).node_workspace.focus.is_focused(window));
+        assert!(
+            !view
+                .read(cx)
+                .node_workspace
+                .read(cx)
+                .focus
+                .is_focused(window)
+        );
     })
     .unwrap();
 }
@@ -76,6 +92,7 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
         assert!(
             view.read(cx)
                 .node_workspace
+                .read(cx)
                 .attention
                 .rows
                 .iter()

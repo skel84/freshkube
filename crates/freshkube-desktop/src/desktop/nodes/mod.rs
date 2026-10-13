@@ -153,6 +153,12 @@ pub(super) struct Nodes {
     pub(super) services: Entity<super::services::NodeServices>,
     /// The pane's Logs tab: the shell's Talos log view.
     logs: Entity<crate::logs::LogPanel>,
+    /// Whether the log view collects, for the Logs tab's dot, and whether
+    /// the history chart shows, for the Overview tab. Neither is drawn
+    /// while another tab shows, so Nodes hears them change itself.
+    collecting: bool,
+    chart: bool,
+    _watches: [Subscription; 2],
     /// The Talos screens the pane's tabs embed, by their pages.
     pub(super) screens:
         std::collections::BTreeMap<super::pages::PageId, crate::screens::ScreenHandle>,
@@ -161,6 +167,47 @@ pub(super) struct Nodes {
     pub(super) attention: Arc<crate::presentation::attention::Attention>,
     /// Why that list may be out of date.
     pub(super) attention_stale: Option<SharedString>,
+}
+
+/// What a click or key in Nodes asks of the shell, which owns the node's
+/// selection across pages, the Talos reads and navigation.
+#[derive(Clone, Debug)]
+pub(super) enum NodesEvent {
+    /// Open a node's pane, and with `focus` move the keyboard into it.
+    Open {
+        key: NodeKey,
+        focus: bool,
+    },
+    /// Step the selection through the list.
+    Step(isize),
+    Close,
+    /// Escape: one level back.
+    Back,
+    StepTab(isize),
+    /// Show a tab and move the keyboard into it.
+    Tab(NodeTab),
+    Refresh,
+    /// An attention row's destination.
+    Destination(crate::presentation::attention::Destination),
+}
+
+impl EventEmitter<NodesEvent> for Nodes {}
+impl EventEmitter<crate::screens::ScreenEvent> for Nodes {}
+
+/// Nodes draws what the shell hands it; the shell runs its reads and
+/// tells it where things stand.
+impl crate::screens::ScreenPanel for Nodes {
+    fn set_source(
+        &mut self,
+        _: Option<crate::screens::ScreenSource>,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+    }
+
+    fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
 }
 
 #[derive(Clone, Debug)]
@@ -177,7 +224,7 @@ impl Nodes {
         // Example data keeps the Pods tab's list loading.
         hold: bool,
         window: &mut Window,
-        cx: &mut Context<Pilot>,
+        cx: &mut Context<Self>,
     ) -> Self {
         cx.bind_keys([KeyBinding::new(
             "escape",
@@ -189,30 +236,51 @@ impl Nodes {
             cx.subscribe_in(
                 &query,
                 window,
-                |pilot, input, event, window, cx| match event {
+                |nodes, input, event, window, cx| match event {
                     InputEvent::Change => {
-                        pilot.node_workspace.query_text = input.read(cx).value().to_lowercase();
-                        pilot.node_workspace.rebuild_lines();
-                        pilot.node_workspace.table.reveal(0, ScrollStrategy::Top);
-                        pilot
-                            .node_workspace
-                            .scroll
-                            .scroll_to_item(0, ScrollStrategy::Top);
+                        nodes.query_text = input.read(cx).value().to_lowercase();
+                        nodes.rebuild_lines();
+                        nodes.table.reveal(0, ScrollStrategy::Top);
+                        nodes.scroll.scroll_to_item(0, ScrollStrategy::Top);
                         cx.notify();
                     }
-                    InputEvent::PressEnter { .. } => window.focus(&pilot.node_workspace.focus, cx),
+                    InputEvent::PressEnter { .. } => window.focus(&nodes.focus, cx),
                     _ => {}
                 },
             );
         let document = cx.new(|cx| DetailPane::new(runtime.clone(), window, cx));
-        let document_subscription =
-            cx.subscribe_in(&document, window, |pilot, _, event, window, cx| {
-                if matches!(event, DetailEvent::Leave) {
-                    pilot.node_back(window, cx);
-                }
-            });
+        let document_subscription = cx.subscribe(&document, |_, _, event, cx| {
+            if matches!(event, DetailEvent::Leave) {
+                cx.emit(NodesEvent::Back);
+            }
+        });
         let loading = freshkube_ui::table::LoadingRows::new("nodes");
         let loading_motion = cx.new(|_| loading.motion(freshkube_ui::table::Look::Pulse));
+        let history =
+            cx.new(|_| crate::monitoring::history::HistoryView::new(runtime.clone(), "node"));
+        // Seeded from the entities, so the flags hold whatever they start as.
+        let collecting = {
+            use crate::logs::TalosPanel as _;
+            logs.read(cx).collecting_count() > 0
+        };
+        let chart = history.read(cx).shows();
+        let watches = [
+            cx.observe(&logs, |nodes, logs, cx| {
+                use crate::logs::TalosPanel as _;
+                let collecting = logs.read(cx).collecting_count() > 0;
+                if nodes.collecting != collecting {
+                    nodes.collecting = collecting;
+                    cx.notify();
+                }
+            }),
+            cx.observe(&history, |nodes, history, cx| {
+                let chart = history.read(cx).shows();
+                if nodes.chart != chart {
+                    nodes.chart = chart;
+                    cx.notify();
+                }
+            }),
+        ];
         Self {
             rows: Arc::new(Vec::new()),
             empty: Some(Empty::Loading),
@@ -261,11 +329,13 @@ impl Nodes {
             pods: cx.new(|cx| {
                 crate::resources::ResourcesScreen::new(runtime.clone(), window, cx).holding(hold)
             }),
-            history: cx
-                .new(|_| crate::monitoring::history::HistoryView::new(runtime.clone(), "node")),
+            history,
             load_history: Default::default(),
             services: cx.new(|cx| super::services::NodeServices::new(window, cx)),
             logs,
+            collecting,
+            chart,
+            _watches: watches,
             screens: Default::default(),
             attention: Default::default(),
             attention_stale: None,
@@ -355,6 +425,7 @@ impl Pilot {
     ) {
         if let Some(key) = self
             .node_workspace
+            .read(cx)
             .rows
             .iter()
             .find(|row| {
@@ -370,8 +441,8 @@ impl Pilot {
 
     /// Whether the Nodes table shows its loading rows.
     #[cfg(test)]
-    pub(super) fn nodes_wait(&self) -> bool {
-        matches!(self.node_workspace.empty, Some(Empty::Loading))
+    pub(super) fn nodes_wait(&self, cx: &App) -> bool {
+        matches!(self.node_workspace.read(cx).empty, Some(Empty::Loading))
     }
     /// Derives where the Talos overview stands, for System services and for
     /// every page that needs a node, whenever the overview changes.
@@ -399,7 +470,7 @@ impl Pilot {
     }
 
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
-        let shown = self.shown_page();
+        let shown = self.shown_page(cx);
         self.publish_reading(cx);
         self.column_changed();
         self.column_state.prepare(
@@ -425,57 +496,54 @@ impl Pilot {
                 .data()
                 .is_some_and(|summary| summary.nodes.is_current()),
         );
-        self.node_workspace.set_rows(
-            rows,
-            self.overview.data().is_some() && !self.overview.is_stale(),
-        );
-        if self
-            .node_workspace
-            .selected
-            .as_ref()
-            .is_some_and(|key| !self.node_workspace.rows.iter().any(|row| &row.key == key))
-        {
-            self.node_workspace.selected = None;
-            self.node_workspace.open = false;
-        }
-        self.node_workspace.empty = if self.node_workspace.rows.is_empty() {
-            let error = self
-                .registry
-                .active()
-                .kubernetes_summary
-                .data()
-                .and_then(|summary| summary.nodes.error())
-                .or_else(|| {
-                    self.registry
-                        .active()
-                        .kubernetes_summary
-                        .error()
-                        .map(String::as_str)
-                })
-                .or(self.config_error.as_deref())
-                .or_else(|| self.overview.error().map(String::as_str));
-            Some(if let Some(error) = error {
-                Empty::Failed(error.to_owned().into())
-            } else if kubernetes.is_some() {
-                Empty::Loaded
-            } else {
-                Empty::Loading
+        let talos_current = self.overview.data().is_some() && !self.overview.is_stale();
+        let loaded = kubernetes.is_some();
+        let error: Option<SharedString> = self
+            .registry
+            .active()
+            .kubernetes_summary
+            .data()
+            .and_then(|summary| summary.nodes.error())
+            .or_else(|| {
+                self.registry
+                    .active()
+                    .kubernetes_summary
+                    .error()
+                    .map(String::as_str)
             })
-        } else {
-            None
-        };
-        self.rebuild_nodes_meta();
-        self.node_workspace.rebuild_lines();
-        self.node_workspace
-            .rebuild_columns(self.kubernetes_only.is_none());
-        self.node_workspace.sync_tabs();
+            .or(self.config_error.as_deref())
+            .or_else(|| self.overview.error().map(String::as_str))
+            .map(|error| error.to_owned().into());
+        let talos = self.kubernetes_only.is_none();
+        self.node_workspace.update(cx, |nodes, cx| {
+            nodes.set_rows(rows, talos_current);
+            if nodes
+                .selected
+                .as_ref()
+                .is_some_and(|key| !nodes.rows.iter().any(|row| &row.key == key))
+            {
+                nodes.selected = None;
+                nodes.open = false;
+            }
+            nodes.empty = nodes.rows.is_empty().then_some(match error {
+                Some(error) => Empty::Failed(error),
+                None if loaded => Empty::Loaded,
+                None => Empty::Loading,
+            });
+            nodes.rebuild_lines();
+            nodes.rebuild_columns(talos);
+            nodes.sync_tabs();
+            cx.notify();
+        });
+        self.rebuild_nodes_meta(cx);
         // A node that left closes the pane, and one that lost its Talos
         // side drops its Talos tabs: the pane's screen hides.
-        if self.shown_page() != shown {
+        if self.shown_page(cx) != shown {
             self.sync_visible_soon(cx);
         }
+        let rows = self.node_workspace.read(cx).rows.clone();
         let mut display = crate::presentation::overview::Overview::build(
-            &self.node_workspace.rows,
+            &rows,
             &self.nodes,
             self.registry
                 .active()
@@ -497,8 +565,8 @@ impl Pilot {
         self.column_changed();
         self.rail_marks =
             crate::desktop::shell::RailMarks::from_cards(&display.cards, self.fixture);
-        self.node_workspace.attention = Arc::new(crate::presentation::attention::build(
-            &self.node_workspace.rows,
+        let attention = Arc::new(crate::presentation::attention::build(
+            &rows,
             self.registry
                 .active()
                 .kubernetes_summary
@@ -508,7 +576,8 @@ impl Pilot {
             self.kube_identity().as_deref(),
             chrono::Utc::now(),
         ));
-        let attention = self.node_workspace.attention.clone();
+        self.node_workspace
+            .update(cx, |nodes, _| nodes.attention = attention.clone());
         self.overview_page.update(cx, |overview, cx| {
             overview.set_display(Arc::new(display), cx);
             overview.set_attention(attention, cx);
@@ -516,73 +585,35 @@ impl Pilot {
     }
 
     pub(super) fn open_node(&mut self, key: NodeKey, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.node_workspace.rows.iter().any(|row| row.key == key) {
+        if !self
+            .node_workspace
+            .read(cx)
+            .rows
+            .iter()
+            .any(|row| row.key == key)
+        {
             return;
         }
         if let Some(name) = &key.talos {
             self.select_node_by_name(name.clone(), window, cx);
         }
-        self.node_workspace.selected = Some(key);
-        if self.node_workspace.view == NodeView::Table {
-            self.node_workspace.show_selected_healthy();
-            freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
-            // Only a stacked inspector shrinks the table it opens under.
-            if crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
-                // Closed or expanded, there is no table to reveal it in.
-                freshkube_ui::table::reveal_when_settled(
-                    cx.entity().downgrade(),
-                    |pilot| pilot.node_workspace.open && !pilot.node_workspace.expanded,
-                    window,
-                );
-            }
-        }
-        self.node_workspace.open = true;
-        // A short page scrolls its frame down to the inspector, or to the
-        // top when the inspector fills it, so its heading stays in view.
-        if self.node_workspace.expanded {
-            self.node_workspace
-                .page_scroll
-                .set_offset(point(px(0.), px(0.)));
-        } else {
-            self.node_workspace.page_scroll.scroll_to_bottom();
-        }
         self.node_workspace
-            .logs_scroll
-            .set_offset(point(px(0.), px(0.)));
-        self.node_workspace.sync_tabs();
+            .update(cx, |nodes, cx| nodes.open(key, window, cx));
         self.navigate(Page::Nodes, window, cx);
         self.activate_node_tab(window, cx);
     }
 
     pub(super) fn close_node(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.node_workspace.open = false;
-        self.node_workspace
-            .page_scroll
-            .set_offset(point(px(0.), px(0.)));
-        if self.node_workspace.view == NodeView::Table {
-            self.node_workspace.show_selected_healthy();
-            freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
-        }
+        self.node_workspace.update(cx, |nodes, cx| nodes.close(cx));
         self.sync_node_visibility(window, cx);
-        window.focus(&self.node_workspace.focus, cx);
+        let focus = self.node_workspace.read(cx).focus.clone();
+        window.focus(&focus, cx);
         cx.notify();
     }
 
     pub(super) fn toggle_node_expanded(&mut self, cx: &mut Context<Self>) {
-        if !self.node_workspace.open {
-            return;
-        }
-        let expanded = !self.node_workspace.expanded;
-        self.node_workspace.expanded = expanded;
-        // A short page keeps its heading in view: expanded from the top,
-        // collapsed down to the inspector, as opening a node does.
-        if expanded {
-            self.node_workspace
-                .page_scroll
-                .set_offset(point(px(0.), px(0.)));
-        } else {
-            self.node_workspace.page_scroll.scroll_to_bottom();
-        }
+        self.node_workspace
+            .update(cx, |nodes, cx| nodes.toggle_expanded(cx));
         cx.notify();
     }
 
@@ -592,43 +623,47 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.node_workspace.tabs.contains(&tab) {
+        let shown = self.node_workspace.update(cx, |nodes, cx| {
+            if !nodes.tabs.contains(&tab) {
+                return false;
+            }
+            nodes.tab = tab;
+            nodes.logs_scroll.set_offset(point(px(0.), px(0.)));
+            cx.notify();
+            true
+        });
+        if !shown {
             return;
         }
-        self.node_workspace.tab = tab;
-        self.node_workspace
-            .logs_scroll
-            .set_offset(point(px(0.), px(0.)));
         self.activate_node_tab(window, cx);
         cx.notify();
     }
 
     pub(super) fn sync_node_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_node_metrics(window, cx);
-        let shown = self.page == Page::Nodes && self.node_workspace.open;
-        self.node_workspace.pods.update(cx, |pods, cx| {
-            pods.set_visible(
-                shown && self.node_workspace.tab == NodeTab::Pods,
-                window,
-                cx,
-            )
-        });
-        self.node_workspace.document.update(cx, |pane, cx| {
-            pane.set_active(
-                shown && matches!(self.node_workspace.tab, NodeTab::Events | NodeTab::Yaml),
-                cx,
-            )
-        });
-        self.logs.update(cx, |logs, cx| {
-            logs.set_visible(shown && self.node_workspace.tab == NodeTab::Logs, cx)
-        });
-        let subject = self
-            .node_workspace
+        let nodes = self.node_workspace.read(cx);
+        let shown = self.page == Page::Nodes && nodes.open;
+        let tab = nodes.tab;
+        let (pods, document, history) = (
+            nodes.pods.clone(),
+            nodes.document.clone(),
+            nodes.history.clone(),
+        );
+        let subject = nodes
             .row()
             .and_then(|row| row.key.kubernetes.clone())
             .map(|name| Subject::Node { name });
-        let overview = shown && self.node_workspace.tab == NodeTab::Overview;
-        self.node_workspace.history.update(cx, |history, cx| {
+        pods.update(cx, |pods, cx| {
+            pods.set_visible(shown && tab == NodeTab::Pods, window, cx)
+        });
+        document.update(cx, |pane, cx| {
+            pane.set_active(shown && matches!(tab, NodeTab::Events | NodeTab::Yaml), cx)
+        });
+        self.logs.update(cx, |logs, cx| {
+            logs.set_visible(shown && tab == NodeTab::Logs, cx)
+        });
+        let overview = shown && tab == NodeTab::Overview;
+        history.update(cx, |history, cx| {
             history.set_subject(subject, cx);
             history.set_visible(overview, cx);
         });
@@ -637,14 +672,22 @@ impl Pilot {
     }
 
     fn activate_node_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(row) = self.node_workspace.row().cloned() {
-            self.node_workspace.pods.update(cx, |pods, cx| {
+        let nodes = self.node_workspace.read(cx);
+        let (row, tab, pods, document, focus) = (
+            nodes.row().cloned(),
+            nodes.tab,
+            nodes.pods.clone(),
+            nodes.document.clone(),
+            nodes.focus.clone(),
+        );
+        if let Some(row) = row {
+            pods.update(cx, |pods, cx| {
                 pods.set_node(row.key.kubernetes.as_deref(), window, cx)
             });
-            if matches!(self.node_workspace.tab, NodeTab::Events | NodeTab::Yaml)
+            if matches!(tab, NodeTab::Events | NodeTab::Yaml)
                 && let (Some(node), Some(source)) = (&row.kubernetes, self.kube_source())
             {
-                let tab = if self.node_workspace.tab == NodeTab::Events {
+                let tab = if tab == NodeTab::Events {
                     Tab::Events
                 } else {
                     Tab::Yaml
@@ -659,7 +702,7 @@ impl Pilot {
                         uid: node.uid.clone(),
                     },
                 };
-                self.node_workspace.document.update(cx, |pane, cx| {
+                document.update(cx, |pane, cx| {
                     pane.set_context(source.context, cx);
                     pane.embed_node(tab, cx);
                     pane.open(target, source.access, "", Duration::ZERO, cx);
@@ -667,17 +710,17 @@ impl Pilot {
             }
         }
         self.sync_node_visibility(window, cx);
-        if let Some(screen) = self.active_screen() {
+        if let Some(screen) = self.active_screen(cx) {
             screen.set_embedded(true, cx);
             screen.activate(window, cx);
         }
-        if self.node_workspace.tab == NodeTab::Logs {
+        if tab == NodeTab::Logs {
             self.logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
-        } else if let Some(screen) = self.active_screen() {
+        } else if let Some(screen) = self.active_screen(cx) {
             screen.focus(window, cx);
         } else {
-            window.focus(&self.node_workspace.focus, cx);
+            window.focus(&focus, cx);
         }
     }
 
@@ -685,25 +728,28 @@ impl Pilot {
     /// Resources' drawer (#340): to the shown tab's list, document, log or
     /// screen, or to the tab strip when the tab has none of its own.
     pub(super) fn focus_node_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.node_workspace.tab {
+        let nodes = self.node_workspace.read(cx);
+        let (tab, pods, document, tab_focus) = (
+            nodes.tab,
+            nodes.pods.clone(),
+            nodes.document.clone(),
+            nodes.tab_focus.clone(),
+        );
+        match tab {
             NodeTab::Logs => self
                 .logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx)),
-            NodeTab::Pods => self
-                .node_workspace
-                .pods
-                .update(cx, |pods, cx| pods.focus(window, cx)),
-            NodeTab::Events | NodeTab::Yaml => self
-                .node_workspace
-                .document
-                .update(cx, |pane, cx| pane.focus(window, cx)),
+            NodeTab::Pods => pods.update(cx, |pods, cx| pods.focus(window, cx)),
+            NodeTab::Events | NodeTab::Yaml => {
+                document.update(cx, |pane, cx| pane.focus(window, cx))
+            }
             _ => {
                 // Most screens keep no keyboard of their own, so the tab
                 // strip takes it; a screen with its own then takes it from
                 // there. Always the strip first: a previous tab's list,
                 // log or screen may hold it, and isn't drawn next frame.
-                window.focus(&self.node_workspace.tab_focus, cx);
-                if let Some(screen) = self.active_screen() {
+                window.focus(&tab_focus, cx);
+                if let Some(screen) = self.active_screen(cx) {
                     screen.focus(window, cx);
                 }
             }
@@ -716,35 +762,161 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use freshkube_ui::table::{self, TableSource};
-        let key = if self.node_workspace.selected.is_none() {
-            // Preserve the existing first-row choice for either arrow, skipping groups.
-            table::step(self, 1, cx)
-        } else {
-            table::step(self, delta, cx)
-        };
+        let (key, open) = self.node_workspace.update(cx, |nodes, cx| {
+            use freshkube_ui::table;
+            let key = if nodes.selected.is_none() {
+                // Preserve the existing first-row choice for either arrow, skipping groups.
+                table::step(nodes, 1, cx)
+            } else {
+                table::step(nodes, delta, cx)
+            };
+            (key, nodes.open)
+        });
         let Some(key) = key else { return };
-        if self.node_workspace.open {
+        if open {
             self.open_node(key, window, cx);
         } else {
-            self.node_workspace.selected = Some(key);
+            self.node_workspace.update(cx, |nodes, cx| {
+                nodes.selected = Some(key);
+                cx.notify();
+            });
             cx.notify();
         }
-        // The cards, or their roster beside a node's pane, scroll their own
-        // grid; the table reveals its row.
-        if self.node_workspace.view == NodeView::Cards {
-            if let Some(line) = self
-                .node_workspace
-                .selected
-                .as_ref()
-                .and_then(|key| self.line_of(key))
-            {
-                let columns = if self.node_workspace.open {
+        self.node_workspace
+            .update(cx, |nodes, _| nodes.reveal_selected(window));
+    }
+
+    pub(super) fn step_node_tab(
+        &mut self,
+        delta: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let nodes = self.node_workspace.read(cx);
+        let tabs = &nodes.tabs;
+        let index = tabs.iter().position(|tab| *tab == nodes.tab).unwrap_or(0);
+        let next = (index as isize + delta).rem_euclid(tabs.len() as isize) as usize;
+        let next = tabs[next];
+        self.show_node_tab(next, window, cx);
+    }
+
+    /// Escape steps back one level, as on Resources: from the pane it hands
+    /// the keyboard to the table, leaving the pane open on its tab (an
+    /// expanded pane first gives the table its room back); on the table it
+    /// clears the filter, then closes the pane.
+    pub(super) fn node_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let nodes = self.node_workspace.read(cx);
+        let (open, expanded, filtered) = (nodes.open, nodes.expanded, !nodes.query_text.is_empty());
+        let focus = nodes.focus.clone();
+        if open && (expanded || !focus.is_focused(window)) {
+            if expanded {
+                self.toggle_node_expanded(cx);
+            }
+            window.focus(&focus, cx);
+            cx.notify();
+        } else if filtered {
+            self.node_workspace
+                .update(cx, |nodes, cx| nodes.clear_filter(window, cx));
+        } else if open {
+            self.close_node(window, cx);
+        }
+    }
+
+    /// Runs what a click or key in Nodes asked for.
+    pub(super) fn nodes_event(
+        &mut self,
+        event: &NodesEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.clone() {
+            NodesEvent::Open { key, focus } => {
+                self.open_node(key, window, cx);
+                if focus {
+                    self.focus_node_pane(window, cx);
+                }
+            }
+            NodesEvent::Step(delta) => self.step_joined_node(delta, window, cx),
+            NodesEvent::Close => self.close_node(window, cx),
+            NodesEvent::Back => self.node_back(window, cx),
+            NodesEvent::StepTab(delta) => self.step_node_tab(delta, window, cx),
+            NodesEvent::Tab(tab) => {
+                self.show_node_tab(tab, window, cx);
+                self.focus_node_pane(window, cx);
+            }
+            NodesEvent::Refresh => self.refresh_now(window, cx),
+            NodesEvent::Destination(destination) => self.open_destination(destination, window, cx),
+        }
+    }
+}
+
+impl Nodes {
+    /// Selects the node and opens its pane on it.
+    fn open(&mut self, key: NodeKey, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected = Some(key);
+        if self.view == NodeView::Table {
+            self.show_selected_healthy();
+            freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
+            // Only a stacked inspector shrinks the table it opens under.
+            if crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
+                // Closed or expanded, there is no table to reveal it in.
+                freshkube_ui::table::reveal_when_settled(
+                    cx.entity().downgrade(),
+                    |nodes| nodes.open && !nodes.expanded,
+                    window,
+                );
+            }
+        }
+        self.open = true;
+        // A short page scrolls its frame down to the inspector, or to the
+        // top when the inspector fills it, so its heading stays in view.
+        if self.expanded {
+            self.page_scroll.set_offset(point(px(0.), px(0.)));
+        } else {
+            self.page_scroll.scroll_to_bottom();
+        }
+        self.logs_scroll.set_offset(point(px(0.), px(0.)));
+        self.sync_tabs();
+        cx.notify();
+    }
+
+    fn close(&mut self, cx: &mut Context<Self>) {
+        self.open = false;
+        self.page_scroll.set_offset(point(px(0.), px(0.)));
+        if self.view == NodeView::Table {
+            self.show_selected_healthy();
+            freshkube_ui::table::reveal(self, ScrollStrategy::Nearest);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn toggle_expanded(&mut self, cx: &mut Context<Self>) {
+        if !self.open {
+            return;
+        }
+        self.expanded = !self.expanded;
+        // A short page keeps its heading in view: expanded from the top,
+        // collapsed down to the inspector, as opening a node does.
+        if self.expanded {
+            self.page_scroll.set_offset(point(px(0.), px(0.)));
+        } else {
+            self.page_scroll.scroll_to_bottom();
+        }
+        cx.notify();
+    }
+
+    /// The cards, or their roster beside a node's pane, scroll their own
+    /// grid to the selection; the table reveals its row.
+    fn reveal_selected(&mut self, window: &Window) {
+        use freshkube_ui::table::{self, TableSource};
+        if self.view == NodeView::Cards {
+            if let Some(line) = self.selected.as_ref().and_then(|key| self.line_of(key)) {
+                let columns = if self.open {
                     1
                 } else {
                     cards::card_columns(window)
                 };
-                self.node_workspace.scroll.scroll_to_item(
+                self.scroll.scroll_to_item(
                     freshkube_ui::grid::row_of(line, columns),
                     ScrollStrategy::Nearest,
                 );
@@ -754,58 +926,36 @@ impl Pilot {
         }
     }
 
-    pub(super) fn step_node_tab(
-        &mut self,
-        delta: isize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let tabs = &self.node_workspace.tabs;
-        let index = tabs
-            .iter()
-            .position(|tab| *tab == self.node_workspace.tab)
-            .unwrap_or(0);
-        let next = (index as isize + delta).rem_euclid(tabs.len() as isize) as usize;
-        self.show_node_tab(tabs[next], window, cx);
-    }
-
-    /// Escape steps back one level, as on Resources: from the pane it hands
-    /// the keyboard to the table, leaving the pane open on its tab (an
-    /// expanded pane first gives the table its room back); on the table it
-    /// clears the filter, then closes the pane.
-    pub(super) fn node_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let nodes = &self.node_workspace;
-        if nodes.open && (nodes.expanded || !self.node_workspace.focus.is_focused(window)) {
-            if nodes.expanded {
-                self.toggle_node_expanded(cx);
-            }
-            window.focus(&self.node_workspace.focus, cx);
-            cx.notify();
-        } else if !nodes.query_text.is_empty() {
-            self.clear_node_filter(window, cx);
-        } else if nodes.open {
-            self.close_node(window, cx);
-        }
-    }
-
     /// Escape in the filter clears it; in an empty filter it hands the
     /// keyboard back to the table.
-    pub(super) fn leave_node_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.node_workspace.query_text.is_empty() {
-            window.focus(&self.node_workspace.focus, cx);
+    pub(super) fn leave_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query_text.is_empty() {
+            window.focus(&self.focus, cx);
         } else {
-            self.clear_node_filter(window, cx);
+            self.clear_filter(window, cx);
         }
     }
 
-    fn clear_node_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.node_workspace.query_text.clear();
+    fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.query_text.clear();
         // Setting the value from code emits no change event.
-        self.node_workspace
-            .query
+        self.query
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.node_workspace.rebuild_lines();
+        self.rebuild_lines();
         cx.notify();
+    }
+
+    /// Why the attention list may be out of date; redraws only for a
+    /// change.
+    pub(super) fn set_attention_stale(
+        &mut self,
+        stale: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.attention_stale != stale {
+            self.attention_stale = stale;
+            cx.notify();
+        }
     }
 }
 

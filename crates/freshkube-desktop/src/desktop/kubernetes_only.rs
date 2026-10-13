@@ -594,7 +594,7 @@ impl Pilot {
             };
         }
         self.kubernetes_only = Some(kube);
-        self.sync_nodes_source_mode();
+        self.sync_nodes_source_mode(cx);
         if self.fixture {
             self.contexts = crate::fixture::CONTEXTS
                 .iter()
@@ -619,7 +619,7 @@ impl Pilot {
         };
         let picked = self.applied.context.take();
         self.contexts.clear();
-        self.sync_nodes_source_mode();
+        self.sync_nodes_source_mode(cx);
         if let Some(path) = kube.explicit {
             self.inspect_kubeconfig_file(path, picked, window, cx);
         }

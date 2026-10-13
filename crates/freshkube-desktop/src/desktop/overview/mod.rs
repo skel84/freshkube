@@ -13,7 +13,7 @@ use gpui_kit::*;
 use std::rc::Rc;
 use std::sync::Arc;
 
-mod attention;
+pub(super) mod attention;
 mod cards;
 
 /// What Overview asks of the shell.
@@ -275,6 +275,14 @@ impl super::Pilot {
         error.map(|error| error.clone().into())
     }
 
+    /// Hands the node pane why its attention rows may be out of date; it
+    /// redraws only for a change.
+    pub(super) fn push_attention_stale(&mut self, cx: &mut Context<Self>) {
+        let stale = self.attention_stale();
+        self.node_workspace
+            .update(cx, |nodes, cx| nodes.set_attention_stale(stale, cx));
+    }
+
     /// Hands Overview where things stand; it redraws only for a change.
     pub(super) fn push_overview_state(&self, cx: &mut App) {
         let state = self.overview_state();
@@ -319,8 +327,11 @@ impl super::Pilot {
 
     /// Hands the node pane and Overview this attention list.
     pub(super) fn set_attention(&mut self, attention: Attention, cx: &mut App) {
-        self.node_workspace.attention = Arc::new(attention);
-        let attention = self.node_workspace.attention.clone();
+        let attention = Arc::new(attention);
+        self.node_workspace.update(cx, |nodes, cx| {
+            nodes.attention = attention.clone();
+            cx.notify();
+        });
         self.overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     }
