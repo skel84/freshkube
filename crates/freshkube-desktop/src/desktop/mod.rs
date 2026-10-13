@@ -579,6 +579,44 @@ impl Pilot {
         ]);
     }
 
+    /// What the shell observes of its own, before any page is made: itself,
+    /// the operations slot and the window's close.
+    fn subscribe_shell(window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
+        let mut subscriptions = Vec::new();
+        // Overview and Nodes hear where things stand whenever the shell
+        // notifies, and redraw only when that changed; the countdown tick
+        // notifies only its ring.
+        subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
+            pilot.push_overview_state(cx);
+            pilot.push_node_services_state(cx);
+            pilot.push_attention_stale(cx);
+        }));
+        // The status bar shows the running operation; the window refuses to
+        // close under it. Cached screens may read the slot too.
+        let operations = Operations::global(cx);
+        subscriptions.push(cx.observe(&operations, |view, _, cx| {
+            view.notify_cached(cx);
+            cx.notify();
+        }));
+        window.on_window_should_close(cx, |window, cx| {
+            mutation::may_close(window, cx)
+                && pod_shell::may_close(window, cx, |window, _| window.remove_window())
+        });
+        subscriptions
+    }
+
+    /// Cached views keep their last frame; a font size or palette change
+    /// that doesn't refresh the window by itself must still redraw them.
+    /// Made after the pages, so Observability hears the theme first.
+    fn observe_theme(window: &mut Window, cx: &mut Context<Self>) -> Subscription {
+        cx.observe_global_in::<Theme>(window, |view, window, cx| {
+            place_window_controls(window, cx);
+            view.prepare_context_display(window, cx);
+            view.notify_cached(cx);
+            cx.notify();
+        })
+    }
+
     /// Hears every page: each in the map through its handle, as a
     /// [`PageEvent`] (`hear_page`), then the events of what the map doesn't
     /// hold. Nodes' own events and its Services tab's aren't `PageEvent`s
@@ -732,26 +770,7 @@ impl Pilot {
                 cx,
             )
         });
-        let mut subscriptions = Vec::new();
-        // Overview and Nodes hear where things stand whenever the shell
-        // notifies, and redraw only when that changed; the countdown tick
-        // notifies only its ring.
-        subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
-            pilot.push_overview_state(cx);
-            pilot.push_node_services_state(cx);
-            pilot.push_attention_stale(cx);
-        }));
-        // The status bar shows the running operation; the window refuses to
-        // close under it. Cached screens may read the slot too.
-        let operations = Operations::global(cx);
-        subscriptions.push(cx.observe(&operations, |view, _, cx| {
-            view.notify_cached(cx);
-            cx.notify();
-        }));
-        window.on_window_should_close(cx, |window, cx| {
-            mutation::may_close(window, cx)
-                && pod_shell::may_close(window, cx, |window, _| window.remove_window())
-        });
+        let mut subscriptions = Self::subscribe_shell(window, cx);
         let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
@@ -865,14 +884,7 @@ impl Pilot {
             &settings_page,
             &resources,
         ));
-        // Cached views keep their last frame; a font size or palette change
-        // that doesn't refresh the window by itself must still redraw them.
-        subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
-            place_window_controls(window, cx);
-            view.prepare_context_display(window, cx);
-            view.notify_cached(cx);
-            cx.notify();
-        }));
+        subscriptions.push(Self::observe_theme(window, cx));
         // Batches arriving while Logs is hidden never notify; the shell
         // shows only what start, stop and the visible page change.
         subscriptions.push(cx.observe(&logs, |_, _, cx| cx.notify()));
