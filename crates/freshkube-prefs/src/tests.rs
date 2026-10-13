@@ -174,10 +174,25 @@ fn mode_of(path: &Path) -> u32 {
     std::fs::metadata(path).unwrap().permissions().mode() & 0o7777
 }
 
+/// The mode a plain file created with `mode` gets here: the umask applied.
+#[cfg(unix)]
+fn created_with(mode: u32) -> u32 {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("probe");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&path)
+        .unwrap();
+    mode_of(&path)
+}
+
 #[cfg(unix)]
 #[test]
-fn a_new_file_takes_the_documents_mode_whatever_the_umask() {
-    for mode in [0o644, 0o600] {
+fn a_new_file_takes_the_documents_mode_less_the_umask() {
+    for mode in [0o666, 0o644, 0o600] {
         let directory = tempfile::tempdir().unwrap();
         let document = Dir::beside(&directory.path().join("preferences.json")).document::<Sample>(
             "sample.json",
@@ -185,7 +200,7 @@ fn a_new_file_takes_the_documents_mode_whatever_the_umask() {
             mode,
         );
         document.save(&Sample::default()).unwrap();
-        assert_eq!(mode_of(document.path()), mode);
+        assert_eq!(mode_of(document.path()), created_with(mode), "{mode:o}");
     }
 }
 
@@ -276,4 +291,75 @@ fn a_failed_rename_leaves_no_temporary_file_and_the_target_alone() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(names, ["sample.json"]);
+}
+
+fn shared(directory: &tempfile::TempDir) -> Document<Map<String, Value>> {
+    Dir::beside(&directory.path().join("preferences.json")).document(
+        "shared.json",
+        Layout::Pretty,
+        0o666,
+    )
+}
+
+#[test]
+fn an_update_changes_its_keys_and_keeps_the_rest() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory);
+    std::fs::write(
+        document.path(),
+        "{\n  \"future\": {\"kept\": [1, 2]},\n  \"other\": true,\n  \"text_size\": 16.0\n}\n",
+    )
+    .unwrap();
+    document
+        .update(|map| {
+            map.insert("text_size".into(), serde_json::json!(20.0f32));
+        })
+        .unwrap();
+    let value = document.load().value;
+    assert_eq!(value["text_size"], 20.0);
+    assert_eq!(value["other"], true);
+    assert_eq!(value["future"]["kept"], serde_json::json!([1, 2]));
+}
+
+#[test]
+fn an_update_of_a_missing_or_unusable_file_starts_from_the_default() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory);
+    for before in [None, Some("not json"), Some("[]")] {
+        if let Some(text) = before {
+            std::fs::write(document.path(), text).unwrap();
+        }
+        document
+            .update(|map| {
+                map.insert("text_size".into(), serde_json::json!(18.0f32));
+            })
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(document.path()).unwrap(),
+            "{\n  \"text_size\": 18.0\n}\n"
+        );
+        std::fs::remove_file(document.path()).unwrap();
+    }
+}
+
+#[test]
+fn updates_from_several_threads_lose_none() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = std::sync::Arc::new(shared(&directory));
+    let threads: Vec<_> = (0..8)
+        .map(|n| {
+            let document = document.clone();
+            std::thread::spawn(move || {
+                document
+                    .update(|map| {
+                        map.insert(format!("key{n}"), n.into());
+                    })
+                    .unwrap();
+            })
+        })
+        .collect();
+    for thread in threads {
+        thread.join().unwrap();
+    }
+    assert_eq!(document.load().value.len(), 8);
 }

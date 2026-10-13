@@ -7,7 +7,10 @@
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use freshkube_prefs::{Dir, Document, Layout};
 use gpui_kit::component::Theme;
 use gpui_kit::{App, Global, KeyBinding};
 
@@ -25,6 +28,9 @@ struct TextSize {
     size: f32,
     /// Where the choice is saved; `None` keeps it for this session only.
     preferences: Option<PathBuf>,
+    /// Whether the last save failed, so a folder that stays unwritable is
+    /// logged once, not on every step.
+    save_failed: Arc<AtomicBool>,
 }
 
 impl Global for TextSize {}
@@ -51,7 +57,11 @@ pub fn install_with(preferences: Option<PathBuf>, start: Option<f32>, cx: &mut A
         .filter(|size| STEPS.contains(size))
         .or_else(|| preferences.as_deref().and_then(saved))
         .unwrap_or(BASE_TEXT);
-    cx.set_global(TextSize { size, preferences });
+    cx.set_global(TextSize {
+        size,
+        preferences,
+        save_failed: Arc::default(),
+    });
     cx.bind_keys([
         // Command-Shift-= arrives as `+`. macOS's View menu shows the first
         // binding, so `⌘+` comes before `⌘=`.
@@ -83,12 +93,21 @@ pub fn set(size: f32, cx: &mut App) {
     let text = cx.global_mut::<TextSize>();
     text.size = size;
     let preferences = text.preferences.clone();
+    let save_failed = text.save_failed.clone();
     apply(cx);
     if let Some(path) = preferences {
         cx.background_executor()
-            // A failed save only means the next launch starts at the default.
             .spawn(async move {
-                let _ = save(&path, size);
+                // A failed save only means the next launch starts at the
+                // default; say so once.
+                match save(&path, size) {
+                    Ok(()) => save_failed.store(false, Ordering::Relaxed),
+                    Err(error) => {
+                        if !save_failed.swap(true, Ordering::Relaxed) {
+                            tracing::warn!("{} not saved: {error}", path.display());
+                        }
+                    }
+                }
             })
             .detach();
     }
@@ -119,26 +138,31 @@ fn apply(cx: &mut App) {
     Theme::change(mode, None, cx);
 }
 
+/// `preferences.json`, whose other keys belong to no one here: the size is
+/// the only key this module sets, and a save keeps every other key. New
+/// files are created `0o666` less the umask, as `std::fs::write` did.
+fn document(path: &Path) -> Document<serde_json::Map<String, serde_json::Value>> {
+    let name = path
+        .file_name()
+        .map_or("preferences.json".into(), |name| name.to_string_lossy());
+    Dir::beside(path).document(&name, Layout::Pretty, 0o666)
+}
+
 /// The size saved in a preferences file, if it holds one of `STEPS`.
 fn saved(path: &Path) -> Option<f32> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let size = value.get("text_size")?.as_f64()? as f32;
+    let loaded = document(path).load();
+    if let Some(problem) = &loaded.problem {
+        tracing::warn!("{problem}");
+    }
+    let size = loaded.value.get("text_size")?.as_f64()? as f32;
     STEPS.contains(&size).then_some(size)
 }
 
 /// Sets `text_size` in the preferences file, keeping anything else in it.
 fn save(path: &Path, size: f32) -> std::io::Result<()> {
-    let mut value = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .filter(serde_json::Value::is_object)
-        .unwrap_or_else(|| serde_json::json!({}));
-    value["text_size"] = serde_json::json!(size);
-    if let Some(directory) = path.parent() {
-        std::fs::create_dir_all(directory)?;
-    }
-    std::fs::write(path, format!("{value:#}\n"))
+    document(path).update(|map| {
+        map.insert("text_size".into(), serde_json::json!(size));
+    })
 }
 
 #[cfg(test)]
@@ -216,6 +240,58 @@ mod tests {
         std::fs::write(&path, "[]").unwrap();
         save(&path, 12.).unwrap();
         assert_eq!(saved(&path), Some(12.));
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_save_writes_the_example_file_byte_for_byte() {
+        let directory = directory("example");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("preferences.json");
+        let example = include_str!("../../freshkube-prefs/src/examples/preferences.json");
+        // From the older compact form, an unknown key and another size.
+        std::fs::write(&path, r#"{"other":true,"text_size":12}"#).unwrap();
+        save(&path, 16.).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), example);
+        // A first save into a missing folder writes the same layout.
+        let fresh = directory.join("nested").join("preferences.json");
+        save(&fresh, 16.).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&fresh).unwrap(),
+            "{\n  \"text_size\": 16.0\n}\n"
+        );
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_save_keeps_every_other_key_unknown_ones_included() {
+        let directory = directory("keys");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("preferences.json");
+        std::fs::write(
+            &path,
+            "{\n  \"a_future_key\": {\"nested\": [1, \"two\", null]},\n  \"other\": true,\n  \"text_size\": 12.0\n}\n",
+        )
+        .unwrap();
+        save(&path, 20.).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\n  \"a_future_key\": {\n    \"nested\": [\n      1,\n      \"two\",\n      null\n    ]\n  },\n  \"other\": true,\n  \"text_size\": 20.0\n}\n"
+        );
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_missing_file_is_the_default_and_saves_leave_no_temporary_file() {
+        let directory = directory("missing");
+        let path = directory.join("preferences.json");
+        assert_eq!(saved(&path), None);
+        save(&path, 14.).unwrap();
+        let names: Vec<_> = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["preferences.json"]);
         std::fs::remove_dir_all(&directory).unwrap();
     }
 }

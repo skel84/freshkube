@@ -14,6 +14,7 @@
 //! owner; this module owns only the reading and the writing.
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Serialize;
@@ -39,9 +40,11 @@ impl Dir {
     }
 
     /// The file called `name` in this directory, holding a `T`. `mode` is the
-    /// Unix permission bits a save gives the file when it creates it (`0o644`
-    /// for `navigation.json`); a file that exists keeps its own. It is
-    /// ignored where there are no such bits.
+    /// Unix permission bits a save asks for when it creates the file (`0o644`
+    /// for `navigation.json`, `0o666` for `preferences.json`); the process's
+    /// umask clears bits from it, as for any file it creates. A file that
+    /// exists keeps its own. On Windows there are no such bits: the mode is
+    /// ignored and a new file takes what its directory gives it.
     pub fn document<T>(&self, name: &str, layout: Layout, mode: u32) -> Document<T> {
         Document {
             path: self.0.join(name),
@@ -111,7 +114,7 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// temporary file is removed.
     ///
     /// The file keeps its permissions when it exists, and takes the
-    /// document's mode when it is new. A path that is a symlink stays one:
+    /// document's mode, less the umask, when it is new. A path that is a symlink stays one:
     /// the temporary file goes beside its target and is renamed over the
     /// target.
     pub fn save(&self, value: &T) -> std::io::Result<()> {
@@ -128,8 +131,9 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         }
         let permissions = std::fs::metadata(&target).ok().map(|m| m.permissions());
         let temporary = temporary_beside(&target);
-        let result = write_synced(&temporary, text.as_bytes())
-            .and_then(|()| self.give_permissions(&temporary, permissions))
+        let result = self
+            .write_synced(&temporary, text.as_bytes(), permissions.is_some())
+            .and_then(|()| give_permissions(&temporary, permissions))
             .and_then(|()| std::fs::rename(&temporary, &target));
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
@@ -155,28 +159,63 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         })
     }
 
-    #[cfg(unix)]
-    fn give_permissions(
-        &self,
-        temporary: &Path,
-        existing: Option<std::fs::Permissions>,
-    ) -> std::io::Result<()> {
-        use std::os::unix::fs::PermissionsExt as _;
-        let permissions =
-            existing.unwrap_or_else(|| std::fs::Permissions::from_mode(self.mode & 0o7777));
-        std::fs::set_permissions(temporary, permissions)
+    /// Creates the temporary file and writes it to disk. A new file is
+    /// created with the document's mode, so the umask applies; one that
+    /// replaces a file is private until it gets that file's permissions.
+    fn write_synced(&self, path: &Path, bytes: &[u8], replaces: bool) -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(
+            &mut options,
+            if replaces { 0o600 } else { self.mode & 0o7777 },
+        );
+        #[cfg(not(unix))]
+        let _ = (replaces, self.mode);
+        let mut file = options.open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()
     }
+}
 
-    /// Windows has no Unix mode: the file keeps what the directory gives it.
-    #[cfg(not(unix))]
-    fn give_permissions(
-        &self,
-        _temporary: &Path,
-        _existing: Option<std::fs::Permissions>,
-    ) -> std::io::Result<()> {
-        let _ = self.mode;
-        Ok(())
+impl<T: Serialize + DeserializeOwned + Default> Document<T> {
+    /// Loads the file, lets `change` edit its value and saves it back. A
+    /// writer that owns some keys of a shared document sets those and leaves
+    /// the rest as it found it, so a `Document<Map<String, Value>>` keeps
+    /// the keys this build does not know. A file that is missing or unusable
+    /// starts from the default, as [`load`](Self::load) says.
+    ///
+    /// Updates in this process run one at a time, so two of them never lose
+    /// each other's change. Another process is not excluded.
+    pub fn update(&self, change: impl FnOnce(&mut T)) -> std::io::Result<()> {
+        static UPDATING: Mutex<()> = Mutex::new(());
+        let _one_at_a_time = UPDATING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut value = self.load().value;
+        change(&mut value);
+        self.save(&value)
     }
+}
+
+#[cfg(unix)]
+fn give_permissions(
+    temporary: &Path,
+    existing: Option<std::fs::Permissions>,
+) -> std::io::Result<()> {
+    match existing {
+        Some(permissions) => std::fs::set_permissions(temporary, permissions),
+        None => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+fn give_permissions(
+    _temporary: &Path,
+    _existing: Option<std::fs::Permissions>,
+) -> std::io::Result<()> {
+    Ok(())
 }
 
 /// A name no other save of this process, or another process, uses.
@@ -203,18 +242,6 @@ fn describe(error: &serde_json::Error) -> String {
         Category::Eof => "the file ends too early",
     };
     format!("{kind} at line {}, column {}", error.line(), error.column())
-}
-
-fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    // Private until the final permissions are set, whatever they are.
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
 }
 
 #[cfg(test)]
