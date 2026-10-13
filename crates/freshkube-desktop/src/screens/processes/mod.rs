@@ -9,13 +9,10 @@ use freshkube_ui::menu::Find;
 use gpui_kit::component::input;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
 
 use freshkube_core::inspection::{
-    InspectionUnavailable, LoadAverageSnapshot, ProcessCpuSnapshot, ProcessDisplayRow,
-    ProcessInspectionRequest, ProcessInspectionSnapshot, ProcessMemorySnapshot, ProcessSampleState,
-    ProcessSnapshotEntry, ProcessSort, ProcessStateCounts, ProcessSystemSnapshot, ProcessTree,
-    ProcessView, collect_process_inspection,
+    InspectionUnavailable, ProcessDisplayRow, ProcessInspectionRequest, ProcessInspectionSnapshot,
+    ProcessSnapshotEntry, ProcessSort, ProcessTree, ProcessView, collect_process_inspection,
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
@@ -26,7 +23,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use talos_rs::{CpuStat, ProcessInfo, ProcessState};
+use talos_rs::ProcessState;
 use tokio::runtime::Handle;
 
 use super::{
