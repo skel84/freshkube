@@ -403,7 +403,7 @@ pub(super) trait Collection: Sized + 'static {
     /// Hands a batch from the current stream to the view: its lines from
     /// services still collected, and its failures. The stream's watch
     /// drops a batch from an earlier stream; one for another node is
-    /// dropped here, and `false` says so.
+    /// dropped here, and `false` says so; the stream then stops.
     fn apply_batch(
         &mut self,
         target: &Target,
@@ -538,7 +538,11 @@ impl Collection for LogPanel {
             work,
             |view: &mut Self| &mut view.source_mut().stream,
             move |view, batch, cx| {
-                view.apply_batch(&target, batch, cx);
+                // A batch for another node ends the stream, as its delivery
+                // used to.
+                if !view.apply_batch(&target, batch, cx) {
+                    view.source_mut().stream.stop();
+                }
             },
             // Every service's stream ended: what was held while hidden
             // lands, and collection stops.
@@ -570,7 +574,9 @@ impl Collection for LogPanel {
             PACE,
             |view: &mut Self| &mut view.source_mut().stream,
             move |view, batch, cx| {
-                view.apply_batch(&apply_target, batch, cx);
+                if !view.apply_batch(&apply_target, batch, cx) {
+                    view.source_mut().stream.stop();
+                }
             },
             cx,
         );
@@ -579,10 +585,8 @@ impl Collection for LogPanel {
             .sender()
             .expect("an open stream holds its channel");
         source.example_writer = Some(cx.spawn(async move |_, cx| {
+            // The first line goes at once, then one every 250 ms.
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(250))
-                    .await;
                 let service = services[sequence as usize % services.len()].clone();
                 let line = crate::fixture::stream_line(service.as_str(), sequence);
                 let event = StreamEvent {
@@ -594,6 +598,9 @@ impl Collection for LogPanel {
                     break;
                 }
                 sequence += 1;
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
             }
         }));
         cx.notify();
