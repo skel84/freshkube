@@ -254,7 +254,7 @@ impl ForwardView {
         self.phase = Phase::Starting;
         self.status = None;
         self.end = None;
-        if let ClusterAccess::Example = self.spec.access {
+        if let ClusterAccess::Example(_) = self.spec.access {
             return self.begin_example(seq, request, fallback, cx);
         }
         let access = self.spec.access.clone();

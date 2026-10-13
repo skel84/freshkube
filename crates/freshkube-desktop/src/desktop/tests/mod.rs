@@ -150,8 +150,10 @@ fn loading_pods(
     let (runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update(|cx| cx.set_reduce_motion(false));
     cx.update_window(handle, |_, window, cx| {
-        let resources = view.read(cx).resources.clone();
-        resources.update(cx, |resources, _| resources.hold = true);
+        view.update(cx, |pilot, cx| {
+            pilot.hold.lists = true;
+            pilot.push_source(window, cx);
+        });
         open_kind(window, cx, "pods");
     })
     .unwrap();

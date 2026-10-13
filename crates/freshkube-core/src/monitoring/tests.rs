@@ -524,7 +524,7 @@ async fn a_client_that_fails_or_a_lost_connection_forgets_it() {
     }
     assert_eq!(source.count(), 3);
     // Example data has nothing to forget.
-    forget_after(&ClusterAccess::Example, &QueryError::unauthorized());
+    forget_after(&ClusterAccess::EXAMPLE, &QueryError::unauthorized());
 }
 
 #[tokio::test]

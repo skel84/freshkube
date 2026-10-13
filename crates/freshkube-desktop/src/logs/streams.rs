@@ -364,7 +364,7 @@ impl<S: StreamSource> StreamReads for LogView<S> {
             },
         );
         S::stream_started(self, &key);
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             self.start_example(key, generation, cx);
             return;
         }

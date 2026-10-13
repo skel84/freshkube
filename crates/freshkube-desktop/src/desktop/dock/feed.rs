@@ -50,7 +50,7 @@ impl Dock {
             ..Feed::default()
         };
         let identity = tab.target.identity.clone();
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             let overview = example::document(&identity, live::now()).map(|doc| doc.overview);
             tab.feed.state = match (&tab.kind, overview) {
                 (TabKind::Pod(_) | TabKind::Shell(_), Some(overview)) => {

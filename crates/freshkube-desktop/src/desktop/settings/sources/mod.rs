@@ -233,7 +233,7 @@ impl SourcesList {
             || (self.reads_open()
                 && matches!(
                     self.source.as_ref().map(|s| &s.access),
-                    Some(ClusterAccess::Example)
+                    Some(ClusterAccess::Example(_))
                 ));
         if example {
             self.read.resolve(self.identity(), Ok(()));

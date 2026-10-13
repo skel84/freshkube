@@ -139,7 +139,7 @@ impl MonitoringPage {
     pub fn history(&self) -> Option<HistorySource> {
         let source = self.source.as_ref()?;
         let kind = match (&self.connection, &source.access) {
-            (_, ClusterAccess::Example) => HistoryKind::Example,
+            (_, ClusterAccess::Example(_)) => HistoryKind::Example,
             (Connection::Ready { prometheus, .. }, _) => HistoryKind::Ready(prometheus.clone()),
             (Connection::None | Connection::Looking { .. }, access) => {
                 // A URL's token is read only when the page connects.

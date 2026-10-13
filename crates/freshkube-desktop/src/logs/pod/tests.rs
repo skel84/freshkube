@@ -88,7 +88,7 @@ fn show(view: &Entity<PodLogView>, identity: &ResourceIdentity, cx: &mut App) {
     let identity = identity.clone();
     let pod = containers(&identity);
     view.update(cx, |view, cx| {
-        view.show_pod(Some(identity), Some(ClusterAccess::Example), cx);
+        view.show_pod(Some(identity), Some(ClusterAccess::EXAMPLE), cx);
         view.want(cx);
         view.set_containers(pod, cx);
     });
@@ -126,7 +126,7 @@ fn the_log_waits_for_the_pod_then_reads_its_tail_and_follows_it(cx: &mut TestApp
     let identity = running_pod();
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.show_pod(Some(identity.clone()), Some(ClusterAccess::Example), cx);
+            view.show_pod(Some(identity.clone()), Some(ClusterAccess::EXAMPLE), cx);
             view.want(cx);
         });
         window.render_frame(cx);
@@ -1050,7 +1050,7 @@ fn all_containers_reads_at_most_the_cap_and_says_how_many_it_leaves_out(cx: &mut
     assert_eq!(apps(&pod).len(), total);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.show_pod(Some(identity.clone()), Some(ClusterAccess::Example), cx);
+            view.show_pod(Some(identity.clone()), Some(ClusterAccess::EXAMPLE), cx);
             view.want(cx);
             view.set_containers(pod.clone(), cx);
         });

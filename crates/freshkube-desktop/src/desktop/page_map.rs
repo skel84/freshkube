@@ -61,8 +61,7 @@ impl Pages {
         let age_label = cx.new(|_| switch::AgeLabel::new());
         let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
         let node_workspace = cx.new(|cx| {
-            let mut nodes =
-                nodes::Nodes::new(runtime.clone(), logs.clone(), hold.lists, window, cx);
+            let mut nodes = nodes::Nodes::new(runtime.clone(), logs.clone(), window, cx);
             // The header the loading rows sit under before anything answers.
             nodes.rebuild_columns(!options.kubernetes_only);
             nodes
@@ -110,8 +109,7 @@ impl Pages {
         .filter_map(|id| Some((id, pages.get(&id)?.clone())))
         .collect();
         node_workspace.update(cx, |nodes, _| nodes.screens = screens);
-        let resources =
-            cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx).holding(hold.lists));
+        let resources = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
@@ -148,7 +146,6 @@ impl Pages {
             crate::applications::ApplicationsPage::new(
                 runtime.clone(),
                 options.debug.applications,
-                hold.applications,
                 window,
                 cx,
             )

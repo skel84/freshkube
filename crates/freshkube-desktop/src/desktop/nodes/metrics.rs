@@ -108,7 +108,7 @@ impl Nodes {
         metrics.visible = visible;
         metrics.example = source
             .as_ref()
-            .is_some_and(|source| matches!(source.access, ClusterAccess::Example));
+            .is_some_and(|source| matches!(source.access, ClusterAccess::Example(_)));
         self.rebuild_resource_cells();
         cx.notify();
         if visible

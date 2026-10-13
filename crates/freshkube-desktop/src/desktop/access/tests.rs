@@ -50,7 +50,7 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 list.start(
                     crate::forwards::ForwardSpec {
                         runtime: view.runtime.clone(),
-                        access: resources::ClusterAccess::Example,
+                        access: resources::ClusterAccess::EXAMPLE,
                         target: freshkube_core::resources::ForwardTarget::of(
                             &resources::example::kind("pods").unwrap(),
                             &pod.name,
@@ -258,7 +258,7 @@ fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAp
         view.update(cx, |view, cx| {
             // Nothing is published for the new context, so what is left in
             // the session after the change is only what was carried over.
-            view.fixture_hold = true;
+            view.hold.talos = true;
             let runtime = view.runtime.clone();
             let session = view.registry.active_mut();
             session.access = Some(access);

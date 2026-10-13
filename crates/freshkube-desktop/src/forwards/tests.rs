@@ -51,7 +51,7 @@ impl Mounted {
         let target = ForwardTarget::of(&resource, &identity.name, &identity.uid).unwrap();
         ForwardSpec {
             runtime: self.runtime.handle().clone(),
-            access: ClusterAccess::Example,
+            access: ClusterAccess::EXAMPLE,
             identity,
             target,
             context: "homelab".into(),

@@ -390,7 +390,7 @@ impl ResourcesScreen {
             ),
             ReadState::Loaded
                 if self.store.columns().is_empty()
-                    && matches!(source.access, ClusterAccess::Example) =>
+                    && matches!(source.access, ClusterAccess::Example(_)) =>
             {
                 let kinds: Vec<SharedString> = example::KINDS
                     .iter()
