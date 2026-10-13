@@ -38,18 +38,19 @@ mod tests;
 mod view;
 
 use freshkube_delivery::change::live::Mapping;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::Utc;
 
 use freshkube_core::resources::kubeconfig_sources;
-use freshkube_core::snapshot::{Request, Snapshot};
+use freshkube_core::snapshot::Request;
 use freshkube_core::workspace::{Chosen, Part as PartKind, Sources};
 use freshkube_delivery::applications::across::{Open, read_workspace};
 use freshkube_delivery::applications::{
     ArgoScope, Derived, Inputs, Override, SessionInputs, SessionKey, derive,
 };
 use freshkube_delivery::entry;
+use freshkube_reads::{Loader, OnShow};
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self as kit, TableState};
@@ -57,7 +58,7 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::backend::{self, OwnedJob};
+use crate::backend;
 use crate::resources::{KubeAccess, KubeSource, ResourceLink};
 use across::{Across, Alone};
 use change::{ChangeEvent, ChangePage, Changes};
@@ -77,6 +78,8 @@ const PREFIX: &str = "applications";
 pub(crate) const CONTEXT: &str = "Applications";
 /// A read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
+/// Showing the page reads again once what it has is [`FRESH_FOR`] old.
+const ON_SHOW: OnShow = OnShow::ReadIfOlder(FRESH_FOR);
 /// How long one cluster's read may take: up to a few hundred lists.
 const DEADLINE: Duration = Duration::from_secs(60);
 
@@ -250,17 +253,13 @@ pub(crate) struct ApplicationsPage {
     variant: Variant,
     /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
     hold: bool,
-    snapshot: Snapshot<Read, Identity, String>,
-    /// Whether a read is in flight; dropping its job and task stops it.
-    pending: bool,
-    job: Option<OwnedJob>,
-    task: Option<Task<()>>,
+    /// The read, its answer and the work in flight. It is hidden while
+    /// the page is, and its answer's age decides whether showing reads.
+    loader: Loader<Read, Identity>,
     /// Example data answers after this, in tests, so a read stays in
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
     clusters: Clusters,
-    /// When the shown read's answer arrived, on the executor's clock.
-    read_at: Option<Instant>,
     display: Display,
     /// The banner for a refresh that failed over an earlier read, and its
     /// label, derived with the display.
@@ -331,6 +330,9 @@ impl ApplicationsPage {
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let split = InspectorSplit::new(PREFIX, cx);
         let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), hold, variant.shape(), cx));
+        // The page starts hidden, and so does its read.
+        let mut loader = Loader::default();
+        loader.set_visible(false, ON_SHOW, cx);
         // The change page's links, from a change the list opened.
         let links = cx.subscribe(&changes, |_, _, event, cx| match event {
             ChangesEvent::Open(link) => cx.emit(link.as_ref().clone()),
@@ -347,13 +349,9 @@ impl ApplicationsPage {
             variant,
             hold,
             entry: None,
-            snapshot: Snapshot::default(),
-            pending: false,
-            job: None,
-            task: None,
+            loader,
             example_delay: Duration::ZERO,
             clusters: Clusters::default(),
-            read_at: None,
             display: Display::default(),
             stale: None,
             lines: Vec::new(),
@@ -418,9 +416,7 @@ impl ApplicationsPage {
         self.update_changes(cx);
         self.changes
             .update(cx, |changes, cx| changes.set_source(source, cx));
-        self.stop();
-        self.snapshot = Snapshot::default();
-        self.read_at = None;
+        self.loader.reset();
         self.selected = None;
         self.inspect = false;
         self.close_open(cx);
@@ -456,7 +452,7 @@ impl ApplicationsPage {
             .as_ref()
             .is_some_and(|source| !matches!(source.access, KubeAccess::Example));
         if reads_elsewhere && live {
-            self.read_at = None;
+            self.loader.expire();
             if self.visible {
                 self.read(cx);
             }
@@ -510,7 +506,7 @@ impl ApplicationsPage {
 
     /// Tells the change page shown the entries and the mapping.
     fn update_change(&mut self, cx: &mut Context<Self>) {
-        let (Some((change, _)), Some(read)) = (&self.change, self.snapshot.data()) else {
+        let (Some((change, _)), Some(read)) = (&self.change, self.loader.data()) else {
             return;
         };
         let connections = self.connections(read);
@@ -552,21 +548,15 @@ impl ApplicationsPage {
         let changes = visible && self.changes_shown;
         self.changes
             .update(cx, |page, cx| page.set_visible(changes, cx));
+        // Fresh only by when an answer arrived: a read dropped on hide, or
+        // a refresh that failed, doesn't make old data new.
+        let reads_again = self.loader.set_visible(visible, ON_SHOW, cx);
         if !visible {
-            self.stop();
             self.derive_column();
             cx.notify();
             return;
         }
-        // Fresh only by when an answer arrived: a read dropped on hide, or
-        // a refresh that failed, doesn't make old data new.
-        let now = cx.background_executor().now();
-        let fresh = self.snapshot.data().is_some()
-            && !self.snapshot.is_stale()
-            && self
-                .read_at
-                .is_some_and(|at| now.saturating_duration_since(at) < FRESH_FOR);
-        if !fresh {
+        if reads_again {
             self.read(cx);
         }
     }
@@ -587,29 +577,20 @@ impl ApplicationsPage {
         self.read(cx);
     }
 
-    /// Drops the read in flight; what was read stays.
-    fn stop(&mut self) {
-        self.pending = false;
-        self.job = None;
-        self.task = None;
-    }
-
     #[cfg(test)]
     pub(crate) fn is_reading(&self) -> bool {
-        self.pending
+        self.loader.is_loading()
     }
 
     fn read(&mut self, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.stop();
-        let request = self.snapshot.begin((source.id.clone(), self.entry.clone()));
+        let request = self.loader.start((source.id.clone(), self.entry.clone()));
         match &source.access {
             KubeAccess::Example => {
                 // Held, it stays in flight, so the page keeps its loading
                 // rows.
-                self.pending = true;
                 if self.hold {
                     self.derive_column();
                     cx.notify();
@@ -632,10 +613,11 @@ impl ApplicationsPage {
                     self.answer(&request, Ok(read), cx);
                 } else {
                     let delay = self.example_delay;
-                    self.task = Some(cx.spawn(async move |this, cx| {
+                    let task = cx.spawn(async move |this, cx| {
                         cx.background_executor().timer(delay).await;
                         _ = this.update(cx, |page, cx| page.answer(&request, Ok(read), cx));
-                    }));
+                    });
+                    self.loader.run(None, task);
                 }
             }
             access => {
@@ -680,14 +662,13 @@ impl ApplicationsPage {
                         })
                     },
                 );
-                self.job = Some(job);
-                self.pending = true;
-                self.task = Some(cx.spawn(async move |this, cx| {
+                let task = cx.spawn(async move |this, cx| {
                     let result = receiver
                         .await
                         .unwrap_or_else(|_| Err("Reading the applications stopped".into()));
                     _ = this.update(cx, |page, cx| page.answer(&request, result, cx));
-                }));
+                });
+                self.loader.run(Some(job), task);
             }
         }
         self.derive_column();
@@ -701,26 +682,18 @@ impl ApplicationsPage {
         result: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
-        let answered = result.is_ok();
-        if !self.pending || !self.snapshot.apply(request, result) {
-            return;
+        if self.loader.land(request, result, cx) {
+            self.show_read(cx);
         }
-        self.pending = false;
-        self.job = None;
-        self.task = None;
-        if answered {
-            self.read_at = Some(cx.background_executor().now());
-        }
-        self.show_read(cx);
     }
 
-    /// Derives the display from the snapshot: what was read, or, when the
+    /// Derives the display from the loader: what was read, or, when the
     /// cluster couldn't be reached before anything was read, every source
     /// as unread, which is never "no applications".
     fn show_read(&mut self, cx: &mut Context<Self>) {
         let unread = || -> Option<Read> {
             let source = self.source.as_ref()?;
-            let why = self.snapshot.error()?;
+            let why = self.loader.error()?;
             let key = SessionKey::new(source.id.clone());
             let inputs = Inputs {
                 sessions: vec![SessionInputs::unread(key.clone(), why)],
@@ -730,7 +703,7 @@ impl ApplicationsPage {
             Some(Read::live(&inputs, source, self.entry.as_deref()))
         };
         if let Some(namespace) = self
-            .snapshot
+            .loader
             .data()
             .and_then(|read| read.argocd_namespace.clone())
         {
@@ -738,7 +711,7 @@ impl ApplicationsPage {
                 changes.set_argocd_namespace(namespace, cx)
             });
         }
-        self.display = match self.snapshot.data().cloned().or_else(unread) {
+        self.display = match self.loader.data().cloned().or_else(unread) {
             Some(read) => {
                 let mut display = Display::new(&read.derived, &read.labels);
                 if let Some(entry) = &read.unmapped {
@@ -752,7 +725,7 @@ impl ApplicationsPage {
             }
             None => Display::default(),
         };
-        self.stale = self.snapshot.data().and(self.snapshot.error()).map(|why| {
+        self.stale = self.loader.data().and(self.loader.error()).map(|why| {
             let text = format!("Showing the last read. {why}");
             let label = format!("Couldn't read again: {text}");
             (text.into(), label.into())
@@ -771,7 +744,7 @@ impl ApplicationsPage {
             return;
         };
         let id = open.read(cx).id().clone();
-        let read = self.snapshot.data();
+        let read = self.loader.data();
         match read.and_then(|read| Some((read.derived.find(&id)?, read))) {
             Some((app, read)) => {
                 let stale = self.stale.clone();
@@ -817,7 +790,7 @@ impl ApplicationsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(read) = self.snapshot.data() else {
+        let Some(read) = self.loader.data() else {
             return;
         };
         let Some(app) = read
@@ -852,7 +825,7 @@ impl ApplicationsPage {
     /// Shows the change a Stage of the open Kargo application carries, in
     /// the application page's place, on the Stage's gates.
     fn follow(&mut self, stage: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some((open, _)), Some(read)) = (&self.open, self.snapshot.data()) else {
+        let (Some((open, _)), Some(read)) = (&self.open, self.loader.data()) else {
             return;
         };
         let Some(source) = &self.source else {
@@ -996,7 +969,7 @@ impl ApplicationsPage {
             }
             Body::Table | Body::Empty { .. } => {}
         }
-        let Some(read) = self.snapshot.data() else {
+        let Some(read) = self.loader.data() else {
             return Segment::default();
         };
         let plural = |count: usize, one: &str, many: &str| {
@@ -1018,7 +991,7 @@ impl ApplicationsPage {
         if incomplete > 0 {
             parts.push(Part::new(format!("{incomplete} may be incomplete")).tone(Tone::Unknown));
         }
-        if self.snapshot.is_stale() {
+        if self.loader.is_stale() {
             parts.push(Part::new("last read").tone(Tone::Warn));
         }
         Segment::new(context, parts)
@@ -1144,7 +1117,7 @@ impl ApplicationsPage {
     }
 
     pub(crate) fn has_read(&self) -> bool {
-        self.snapshot.data().is_some()
+        self.loader.data().is_some()
     }
 
     /// A read again that fails, as a cluster that stops answering does.
@@ -1152,9 +1125,7 @@ impl ApplicationsPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        self.stop();
-        let request = self.snapshot.begin((source.id, self.entry.clone()));
-        self.pending = true;
+        let request = self.loader.start((source.id, self.entry.clone()));
         self.answer(&request, Err(why.into()), cx);
     }
 }

@@ -672,7 +672,7 @@ fn the_same_applications_show_whichever_entry_is_open(cx: &mut TestAppContext) {
             let page = page(&view, cx);
             let page = page.read(cx);
             assert_eq!(page.names(), first, "with {active} open");
-            let read = page.snapshot.data().expect("read");
+            let read = page.loader.data().expect("read");
             let connections = page.connections(read);
             // Kargo's parts open where Kargo is read: here once cicd-fra
             // is open, else a switch away.
