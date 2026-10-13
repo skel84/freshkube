@@ -29,7 +29,7 @@ pub(super) struct ServiceDisplay {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HealthFilter {
+pub(super) enum HealthFilter {
     All,
     Unhealthy,
     Unknown,
@@ -47,7 +47,7 @@ impl HealthFilter {
 
 /// The target node's services as the shell last read them.
 #[derive(Clone, Default)]
-pub(crate) struct ServicesReading {
+pub(super) struct ServicesReading {
     services: Option<Arc<Vec<ServiceInfo>>>,
     error: Option<String>,
     loading: bool,
@@ -76,7 +76,7 @@ impl ServicesReading {
 
 /// Where the Talos overview stands, as the tab's states say.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum TalosReading {
+pub(super) enum TalosReading {
     /// No answer yet: the skeleton.
     #[default]
     Loading,
@@ -88,7 +88,7 @@ pub(crate) enum TalosReading {
 
 /// The node whose services show.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ServiceNode {
+pub(super) struct ServiceNode {
     name: String,
     address: String,
     responding: bool,
@@ -98,7 +98,7 @@ pub(crate) struct ServiceNode {
 /// the node stand. The shell hands it over after each of its changes; an
 /// equal one redraws nothing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct NodeServicesState {
+pub(super) struct NodeServicesState {
     config_error: Option<String>,
     kubernetes_only: bool,
     context: String,
@@ -110,7 +110,7 @@ pub(crate) struct NodeServicesState {
 
 /// What the tab asks of the shell.
 #[derive(Clone, Debug)]
-pub(crate) enum NodeServicesEvent {
+pub(super) enum NodeServicesEvent {
     /// Open the selected service's logs.
     Logs,
     /// Ask before restarting this service.
@@ -124,7 +124,7 @@ pub(crate) enum NodeServicesEvent {
     Config(ConfigAction),
 }
 
-pub(crate) struct NodeServices {
+pub(super) struct NodeServices {
     state: NodeServicesState,
     reading: ServicesReading,
     display: ServiceDisplay,
@@ -152,6 +152,8 @@ impl NodeServices {
                 }
             }),
             cx.observe(&filter, |_, _, cx| cx.notify()),
+            // A restart's notice shows under its service, here alone.
+            cx.observe_global::<restart::RestartNotices>(|_, cx| cx.notify()),
         ];
         let page = cx.weak_entity();
         let on_config: OnConfigAction = Rc::new(move |action, _, cx| {
@@ -172,10 +174,15 @@ impl NodeServices {
         }
     }
 
-    /// The services the shell read; a selection they no longer have goes.
+    /// The services the shell read; a selection they no longer have goes
+    /// once they answer. While a read is on its way the selection stays,
+    /// so one made from elsewhere waits for the services it names.
     pub(super) fn set_reading(&mut self, reading: ServicesReading, cx: &mut Context<Self>) {
         self.reading = reading;
-        if presentation::selected_service(self.reading.all(), self.selected.as_deref()).is_none() {
+        if !self.reading.loading
+            && presentation::selected_service(self.reading.all(), self.selected.as_deref())
+                .is_none()
+        {
             self.selected = None;
         }
         self.rebuild_rows(cx);
@@ -352,5 +359,10 @@ impl Pilot {
             .read(cx)
             .focus
             .is_focused(window)
+    }
+
+    /// Leaves a restart's notice, as a finished restart does.
+    pub(super) fn note_restart(&self, service: &str, cx: &mut App) {
+        self.set_restart_notice(service, true, "Restarted".into(), cx);
     }
 }

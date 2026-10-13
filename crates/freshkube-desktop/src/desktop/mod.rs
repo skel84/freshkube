@@ -1674,6 +1674,7 @@ impl Pilot {
         App::notify(cx, self.overview_page.entity_id());
         App::notify(cx, self.system_services.entity_id());
         App::notify(cx, self.nodes_page.entity_id());
+        App::notify(cx, self.node_workspace.services.entity_id());
         App::notify(cx, self.node_workspace.pods.entity_id());
         App::notify(cx, self.node_workspace.document.entity_id());
     }

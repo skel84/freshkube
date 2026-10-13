@@ -121,7 +121,8 @@ impl Pilot {
         );
     }
 
-    fn set_restart_notice(&self, service: &str, ok: bool, text: String, cx: &mut Context<Self>) {
+    /// Leaves the notice under the service; the tab hears it itself.
+    pub(super) fn set_restart_notice(&self, service: &str, ok: bool, text: String, cx: &mut App) {
         let (Some(cluster), Some(node)) = (self.overview.data(), self.selected_node.clone()) else {
             return;
         };
@@ -132,7 +133,6 @@ impl Pilot {
             ok,
             text,
         })));
-        cx.notify();
     }
 
     /// Takes the operation slot and restarts `service_id` on the target node.
