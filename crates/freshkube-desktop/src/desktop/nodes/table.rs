@@ -153,8 +153,10 @@ impl Nodes {
 impl Pilot {
     pub(in crate::desktop) fn sync_nodes_source_mode(&mut self, cx: &mut App) {
         let talos = self.kubernetes_only.is_none();
-        self.node_workspace
-            .update(cx, |nodes, _| nodes.rebuild_columns(talos));
+        self.node_workspace.update(cx, |nodes, cx| {
+            nodes.rebuild_columns(talos);
+            cx.notify();
+        });
         self.rebuild_nodes_meta(cx);
     }
 }

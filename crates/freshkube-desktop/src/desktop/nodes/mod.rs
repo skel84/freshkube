@@ -153,6 +153,12 @@ pub(super) struct Nodes {
     pub(super) services: Entity<super::services::NodeServices>,
     /// The pane's Logs tab: the shell's Talos log view.
     logs: Entity<crate::logs::LogPanel>,
+    /// Whether the log view collects, for the Logs tab's dot, and whether
+    /// the history chart shows, for the Overview tab. Neither is drawn
+    /// while another tab shows, so Nodes hears them change itself.
+    collecting: bool,
+    chart: bool,
+    _watches: [Subscription; 2],
     /// The Talos screens the pane's tabs embed, by their pages.
     pub(super) screens:
         std::collections::BTreeMap<super::pages::PageId, crate::screens::ScreenHandle>,
@@ -250,6 +256,25 @@ impl Nodes {
         });
         let loading = freshkube_ui::table::LoadingRows::new("nodes");
         let loading_motion = cx.new(|_| loading.motion(freshkube_ui::table::Look::Pulse));
+        let history =
+            cx.new(|_| crate::monitoring::history::HistoryView::new(runtime.clone(), "node"));
+        let watches = [
+            cx.observe(&logs, |nodes, logs, cx| {
+                use crate::logs::TalosPanel as _;
+                let collecting = logs.read(cx).collecting_count() > 0;
+                if nodes.collecting != collecting {
+                    nodes.collecting = collecting;
+                    cx.notify();
+                }
+            }),
+            cx.observe(&history, |nodes, history, cx| {
+                let chart = history.read(cx).shows();
+                if nodes.chart != chart {
+                    nodes.chart = chart;
+                    cx.notify();
+                }
+            }),
+        ];
         Self {
             rows: Arc::new(Vec::new()),
             empty: Some(Empty::Loading),
@@ -298,11 +323,13 @@ impl Nodes {
             pods: cx.new(|cx| {
                 crate::resources::ResourcesScreen::new(runtime.clone(), window, cx).holding(hold)
             }),
-            history: cx
-                .new(|_| crate::monitoring::history::HistoryView::new(runtime.clone(), "node")),
+            history,
             load_history: Default::default(),
             services: cx.new(|cx| super::services::NodeServices::new(window, cx)),
             logs,
+            collecting: false,
+            chart: false,
+            _watches: watches,
             screens: Default::default(),
             attention: Default::default(),
             attention_stale: None,

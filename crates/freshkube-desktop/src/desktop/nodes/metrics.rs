@@ -105,6 +105,7 @@ impl Nodes {
             .as_ref()
             .is_some_and(|source| matches!(source.access, KubeAccess::Example));
         self.rebuild_resource_cells();
+        cx.notify();
         if !visible {
             return;
         }

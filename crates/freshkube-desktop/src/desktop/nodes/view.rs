@@ -1,6 +1,5 @@
 use super::*;
 use crate::{
-    logs::TalosPanel,
     palette::palette,
     screens::page_width,
     ui::{MONO_FONT, dp},
@@ -304,9 +303,7 @@ impl Nodes {
                                 this.child(ui::meter(memory.percent(), memory.level(), cx))
                             },
                         )
-                        .when(self.history.read(cx).shows(), |this| {
-                            this.child(self.history.clone())
-                        })
+                        .when(self.chart, |this| this.child(self.history.clone()))
                         .children(row.facts.iter().map(|(label, value)| {
                             h_flex()
                                 .gap(dp(12.))
@@ -396,7 +393,7 @@ impl Nodes {
 
     fn render_node_tabs(&self, row: &NodeRow, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let collecting = self.logs.read(cx).collecting_count() > 0;
+        let collecting = self.collecting;
         let workspace = self;
         // Events and YAML sit in More, so while one shows, More is the
         // strip's active place.
