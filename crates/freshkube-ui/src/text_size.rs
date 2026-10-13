@@ -259,7 +259,6 @@ mod tests {
     fn a_save_writes_the_example_file_byte_for_byte() {
         let scratch = tempfile::tempdir().unwrap();
         let directory = scratch.path().to_path_buf();
-        std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("preferences.json");
         let example = include_str!("../../freshkube-prefs/src/examples/preferences.json");
         // From the older compact form, an unknown key and another size.
@@ -279,7 +278,6 @@ mod tests {
     fn a_save_keeps_every_other_key_unknown_ones_included() {
         let scratch = tempfile::tempdir().unwrap();
         let directory = scratch.path().to_path_buf();
-        std::fs::create_dir_all(&directory).unwrap();
         let path = directory.join("preferences.json");
         std::fs::write(
             &path,
@@ -305,6 +303,39 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(names, ["preferences.json"]);
+    }
+
+    #[test]
+    fn a_save_reads_the_latest_size_under_the_lock() {
+        use std::sync::mpsc;
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("preferences.json");
+        let latest = Arc::new(AtomicU32::new(16f32.to_bits()));
+        let (holding, is_held) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        // A holds the update lock through another document.
+        let other = scratch.path().join("other.json");
+        let a = std::thread::spawn(move || {
+            document(&other)
+                .update(|_| {
+                    holding.send(()).unwrap();
+                    released.recv().unwrap();
+                })
+                .unwrap();
+        });
+        is_held.recv().unwrap();
+        // B's save for 16 waits on the lock...
+        let b = {
+            let (path, latest) = (path.clone(), latest.clone());
+            std::thread::spawn(move || save(&path, &latest).unwrap())
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // ...while 18 is chosen; B must write 18, not what it saw at start.
+        latest.store(18f32.to_bits(), Ordering::Relaxed);
+        release.send(()).unwrap();
+        a.join().unwrap();
+        b.join().unwrap();
+        assert_eq!(saved(&path), Some(18.));
     }
 
     #[test]
