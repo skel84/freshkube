@@ -499,13 +499,17 @@ fn hiding_cuts_a_held_read_and_drops_its_task(cx: &mut TestAppContext) {
     screen.update(cx, |screen, cx| {
         let request = screen.loader.start("a");
         screen.loader.land(&request, Ok(1), cx);
-        screen.loader.start("a");
+        let held = screen.loader.start("a");
         assert!(screen.loader.is_loading());
         let revision = screen.loader.revision();
         screen.loader.set_visible(false, policy, cx);
         assert!(!screen.loader.is_loading());
         assert!(screen.loader.revision() > revision);
         assert_eq!(screen.loader.data(), Some(&1), "kept as last known");
+        // Its answer, arriving after all, never lands.
+        assert!(!screen.loader.land(&held, Ok(2), cx));
+        assert_eq!(screen.loader.data(), Some(&1));
+        assert!(!screen.loader.is_loading());
         // A read cut short counts as old.
         assert!(screen.loader.set_visible(true, policy, cx));
     });

@@ -29,7 +29,8 @@ pub struct Loader<T, I> {
     /// A read hiding dropped before it answered: the snapshot still waits
     /// for it, but nothing is loading.
     cut: bool,
-    /// When the last successful answer from [`load`](Self::load) landed,
+    /// When the last successful answer from [`load`](Self::load) or
+    /// [`land`](Self::land) landed,
     /// by the executor's clock. A failure clears it: a refresh that failed
     /// doesn't make old data new.
     answered: Option<Instant>,
@@ -148,10 +149,14 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Loader<T, I> {
         self.task = Some(task);
     }
 
-    /// Lands `result` if `request` is still the latest for its identity,
-    /// and returns whether it did. A successful answer is timed by the
+    /// Lands `result` if `request` is still the latest for its identity
+    /// and hiding didn't cut it short, and returns whether it did. A successful answer is timed by the
     /// executor's clock, for [`set_visible`](Self::set_visible).
     pub fn land(&mut self, request: &Request<I>, result: Result<T, String>, cx: &App) -> bool {
+        // Hiding cut the read short: its answer, however late, never lands.
+        if self.cut {
+            return false;
+        }
         let ok = result.is_ok();
         let landed = self.deliver(request, result);
         if landed && ok {
