@@ -20,7 +20,7 @@ pub(super) struct Metrics {
     /// Example mode answers from the rows themselves, so new rows answer at once.
     example: bool,
     pub(super) generation: u64,
-    pub(super) snapshot: Snapshot<HashMap<String, NodeUsage>, String>,
+    pub(super) snapshot: Snapshot<HashMap<String, NodeUsage>, String, String>,
     pub(super) job: Option<OwnedJob>,
     pub(super) delivery: Option<Task<()>>,
 }

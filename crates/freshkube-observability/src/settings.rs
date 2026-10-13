@@ -88,7 +88,7 @@ impl ObservabilityPage {
                 if refused { IconName::Shield } else { IconName::TriangleAlert },
                 title,
                 "No successful observation is available. A failed read does not establish that this project is empty.",
-                error.map(str::to_owned),
+                error.cloned(),
                 vec![action("obs-retry", "Retry")
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
                     .into_any_element()],
@@ -325,7 +325,9 @@ impl ObservabilityPage {
             return Some(
                 ui::warning_banner(
                     lead,
-                    error.unwrap_or("This observation is out of date."),
+                    error
+                        .map(String::as_str)
+                        .unwrap_or("This observation is out of date."),
                     Some(
                         action("obs-retry", "Retry")
                             .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))

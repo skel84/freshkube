@@ -345,7 +345,7 @@ pub(crate) struct Pilot {
     config_loading: bool,
     config_generation: u64,
     epoch: u64,
-    overview: Snapshot<ClusterOverview>,
+    overview: Snapshot<ClusterOverview, AppliedConfig, String>,
     /// The cluster sessions: a workspace of one.
     registry: session::Registry,
     /// How the active workspace entry was defined when it was opened.
@@ -372,7 +372,7 @@ pub(crate) struct Pilot {
     object_open_job: Option<OwnedJob>,
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
-    services: Snapshot<Vec<ServiceInfo>, Target>,
+    services: Snapshot<Vec<ServiceInfo>, Target, String>,
     service_display: services::ServiceDisplay,
     nodes: Vec<NodeSummary>,
     load_history: LoadHistory,
@@ -1878,7 +1878,7 @@ impl Pilot {
         cx.notify();
     }
 
-    fn status<T, I: Clone + Eq>(snapshot: &Snapshot<T, I>) -> String {
+    fn status<T, I: Clone + Eq, E>(snapshot: &Snapshot<T, I, E>) -> String {
         let refreshed = snapshot
             .last_successful()
             .map(|time| {
