@@ -1,6 +1,6 @@
 # Architecture
 
-What the code is today, on main `bed96316` (after #589 and #591, before #593). It describes; [AGENTS.md](../AGENTS.md) holds the rules and the other docs hold each feature's behaviour. Every claim names the module that makes it true, so a stale line is one you can check. Paths are from the repository root.
+What the code is today, on main `6b5fdc9` (after #589, #591 and #593). It describes; [AGENTS.md](../AGENTS.md) holds the rules and the other docs hold each feature's behaviour. Every claim names the module that makes it true, so a stale line is one you can check. Paths are from the repository root.
 
 ## Crates and their direction
 
@@ -8,8 +8,9 @@ A crate may depend only on the crates below it. Read the arrows off each `crates
 
 ```
 src/main.rs (freshkube)      → freshkube-desktop, freshkube-probe
-freshkube-desktop            → core, logs, monitoring, observability, probe, reads, terminal, ui, talos-rs
-freshkube-observability      → core, graph, logs, monitoring, ui
+freshkube-desktop            → core, delivery, logs, monitoring, observability, probe, reads, terminal, ui, talos-rs
+freshkube-observability      → core, delivery, graph, logs, monitoring, ui
+freshkube-delivery           → core, talos-rs
 freshkube-monitoring         → core, probe, ui, talos-rs
 freshkube-logs               → core, probe, ui
 freshkube-terminal           → probe, ui
@@ -28,7 +29,7 @@ The rules the graph shows:
 - **`freshkube-reads` holds the one shared, generic read owner.** `Loader<T, I>` (`crates/freshkube-reads/src/loader/mod.rs`) needs core's `Snapshot` and `spawn_job` and a GPUI `Task`, so it depends on core and `gpui-kit`, and on nothing of `freshkube-ui` or desktop. Features that own their reads keep them: Monitoring (`crates/freshkube-monitoring/src/request.rs`), Observability (`crates/freshkube-observability/src/connection.rs`) and `LogView`.
 - **Test-only edges are features or dev-dependencies.** The `testing` features and `freshkube-probe`'s `counting` are turned on only from `[dev-dependencies]` (desktop's, and for the feature crates their own), never from a normal dependency. Desktop also has a plain dev-dependency on `freshkube-graph`, for the map's tests.
 
-Desktop reaches the moved code by its old paths in `crates/freshkube-desktop/src/lib.rs`: `crate::monitoring`, `crate::observability` and `crate::terminal` are `use … as …` lines, and `crate::palette`, `theme`, `text_size` and `meters` come from one `use freshkube_ui::{…}`. `crate::ui` is a module (`crates/freshkube-desktop/src/ui.rs`) that re-exports `freshkube_ui::ui::*` and adds desktop's own helpers, such as `health_tone`. Inside core, `delivery/` and `applications/` are still core modules; #593 moves them together into a `freshkube-delivery` crate that sits between core and desktop/observability. This page describes them as core's until it lands.
+Desktop reaches the moved code by its old paths in `crates/freshkube-desktop/src/lib.rs`: `crate::monitoring`, `crate::observability` and `crate::terminal` are `use … as …` lines, and `crate::palette`, `theme`, `text_size` and `meters` come from one `use freshkube_ui::{…}`. `crate::ui` is a module (`crates/freshkube-desktop/src/ui.rs`) that re-exports `freshkube_ui::ui::*` and adds desktop's own helpers, such as `health_tone`. The delivery chain (Kargo, Argo CD, builds and pods) and the applications derived from it live in `crates/freshkube-delivery/` (`src/applications/`, `change/`, `changes/`, `entry/`), not in core. It sits between core and desktop/observability, depends on core and `talos-rs` only, and has no UI types. Its `testing` feature (`freshkube_delivery::testing`, `crates/freshkube-delivery/src/lib.rs`) holds what desktop's tests read and is turned on from desktop's `[dev-dependencies]`.
 
 ## What a page is
 
@@ -98,7 +99,7 @@ There are about a dozen event types and two ways to subscribe. `PageEvent` (`scr
 
 - Talos side: `crates/freshkube-desktop/src/fixture.rs` (the cluster and its nodes, and the hold knobs), plus `screens/<name>/example.rs` for each screen but etcd, whose example is in `screens/etcd/mod.rs`; `crates/freshkube-desktop/examples/fixture.rs` runs it standalone.
 - Resources: `crates/freshkube-desktop/src/resources/example/` (objects, the acme workspace's Kargo and Argo CD kinds); `resources/shell/example.rs` (a local shell); `crates/freshkube-desktop/src/forwards/example.rs` (a loopback listener).
-- Applications and changes: `crates/freshkube-desktop/src/applications/example.rs`; in core, `crates/freshkube-core/src/applications/example.rs` and `crates/freshkube-core/src/delivery/change/example.rs`, `delivery/changes/example.rs` and `delivery/fixtures.rs`.
+- Applications and changes: `crates/freshkube-desktop/src/applications/example.rs`; in delivery, `crates/freshkube-delivery/src/applications/example.rs`, `change/example.rs`, `changes/example.rs` and `fixtures.rs`.
 - Monitoring and Observability: `crates/freshkube-core/src/monitoring/example.rs`; `crates/freshkube-observability/src/example.rs`, `application/example.rs`, `logs/example.rs`.
 - Maintenance mode: `crates/freshkube-desktop/src/maintenance/example.rs`.
 - The shared components on invented data: `crates/freshkube-workbench/src/stories/`.
@@ -112,7 +113,7 @@ The knobs are read from the environment where each feature starts, not in one pl
 - Page, theme, motion, kind, dashboard and sidebar: `startup_selection` and `open_startup_page` in `crates/freshkube-desktop/src/desktop/startup/mod.rs` (`FRESHKUBE_PAGE`, `_THEME`, `_MOTION`, `_KIND`, `_DASHBOARD`, `_SIDEBAR`), a module built under `any(debug_assertions, feature = "stress")`; window size in `crates/freshkube-desktop/src/desktop/mod.rs` (`FRESHKUBE_WINDOW_SIZE`, same `cfg`).
 - Debug builds only: log search (`FRESHKUBE_LOG_SEARCH`, `startup/mod.rs`), `FRESHKUBE_PAGE=maintenance` (`desktop/mod.rs`; its theme in `maintenance/example.rs`) and text size (`FRESHKUBE_TEXT_SIZE`, `crates/freshkube-ui/src/text_size.rs`).
 - Fixture holds: `FRESHKUBE_FIXTURE_HOLD` is parsed only in `crates/freshkube-desktop/src/fixture.rs`. `Pilot::new` (`desktop/mod.rs`) passes it to the Monitoring and Observability pages through their `hold_examples`, and Applications reads `fixture::hold().applications`. The stress binary sets it (`crates/freshkube-desktop/src/bin/stress/main.rs`).
-- Example shapes: `FRESHKUBE_ETCD` in `screens/etcd/mod.rs`; `FRESHKUBE_APPLICATIONS` in `crates/freshkube-desktop/src/applications/example.rs` (`Variant::from_env`), which maps to core's `Shape` in `delivery/change/example.rs`; core reads no environment for it.
+- Example shapes: `FRESHKUBE_ETCD` in `screens/etcd/mod.rs`; `FRESHKUBE_APPLICATIONS` in `crates/freshkube-desktop/src/applications/example.rs` (`Variant::from_env`), which maps to delivery's `Shape` in `crates/freshkube-delivery/src/change/example.rs`; delivery reads no environment for it.
 - The app menu button: `crates/freshkube-desktop/src/desktop/app_menu/mod.rs` (`FRESHKUBE_APP_MENU`).
 - First-frame timing: `first_frame::start()` in `crates/freshkube-probe/src/first_frame.rs`, called from `src/main.rs` (`FRESHKUBE_FIRST_FRAME`).
 - The stress binary: `crates/freshkube-desktop/src/stress.rs` and `crates/freshkube-desktop/src/bin/stress/` (`FRESHKUBE_STRESS_*`).
