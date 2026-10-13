@@ -8,12 +8,12 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use freshkube_core::delivery::change::Change;
-use freshkube_core::delivery::change::example::Shape;
-use freshkube_core::delivery::change::live::{self, Place};
-use freshkube_core::delivery::changes::example as changes_example;
-use freshkube_core::delivery::entry::{self, pool};
 use freshkube_core::snapshot::Request;
+use freshkube_delivery::change::Change;
+use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::change::live::{self, Place};
+use freshkube_delivery::changes::example as changes_example;
+use freshkube_delivery::entry::{self, pool};
 
 use super::*;
 use crate::applications::across::{Across, Alone};

@@ -239,7 +239,7 @@ impl Pilot {
                 .map(|entry| entry.id.clone())
                 .collect(),
             active: self.active_cluster().map(str::to_owned),
-            mapping: freshkube_core::delivery::change::live::Mapping::of(
+            mapping: freshkube_delivery::change::live::Mapping::of(
                 workspace,
                 self.active_cluster(),
             ),

@@ -21,13 +21,11 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use freshkube_core::delivery::change::example::Shape;
-use freshkube_core::delivery::change::live::Place;
-use freshkube_core::delivery::changes::{
-    self as core_changes, Changes as Derived, Fold, live::Where,
-};
-use freshkube_core::delivery::entry::{self, pool};
 use freshkube_core::snapshot::{Request, Snapshot};
+use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::change::live::Place;
+use freshkube_delivery::changes::{self as core_changes, Changes as Derived, Fold, live::Where};
+use freshkube_delivery::entry::{self, pool};
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::table::{self as kit, TableState};

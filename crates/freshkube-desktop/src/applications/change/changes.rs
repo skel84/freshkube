@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use freshkube_core::applications::{ArgoScope, Inputs};
-use freshkube_core::delivery::change::example::Shape;
-use freshkube_core::delivery::change::{self as delivery_change, live::Place};
+use freshkube_delivery::applications::{ArgoScope, Inputs};
+use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::change::{self as delivery_change, live::Place};
 
 use super::Fetch;
 use crate::applications::across::Across;

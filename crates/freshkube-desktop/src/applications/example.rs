@@ -4,12 +4,12 @@
 //! workloads labelled as Argo CD's run, `argocd`), and the environments'
 //! labelled workloads.
 //! Debug builds reshape it for captures with `FRESHKUBE_APPLICATIONS`.
-use freshkube_core::applications::read::{ARGOCD, argo_namespaces};
-use freshkube_core::applications::{
+use freshkube_delivery::applications::read::{ARGOCD, argo_namespaces};
+use freshkube_delivery::applications::{
     Absent, ArgoFound, ArgoScope, Asked, Inputs, SessionInputs, SessionKey, example as acme,
 };
-use freshkube_core::delivery::change::example::Shape;
-use freshkube_core::delivery::source::{Source, Truncation};
+use freshkube_delivery::change::example::Shape;
+use freshkube_delivery::source::{Source, Truncation};
 
 use super::display::Labels;
 use super::links::Connections;
@@ -263,7 +263,7 @@ mod tests {
     /// the open cluster while its parts are refused.
     #[test]
     fn no_acme_cluster_is_named_as_an_example_context() {
-        let inputs = freshkube_core::applications::example::acme();
+        let inputs = freshkube_delivery::applications::example::acme();
         for session in &inputs.sessions {
             assert!(
                 !crate::fixture::CONTEXTS.contains(&session.key.0.as_str()),

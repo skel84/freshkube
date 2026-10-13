@@ -3,9 +3,9 @@
 //! notes on what may be missing, and, with no rows, the state that says
 //! why. Drawing only reads it.
 use chrono::{DateTime, Local, Utc};
-use freshkube_core::delivery::change::{Change, Phase, Reach, Shows};
-use freshkube_core::delivery::changes::{Changes, Fold, Gap, Named, Row};
-use freshkube_core::delivery::join::Confidence;
+use freshkube_delivery::change::{Change, Phase, Reach, Shows};
+use freshkube_delivery::changes::{Changes, Fold, Gap, Named, Row};
+use freshkube_delivery::join::Confidence;
 use freshkube_ui::ui::Tone;
 use gpui_kit::SharedString;
 

@@ -558,7 +558,7 @@ fn the_page_and_the_inspector_say_what_the_application_is(cx: &mut TestAppContex
 
 #[test]
 fn what_was_not_checked_names_its_cluster_and_namespaces() {
-    use freshkube_core::applications::claims::Unchecked;
+    use freshkube_delivery::applications::claims::Unchecked;
     let words = |unchecked| super::unchecked_words(&unchecked, "core-fra", "core-fra");
     assert_eq!(
         words(Unchecked::Namespaces(vec!["gitops".into()])),
