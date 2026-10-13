@@ -47,34 +47,8 @@ impl Render for Pilot {
             .key_context(freshkube_ui::page::SHELL_CONTEXT)
             .track_focus(&self.focus);
         let root = self.navigation.listen(root, cx);
-        self.chrome
-            .listen(root, cx)
-            .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
-            .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
-                view.adjacent_context(false, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &NextContext, window, cx| {
-                view.adjacent_context(true, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
-            // Each handler is there only while it can act, so the menus grey
-            // it otherwise and its key goes on to whatever else binds it.
-            .when(self.dock.read(cx).has_tabs(), |this| {
-                this.on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
-                    view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
-                }))
-                .on_action(cx.listener(|view, _: &dock::PreviousDockTab, window, cx| {
-                    view.dock.update(cx, |dock, cx| dock.step(-1, window, cx))
-                }))
-                .on_action(cx.listener(
-                    |view, _: &dock::MinimizeDock, window, cx| {
-                        view.dock.update(cx, |dock, cx| {
-                            let open = dock.is_open();
-                            dock.set_open(!open, window, cx)
-                        })
-                    },
-                ))
-            })
+        let root = self.chrome.listen(root, cx);
+        self.listen(root, cx)
             .child(
                 self.chrome.parts.header.clone().cached(
                     StyleRefinement::default()
@@ -115,6 +89,39 @@ impl Render for Pilot {
 }
 
 impl Pilot {
+    /// Adds the actions only the shell can answer to its root: Refresh,
+    /// which reads the session's sources and the shown page again; the
+    /// session's previous and next context; Go to kind, the search palette
+    /// the shell holds; and the dock's tabs, which can be open on any page.
+    fn listen(&self, root: Div, cx: &mut Context<Self>) -> Div {
+        root.on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
+            .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
+                view.adjacent_context(false, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &NextContext, window, cx| {
+                view.adjacent_context(true, window, cx)
+            }))
+            .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
+            // Each handler is there only while it can act, so the menus grey
+            // it otherwise and its key goes on to whatever else binds it.
+            .when(self.dock.read(cx).has_tabs(), |this| {
+                this.on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
+                    view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
+                }))
+                .on_action(cx.listener(|view, _: &dock::PreviousDockTab, window, cx| {
+                    view.dock.update(cx, |dock, cx| dock.step(-1, window, cx))
+                }))
+                .on_action(cx.listener(
+                    |view, _: &dock::MinimizeDock, window, cx| {
+                        view.dock.update(cx, |dock, cx| {
+                            let open = dock.is_open();
+                            dock.set_open(!open, window, cx)
+                        })
+                    },
+                ))
+            })
+    }
+
     /// The flash over the shown page's changed rows, mounted beside the
     /// page and the cached chrome as the loading motion is. Only
     /// Resources lists flash.
