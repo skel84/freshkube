@@ -10,9 +10,11 @@
 //! An older build reads the file too: it reads `collapsed` and ignores the
 //! keys it doesn't know, and a file it wrote without a split's size gives
 //! that split its default here. Keys this build doesn't know are kept.
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use freshkube_prefs::{Dir, Document, Layout};
 use freshkube_ui::split_size::{SizeKey, SizeStore};
 use gpui_kit::{App, Global};
 use serde_json::{Map, Value};
@@ -31,11 +33,14 @@ pub(crate) const DOCK_HEIGHT: SizeKey = SizeKey::new(DOCK, "height");
 pub(crate) struct NavigationFile(Option<Arc<File>>);
 
 struct File {
-    path: PathBuf,
+    document: Document<Map<String, Value>>,
     /// The file's object as last changed; a save writes all of it.
     value: Mutex<Map<String, Value>>,
     /// Keeps two saves from writing at once.
     writer: Mutex<()>,
+    /// Whether the last save failed, so a directory that stays unwritable
+    /// is logged once, not on every change.
+    save_failed: AtomicBool,
     /// How many split sizes were saved, for tests that count a drag's
     /// writes.
     #[cfg(test)]
@@ -44,25 +49,39 @@ struct File {
 
 impl Global for NavigationFile {}
 
+impl File {
+    /// Logs a failed save the first time it fails; a save that works again
+    /// re-arms the log.
+    fn report_save(&self, result: std::io::Result<()>) {
+        match result {
+            Ok(()) => self.save_failed.store(false, Ordering::Relaxed),
+            Err(error) => {
+                if !self.save_failed.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("{} not saved: {error}", self.document.path().display());
+                }
+            }
+        }
+    }
+}
+
 impl NavigationFile {
     /// The file beside `preferences`, read once. Without preferences, as in
     /// tests, nothing is read or written.
     pub(crate) fn open(preferences: Option<&Path>) -> Self {
-        let Some(path) = preferences.map(|p| p.with_file_name("navigation.json")) else {
+        let Some(preferences) = preferences else {
             return Self(None);
         };
-        let value = std::fs::read(&path)
-            .ok()
-            .and_then(|s| serde_json::from_slice::<Value>(&s).ok())
-            .and_then(|v| match v {
-                Value::Object(map) => Some(map),
-                _ => None,
-            })
-            .unwrap_or_default();
+        let document = Dir::beside(preferences).document("navigation.json", Layout::Compact, 0o644);
+        let loaded = document.load();
+        if let Some(problem) = &loaded.problem {
+            tracing::warn!("{problem}; starting from the defaults");
+        }
+        let value = loaded.value;
         Self(Some(Arc::new(File {
-            path,
+            document,
             value: Mutex::new(value),
             writer: Mutex::new(()),
+            save_failed: AtomicBool::new(false),
             #[cfg(test)]
             sizes_saved: Default::default(),
         })))
@@ -165,22 +184,12 @@ impl NavigationFile {
                     return;
                 };
                 // The latest snapshot, which a later change may have moved on.
-                let Ok(text) = file
-                    .value
-                    .lock()
-                    .map(|value| Value::Object(value.clone()).to_string())
-                else {
+                // Cloned so the lock is not held through the file I/O: the UI
+                // thread changes and reads the snapshot under the same lock.
+                let Ok(snapshot) = file.value.lock().map(|value| value.clone()) else {
                     return;
                 };
-                if let Some(parent) = file.path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let temporary = file
-                    .path
-                    .with_extension(format!("{}.tmp", std::process::id()));
-                if std::fs::write(&temporary, format!("{text}\n")).is_ok() {
-                    let _ = std::fs::rename(&temporary, &file.path);
-                }
+                file.report_save(file.document.save(&snapshot));
             })
             .detach();
     }
