@@ -43,7 +43,7 @@ fn another_talos_context_closes_every_tab_while_it_loads(cx: &mut TestAppContext
     });
     while_loading(handle, &pilot, cx, |pilot, window, cx| {
         pilot.select_context(other, window, cx);
-        assert!(pilot.kube_source().is_none());
+        assert!(pilot.source().kube.is_none());
     });
     assert!(titles(&dock, cx).is_empty());
     assert!(view.upgrade().is_none());
@@ -66,7 +66,7 @@ fn another_kubeconfig_closes_every_tab_while_it_loads(cx: &mut TestAppContext) {
             context: None,
         };
         pilot.apply_kubeconfig(selection, window, cx);
-        assert!(pilot.kube_source().is_none());
+        assert!(pilot.source().kube.is_none());
     });
     assert!(titles(&dock, cx).is_empty());
     assert!(view.upgrade().is_none());
@@ -78,7 +78,7 @@ fn losing_the_source_closes_every_tab_and_its_return_reopens_none(cx: &mut TestA
     let dock = dock(&pilot, cx);
     let pods = running_pods(&pilot, cx);
     open_logs(handle, &pilot, "pods", &pods[0], cx);
-    let source = cx.update(|cx| pilot.read(cx).kube_source());
+    let source = cx.update(|cx| pilot.read(cx).source().kube);
     cx.update_window(handle, |_, window, cx| {
         dock.update(cx, |dock, cx| {
             dock.set_source(None, None, window, cx);
@@ -98,7 +98,7 @@ fn a_source_missing_for_a_while_keeps_the_tabs_and_their_shells(cx: &mut TestApp
     let pods = running_pods(&pilot, cx);
     open_logs(handle, &pilot, "pods", &pods[0], cx);
     start_shell(handle, &pilot, &pods[1], cx);
-    let source = cx.update(|cx| pilot.read(cx).kube_source()).unwrap();
+    let source = cx.update(|cx| pilot.read(cx).source().kube).unwrap();
     cx.update_window(handle, |_, window, cx| {
         dock.update(cx, |dock, cx| {
             // As Talos without its overview or client: the same access.

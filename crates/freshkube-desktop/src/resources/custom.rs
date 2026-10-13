@@ -15,7 +15,7 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 
 use super::example;
-use super::screen::{KubeAccess, KubeSource};
+use super::screen::{ClusterAccess, ClusterSource};
 use crate::backend::{self, OwnedJob};
 
 /// How long one discovery read may take.
@@ -146,7 +146,7 @@ type Answer<T> = oneshot::Receiver<Result<Result<T, Failure>, String>>;
 
 pub(crate) struct CustomResources {
     runtime: Handle,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     open: bool,
     open_groups: BTreeSet<String>,
     groups: Option<Discovery<Vec<CustomGroup>>>,
@@ -199,8 +199,8 @@ impl CustomResources {
     /// Another connection forgets what discovery found on the last one and,
     /// if the section is open, discovers again. The same connection only
     /// takes the new access.
-    pub(crate) fn set_source(&mut self, source: Option<KubeSource>, cx: &mut Context<Self>) {
-        let id = |source: &Option<KubeSource>| source.as_ref().map(|source| source.id.clone());
+    pub(crate) fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
+        let id = |source: &Option<ClusterSource>| source.as_ref().map(|source| source.id.clone());
         let same = id(&self.source) == id(&source);
         self.source = source;
         if same {
@@ -309,7 +309,7 @@ impl CustomResources {
         };
         self.groups = Some(Discovery::Reading);
         let epoch = self.epoch;
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             self.finish_groups(epoch, Ok(example::custom_groups()), cx);
             return;
         }
@@ -375,7 +375,7 @@ impl CustomResources {
         entry.kinds = Some(Discovery::Reading);
         let group = entry.group.clone();
         let epoch = self.epoch;
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             let result = example::group_kinds(&group.name);
             self.finish_kinds(epoch, name, result, cx);
             return;
@@ -419,7 +419,7 @@ impl CustomResources {
 /// Runs `read` on Tokio with a client from `access`, within the deadline.
 /// After a failure that retrying could fix, the client is dropped so the
 /// next read builds a new one.
-fn read<T, F, Fut>(runtime: &Handle, access: KubeAccess, read: F) -> (OwnedJob, Answer<T>)
+fn read<T, F, Fut>(runtime: &Handle, access: ClusterAccess, read: F) -> (OwnedJob, Answer<T>)
 where
     T: Send + 'static,
     F: FnOnce(kube::Client) -> Fut + Send + 'static,
@@ -467,13 +467,13 @@ mod tests {
     // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
     use super::{CustomResources, Discovery, GroupRows};
     use crate::resources::example;
-    use crate::resources::screen::{KubeAccess, KubeSource};
+    use crate::resources::screen::{ClusterAccess, ClusterSource};
 
-    fn source(context: &str) -> KubeSource {
-        KubeSource {
+    fn source(context: &str) -> ClusterSource {
+        ClusterSource {
             id: example::connection(context),
             context: context.into(),
-            access: KubeAccess::Example,
+            access: ClusterAccess::Example,
         }
     }
 

@@ -13,7 +13,7 @@ use tokio::runtime::Runtime;
 use crate::forwards::{self, ForwardList, Phase};
 use crate::resources::detail::DetailTarget;
 use crate::resources::pane::DetailPane;
-use crate::resources::screen::KubeAccess;
+use crate::resources::screen::ClusterAccess;
 use crate::resources::{example, live};
 
 struct Mounted {
@@ -42,7 +42,7 @@ impl Mounted {
         self.step(cx, |_, cx| {
             self.pane.update(cx, |pane, cx| {
                 pane.set_context("homelab".into(), cx);
-                pane.open(target, KubeAccess::Example, "1", Duration::ZERO, cx)
+                pane.open(target, ClusterAccess::Example, "1", Duration::ZERO, cx)
             });
         });
     }

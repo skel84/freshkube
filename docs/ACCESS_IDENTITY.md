@@ -6,7 +6,7 @@ Operations mutation lifetime. Access identity and request generation remain
 independent: a same-access refresh can supersede a request without clearing its
 retained data.
 
-Ordinary Kubernetes reads use the opaque `KubeSource.id` derived from core's
+Ordinary Kubernetes reads use the opaque `ClusterSource.id` derived from core's
 `AccessIdentity`; Monitoring's `ClusterSource.id` carries the same key, and
 Observability takes it alone. Resource rows, detail requests, discovery, search and the
 summary share that access boundary. Node selection is independent.
@@ -57,12 +57,12 @@ can carry over to the next. The summary epoch lives on the `Registry` and only
 rises, so a replaced session never repeats a summary `SessionIdentity`.
 
 Object links name their cluster: `ObjectRef::connection` is a
-`ResourceIdentity::connection` (the opaque `KubeSource.id`), and `None` means
+`ResourceIdentity::connection` (the opaque `ClusterSource.id`), and `None` means
 the cluster that is open. `open_object` and the owner-kind read send a link through
 `Pilot::route_link`: one that names another cluster is never opened by name
 here, also while none is open; it activates the listed entry it was made in or
-is refused with a notice (see below). The Kubernetes source (`Pilot::kube_source`) and the
-Talos target are still derived from `Pilot`'s selection, overview and kubeconfig
+is refused with a notice (see below). The Kubernetes source and the Talos target
+(`Pilot::source`) are still derived from `Pilot`'s selection, overview and kubeconfig
 rather than held by the session.
 
 Switching to another entry of the workspace file (the header's Clusters list,

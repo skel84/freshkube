@@ -275,7 +275,7 @@ impl Pilot {
         // Links made in the session being left name an id that ends here,
         // and belong to the entry it was.
         self.registry
-            .retire_connection(self.kube_identity(), &self.active_definition);
+            .retire_connection(self.source().kube_identity, &self.active_definition);
         self.registry.adopt(SessionKey::Implicit);
         self.active_definition = Definition::default();
         self.entry_open = None;
@@ -424,7 +424,11 @@ impl Pilot {
         let Some(connection) = &object.connection else {
             return LinkRoute::Here;
         };
-        if self.kube_identity().is_some_and(|open| open == *connection) {
+        if self
+            .source()
+            .kube_identity
+            .is_some_and(|open| open == *connection)
+        {
             return LinkRoute::Here;
         }
         let refused = || {
@@ -498,7 +502,7 @@ impl Pilot {
         {
             return;
         }
-        let Some(source) = self.kube_source() else {
+        let Some(source) = self.source().kube else {
             return;
         };
         let Some(pending) = self.pending_link.take() else {
@@ -555,7 +559,8 @@ impl Pilot {
         let applied = self.applied.clone();
         let left = std::mem::take(&mut self.active_definition);
         let revision = self.current_revision();
-        self.registry.retire_connection(self.kube_identity(), &left);
+        self.registry
+            .retire_connection(self.source().kube_identity, &left);
         self.pending_link = None;
         self.registry.activate(
             SessionKey::Entry(entry.id.clone()),

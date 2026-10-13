@@ -40,7 +40,7 @@ pub(crate) struct Feed {
 
 impl Dock {
     /// Starts learning tab `id`'s object, dropping any earlier read.
-    pub(super) fn start_feed(&mut self, id: u64, access: KubeAccess, cx: &mut Context<Self>) {
+    pub(super) fn start_feed(&mut self, id: u64, access: ClusterAccess, cx: &mut Context<Self>) {
         let Some(ix) = self.position(id) else {
             return;
         };
@@ -50,7 +50,7 @@ impl Dock {
             ..Feed::default()
         };
         let identity = tab.target.identity.clone();
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             let overview = example::document(&identity, live::now()).map(|doc| doc.overview);
             tab.feed.state = match (&tab.kind, overview) {
                 (TabKind::Pod(_) | TabKind::Shell(_), Some(overview)) => {

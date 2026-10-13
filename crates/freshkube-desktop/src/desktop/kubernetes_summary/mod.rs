@@ -17,7 +17,7 @@ use gpui_kit::{Context, Window};
 use super::Pilot;
 use crate::{
     backend::{OwnedJob, Target},
-    resources::{KubeAccess, example},
+    resources::{ClusterAccess, example},
     screens::WorkloadData,
 };
 
@@ -100,7 +100,7 @@ impl Pilot {
     }
 
     fn ensure_summary_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = self.kube_source() else {
+        let Some(source) = self.source().kube else {
             return;
         };
         if self
@@ -129,7 +129,7 @@ impl Pilot {
             applied_revision: 0,
         });
         self.sync_unread_health(cx);
-        if matches!(source.access, KubeAccess::Example) {
+        if matches!(source.access, ClusterAccess::Example) {
             self.start_fixture_summary(window, cx);
             return;
         }
@@ -320,7 +320,7 @@ type SummaryAnswer = Option<(Arc<Publication>, Result<Arc<WorkloadData>, String>
 fn spawn_summary_driver(
     runtime: &tokio::runtime::Handle,
     session: Session,
-    access: KubeAccess,
+    access: ClusterAccess,
 ) -> (OwnedJob, tokio::sync::watch::Receiver<SummaryAnswer>) {
     let mut publications = session.publications();
     let (sender, receiver) = tokio::sync::watch::channel(None);

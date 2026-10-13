@@ -38,7 +38,7 @@ use super::across::{Across, Alone};
 use super::change::{ChangeEvent, ChangePage, Fetch};
 use super::links::Connections;
 use crate::backend;
-use crate::resources::{KubeAccess, KubeSource, ResourceLink};
+use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use display::{Body, ChangeRow, Display};
 
 /// The page's id prefix: `changes-title`, `changes-row-<key>`, …
@@ -100,7 +100,7 @@ enum Entry {
 
 pub(crate) struct ChangesPage {
     runtime: tokio::runtime::Handle,
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     visible: bool,
     /// Example data never answers, for captures (`FRESHKUBE_FIXTURE_HOLD`).
     hold: bool,
@@ -220,7 +220,7 @@ impl ChangesPage {
     /// The connection the page reads. Another connection drops what was
     /// read, what is in flight and the change shown; the page reads it
     /// again if shown.
-    pub(crate) fn set_source(&mut self, source: Option<KubeSource>, cx: &mut Context<Self>) {
+    pub(crate) fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
         let same = self.source.as_ref().map(|s| &s.id) == source.as_ref().map(|s| &s.id);
         self.source = source;
         if same {
@@ -282,7 +282,7 @@ impl ChangesPage {
     fn is_live(&self) -> bool {
         self.source
             .as_ref()
-            .is_some_and(|source| !matches!(source.access, KubeAccess::Example))
+            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example))
     }
 
     /// What was read is no longer fresh: read the list now if shown.
@@ -330,7 +330,7 @@ impl ChangesPage {
         };
         let request = self.loader.start(source.id.clone());
         match &source.access {
-            KubeAccess::Example => {
+            ClusterAccess::Example => {
                 // Held, it stays in flight, so the page keeps its loading
                 // rows.
                 if self.hold {
@@ -641,14 +641,14 @@ impl ChangesPage {
         let source = self.source.as_ref()?;
         let read = self.loader.data()?;
         Some(match (&source.access, read.example) {
-            (KubeAccess::Example, Some(now)) => Fetch::Example {
+            (ClusterAccess::Example, Some(now)) => Fetch::Example {
                 project: project.to_owned(),
                 freight: freight.to_owned(),
                 now,
                 shape: self.shape,
                 delay: self.example_delay,
             },
-            (KubeAccess::Example, None) => return None,
+            (ClusterAccess::Example, None) => return None,
             (access, _) => Fetch::Live {
                 runtime: self.runtime.clone(),
                 access: access.clone(),

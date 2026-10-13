@@ -727,7 +727,7 @@ impl Pilot {
             },
             ..object
         };
-        let Some(source) = self.kube_source() else {
+        let Some(source) = self.source().kube else {
             self.open_kind(kind, window, cx);
             return;
         };
@@ -760,7 +760,7 @@ impl Pilot {
     /// neither has it.
     fn resolve_local_identity(
         &self,
-        source: &resources::KubeSource,
+        source: &resources::ClusterSource,
         kind: &ResourceKind,
         object: &resources::model::ObjectRef,
         mut identity: resources::model::ResourceIdentity,
@@ -795,7 +795,7 @@ impl Pilot {
     #[allow(clippy::too_many_arguments)]
     fn resolve_identity_remote(
         &mut self,
-        source: resources::KubeSource,
+        source: resources::ClusterSource,
         kind: ResourceKind,
         object: resources::model::ObjectRef,
         mut identity: resources::model::ResourceIdentity,
@@ -818,7 +818,8 @@ impl Pilot {
                 .map_err(|error| error.to_string())
             },
             move |this, cx| {
-                this.kube_source()
+                this.source()
+                    .kube
                     .is_none_or(|source| source.id != connection)
                     || this.resources.read(cx).detail_identity(cx).is_some()
             },

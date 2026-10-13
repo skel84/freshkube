@@ -29,7 +29,7 @@ use super::detail::{
     Detail, DetailTarget, DocumentRead, DocumentView, Follow, LineSelection, Reveal,
 };
 use super::model::ResourceIdentity;
-use super::screen::KubeAccess;
+use super::screen::ClusterAccess;
 use super::{LogsAt, LogsRequest, ResourceLink, ShellRequest, example, live};
 use crate::backend::{self, OwnedJob};
 use crate::monitoring::history::{HistorySource, HistoryView};
@@ -162,7 +162,7 @@ type Job = (OwnedJob, Task<()>);
 pub(crate) struct DetailPane {
     embedded_node: bool,
     runtime: Handle,
-    access: Option<KubeAccess>,
+    access: Option<ClusterAccess>,
     /// Only an active pane, on a visible page, reads.
     active: bool,
     detail: Option<Detail>,
@@ -344,7 +344,7 @@ impl DetailPane {
     }
 
     /// Fresh handles for the same connection.
-    pub(crate) fn set_access(&mut self, access: KubeAccess, cx: &mut Context<Self>) {
+    pub(crate) fn set_access(&mut self, access: ClusterAccess, cx: &mut Context<Self>) {
         self.ports
             .update(cx, |ports, _| ports.set_access(access.clone()));
         self.access = Some(access);
@@ -360,7 +360,7 @@ impl DetailPane {
     pub(crate) fn open(
         &mut self,
         target: DetailTarget,
-        access: KubeAccess,
+        access: ClusterAccess,
         version: &str,
         delay: Duration,
         cx: &mut Context<Self>,
@@ -518,7 +518,7 @@ impl DetailPane {
         self.read_seq += 1;
         let seq = self.read_seq;
         self.follow.begin(cx.background_executor().now());
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             let result = example::document(&target.identity, live::now())
                 .map(DocumentView::new)
                 .ok_or_else(|| {
@@ -658,7 +658,7 @@ impl DetailPane {
         };
         let target = detail.target.clone();
         let identity = target.identity.clone();
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             let events = example::events(&identity, live::now());
             self.apply_events(&identity, seq, EventUpdate::Reset(events), cx);
             return;
@@ -729,7 +729,7 @@ impl DetailPane {
         detail.reveals.insert(key.clone(), Reveal::Reading);
         self.feedback = None;
         cx.notify();
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             let result = example::secret_value(&identity, &key, live::now()).ok_or_else(|| {
                 Failure::new(FailureKind::NotFound, "Example data has no such value")
             });

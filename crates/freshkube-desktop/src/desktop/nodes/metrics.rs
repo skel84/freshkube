@@ -6,7 +6,7 @@ use freshkube_core::resources::{FailureKind, NodeUsage, list_node_usage};
 use freshkube_reads::{Loader, OnShow};
 
 use super::*;
-use crate::{backend, resources::KubeAccess, screens::SCREEN_DEADLINE, state::Request};
+use crate::{backend, resources::ClusterAccess, screens::SCREEN_DEADLINE, state::Request};
 
 const INTERVAL: Duration = Duration::from_secs(15);
 const ON_SHOW: OnShow = OnShow::ReadIfOlder(Duration::ZERO);
@@ -16,7 +16,7 @@ type Usage = HashMap<String, NodeUsage>;
 pub(super) struct Metrics {
     runtime: tokio::runtime::Handle,
     /// The connection the shell last handed Nodes, read while it shows.
-    kube: Option<crate::resources::KubeSource>,
+    kube: Option<crate::resources::ClusterSource>,
     pub(super) source: Option<String>,
     /// The owner needs visibility for source changes and arriving example rows;
     /// the loader hears the same changes through `set_visible`.
@@ -66,7 +66,7 @@ impl Nodes {
     /// Nodes shows.
     pub(super) fn set_metrics_source(
         &mut self,
-        source: Option<crate::resources::KubeSource>,
+        source: Option<crate::resources::ClusterSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -90,7 +90,7 @@ impl Nodes {
     fn sync_metrics(
         &mut self,
         visible: bool,
-        source: Option<crate::resources::KubeSource>,
+        source: Option<crate::resources::ClusterSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -108,7 +108,7 @@ impl Nodes {
         metrics.visible = visible;
         metrics.example = source
             .as_ref()
-            .is_some_and(|source| matches!(source.access, KubeAccess::Example));
+            .is_some_and(|source| matches!(source.access, ClusterAccess::Example));
         self.rebuild_resource_cells();
         cx.notify();
         if visible
@@ -123,7 +123,7 @@ impl Nodes {
     /// then hands ownership to the next read. Hiding also drops that wait.
     fn read_metrics(
         &mut self,
-        source: crate::resources::KubeSource,
+        source: crate::resources::ClusterSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

@@ -115,7 +115,7 @@ fn a_page_in_the_map_hears_the_shell_in_key_order_and_is_heard(cx: &mut TestAppC
     register(&view, handle, &pages, &log, cx);
     let take = || std::mem::take(&mut *log.borrow_mut());
     let context = cx.update(|cx| {
-        let kube = view.read(cx).kube_source();
+        let kube = view.read(cx).source().kube;
         kube.map_or("none".into(), |kube| kube.context)
     });
 

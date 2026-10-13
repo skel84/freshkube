@@ -165,7 +165,7 @@ impl Dock {
                 uid: String::new(),
             };
             // Example objects are found by their whole identity.
-            if let KubeAccess::Example = source.access
+            if let ClusterAccess::Example = source.access
                 && let Some((_, rows)) = example::read(
                     &source.context,
                     &identity.resource,
