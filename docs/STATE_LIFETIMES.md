@@ -21,7 +21,7 @@ Compatible watch/transport reconnects, client-cache eviction and direct `forget(
 
 ## Snapshot transitions
 
-Core's [snapshot.rs](../crates/freshkube-core/src/snapshot.rs) defines `Snapshot<T, I>` and `Request<I>`, with their unit tests. Desktop's [state.rs](../crates/freshkube-desktop/src/state.rs) names them `state::Snapshot<T, I = AppliedConfig>` and `state::Request<I>`, used by the shell and Observability, and wrapped by screen loaders.
+Core's [snapshot.rs](../crates/freshkube-core/src/snapshot.rs) defines `Snapshot<T, I, E = Failure>` and `Request<I>`, with their unit tests. Desktop's [state.rs](../crates/freshkube-desktop/src/state.rs) names them `state::Snapshot<T, I = AppliedConfig, E = Failure>` and `state::Request<I>`, used by the shell and Observability, and wrapped by screen loaders.
 
 | Transition | Data and status |
 | --- | --- |

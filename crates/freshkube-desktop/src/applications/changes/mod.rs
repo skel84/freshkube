@@ -108,7 +108,7 @@ pub(crate) struct ChangesPage {
     /// Example data answers after this, in tests, so a read stays in
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
-    snapshot: Snapshot<Read, String>,
+    snapshot: Snapshot<Read, String, String>,
     pending: bool,
     job: Option<OwnedJob>,
     task: Option<Task<()>>,
@@ -449,7 +449,7 @@ impl ChangesPage {
         let first = self.display.rows.is_empty();
         self.display = Display::new(
             self.snapshot.data().map(|read| &read.changes),
-            self.snapshot.error(),
+            self.snapshot.error().map(String::as_str),
             cluster.as_deref().unwrap_or_default(),
             Utc::now(),
         );

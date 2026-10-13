@@ -141,9 +141,13 @@ impl Pilot {
                 .children(lines),
         );
         let stale = if self.overview.is_stale() {
-            self.overview.error()
+            self.overview.error().map(String::as_str)
         } else if self.registry.active().kubernetes_summary.is_stale() {
-            self.registry.active().kubernetes_summary.error()
+            self.registry
+                .active()
+                .kubernetes_summary
+                .error()
+                .map(String::as_str)
         } else {
             None
         };

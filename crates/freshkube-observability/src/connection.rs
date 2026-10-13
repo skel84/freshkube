@@ -61,20 +61,20 @@ pub(super) struct Live {
     pub range_label: String,
     pub connecting: bool,
     pub error: Option<String>,
-    pub apps: Snapshot<Vec<api::Application>, ReadIdentity>,
-    pub map: Snapshot<api::ServiceMap, ReadIdentity>,
-    pub view: Snapshot<api::AppView, ReadIdentity>,
+    pub apps: Snapshot<Vec<api::Application>, ReadIdentity, String>,
+    pub map: Snapshot<api::ServiceMap, ReadIdentity, String>,
+    pub view: Snapshot<api::AppView, ReadIdentity, String>,
     /// The view's last read was refused, rather than failed.
     pub view_refused: bool,
     /// Coroot refused the last window read around a revision.
     pub revision_refused: bool,
-    pub incidents: Snapshot<Vec<api::Incident>, ReadIdentity>,
-    pub incident: Snapshot<api::IncidentView, ReadIdentity>,
-    pub tracing: Snapshot<api::Tracing, ReadIdentity>,
-    pub trace: Snapshot<api::Tracing, ReadIdentity>,
-    pub profiling: Snapshot<api::Profiling, ReadIdentity>,
-    pub logs: Snapshot<api::LogsView, ReadIdentity>,
-    pub revision: Snapshot<api::RevisionView, ReadIdentity>,
+    pub incidents: Snapshot<Vec<api::Incident>, ReadIdentity, String>,
+    pub incident: Snapshot<api::IncidentView, ReadIdentity, String>,
+    pub tracing: Snapshot<api::Tracing, ReadIdentity, String>,
+    pub trace: Snapshot<api::Tracing, ReadIdentity, String>,
+    pub profiling: Snapshot<api::Profiling, ReadIdentity, String>,
+    pub logs: Snapshot<api::LogsView, ReadIdentity, String>,
+    pub revision: Snapshot<api::RevisionView, ReadIdentity, String>,
     /// What reading the applications and the service map showed of access.
     pub capabilities: [api::Capability; 2],
 }
@@ -662,7 +662,7 @@ mod tests {
             original.clone(), // a new generation with the same identity
         ];
         for changed in changes {
-            let mut state = Snapshot::default();
+            let mut state = Snapshot::<i32, ReadIdentity, String>::default();
             let old = state.begin(original.clone());
             let current = state.begin(changed);
             assert!(!state.apply(&old, Ok(99)));

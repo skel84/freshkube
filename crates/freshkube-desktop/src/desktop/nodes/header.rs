@@ -148,7 +148,10 @@ impl Pilot {
 }
 
 /// A source's state as the status bar words it: `Talos · current 14:02:11`.
-fn source_status<T, I: Clone + Eq>(name: &str, snapshot: &crate::state::Snapshot<T, I>) -> Part {
+fn source_status<T, I: Clone + Eq, E: std::fmt::Display>(
+    name: &str,
+    snapshot: &crate::state::Snapshot<T, I, E>,
+) -> Part {
     let state = if snapshot.is_loading() {
         "loading"
     } else if snapshot.is_stale() {
