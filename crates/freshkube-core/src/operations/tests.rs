@@ -374,7 +374,7 @@ async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
         .await
         .unwrap_err();
     assert_eq!(failure.kind, FailureKind::Forbidden);
-    assert!(failure.message.starts_with("Pod precheck for node-a: "));
+    assert_eq!(failure.message, format!("Pod precheck for node-a: {expected}"));
 
     let mismatched = preview_client(403, Some(node_a("10.9.9.9")));
     let failure = preflight_kubernetes(&mismatched, &targets)
@@ -388,5 +388,8 @@ async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
 
     let failure = blocking_pdbs(&refused).await.unwrap_err();
     assert_eq!(failure.kind, FailureKind::Forbidden);
-    assert!(failure.message.starts_with("PodDisruptionBudget check: "));
+    assert_eq!(
+        failure.message,
+        format!("PodDisruptionBudget check: {expected}")
+    );
 }
