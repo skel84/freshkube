@@ -722,6 +722,6 @@ impl SourceListHost for Pilot {
 
     /// Only the column draws the keyboard's row.
     fn moved(&mut self, cx: &mut Context<Self>) {
-        self.chrome.column.update(cx, |_, cx| cx.notify());
+        self.chrome.parts.column.update(cx, |_, cx| cx.notify());
     }
 }

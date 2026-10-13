@@ -7,7 +7,8 @@ impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
         let _span = crate::perf::span("shell.render");
-        self.fps
+        self.chrome
+            .fps
             .read(cx)
             .frame_started(cx.background_executor().now());
         // `FRESHKUBE_FIRST_FRAME=1` prints when the window first draws,
@@ -134,13 +135,16 @@ impl Render for Pilot {
                     view.set_appearance(Appearance::Dark, window, cx)
                 }),
             )
-            .when(self.menu_platform.app_menu() == AppMenu::Button, |this| {
-                this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
-                    view.open_app_menu(false, window, cx)
-                }))
-            })
+            .when(
+                self.chrome.menu_platform.app_menu() == AppMenu::Button,
+                |this| {
+                    this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
+                        view.open_app_menu(false, window, cx)
+                    }))
+                },
+            )
             .child(
-                self.chrome.header.clone().cached(
+                self.chrome.parts.header.clone().cached(
                     StyleRefinement::default()
                         .w_full()
                         .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
@@ -154,7 +158,7 @@ impl Render for Pilot {
                     .flex_1()
                     .min_h_0()
                     .child(
-                        self.chrome.rail.clone().cached(
+                        self.chrome.parts.rail.clone().cached(
                             StyleRefinement::default()
                                 .w(dp(RAIL_WIDTH))
                                 .h_full()
@@ -163,6 +167,7 @@ impl Render for Pilot {
                     )
                     .children(column.map(|width| {
                         self.chrome
+                            .parts
                             .column
                             .clone()
                             .cached(StyleRefinement::default().w(dp(width)).h_full().flex_none())

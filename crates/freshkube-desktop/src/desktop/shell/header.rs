@@ -390,7 +390,7 @@ impl Pilot {
         let (remaining, ring_visible) = self.countdown_state();
         // The ring is a view of its own: hand it this frame's values without
         // notifying, since it draws right after the shell does.
-        self.countdown.update(cx, |countdown, _| {
+        self.chrome.countdown.update(cx, |countdown, _| {
             countdown.set(remaining, ring_visible);
         });
         let pilot = cx.entity().downgrade();
@@ -405,7 +405,7 @@ impl Pilot {
                     .absolute()
                     .top_0()
                     .left_0()
-                    .child(self.countdown.clone()),
+                    .child(self.chrome.countdown.clone()),
             )
             .child(
                 Button::new("refresh")

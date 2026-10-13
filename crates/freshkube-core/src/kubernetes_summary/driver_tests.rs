@@ -35,6 +35,13 @@ fn api(http_gone: bool, nodes_refused: bool) -> (Client, ApiLog) {
     api_with_delay(http_gone, nodes_refused, Duration::ZERO)
 }
 fn api_with_delay(http_gone: bool, nodes_refused: bool, page_delay: Duration) -> (Client, ApiLog) {
+    api_with_nodes_status(http_gone, nodes_refused.then_some(403), page_delay)
+}
+fn api_with_nodes_status(
+    http_gone: bool,
+    nodes_status: Option<u16>,
+    page_delay: Duration,
+) -> (Client, ApiLog) {
     let log = ApiLog {
         calls: Default::default(),
         streams: Default::default(),
@@ -65,8 +72,8 @@ fn api_with_delay(http_gone: bool, nodes_refused: bool, page_delay: Duration) ->
                 200,
                 full(json!({"major":"1","minor":"32","gitVersion":"v1.32.3"})),
             )
-        } else if kind == "nodes" && nodes_refused {
-            (403, full(status(403)))
+        } else if let Some(code) = nodes_status.filter(|_| kind == "nodes") {
+            (code, full(status(code)))
         } else if uri.contains("watch=true") {
             if kind == "pods" && http_gone && pod_watches == 1 {
                 (410, full(status(410)))
@@ -115,6 +122,66 @@ async fn until(mut predicate: impl FnMut() -> bool) {
 }
 fn session() -> Session {
     Session::new(SessionIdentity::new("synthetic", 1))
+}
+
+async fn summary_list_failure(code: u16, kind: crate::failure::FailureKind, words: &str) {
+    let (client, log) = api_with_nodes_status(false, Some(code), Duration::ZERO);
+    let session = session();
+    let worker = session.clone();
+    let task = tokio::spawn(async move { worker.run(client).await });
+    until(|| {
+        session.derive(chrono::Utc::now()).summary.observations[&Source::Nodes]
+            .failure()
+            .is_some()
+            && log.streams.lock().unwrap().len() == 8
+    })
+    .await;
+    let summary = session.derive(chrono::Utc::now()).summary.clone();
+    let observation = &summary.observations[&Source::Nodes];
+    assert_eq!(observation.failure(), Some(&ObservationFailure::Read(kind)));
+    assert_eq!(observation.message(), Some(words));
+    let unavailable = match (&summary.nodes, code) {
+        (Part::Refused(unavailable), 403) | (Part::Failed(unavailable), 404) => unavailable,
+        other => panic!("a failed list must not become an empty loaded part: {other:?}"),
+    };
+    assert_eq!(unavailable.failure, Some(ObservationFailure::Read(kind)));
+    assert_eq!(unavailable.message, words);
+    assert!(unavailable.last_good.is_none());
+    assert!(
+        summary.pods.is_current(),
+        "one failure must not hide another collection"
+    );
+    assert_eq!(
+        log.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.starts_with("/api/v1/nodes?"))
+            .count(),
+        1
+    );
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_summary_list_403_keeps_the_refusal_kind_and_words() {
+    summary_list_failure(
+        403,
+        crate::failure::FailureKind::Forbidden,
+        "Not allowed to read this collection",
+    )
+    .await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_summary_list_404_keeps_the_not_served_kind_and_words() {
+    summary_list_failure(
+        404,
+        crate::failure::FailureKind::NotFound,
+        "This API is not served",
+    )
+    .await;
 }
 
 #[tokio::test(start_paused = true)]
