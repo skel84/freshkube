@@ -276,7 +276,7 @@ fn main() -> color_eyre::Result<()> {
         );
     }
     let world = Arc::new(World::new(scenario));
-    let address = runtime.block_on(serve(world.clone()))?;
+    let address = runtime.block_on(serve(world.clone(), stress.seconds))?;
     std::fs::create_dir_all(&dir)?;
     let kubeconfig = dir.join("kubeconfig");
     std::fs::write(
@@ -393,8 +393,8 @@ impl World {
     }
 }
 
-async fn serve(world: Arc<World>) -> std::io::Result<std::net::SocketAddr> {
-    summary::start(world.clone(), stress.seconds);
+async fn serve(world: Arc<World>, seconds: u64) -> std::io::Result<std::net::SocketAddr> {
+    summary::start(world.clone(), seconds);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     tokio::spawn(async move {
