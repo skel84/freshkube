@@ -60,9 +60,10 @@ async fn logs_are_read_then_refreshed_with_since_and_a_failure_keeps_them(cx: &m
     // A failed read keeps the lines and offers Retry.
     server.logs_status.store(500, Ordering::SeqCst);
     cx.update(|cx| page.update(cx, |page, cx| page.refresh_current(cx)));
-    let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
-        observed.read(cx).live_logs.failure().is_some()
+    // The banner itself: the page keeps the report away while it reads its
+    // applications again, so the failure can be in before there is a banner.
+    cx.wait_for(handle, std::time::Duration::from_secs(5), |window, _| {
+        window.try_find("obs-logs-failed").is_some()
     })
     .await;
     assert_eq!(retained(cx, &page).len(), 3);
