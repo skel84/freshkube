@@ -1562,8 +1562,8 @@ async fn load_talos_client(
     let path = paths.talosconfig_path.clone();
     let name = target.talos_context.clone();
     let context = tokio::task::spawn_blocking(move || {
-        let config = TalosConfig::load_from(&path)
-            .map_err(|error| Failure::from_talos_formatted(&error))?;
+        let config =
+            TalosConfig::load_from(&path).map_err(|error| Failure::from_talos_formatted(&error))?;
         config
             .get_context(&name)
             .cloned()

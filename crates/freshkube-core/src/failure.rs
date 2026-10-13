@@ -137,6 +137,12 @@ impl Failure {
     }
 
     /// Classifies a Talos error as [`Failure::from_talos`] does but words it
+    /// with the error's own `Display` text.
+    pub fn from_talos_text(error: &TalosError) -> Self {
+        Self::new(Self::from_talos(error).kind, error.to_string())
+    }
+
+    /// Classifies a Talos error as [`Failure::from_talos`] does but words it
     /// with `format_talos_error` whole, status message included.
     pub fn from_talos_formatted(error: &TalosError) -> Self {
         Self::new(

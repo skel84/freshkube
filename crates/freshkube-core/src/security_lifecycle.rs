@@ -14,11 +14,12 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use talos_rs::{
-    DiscoveryMember, EtcdMemberInfo, NodeTimeInfo, TalosClient, TalosConfig, VersionInfo,
-    get_discovery_members_with_retry,
+    DiscoveryMember, EtcdMemberInfo, NodeTimeInfo, TalosClient, TalosConfig, TalosError,
+    VersionInfo, get_discovery_members_with_retry,
 };
 use x509_parser::prelude::*;
 
+use crate::failure::{Failure, FailureKind};
 use crate::{
     HasHealth, HealthIndicator, QuorumState,
     cluster_overview::{
@@ -243,7 +244,7 @@ impl SecurityAuditCollector {
                 SourceSnapshot::Available(identity)
             }
             Err(reason) => SourceSnapshot::Unavailable {
-                reason: reason.clone(),
+                reason: reason.message.clone(),
             },
         };
 
@@ -251,10 +252,10 @@ impl SecurityAuditCollector {
             Ok(config) => audit_talosconfig_certificates(config),
             Err(reason) => (
                 SourceSnapshot::Unavailable {
-                    reason: reason.clone(),
+                    reason: reason.message.clone(),
                 },
                 SourceSnapshot::Unavailable {
-                    reason: reason.clone(),
+                    reason: reason.message.clone(),
                 },
             ),
         };
@@ -262,14 +263,14 @@ impl SecurityAuditCollector {
         let talos_kubeconfig_certificates = match bounded_request(client.kubeconfig()).await {
             Ok(kubeconfig) => audit_kubeconfig_certificates(&kubeconfig),
             Err(error) => SourceSnapshot::Unavailable {
-                reason: format!("Talos did not provide a kubeconfig: {error}"),
+                reason: format!("Talos did not provide a kubeconfig: {}", error.message),
             },
         };
 
         let volume_encryption = match &config {
             Ok(config) => self.collect_volume_encryption(config, target).await,
             Err(reason) => SourceSnapshot::Unavailable {
-                reason: reason.clone(),
+                reason: reason.message.clone(),
             },
         };
 
@@ -341,7 +342,10 @@ impl SecurityAuditCollector {
                 }
             }
             Err(error) => SourceSnapshot::Unavailable {
-                reason: format!("Talos volume status for {target} is unavailable: {error}"),
+                reason: format!(
+                    "Talos volume status for {target} is unavailable: {}",
+                    error.message
+                ),
             },
         }
     }
@@ -527,7 +531,7 @@ impl LifecycleCollector {
         let identity = match &config {
             Ok(config) => SourceSnapshot::Available(ClusterIdentity::from_config(config)),
             Err(reason) => SourceSnapshot::Unavailable {
-                reason: reason.clone(),
+                reason: reason.message.clone(),
             },
         };
 
@@ -593,7 +597,7 @@ impl LifecycleCollector {
 
     async fn collect_talos_discovery(
         &self,
-        config: &Result<TalosConfig, String>,
+        config: &Result<TalosConfig, Failure>,
         versions: Option<&Vec<VersionInfo>>,
     ) -> SourceSnapshot<Vec<DiscoveryRosterEntry>> {
         let Ok(config) = config else {
@@ -667,9 +671,9 @@ impl LifecycleCollector {
         &self,
         client: &TalosClient,
         roster: &BTreeMap<String, RosterNode>,
-        initial_versions: Result<Vec<VersionInfo>, String>,
-        initial_times: Result<Vec<NodeTimeInfo>, String>,
-        config: &Result<TalosConfig, String>,
+        initial_versions: Result<Vec<VersionInfo>, Failure>,
+        initial_times: Result<Vec<NodeTimeInfo>, Failure>,
+        config: &Result<TalosConfig, Failure>,
     ) -> Vec<NodeLifecycleSnapshot> {
         let initial_version_error = initial_versions.as_ref().err().cloned();
         let initial_time_error = initial_times.as_ref().err().cloned();
@@ -701,20 +705,35 @@ impl LifecycleCollector {
                 address: node.address.clone(),
                 machine_type: node.machine_type,
                 version: version.map_or_else(
-                    || unavailable_value("Talos version", initial_version_error.as_deref()),
+                    || {
+                        unavailable_value(
+                            "Talos version",
+                            initial_version_error
+                                .as_ref()
+                                .map(|failure| failure.message.as_str()),
+                        )
+                    },
                     |version| available_string(&version.version, "Talos returned an empty version"),
                 ),
                 platform: version.map_or_else(
-                    || unavailable_value("Talos platform", initial_version_error.as_deref()),
+                    || {
+                        unavailable_value(
+                            "Talos platform",
+                            initial_version_error
+                                .as_ref()
+                                .map(|failure| failure.message.as_str()),
+                        )
+                    },
                     |version| {
                         available_string(&version.platform, "Talos returned an empty platform")
                     },
                 ),
                 time_synchronization: time.map_or_else(
                     || SourceSnapshot::Unavailable {
-                        reason: initial_time_error
-                            .clone()
-                            .unwrap_or_else(|| "No time status was returned for this node".into()),
+                        reason: initial_time_error.as_ref().map_or_else(
+                            || "No time status was returned for this node".into(),
+                            |failure| failure.message.clone(),
+                        ),
                     },
                     |time| {
                         SourceSnapshot::Available(TimeSynchronizationAudit {
@@ -751,7 +770,7 @@ impl LifecycleCollector {
                                     .await
                             }
                             Err(reason) => SourceSnapshot::Unavailable {
-                                reason: reason.clone(),
+                                reason: reason.message.clone(),
                             },
                         }
                     };
@@ -801,26 +820,31 @@ struct RosterNode {
     machine_type: Option<String>,
 }
 
-fn load_talosconfig(path: Option<&Path>) -> Result<TalosConfig, String> {
+fn load_talosconfig(path: Option<&Path>) -> Result<TalosConfig, Failure> {
     match path {
         Some(path) => TalosConfig::load_from(&path.to_path_buf()),
         None => TalosConfig::load_default(),
     }
-    .map_err(|error| format!("Failed to load talosconfig: {error}"))
+    .map_err(|error| {
+        Failure::new(
+            FailureKind::Config,
+            format!("Failed to load talosconfig: {error}"),
+        )
+    })
 }
 
-async fn bounded_request<T, E: std::fmt::Display>(
-    future: impl Future<Output = Result<T, E>>,
-) -> Result<T, String> {
+async fn bounded_request<T>(
+    future: impl Future<Output = Result<T, TalosError>>,
+) -> Result<T, Failure> {
     tokio::time::timeout(std::time::Duration::from_secs(5), future)
         .await
-        .map_err(|_| "Talos read request timed out".to_string())?
-        .map_err(|error| error.to_string())
+        .map_err(|_| Failure::new(FailureKind::Timeout, "Talos read request timed out"))?
+        .map_err(|error| Failure::from_talos_text(&error))
 }
 async fn load_selected_talosconfig(
     path: Option<PathBuf>,
     context: Option<&str>,
-) -> Result<TalosConfig, String> {
+) -> Result<TalosConfig, Failure> {
     let context = context.map(str::to_owned);
     tokio::task::spawn_blocking(move || {
         let mut config = load_talosconfig(path.as_deref())?;
@@ -830,12 +854,15 @@ async fn load_selected_talosconfig(
         Ok(config)
     })
     .await
-    .map_err(|_| "Talosconfig loading worker failed".to_string())?
+    .map_err(|_| Failure::new(FailureKind::Other, "Talosconfig loading worker failed"))?
 }
 
-fn select_talos_context(config: &mut TalosConfig, context: &str) -> Result<(), String> {
+fn select_talos_context(config: &mut TalosConfig, context: &str) -> Result<(), Failure> {
     config.get_context(context).map_err(|_| {
-        format!("Selected Talos context '{context}' is not present in the applied talosconfig")
+        Failure::new(
+            FailureKind::Config,
+            format!("Selected Talos context '{context}' is not present in the applied talosconfig"),
+        )
     })?;
     config.context = context.to_string();
     Ok(())
@@ -1394,7 +1421,7 @@ fn parse_config_hash(bytes: &[u8]) -> Result<String, String> {
 
 async fn collect_etcd_pre_operation(
     client: &TalosClient,
-    members: Result<Vec<EtcdMemberInfo>, String>,
+    members: Result<Vec<EtcdMemberInfo>, Failure>,
 ) -> SourceSnapshot<EtcdPreOperationAudit> {
     let members = match members {
         Ok(members) if members.is_empty() => {
@@ -1405,7 +1432,7 @@ async fn collect_etcd_pre_operation(
         Ok(members) => members,
         Err(error) => {
             return SourceSnapshot::Unavailable {
-                reason: format!("Talos etcd member list is unavailable: {error}"),
+                reason: format!("Talos etcd member list is unavailable: {}", error.message),
             };
         }
     };
@@ -1512,6 +1539,45 @@ fn lifecycle_alerts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The words Lifecycle and Security show for a failed Talos read, pinned
+    /// as they were when the reads carried `String`.
+    #[tokio::test]
+    async fn failed_reads_keep_their_words_and_gain_a_kind() {
+        let down = bounded_request(async {
+            Err::<(), _>(TalosError::Grpc(tonic::Status::unavailable("apid is down")))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(down.kind, FailureKind::Unreachable);
+        assert_eq!(
+            down.message,
+            TalosError::Grpc(tonic::Status::unavailable("apid is down")).to_string()
+        );
+
+        tokio::time::pause();
+        let slow = bounded_request(std::future::pending::<Result<(), TalosError>>()).await;
+        let slow = slow.unwrap_err();
+        assert_eq!(slow.kind, FailureKind::Timeout);
+        assert_eq!(slow.message, "Talos read request timed out");
+
+        let missing = load_talosconfig(Some(Path::new("/nonexistent/acme/talosconfig")))
+            .map(|_| ())
+            .unwrap_err();
+        assert_eq!(missing.kind, FailureKind::Config);
+        assert!(missing.message.starts_with("Failed to load talosconfig: "));
+
+        let mut config = TalosConfig {
+            context: String::new(),
+            contexts: Default::default(),
+        };
+        let absent = select_talos_context(&mut config, "cluster-a").unwrap_err();
+        assert_eq!(absent.kind, FailureKind::Config);
+        assert_eq!(
+            absent.message,
+            "Selected Talos context 'cluster-a' is not present in the applied talosconfig"
+        );
+    }
 
     #[test]
     fn a_reply_from_a_listed_address_is_the_same_node_not_a_new_row() {
