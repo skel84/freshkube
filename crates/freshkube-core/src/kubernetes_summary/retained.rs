@@ -315,6 +315,199 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    use crate::workloads::{HealthState, WorkloadKind};
+    use serde::de::DeserializeOwned;
+    use serde_json::Value;
+
+    fn retained_workload<K: SummaryResource + DeserializeOwned>(object: Value) -> WorkloadInfo {
+        let resource: K = serde_json::from_value(object).unwrap();
+        let Facts::Workload(info) = resource.retain().facts else {
+            panic!("expected workload facts");
+        };
+        *info
+    }
+
+    fn assert_workload<K: SummaryResource + DeserializeOwned>(
+        kind: WorkloadKind,
+        status: Value,
+        desired: i32,
+        ready: i32,
+        health: HealthState,
+        issues: &[&str],
+    ) {
+        assert_eq!(
+            retained_workload::<K>(json!({
+                "metadata": {"name": "app", "namespace": "example"},
+                "spec": {"replicas": 9, "selector": {}, "template": {}, "serviceName": "app"},
+                "status": status,
+            })),
+            WorkloadInfo {
+                name: "app".into(),
+                namespace: "example".into(),
+                kind,
+                ready,
+                desired,
+                health,
+                issues: issues.iter().map(|issue| (*issue).into()).collect(),
+            }
+        );
+    }
+
+    fn assert_workload_defaults<K: SummaryResource + DeserializeOwned>(kind: WorkloadKind) {
+        assert_eq!(
+            retained_workload::<K>(json!({})),
+            WorkloadInfo {
+                name: "unknown".into(),
+                namespace: "default".into(),
+                kind,
+                ready: 0,
+                desired: 0,
+                health: HealthState::Healthy,
+                issues: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn deployment_conversion_preserves_replica_health_and_defaults() {
+        let kind = WorkloadKind::Deployment;
+        for (status, desired, ready, health, issues) in [
+            (Value::Null, 0, 0, HealthState::Healthy, vec![]),
+            (json!({}), 0, 0, HealthState::Healthy, vec![]),
+            (
+                json!({"replicas": 0, "readyReplicas": 0}),
+                0,
+                0,
+                HealthState::Healthy,
+                vec![],
+            ),
+            (
+                json!({"replicas": 3, "readyReplicas": 3, "availableReplicas": 3}),
+                3,
+                3,
+                HealthState::Healthy,
+                vec![],
+            ),
+            (
+                json!({"replicas": 3}),
+                3,
+                0,
+                HealthState::Failing,
+                vec!["No pods ready (0/3)"],
+            ),
+            (
+                json!({"replicas": 3, "readyReplicas": 2, "availableReplicas": 2}),
+                3,
+                2,
+                HealthState::Degraded,
+                vec!["Partial: 2/3 ready"],
+            ),
+            (
+                json!({"replicas": 3, "readyReplicas": 3}),
+                3,
+                3,
+                HealthState::Healthy,
+                vec![],
+            ),
+            (
+                json!({"replicas": 3, "readyReplicas": 4, "availableReplicas": 2}),
+                3,
+                4,
+                HealthState::Healthy,
+                vec![],
+            ),
+        ] {
+            assert_workload::<Deployment>(kind, status, desired, ready, health, &issues);
+        }
+        assert_workload_defaults::<Deployment>(kind);
+    }
+
+    #[test]
+    fn statefulset_conversion_preserves_replica_health_and_defaults() {
+        let kind = WorkloadKind::StatefulSet;
+        for (status, desired, ready, health, issues) in [
+            (Value::Null, 0, 0, HealthState::Healthy, vec![]),
+            (json!({"replicas": 0}), 0, 0, HealthState::Healthy, vec![]),
+            (
+                json!({"replicas": 3, "readyReplicas": 3}),
+                3,
+                3,
+                HealthState::Healthy,
+                vec![],
+            ),
+            (
+                json!({"replicas": 3}),
+                3,
+                0,
+                HealthState::Failing,
+                vec!["No pods ready (0/3)"],
+            ),
+            (
+                json!({"replicas": 3, "readyReplicas": 2}),
+                3,
+                2,
+                HealthState::Degraded,
+                vec!["Partial: 2/3 ready"],
+            ),
+            (
+                json!({"replicas": 3, "readyReplicas": 4}),
+                3,
+                4,
+                HealthState::Healthy,
+                vec![],
+            ),
+        ] {
+            assert_workload::<StatefulSet>(kind, status, desired, ready, health, &issues);
+        }
+        assert_workload_defaults::<StatefulSet>(kind);
+    }
+
+    #[test]
+    fn daemonset_conversion_preserves_replica_health_and_defaults() {
+        let kind = WorkloadKind::DaemonSet;
+        for (status, desired, ready, health, issues) in [
+            (Value::Null, 0, 0, HealthState::Healthy, vec![]),
+            (
+                json!({"desiredNumberScheduled": 0, "numberReady": 0, "currentNumberScheduled": 0, "numberMisscheduled": 0}),
+                0,
+                0,
+                HealthState::Healthy,
+                vec![],
+            ),
+            (
+                json!({"desiredNumberScheduled": 3, "numberReady": 3, "currentNumberScheduled": 3, "numberMisscheduled": 0}),
+                3,
+                3,
+                HealthState::Healthy,
+                vec![],
+            ),
+            (
+                json!({"desiredNumberScheduled": 3, "numberReady": 0, "currentNumberScheduled": 3, "numberMisscheduled": 0}),
+                3,
+                0,
+                HealthState::Failing,
+                vec!["No pods ready (0/3)"],
+            ),
+            (
+                json!({"desiredNumberScheduled": 3, "numberReady": 2, "currentNumberScheduled": 3, "numberMisscheduled": 0}),
+                3,
+                2,
+                HealthState::Degraded,
+                vec!["Partial: 2/3 ready"],
+            ),
+            (
+                json!({"desiredNumberScheduled": 3, "numberReady": 4, "currentNumberScheduled": 3, "numberMisscheduled": 0}),
+                3,
+                4,
+                HealthState::Healthy,
+                vec![],
+            ),
+        ] {
+            assert_workload::<DaemonSet>(kind, status, desired, ready, health, &issues);
+        }
+        assert_workload_defaults::<DaemonSet>(kind);
+    }
+
     #[test]
     fn diagnosed_reason_strings_are_counted_against_the_pod_byte_limit() {
         let reason = "example".repeat(1024);
