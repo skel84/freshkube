@@ -32,6 +32,7 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use freshkube_core::logs::{LogEvent, ServiceId};
@@ -39,7 +40,8 @@ use freshkube_core::pluralize;
 use freshkube_core::resources::{
     ContainerRole, Failure, FailureKind, PodSelector, WorkloadPod, WorkloadPods, follow_pods,
 };
-use gpui_kit::{AnyElement, Context, Pixels, SharedString, Task, Window};
+use freshkube_reads::{Pace, Watch};
+use gpui_kit::{AnyElement, Context, Pixels, SharedString, Window};
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 
@@ -49,6 +51,7 @@ use super::streams::{Clock, StreamKey, StreamReads, StreamSet, StreamSource};
 #[cfg(test)]
 use super::streams::{EXAMPLE_INTERVAL, Jitter, RETRY_FIRST, RETRY_JITTER, RETRY_MAX, StreamState};
 use super::{Columns, DownloadLines, LogSource, LogView};
+#[cfg(feature = "stress")]
 use crate::backend::OwnedJob;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{KubeAccess, example};
@@ -66,6 +69,14 @@ pub(crate) type WorkloadLogView = LogView<WorkloadLogs>;
 pub(crate) use super::streams::MAX_STREAMS;
 /// Lines from the end each container's log starts with.
 const TAIL: i64 = 100;
+
+/// The pods' watch hands over one listing at a time: the work keeps only
+/// the latest while one waits, so a busy watch coalesces.
+const POD_PACE: Pace = Pace {
+    capacity: 1,
+    most: 1,
+    every: Duration::ZERO,
+};
 /// Where the pod watch stands.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum PodsState {
@@ -120,10 +131,9 @@ pub(crate) struct WorkloadLogs {
     /// Pods seen so far, by name and uid, to tell which joined and left.
     /// The first listing of a workload marks none.
     known: Option<BTreeSet<(String, String)>>,
-    /// Advances whenever the watch is dropped; its deliveries carry it.
-    epoch: u64,
-    watch_job: Option<OwnedJob>,
-    watch_delivery: Option<Task<()>>,
+    /// The pods' watch, for the workload and selector it lists by; an
+    /// older watch's listings are dropped.
+    pub(super) pod_watch: Watch<WorkloadPods, (ResourceIdentity, String)>,
     /// A `stress` run's flood into the feed.
     #[cfg(feature = "stress")]
     stress: Option<OwnedJob>,
@@ -188,9 +198,7 @@ impl WorkloadLogs {
             pods_state: PodsState::Idle,
             pods: Vec::new(),
             known: None,
-            epoch: 0,
-            watch_job: None,
-            watch_delivery: None,
+            pod_watch: Watch::default(),
             #[cfg(feature = "stress")]
             stress: None,
             left_out: 0,
@@ -223,14 +231,12 @@ impl WorkloadLogs {
 
     /// Whether the watch is open or about to be.
     pub(super) fn watching(&self) -> bool {
-        self.watch_job.is_some() || self.watch_delivery.is_some()
+        self.pod_watch.is_running()
     }
 
     /// Drops the watch and every stream, keeping how far each was read.
     fn drop_all(&mut self) {
-        self.epoch += 1;
-        self.watch_job = None;
-        self.watch_delivery = None;
+        self.pod_watch.stop();
         self.reads.drop_streams();
         // Nothing is read, so the cap leaves nothing out until the pods
         // are listed again.
@@ -811,9 +817,12 @@ trait Streams: Sized + 'static {
     /// Reads every refused stream again, as Retry asks.
     fn retry_refused(&mut self, cx: &mut Context<Self>);
 
-    /// Takes the pods as last seen by the watch of `epoch`. Returns false
-    /// when that watch is gone, which ends its delivery.
-    fn apply_pods(&mut self, epoch: u64, pods: WorkloadPods, cx: &mut Context<Self>) -> bool;
+    /// Takes the latest of the current watch's listings; its watch drops
+    /// an older one's.
+    fn apply_listings(&mut self, listings: Vec<WorkloadPods>, cx: &mut Context<Self>);
+
+    /// Takes the pods as last seen by the watch.
+    fn apply_pods(&mut self, pods: WorkloadPods, cx: &mut Context<Self>);
 }
 
 impl Streams for WorkloadLogView {
@@ -885,14 +894,20 @@ impl Streams for WorkloadLogView {
         source.pods_state = PodsState::Finding;
         source.describe();
         cx.notify();
-        let epoch = self.source().epoch;
+        let identity = (workload.clone(), selector.clone());
         if let KubeAccess::Example = access {
-            // Example pods don't come and go; the watch counts as running.
-            self.source_mut().watch_delivery = Some(Task::ready(()));
+            // Example pods don't come and go: the watch is open, and
+            // nothing writes into it.
+            self.source_mut().pod_watch.open(
+                identity,
+                POD_PACE,
+                |view: &mut Self| &mut view.source_mut().pod_watch,
+                Self::apply_listings,
+                cx,
+            );
             let now = self.source().reads.clock.now(cx).timestamp();
             let pods = example::workload_pods(&workload, &selector, now);
             self.apply_pods(
-                epoch,
                 WorkloadPods {
                     listed: true,
                     pods,
@@ -904,36 +919,47 @@ impl Streams for WorkloadLogView {
             stress_flood(self, cx);
             return;
         }
-        let (sender, mut receiver) = watch::channel(WorkloadPods::default());
         let namespace = workload.namespace.clone();
-        let job = self.source().reads.runtime.spawn(async move {
-            match access.client().await {
-                Ok(client) => {
-                    follow_pods(client, namespace, PodSelector::Labels(selector), sender).await
-                }
-                Err(error) => {
-                    access.forget();
-                    sender.send_modify(|pods| {
-                        pods.failure = Some(Failure::new(FailureKind::Other, error))
-                    });
-                    // Keep the sender until the receiver has seen it.
-                    sender.closed().await;
-                }
-            }
-        });
         let source = self.source_mut();
-        source.watch_job = Some(OwnedJob::new(job));
-        source.watch_delivery = Some(cx.spawn(async move |weak, cx| {
-            while receiver.changed().await.is_ok() {
-                let pods = receiver.borrow_and_update().clone();
-                let applied = weak
-                    .update(cx, |view, cx| view.apply_pods(epoch, pods, cx))
-                    .unwrap_or(false);
-                if !applied {
-                    return;
-                }
-            }
-        }));
+        source.pod_watch.start(
+            identity,
+            &source.reads.runtime,
+            POD_PACE,
+            move |sender| async move {
+                // follow_pods keeps only the latest listing; each is passed
+                // on once the last was taken, so a busy watch coalesces as
+                // before.
+                let (latest, mut listings) = watch::channel(WorkloadPods::default());
+                let follow = async move {
+                    match access.client().await {
+                        Ok(client) => {
+                            follow_pods(client, namespace, PodSelector::Labels(selector), latest)
+                                .await
+                        }
+                        Err(error) => {
+                            access.forget();
+                            latest.send_modify(|pods| {
+                                pods.failure = Some(Failure::new(FailureKind::Other, error))
+                            });
+                            // Keep the watch open, as a refused one stays.
+                            latest.closed().await;
+                        }
+                    }
+                };
+                let forward = async move {
+                    while listings.changed().await.is_ok() {
+                        let pods = listings.borrow_and_update().clone();
+                        if sender.send(pods).await.is_err() {
+                            return;
+                        }
+                    }
+                };
+                tokio::join!(follow, forward);
+            },
+            |view: &mut Self| &mut view.source_mut().pod_watch,
+            Self::apply_listings,
+            cx,
+        );
     }
 
     fn retry(&mut self, cx: &mut Context<Self>) {
@@ -957,15 +983,13 @@ impl Streams for WorkloadLogView {
         cx.notify();
     }
 
-    fn apply_pods(
-        &mut self,
-        epoch: u64,
-        mut snapshot: WorkloadPods,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if epoch != self.source().epoch {
-            return false;
+    fn apply_listings(&mut self, listings: Vec<WorkloadPods>, cx: &mut Context<Self>) {
+        if let Some(latest) = listings.into_iter().next_back() {
+            self.apply_pods(latest, cx);
         }
+    }
+
+    fn apply_pods(&mut self, mut snapshot: WorkloadPods, cx: &mut Context<Self>) {
         if let Some(failure) = snapshot.failure.take() {
             // The streams read on; a watch that can retry lists again by
             // itself, and its next listing says Following again.
@@ -973,10 +997,10 @@ impl Streams for WorkloadLogView {
             source.pods_state = PodsState::Failed(failure);
             source.describe();
             cx.notify();
-            return true;
+            return;
         }
         if !snapshot.listed {
-            return true;
+            return;
         }
         snapshot.pods.sort_by(|left, right| {
             right
@@ -1084,7 +1108,6 @@ impl Streams for WorkloadLogView {
         self.clear_shown();
         self.source_mut().describe();
         cx.notify();
-        true
     }
 }
 

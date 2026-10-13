@@ -92,16 +92,14 @@ fn show_fed(view: &Entity<WorkloadLogView>, workload: &ResourceIdentity, cx: &mu
 
 fn feed(view: &Entity<WorkloadLogView>, pods: Vec<WorkloadPod>, cx: &mut App) {
     view.update(cx, |view, cx| {
-        let epoch = view.source().epoch;
-        assert!(view.apply_pods(
-            epoch,
+        view.apply_pods(
             WorkloadPods {
                 listed: true,
                 pods,
                 failure: None,
             },
             cx,
-        ));
+        );
     });
 }
 
@@ -1061,10 +1059,8 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
     let api = deployment("api");
     cx.update_window(handle, |_, window, cx| {
         show(&view, &api, cx);
-        let epoch = view.read(cx).source().epoch;
         view.update(cx, |view, cx| {
             view.apply_pods(
-                epoch,
                 WorkloadPods {
                     listed: false,
                     pods: Vec::new(),
@@ -1087,15 +1083,25 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
             .unwrap()
             .to_owned();
         assert!(failed.contains("pods is forbidden"), "{failed}");
-
+    })
+    .unwrap();
+    // A listing from the watch before Retry lands nowhere.
+    let older = cx.update(|cx| view.read(cx).source().pod_watch.sender().unwrap());
+    cx.update_window(handle, |_, window, cx| {
         window.click("workload-logs-retry", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).source().pods_state, PodsState::Watching);
         assert!(window.try_find("workload-logs-failed").is_none());
-        // An older watch's answer is dropped.
-        view.update(cx, |view, cx| {
-            assert!(!view.apply_pods(epoch, WorkloadPods::default(), cx));
-        });
+    })
+    .unwrap();
+    let _ = older.try_send(WorkloadPods {
+        listed: false,
+        pods: Vec::new(),
+        failure: Some(Failure::new(FailureKind::Forbidden, "older".to_owned())),
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(view.read(cx).source().pods_state, PodsState::Watching);
         assert!(
             view.read(cx)
                 .source()
@@ -1104,8 +1110,7 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
                 .values()
                 .any(|stream| stream.state == StreamState::Streaming)
         );
-    })
-    .unwrap();
+    });
 }
 
 /// Chips past the rows' room end in "+N", which lists every container
