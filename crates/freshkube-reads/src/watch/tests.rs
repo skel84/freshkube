@@ -465,6 +465,24 @@ fn a_sender_taken_before_starting_again_never_lands(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn a_sender_used_right_after_a_restart_for_the_same_identity_never_lands(
+    cx: &mut TestAppContext,
+) {
+    let (runtime, screen) = mount(cx);
+    let _old = start(&screen, &runtime, "a", cx);
+    let old = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    let _new = start(&screen, &runtime, "a", cx);
+    // The old channel still takes it: dropping the old delivery keeps it
+    // out, and so would the generation, since the identity is the same.
+    old.try_send(1).unwrap();
+    let new = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    new.try_send(2).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [2]);
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [2]);
+}
+
+#[gpui_kit::test]
 fn a_taken_sender_keeps_the_stream_open_and_the_watch_does_not(cx: &mut TestAppContext) {
     let (runtime, screen) = mount(cx);
     let feed = start(&screen, &runtime, "a", cx);
