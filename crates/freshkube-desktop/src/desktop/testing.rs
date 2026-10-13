@@ -126,8 +126,10 @@ pub(crate) fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App,
         window.render_frame(cx);
     }
     expand_healthy_nodes(window, cx);
-    let id = view.read(cx).node_workspace.read(cx).rows[ix].id.clone();
-    window.click(id, cx);
+    // A row's click reaches the shell as an event, after this update; open
+    // the node as that event would.
+    let key = view.read(cx).node_workspace.read(cx).rows[ix].key.clone();
+    view.update(cx, |view, cx| view.open_node(key, window, cx));
     window.render_frame(cx);
     if page == Page::Nodes {
         view.update(cx, |view, cx| view.show_node_tab(tab, window, cx));
@@ -155,7 +157,7 @@ pub(crate) fn open_node_tab(
     area(window, cx, "nav-nodes");
     if !view.read(cx).node_workspace.read(cx).open {
         expand_healthy_nodes(window, cx);
-        let id = view
+        let key = view
             .read(cx)
             .node_workspace
             .read(cx)
@@ -163,9 +165,10 @@ pub(crate) fn open_node_tab(
             .iter()
             .find(|row| row.key.talos.as_ref() == Some(&name))
             .unwrap()
-            .id
+            .key
             .clone();
-        window.click(id, cx);
+        // As the row's click would, through the shell.
+        view.update(cx, |view, cx| view.open_node(key, window, cx));
         window.render_frame(cx);
     }
     if window.try_find(tab.id()).is_some_and(|button| {
