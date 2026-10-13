@@ -133,7 +133,11 @@ impl SummaryResource for Pod {
         let bytes = facts.node.as_ref().map_or(0, String::capacity)
             + facts.phase.capacity()
             + match &facts.issue {
-                Some(PodIssue::Unknown(reason)) => reason.capacity(),
+                Some(
+                    PodIssue::Unknown(reason)
+                    | PodIssue::FailingReason(reason)
+                    | PodIssue::WaitingReason(reason),
+                ) => reason.capacity(),
                 _ => 0,
             };
         RetainedObject::new(self, Facts::Pod(facts), bytes)
@@ -303,5 +307,35 @@ impl SummaryResource for Event {
             .map(|value| value.as_ref().map_or(0, String::capacity))
             .sum::<usize>();
         RetainedObject::new(self, Facts::Event(Box::new(event)), bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn diagnosed_reason_strings_are_counted_against_the_pod_byte_limit() {
+        let reason = "example".repeat(1024);
+        for status in [
+            json!({"phase":"Failed","reason":reason}),
+            json!({"phase":"Pending","initContainerStatuses":[{
+                "name":"migrate","image":"example","imageID":"example",
+                "ready":false,"restartCount":0,"state":{"waiting":{"reason":reason}}
+            }]}),
+        ] {
+            let pod: Pod = serde_json::from_value(json!({
+                "metadata":{"name":"app","namespace":"example","uid":"app","resourceVersion":"1"},
+                "status":status
+            }))
+            .unwrap();
+            let retained = pod.retain();
+            assert!(retained.bytes >= reason.len());
+            assert_eq!(
+                retained.validate(Source::Pods),
+                Err(ObservationFailure::Capacity)
+            );
+        }
     }
 }
