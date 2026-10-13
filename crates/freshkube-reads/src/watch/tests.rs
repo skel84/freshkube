@@ -4,7 +4,6 @@ use gpui_kit::{AppContext, Entity, TestAppContext};
 use tokio::{runtime::Runtime, sync::mpsc};
 
 use super::{Pace, Ticket, Watch};
-use crate::OnShow;
 
 const PACE: Pace = Pace {
     capacity: 16,
@@ -191,9 +190,8 @@ fn hiding_stops_the_stream_and_keeps_what_it_sent(cx: &mut TestAppContext) {
     let feed = start(&screen, &runtime, "a", cx);
     runtime.block_on(feed.send(1)).unwrap();
     until(cx, |cx| seen(&screen, cx) == [1]);
-    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
-    screen.update(cx, |screen, cx| {
-        assert!(!screen.watch.set_visible(false, policy, cx));
+    screen.update(cx, |screen, _| {
+        assert!(!screen.watch.set_visible(false));
         assert!(!screen.watch.is_visible());
     });
     until(cx, |_| feed.is_closed());
@@ -204,47 +202,26 @@ fn hiding_stops_the_stream_and_keeps_what_it_sent(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn showing_starts_again_past_the_threshold_and_not_before(cx: &mut TestAppContext) {
+fn showing_starts_again_whatever_the_age(cx: &mut TestAppContext) {
     let (runtime, screen) = mount(cx);
     let _feed = start(&screen, &runtime, "a", cx);
-    let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
-    screen.update(cx, |screen, cx| screen.watch.set_visible(false, policy, cx));
-    cx.executor().advance_clock(Duration::from_secs(29));
-    screen.update(cx, |screen, cx| {
-        assert!(!screen.watch.set_visible(true, policy, cx), "not yet");
-        screen.watch.set_visible(false, policy, cx);
-    });
-    cx.executor().advance_clock(Duration::from_secs(1));
-    screen.update(cx, |screen, cx| {
-        assert!(
-            screen.watch.set_visible(true, policy, cx),
-            "30 s since it hid"
-        );
+    // Shown again at once: a stopped stream holds nothing fresh.
+    screen.update(cx, |screen, _| {
+        screen.watch.set_visible(false);
+        assert!(screen.watch.set_visible(true));
+        assert!(!screen.watch.set_visible(true), "already shown");
     });
 
-    // Started again, it hides and shows anew; one that was stopped before
-    // it hid isn't started again.
+    // One the owner didn't start again isn't asked for twice, and one
+    // stopped before it hid isn't started again.
+    screen.update(cx, |screen, _| {
+        screen.watch.set_visible(false);
+        assert!(!screen.watch.set_visible(true));
+    });
     let _feed = start(&screen, &runtime, "a", cx);
-    screen.update(cx, |screen, cx| {
+    screen.update(cx, |screen, _| {
         screen.watch.stop();
-        screen.watch.set_visible(false, policy, cx);
-    });
-    cx.executor().advance_clock(Duration::from_secs(60));
-    screen.update(cx, |screen, cx| {
-        assert!(!screen.watch.set_visible(true, policy, cx))
-    });
-}
-
-#[gpui_kit::test]
-fn never_starts_again_on_showing(cx: &mut TestAppContext) {
-    let (runtime, screen) = mount(cx);
-    let _feed = start(&screen, &runtime, "a", cx);
-    screen.update(cx, |screen, cx| {
-        screen.watch.set_visible(false, OnShow::Never, cx)
-    });
-    cx.executor().advance_clock(Duration::from_secs(3_600));
-    screen.update(cx, |screen, cx| {
-        assert!(!screen.watch.set_visible(true, OnShow::Never, cx));
-        assert!(!screen.watch.is_running());
+        screen.watch.set_visible(false);
+        assert!(!screen.watch.set_visible(true));
     });
 }

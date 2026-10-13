@@ -18,8 +18,6 @@ use freshkube_core::job::OwnedJob;
 use gpui_kit::*;
 use tokio::{runtime::Handle, sync::mpsc};
 
-use crate::OnShow;
-
 /// How a watch hands what its stream sends to the owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pace {
@@ -53,9 +51,8 @@ pub struct Watch<T, I> {
     revision: u64,
     /// Whether the owner shows it; see [`set_visible`](Self::set_visible).
     visible: bool,
-    /// When hiding stopped a running stream, by the executor's clock: what
-    /// it sent was current until then.
-    hidden_at: Option<Instant>,
+    /// Whether hiding stopped a running stream, which showing starts again.
+    stopped_by_hiding: bool,
     items: PhantomData<fn(T)>,
 }
 
@@ -68,7 +65,7 @@ impl<T, I> Default for Watch<T, I> {
             task: None,
             revision: 0,
             visible: true,
-            hidden_at: None,
+            stopped_by_hiding: false,
             items: PhantomData,
         }
     }
@@ -95,7 +92,7 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         Fut: Future<Output = ()> + Send + 'static,
     {
         self.stop();
-        self.hidden_at = None;
+        self.stopped_by_hiding = false;
         self.identity = Some(identity.clone());
         let ticket = Ticket {
             identity,
@@ -202,25 +199,26 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
     }
 
     /// Hiding stops a running stream and keeps what it sent as last known;
-    /// showing again returns whether the owner should start it again, as
-    /// `on_show` says, by how long ago hiding stopped it. A stream that
-    /// wasn't running when it hid isn't started again. Returns false when
-    /// nothing changed.
-    pub fn set_visible(&mut self, visible: bool, on_show: OnShow, cx: &App) -> bool {
+    /// showing again returns whether the owner should start it again, which
+    /// it should whenever hiding stopped it, however recently: a stopped
+    /// stream holds nothing fresh. A stream that wasn't running when it hid
+    /// isn't started again. Returns false when nothing changed.
+    ///
+    /// An owner whose stream reads on while its page hides, as a dock's log
+    /// tab does, never calls this.
+    pub fn set_visible(&mut self, visible: bool) -> bool {
         if self.visible == visible {
             return false;
         }
         self.visible = visible;
-        let now = cx.background_executor().now();
         if !visible {
             if self.is_running() {
                 self.stop();
-                self.hidden_at = Some(now);
+                self.stopped_by_hiding = true;
             }
             return false;
         }
-        self.hidden_at
-            .is_some_and(|since| on_show.reads_again(Some(since), now))
+        std::mem::take(&mut self.stopped_by_hiding)
     }
 
     /// Whether the owner shows it, as [`set_visible`](Self::set_visible)
