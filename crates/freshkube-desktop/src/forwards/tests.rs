@@ -166,6 +166,13 @@ fn fetch(port: u16) -> std::io::Result<String> {
     Ok(answer)
 }
 
+/// A loopback port nothing listens on, from the system's own pick, so that
+/// no other test is asked for it.
+fn free_port() -> u16 {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.local_addr().unwrap().port()
+}
+
 /// Whether nothing listens on `port` within a second of real time: a stop
 /// returns before Tokio drops the listener, and the test clock doesn't
 /// wait for it.
@@ -212,10 +219,14 @@ async fn a_pod_forward_answers_on_its_port_and_the_status_bar_counts_it(cx: &mut
 async fn stop_frees_the_port_and_start_again_takes_it_back(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let forwards = mount(cx);
+    // A port the system picked: tests running side by side all ask for the
+    // automatic port of 8080, and one of them could take it between Stop
+    // and Start again.
+    let port = free_port();
     let id = forwards
-        .start(cx, forwards.spec("pods", "grafana", 8080, None))
+        .start(cx, forwards.spec("pods", "grafana", 8080, Some(port)))
         .await;
-    let port = forwards.local_port(cx, id);
+    assert_eq!(forwards.local_port(cx, id), port);
     forwards.click(cx, "forwards");
     forwards.click(cx, &format!("forward-{id}-stop"));
     assert_eq!(forwards.phase(cx, id), Phase::Ended);
