@@ -4,8 +4,6 @@
 //! list request makes only that resource kind unavailable: successful lists
 //! remain in the returned snapshot so a frontend can still show useful state.
 
-use std::collections::HashMap;
-
 use crate::{
     constants::HIGH_RESTART_THRESHOLD,
     indicators::{HasHealth, HealthIndicator},
@@ -76,6 +74,64 @@ pub struct WorkloadInfo {
     pub issues: Vec<String>,
 }
 
+impl WorkloadInfo {
+    pub(crate) fn from_deployment(deployment: &Deployment) -> Self {
+        let namespace = resource_namespace(&deployment.metadata.namespace);
+        let status = deployment.status.as_ref();
+        let desired = status.and_then(|status| status.replicas).unwrap_or(0);
+        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
+        let available = status
+            .and_then(|status| status.available_replicas)
+            .unwrap_or(0);
+        let (health, issues) = classify_workload_health(ready, desired, available);
+        Self {
+            name: resource_name(&deployment.metadata.name),
+            namespace,
+            kind: WorkloadKind::Deployment,
+            ready,
+            desired,
+            health,
+            issues,
+        }
+    }
+
+    pub(crate) fn from_statefulset(statefulset: &StatefulSet) -> Self {
+        let namespace = resource_namespace(&statefulset.metadata.namespace);
+        let status = statefulset.status.as_ref();
+        let desired = status.map(|status| status.replicas).unwrap_or(0);
+        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
+        let (health, issues) = classify_workload_health(ready, desired, ready);
+        Self {
+            name: resource_name(&statefulset.metadata.name),
+            namespace,
+            kind: WorkloadKind::StatefulSet,
+            ready,
+            desired,
+            health,
+            issues,
+        }
+    }
+
+    pub(crate) fn from_daemonset(daemonset: &DaemonSet) -> Self {
+        let namespace = resource_namespace(&daemonset.metadata.namespace);
+        let status = daemonset.status.as_ref();
+        let desired = status
+            .map(|status| status.desired_number_scheduled)
+            .unwrap_or(0);
+        let ready = status.map(|status| status.number_ready).unwrap_or(0);
+        let (health, issues) = classify_workload_health(ready, desired, ready);
+        Self {
+            name: resource_name(&daemonset.metadata.name),
+            namespace,
+            kind: WorkloadKind::DaemonSet,
+            ready,
+            desired,
+            health,
+            issues,
+        }
+    }
+}
+
 impl HasHealth for WorkloadInfo {
     fn health(&self) -> HealthIndicator {
         self.health.health()
@@ -92,6 +148,11 @@ pub enum PodIssue {
     OOMKilled,
     Error,
     HighRestarts(i32),
+    NotReady,
+    /// A failure reason diagnosed from current pod or container evidence.
+    FailingReason(String),
+    /// A scheduling or startup reason diagnosed from current evidence.
+    WaitingReason(String),
     /// A container state that Kubernetes reports but this collector does not
     /// classify as one of the known failure reasons.
     Unknown(String),
@@ -108,6 +169,8 @@ impl PodIssue {
             Self::OOMKilled => "OOMKilled",
             Self::Error => "Error",
             Self::HighRestarts(_) => "High Restarts",
+            Self::NotReady => "Not ready",
+            Self::FailingReason(reason) | Self::WaitingReason(reason) => reason,
             Self::Unknown(_) => "Unknown",
         }
     }
@@ -126,9 +189,10 @@ impl PodIssue {
             | Self::ImagePullBackOff
             | Self::ErrImagePull
             | Self::OOMKilled
-            | Self::Error => HealthState::Failing,
-            Self::Pending => HealthState::Pending,
-            Self::HighRestarts(_) | Self::Unknown(_) => HealthState::Degraded,
+            | Self::Error
+            | Self::FailingReason(_) => HealthState::Failing,
+            Self::Pending | Self::WaitingReason(_) => HealthState::Pending,
+            Self::HighRestarts(_) | Self::Unknown(_) | Self::NotReady => HealthState::Degraded,
         }
     }
 }
@@ -167,16 +231,6 @@ pub struct NamespaceSummary {
     pub problem_pods: Vec<PodInfo>,
     pub total_workloads: usize,
     pub healthy_workloads: usize,
-}
-
-impl NamespaceSummary {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            health: HealthState::Healthy,
-            ..Self::default()
-        }
-    }
 }
 
 impl HasHealth for NamespaceSummary {
@@ -276,161 +330,12 @@ impl WorkloadCollectionOutcome {
     }
 }
 
-pub(crate) fn build_snapshot(
-    target: String,
-    deployments: Vec<Deployment>,
-    statefulsets: Vec<StatefulSet>,
-    daemonsets: Vec<DaemonSet>,
-    pods: Vec<Pod>,
-) -> WorkloadSnapshot {
-    let total_deployments = deployments.len();
-    let total_statefulsets = statefulsets.len();
-    let total_daemonsets = daemonsets.len();
-    let mut namespaces = HashMap::new();
-
-    for deployment in deployments {
-        let namespace = resource_namespace(&deployment.metadata.namespace);
-        let status = deployment.status.as_ref();
-        let desired = status.and_then(|status| status.replicas).unwrap_or(0);
-        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
-        let available = status
-            .and_then(|status| status.available_replicas)
-            .unwrap_or(0);
-        let (health, issues) = classify_workload_health(ready, desired, available);
-        add_workload(
-            &mut namespaces,
-            namespace.clone(),
-            WorkloadInfo {
-                name: resource_name(&deployment.metadata.name),
-                namespace,
-                kind: WorkloadKind::Deployment,
-                ready,
-                desired,
-                health,
-                issues,
-            },
-        );
-    }
-
-    for statefulset in statefulsets {
-        let namespace = resource_namespace(&statefulset.metadata.namespace);
-        let status = statefulset.status.as_ref();
-        let desired = status.map(|status| status.replicas).unwrap_or(0);
-        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
-        let (health, issues) = classify_workload_health(ready, desired, ready);
-        add_workload(
-            &mut namespaces,
-            namespace.clone(),
-            WorkloadInfo {
-                name: resource_name(&statefulset.metadata.name),
-                namespace,
-                kind: WorkloadKind::StatefulSet,
-                ready,
-                desired,
-                health,
-                issues,
-            },
-        );
-    }
-
-    for daemonset in daemonsets {
-        let namespace = resource_namespace(&daemonset.metadata.namespace);
-        let status = daemonset.status.as_ref();
-        let desired = status
-            .map(|status| status.desired_number_scheduled)
-            .unwrap_or(0);
-        let ready = status.map(|status| status.number_ready).unwrap_or(0);
-        let (health, issues) = classify_workload_health(ready, desired, ready);
-        add_workload(
-            &mut namespaces,
-            namespace.clone(),
-            WorkloadInfo {
-                name: resource_name(&daemonset.metadata.name),
-                namespace,
-                kind: WorkloadKind::DaemonSet,
-                ready,
-                desired,
-                health,
-                issues,
-            },
-        );
-    }
-
-    let mut total_pods_healthy = 0;
-    let mut total_pods_degraded = 0;
-    let mut total_pods_failing = 0;
-    for pod in pods {
-        let namespace = resource_namespace(&pod.metadata.namespace);
-        let phase = pod
-            .status
-            .as_ref()
-            .and_then(|status| status.phase.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
-        let (restarts, issue) = analyze_pod(&pod);
-
-        match issue.as_ref().map(PodIssue::severity) {
-            Some(HealthState::Failing) => total_pods_failing += 1,
-            Some(HealthState::Degraded | HealthState::Pending) => total_pods_degraded += 1,
-            Some(HealthState::Healthy) => total_pods_healthy += 1,
-            None if phase == "Running" || phase == "Succeeded" => total_pods_healthy += 1,
-            None => {}
-        }
-
-        if let Some(issue) = issue {
-            let pod_info = PodInfo {
-                name: resource_name(&pod.metadata.name),
-                namespace: namespace.clone(),
-                node: pod.spec.as_ref().and_then(|spec| spec.node_name.clone()),
-                phase,
-                restarts,
-                issue,
-                created_at: pod.metadata.creation_timestamp.map(|timestamp| timestamp.0),
-            };
-            namespaces
-                .entry(namespace.clone())
-                .or_insert_with(|| NamespaceSummary::new(namespace))
-                .problem_pods
-                .push(pod_info);
-        }
-    }
-
-    let mut namespaces: Vec<_> = namespaces.into_values().map(finalize_namespace).collect();
-    namespaces.sort_by(|left, right| {
-        left.health
-            .cmp(&right.health)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-
-    WorkloadSnapshot {
-        target,
-        namespaces,
-        total_deployments,
-        total_statefulsets,
-        total_daemonsets,
-        total_pods_healthy,
-        total_pods_degraded,
-        total_pods_failing,
-    }
-}
-
 fn resource_namespace(namespace: &Option<String>) -> String {
     namespace.clone().unwrap_or_else(|| "default".to_string())
 }
 
 fn resource_name(name: &Option<String>) -> String {
     name.clone().unwrap_or_else(|| "unknown".to_string())
-}
-
-fn add_workload(
-    namespaces: &mut HashMap<String, NamespaceSummary>,
-    namespace: String,
-    workload: WorkloadInfo,
-) {
-    namespaces
-        .entry(namespace.clone())
-        .or_insert_with(|| NamespaceSummary::new(namespace))
-        .workloads
-        .push(workload);
 }
 
 pub(crate) fn finalize_namespace(mut summary: NamespaceSummary) -> NamespaceSummary {
@@ -482,64 +387,179 @@ fn classify_workload_health(
     (HealthState::Healthy, Vec::new())
 }
 
+/// Only current state enters the decision. Restart totals and last instances
+/// are history and belong to each consumer's display or advisory.
 #[derive(Clone, Copy)]
-struct ContainerState<'a> {
-    waiting_reason: Option<&'a str>,
-    terminated_reason: Option<&'a str>,
+pub(crate) struct ContainerState<'a> {
+    pub init: bool,
+    pub ready: bool,
+    pub waiting_reason: Option<&'a str>,
+    pub terminated: Option<(i64, &'a str)>,
+}
+
+/// Container indexes refer to init containers followed by app containers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PodEvidence {
+    Pod,
+    Waiting(usize),
+    Terminated(usize),
+    Unschedulable,
+    Pending,
+    NotReady(Option<usize>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PodDecision<'a> {
+    pub severity: HealthState,
+    pub reason: &'a str,
+    pub evidence: PodEvidence,
+}
+
+/// The detail pane's current-state policy, shared by all pod consumers.
+/// Absent Ready evidence is deliberately different from a non-True condition.
+pub(crate) fn decide_pod_health<'a>(
+    phase: &str,
+    reason: &'a str,
+    unschedulable: bool,
+    not_ready: bool,
+    containers: impl Iterator<Item = ContainerState<'a>> + Clone,
+) -> Option<PodDecision<'a>> {
+    let decision = |severity, reason, evidence| {
+        Some(PodDecision {
+            severity,
+            reason,
+            evidence,
+        })
+    };
+    if phase == "Failed" && !reason.is_empty() {
+        return decision(HealthState::Failing, reason, PodEvidence::Pod);
+    }
+    for (index, container) in containers.clone().enumerate() {
+        if let Some(reason) = container.waiting_reason
+            && crate::resources::is_error_reason(reason)
+        {
+            return decision(HealthState::Failing, reason, PodEvidence::Waiting(index));
+        }
+        if let Some((exit_code, reason)) = container.terminated
+            && exit_code != 0
+            && (phase == "Failed" || container.init)
+        {
+            let reason = if reason.is_empty() { "Error" } else { reason };
+            return decision(HealthState::Failing, reason, PodEvidence::Terminated(index));
+        }
+    }
+    if unschedulable {
+        return decision(
+            HealthState::Pending,
+            "Unschedulable",
+            PodEvidence::Unschedulable,
+        );
+    }
+    if phase == "Pending" {
+        return match containers
+            .clone()
+            .enumerate()
+            .find_map(|(index, container)| container.waiting_reason.map(|reason| (index, reason)))
+        {
+            Some((index, reason)) => {
+                decision(HealthState::Pending, reason, PodEvidence::Waiting(index))
+            }
+            None => decision(HealthState::Pending, "Pending", PodEvidence::Pending),
+        };
+    }
+    if phase == "Running" && not_ready {
+        let index = containers
+            .enumerate()
+            .find_map(|(index, container)| (!container.init && !container.ready).then_some(index));
+        return decision(
+            HealthState::Degraded,
+            "Not ready",
+            PodEvidence::NotReady(index),
+        );
+    }
+    None
+}
+
+/// Borrow the API pod's compact facts without constructing a detail model.
+pub(crate) fn pod_health(pod: &Pod) -> Option<PodDecision<'_>> {
+    let status = pod.status.as_ref()?;
+    let condition = |kind| {
+        status
+            .conditions
+            .iter()
+            .flatten()
+            .find(|condition| condition.type_ == kind)
+    };
+    let containers = [
+        (true, &status.init_container_statuses),
+        (false, &status.container_statuses),
+    ]
+    .into_iter()
+    .flat_map(|(init, statuses)| {
+        statuses.iter().flatten().map(move |container| {
+            let state = container.state.as_ref();
+            ContainerState {
+                init,
+                ready: container.ready,
+                waiting_reason: state
+                    .and_then(|s| s.waiting.as_ref())
+                    .map(|waiting| waiting.reason.as_deref().unwrap_or("")),
+                terminated: state.and_then(|s| s.terminated.as_ref()).map(|ended| {
+                    (
+                        i64::from(ended.exit_code),
+                        ended.reason.as_deref().unwrap_or(""),
+                    )
+                }),
+            }
+        })
+    });
+    decide_pod_health(
+        status.phase.as_deref().unwrap_or("Unknown"),
+        status.reason.as_deref().unwrap_or(""),
+        condition("PodScheduled").is_some_and(|c| c.status == "False"),
+        condition("Ready").is_some_and(|c| c.status != "True"),
+        containers,
+    )
+}
+
+fn decision_issue(decision: PodDecision<'_>) -> PodIssue {
+    match (decision.severity, decision.reason) {
+        (HealthState::Failing, "CrashLoopBackOff") => PodIssue::CrashLoopBackOff,
+        (HealthState::Failing, "ImagePullBackOff") => PodIssue::ImagePullBackOff,
+        (HealthState::Failing, "ErrImagePull") => PodIssue::ErrImagePull,
+        (HealthState::Failing, "OOMKilled") => PodIssue::OOMKilled,
+        (HealthState::Failing, "Error") => PodIssue::Error,
+        (HealthState::Failing, reason) => PodIssue::FailingReason(reason.into()),
+        (HealthState::Pending, "Pending") => PodIssue::Pending,
+        (HealthState::Pending, reason) => PodIssue::WaitingReason(reason.into()),
+        _ => PodIssue::NotReady,
+    }
 }
 
 pub(crate) fn analyze_pod(pod: &Pod) -> (i32, Option<PodIssue>) {
     let Some(status) = pod.status.as_ref() else {
         return (0, None);
     };
-    let phase = status.phase.as_deref().unwrap_or("Unknown");
+    // Keep today's app-container restart total as a summary-only advisory.
     let restarts = status
         .container_statuses
-        .as_ref()
-        .map(|statuses| statuses.iter().map(|status| status.restart_count).sum())
-        .unwrap_or(0);
-    let containers = status.container_statuses.iter().flatten().map(|status| {
-        let state = status.state.as_ref();
-        ContainerState {
-            waiting_reason: state
-                .and_then(|state| state.waiting.as_ref())
-                .and_then(|waiting| waiting.reason.as_deref()),
-            terminated_reason: state
-                .and_then(|state| state.terminated.as_ref())
-                .and_then(|terminated| terminated.reason.as_deref()),
+        .iter()
+        .flatten()
+        .map(|c| c.restart_count)
+        .sum();
+    let issue = pod_health(pod).map(decision_issue).or_else(|| {
+        if status.phase.as_deref() == Some("Failed") {
+            // Missing reasons keep the summary's existing phase fallback.
+            Some(PodIssue::Error)
+        } else {
+            summary_restart_advisory(restarts)
         }
     });
-    (restarts, classify_pod_status(phase, restarts, containers))
+    (restarts, issue)
 }
 
-fn classify_pod_status<'a>(
-    phase: &str,
-    restarts: i32,
-    containers: impl IntoIterator<Item = ContainerState<'a>>,
-) -> Option<PodIssue> {
-    for container in containers {
-        match container.waiting_reason {
-            Some("CrashLoopBackOff") => return Some(PodIssue::CrashLoopBackOff),
-            Some("ImagePullBackOff") => return Some(PodIssue::ImagePullBackOff),
-            Some("ErrImagePull") => return Some(PodIssue::ErrImagePull),
-            _ => {}
-        }
-        match container.terminated_reason {
-            Some("OOMKilled") => return Some(PodIssue::OOMKilled),
-            Some("Error") => return Some(PodIssue::Error),
-            _ => {}
-        }
-    }
-
-    if phase == "Pending" {
-        Some(PodIssue::Pending)
-    } else if phase == "Failed" {
-        Some(PodIssue::Error)
-    } else if restarts >= HIGH_RESTART_THRESHOLD {
-        Some(PodIssue::HighRestarts(restarts))
-    } else {
-        None
-    }
+fn summary_restart_advisory(restarts: i32) -> Option<PodIssue> {
+    (restarts >= HIGH_RESTART_THRESHOLD).then_some(PodIssue::HighRestarts(restarts))
 }
 
 #[cfg(test)]
@@ -574,13 +594,17 @@ mod tests {
 
     #[test]
     fn pod_waiting_failures_take_precedence_over_restart_counts() {
-        let containers = [ContainerState {
-            waiting_reason: Some("CrashLoopBackOff"),
-            terminated_reason: None,
-        }];
+        let pod = serde_json::from_value(serde_json::json!({
+            "status": {"phase": "Running", "containerStatuses": [{
+                "name": "app", "image": "example", "imageID": "example", "ready": false,
+                "restartCount": HIGH_RESTART_THRESHOLD,
+                "state": {"waiting": {"reason": "CrashLoopBackOff"}}
+            }]}
+        }))
+        .unwrap();
         assert_eq!(
-            classify_pod_status("Running", HIGH_RESTART_THRESHOLD, containers),
-            Some(PodIssue::CrashLoopBackOff)
+            analyze_pod(&pod),
+            (HIGH_RESTART_THRESHOLD, Some(PodIssue::CrashLoopBackOff))
         );
     }
 
@@ -608,11 +632,11 @@ mod tests {
     #[test]
     fn pod_pending_and_high_restarts_are_classified() {
         assert_eq!(
-            classify_pod_status("Pending", 0, []),
+            decide_pod_health("Pending", "", false, false, [].into_iter()).map(decision_issue),
             Some(PodIssue::Pending)
         );
         assert_eq!(
-            classify_pod_status("Running", HIGH_RESTART_THRESHOLD, []),
+            summary_restart_advisory(HIGH_RESTART_THRESHOLD),
             Some(PodIssue::HighRestarts(HIGH_RESTART_THRESHOLD))
         );
     }

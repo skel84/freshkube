@@ -17,6 +17,7 @@ mod menu_tests;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
+mod page_map;
 mod pages;
 #[cfg(test)]
 mod proof_tests;
@@ -56,9 +57,8 @@ use crate::{
         shell as pod_shell,
     },
     screens::{
-        DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
-        OperationsScreen, PageSource, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel,
-        ScreenSource, SecurityScreen, StorageScreen, WorkloadsScreen,
+        LifecycleScreen, LiveSource, PageSource, ScreenEvent, ScreenHandle, ScreenSource,
+        WorkloadsScreen,
     },
     state::Snapshot,
     text_size, theme,
@@ -255,12 +255,14 @@ fn cached_page_style() -> StyleRefinement {
     StyleRefinement::default().size_full()
 }
 
-/// What the shell hears beside the page map: Nodes and its pane, whose
-/// own events aren't [`PageEvent`]s yet, the dock and the custom kinds.
-struct PageEntities<'a> {
-    nodes: &'a Entity<nodes::Nodes>,
-    dock: &'a Entity<dock::Dock>,
-    custom: &'a Entity<CustomResources>,
+/// What `Pilot::new` makes the shell of, beside the session.
+struct Owners {
+    pages: page_map::Pages,
+    chrome: shell::Chrome,
+    navigation: shell::Navigation,
+    search: Entity<search::Search>,
+    subscriptions: Vec<Subscription>,
+    tick: Task<()>,
 }
 
 pub(crate) struct Pilot {
@@ -407,80 +409,13 @@ impl Pilot {
     /// The shell's global key bindings, by key context.
     fn bind_shell_keys(cx: &mut App) {
         freshkube_ui::source_list::bind_keys(cx);
+        cx.bind_keys([KeyBinding::new(
+            "secondary-r",
+            Refresh,
+            Some(freshkube_ui::page::SHELL_CONTEXT),
+        )]);
+        shell::Navigation::bind_keys(cx);
         cx.bind_keys([
-            KeyBinding::new(
-                "secondary-r",
-                Refresh,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-b",
-                ToggleColumn,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-1",
-                ShowOverview,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-2",
-                ShowNodes,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-3",
-                ShowNamespaces,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-4",
-                ShowEvents,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-5",
-                ShowHealth,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-6",
-                ShowEtcd,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-7",
-                ShowSystemServices,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-8",
-                ShowSecurity,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-9",
-                ShowLifecycle,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            // macOS's bar shows and binds an action's first binding, and
-            // GPUI hands AppKit the name `tab`, of which AppKit keeps the
-            // T: ⌃T would switch screens. The Tab character itself, in a
-            // context nothing draws, binds nothing here, and AppKit shows
-            // no key for it, since Control-Tab moves its focus.
-            KeyBinding::new("ctrl-\t", NextScreen, Some(MENU_BAR_ONLY)),
-            KeyBinding::new("ctrl-shift-\t", PreviousScreen, Some(MENU_BAR_ONLY)),
-            // Reaches the screens without a number of their own.
-            KeyBinding::new(
-                "ctrl-tab",
-                NextScreen,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "ctrl-shift-tab",
-                PreviousScreen,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
             KeyBinding::new(
                 "alt-up",
                 PreviousContext,
@@ -579,24 +514,67 @@ impl Pilot {
         ]);
     }
 
-    /// Hears every page: each in the map through its handle, as a
-    /// [`PageEvent`] (`hear_page`), then the events of what the map doesn't
-    /// hold. Nodes' own events and its Services tab's aren't `PageEvent`s
-    /// yet, so they keep their arms; the node pane's Pods list and the dock
-    /// turn theirs into one.
+    /// What the shell observes of its own, before any page is made: itself,
+    /// the operations slot and the window's close.
+    fn subscribe_shell(window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
+        let mut subscriptions = Vec::new();
+        // Overview and Nodes hear where things stand whenever the shell
+        // notifies, and redraw only when that changed; the countdown tick
+        // notifies only its ring.
+        subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
+            pilot.push_overview_state(cx);
+            pilot.push_node_services_state(cx);
+            pilot.push_attention_stale(cx);
+        }));
+        // The status bar shows the running operation; the window refuses to
+        // close under it. Cached screens may read the slot too.
+        let operations = Operations::global(cx);
+        subscriptions.push(cx.observe(&operations, |view, _, cx| {
+            view.notify_cached(cx);
+            cx.notify();
+        }));
+        window.on_window_should_close(cx, |window, cx| {
+            mutation::may_close(window, cx)
+                && pod_shell::may_close(window, cx, |window, _| window.remove_window())
+        });
+        subscriptions
+    }
+
+    /// Cached views keep their last frame; a font size or palette change
+    /// that doesn't refresh the window by itself must still redraw them.
+    /// Made after the pages, so Observability hears the theme first.
+    fn observe_theme(window: &mut Window, cx: &mut Context<Self>) -> Subscription {
+        cx.observe_global_in::<Theme>(window, |view, window, cx| {
+            place_window_controls(window, cx);
+            view.prepare_context_display(window, cx);
+            view.notify_cached(cx);
+            cx.notify();
+        })
+    }
+
+    /// Hears every page: when Logs starts and stops, then each page in the
+    /// map through its handle, as a [`PageEvent`] (`hear_page`), then the
+    /// events of what the map doesn't hold. Nodes' own events and its
+    /// Services tab's aren't `PageEvent`s yet, so they keep their arms; the
+    /// node pane's Pods list and the dock turn theirs into one.
     fn subscribe_page_events(
-        pages: &BTreeMap<PageId, ScreenHandle>,
-        others: PageEntities<'_>,
+        pages: &page_map::Pages,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
-        let PageEntities {
-            nodes,
+        let page_map::Pages {
+            map,
+            logs,
+            node_workspace: nodes,
             dock,
             custom,
-        } = others;
+            ..
+        } = pages;
         let mut subscriptions = Vec::new();
-        for page in pages.values() {
+        // Batches arriving while Logs is hidden never notify; the shell
+        // shows only what start, stop and the visible page change.
+        subscriptions.push(cx.observe(logs, |_, _, cx| cx.notify()));
+        for page in map.values() {
             subscriptions.extend(Self::hear_page(page, window, cx));
         }
         subscriptions.push(cx.subscribe_in(
@@ -701,9 +679,51 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // The window opens on Overview, which has no navigation column.
+        crate::screens::set_chrome_width(RAIL_WIDTH);
+        // Opened before the pages, which read their splits' sizes from it.
+        let navigation_file =
+            crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
+        navigation_file.clone().install(cx);
+        Self::bind_shell_keys(cx);
+        let path = Self::talosconfig_input(&options, window, cx);
+        let mut subscriptions = Self::subscribe_shell(window, cx);
+        let pages = page_map::Pages::new(&options, &runtime, window, cx);
+        subscriptions.push(Self::observe_theme(window, cx));
+        subscriptions.extend(Self::subscribe_page_events(&pages, window, cx));
+        let tick = Self::start_tick(window, cx);
+        let chrome = shell::Chrome::new(
+            app_menu::menu_platform(options.debug.app_menu_button),
+            window,
+            cx,
+        );
+        let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
+        let navigation = shell::Navigation::new(navigation_file, cx);
+        let mut view = Self::with_session(
+            &options,
+            runtime,
+            path,
+            Owners {
+                pages,
+                chrome,
+                navigation,
+                search,
+                subscriptions,
+                tick,
+            },
+            window,
+            cx,
+        );
+        view.start(options, window, cx);
+        view
+    }
+
+    /// Starts the shell once it is made: reads the workspace, opens the
+    /// first source, hears what needs the shell itself, takes focus and
+    /// gives Overview its first frame.
+    fn start(&mut self, options: GpuiOptions, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(any(debug_assertions, feature = "stress"))]
         let debug = options.debug.clone();
-        let hold = options.debug.hold;
         let names_source =
             options.fixture || options.named_source || options.maintenance_endpoint.is_some();
         let launched = switch::Launched {
@@ -713,13 +733,57 @@ impl Pilot {
             talosconfig: options.config_path.clone(),
             talos_context: options.context.clone(),
         };
-        // The window opens on Overview, which has no navigation column.
-        crate::screens::set_chrome_width(RAIL_WIDTH);
-        // Opened before the pages, which read their splits' sizes from it.
-        let navigation_file =
-            crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
-        navigation_file.clone().install(cx);
-        Self::bind_shell_keys(cx);
+        self.load_workspace(cx);
+        self.rebuild_switcher(cx);
+        let workspace_entry = self.launch_entry(names_source, cx);
+        let started_entry = workspace_entry.is_some();
+        if let Some((id, note)) = workspace_entry {
+            self.activate_entry(&id, window, cx);
+            if let Some(note) = note {
+                gpui_kit::component::WindowExt::push_notification(window, note, cx);
+            }
+        } else {
+            self.open_initial_source(
+                options.kubernetes_only,
+                options.kubeconfig_path,
+                options.kube_context,
+                options.remembered_kubernetes,
+                window,
+                cx,
+            );
+        }
+        if !started_entry {
+            self.adopt_launched_entry(&launched, cx);
+        }
+        self._subscriptions
+            .push(cx.observe(&self.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
+        self.watch_menus(window, cx);
+        self.publish_reading(cx);
+        self.chrome.parts.watch(self, cx);
+        self.prepare_context_display(window, cx);
+        // Initial shell focus makes contextual commands available without a click.
+        window.focus(&self.focus, cx);
+        // Without Talos, the one page that reads is the first one shown.
+        if self.kubernetes_only.is_some() {
+            self.navigate_from_keyboard(Page::Overview, window, cx);
+        }
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        self.open_startup_page(&debug, window, cx);
+        #[cfg(feature = "stress")]
+        crate::stress::start(window, cx);
+        // Overview's first frame needs no notify of the shell to know where
+        // things stand.
+        self.push_overview_state(cx);
+        self.push_attention_stale(cx);
+    }
+
+    /// The session's talosconfig input, holding the path it was launched
+    /// with. Made before the pages, as it always was.
+    fn talosconfig_input(
+        options: &GpuiOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
         let path = cx.new(|cx| InputState::new(window, cx).placeholder("Default talosconfig"));
         path.update(cx, |input, cx| {
             input.set_value(
@@ -732,168 +796,54 @@ impl Pilot {
                 cx,
             )
         });
-        let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
-        // Overview is the first page; logs collect in the background until
-        // Logs is shown.
-        logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let age_label = cx.new(|_| switch::AgeLabel::new());
-        let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
-        let node_workspace = cx.new(|cx| {
-            let mut nodes =
-                nodes::Nodes::new(runtime.clone(), logs.clone(), hold.lists, window, cx);
-            // The header the loading rows sit under before anything answers.
-            nodes.rebuild_columns(!options.kubernetes_only);
-            nodes
-        });
-        let mut subscriptions = Vec::new();
-        // Overview and Nodes hear where things stand whenever the shell
-        // notifies, and redraw only when that changed; the countdown tick
-        // notifies only its ring.
-        subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
-            pilot.push_overview_state(cx);
-            pilot.push_node_services_state(cx);
-            pilot.push_attention_stale(cx);
-        }));
-        // The status bar shows the running operation; the window refuses to
-        // close under it. Cached screens may read the slot too.
-        let operations = Operations::global(cx);
-        subscriptions.push(cx.observe(&operations, |view, _, cx| {
-            view.notify_cached(cx);
-            cx.notify();
-        }));
-        window.on_window_should_close(cx, |window, cx| {
-            mutation::may_close(window, cx)
-                && pod_shell::may_close(window, cx, |window, _| window.remove_window())
-        });
-        let health = cx.new(|cx| WorkloadsScreen::new(runtime.clone(), window, cx));
-        let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
-        let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
-            .into_iter()
-            .map(|page| {
-                let runtime = runtime.clone();
-                let handle = match page {
-                    PageId::Processes => Self::screen(ProcessesScreen::new, runtime, window, cx),
-                    PageId::Storage => Self::screen(StorageScreen::new, runtime, window, cx),
-                    PageId::Network => Self::screen(NetworkScreen::new, runtime, window, cx),
-                    PageId::Diagnostics => {
-                        Self::screen(DiagnosticsScreen::new, runtime, window, cx)
-                    }
-                    PageId::Etcd => {
-                        let etcd = options.debug.etcd;
-                        Self::screen(
-                            move |runtime, window, cx| {
-                                EtcdScreen::new(runtime, window, cx).with_example(etcd)
-                            },
-                            runtime,
-                            window,
-                            cx,
-                        )
-                    }
-                    PageId::Health => ScreenHandle::new(health.clone()),
-                    PageId::Security => Self::screen(SecurityScreen::new, runtime, window, cx),
-                    PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
-                    PageId::Operations => Self::screen(OperationsScreen::new, runtime, window, cx),
-                    _ => unreachable!("SCREENS holds the Talos screens alone"),
-                };
-                (page, handle)
-            })
-            .collect();
-        // The node pane embeds four of them.
-        let screens = [
-            nodes::NodeTab::Processes,
-            nodes::NodeTab::Storage,
-            nodes::NodeTab::Network,
-            nodes::NodeTab::Diagnostics,
-        ]
-        .into_iter()
-        .filter_map(nodes::NodeTab::screen)
-        .filter_map(|id| Some((id, pages.get(&id)?.clone())))
-        .collect();
-        node_workspace.update(cx, |nodes, _| nodes.screens = screens);
-        let resources =
-            cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx).holding(hold.lists));
-        let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
-        // Its height and whether it shows are laid out by the shell.
-        let custom = cx.new(|_| CustomResources::new(runtime.clone()));
-        let secrets = options.keyring.then(|| -> crate::secrets::Secrets {
-            std::sync::Arc::new(crate::secrets::SystemStore)
-        });
-        let monitoring = cx.new(|cx| {
-            let mut page = MonitoringPage::new(
-                runtime.clone(),
-                options.preferences.as_deref(),
-                secrets.clone(),
-                cx,
-            );
-            if hold.monitoring {
-                page.hold_examples();
-            }
-            page
-        });
-        let observability = cx.new(|cx| {
-            let mut page = crate::observability::ObservabilityPage::new(
-                options.fixture,
-                runtime.clone(),
-                options.preferences.as_deref(),
-                secrets,
-                window,
-                cx,
-            );
-            if hold.coroot {
-                page.hold_examples();
-            }
-            page
-        });
-        // Cached views keep their last frame; a font size or palette change
-        // that doesn't refresh the window by itself must still redraw them.
-        subscriptions.push(cx.observe_global_in::<Theme>(window, |view, window, cx| {
-            place_window_controls(window, cx);
-            view.prepare_context_display(window, cx);
-            view.notify_cached(cx);
-            cx.notify();
-        }));
-        // Batches arriving while Logs is hidden never notify; the shell
-        // shows only what start, stop and the visible page change.
-        subscriptions.push(cx.observe(&logs, |_, _, cx| cx.notify()));
-        let applications = cx.new(|cx| {
-            crate::applications::ApplicationsPage::new(
-                runtime.clone(),
-                options.debug.applications,
-                hold.applications,
-                window,
-                cx,
-            )
-        });
-        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
-        let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
-        pages.extend(Self::page_handles(
-            &overview_page,
-            &node_workspace,
-            &system_services,
-            &monitoring,
-            &observability,
-            &applications,
-            &settings_page,
-            &resources,
-        ));
-        subscriptions.extend(Self::subscribe_page_events(
-            &pages,
-            PageEntities {
-                nodes: &node_workspace,
-                dock: &dock,
-                custom: &custom,
-            },
-            window,
-            cx,
-        ));
-        let tick = Self::start_tick(window, cx);
-        let mut view = Self {
-            runtime: runtime.clone(),
+        path
+    }
+
+    /// The shell around the owners `Pilot::new` made, with the session as
+    /// it starts, before anything is read. Two of the session's entities
+    /// are made earlier, where they always were: the talosconfig input
+    /// (`talosconfig_input`) before the pages, and the age label with
+    /// Overview, which draws it.
+    fn with_session(
+        options: &GpuiOptions,
+        runtime: Handle,
+        path: Entity<InputState>,
+        owners: Owners,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let Owners {
+            pages,
+            chrome,
+            navigation,
+            search,
+            subscriptions,
+            tick,
+        } = owners;
+        let page_map::Pages {
+            map: pages,
+            logs,
+            age_label,
+            overview_page,
+            node_workspace,
+            health,
+            lifecycle,
+            resources,
+            dock,
+            custom,
+            monitoring,
+            observability,
+            applications,
+            settings_page,
+            system_services,
+        } = pages;
+        Self {
+            runtime,
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
             loaded_config_path: None,
             applied: AppliedConfig {
-                path: options.config_path,
-                context: options.context,
+                path: options.config_path.clone(),
+                context: options.context.clone(),
             },
             path,
             contexts: Vec::new(),
@@ -912,11 +862,7 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            chrome: shell::Chrome::new(
-                app_menu::menu_platform(options.debug.app_menu_button),
-                window,
-                cx,
-            ),
+            chrome,
             dock,
             overview_page,
             node_workspace,
@@ -932,7 +878,7 @@ impl Pilot {
                 .as_deref()
                 .map(|preferences| preferences.with_file_name("workspace.json")),
             custom,
-            search: cx.new(|cx| search::Search::new(runtime.clone(), window, cx)),
+            search,
             monitoring,
             observability,
             kubeconfig: KubeconfigSelection::Automatic,
@@ -949,9 +895,9 @@ impl Pilot {
             age_label,
             switcher: Vec::new(),
             kubeconfig_draft: Default::default(),
-            navigation: shell::Navigation::new(navigation_file, cx),
+            navigation,
             fixture: options.fixture,
-            fixture_hold: options.fixture && (options.hold_talos || hold.talos),
+            fixture_hold: options.fixture && (options.hold_talos || options.debug.hold.talos),
             fixture_tick: 0,
             focus: cx.focus_handle(),
             window: window.window_handle(),
@@ -963,50 +909,7 @@ impl Pilot {
             overview_task: None,
             service_task: None,
             _tick: tick,
-        };
-        view.load_workspace(cx);
-        view.rebuild_switcher(cx);
-        let workspace_entry = view.launch_entry(names_source, cx);
-        let started_entry = workspace_entry.is_some();
-        if let Some((id, note)) = workspace_entry {
-            view.activate_entry(&id, window, cx);
-            if let Some(note) = note {
-                gpui_kit::component::WindowExt::push_notification(window, note, cx);
-            }
-        } else {
-            view.open_initial_source(
-                options.kubernetes_only,
-                options.kubeconfig_path,
-                options.kube_context,
-                options.remembered_kubernetes,
-                window,
-                cx,
-            );
         }
-        if !started_entry {
-            view.adopt_launched_entry(&launched, cx);
-        }
-        view._subscriptions
-            .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
-        view.watch_menus(window, cx);
-        view.publish_reading(cx);
-        view.chrome.parts.watch(&view, cx);
-        view.prepare_context_display(window, cx);
-        // Initial shell focus makes contextual commands available without a click.
-        window.focus(&view.focus, cx);
-        // Without Talos, the one page that reads is the first one shown.
-        if view.kubernetes_only.is_some() {
-            view.navigate_from_keyboard(Page::Overview, window, cx);
-        }
-        #[cfg(any(debug_assertions, feature = "stress"))]
-        view.open_startup_page(&debug, window, cx);
-        #[cfg(feature = "stress")]
-        crate::stress::start(window, cx);
-        // Overview's first frame needs no notify of the shell to know where
-        // things stand.
-        view.push_overview_state(cx);
-        view.push_attention_stale(cx);
-        view
     }
 
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1191,17 +1094,6 @@ impl Pilot {
             },
             cluster.client.clone()?,
         ))
-    }
-
-    /// A Talos screen's handle; the shell hears it with every other page
-    /// (`subscribe_page_events`).
-    fn screen<T: ScreenPanel>(
-        new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
-        runtime: Handle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> ScreenHandle {
-        ScreenHandle::new(cx.new(|cx| new(runtime, window, cx)))
     }
 
     /// What a Talos screen asks of the shell.

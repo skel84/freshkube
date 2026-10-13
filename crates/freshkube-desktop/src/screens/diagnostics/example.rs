@@ -131,6 +131,7 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
                 restart_count: 14,
             }],
             image_pull_errors: Vec::new(),
+            not_ready: Vec::new(),
             total_pods: 142,
         })
     } else {

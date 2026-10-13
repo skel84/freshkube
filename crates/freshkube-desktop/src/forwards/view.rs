@@ -125,6 +125,31 @@ pub(crate) struct ForwardView {
 }
 
 impl ForwardView {
+    #[cfg(test)]
+    pub(super) fn run_with_status(
+        &mut self,
+        status: watch::Receiver<ForwardStatus>,
+        cx: &mut Context<Self>,
+    ) -> u64 {
+        let Some(Session::Running { guard, .. }) = self.session.take() else {
+            panic!("the fixture forward must be running");
+        };
+        self.run(self.seq, self.local_port.unwrap(), status, guard, cx);
+        self.seq
+    }
+
+    #[cfg(test)]
+    pub(super) fn deliver_start_failure(&mut self, seq: u64, cx: &mut Context<Self>) {
+        self.started(
+            seq,
+            Err(ForwardFailure::new(
+                ForwardFailureKind::NotRunning,
+                "An earlier start ended",
+            )),
+            cx,
+        );
+    }
+
     pub(super) fn new(id: u64, spec: ForwardSpec, watches: Watches, listen: Listen) -> Self {
         let mut view = Self {
             id,
@@ -389,7 +414,7 @@ impl ForwardView {
     ) {
         self.local_port = Some(local_port);
         self.phase = Phase::Running;
-        self.status = Some(status.borrow_and_update().clone());
+        let initial = status.borrow_and_update().clone();
         let delivery = cx.spawn(async move |this, cx| {
             loop {
                 if status.changed().await.is_err() {
@@ -409,8 +434,7 @@ impl ForwardView {
             guard,
             _delivery: delivery,
         });
-        self.describe();
-        cx.notify();
+        self.apply(seq, initial, cx);
     }
 
     fn apply(&mut self, seq: u64, status: ForwardStatus, cx: &mut Context<Self>) {
