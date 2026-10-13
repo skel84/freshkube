@@ -162,6 +162,8 @@ impl DebugOptions {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// The knob names AGENTS.md's table documents, in its first column.
     fn documented_knobs() -> std::collections::BTreeSet<String> {
         include_str!("../../../AGENTS.md")
@@ -185,8 +187,6 @@ mod tests {
             "AGENTS.md's knob table and DebugOptions::parse disagree"
         );
     }
-
-    use super::*;
 
     fn parse(pairs: &[(&str, &str)]) -> DebugOptions {
         DebugOptions::parse(|name| {
