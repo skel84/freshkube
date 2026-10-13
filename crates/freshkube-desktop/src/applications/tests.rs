@@ -4,7 +4,9 @@ use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 use crate::fixture::Hold;
 use std::time::Duration;
 
-use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext, px, test::TestWindowExt};
+use gpui_kit::{
+    AnyWindowHandle, App, AppContext, Entity, TestAppContext, Window, px, test::TestWindowExt,
+};
 
 const APPLICATIONS: layout_check::TablePage = layout_check::TablePage {
     page: "applications-page",
@@ -26,6 +28,15 @@ fn page(view: &Entity<Pilot>, cx: &gpui_kit::App) -> Entity<ApplicationsPage> {
 }
 
 /// The app on example data, with the page shaped before it first shows.
+/// Example sources hold the Applications read, or answer it again.
+fn hold(view: &Entity<Pilot>, on: bool, window: &mut Window, cx: &mut App) {
+    let hold = Hold {
+        applications: on,
+        ..Hold::NONE
+    };
+    view.update(cx, |pilot, cx| pilot.set_hold(hold, window, cx));
+}
+
 fn open(
     cx: &mut TestAppContext,
     width: f32,
@@ -154,7 +165,7 @@ fn reads_only_while_shown(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         let page = page(&view, cx);
-        page.update(cx, |page, _| page.set_hold(true));
+        hold(&view, true, window, cx);
         window.render_frame(cx);
         assert!(!page.read(cx).has_read(), "nothing is read while hidden");
         assert!(!page.read(cx).is_reading());
@@ -185,7 +196,7 @@ fn reads_only_while_shown(cx: &mut TestAppContext) {
 
         // Shown again with nothing read, it reads again; answered, it
         // shows the rows.
-        page.update(cx, |page, _| page.set_hold(false));
+        hold(&view, false, window, cx);
         window.click("nav-applications", cx);
         window.render_frame(cx);
         assert!(page.read(cx).has_read());
@@ -203,7 +214,7 @@ fn a_fresh_read_is_shown_again_without_reading(cx: &mut TestAppContext) {
         let page = page(&view, cx);
         window.click("nav-overview", cx);
         // Held now, a read would stay in flight: it must not start.
-        page.update(cx, |page, _| page.set_hold(true));
+        hold(&view, true, window, cx);
         window.click("nav-applications", cx);
         window.render_frame(cx);
         assert!(!page.read(cx).is_reading());
@@ -227,7 +238,7 @@ fn command_r_reads_the_applications_again_as_refresh_does(cx: &mut TestAppContex
     cx.update_window(handle, |_, window, cx| {
         let page = page(&view, cx);
         window.render_frame(cx);
-        page.update(cx, |page, _| page.set_hold(true));
+        hold(&view, true, window, cx);
         assert!(!page.read(cx).is_reading());
         window.press("secondary-r", cx);
         window.render_frame(cx);
@@ -242,7 +253,7 @@ fn a_stale_read_is_read_again_when_shown(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-overview", cx);
-        page(&view, cx).update(cx, |page, _| page.set_hold(true));
+        hold(&view, true, window, cx);
     })
     .unwrap();
     cx.executor().advance_clock(super::FRESH_FOR);
@@ -262,7 +273,7 @@ fn a_read_dropped_on_hide_leaves_the_last_answer_as_old_as_it_was(cx: &mut TestA
     // Answered at 0 s; a refresh at 25 s is dropped on hide.
     cx.executor().advance_clock(Duration::from_secs(25));
     cx.update_window(handle, |_, window, cx| {
-        page(&view, cx).update(cx, |page, _| page.set_hold(true));
+        hold(&view, true, window, cx);
         window.click("applications-refresh", cx);
         window.render_frame(cx);
         assert!(page(&view, cx).read(cx).is_reading());
@@ -290,7 +301,7 @@ fn a_refresh_cut_short_by_hiding_reads_again_on_showing(cx: &mut TestAppContext)
     // Answered at 0 s; a refresh at 5 s is dropped on hide.
     cx.executor().advance_clock(Duration::from_secs(5));
     cx.update_window(handle, |_, window, cx| {
-        page(&view, cx).update(cx, |page, _| page.set_hold(true));
+        hold(&view, true, window, cx);
         window.click("applications-refresh", cx);
         window.render_frame(cx);
         assert!(page(&view, cx).read(cx).is_reading());
@@ -367,13 +378,8 @@ fn another_context_drops_the_read_and_the_selection(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert!(window.find("applications-detail").visible());
         // staging-eu's example source holds its read.
-        view.update(cx, |view, cx| {
-            view.set_hold(Hold {
-                applications: true,
-                ..Hold::NONE
-            });
-            view.choose_context("staging-eu", window, cx);
-        });
+        hold(&view, true, window, cx);
+        view.update(cx, |view, cx| view.choose_context("staging-eu", window, cx));
         window.render_frame(cx);
         let page = page(&view, cx);
         assert!(!page.read(cx).has_read(), "staging-eu's read is its own");
@@ -453,15 +459,13 @@ fn a_cluster_that_didnt_answer_fails_with_retry(cx: &mut TestAppContext) {
         assert!(status.contains("couldn't read applications"), "{status}");
 
         // A retry in flight says so, and another press does nothing.
-        page(&view, cx).update(cx, |page, _| page.set_hold(true));
+        hold(&view, true, window, cx);
         window.click("applications-retry", cx);
         window.render_frame(cx);
         assert!(page(&view, cx).read(cx).is_reading());
         assert_eq!(window.find("applications-retry").label(), Some("Retrying…"));
-        page(&view, cx).update(cx, |page, _| {
-            page.set_hold(false);
-            page.set_variant(Variant::Acme);
-        });
+        hold(&view, false, window, cx);
+        page(&view, cx).update(cx, |page, _| page.set_variant(Variant::Acme));
         window.click("applications-retry", cx);
         window.render_frame(cx);
         assert!(

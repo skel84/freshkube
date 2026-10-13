@@ -229,7 +229,16 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
             assert_eq!(all, None, "{variant:?}: no count of nothing");
             if retry {
                 let page = view.read(cx).applications.clone();
-                page.update(cx, |page, _| page.set_hold(true));
+                view.update(cx, |pilot, cx| {
+                    pilot.set_hold(
+                        crate::fixture::Hold {
+                            applications: true,
+                            ..crate::fixture::Hold::NONE
+                        },
+                        window,
+                        cx,
+                    )
+                });
                 window.click("nav-applications-status-retry", cx);
                 assert!(page.read(cx).is_reading(), "Retry reads again");
             }
@@ -253,11 +262,17 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
     }
     // Held, the first read never answers.
     let (_runtime, _handle, view) = fixture(cx, 1280., 880.);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
-    cx.update(|cx| page.update(cx, |page, _| page.set_hold(true)));
     let handle = _handle;
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
+            pilot.set_hold(
+                crate::fixture::Hold {
+                    applications: true,
+                    ..crate::fixture::Hold::NONE
+                },
+                window,
+                cx,
+            );
             pilot.show_area(Area::Applications, window, cx)
         });
         window.render_frame(cx);

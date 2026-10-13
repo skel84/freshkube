@@ -392,10 +392,11 @@ impl Pilot {
     }
 
     /// What example sources hold from now on, as `FRESHKUBE_FIXTURE_HOLD`
-    /// says at launch; a page hears it with the next source.
+    /// says at launch; every page hears it with the source pushed here.
     #[cfg(test)]
-    pub(crate) fn set_hold(&mut self, hold: Hold) {
+    pub(crate) fn set_hold(&mut self, hold: Hold, window: &mut Window, cx: &mut Context<Self>) {
         self.hold = hold;
+        self.push_source(window, cx);
     }
 
     /// Chooses another context, as the header's switcher does.

@@ -382,19 +382,6 @@ impl ApplicationsPage {
         self.variant = variant;
     }
 
-    /// Holds the example source the page has, or lets it answer again
-    /// (`Hold::applications`), as `FRESHKUBE_FIXTURE_HOLD` does at launch.
-    #[cfg(test)]
-    pub(crate) fn set_hold(&mut self, hold: bool) {
-        if let Some(ClusterSource {
-            access: ClusterAccess::Example(held),
-            ..
-        }) = &mut self.source
-        {
-            held.applications = hold;
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn set_example_delay(&mut self, delay: Duration) {
         self.example_delay = delay;

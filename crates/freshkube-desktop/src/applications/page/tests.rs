@@ -698,10 +698,11 @@ fn another_context_closes_the_page_and_its_late_read_never_lands(cx: &mut TestAp
         window.render_frame(cx);
         // staging-eu's example source holds its read.
         view.update(cx, |view, cx| {
-            view.set_hold(crate::fixture::Hold {
+            let hold = crate::fixture::Hold {
                 applications: true,
                 ..crate::fixture::Hold::NONE
-            });
+            };
+            view.set_hold(hold, window, cx);
             view.choose_context("staging-eu", window, cx);
         });
         window.render_frame(cx);
