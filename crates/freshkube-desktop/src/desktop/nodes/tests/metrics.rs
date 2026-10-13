@@ -392,3 +392,41 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
     })
     .unwrap();
 }
+
+/// The node-usage read follows Nodes' page, not the pane: opening a node
+/// and moving between its tabs, a Talos screen's included, neither stops
+/// nor restarts it, and leaving Nodes stops it. PR 3 of #579 moves the
+/// read onto Nodes' `set_visible`, which must keep this schedule.
+#[gpui_kit::test]
+fn node_metrics_keep_reading_while_the_pane_shows_a_screen(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let read = |cx: &mut TestAppContext| {
+        pilot.read_with(cx, |pilot, _| {
+            let metrics = &pilot.node_workspace.metrics;
+            (metrics.visible, metrics.generation)
+        })
+    };
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Nodes, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (visible, generation) = read(cx);
+    assert!(visible);
+    for tab in [NodeTab::Processes, NodeTab::Overview, NodeTab::Storage] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::desktop::tests::open_node_tab(window, cx, tab)
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(read(cx), (true, generation), "on {tab:?}");
+    }
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Etcd, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let (visible, after) = read(cx);
+    assert!(!visible);
+    assert_ne!(after, generation, "leaving Nodes stops the read");
+}

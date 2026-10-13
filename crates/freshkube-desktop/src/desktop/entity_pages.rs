@@ -347,12 +347,26 @@ impl Pilot {
     /// The handle of the page that shows: the node pane's selected tab
     /// when it is a Talos screen and Nodes shows it, or else the page's.
     pub(super) fn shown_page(&self) -> Option<ScreenHandle> {
-        let pane = self.page == Page::Nodes && self.node_workspace.open;
-        let id = pane
-            .then(|| self.node_workspace.tab.screen())
+        self.pages.get(&self.shown_id()).cloned()
+    }
+
+    /// Every page that shows: the one [`shown_page`](Self::shown_page)
+    /// names and, when that is the node pane's screen, Nodes around it.
+    pub(super) fn shown_pages(&self) -> Vec<ScreenHandle> {
+        let id = self.shown_id();
+        let around = (id != self.page.id()).then(|| self.page.id());
+        [Some(id), around]
+            .into_iter()
             .flatten()
-            .unwrap_or(self.page.id());
-        self.pages.get(&id).cloned()
+            .filter_map(|id| self.pages.get(&id).cloned())
+            .collect()
+    }
+
+    fn shown_id(&self) -> PageId {
+        (self.page == Page::Nodes)
+            .then(|| self.node_workspace.pane_screen())
+            .flatten()
+            .unwrap_or(self.page.id())
     }
 
     /// What a page asks of the shell.
@@ -419,7 +433,7 @@ impl Pilot {
             ServiceEvent::Open(node, service) => (node, service, nodes::NodeTab::Services),
         };
         self.open_node_by_name(node, tab, window, cx);
-        self.selected_service = Some(service.clone());
+        self.select_service(Some(service.clone()), cx);
         if tab == nodes::NodeTab::Logs {
             self.open_logs(window, cx);
         }

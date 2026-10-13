@@ -69,11 +69,10 @@ impl Pilot {
             self.publish_reading(cx);
         }
         self.selected_node = selected;
-        self.selected_service = None;
         self.service_task = None;
         self.service_job = None;
         self.services = Snapshot::default();
-        self.rebuild_service_rows(cx);
+        self.push_services(cx);
         if self.fixture {
             let context = self.applied.context.clone().unwrap_or_default();
             let node = self.selected_node.clone().unwrap_or_default();
@@ -129,14 +128,14 @@ impl Pilot {
                 Ok(catalog)
             };
             self.services.apply(&request, result);
-            self.retain_selected_service();
-            self.rebuild_service_rows(cx);
+            self.push_services(cx);
             return;
         }
         let Some((target, client)) = self.target() else {
             return;
         };
         let request = self.services.begin(target.clone());
+        self.push_services(cx);
         let (job, receiver) = backend::services(self.runtime.clone(), client, target.clone());
         self.service_job = Some(job);
         self.service_task = Some(cx.spawn_in(window, async move |this, cx| {
@@ -149,8 +148,7 @@ impl Pilot {
                 }
                 view.service_job = None;
                 if view.services.apply(&request, result) {
-                    view.retain_selected_service();
-                    view.rebuild_service_rows(cx);
+                    view.push_services(cx);
                     let catalog = view.services.data().cloned().unwrap_or_default();
                     let current = view.target();
                     view.logs
@@ -159,74 +157,6 @@ impl Pilot {
                 cx.notify();
             });
         }));
-        cx.notify();
-    }
-
-    pub(super) fn retain_selected_service(&mut self) {
-        let services = self.services.data().cloned().unwrap_or_default();
-        if presentation::selected_service(&services, self.selected_service.as_deref()).is_none() {
-            self.selected_service = None;
-        }
-    }
-
-    pub(super) fn rebuild_service_rows(&mut self, cx: &App) {
-        self.service_display.visible = self.visible_services(cx);
-        let all = self.services.data().map(Vec::as_slice).unwrap_or_default();
-        self.service_display.labels = [
-            format!("All {}", all.len()).into(),
-            format!(
-                "Unhealthy {}",
-                all.iter()
-                    .filter(|service| presentation::service_health(service) == Health::Unhealthy)
-                    .count()
-            )
-            .into(),
-            format!(
-                "Not reported {}",
-                all.iter()
-                    .filter(|service| presentation::service_health(service) == Health::Unknown)
-                    .count()
-            )
-            .into(),
-        ];
-    }
-
-    /// Services on the target node that pass the name and health filters.
-    fn visible_services(&self, cx: &App) -> Vec<ServiceInfo> {
-        let query = self.service_filter.read(cx).value().to_lowercase();
-        self.services
-            .data()
-            .map(|services| {
-                services
-                    .iter()
-                    .filter(|service| service.id.to_lowercase().contains(&query))
-                    .filter(|service| {
-                        self.health_filter
-                            .accepts(presentation::service_health(service))
-                    })
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Steps through the rows on screen: the list `rebuild_service_rows`
-    /// derived, which every filter and data change rebuilds.
-    pub(super) fn step_service(&mut self, delta: isize, cx: &mut Context<Self>) {
-        let visible = &self.service_display.visible;
-        if visible.is_empty() {
-            return;
-        }
-        let current = visible
-            .iter()
-            .position(|service| Some(&service.id) == self.selected_service.as_ref());
-        let next = match current {
-            Some(ix) => ix.saturating_add_signed(delta).min(visible.len() - 1),
-            None if delta < 0 => visible.len() - 1,
-            None => 0,
-        };
-        self.selected_service = Some(visible[next].id.clone());
-        self.reveal_service = true;
         cx.notify();
     }
 }

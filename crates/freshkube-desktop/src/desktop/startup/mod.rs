@@ -162,7 +162,8 @@ impl Pilot {
                     );
                 }
                 if self.fixture {
-                    self.node_history
+                    self.node_workspace
+                        .history
                         .update(cx, |history, cx| history.answer_example_now(cx));
                 }
             }

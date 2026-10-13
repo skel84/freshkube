@@ -225,12 +225,4 @@ impl super::Pilot {
             ConfigAction::Retry => self.refresh(window, cx),
         }
     }
-
-    /// The shell's state buttons, for a state it draws itself.
-    pub(super) fn on_config_action(&self, cx: &Context<Self>) -> OnConfigAction {
-        let pilot = cx.weak_entity();
-        Rc::new(move |action, window, cx| {
-            _ = pilot.update(cx, |pilot, cx| pilot.config_action(action, window, cx));
-        })
-    }
 }

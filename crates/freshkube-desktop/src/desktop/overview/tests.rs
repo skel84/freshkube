@@ -89,7 +89,7 @@ fn every_attention_subject_opens_and_optional_actions_follow(cx: &mut TestAppCon
         .update_window(handle, |_, window, cx| {
             pilot.update(cx, |pilot, cx| pilot.expand_attention(cx));
             window.render_frame(cx);
-            pilot.read(cx).attention.rows.clone()
+            pilot.read(cx).node_workspace.attention.rows.clone()
         })
         .unwrap();
     assert!(rows.iter().any(|row| row.kind == "Node"));
@@ -621,7 +621,7 @@ fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
         window.click("nav-overview", cx);
         pilot.update(cx, |pilot, cx| pilot.expand_attention(cx));
         window.render_frame(cx);
-        let rows = pilot.read(cx).attention.rows.clone();
+        let rows = pilot.read(cx).node_workspace.attention.rows.clone();
         let mut expected = Vec::new();
         for row in &rows {
             let header = gpui_kit::ElementId::from(gpui_kit::SharedString::from(row.group.id()));
@@ -633,7 +633,7 @@ fn needs_attention_groups_compact_rows_by_severity(cx: &mut TestAppContext) {
         assert!(expected.len() > rows.len());
         assert_eq!(attention_lines(window, "needs-attention-rows"), expected);
         let failing = window.find(AttentionGroup::Failing.id());
-        let details = pilot.read(cx).attention.details.clone();
+        let details = pilot.read(cx).node_workspace.attention.details.clone();
         assert!(
             failing
                 .label()
@@ -791,7 +791,7 @@ fn attention_rows_name_the_open_cluster(cx: &mut TestAppContext) {
         let open = pilot.kube_identity();
         assert!(open.is_some());
         let mut seen = 0;
-        for row in &pilot.attention.rows {
+        for row in &pilot.node_workspace.attention.rows {
             for destination in [Some(&row.open), row.logs.as_ref(), row.open_node.as_ref()]
                 .into_iter()
                 .flatten()

@@ -283,7 +283,7 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let stale = redrawn(&|view, cx| view.simulate_failure(cx));
     let after_stale = redrawn(&|_, cx| cx.notify());
     let attention = redrawn(&|view, cx| {
-        let attention = view.attention.clone();
+        let attention = view.node_workspace.attention.clone();
         view.overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     });
@@ -416,4 +416,50 @@ fn tick(view: &Entity<Pilot>, cx: &mut TestAppContext) {
         });
     });
     cx.run_until_parked();
+}
+
+/// The node pane's System services tab draws inside the Nodes host, so a
+/// notify of the shell still draws it again; its own changes draw it once.
+/// A restart's notice no longer notifies the shell, so the tab draws it
+/// only because it hears the notice itself. A theme change redraws the
+/// cached tab. PR 3 of #579 takes the host away and changes the first
+/// count.
+#[gpui_kit::test]
+fn node_services_redraws_inside_the_nodes_host(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1700., 1200.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_node_by_name(
+                "talos-wk-fra1-02",
+                super::super::nodes::NodeTab::Services,
+                window,
+                cx,
+            )
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+        let before = count("node-services");
+        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        count("node-services") - before
+    };
+    let shell = redrawn(&|_, cx| cx.notify());
+    let selection = redrawn(&|view, cx| view.select_service(Some("kubelet".into()), cx));
+    let services = redrawn(&|view, cx| view.push_services(cx));
+    let notice = redrawn(&|view, cx| view.note_restart("kubelet", cx));
+    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    assert_eq!(
+        [shell, selection, services, notice, cached],
+        [1, 1, 1, 1, 1]
+    );
 }

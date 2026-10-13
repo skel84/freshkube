@@ -44,9 +44,9 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
                 .unwrap()
                 .contains("talos-cp-fra1-02")
         );
-        assert!(view.read(cx).node_focus.is_focused(window));
+        assert!(view.read(cx).node_workspace.focus.is_focused(window));
         window.press("tab", cx);
-        assert!(!view.read(cx).node_focus.is_focused(window));
+        assert!(!view.read(cx).node_workspace.focus.is_focused(window));
     })
     .unwrap();
 }
@@ -75,6 +75,7 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
         assert!(window.find("tile-services").visible());
         assert!(
             view.read(cx)
+                .node_workspace
                 .attention
                 .rows
                 .iter()

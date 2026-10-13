@@ -213,3 +213,57 @@ fn a_page_in_the_map_hears_the_shell_in_key_order_and_is_heard(cx: &mut TestAppC
         ]
     );
 }
+
+/// Visibility nests: while Nodes' pane shows Processes, Nodes and the
+/// screen both hear that they show, in key order, and each hears it hide
+/// on its own.
+#[gpui_kit::test]
+fn nodes_and_its_pane_screen_hear_they_show_in_key_order(cx: &mut TestAppContext) {
+    use super::super::nodes::NodeTab;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let pages = [(PageId::Processes, "processes"), (PageId::Nodes, "nodes")];
+    register(&view, handle, &pages, &log, cx);
+    let take = || {
+        std::mem::take(&mut *log.borrow_mut())
+            .into_iter()
+            .filter(|line| line.ends_with("shown") || line.ends_with("hidden"))
+            .collect::<Vec<_>>()
+    };
+    let name = cx.update(|cx| view.read(cx).selected_node.clone().unwrap());
+    let step = |go: &dyn Fn(&mut Pilot, &mut Window, &mut Context<Pilot>),
+                cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| go(view, window, cx))
+        })
+        .unwrap();
+        cx.run_until_parked();
+    };
+    take();
+    step(
+        &|view, window, cx| view.open_node_by_name(&name, NodeTab::Processes, window, cx),
+        cx,
+    );
+    // Opening navigates first, then picks the tab: the last round is
+    // where things stand.
+    let told = take();
+    assert!(told.len() >= 2, "{told:?}");
+    for round in told.chunks(2) {
+        assert!(round[0].starts_with("nodes ") && round[1].starts_with("processes "));
+    }
+    assert_eq!(told[told.len() - 2..], ["nodes shown", "processes shown"]);
+    step(
+        &|view, window, cx| view.show_node_tab(NodeTab::Overview, window, cx),
+        cx,
+    );
+    for round in take().chunks(2) {
+        assert_eq!(round, ["nodes shown", "processes hidden"]);
+    }
+    step(
+        &|view, window, cx| view.navigate(Page::Overview, window, cx),
+        cx,
+    );
+    for round in take().chunks(2) {
+        assert_eq!(round, ["nodes hidden", "processes hidden"]);
+    }
+}
