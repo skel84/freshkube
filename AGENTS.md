@@ -15,6 +15,7 @@ crates/
 ├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
 ├── freshkube-graph/     graph layout without GPUI: columns of boxes and the curves between them
+├── freshkube-prefs/     the preferences files: a Dir and a typed Document with an atomic save; no GPUI, no core
 ├── freshkube-monitoring/ Grafana dashboards from the cluster's Prometheus, and the CPU and memory history charts
 ├── freshkube-observability/ Coroot's applications, service map, incidents, traces, profiles and logs
 ├── freshkube-workbench/ the shared components on invented data, one story at a time; never shipped
