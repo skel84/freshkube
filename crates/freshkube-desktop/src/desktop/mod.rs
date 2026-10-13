@@ -255,6 +255,16 @@ fn cached_page_style() -> StyleRefinement {
     StyleRefinement::default().size_full()
 }
 
+/// What `Pilot::new` makes the shell of, beside the session.
+struct Owners {
+    pages: page_map::Pages,
+    chrome: shell::Chrome,
+    navigation: shell::Navigation,
+    search: Entity<search::Search>,
+    subscriptions: Vec<Subscription>,
+    tick: Task<()>,
+}
+
 pub(crate) struct Pilot {
     runtime: Handle,
     connection_store: Option<ConnectionStore>,
@@ -738,7 +748,6 @@ impl Pilot {
     ) -> Self {
         #[cfg(any(debug_assertions, feature = "stress"))]
         let debug = options.debug.clone();
-        let hold = options.debug.hold;
         let names_source =
             options.fixture || options.named_source || options.maintenance_endpoint.is_some();
         let launched = switch::Launched {
@@ -771,6 +780,94 @@ impl Pilot {
         let pages = page_map::Pages::new(&options, &runtime, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
         subscriptions.extend(Self::subscribe_page_events(&pages, window, cx));
+        let tick = Self::start_tick(window, cx);
+        let chrome = shell::Chrome::new(
+            app_menu::menu_platform(options.debug.app_menu_button),
+            window,
+            cx,
+        );
+        let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
+        let navigation = shell::Navigation::new(navigation_file, cx);
+        let mut view = Self::with_session(
+            &options,
+            runtime,
+            path,
+            Owners {
+                pages,
+                chrome,
+                navigation,
+                search,
+                subscriptions,
+                tick,
+            },
+            window,
+            cx,
+        );
+        view.load_workspace(cx);
+        view.rebuild_switcher(cx);
+        let workspace_entry = view.launch_entry(names_source, cx);
+        let started_entry = workspace_entry.is_some();
+        if let Some((id, note)) = workspace_entry {
+            view.activate_entry(&id, window, cx);
+            if let Some(note) = note {
+                gpui_kit::component::WindowExt::push_notification(window, note, cx);
+            }
+        } else {
+            view.open_initial_source(
+                options.kubernetes_only,
+                options.kubeconfig_path,
+                options.kube_context,
+                options.remembered_kubernetes,
+                window,
+                cx,
+            );
+        }
+        if !started_entry {
+            view.adopt_launched_entry(&launched, cx);
+        }
+        view._subscriptions
+            .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
+        view.watch_menus(window, cx);
+        view.publish_reading(cx);
+        view.chrome.parts.watch(&view, cx);
+        view.prepare_context_display(window, cx);
+        // Initial shell focus makes contextual commands available without a click.
+        window.focus(&view.focus, cx);
+        // Without Talos, the one page that reads is the first one shown.
+        if view.kubernetes_only.is_some() {
+            view.navigate_from_keyboard(Page::Overview, window, cx);
+        }
+        #[cfg(any(debug_assertions, feature = "stress"))]
+        view.open_startup_page(&debug, window, cx);
+        #[cfg(feature = "stress")]
+        crate::stress::start(window, cx);
+        // Overview's first frame needs no notify of the shell to know where
+        // things stand.
+        view.push_overview_state(cx);
+        view.push_attention_stale(cx);
+        view
+    }
+
+    /// The shell around the owners `Pilot::new` made, with the session as
+    /// it starts, before anything is read. Two of the session's entities
+    /// are made earlier, where they always were: the talosconfig input
+    /// before the pages, and the age label with Overview, which draws it.
+    fn with_session(
+        options: &GpuiOptions,
+        runtime: Handle,
+        path: Entity<InputState>,
+        owners: Owners,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let Owners {
+            pages,
+            chrome,
+            navigation,
+            search,
+            subscriptions,
+            tick,
+        } = owners;
         let page_map::Pages {
             map: pages,
             logs,
@@ -788,21 +885,13 @@ impl Pilot {
             settings_page,
             system_services,
         } = pages;
-        let tick = Self::start_tick(window, cx);
-        let chrome = shell::Chrome::new(
-            app_menu::menu_platform(options.debug.app_menu_button),
-            window,
-            cx,
-        );
-        let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
-        let navigation = shell::Navigation::new(navigation_file, cx);
-        let mut view = Self {
-            runtime: runtime.clone(),
+        Self {
+            runtime,
             connection_store: options.preferences.as_deref().map(ConnectionStore::new),
             loaded_config_path: None,
             applied: AppliedConfig {
-                path: options.config_path,
-                context: options.context,
+                path: options.config_path.clone(),
+                context: options.context.clone(),
             },
             path,
             contexts: Vec::new(),
@@ -856,7 +945,7 @@ impl Pilot {
             kubeconfig_draft: Default::default(),
             navigation,
             fixture: options.fixture,
-            fixture_hold: options.fixture && (options.hold_talos || hold.talos),
+            fixture_hold: options.fixture && (options.hold_talos || options.debug.hold.talos),
             fixture_tick: 0,
             focus: cx.focus_handle(),
             window: window.window_handle(),
@@ -868,50 +957,7 @@ impl Pilot {
             overview_task: None,
             service_task: None,
             _tick: tick,
-        };
-        view.load_workspace(cx);
-        view.rebuild_switcher(cx);
-        let workspace_entry = view.launch_entry(names_source, cx);
-        let started_entry = workspace_entry.is_some();
-        if let Some((id, note)) = workspace_entry {
-            view.activate_entry(&id, window, cx);
-            if let Some(note) = note {
-                gpui_kit::component::WindowExt::push_notification(window, note, cx);
-            }
-        } else {
-            view.open_initial_source(
-                options.kubernetes_only,
-                options.kubeconfig_path,
-                options.kube_context,
-                options.remembered_kubernetes,
-                window,
-                cx,
-            );
         }
-        if !started_entry {
-            view.adopt_launched_entry(&launched, cx);
-        }
-        view._subscriptions
-            .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
-        view.watch_menus(window, cx);
-        view.publish_reading(cx);
-        view.chrome.parts.watch(&view, cx);
-        view.prepare_context_display(window, cx);
-        // Initial shell focus makes contextual commands available without a click.
-        window.focus(&view.focus, cx);
-        // Without Talos, the one page that reads is the first one shown.
-        if view.kubernetes_only.is_some() {
-            view.navigate_from_keyboard(Page::Overview, window, cx);
-        }
-        #[cfg(any(debug_assertions, feature = "stress"))]
-        view.open_startup_page(&debug, window, cx);
-        #[cfg(feature = "stress")]
-        crate::stress::start(window, cx);
-        // Overview's first frame needs no notify of the shell to know where
-        // things stand.
-        view.push_overview_state(cx);
-        view.push_attention_stale(cx);
-        view
     }
 
     fn invalidate_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
