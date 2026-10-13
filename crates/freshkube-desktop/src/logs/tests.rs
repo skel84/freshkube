@@ -10,7 +10,7 @@ use freshkube_core::logs::{LogEvent, ServiceId};
 
 use super::talos::Collection;
 use super::{LogPanel, TalosPanel};
-use crate::backend::StreamEvent;
+use crate::backend::{StreamEvent, Target};
 
 fn fixture_events() -> Vec<LogEvent> {
     (0..120)
@@ -680,4 +680,84 @@ async fn a_collection_whose_stream_ends_stops_and_lands_what_it_held(cx: &mut Te
                 .any(|entry| entry.raw.contains("held until the stream ends"))
         );
     });
+}
+
+fn line(target: &Target, text: &str) -> StreamEvent {
+    StreamEvent {
+        target: target.clone(),
+        service: ServiceId::from("apid"),
+        result: Ok(text.into()),
+    }
+}
+
+fn holds(text: &str, panel: &Entity<LogPanel>, cx: &gpui_kit::App) -> bool {
+    panel
+        .read(cx)
+        .retained()
+        .iter()
+        .any(|entry| entry.raw.contains(text))
+}
+
+#[gpui_kit::test]
+async fn an_earlier_collections_late_batch_on_the_same_node_never_lands(cx: &mut TestAppContext) {
+    // The streams' work runs on Tokio's thread.
+    cx.executor().allow_parking();
+    let (_runtime, panel, handle) = mount(cx);
+    let target = cx.update(|cx| panel.read(cx).source().fixture_target.clone().unwrap());
+    let collect = |view: &mut LogPanel, cx: &mut gpui_kit::Context<LogPanel>| {
+        view.collect(
+            target.clone(),
+            |sender| async move { sender.closed().await },
+            cx,
+        )
+    };
+    let (old, new) = cx.update(|cx| {
+        panel.update(cx, |view, cx| {
+            collect(view, cx);
+            let old = view.source().stream.sender().expect("collecting");
+            view.stop(cx);
+            collect(view, cx);
+            (old, view.source().stream.sender().expect("collecting"))
+        })
+    });
+    let _ = old.try_send(line(&target, "info late from the earlier stream"));
+    new.try_send(line(&target, "info from the current stream"))
+        .unwrap();
+    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+        holds("from the current stream", &panel, cx)
+    })
+    .await;
+    cx.run_until_parked();
+    cx.update(|cx| assert!(!holds("late from the earlier stream", &panel, cx)));
+}
+
+#[gpui_kit::test]
+async fn a_batch_for_another_node_stops_the_stream(cx: &mut TestAppContext) {
+    // The stream's work runs on Tokio's thread.
+    cx.executor().allow_parking();
+    let (_runtime, panel, handle) = mount(cx);
+    let other = cx.update(|cx| {
+        let mut other = panel.read(cx).source().fixture_target.clone().unwrap();
+        other.node = "worker-elsewhere".into();
+        other
+    });
+    let event = line(&other, "info for another node");
+    cx.update(|cx| {
+        panel.update(cx, |view, cx| {
+            view.collect(
+                other.clone(),
+                move |sender| async move {
+                    if sender.send(event).await.is_ok() {
+                        sender.closed().await;
+                    }
+                },
+                cx,
+            );
+        })
+    });
+    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+        !panel.read(cx).source().stream.is_running()
+    })
+    .await;
+    cx.update(|cx| assert!(!holds("for another node", &panel, cx)));
 }

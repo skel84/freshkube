@@ -465,9 +465,7 @@ fn a_sender_taken_before_starting_again_never_lands(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn a_sender_used_right_after_a_restart_for_the_same_identity_never_lands(
-    cx: &mut TestAppContext,
-) {
+fn a_sender_used_right_after_a_restart_for_the_same_identity_never_lands(cx: &mut TestAppContext) {
     let (runtime, screen) = mount(cx);
     let _old = start(&screen, &runtime, "a", cx);
     let old = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
