@@ -1,6 +1,5 @@
 //! The preferences files beside `preferences.json`: where they live and how
-//! one is read and written. No GPUI and nothing of the app's own types, so
-//! any crate may use it.
+//! one is read and written.
 //!
 //! A [`Dir`] is resolved once from the preferences path the app already uses
 //! (`GpuiOptions.preferences`). It names each file in that directory, and a
@@ -9,11 +8,7 @@
 //! and the load says why once, in [`Loaded::problem`], for the caller to log.
 //! A save writes a temporary file in the same directory and renames it into
 //! place, so a reader never sees half a file and a failed save leaves the old
-//! one. A file that exists keeps its permissions; a new one takes the mode
-//! its `Document` names (`0o644` unless [`Document::new_file_mode`] says
-//! otherwise; Unix only). A `preferences.json` that is a symlink is written
-//! through: the temporary file goes beside the link's target and replaces the
-//! target, so the link stays.
+//! one.
 //!
 //! Which keys a file holds, and who may write them, stays with the file's
 //! owner; this module owns only the reading and the writing.
@@ -40,20 +35,18 @@ pub struct Dir(PathBuf);
 impl Dir {
     /// The directory of `preferences`, the path of `preferences.json`.
     pub fn beside(preferences: &Path) -> Self {
-        Self(
-            preferences
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_default(),
-        )
+        Self(preferences.with_file_name(""))
     }
 
-    /// The file called `name` in this directory, holding a `T`.
-    pub fn document<T>(&self, name: &str, layout: Layout) -> Document<T> {
+    /// The file called `name` in this directory, holding a `T`. `mode` is the
+    /// Unix permission bits a save gives the file when it creates it (`0o644`
+    /// for `navigation.json`); a file that exists keeps its own. It is
+    /// ignored where there are no such bits.
+    pub fn document<T>(&self, name: &str, layout: Layout, mode: u32) -> Document<T> {
         Document {
             path: self.0.join(name),
             layout,
-            mode: 0o644,
+            mode,
             value: PhantomData,
         }
     }
@@ -64,7 +57,6 @@ impl Dir {
 pub struct Document<T> {
     path: PathBuf,
     layout: Layout,
-    /// The mode a new file is created with, before the umask.
     mode: u32,
     value: PhantomData<fn() -> T>,
 }
@@ -84,14 +76,6 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         &self.path
     }
 
-    /// The mode a file that doesn't exist yet is created with, before the
-    /// umask: `0o600` for a file that names a credential's place. Ignored
-    /// off Unix. A file that exists keeps the mode it has.
-    pub fn new_file_mode(mut self, mode: u32) -> Self {
-        self.mode = mode;
-        self
-    }
-
     /// The file's value, read once.
     pub fn load(&self) -> Loaded<T> {
         let bytes = match std::fs::read(&self.path) {
@@ -102,29 +86,32 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
                     problem: None,
                 };
             }
-            Err(error) => return self.unusable(format!("could not be read ({})", error.kind())),
+            Err(error) => return self.unusable(format!("could not be read: {error}")),
         };
         match serde_json::from_slice(&bytes) {
             Ok(value) => Loaded {
                 value,
                 problem: None,
             },
-            Err(error) => self.unusable(describe(&error)),
+            Err(error) => self.unusable(format!("could not be parsed: {}", describe(&error))),
         }
     }
 
     fn unusable(&self, why: String) -> Loaded<T> {
-        let problem = format!("{} {why}", self.path.display());
-        tracing::warn!("{problem}; using the defaults");
         Loaded {
             value: T::default(),
-            problem: Some(problem),
+            problem: Some(format!("{} {why}", self.path.display())),
         }
     }
 
     /// Writes `value` whole, through a temporary file in the same directory
     /// renamed into place. On failure the old file is untouched and the
     /// temporary file is removed.
+    ///
+    /// The file keeps its permissions when it exists, and takes the
+    /// document's mode when it is new. A path that is a symlink stays one:
+    /// the temporary file goes beside its target and is renamed over the
+    /// target.
     pub fn save(&self, value: &T) -> std::io::Result<()> {
         let mut text = match self.layout {
             Layout::Compact => serde_json::to_string(value),
@@ -137,14 +124,10 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         if !directory.as_os_str().is_empty() {
             std::fs::create_dir_all(directory)?;
         }
-        let existing = std::fs::metadata(&target).ok().map(|m| m.permissions());
-        let temporary = Self::temporary(&target);
-        let result = self
-            .write_synced(&temporary, text.as_bytes())
-            .and_then(|()| match existing {
-                Some(permissions) => std::fs::set_permissions(&temporary, permissions),
-                None => Ok(()),
-            })
+        let permissions = std::fs::metadata(&target).ok().map(|m| m.permissions());
+        let temporary = temporary_beside(&target);
+        let result = write_synced(&temporary, text.as_bytes())
+            .and_then(|()| self.give_permissions(&temporary, permissions))
             .and_then(|()| std::fs::rename(&temporary, &target));
         if result.is_err() {
             let _ = std::fs::remove_file(&temporary);
@@ -152,54 +135,82 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         result
     }
 
-    /// The file a save replaces: the path, or what it links to when it is
-    /// a symlink, so that the link stays a link.
+    /// The file a save replaces: the path itself, or what a symlink there
+    /// points to.
     fn target(&self) -> PathBuf {
-        let linked = std::fs::symlink_metadata(&self.path).is_ok_and(|m| m.is_symlink());
-        linked
-            .then(|| std::fs::canonicalize(&self.path).ok())
-            .flatten()
-            .unwrap_or_else(|| self.path.clone())
-    }
-
-    /// A name no other save of this process, or another process, uses,
-    /// beside the file and visible there if a crash leaves it.
-    fn temporary(target: &Path) -> PathBuf {
-        static SAVES: AtomicU64 = AtomicU64::new(0);
-        let name = target.file_name().unwrap_or_default().to_string_lossy();
-        target.with_file_name(format!(
-            "{name}.{}.{}.tmp",
-            std::process::id(),
-            SAVES.fetch_add(1, Ordering::Relaxed)
-        ))
-    }
-
-    fn write_synced(&self, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-        use std::io::Write as _;
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt as _;
-            options.mode(self.mode);
+        let is_link = std::fs::symlink_metadata(&self.path)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false);
+        if !is_link {
+            return self.path.clone();
         }
-        let mut file = options.open(path)?;
-        file.write_all(bytes)?;
-        file.sync_all()
+        std::fs::canonicalize(&self.path).unwrap_or_else(|_| {
+            // A link to a file that doesn't exist yet: write where it points.
+            match std::fs::read_link(&self.path) {
+                Ok(to) => self.path.with_file_name("").join(to),
+                Err(_) => self.path.clone(),
+            }
+        })
+    }
+
+    #[cfg(unix)]
+    fn give_permissions(
+        &self,
+        temporary: &Path,
+        existing: Option<std::fs::Permissions>,
+    ) -> std::io::Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+        let permissions =
+            existing.unwrap_or_else(|| std::fs::Permissions::from_mode(self.mode & 0o7777));
+        std::fs::set_permissions(temporary, permissions)
+    }
+
+    #[cfg(not(unix))]
+    fn give_permissions(
+        &self,
+        _temporary: &Path,
+        _existing: Option<std::fs::Permissions>,
+    ) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
-/// What a parse error says about the file, without its contents: serde_json's
-/// own message can quote a value, and a value may be a path or an endpoint.
+/// A name no other save of this process, or another process, uses.
+fn temporary_beside(target: &Path) -> PathBuf {
+    static SAVES: AtomicU64 = AtomicU64::new(0);
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    target.with_file_name(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        SAVES.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// A parse error in words that never carry the file's contents: serde_json's
+/// own message echoes the value it did not expect, which in a typed document
+/// can be a path, a context name or an endpoint. Only the kind of error and
+/// where it is.
 fn describe(error: &serde_json::Error) -> String {
     use serde_json::error::Category;
-    let place = format!("line {}, column {}", error.line(), error.column());
-    match error.classify() {
-        Category::Io => "could not be read".into(),
-        Category::Syntax => format!("is not valid JSON ({place})"),
-        Category::Eof => format!("ends early ({place})"),
-        Category::Data => format!("does not have the expected shape ({place})"),
-    }
+    let kind = match error.classify() {
+        Category::Io => "a read error",
+        Category::Syntax => "invalid JSON",
+        Category::Data => "a value of the wrong type or shape",
+        Category::Eof => "the file ends too early",
+    };
+    format!("{kind} at line {}, column {}", error.line(), error.column())
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // Private until the final permissions are set, whatever they are.
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 #[cfg(test)]

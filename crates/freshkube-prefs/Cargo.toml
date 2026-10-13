@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 publish = false
-description = "Reading and writing freshkube's preferences files"
+description = "The preferences files: where they live and how one is read and written"
 
 [dependencies]
 serde.workspace = true

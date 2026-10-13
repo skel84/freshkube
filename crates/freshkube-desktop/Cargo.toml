@@ -13,13 +13,12 @@ doctest = false
 base64.workspace = true
 fastrand = "2"
 gpui-kit = "=0.7.0"
-tracing.workspace = true
 freshkube-core.workspace = true
-freshkube-prefs.workspace = true
 freshkube-delivery.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
 freshkube-observability.workspace = true
+freshkube-prefs.workspace = true
 freshkube-probe.workspace = true
 freshkube-reads.workspace = true
 freshkube-terminal.workspace = true
@@ -34,6 +33,7 @@ k8s-openapi.workspace = true
 serde_json.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
+tracing.workspace = true
 # Where preferences live on each platform.
 dirs.workspace = true
 # Keys the user asks to remember: Keychain, Credential Manager or Secret Service.

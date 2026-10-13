@@ -9,13 +9,13 @@ crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-delivery/  the delivery chain (Kargo, Argo CD, builds → pods) and the applications derived from it; no UI types
+├── freshkube-prefs/     the preferences files: a Dir and a typed JSON Document with an atomic save; std, serde and tracing only
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
 ├── freshkube-reads/     the owners of cluster reads: Loader<T, I>, one read's answer for one identity and its Tokio work
 ├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
 ├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
 ├── freshkube-graph/     graph layout without GPUI: columns of boxes and the curves between them
-├── freshkube-prefs/     the preferences files: a Dir and a typed Document with an atomic save; no GPUI, no core
 ├── freshkube-monitoring/ Grafana dashboards from the cluster's Prometheus, and the CPU and memory history charts
 ├── freshkube-observability/ Coroot's applications, service map, incidents, traces, profiles and logs
 ├── freshkube-workbench/ the shared components on invented data, one story at a time; never shipped

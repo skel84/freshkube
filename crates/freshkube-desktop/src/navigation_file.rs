@@ -11,7 +11,7 @@
 //! keys it doesn't know, and a file it wrote without a split's size gives
 //! that split its default here. Keys this build doesn't know are kept.
 use std::path::Path;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use freshkube_prefs::{Dir, Document, Layout};
@@ -38,9 +38,9 @@ struct File {
     value: Mutex<Map<String, Value>>,
     /// Keeps two saves from writing at once.
     writer: Mutex<()>,
-    /// Whether the last save failed, so a directory that can't be written
-    /// logs once, not on every drag.
-    save_failed: std::sync::atomic::AtomicBool,
+    /// Whether the last save failed, so a directory that stays unwritable
+    /// is logged once, not on every change.
+    save_failed: AtomicBool,
     /// How many split sizes were saved, for tests that count a drag's
     /// writes.
     #[cfg(test)]
@@ -49,6 +49,21 @@ struct File {
 
 impl Global for NavigationFile {}
 
+impl File {
+    /// Logs a failed save the first time it fails; a save that works again
+    /// re-arms the log.
+    fn report_save(&self, result: std::io::Result<()>) {
+        match result {
+            Ok(()) => self.save_failed.store(false, Ordering::Relaxed),
+            Err(error) => {
+                if !self.save_failed.swap(true, Ordering::Relaxed) {
+                    tracing::warn!("{} not saved: {error}", self.document.path().display());
+                }
+            }
+        }
+    }
+}
+
 impl NavigationFile {
     /// The file beside `preferences`, read once. Without preferences, as in
     /// tests, nothing is read or written.
@@ -56,14 +71,17 @@ impl NavigationFile {
         let Some(preferences) = preferences else {
             return Self(None);
         };
-        let document = Dir::beside(preferences).document("navigation.json", Layout::Compact);
-        // A file that can't be used is logged by the load.
-        let value = document.load().value;
+        let document = Dir::beside(preferences).document("navigation.json", Layout::Compact, 0o644);
+        let loaded = document.load();
+        if let Some(problem) = &loaded.problem {
+            tracing::warn!("{problem}; starting from the defaults");
+        }
+        let value = loaded.value;
         Self(Some(Arc::new(File {
             document,
             value: Mutex::new(value),
             writer: Mutex::new(()),
-            save_failed: Default::default(),
+            save_failed: AtomicBool::new(false),
             #[cfg(test)]
             sizes_saved: Default::default(),
         })))
@@ -166,20 +184,12 @@ impl NavigationFile {
                     return;
                 };
                 // The latest snapshot, which a later change may have moved on.
-                // Copied so the lock is not held while the file is written.
+                // Cloned so the lock is not held through the file I/O: the UI
+                // thread changes and reads the snapshot under the same lock.
                 let Ok(snapshot) = file.value.lock().map(|value| value.clone()) else {
                     return;
                 };
-                let failed = match file.document.save(&snapshot) {
-                    Ok(()) => false,
-                    Err(error) => {
-                        if !file.save_failed.load(Ordering::Relaxed) {
-                            tracing::warn!("{} not saved: {error}", file.document.path().display());
-                        }
-                        true
-                    }
-                };
-                file.save_failed.store(failed, Ordering::Relaxed);
+                file.report_save(file.document.save(&snapshot));
             })
             .detach();
     }
