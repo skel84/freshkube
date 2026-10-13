@@ -396,3 +396,28 @@ async fn preview_reads_keep_their_sentences_and_carry_a_kind() {
         format!("PodDisruptionBudget check: {expected}")
     );
 }
+
+#[test]
+fn audit_path_and_actor_follow_the_ambient_values() {
+    use crate::ambient::Ambient;
+    let ambient = Ambient {
+        home_variable: Some("/home/ana".into()),
+        user: Some("ana".into()),
+        ..Ambient::default()
+    };
+    assert_eq!(
+        default_audit_path_in(&ambient, "cluster-a"),
+        PathBuf::from("/home/ana/.freshkube/operations-cluster-a.yaml")
+    );
+    assert_eq!(
+        default_audit_path_in(&Ambient::default(), "cluster-a"),
+        PathBuf::from("./.freshkube/operations-cluster-a.yaml")
+    );
+    assert_eq!(actor_in(&ambient), "ana");
+    assert_eq!(actor_in(&Ambient::default()), "unknown");
+    let empty = Ambient {
+        user: Some(String::new()),
+        ..Ambient::default()
+    };
+    assert_eq!(actor_in(&empty), "");
+}

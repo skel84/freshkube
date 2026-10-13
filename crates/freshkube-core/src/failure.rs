@@ -32,6 +32,20 @@ impl FailureKind {
     pub fn is_permanent(self) -> bool {
         matches!(self, FailureKind::Forbidden | FailureKind::NotFound)
     }
+
+    /// The kind in a word or two, as a failure prints it ahead of its
+    /// message. The one place these labels are written.
+    pub fn label(self) -> &'static str {
+        match self {
+            FailureKind::Config => "Configuration",
+            FailureKind::Unreachable => "Unreachable",
+            FailureKind::Timeout => "Timed out",
+            FailureKind::Unauthorized => "Unauthorized",
+            FailureKind::Forbidden => "Forbidden",
+            FailureKind::NotFound => "Not found",
+            FailureKind::Other => "Error",
+        }
+    }
 }
 
 /// A failed Kubernetes or Talos read, already classified.
@@ -117,7 +131,7 @@ impl Failure {
             }
             kube::Error::Service(error) => {
                 let message = with_causes(error.as_ref());
-                let kind = if message.to_lowercase().contains("timed out") {
+                let kind = if timed_out(error.as_ref()) {
                     FailureKind::Timeout
                 } else {
                     FailureKind::Unreachable
@@ -174,6 +188,27 @@ impl From<TalosError> for Failure {
     }
 }
 
+/// Whether a read or write timed out, or the OS did, among the error's
+/// causes. The client's connect timeout is not one: hyper-timeout raises it
+/// as a `TimedOut` io error whose inner error is tokio's `Elapsed`, and a
+/// connection that could not be made is `Unreachable`; its read and write
+/// timeouts and the OS's `ETIMEDOUT` carry no such inner error.
+fn timed_out(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(cause) = source {
+        if cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+            io.kind() == std::io::ErrorKind::TimedOut
+                && !io
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<tokio::time::error::Elapsed>())
+        }) {
+            return true;
+        }
+        source = cause.source();
+    }
+    false
+}
+
 /// An error and its causes, as "client error (Connect): unsuccessful tunnel
 /// (HTTP/1.1 407 Pro)": hyper's own message names only the stage that failed.
 fn with_causes(error: &(dyn std::error::Error + 'static)) -> String {
@@ -192,16 +227,7 @@ fn with_causes(error: &(dyn std::error::Error + 'static)) -> String {
 
 impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let kind = match self.kind {
-            FailureKind::Config => "Configuration",
-            FailureKind::Unreachable => "Unreachable",
-            FailureKind::Timeout => "Timed out",
-            FailureKind::Unauthorized => "Unauthorized",
-            FailureKind::Forbidden => "Forbidden",
-            FailureKind::NotFound => "Not found",
-            FailureKind::Other => "Error",
-        };
-        write!(f, "{kind} · {}", self.message)
+        write!(f, "{} · {}", self.kind.label(), self.message)
     }
 }
 
@@ -239,6 +265,38 @@ mod tests {
         assert_eq!(Failure::from_kube(api(504, "x")).kind, FailureKind::Timeout);
         assert_eq!(Failure::from_kube(api(500, "x")).kind, FailureKind::Other);
         assert!(!FailureKind::Unreachable.is_permanent());
+    }
+
+    #[test]
+    fn a_timed_out_transport_is_a_timeout_by_its_io_kind() {
+        use std::io::{Error, ErrorKind};
+        let service = |error: Error| kube::Error::Service(Box::new(error));
+        let timeout = Failure::from_kube(service(Error::from(ErrorKind::TimedOut)));
+        assert_eq!(timeout.kind, FailureKind::Timeout);
+        // Words that say so do not: the kind comes from the error's type.
+        let reset =
+            Failure::from_kube(service(Error::new(ErrorKind::ConnectionReset, "timed out")));
+        assert_eq!(reset.kind, FailureKind::Unreachable);
+    }
+
+    #[test]
+    fn every_kind_has_its_label() {
+        let labels = [
+            (FailureKind::Config, "Configuration"),
+            (FailureKind::Unreachable, "Unreachable"),
+            (FailureKind::Timeout, "Timed out"),
+            (FailureKind::Unauthorized, "Unauthorized"),
+            (FailureKind::Forbidden, "Forbidden"),
+            (FailureKind::NotFound, "Not found"),
+            (FailureKind::Other, "Error"),
+        ];
+        for (kind, label) in labels {
+            assert_eq!(kind.label(), label);
+            assert_eq!(
+                Failure::new(kind, "why").to_string(),
+                format!("{label} · why")
+            );
+        }
     }
 
     #[test]

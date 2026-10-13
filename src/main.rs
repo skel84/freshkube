@@ -89,6 +89,8 @@ fn attach_console() {
 fn main() -> Result<()> {
     // `FRESHKUBE_FIRST_FRAME=1` times the first drawn frame from here.
     freshkube_probe::first_frame::start();
+    // The environment core depends on is read here once.
+    freshkube_desktop::install_ambient_from_env();
     #[cfg(all(windows, not(debug_assertions)))]
     attach_console();
     let Cli {

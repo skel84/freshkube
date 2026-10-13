@@ -246,6 +246,8 @@ fn main() -> color_eyre::Result<()> {
             unsafe { std::env::set_var(name, value) };
         }
     }
+    // After the defaults above, which set HOME for the dashboard scenario.
+    freshkube_desktop::install_ambient_from_env();
     eprintln!("stress scenario {scenario:?}");
     let terminal = match scenario {
         Scenario::Terminal { rate } => Some(freshkube_desktop::TerminalWorkload::Flood {

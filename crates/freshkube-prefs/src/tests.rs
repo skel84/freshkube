@@ -368,3 +368,92 @@ fn updates_from_several_threads_lose_none() {
     }
     assert_eq!(document.load().value.len(), 8);
 }
+
+#[test]
+fn an_update_of_a_file_that_cannot_be_read_returns_the_error_and_saves_nothing() {
+    // A directory where the file should be: reading it fails with something
+    // other than "not found", on every platform and for any user.
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory);
+    std::fs::create_dir(document.path()).unwrap();
+    let mut called = false;
+    let result = document.update(|_| called = true);
+    assert!(result.is_err());
+    assert!(!called, "change must not run on a file that wasn't read");
+    assert!(document.path().is_dir());
+    let names: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["shared.json"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_update_of_a_file_without_read_permission_keeps_it() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory);
+    std::fs::write(document.path(), "{\"keep\": 1}\n").unwrap();
+    std::fs::set_permissions(document.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    // A process that ignores file permissions (root) can still read it.
+    if std::fs::read(document.path()).is_ok() {
+        std::fs::set_permissions(document.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+        eprintln!("skipped: unreadable files do not stop this process");
+        return;
+    }
+    let result = document.update(|map| {
+        map.insert("text_size".into(), serde_json::json!(18.0f32));
+    });
+    std::fs::set_permissions(document.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(result.is_err());
+    assert_eq!(
+        std::fs::read_to_string(document.path()).unwrap(),
+        "{\"keep\": 1}\n"
+    );
+}
+
+#[test]
+fn a_load_of_a_file_that_cannot_be_read_is_the_default_with_a_problem() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory);
+    std::fs::create_dir(document.path()).unwrap();
+    let loaded = document.load();
+    assert!(loaded.value.is_empty());
+    assert!(loaded.problem.unwrap().contains("could not be read"));
+}
+
+#[test]
+fn a_limited_document_refuses_a_large_file_and_a_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory).limited_to(16);
+    std::fs::write(document.path(), "{\"a\": \"0123456789abcdef\"}").unwrap();
+    let loaded = document.load();
+    assert!(loaded.value.is_empty());
+    assert!(loaded.problem.unwrap().contains("larger than 16 bytes"));
+    std::fs::write(document.path(), "{\"a\": 1}").unwrap();
+    assert_eq!(document.load().value["a"], 1);
+    std::fs::remove_file(document.path()).unwrap();
+    assert!(document.load().problem.is_none());
+    std::fs::create_dir(document.path()).unwrap();
+    assert!(document.load().problem.unwrap().contains("regular file"));
+}
+
+#[test]
+fn an_update_of_a_file_a_limited_document_refuses_returns_the_error_and_saves_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory).limited_to(16);
+    let big = "{\"keep\": \"0123456789abcdef\"}\n";
+    std::fs::write(document.path(), big).unwrap();
+    let mut called = false;
+    let result = document.update(|_| called = true);
+    assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+    assert!(!called, "change must not run on a refused file");
+    assert_eq!(std::fs::read_to_string(document.path()).unwrap(), big);
+
+    std::fs::remove_file(document.path()).unwrap();
+    std::fs::create_dir(document.path()).unwrap();
+    assert!(document.update(|_| called = true).is_err());
+    assert!(!called);
+    assert!(document.path().is_dir());
+}

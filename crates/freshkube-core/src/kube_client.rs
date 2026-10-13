@@ -21,14 +21,15 @@ use kube::{Client, Config};
 /// kube's (rare: a plain-http API server) and leaks nothing. kube refuses
 /// other schemes, `socks5://` (a feature
 /// we don't build) and `https://` among them.
-pub fn client(mut config: Config) -> Result<Client, ClientError> {
-    let environment = environment_proxy();
-    let no_proxy = environment_no_proxy();
-    let from_environment = skip_environment_proxy(
-        &mut config,
-        environment.as_deref(),
-        no_proxy.as_deref().unwrap_or(""),
-    );
+pub fn client(config: Config) -> Result<Client, ClientError> {
+    client_with(config, crate::ambient::get())
+}
+
+fn client_with(
+    mut config: Config,
+    ambient: &crate::ambient::Ambient,
+) -> Result<Client, ClientError> {
+    let from_environment = skip_ambient_proxy(&mut config, ambient);
     Client::try_from(config).map_err(|error| ClientError {
         error,
         from_environment,
@@ -96,21 +97,13 @@ fn redacted(proxy: &http::Uri) -> String {
     }
 }
 
-/// The proxy kube takes from the environment, in kube's order.
-fn environment_proxy() -> Option<String> {
-    first_set(&["HTTPS_PROXY", "https_proxy"])
-}
-
-/// `NO_PROXY`, else `no_proxy`, as Go reads them.
-fn environment_no_proxy() -> Option<String> {
-    first_set(&["NO_PROXY", "no_proxy"])
-}
-
-fn first_set(names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .find(|value| !value.is_empty())
+/// [`skip_environment_proxy`] with the proxy pair `ambient` holds.
+fn skip_ambient_proxy(config: &mut Config, ambient: &crate::ambient::Ambient) -> bool {
+    skip_environment_proxy(
+        config,
+        ambient.https_proxy.as_deref(),
+        ambient.no_proxy.as_deref().unwrap_or(""),
+    )
 }
 
 /// Drops the environment's proxy for a server Go wouldn't proxy, and says
@@ -274,6 +267,41 @@ mod tests {
 
     fn direct(no_proxy: &str, server: &str) -> bool {
         bypasses(no_proxy, &server.parse().unwrap())
+    }
+
+    #[test]
+    fn the_client_takes_its_proxy_decision_from_the_ambient_values() {
+        use crate::ambient::Ambient;
+        let ambient = Ambient {
+            https_proxy: Some("http://proxy.example.test:3128".into()),
+            no_proxy: Some("internal.example.test".into()),
+            ..Ambient::default()
+        };
+        let mut proxied = config(
+            "https://api.example.test:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        assert!(skip_ambient_proxy(&mut proxied, &ambient));
+        assert!(proxied.proxy_url.is_some());
+        let mut bypassed = config(
+            "https://internal.example.test:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        assert!(!skip_ambient_proxy(&mut bypassed, &ambient));
+        assert!(bypassed.proxy_url.is_none());
+        let mut loopback = config(
+            "https://127.0.0.1:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        skip_ambient_proxy(&mut loopback, &ambient);
+        assert!(loopback.proxy_url.is_none());
+        // Nothing installed: the proxy kube took from the real environment stays.
+        let mut unknown = config(
+            "https://127.0.0.1:6443",
+            Some("http://proxy.example.test:3128"),
+        );
+        skip_ambient_proxy(&mut unknown, &Ambient::default());
+        assert!(unknown.proxy_url.is_some());
     }
 
     #[test]
@@ -468,6 +496,83 @@ mod tests {
             String::from_utf8_lossy(&head).into_owned()
         });
         (format!("{address}"), head)
+    }
+
+    /// A one-connection listener that accepts and never answers, holding the
+    /// connection open for `hold`. With `read_head` it reads the request head
+    /// first, as a server that took the request and went quiet.
+    async fn silent(read_head: bool, hold: std::time::Duration) -> String {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            if read_head {
+                let mut head = Vec::new();
+                let mut buffer = [0; 1024];
+                while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut buffer).await {
+                        Ok(read) if read > 0 => head.extend_from_slice(&buffer[..read]),
+                        _ => return,
+                    }
+                }
+            }
+            tokio::time::sleep(hold).await;
+        });
+        format!("{address}")
+    }
+
+    fn quick(server: &str, proxy: &str, connect: bool) -> Client {
+        let wait = Some(std::time::Duration::from_millis(100));
+        let mut config = config(server, Some(proxy));
+        config.connect_timeout = if connect {
+            wait
+        } else {
+            Some(std::time::Duration::from_secs(5))
+        };
+        config.read_timeout = if connect {
+            Some(std::time::Duration::from_secs(5))
+        } else {
+            wait
+        };
+        Client::try_from(config).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_connect_that_never_finishes_is_unreachable() {
+        use crate::resources::{Failure, FailureKind};
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        // The proxy takes the CONNECT and never answers, inside the connector.
+        let address = silent(true, std::time::Duration::from_secs(5)).await;
+        let client = quick(
+            "https://api.example.test:6443",
+            &format!("http://{address}"),
+            true,
+        );
+        let error = client.apiserver_version().await.unwrap_err();
+        let failure = Failure::from_kube(error);
+        assert_eq!(failure.kind, FailureKind::Unreachable, "{failure}");
+        assert!(
+            failure.message.contains("deadline has elapsed"),
+            "{failure}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_read_that_never_finishes_is_a_timeout() {
+        use crate::resources::{Failure, FailureKind};
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let address = silent(true, std::time::Duration::from_secs(5)).await;
+        let client = quick(
+            "http://api.example.test:6443",
+            &format!("http://{address}"),
+            false,
+        );
+        let error = client.apiserver_version().await.unwrap_err();
+        let failure = Failure::from_kube(error);
+        assert_eq!(failure.kind, FailureKind::Timeout, "{failure}");
     }
 
     fn proxied(server: &str, proxy: &str) -> Client {
