@@ -220,3 +220,135 @@ fn command_k_goes_to_any_kind_from_any_page(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// The shell's keys and the actions its root answers, as they stood before
+/// #580 moved each to its owner. The bindings are those in the shell's and
+/// the menu bar's contexts and the context-free ones, in the order they
+/// were added: a key's later binding wins, and macOS's bar shows an
+/// action's first. The actions are those the shell answers with the
+/// keyboard on it, by page and by the menu the window has.
+#[gpui_kit::test]
+fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
+    use gpui_kit::AsKeystroke;
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let bindings: Vec<String> = cx.update(|cx| {
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+        keymap
+            .bindings()
+            .filter_map(|binding| {
+                let context = binding.predicate().map(|context| context.to_string());
+                let shell = matches!(
+                    context.as_deref(),
+                    None | Some(freshkube_ui::page::SHELL_CONTEXT)
+                        | Some(crate::desktop::MENU_BAR_ONLY)
+                );
+                shell.then(|| {
+                    let keys: Vec<String> = binding
+                        .keystrokes()
+                        .iter()
+                        .map(|key| key.as_keystroke().unparse())
+                        .collect();
+                    format!(
+                        "{} {} {}",
+                        keys.join(" "),
+                        binding.action().name(),
+                        context.unwrap_or_default()
+                    )
+                })
+            })
+            .collect()
+    });
+    assert_eq!(
+        bindings,
+        [
+            "alt-cmd-i inspector::ToggleInspector ",
+            "cmd-+ text_size::LargerText ",
+            "cmd-= text_size::LargerText ",
+            "cmd-- text_size::SmallerText ",
+            "cmd-0 text_size::DefaultText ",
+            "cmd-r pilot::Refresh Freshkube",
+            "cmd-b pilot::ToggleColumn Freshkube",
+            "cmd-1 pilot::ShowOverview Freshkube",
+            "cmd-2 pilot::ShowNodes Freshkube",
+            "cmd-3 pilot::ShowNamespaces Freshkube",
+            "cmd-4 pilot::ShowEvents Freshkube",
+            "cmd-5 pilot::ShowHealth Freshkube",
+            "cmd-6 pilot::ShowEtcd Freshkube",
+            "cmd-7 pilot::ShowSystemServices Freshkube",
+            "cmd-8 pilot::ShowSecurity Freshkube",
+            "cmd-9 pilot::ShowLifecycle Freshkube",
+            // The Tab character, which GPUI parses as no key.
+            "ctrl- pilot::NextScreen MenuBarOnly",
+            "ctrl-shift- pilot::PreviousScreen MenuBarOnly",
+            "ctrl-tab pilot::NextScreen Freshkube",
+            "ctrl-shift-tab pilot::PreviousScreen Freshkube",
+            "alt-up pilot::PreviousContext Freshkube",
+            "alt-down pilot::NextContext Freshkube",
+            "cmd-k pilot::GoToKind Freshkube",
+            "ctrl-. dock::NextDockTab Freshkube",
+            "ctrl-, dock::PreviousDockTab Freshkube",
+            "shift-escape dock::MinimizeDock Freshkube",
+        ]
+    );
+    let answered = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            view.read(cx).focus.clone().focus(window, cx);
+            window.render_frame(cx);
+            let mut names: Vec<&'static str> = window
+                .available_actions(cx)
+                .iter()
+                .map(|action| action.name())
+                .collect();
+            names.sort_unstable();
+            names
+        })
+        .unwrap()
+    };
+    let mut expected = vec![
+        "app::About",
+        "app::OpenSettings",
+        "input::Copy",
+        "inspector::ToggleInspector",
+        "pilot::GoToKind",
+        "pilot::NextContext",
+        "pilot::NextScreen",
+        "pilot::PreviousContext",
+        "pilot::PreviousScreen",
+        "pilot::Refresh",
+        "pilot::ShowEtcd",
+        "pilot::ShowEvents",
+        "pilot::ShowHealth",
+        "pilot::ShowLifecycle",
+        "pilot::ShowNamespaces",
+        "pilot::ShowNodes",
+        "pilot::ShowOverview",
+        "pilot::ShowSecurity",
+        "pilot::ShowSystemServices",
+        "pilot::UseDarkAppearance",
+        "pilot::UseLightAppearance",
+        "pilot::UseSystemAppearance",
+        "root::Tab",
+        "root::TabPrev",
+        "text_size::DefaultText",
+        "text_size::LargerText",
+        "text_size::SmallerText",
+    ];
+    // Overview has no column.
+    assert_eq!(answered(cx), expected);
+    // Resources has one, so ToggleColumn joins.
+    cx.update_window(handle, |_, window, cx| open_kind(window, cx, "pods"))
+        .unwrap();
+    expected.push("pilot::ToggleColumn");
+    expected.sort_unstable();
+    assert_eq!(answered(cx), expected);
+    // The menu button answers OpenAppMenu.
+    cx.update(|cx| {
+        view.update(cx, |pilot, _| {
+            pilot.chrome.menu_platform = freshkube_ui::platform::Platform::Linux
+        })
+    });
+    expected.push("app::OpenAppMenu");
+    expected.sort_unstable();
+    assert_eq!(answered(cx), expected);
+}
