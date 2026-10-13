@@ -6,16 +6,19 @@ license.workspace = true
 publish = false
 description = "Freshkube's look: theme, palette, text size and the shared components every page draws"
 
-# Depends on neither freshkube-desktop nor freshkube-core, so a page can
+# Depends on neither freshkube-desktop nor freshkube-core (freshkube-prefs
+# is std, serde and serde_json only), so a page can
 # use only what this crate exports (docs/DESIGN.md#components). The graph
 # view lays out with freshkube-graph, which depends on nothing.
 [dependencies]
 gpui-kit = "=0.7.0"
 freshkube-graph.workspace = true
+freshkube-prefs.workspace = true
 # Render probes: the loading rows and the change flash count their frames.
 freshkube-probe.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 # The reduced-motion readers hand the OS's answer back to GPUI (`motion`).
 futures.workspace = true
 
@@ -41,3 +44,4 @@ testing = ["gpui-kit/test-support"]
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 freshkube-probe = { workspace = true, features = ["counting"] }
+tempfile = "3"

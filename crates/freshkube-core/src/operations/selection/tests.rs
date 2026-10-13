@@ -237,7 +237,9 @@ impl Harness {
                             [0]["address"] = json!("10.99.99.99");
                     }
                     // Exercise the same identity, readiness, scheduling and pod reads as live.
-                    let mut nodes = preflight_kubernetes(&client, &targets).await?;
+                    let mut nodes = preflight_kubernetes(&client, &targets)
+                        .await
+                        .map_err(|failure| failure.message)?;
                     if let Some(impacts) = scenario.impacts.get(call) {
                         assert_eq!(impacts.len(), nodes.len());
                         for (node, impact) in nodes.iter_mut().zip(impacts) {

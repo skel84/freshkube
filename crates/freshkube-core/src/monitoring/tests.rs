@@ -811,6 +811,26 @@ async fn markers_read_what_they_may_and_name_what_was_refused() {
     );
 }
 
+/// A part that fails any other way reads "request failed", and a silent API server "timed out".
+#[tokio::test(start_paused = true)]
+async fn a_failing_or_silent_marker_read_keeps_its_words() {
+    let (client, _) = fake(|_, path, _| match path {
+        "/api/v1/nodes" => (500, status(500, "boom")),
+        "/api/v1/events" => (0, String::new()),
+        _ => (403, status(403, "forbidden")),
+    });
+    let read = markers::read_markers(client, 0).await;
+    assert!(read.markers.is_empty());
+    assert_eq!(
+        read.unavailable,
+        [
+            "Can't list replicasets: forbidden",
+            "Can't list nodes: request failed",
+            "Can't list events: timed out"
+        ]
+    );
+}
+
 #[test]
 fn compatible_servers_rank_with_their_port_and_prefix() {
     let candidate = |name: &str, labels: Value, ports: Value| {

@@ -2579,7 +2579,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tracing",
 ]
 
 [[package]]
@@ -2616,12 +2615,15 @@ dependencies = [
  "block2 0.6.2",
  "chrono",
  "freshkube-graph",
+ "freshkube-prefs",
  "freshkube-probe",
  "futures",
  "gpui-kit",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "serde_json",
+ "tempfile",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 

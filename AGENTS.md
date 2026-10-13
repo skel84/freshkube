@@ -9,7 +9,7 @@ crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
 ├── freshkube-delivery/  the delivery chain (Kargo, Argo CD, builds → pods) and the applications derived from it; no UI types
-├── freshkube-prefs/     the preferences files: a Dir and a typed JSON Document with an atomic save; std, serde and tracing only
+├── freshkube-prefs/     the preferences files: a Dir and a typed JSON Document with an atomic save and a keyed update; std, serde and serde_json only
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
 ├── freshkube-reads/     the owners of cluster reads: Loader<T, I>, one read's answer for one identity and its Tokio work; Watch<T, I>, one stream's batches for one identity
 ├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
