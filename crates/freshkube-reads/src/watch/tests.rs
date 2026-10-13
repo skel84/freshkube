@@ -1,4 +1,10 @@
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use gpui_kit::{AppContext, Context, Entity, TestAppContext};
 use tokio::{
@@ -33,6 +39,8 @@ struct Screen {
     /// keeping the new stream's feed in `restarted`.
     restart_on: Option<u32>,
     restarted: Option<mpsc::Sender<u32>>,
+    /// How many items the current stream has passed on to the watch.
+    forwarded: Arc<AtomicUsize>,
 }
 
 impl Screen {
@@ -41,6 +49,8 @@ impl Screen {
     /// dropped.
     fn begin(&mut self, identity: &'static str, cx: &mut Context<Self>) -> mpsc::Sender<u32> {
         let (feed, mut items) = mpsc::channel::<u32>(16);
+        let forwarded = Arc::new(AtomicUsize::new(0));
+        self.forwarded = forwarded.clone();
         let runtime = self.runtime.clone();
         self.watch.start(
             identity,
@@ -51,6 +61,7 @@ impl Screen {
                     if sender.send(item).await.is_err() {
                         return;
                     }
+                    forwarded.fetch_add(1, Ordering::SeqCst);
                 }
             },
             |screen: &mut Screen| &mut screen.watch,
@@ -92,6 +103,7 @@ fn mount_paced(pace: Pace, cx: &mut TestAppContext) -> (Runtime, Entity<Screen>)
         stop_on: None,
         restart_on: None,
         restarted: None,
+        forwarded: Arc::default(),
     });
     (runtime, screen)
 }
@@ -105,21 +117,32 @@ fn start(
     screen.update(cx, |screen, cx| screen.begin(identity, cx))
 }
 
-/// Sends `items` and waits, without running GPUI, until the stream has
-/// passed them all on to the watch's channel.
-fn queue(feed: &mpsc::Sender<u32>, runtime: &Runtime, items: &[u32]) {
+/// Sends `items` and runs GPUI until the stream has passed them all on to
+/// the watch's channel; a paced delivery holds them there until its time.
+fn queue(
+    screen: &Entity<Screen>,
+    feed: &mpsc::Sender<u32>,
+    runtime: &Runtime,
+    items: &[u32],
+    cx: &mut TestAppContext,
+) {
+    let forwarded = screen.read_with(cx, |screen, _| screen.forwarded.clone());
+    let target = forwarded.load(Ordering::SeqCst) + items.len();
     for item in items {
         runtime.block_on(feed.send(*item)).unwrap();
     }
-    for _ in 0..500 {
-        if feed.capacity() == feed.max_capacity() {
-            // Taken from the feed; give the last one time to be sent on.
-            std::thread::sleep(Duration::from_millis(20));
+    const TURNS: usize = 100_000;
+    for _ in 0..TURNS {
+        cx.run_until_parked();
+        if forwarded.load(Ordering::SeqCst) >= target {
             return;
         }
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::yield_now();
     }
-    panic!("the stream never took its items");
+    panic!(
+        "the stream passed on {} of {target} items in {TURNS} turns",
+        forwarded.load(Ordering::SeqCst)
+    );
 }
 
 /// Runs GPUI's executor until `done`, while Tokio works on its own threads,
@@ -290,7 +313,7 @@ fn batches_wait_for_their_pace(cx: &mut TestAppContext) {
     until(cx, |cx| seen(&screen, cx) == [1]);
 
     // What arrives sooner waits, then lands as one batch.
-    queue(&feed, &runtime, &[2, 3, 4]);
+    queue(&screen, &feed, &runtime, &[2, 3, 4], cx);
     cx.run_until_parked();
     assert_eq!(seen(&screen, cx), [1]);
     cx.executor().advance_clock(EVERY);
@@ -300,7 +323,7 @@ fn batches_wait_for_their_pace(cx: &mut TestAppContext) {
         assert_eq!(screen.sizes, [1, 3]);
     });
 
-    queue(&feed, &runtime, &[5]);
+    queue(&screen, &feed, &runtime, &[5], cx);
     cx.executor()
         .advance_clock(EVERY - Duration::from_millis(1));
     cx.run_until_parked();
@@ -321,7 +344,7 @@ fn a_batch_carries_at_most_its_cap(cx: &mut TestAppContext) {
     let feed = start(&screen, &runtime, "a", cx);
     runtime.block_on(feed.send(1)).unwrap();
     until(cx, |cx| seen(&screen, cx) == [1]);
-    queue(&feed, &runtime, &[2, 3, 4, 5, 6]);
+    queue(&screen, &feed, &runtime, &[2, 3, 4, 5, 6], cx);
     for _ in 0..3 {
         cx.executor().advance_clock(EVERY);
         cx.run_until_parked();
@@ -345,7 +368,7 @@ fn a_delivery_may_start_its_own_watch_again(cx: &mut TestAppContext) {
     runtime.block_on(old.send(1)).unwrap();
     until(cx, |cx| seen(&screen, cx) == [1]);
     // 3 is queued behind 2, whose delivery starts the watch again.
-    queue(&old, &runtime, &[2, 3]);
+    queue(&screen, &old, &runtime, &[2, 3], cx);
     cx.executor().advance_clock(EVERY);
     cx.run_until_parked();
     until(cx, |_| old.is_closed());

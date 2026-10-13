@@ -211,7 +211,9 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
     /// showing again returns whether the owner should start it again, which
     /// it should whenever hiding stopped it, however recently: a stopped
     /// stream holds nothing fresh. A stream that wasn't running when it hid
-    /// isn't started again. Returns false when nothing changed.
+    /// isn't started again; one the owner stops while hidden still asks for
+    /// a start on show, so an owner that wants it to stay stopped says no.
+    /// Returns false when nothing changed.
     ///
     /// An owner whose stream reads on while its page hides, as a dock's log
     /// tab does, never calls this.
