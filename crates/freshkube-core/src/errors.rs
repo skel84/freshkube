@@ -16,11 +16,11 @@ use talos_rs::TalosError;
 ///
 /// let error = TalosError::Connection("connection refused".to_string());
 /// let message = format_talos_error(&error);
-/// assert!(message.contains("refused"));
+/// assert_eq!(message, "Connection refused - is the node reachable?");
 /// ```
 pub fn format_talos_error(error: &TalosError) -> String {
     match error {
-        TalosError::Connection(msg) => format!("Connection failed: {msg}"),
+        TalosError::Connection(msg) => format_connection_error(msg),
         TalosError::Grpc(status) => format_grpc_error(status),
         TalosError::Transport(e) => format_transport_error(e),
         TalosError::Tls(msg) => {
@@ -36,6 +36,27 @@ pub fn format_talos_error(error: &TalosError) -> String {
             format!("Context '{}' not found in talosconfig", ctx)
         }
         _ => error.to_string(),
+    }
+}
+
+/// Format a connection error message.
+///
+/// The one text check left in this file: `TalosError::Connection` carries
+/// only text from talos-rs (talosctl's stderr, a node's own message), so there
+/// is no type or source chain to classify it by. Everything with a type is
+/// worded by its type.
+fn format_connection_error(msg: &str) -> String {
+    let lower = msg.to_lowercase();
+    if lower.contains("certificate") || lower.contains("tls") || lower.contains("ssl") {
+        "TLS/certificate error - check talosconfig credentials".to_string()
+    } else if lower.contains("refused") {
+        "Connection refused - is the node reachable?".to_string()
+    } else if lower.contains("timeout") {
+        "Connection timed out - node may be slow or unreachable".to_string()
+    } else if lower.contains("dns") || lower.contains("resolve") {
+        "DNS resolution failed - check node hostname/IP".to_string()
+    } else {
+        format!("Connection failed: {}", msg)
     }
 }
 
@@ -94,11 +115,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_connection_error_keeps_its_text() {
-        let error = TalosError::Connection("connection refused".into());
+    fn test_format_connection_error() {
+        assert!(format_connection_error("connection refused").contains("refused"));
+        assert!(format_connection_error("TLS handshake failed").contains("TLS"));
+        assert!(format_connection_error("timeout").contains("timed out"));
+    }
+
+    #[test]
+    fn a_connection_error_is_worded_by_its_text() {
+        let error = TalosError::Connection("talosctl failed: dial tcp: connection refused".into());
         assert_eq!(
             format_talos_error(&error),
-            "Connection failed: connection refused"
+            "Connection refused - is the node reachable?"
+        );
+        let other = TalosError::Connection("something else".into());
+        assert_eq!(
+            format_talos_error(&other),
+            "Connection failed: something else"
         );
     }
 
@@ -141,7 +174,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_dial_is_worded_as_refused() {
-        // A port nothing listens on: bind one, then let it go.
+        // A port nothing listens on: bind one, then let it go. Another
+        // process could take it before the dial; the test would then fail.
         let port = {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             listener.local_addr().unwrap().port()
