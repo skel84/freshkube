@@ -34,9 +34,9 @@ use kube::config::{Config, KubeConfigOptions};
 use super::read::{
     ListRequest, Listing, MAX_PAGES, ReadOnlyClient, Reader, Resource, Scope, ServedGroup,
 };
-use super::source::Source;
+use super::source::printable;
 use super::versions::resolve;
-use super::{argocd, kargo, tekton};
+use super::{argocd, kargo, tekton, words};
 use crate::applications::read::{PART_OF, argo_namespaces, read_argo_workloads};
 use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
@@ -367,24 +367,46 @@ where
     connected.into_iter().map(|(_, entry)| entry).collect()
 }
 
-/// What a part's entry answered.
+/// What a part's entry answered. Each failure's kind agrees with its
+/// variant ([`Reach::missing`] and the others make them so), and the
+/// sentence comes from the kind ([`words::failed`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Reach {
     /// No entry holds the part, or the one pinned is gone; the words say
-    /// which.
-    Missing(String),
+    /// which. A [`FailureKind::Config`].
+    Missing(Failure),
     /// The entry couldn't be reached: a deadline, DNS, TLS, or its exec
     /// plugin failed or waits for a sign-in. The words are why.
-    Unreachable(String),
+    Unreachable(Failure),
     /// 401 or 403, and the server's words.
-    Refused(String),
+    Refused(Failure),
     /// The part's kind isn't served there (404).
-    NotServed(String),
+    NotServed(Failure),
     /// It answered.
     Readable,
 }
 
 impl Reach {
+    /// No entry holds the part.
+    pub fn missing(why: impl Into<String>) -> Self {
+        Reach::Missing(Failure::new(FailureKind::Config, why))
+    }
+
+    /// The entry wasn't reached, for a reason with no kind of its own.
+    pub fn unreachable(why: impl Into<String>) -> Self {
+        Reach::Unreachable(Failure::new(FailureKind::Unreachable, why))
+    }
+
+    /// The entry refused the read (401 or 403).
+    pub fn refused(why: impl Into<String>) -> Self {
+        Reach::Refused(Failure::new(FailureKind::Forbidden, why))
+    }
+
+    /// The entry doesn't serve the part's kind (404).
+    pub fn not_served(why: impl Into<String>) -> Self {
+        Reach::NotServed(Failure::new(FailureKind::NotFound, why))
+    }
+
     /// The state, as the Sources view names it.
     pub fn label(&self) -> &'static str {
         match self {
@@ -400,20 +422,30 @@ impl Reach {
     /// on `entry`, as the view names both.
     pub fn words(&self, what: &str, entry: &str) -> String {
         match self {
-            Reach::Missing(why) => why.clone(),
-            Reach::Unreachable(why) => format!("Couldn't reach {entry}: {why}"),
-            Reach::Refused(why) => format!("{what} refused on {entry}: {why}"),
-            Reach::NotServed(_) => format!("{what} isn't served on {entry}"),
+            Reach::Missing(failure)
+            | Reach::Unreachable(failure)
+            | Reach::Refused(failure)
+            | Reach::NotServed(failure) => {
+                words::failed(failure.kind, what, entry, &failure.message)
+            }
             Reach::Readable => format!("{what} answered on {entry}"),
         }
     }
 
+    /// What `failure` says about its entry. Its message is made printable
+    /// ([`printable`]); a kind with no refusal or 404 in it is a failure to
+    /// reach.
     fn of_failure(failure: Failure) -> Self {
-        match Source::<()>::from_failure(failure) {
-            Source::NotInstalled(why) => Reach::NotServed(why),
-            Source::Refused(why) => Reach::Refused(why),
-            Source::Unreadable(why) => Reach::Unreachable(why),
-            Source::Read(()) | Source::Capped(..) => Reach::Readable,
+        let message = printable(&failure);
+        match failure.kind {
+            FailureKind::NotFound => Reach::NotServed(Failure::new(failure.kind, message)),
+            FailureKind::Forbidden | FailureKind::Unauthorized => {
+                Reach::Refused(Failure::new(failure.kind, message))
+            }
+            FailureKind::Timeout => Reach::Unreachable(Failure::new(failure.kind, message)),
+            FailureKind::Config | FailureKind::Unreachable | FailureKind::Other => {
+                Reach::Unreachable(Failure::new(FailureKind::Unreachable, message))
+            }
         }
     }
 }
@@ -554,17 +586,17 @@ pub async fn check_all<R: Reader>(
     let target = |chosen: &Chosen| -> Result<Target<'_, R>, Reach> {
         match chosen {
             Chosen::NoEntry(_) | Chosen::Gone(_) => {
-                Err(Reach::Missing(chosen.missing().unwrap_or_default()))
+                Err(Reach::missing(chosen.missing().unwrap_or_default()))
             }
             Chosen::Open => match &open {
                 Some(Ok(reader)) => Ok(Target::Open(reader)),
-                Some(Err(why)) => Err(Reach::Unreachable(why.clone())),
-                None => Err(Reach::Unreachable("no cluster is open".into())),
+                Some(Err(why)) => Err(Reach::unreachable(why.clone())),
+                None => Err(Reach::unreachable("no cluster is open")),
             },
             Chosen::Entry { entry, .. } => match readers.iter().find(|(id, _)| id == &entry.id) {
                 Some((_, Ok(reader))) => Ok(Target::Entry(reader)),
-                Some((_, Err(why))) => Err(Reach::Unreachable(why.clone())),
-                None => Err(Reach::Unreachable("it wasn't connected to".into())),
+                Some((_, Err(why))) => Err(Reach::unreachable(why.clone())),
+                None => Err(Reach::unreachable("it wasn't connected to")),
             },
         }
     };

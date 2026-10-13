@@ -278,7 +278,7 @@ impl SourcesList {
     fn example_check(&self) -> Checked {
         let reach = |chosen: &Chosen, read: Read| match chosen {
             Chosen::NoEntry(_) | Chosen::Gone(_) => {
-                Reach::Missing(chosen.missing().unwrap_or_default())
+                Reach::missing(chosen.missing().unwrap_or_default())
             }
             Chosen::Open => Reach::Readable,
             Chosen::Entry { entry, .. } => self.example_answer(&entry.id, read),

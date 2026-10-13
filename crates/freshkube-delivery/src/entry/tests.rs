@@ -50,7 +50,7 @@ async fn an_answer_is_readable_even_when_empty() {
 #[tokio::test]
 async fn a_refusal_is_refused_never_none_found() {
     let reach = check(&serving().refusing("pipelineruns"), Part::Builds).await;
-    assert_eq!(reach, Reach::Refused("forbidden by RBAC".into()));
+    assert_eq!(reach, Reach::refused("forbidden by RBAC"));
     assert_eq!(reach.label(), "Refused");
     assert_eq!(
         reach.words(Part::Builds.label(), "cluster-b"),
@@ -91,7 +91,7 @@ async fn a_read_past_its_deadline_is_unreachable() {
     let reach = check(&reader, Part::Kargo).await;
     assert_eq!(started.elapsed(), REQUEST_DEADLINE);
     match reach {
-        Reach::Unreachable(why) => assert_eq!(why, "the request timed out"),
+        Reach::Unreachable(why) => assert_eq!(why.message, "the request timed out"),
         other => panic!("{other:?}"),
     }
     // The deadline is each request's, not the whole check's.
@@ -237,12 +237,12 @@ async fn every_part_is_checked_and_a_missing_entry_reads_nothing() {
         (*kargo, *builds, *argocd),
         (Part::Kargo, Part::Builds, Part::ArgoCd)
     );
-    let unreachable = Reach::Unreachable("the kubeconfig has no context cluster-b-context".into());
+    let unreachable = Reach::unreachable("the kubeconfig has no context cluster-b-context");
     assert_eq!(kargo_reach, &unreachable);
     assert_eq!(builds_reach, &unreachable);
     assert_eq!(
         argocd_reach,
-        &Reach::Missing("No Core entry in the workspace".into())
+        &Reach::missing("No Core entry in the workspace")
     );
 }
 
@@ -256,7 +256,7 @@ async fn a_workspace_of_one_checks_the_open_connection() {
         vec![
             (Part::Kargo, Reach::Readable),
             (Part::Builds, Reach::Readable),
-            (Part::ArgoCd, Reach::Refused("forbidden by RBAC".into())),
+            (Part::ArgoCd, Reach::refused("forbidden by RBAC")),
         ]
     );
     assert_eq!(checked.argocd_in, vec!["argocd"]);
@@ -351,7 +351,7 @@ async fn an_open_connection_that_failed_says_why() {
         )),
     )
     .await;
-    let failed = Reach::Unreachable("its credential plugin failed".into());
+    let failed = Reach::unreachable("its credential plugin failed");
     assert!(
         checked.parts.iter().all(|(_, reach)| reach == &failed),
         "{checked:?}"
@@ -426,11 +426,11 @@ async fn workloads_are_checked_on_each_mapped_entry() {
         vec![
             (
                 "cluster-c".to_owned(),
-                Reach::Unreachable("the kubeconfig has no context cluster-c-context".into())
+                Reach::unreachable("the kubeconfig has no context cluster-c-context")
             ),
             (
                 "cluster-x".to_owned(),
-                Reach::Missing("cluster-x is no longer in the workspace".into())
+                Reach::missing("cluster-x is no longer in the workspace")
             ),
         ]
     );
