@@ -108,7 +108,9 @@ enum Act {
     Open,
 }
 
-pub(super) enum ServiceEvent {
+/// A row's action, which the shell takes to the service's node.
+#[derive(Clone, Debug)]
+pub(crate) enum ServiceEvent {
     Logs(String, String),
     Open(String, String),
 }

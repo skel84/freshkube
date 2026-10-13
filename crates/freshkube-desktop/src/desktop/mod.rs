@@ -30,7 +30,7 @@ mod startup;
 mod switch;
 #[cfg(test)]
 mod switch_tests;
-mod system_services;
+pub(crate) mod system_services;
 mod target;
 #[cfg(test)]
 mod testing;
@@ -288,7 +288,8 @@ impl Render for Countdown {
 
 /// Overview and Services are drawn by the shell itself; hosting each in a view
 /// of its own lets GPUI reuse the last frame until the shell's state changes,
-/// like the screens, which are views already.
+/// like the screens, which are views already. Overview's and Nodes' hosts are
+/// their handles, whose hooks do nothing: the shell feeds what they draw.
 struct PageHost {
     pilot: WeakEntity<Pilot>,
     page: Page,
@@ -1026,7 +1027,10 @@ impl Pilot {
         let applications =
             cx.new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx));
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
+        let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         let pages = Self::page_handles(
+            [&overview_page, &nodes_page],
+            &system_services,
             &monitoring,
             &observability,
             &applications,
@@ -1091,7 +1095,7 @@ impl Pilot {
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
-            system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
+            system_services,
             settings_page,
             applications,
             workspace_file: options
@@ -1192,26 +1196,6 @@ impl Pilot {
         view._subscriptions
             .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
         view.watch_menus(window, cx);
-        view._subscriptions.push(cx.subscribe_in(
-            &view.system_services,
-            window,
-            |this, _, event: &system_services::ServiceEvent, window, cx| {
-                let (node, service, tab) = match event {
-                    system_services::ServiceEvent::Logs(node, service) => {
-                        (node, service, nodes::NodeTab::Logs)
-                    }
-                    system_services::ServiceEvent::Open(node, service) => {
-                        (node, service, nodes::NodeTab::Services)
-                    }
-                };
-                this.open_node_by_name(node, tab, window, cx);
-                this.selected_service = Some(service.clone());
-                if tab == nodes::NodeTab::Logs {
-                    this.open_logs(window, cx);
-                }
-                cx.notify();
-            },
-        ));
         view.publish_reading(cx);
         view.chrome.watch(&view, cx);
         view.prepare_context_display(window, cx);

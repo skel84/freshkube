@@ -2,6 +2,10 @@
 //! [`ScreenHandle`] as the Talos screens, and what the shell does with
 //! what every page asks of it.
 //!
+//! Overview, Nodes and System services have handles too, whose hooks do
+//! nothing but hear System services' row actions: the shell feeds what
+//! they draw.
+//!
 //! Resources, Monitoring, Observability, Applications and Settings take
 //! their part of the shell's [`PageSource`] and hear
 //! [`set_visible`](ScreenPanel::set_visible) through their handle, which is
@@ -12,7 +16,8 @@
 use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
 use super::settings::SettingsPage;
-use super::{Page, Pilot};
+use super::system_services::{ServiceEvent, SystemServices};
+use super::{Page, PageHost, Pilot, nodes};
 use crate::applications::{ApplicationsPage, SwitchLink};
 use crate::monitoring::page::{MonitoringEvent, MonitoringPage};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
@@ -38,6 +43,42 @@ where
     window.subscribe(page, cx, move |_, event: &E, window, cx| {
         on_event(&event.clone().into(), window, cx)
     })
+}
+
+impl EventEmitter<ScreenEvent> for PageHost {}
+
+/// Overview and Nodes, drawn from the shell's state.
+impl ScreenPanel for PageHost {
+    fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+}
+
+impl EventEmitter<ScreenEvent> for SystemServices {}
+
+/// System services lists what the shell's Talos overview read; it makes no
+/// requests, so it has no source, visibility or refresh of its own.
+impl ScreenPanel for SystemServices {
+    fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn subscribe_page(
+        this: &Entity<Self>,
+        on_event: PageEventFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<Subscription> {
+        vec![hear::<_, ServiceEvent>(this, &on_event, window, cx)]
+    }
+
+    fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(self.status.clone())
+    }
 }
 
 impl EventEmitter<ScreenEvent> for ResourcesScreen {}
@@ -224,9 +265,13 @@ impl ScreenPanel for SettingsPage {
 }
 
 impl Pilot {
-    /// The entity pages' handles, in the order the shell told them they
-    /// showed or hid before they had them.
+    /// The handles of the pages that aren't Talos screens: Overview, Nodes
+    /// and System services, whose hooks do nothing, then the entity pages in
+    /// the order the shell told them they showed or hid before they had
+    /// them.
     pub(super) fn page_handles(
+        [overview, nodes]: [&Entity<PageHost>; 2],
+        services: &Entity<SystemServices>,
         monitoring: &Entity<MonitoringPage>,
         observability: &Entity<ObservabilityPage>,
         applications: &Entity<ApplicationsPage>,
@@ -234,6 +279,9 @@ impl Pilot {
         resources: &Entity<ResourcesScreen>,
     ) -> Vec<(Page, ScreenHandle)> {
         vec![
+            (Page::Overview, ScreenHandle::new(overview.clone())),
+            (Page::Nodes, ScreenHandle::new(nodes.clone())),
+            (Page::SystemServices, ScreenHandle::new(services.clone())),
             (Page::Monitoring, ScreenHandle::new(monitoring.clone())),
             (
                 Page::Observability,
@@ -329,7 +377,22 @@ impl Pilot {
                 self.custom
                     .update(cx, |custom, cx| custom.not_served(&group, cx));
             }
+            PageEvent::Service(event) => self.service_event(event, window, cx),
         }
+    }
+
+    /// A System services row's Logs or Open node.
+    fn service_event(&mut self, event: &ServiceEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let (node, service, tab) = match event {
+            ServiceEvent::Logs(node, service) => (node, service, nodes::NodeTab::Logs),
+            ServiceEvent::Open(node, service) => (node, service, nodes::NodeTab::Services),
+        };
+        self.open_node_by_name(node, tab, window, cx);
+        self.selected_service = Some(service.clone());
+        if tab == nodes::NodeTab::Logs {
+            self.open_logs(window, cx);
+        }
+        cx.notify();
     }
 
     fn observability_event(
