@@ -4,8 +4,6 @@
 //! list request makes only that resource kind unavailable: successful lists
 //! remain in the returned snapshot so a frontend can still show useful state.
 
-use std::collections::HashMap;
-
 use crate::{
     constants::HIGH_RESTART_THRESHOLD,
     indicators::{HasHealth, HealthIndicator},
@@ -235,16 +233,6 @@ pub struct NamespaceSummary {
     pub healthy_workloads: usize,
 }
 
-impl NamespaceSummary {
-    fn new(name: String) -> Self {
-        Self {
-            name,
-            health: HealthState::Healthy,
-            ..Self::default()
-        }
-    }
-}
-
 impl HasHealth for NamespaceSummary {
     fn health(&self) -> HealthIndicator {
         self.health.health()
@@ -342,161 +330,12 @@ impl WorkloadCollectionOutcome {
     }
 }
 
-pub(crate) fn build_snapshot(
-    target: String,
-    deployments: Vec<Deployment>,
-    statefulsets: Vec<StatefulSet>,
-    daemonsets: Vec<DaemonSet>,
-    pods: Vec<Pod>,
-) -> WorkloadSnapshot {
-    let total_deployments = deployments.len();
-    let total_statefulsets = statefulsets.len();
-    let total_daemonsets = daemonsets.len();
-    let mut namespaces = HashMap::new();
-
-    for deployment in deployments {
-        let namespace = resource_namespace(&deployment.metadata.namespace);
-        let status = deployment.status.as_ref();
-        let desired = status.and_then(|status| status.replicas).unwrap_or(0);
-        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
-        let available = status
-            .and_then(|status| status.available_replicas)
-            .unwrap_or(0);
-        let (health, issues) = classify_workload_health(ready, desired, available);
-        add_workload(
-            &mut namespaces,
-            namespace.clone(),
-            WorkloadInfo {
-                name: resource_name(&deployment.metadata.name),
-                namespace,
-                kind: WorkloadKind::Deployment,
-                ready,
-                desired,
-                health,
-                issues,
-            },
-        );
-    }
-
-    for statefulset in statefulsets {
-        let namespace = resource_namespace(&statefulset.metadata.namespace);
-        let status = statefulset.status.as_ref();
-        let desired = status.map(|status| status.replicas).unwrap_or(0);
-        let ready = status.and_then(|status| status.ready_replicas).unwrap_or(0);
-        let (health, issues) = classify_workload_health(ready, desired, ready);
-        add_workload(
-            &mut namespaces,
-            namespace.clone(),
-            WorkloadInfo {
-                name: resource_name(&statefulset.metadata.name),
-                namespace,
-                kind: WorkloadKind::StatefulSet,
-                ready,
-                desired,
-                health,
-                issues,
-            },
-        );
-    }
-
-    for daemonset in daemonsets {
-        let namespace = resource_namespace(&daemonset.metadata.namespace);
-        let status = daemonset.status.as_ref();
-        let desired = status
-            .map(|status| status.desired_number_scheduled)
-            .unwrap_or(0);
-        let ready = status.map(|status| status.number_ready).unwrap_or(0);
-        let (health, issues) = classify_workload_health(ready, desired, ready);
-        add_workload(
-            &mut namespaces,
-            namespace.clone(),
-            WorkloadInfo {
-                name: resource_name(&daemonset.metadata.name),
-                namespace,
-                kind: WorkloadKind::DaemonSet,
-                ready,
-                desired,
-                health,
-                issues,
-            },
-        );
-    }
-
-    let mut total_pods_healthy = 0;
-    let mut total_pods_degraded = 0;
-    let mut total_pods_failing = 0;
-    for pod in pods {
-        let namespace = resource_namespace(&pod.metadata.namespace);
-        let phase = pod
-            .status
-            .as_ref()
-            .and_then(|status| status.phase.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
-        let (restarts, issue) = analyze_pod(&pod);
-
-        match issue.as_ref().map(PodIssue::severity) {
-            Some(HealthState::Failing) => total_pods_failing += 1,
-            Some(HealthState::Degraded | HealthState::Pending) => total_pods_degraded += 1,
-            Some(HealthState::Healthy) => total_pods_healthy += 1,
-            None if phase == "Running" || phase == "Succeeded" => total_pods_healthy += 1,
-            None => {}
-        }
-
-        if let Some(issue) = issue {
-            let pod_info = PodInfo {
-                name: resource_name(&pod.metadata.name),
-                namespace: namespace.clone(),
-                node: pod.spec.as_ref().and_then(|spec| spec.node_name.clone()),
-                phase,
-                restarts,
-                issue,
-                created_at: pod.metadata.creation_timestamp.map(|timestamp| timestamp.0),
-            };
-            namespaces
-                .entry(namespace.clone())
-                .or_insert_with(|| NamespaceSummary::new(namespace))
-                .problem_pods
-                .push(pod_info);
-        }
-    }
-
-    let mut namespaces: Vec<_> = namespaces.into_values().map(finalize_namespace).collect();
-    namespaces.sort_by(|left, right| {
-        left.health
-            .cmp(&right.health)
-            .then_with(|| left.name.cmp(&right.name))
-    });
-
-    WorkloadSnapshot {
-        target,
-        namespaces,
-        total_deployments,
-        total_statefulsets,
-        total_daemonsets,
-        total_pods_healthy,
-        total_pods_degraded,
-        total_pods_failing,
-    }
-}
-
 fn resource_namespace(namespace: &Option<String>) -> String {
     namespace.clone().unwrap_or_else(|| "default".to_string())
 }
 
 fn resource_name(name: &Option<String>) -> String {
     name.clone().unwrap_or_else(|| "unknown".to_string())
-}
-
-fn add_workload(
-    namespaces: &mut HashMap<String, NamespaceSummary>,
-    namespace: String,
-    workload: WorkloadInfo,
-) {
-    namespaces
-        .entry(namespace.clone())
-        .or_insert_with(|| NamespaceSummary::new(namespace))
-        .workloads
-        .push(workload);
 }
 
 pub(crate) fn finalize_namespace(mut summary: NamespaceSummary) -> NamespaceSummary {
