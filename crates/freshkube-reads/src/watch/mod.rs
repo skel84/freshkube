@@ -135,7 +135,8 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
     /// through [`sender`](Self::sender), and delivered as `start`'s is:
     /// many containers' jobs that share one delivery, or example data
     /// written on the GPUI clock, which no Tokio thread should wake. It
-    /// stays open until the watch stops or starts again.
+    /// stays open until the watch stops or starts again. Returns a sender
+    /// into it, as [`sender`](Self::sender) would.
     pub fn open<V: 'static>(
         &mut self,
         identity: I,
@@ -143,8 +144,10 @@ impl<T: Send + 'static, I: Clone + Eq + 'static> Watch<T, I> {
         slot: impl Fn(&mut V) -> &mut Self + 'static,
         apply: impl Fn(&mut V, Vec<T>, &mut Context<V>) + 'static,
         cx: &mut Context<V>,
-    ) {
-        self.held = Some(self.begin(identity, pace, slot, apply, |_, _| {}, cx));
+    ) -> mpsc::Sender<T> {
+        let sender = self.begin(identity, pace, slot, apply, |_, _| {}, cx);
+        self.held = Some(sender.clone());
+        sender
     }
 
     /// Drops any earlier stream and starts the delivery of a new one for

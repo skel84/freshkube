@@ -133,7 +133,7 @@ pub(crate) struct WorkloadLogs {
     known: Option<BTreeSet<(String, String)>>,
     /// The pods' watch, for the workload and selector it lists by; an
     /// older watch's listings are dropped.
-    pub(super) pod_watch: Watch<WorkloadPods, (ResourceIdentity, String)>,
+    pod_watch: Watch<WorkloadPods, (ResourceIdentity, String)>,
     /// A `stress` run's flood into the feed.
     #[cfg(feature = "stress")]
     stress: Option<OwnedJob>,

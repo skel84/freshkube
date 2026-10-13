@@ -225,7 +225,7 @@ impl StreamSet {
 
     /// Whether the streams' feed is open, for the dock's tests.
     #[cfg(test)]
-    pub(crate) fn feed_open(&self) -> bool {
+    pub(super) fn feed_open(&self) -> bool {
         self.feed.is_running()
     }
 
@@ -258,7 +258,9 @@ pub(super) trait StreamSource: LogSource + Sized + 'static {
 
     fn access(&self) -> Option<KubeAccess>;
 
-    /// The object whose containers the set reads, which the feed is for.
+    /// The object whose containers the set reads, which labels the feed.
+    /// Nothing compares it: the feed opens again only after `drop_streams`
+    /// stopped it, so its generation alone guards a delivery.
     fn identity(&self) -> Option<ResourceIdentity>;
 
     /// The tag a container's lines carry.
@@ -448,8 +450,7 @@ impl<S: StreamSource> StreamReads for LogView<S> {
             |view: &mut Self| &mut view.source_mut().reads_mut().feed,
             |view, batch, cx| view.apply_fed(batch, cx),
             cx,
-        );
-        reads.feed.sender().expect("an open feed holds its channel")
+        )
     }
 
     fn apply_fed(&mut self, batch: Vec<Fed>, cx: &mut Context<Self>) {

@@ -569,7 +569,7 @@ impl Collection for LogPanel {
         source.errors.clear();
         source.collection_active = true;
         let apply_target = target.clone();
-        source.stream.open(
+        let sender = source.stream.open(
             target.clone(),
             PACE,
             |view: &mut Self| &mut view.source_mut().stream,
@@ -580,10 +580,6 @@ impl Collection for LogPanel {
             },
             cx,
         );
-        let sender = source
-            .stream
-            .sender()
-            .expect("an open stream holds its channel");
         source.example_writer = Some(cx.spawn(async move |_, cx| {
             // The first line goes at once, then one every 250 ms.
             loop {

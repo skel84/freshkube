@@ -1227,17 +1227,13 @@ impl Stream for PodLogView {
         // The stream has no work of its own: the example writes into it on
         // the GPUI clock.
         let source = self.source_mut();
-        source.stream.open(
+        let sender = source.stream.open(
             (pod.clone(), container.to_owned()),
             PACE,
             |view: &mut Self| &mut view.source_mut().stream,
             |view, batch, cx| view.apply_updates(batch, cx),
             cx,
         );
-        let sender = source
-            .stream
-            .sender()
-            .expect("an open stream holds its channel");
         source.example_writer = Some(cx.spawn(async move |_, cx| {
             for sequence in 0u64.. {
                 cx.background_executor().timer(EXAMPLE_INTERVAL).await;
