@@ -167,7 +167,9 @@ fn fetch(port: u16) -> std::io::Result<String> {
 }
 
 /// A loopback port nothing listens on, from the system's own pick, so that
-/// no other test is asked for it.
+/// no other test is asked for it. The listener is dropped before the port
+/// is used, so another process could take it in between: far rarer than
+/// two tests asking for the same automatic port, but not a guarantee.
 fn free_port() -> u16 {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     listener.local_addr().unwrap().port()
