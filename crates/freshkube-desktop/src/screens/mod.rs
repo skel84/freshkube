@@ -29,12 +29,9 @@ pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
 pub(crate) use workloads::{Summary as HealthSummary, WorkloadData, WorkloadsScreen};
 
-use std::{path::PathBuf, rc::Rc, sync::Arc, time::Duration};
+use std::{rc::Rc, sync::Arc, time::Duration};
 
-use freshkube_core::{
-    cluster_overview::{ClusterOverview, ClusterOverviewCollector},
-    inspection::InspectionTarget,
-};
+use freshkube_core::inspection::InspectionTarget;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
@@ -43,7 +40,6 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use talos_rs::TalosClient;
 
 use crate::backend::Target;
 use crate::palette::palette;
@@ -58,7 +54,6 @@ pub(crate) use freshkube_ui::table::TableLoading;
 
 /// Upper bound for one screen request, including Kubernetes client setup.
 pub(crate) const SCREEN_DEADLINE: Duration = Duration::from_secs(60);
-const KUBERNETES_SETUP: Duration = Duration::from_secs(45);
 
 /// Whether a screen inspects the target node or its whole cluster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,53 +92,8 @@ impl ScreenSource {
     }
 }
 
-/// Talos access for a connected context. Clone it into a screen's Tokio work.
-#[derive(Clone)]
-pub(crate) struct LiveSource {
-    /// Context client; pin it with `with_node` (core collectors do this themselves).
-    pub(crate) client: TalosClient,
-    pub(crate) cluster: Arc<ClusterOverview>,
-    pub(crate) collector: ClusterOverviewCollector,
-    /// The talosconfig in use; `None` means TALOSCONFIG or ~/.talos/config.
-    pub(crate) config_path: Option<PathBuf>,
-    /// The access the shell applied with this source, once its overview has
-    /// answered. Operations pins its preview and run to it.
-    pub(crate) applied: Option<crate::resources::talos::AppliedAccess>,
-}
-
-impl LiveSource {
-    /// An identity-validated Kubernetes client for this cluster, using the
-    /// kubeconfig source chosen in Settings. Never an ambient kubeconfig.
-    pub(crate) async fn kubernetes(&self) -> Result<kube::Client, String> {
-        self.kubernetes_with_source()
-            .await
-            .map(|(client, _, _)| client)
-    }
-
-    /// Drops the reused Kubernetes client and prepared kubeconfig, so the next
-    /// call revalidates and rebuilds. Call it when a Kubernetes request made
-    /// with a client from [`Self::kubernetes`] fails.
-    pub(crate) fn forget_kubernetes(&self) {
-        self.collector.forget_kubernetes_client(&self.cluster);
-    }
-
-    /// As [`Self::kubernetes`], with the kubeconfig actually used and, when a
-    /// selected file was rejected, why.
-    ///
-    /// The identity-validated client is reused for the same context, pinned node
-    /// and kubeconfig selection for a couple of minutes.
-    pub(crate) async fn kubernetes_with_source(
-        &self,
-    ) -> Result<(kube::Client, String, Option<String>), String> {
-        tokio::time::timeout(
-            KUBERNETES_SETUP,
-            self.collector.kubernetes_client_with_source(&self.cluster),
-        )
-        .await
-        .map_err(|_| "Setting up the Kubernetes client timed out".to_owned())?
-        .map_err(|error| error.to_string())
-    }
-}
+/// Talos access for a connected context; it lives in core's `cluster_source`.
+pub(crate) use freshkube_core::cluster_source::LiveSource;
 
 /// Requests a screen makes of the shell.
 #[derive(Clone, Debug)]

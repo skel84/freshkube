@@ -4,10 +4,22 @@
 //!
 //! The desktop app builds one from its own connection type, so a page that
 //! takes a [`ClusterSource`] depends on neither that type nor the UI.
+//!
+//! The access the shell hands its pages lives here too: [`KubeAccess`]
+//! (example data, the Kubernetes client the Talos side sets up, or a
+//! kubeconfig context), [`LiveSource`] (Talos access for a connected
+//! context), [`TalosAccess`], [`AppliedAccess`] and [`DirectAccess`].
+//! Desktop names them by their old paths.
 
 use futures::future::BoxFuture;
 use std::fmt;
 use std::sync::Arc;
+
+mod direct;
+mod talos;
+
+pub use direct::DirectAccess;
+pub use talos::{AppliedAccess, LiveSource, TalosAccess};
 
 /// Hands out a Kubernetes client for one cluster. An implementation may
 /// build it once and reuse it; it decides when to build it again.
@@ -68,6 +80,49 @@ pub struct ClusterSource {
     /// The context the page names.
     pub context: String,
     pub access: ClusterAccess,
+}
+
+#[derive(Clone)]
+pub enum KubeAccess {
+    /// Made-up objects for `--fixture`; nothing is contacted.
+    Example,
+    /// The Kubernetes client the Talos side sets up for its cluster.
+    Talos(Box<TalosAccess>),
+    /// A kubeconfig context, without Talos.
+    Direct(DirectAccess),
+}
+
+impl KubeAccess {
+    pub async fn client(&self) -> Result<kube::Client, String> {
+        match self {
+            KubeAccess::Example => Err("Example data has no Kubernetes client".into()),
+            KubeAccess::Talos(live) => live.client().await,
+            KubeAccess::Direct(direct) => {
+                direct.connect().await.map(|connection| connection.client)
+            }
+        }
+    }
+
+    /// Drops a reused client after a failure, so the next read rebuilds it.
+    pub fn forget(&self) {
+        match self {
+            KubeAccess::Example => {}
+            KubeAccess::Talos(live) => live.forget(),
+            KubeAccess::Direct(direct) => direct.forget(),
+        }
+    }
+}
+
+/// Pages outside Resources reach a live cluster through this, so a clone
+/// shares the client the Talos or kubeconfig access caches.
+impl KubeClientSource for KubeAccess {
+    fn client(&self) -> BoxFuture<'_, Result<kube::Client, String>> {
+        Box::pin(KubeAccess::client(self))
+    }
+
+    fn forget(&self) {
+        KubeAccess::forget(self);
+    }
 }
 
 #[cfg(test)]
