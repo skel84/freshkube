@@ -25,9 +25,19 @@ pub(crate) enum Page {
     Settings,
 }
 
-/// The retained inspection views, including those embedded in the node pane.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ScreenKind {
+/// Every page by its key, in the order the shell tells them whether they
+/// show: the pages that aren't Talos screens, then the retained inspection
+/// views, including those embedded in the node pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum PageId {
+    Overview,
+    Nodes,
+    SystemServices,
+    Monitoring,
+    Observability,
+    Applications,
+    Settings,
+    Resources,
     Processes,
     Storage,
     Network,
@@ -39,8 +49,9 @@ pub(super) enum ScreenKind {
     Operations,
 }
 
-impl ScreenKind {
-    pub(super) const ALL: [Self; 9] = [
+impl PageId {
+    /// The Talos screens, the retained inspection views.
+    pub(super) const SCREENS: [Self; 9] = [
         Self::Processes,
         Self::Storage,
         Self::Network,
@@ -51,6 +62,45 @@ impl ScreenKind {
         Self::Lifecycle,
         Self::Operations,
     ];
+
+    /// Whether this is one of the [Talos screens](Self::SCREENS).
+    pub(super) fn is_screen(self) -> bool {
+        Self::SCREENS.contains(&self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PageId::{self, *};
+
+    /// The key order is what the shell tells pages in: every page that
+    /// isn't a screen sorts before every screen, and the screens keep
+    /// [`PageId::SCREENS`]' order.
+    #[test]
+    fn the_pages_sort_before_the_screens() {
+        // A new key fails to compile here until it is placed.
+        let screen = |id: PageId| match id {
+            Overview | Nodes | SystemServices | Monitoring | Observability | Applications
+            | Settings | Resources => false,
+            Processes | Storage | Network | Diagnostics | Etcd | Health | Security | Lifecycle
+            | Operations => true,
+        };
+        let pages = [
+            Overview,
+            Nodes,
+            SystemServices,
+            Monitoring,
+            Observability,
+            Applications,
+            Settings,
+            Resources,
+        ];
+        let keys: Vec<_> = pages.into_iter().chain(PageId::SCREENS).collect();
+        assert!(keys.is_sorted());
+        for id in keys {
+            assert_eq!(id.is_screen(), screen(id), "{id:?}");
+        }
+    }
 }
 
 /// A row of the navigation column to scroll into view; scrolling is
@@ -219,15 +269,44 @@ impl Page {
         Self::Settings,
     ];
 
-    pub(super) fn screen(self) -> Option<ScreenKind> {
+    /// The page's key.
+    pub(super) fn id(self) -> PageId {
         match self {
-            Self::Etcd => Some(ScreenKind::Etcd),
-            Self::Health => Some(ScreenKind::Health),
-            Self::Security => Some(ScreenKind::Security),
-            Self::Lifecycle => Some(ScreenKind::Lifecycle),
-            Self::Operations => Some(ScreenKind::Operations),
-            _ => None,
+            Self::Overview => PageId::Overview,
+            Self::Nodes => PageId::Nodes,
+            Self::Health => PageId::Health,
+            Self::Resources => PageId::Resources,
+            Self::Etcd => PageId::Etcd,
+            Self::SystemServices => PageId::SystemServices,
+            Self::Security => PageId::Security,
+            Self::Lifecycle => PageId::Lifecycle,
+            Self::Operations => PageId::Operations,
+            Self::Monitoring => PageId::Monitoring,
+            Self::Observability => PageId::Observability,
+            Self::Applications => PageId::Applications,
+            Self::Settings => PageId::Settings,
         }
+    }
+
+    /// Whether the page reads Talos alone, so that without a talosconfig
+    /// it shows how to add one instead.
+    pub(super) fn needs_talos(self) -> bool {
+        !matches!(
+            self,
+            Self::Overview
+                | Self::Nodes
+                | Self::Health
+                | Self::Resources
+                | Self::Monitoring
+                | Self::Observability
+                | Self::Applications
+                | Self::Settings
+        )
+    }
+
+    /// The page's key when a Talos screen draws it.
+    pub(super) fn screen(self) -> Option<PageId> {
+        Some(self.id()).filter(|id| id.is_screen())
     }
     pub(super) fn title(self) -> &'static str {
         match self {
@@ -429,8 +508,7 @@ impl Pilot {
     /// knows does nothing.
     pub(super) fn sync_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let shown = self.shown_page();
-        let pages = self.pages.iter().map(|(_, handle)| handle);
-        for handle in pages.chain(self.screens.iter().map(|(_, handle)| handle)) {
+        for handle in self.pages.values() {
             handle.set_visible(shown.as_ref() == Some(handle), window, cx);
         }
     }

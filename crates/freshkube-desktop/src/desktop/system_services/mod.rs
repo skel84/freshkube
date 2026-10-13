@@ -9,6 +9,7 @@ use crate::{
     presentation::{self, Health, NodeSummary},
     ui::{self, dp},
 };
+use freshkube_core::HasHealth;
 use freshkube_ui::status::Segment;
 use freshkube_ui::{menu, page, table};
 use gpui_kit::prelude::*;
@@ -108,7 +109,9 @@ enum Act {
     Open,
 }
 
-pub(super) enum ServiceEvent {
+/// A row's action, which the shell takes to the service's node.
+#[derive(Clone, Debug)]
+pub(crate) enum ServiceEvent {
     Logs(String, String),
     Open(String, String),
 }
@@ -381,7 +384,7 @@ impl SystemServices {
                 let health = status.health;
                 table::status_chip(
                     header.id(&format!("tally-{}", status.what.replace(' ', "-"))),
-                    ui::health_tone(health),
+                    ui::health_tone(health.health()).0,
                     self.counts[status_index(health)],
                     status.what,
                     self.health == Some(health),
@@ -501,6 +504,7 @@ impl SystemServices {
 
 impl Render for SystemServices {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::desktop::probe::hit(PREFIX);
         let _span = crate::perf::span("page.render");
         // A short window scrolls the frame, so the list keeps some rows.
         let short = page::is_short(window);

@@ -56,8 +56,8 @@ fn quorum(screen: &Entity<EtcdScreen>, cx: &gpui_kit::App) -> String {
 
 /// The status bar's line, read from the screen: the shell draws it.
 fn status_line(screen: &Entity<EtcdScreen>, cx: &mut gpui_kit::App) -> SharedString {
-    screen.update(cx, |screen, _| {
-        screen.status().expect("a segment").text(None).clone()
+    screen.update(cx, |screen, cx| {
+        screen.status(cx).expect("a segment").text(None).clone()
     })
 }
 

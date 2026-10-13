@@ -173,7 +173,7 @@ impl LifecycleScreen {
             },
             Item::Alert(key) => match view.display.alerts.iter().find(|alert| &alert.key == key) {
                 Some(alert) => {
-                    let (tone, icon, label) = health_tone(&alert.health);
+                    let (tone, icon, label) = alert_look(&alert.health);
                     Shown::Alert(AlertDetail {
                         tone,
                         icon,

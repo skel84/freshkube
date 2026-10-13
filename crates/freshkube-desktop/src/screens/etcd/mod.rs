@@ -253,9 +253,9 @@ impl ScreenPanel for EtcdScreen {
         window.focus(&self.focus, cx);
     }
 
-    fn status(&mut self) -> Option<&Segment> {
+    fn status(&mut self, _: &App) -> Option<Segment> {
         self.derive_if_changed();
-        self.derived.status.as_ref()
+        self.derived.status.clone()
     }
 
     fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {

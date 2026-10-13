@@ -58,7 +58,7 @@ use crate::{
     },
     screens::{
         DiagnosticsScreen, EtcdScreen, LifecycleScreen, LiveSource, NetworkScreen,
-        OperationsScreen, PageEvent, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel,
+        OperationsScreen, PageSource, ProcessesScreen, ScreenEvent, ScreenHandle, ScreenPanel,
         ScreenSource, SecurityScreen, StorageScreen, WorkloadsScreen,
     },
     state::Snapshot,
@@ -83,7 +83,8 @@ use tokio::runtime::Handle;
 pub(crate) use freshkube_probe::probe;
 
 pub(crate) use pages::Page;
-use pages::{Area, ColumnReveal, ScreenKind};
+use pages::{Area, ColumnReveal, PageId};
+pub(crate) use system_services::ServiceEvent;
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 /// A key context no element draws: a binding in it only gives macOS's bar
@@ -287,9 +288,10 @@ impl Render for Countdown {
     }
 }
 
-/// Overview and Services are drawn by the shell itself; hosting each in a view
+/// Overview and Nodes are drawn by the shell itself; hosting each in a view
 /// of its own lets GPUI reuse the last frame until the shell's state changes,
-/// like the screens, which are views already.
+/// like the screens, which are views already. A host is its page's handle,
+/// whose hooks do nothing: the shell feeds what it draws.
 struct PageHost {
     pilot: WeakEntity<Pilot>,
     page: Page,
@@ -303,7 +305,7 @@ impl Render for PageHost {
             .update(cx, |pilot, cx| match page {
                 Page::Overview => pilot.render_overview(window, cx),
                 Page::Nodes => pilot.render_nodes(window, cx),
-                _ => pilot.system_services.clone().into_any_element(),
+                _ => unreachable!("only Overview and Nodes have a host"),
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
@@ -386,15 +388,14 @@ pub(crate) struct Pilot {
     /// Logs under the page, in tabs; app-wide, like the forwards.
     pub(crate) dock: Entity<dock::Dock>,
     overview_page: Entity<PageHost>,
-    services_page: Entity<PageHost>,
     nodes_page: Entity<PageHost>,
     node_workspace: nodes::Nodes,
     node_pods: Entity<ResourcesScreen>,
-    screens: Vec<(ScreenKind, ScreenHandle)>,
-    /// The entity pages' handles, which hear whether they show; #579's
-    /// step 3 keeps them and `screens` in one map.
-    pages: Vec<(Page, ScreenHandle)>,
-    /// Typed observation recipients; `screens` wraps these same entities.
+    /// Every page's handle by its key. The shell hands each its source,
+    /// tells each whether it shows and hears each through it, in key order:
+    /// the pages that aren't Talos screens, then the screens.
+    pages: BTreeMap<PageId, ScreenHandle>,
+    /// Typed observation recipients; `pages` wraps these same entities.
     health: Entity<WorkloadsScreen>,
     lifecycle: Entity<LifecycleScreen>,
     resources: Entity<ResourcesScreen>,
@@ -875,7 +876,7 @@ impl Pilot {
             page: Page::Overview,
         });
         let nodes_page = cx.new(|_| PageHost {
-            pilot: pilot.clone(),
+            pilot,
             page: Page::Nodes,
         });
         let mut node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
@@ -883,18 +884,10 @@ impl Pilot {
         node_workspace.rebuild_columns(!options.kubernetes_only);
         let node_pods =
             cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx).holding(hold.lists));
-        let services_page = cx.new(|_| PageHost {
-            pilot,
-            page: Page::SystemServices,
-        });
         let mut subscriptions = Vec::new();
         // The hosted pages read the shell's state, so whatever notifies the
         // shell redraws them; the countdown tick notifies only its ring.
-        let hosted = [
-            overview_page.clone(),
-            services_page.clone(),
-            nodes_page.clone(),
-        ];
+        let hosted = [overview_page.clone(), nodes_page.clone()];
         subscriptions.push(cx.observe(&cx.entity(), move |_, _, cx| {
             for page in &hosted {
                 page.update(cx, |_, cx| cx.notify());
@@ -911,69 +904,35 @@ impl Pilot {
             mutation::may_close(window, cx)
                 && pod_shell::may_close(window, cx, |window, _| window.remove_window())
         });
-        let health = Self::screen_entity(
-            WorkloadsScreen::new,
-            runtime.clone(),
-            &mut subscriptions,
-            window,
-            cx,
-        );
-        let lifecycle = Self::screen_entity(
-            LifecycleScreen::new,
-            runtime.clone(),
-            &mut subscriptions,
-            window,
-            cx,
-        );
-        let screens = ScreenKind::ALL
+        let health = cx.new(|cx| WorkloadsScreen::new(runtime.clone(), window, cx));
+        let lifecycle = cx.new(|cx| LifecycleScreen::new(runtime.clone(), window, cx));
+        let mut pages: BTreeMap<PageId, ScreenHandle> = PageId::SCREENS
             .into_iter()
             .map(|page| {
                 let runtime = runtime.clone();
                 let handle = match page {
-                    ScreenKind::Processes => Self::screen(
-                        ProcessesScreen::new,
-                        runtime,
-                        &mut subscriptions,
-                        window,
-                        cx,
-                    ),
-                    ScreenKind::Storage => {
-                        Self::screen(StorageScreen::new, runtime, &mut subscriptions, window, cx)
+                    PageId::Processes => Self::screen(ProcessesScreen::new, runtime, window, cx),
+                    PageId::Storage => Self::screen(StorageScreen::new, runtime, window, cx),
+                    PageId::Network => Self::screen(NetworkScreen::new, runtime, window, cx),
+                    PageId::Diagnostics => {
+                        Self::screen(DiagnosticsScreen::new, runtime, window, cx)
                     }
-                    ScreenKind::Network => {
-                        Self::screen(NetworkScreen::new, runtime, &mut subscriptions, window, cx)
-                    }
-                    ScreenKind::Diagnostics => Self::screen(
-                        DiagnosticsScreen::new,
-                        runtime,
-                        &mut subscriptions,
-                        window,
-                        cx,
-                    ),
-                    ScreenKind::Etcd => {
+                    PageId::Etcd => {
                         let etcd = options.debug.etcd;
                         Self::screen(
                             move |runtime, window, cx| {
                                 EtcdScreen::new(runtime, window, cx).with_example(etcd)
                             },
                             runtime,
-                            &mut subscriptions,
                             window,
                             cx,
                         )
                     }
-                    ScreenKind::Health => ScreenHandle::new(health.clone()),
-                    ScreenKind::Security => {
-                        Self::screen(SecurityScreen::new, runtime, &mut subscriptions, window, cx)
-                    }
-                    ScreenKind::Lifecycle => ScreenHandle::new(lifecycle.clone()),
-                    ScreenKind::Operations => Self::screen(
-                        OperationsScreen::new,
-                        runtime,
-                        &mut subscriptions,
-                        window,
-                        cx,
-                    ),
+                    PageId::Health => ScreenHandle::new(health.clone()),
+                    PageId::Security => Self::screen(SecurityScreen::new, runtime, window, cx),
+                    PageId::Lifecycle => ScreenHandle::new(lifecycle.clone()),
+                    PageId::Operations => Self::screen(OperationsScreen::new, runtime, window, cx),
+                    _ => unreachable!("SCREENS holds the Talos screens alone"),
                 };
                 (page, handle)
             })
@@ -1047,13 +1006,16 @@ impl Pilot {
             )
         });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
-        let pages = Self::page_handles(
+        let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
+        pages.extend(Self::page_handles(
+            [&overview_page, &nodes_page],
+            &system_services,
             &monitoring,
             &observability,
             &applications,
             &settings_page,
             &resources,
-        );
+        ));
         subscriptions.extend(Self::subscribe_pages(&pages, window, cx));
         Self::subscribe_page_events(
             &mut subscriptions,
@@ -1101,18 +1063,16 @@ impl Pilot {
             forwards: cx.new(ForwardsIndicator::new),
             dock,
             overview_page,
-            services_page,
             nodes_page,
             node_workspace,
             node_pods,
-            screens,
             pages,
             health,
             lifecycle,
             resources,
             resource_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
             last_kind: builtin(navigation::DEFAULT_KIND).expect("the default kind is built in"),
-            system_services: cx.new(|cx| system_services::SystemServices::new(window, cx)),
+            system_services,
             settings_page,
             applications,
             workspace_file: options
@@ -1213,26 +1173,6 @@ impl Pilot {
         view._subscriptions
             .push(cx.observe(&view.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
         view.watch_menus(window, cx);
-        view._subscriptions.push(cx.subscribe_in(
-            &view.system_services,
-            window,
-            |this, _, event: &system_services::ServiceEvent, window, cx| {
-                let (node, service, tab) = match event {
-                    system_services::ServiceEvent::Logs(node, service) => {
-                        (node, service, nodes::NodeTab::Logs)
-                    }
-                    system_services::ServiceEvent::Open(node, service) => {
-                        (node, service, nodes::NodeTab::Services)
-                    }
-                };
-                this.open_node_by_name(node, tab, window, cx);
-                this.selected_service = Some(service.clone());
-                if tab == nodes::NodeTab::Logs {
-                    this.open_logs(window, cx);
-                }
-                cx.notify();
-            },
-        ));
         view.publish_reading(cx);
         view.chrome.watch(&view, cx);
         view.prepare_context_display(window, cx);
@@ -1434,30 +1374,15 @@ impl Pilot {
         ))
     }
 
+    /// A Talos screen's handle; the shell hears it with every other page
+    /// (`subscribe_pages`).
     fn screen<T: ScreenPanel>(
         new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
         runtime: Handle,
-        subscriptions: &mut Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ScreenHandle {
-        ScreenHandle::new(Self::screen_entity(new, runtime, subscriptions, window, cx))
-    }
-
-    fn screen_entity<T: ScreenPanel>(
-        new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
-        runtime: Handle,
-        subscriptions: &mut Vec<Subscription>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<T> {
-        let screen = cx.new(|cx| new(runtime, window, cx));
-        subscriptions.push(
-            cx.subscribe_in(&screen, window, |this, _, event, window, cx| {
-                this.page_event(&PageEvent::Screen(event.clone()), window, cx)
-            }),
-        );
-        screen
+        ScreenHandle::new(cx.new(|cx| new(runtime, window, cx)))
     }
 
     /// What a Talos screen asks of the shell.
@@ -1599,19 +1524,31 @@ impl Pilot {
         } else {
             self.page.screen()?
         };
-        self.screens
-            .iter()
-            .find(|(candidate, _)| *candidate == page)
-            .map(|(_, handle)| handle.clone())
+        self.pages.get(&page).cloned()
     }
 
-    /// Hands every screen the current source; the visible one loads if empty.
+    /// What every page is handed: the Talos target, and the Kubernetes
+    /// connection with the entry and access it is.
+    fn page_source(&self) -> PageSource {
+        PageSource {
+            screen: self.screen_source(),
+            kube: self.kube_source(),
+            // The entry the window is on is the one the source's connection
+            // is: both change together here.
+            entry: self.active_cluster().map(str::to_owned),
+            kube_identity: self.kube_identity(),
+        }
+    }
+
+    /// Hands every page the current source; the visible screen loads if
+    /// empty. The screens hear first, then the entities beside the pages,
+    /// then the other pages, in key order.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_node_metrics(window, cx);
         self.deliver_summary_nodes(cx);
-        let source = self.screen_source();
-        for (_, screen) in &self.screens {
-            screen.set_source(source.clone(), window, cx);
+        let source = self.page_source();
+        for (_, screen) in self.pages.iter().filter(|(id, _)| id.is_screen()) {
+            screen.set_page_source(source.clone(), window, cx);
         }
         if let Some(data) = self.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);
@@ -1620,32 +1557,19 @@ impl Pilot {
         if let Some(screen) = self.active_screen() {
             screen.activate(window, cx);
         }
-        let source = self.kube_source();
-        self.sync_search_source(source.clone(), window, cx);
+        let kube = source.kube.clone();
+        self.sync_search_source(kube.clone(), window, cx);
         self.custom
-            .update(cx, |custom, cx| custom.set_source(source.clone(), cx));
+            .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
         self.node_pods.update(cx, |resources, cx| {
-            resources.set_source(source.clone(), window, cx)
+            resources.set_source(kube.clone(), window, cx)
         });
-        let cluster = source.as_ref().map(KubeSource::cluster);
-        self.monitoring
-            .update(cx, |monitoring, cx| monitoring.set_source(cluster, cx));
-        let id = source.as_ref().map(|source| source.id.clone());
-        self.observability
-            .update(cx, |page, cx| page.set_source(id, cx));
-        // The entry the window is on is the one the source's connection is:
-        // both change together here.
-        let entry = self.active_cluster().map(str::to_owned);
-        self.applications
-            .update(cx, |page, cx| page.set_source(source.clone(), entry, cx));
-        let sources = self.settings_page.read(cx).sources.clone();
-        sources.update(cx, |list, cx| list.set_source(source.clone(), cx));
-        let identity = self.kube_identity();
         self.dock.update(cx, |dock, cx| {
-            dock.set_source(source.clone(), identity.as_deref(), window, cx)
+            dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
         });
-        self.resources
-            .update(cx, |resources, cx| resources.set_source(source, window, cx));
+        for (_, page) in self.pages.iter().filter(|(id, _)| !id.is_screen()) {
+            page.set_page_source(source.clone(), window, cx);
+        }
     }
 
     /// Hands pod and node history the Monitoring page's Prometheus.
@@ -1664,20 +1588,12 @@ impl Pilot {
         self.registry.active_mut().prompted_access = None;
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
-        if self.page == Page::Resources {
-            self.resources
-                .update(cx, |resources, cx| resources.refresh(window, cx));
-        }
-        if self.page == Page::Monitoring {
-            self.monitoring
-                .update(cx, |monitoring, cx| monitoring.refresh(cx));
-        }
-        if self.page == Page::Observability {
-            self.observability
-                .update(cx, |page, cx| page.refresh_current(cx));
-        }
-        if self.page == Page::Applications {
-            self.applications.update(cx, |page, cx| page.refresh(cx));
+        // The screens refresh with the shell, above.
+        let id = self.page.id();
+        if !id.is_screen()
+            && let Some(page) = self.pages.get(&id)
+        {
+            page.refresh(window, cx);
         }
         if self.page == Page::Nodes {
             self.node_history
@@ -1818,7 +1734,7 @@ impl Pilot {
     /// Marks every cached view dirty, for state they read from outside their
     /// own entity.
     fn notify_cached(&self, cx: &mut App) {
-        for (_, screen) in &self.screens {
+        for (_, screen) in self.pages.iter().filter(|(id, _)| id.is_screen()) {
             App::notify(cx, screen.view().entity_id());
         }
         App::notify(cx, self.observability.entity_id());
@@ -1828,7 +1744,7 @@ impl Pilot {
         let detail = self.resources.read(cx).detail_view();
         App::notify(cx, detail);
         App::notify(cx, self.overview_page.entity_id());
-        App::notify(cx, self.services_page.entity_id());
+        App::notify(cx, self.system_services.entity_id());
         App::notify(cx, self.nodes_page.entity_id());
         App::notify(cx, self.node_pods.entity_id());
         App::notify(cx, self.node_workspace.document.entity_id());
