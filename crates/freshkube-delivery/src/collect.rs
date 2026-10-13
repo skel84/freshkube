@@ -11,11 +11,13 @@
 //! [`Workloads`] in [`Evidence::environments`].
 
 use std::collections::BTreeMap;
+use std::future::Future;
 
 use chrono::{DateTime, Utc};
 
 use super::argocd::{
-    DestinationMatch, Destinations, MapHint, StageNaming, match_destination, read_applications,
+    Application, DestinationMatch, Destinations, MapHint, StageNaming, match_destination,
+    read_applications,
 };
 use super::deployments::{
     Deployment, DeploymentSet, current_set, read_deployment_sets, read_deployments,
@@ -155,6 +157,22 @@ pub async fn upstream<K: Reader, A: Reader, T: Reader, G: GitHub>(
     plan: &Plan,
     observed_at: DateTime<Utc>,
 ) -> Evidence {
+    upstream_with_applications(
+        clusters,
+        plan,
+        observed_at,
+        read_applications(clusters.argocd, &plan.argocd_namespace),
+    )
+    .await
+}
+
+/// Everything upstream, with the caller's read of Argo CD's Applications.
+pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, G: GitHub>(
+    clusters: &Upstream<'_, K, A, T, G>,
+    plan: &Plan,
+    observed_at: DateTime<Utc>,
+    applications: impl Future<Output = Source<Vec<Application>>>,
+) -> Evidence {
     let builds = async {
         if plan.sha.is_empty() {
             Source::Unreadable("the Freight names no commit to find its builds by".into())
@@ -163,7 +181,6 @@ pub async fn upstream<K: Reader, A: Reader, T: Reader, G: GitHub>(
         }
     };
     let kargo = read_project(clusters.kargo, &plan.kargo_project);
-    let applications = read_applications(clusters.argocd, &plan.argocd_namespace);
     // Each part is asked of its own cluster, so none waits on another's.
     let (builds, kargo, applications) = futures::join!(builds, kargo, applications);
     let destinations: BTreeMap<String, DestinationMatch> = applications

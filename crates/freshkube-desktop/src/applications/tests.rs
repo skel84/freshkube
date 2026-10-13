@@ -665,7 +665,7 @@ fn a_scoped_application_keeps_its_name_in_the_inspector(cx: &mut TestAppContext)
     let (_runtime, handle, _view) = open(cx, 1280., 880., |page| page.set_variant(Variant::Spread));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click(STATUS, cx);
+        window.click("application-argocd:application/delivery/status-page", cx);
         window.render_frame(cx);
         let pane = window.find("applications-detail").bounds();
         let title = window.find("applications-detail-title");
