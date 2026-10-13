@@ -6,6 +6,7 @@ mod menu;
 mod metrics;
 mod pane;
 mod projection;
+mod redraws;
 mod table;
 use super::{NodeTab, join};
 use crate::{
