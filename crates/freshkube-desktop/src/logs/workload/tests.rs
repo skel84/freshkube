@@ -92,16 +92,14 @@ fn show_fed(view: &Entity<WorkloadLogView>, workload: &ResourceIdentity, cx: &mu
 
 fn feed(view: &Entity<WorkloadLogView>, pods: Vec<WorkloadPod>, cx: &mut App) {
     view.update(cx, |view, cx| {
-        let epoch = view.source().epoch;
-        assert!(view.apply_pods(
-            epoch,
+        view.apply_pods(
             WorkloadPods {
                 listed: true,
                 pods,
                 failure: None,
             },
             cx,
-        ));
+        );
     });
 }
 
@@ -1061,10 +1059,8 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
     let api = deployment("api");
     cx.update_window(handle, |_, window, cx| {
         show(&view, &api, cx);
-        let epoch = view.read(cx).source().epoch;
         view.update(cx, |view, cx| {
             view.apply_pods(
-                epoch,
                 WorkloadPods {
                     listed: false,
                     pods: Vec::new(),
@@ -1087,15 +1083,25 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
             .unwrap()
             .to_owned();
         assert!(failed.contains("pods is forbidden"), "{failed}");
-
+    })
+    .unwrap();
+    // A listing from the watch before Retry lands nowhere.
+    let older = cx.update(|cx| view.read(cx).source().pod_watch.sender().unwrap());
+    cx.update_window(handle, |_, window, cx| {
         window.click("workload-logs-retry", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).source().pods_state, PodsState::Watching);
         assert!(window.try_find("workload-logs-failed").is_none());
-        // An older watch's answer is dropped.
-        view.update(cx, |view, cx| {
-            assert!(!view.apply_pods(epoch, WorkloadPods::default(), cx));
-        });
+    })
+    .unwrap();
+    let _ = older.try_send(WorkloadPods {
+        listed: false,
+        pods: Vec::new(),
+        failure: Some(Failure::new(FailureKind::Forbidden, "older".to_owned())),
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(view.read(cx).source().pods_state, PodsState::Watching);
         assert!(
             view.read(cx)
                 .source()
@@ -1104,8 +1110,7 @@ fn a_failed_pod_watch_says_why_and_retry_watches_again(cx: &mut TestAppContext) 
                 .values()
                 .any(|stream| stream.state == StreamState::Streaming)
         );
-    })
-    .unwrap();
+    });
 }
 
 /// Chips past the rows' room end in "+N", which lists every container
@@ -1715,5 +1720,48 @@ fn a_workload_download_is_named_by_the_workload_and_its_picked_pod(cx: &mut Test
             format!("{workload}-{}", all[0].name)
         );
         assert_eq!(name(DownloadLines::Retained, cx), workload);
+    });
+}
+
+#[test]
+fn a_busy_pod_watch_hands_over_the_newest_listing_after_the_one_in_flight() {
+    use freshkube_core::resources::{Failure, FailureKind};
+    use tokio::sync::{mpsc, watch};
+
+    let listing = |name: &str| WorkloadPods {
+        listed: true,
+        failure: Some(Failure::new(FailureKind::Other, name)),
+        ..WorkloadPods::default()
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (latest, listings) = watch::channel(WorkloadPods::default());
+        let (sender, mut received) = mpsc::channel(1);
+        let forward = tokio::spawn(super::forward_listings(listings, sender));
+        let settle = || async {
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+        };
+
+        latest.send_replace(listing("a"));
+        settle().await;
+        // "a" fills the slot; three more arrive before the owner takes it.
+        for name in ["b", "c", "d"] {
+            latest.send_replace(listing(name));
+            settle().await;
+        }
+
+        assert_eq!(received.recv().await, Some(listing("a")));
+        settle().await;
+        assert_eq!(received.recv().await, Some(listing("d")));
+        settle().await;
+        assert!(received.try_recv().is_err(), "b and c never land");
+
+        drop(latest);
+        forward.await.unwrap();
     });
 }

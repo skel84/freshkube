@@ -42,6 +42,8 @@ struct Screen {
     restarted: Option<mpsc::Sender<u32>>,
     /// How many items the current stream has passed on to the watch.
     forwarded: Arc<AtomicUsize>,
+    /// What had landed each time a stream ended by itself.
+    ends: Vec<Vec<u32>>,
 }
 
 impl Screen {
@@ -70,6 +72,44 @@ impl Screen {
             cx,
         );
         feed
+    }
+
+    /// As `begin`, noting in `ends` what had landed when the stream ends by
+    /// itself.
+    fn begin_then(&mut self, identity: &'static str, cx: &mut Context<Self>) -> mpsc::Sender<u32> {
+        let (feed, mut items) = mpsc::channel::<u32>(16);
+        let runtime = self.runtime.clone();
+        self.watch.start_then(
+            identity,
+            &runtime,
+            self.pace,
+            move |sender| async move {
+                while let Some(item) = items.recv().await {
+                    if sender.send(item).await.is_err() {
+                        return;
+                    }
+                }
+            },
+            |screen: &mut Screen| &mut screen.watch,
+            Self::apply,
+            |screen: &mut Screen, _| {
+                assert!(!screen.watch.is_running(), "ended before its end runs");
+                screen.ends.push(screen.seen.clone());
+            },
+            cx,
+        );
+        feed
+    }
+
+    /// Opens the watch for `identity` with no work of its own.
+    fn open(&mut self, identity: &'static str, cx: &mut Context<Self>) {
+        self.watch.open(
+            identity,
+            self.pace,
+            |screen: &mut Screen| &mut screen.watch,
+            Self::apply,
+            cx,
+        );
     }
 
     fn apply(&mut self, batch: Vec<u32>, cx: &mut Context<Self>) {
@@ -105,6 +145,7 @@ fn mount_paced(pace: Pace, cx: &mut TestAppContext) -> (Runtime, Entity<Screen>)
         restart_on: None,
         restarted: None,
         forwarded: Arc::default(),
+        ends: Vec::new(),
     });
     (runtime, screen)
 }
@@ -376,4 +417,178 @@ fn a_delivery_may_start_its_own_watch_again(cx: &mut TestAppContext) {
         [1, 2, 10],
         "the old stream's 3 never lands"
     );
+}
+
+#[gpui_kit::test]
+fn a_sender_beside_the_work_feeds_the_same_delivery(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = start(&screen, &runtime, "a", cx);
+    let beside = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    runtime.block_on(feed.send(1)).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1]);
+    beside.try_send(2).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1, 2]);
+
+    // Stopping closes it with the stream, and the watch has none to give.
+    screen.update(cx, |screen, _| {
+        screen.watch.stop();
+        assert!(screen.watch.sender().is_none());
+    });
+    until(cx, |_| beside.is_closed());
+    assert!(beside.try_send(3).is_err());
+    assert_eq!(seen(&screen, cx), [1, 2]);
+}
+
+#[gpui_kit::test]
+fn a_sender_taken_before_starting_again_never_lands(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let _old = start(&screen, &runtime, "a", cx);
+    let old = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    let _new = start(&screen, &runtime, "b", cx);
+    until(cx, |_| old.is_closed());
+    assert!(old.try_send(1).is_err());
+    let new = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    new.try_send(2).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [2]);
+}
+
+#[gpui_kit::test]
+fn a_sender_used_right_after_a_restart_for_the_same_identity_never_lands(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let _old = start(&screen, &runtime, "a", cx);
+    let old = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    let _new = start(&screen, &runtime, "a", cx);
+    // The old channel still takes it: dropping the old delivery keeps it
+    // out, and so would the generation, since the identity is the same.
+    old.try_send(1).unwrap();
+    let new = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    new.try_send(2).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [2]);
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [2]);
+}
+
+#[gpui_kit::test]
+fn a_taken_sender_keeps_the_stream_open_and_the_watch_does_not(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = start(&screen, &runtime, "a", cx);
+    let beside = screen.read_with(cx, |screen, _| screen.watch.sender().expect("running"));
+    // The work ends, and the sender taken beside it still feeds.
+    drop(feed);
+    beside.try_send(1).unwrap();
+    until(cx, |cx| seen(&screen, cx) == [1]);
+    assert!(screen.read_with(cx, |screen, _| screen.watch.is_running()));
+    // Once it goes too, the stream ends: the watch held it only weakly.
+    drop(beside);
+    until(cx, |cx| {
+        screen.read_with(cx, |screen, _| !screen.watch.is_running())
+    });
+    assert!(screen.read_with(cx, |screen, _| screen.watch.sender().is_none()));
+}
+
+#[gpui_kit::test]
+fn each_start_and_stop_moves_the_generation(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let first = screen.read_with(cx, |screen, _| screen.watch.generation());
+    let _feed = start(&screen, &runtime, "a", cx);
+    let started = screen.read_with(cx, |screen, _| screen.watch.generation());
+    assert!(started > first);
+    screen.update(cx, |screen, _| screen.watch.stop());
+    assert!(screen.read_with(cx, |screen, _| screen.watch.generation()) > started);
+}
+
+#[gpui_kit::test]
+fn an_opened_watch_is_fed_only_through_its_senders(cx: &mut TestAppContext) {
+    let pace = Pace {
+        every: EVERY,
+        ..PACE
+    };
+    let (_runtime, screen) = mount_paced(pace, cx);
+    screen.update(cx, |screen, cx| screen.open("a", cx));
+    let feed = screen.read_with(cx, |screen, _| {
+        assert!(screen.watch.is_running());
+        assert_eq!(screen.watch.identity(), Some(&"a"));
+        screen.watch.sender().expect("open")
+    });
+    // Sent on the GPUI thread, as an example writer does, and paced as a
+    // started stream's items are.
+    feed.try_send(1).unwrap();
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [1]);
+    feed.try_send(2).unwrap();
+    feed.try_send(3).unwrap();
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [1], "not yet");
+    cx.executor().advance_clock(EVERY);
+    cx.run_until_parked();
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.seen, [1, 2, 3]);
+        assert_eq!(screen.sizes, [1, 2]);
+    });
+
+    // No sender taken keeps it open: dropping this one ends nothing.
+    drop(feed);
+    cx.run_until_parked();
+    assert!(screen.read_with(cx, |screen, _| screen.watch.is_running()));
+}
+
+#[gpui_kit::test]
+fn an_opened_watch_closes_when_it_stops_or_starts_again(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    screen.update(cx, |screen, cx| screen.open("a", cx));
+    let first = screen.read_with(cx, |screen, _| screen.watch.sender().expect("open"));
+    screen.update(cx, |screen, cx| screen.open("b", cx));
+    // A dropped delivery lets its channel go once the executor runs.
+    cx.run_until_parked();
+    assert!(first.is_closed(), "opening again dropped the first");
+    assert!(first.try_send(1).is_err());
+
+    let second = screen.read_with(cx, |screen, _| screen.watch.sender().expect("open"));
+    second.try_send(2).unwrap();
+    cx.run_until_parked();
+    assert_eq!(seen(&screen, cx), [2]);
+    screen.update(cx, |screen, _| {
+        screen.watch.stop();
+        assert!(!screen.watch.is_running());
+        assert!(screen.watch.sender().is_none());
+    });
+    cx.run_until_parked();
+    assert!(second.is_closed());
+
+    // A start replaces an opened stream too.
+    screen.update(cx, |screen, cx| screen.open("a", cx));
+    let opened = screen.read_with(cx, |screen, _| screen.watch.sender().expect("open"));
+    let _feed = start(&screen, &runtime, "a", cx);
+    cx.run_until_parked();
+    assert!(opened.is_closed());
+}
+
+#[gpui_kit::test]
+fn a_stream_that_ends_by_itself_runs_its_end_after_its_last_batch(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = screen.update(cx, |screen, cx| screen.begin_then("a", cx));
+    runtime.block_on(feed.send(1)).unwrap();
+    runtime.block_on(feed.send(2)).unwrap();
+    drop(feed);
+    until(cx, |cx| {
+        screen.read_with(cx, |screen, _| !screen.watch.is_running())
+    });
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.seen, [1, 2]);
+        assert_eq!(screen.ends, [vec![1, 2]], "once, after the last batch");
+    });
+}
+
+#[gpui_kit::test]
+fn stopping_or_starting_again_runs_no_end(cx: &mut TestAppContext) {
+    let (runtime, screen) = mount(cx);
+    let feed = screen.update(cx, |screen, cx| screen.begin_then("a", cx));
+    screen.update(cx, |screen, _| screen.watch.stop());
+    until(cx, |_| feed.is_closed());
+
+    let feed = screen.update(cx, |screen, cx| screen.begin_then("a", cx));
+    let _new = start(&screen, &runtime, "b", cx);
+    until(cx, |_| feed.is_closed());
+    cx.run_until_parked();
+    assert!(screen.read_with(cx, |screen, _| screen.ends.is_empty()));
 }
