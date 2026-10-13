@@ -131,20 +131,20 @@ impl Failure {
     /// Classifies a kube error as [`Failure::from_kube`] does but keeps the
     /// error's own `Display` text as the message, for a read that worded its
     /// failure that way before it carried a kind.
-    pub fn from_kube_text(error: kube::Error) -> Self {
+    pub(crate) fn from_kube_text(error: kube::Error) -> Self {
         let text = error.to_string();
         Self::new(Self::from_kube(error).kind, text)
     }
 
     /// Classifies a Talos error as [`Failure::from_talos`] does but words it
     /// with the error's own `Display` text.
-    pub fn from_talos_text(error: &TalosError) -> Self {
+    pub(crate) fn from_talos_text(error: &TalosError) -> Self {
         Self::new(Self::from_talos(error).kind, error.to_string())
     }
 
     /// Classifies a Talos error as [`Failure::from_talos`] does but words it
     /// with `format_talos_error` whole, status message included.
-    pub fn from_talos_formatted(error: &TalosError) -> Self {
+    pub(crate) fn from_talos_formatted(error: &TalosError) -> Self {
         Self::new(
             Self::from_talos(error).kind,
             crate::errors::format_talos_error(error),

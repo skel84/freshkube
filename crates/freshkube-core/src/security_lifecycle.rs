@@ -263,7 +263,7 @@ impl SecurityAuditCollector {
         let talos_kubeconfig_certificates = match bounded_request(client.kubeconfig()).await {
             Ok(kubeconfig) => audit_kubeconfig_certificates(&kubeconfig),
             Err(error) => SourceSnapshot::Unavailable {
-                reason: format!("Talos did not provide a kubeconfig: {}", error.message),
+                reason: kubeconfig_unavailable(&error),
             },
         };
 
@@ -342,10 +342,7 @@ impl SecurityAuditCollector {
                 }
             }
             Err(error) => SourceSnapshot::Unavailable {
-                reason: format!(
-                    "Talos volume status for {target} is unavailable: {}",
-                    error.message
-                ),
+                reason: volume_status_unavailable(&target, &error),
             },
         }
     }
@@ -827,10 +824,25 @@ fn load_talosconfig(path: Option<&Path>) -> Result<TalosConfig, Failure> {
     }
     .map_err(|error| {
         Failure::new(
-            FailureKind::Config,
+            Failure::from_talos(&error).kind,
             format!("Failed to load talosconfig: {error}"),
         )
     })
+}
+
+fn kubeconfig_unavailable(error: &Failure) -> String {
+    format!("Talos did not provide a kubeconfig: {}", error.message)
+}
+
+fn volume_status_unavailable(target: &str, error: &Failure) -> String {
+    format!(
+        "Talos volume status for {target} is unavailable: {}",
+        error.message
+    )
+}
+
+fn etcd_members_unavailable(error: &Failure) -> String {
+    format!("Talos etcd member list is unavailable: {}", error.message)
 }
 
 async fn bounded_request<T>(
@@ -1565,7 +1577,25 @@ mod tests {
             .map(|_| ())
             .unwrap_err();
         assert_eq!(missing.kind, FailureKind::Config);
-        assert!(missing.message.starts_with("Failed to load talosconfig: "));
+        assert_eq!(
+            missing.message,
+            "Failed to load talosconfig: Config file not found: /nonexistent/acme/talosconfig"
+        );
+
+        // The sentences built around a failed read take its message alone, so
+        // no "Unreachable · " from `Failure`'s Display reaches the page.
+        assert_eq!(
+            kubeconfig_unavailable(&down),
+            format!("Talos did not provide a kubeconfig: {}", down.message)
+        );
+        assert_eq!(
+            volume_status_unavailable("10.0.0.5", &slow),
+            "Talos volume status for 10.0.0.5 is unavailable: Talos read request timed out"
+        );
+        assert_eq!(
+            etcd_members_unavailable(&slow),
+            "Talos etcd member list is unavailable: Talos read request timed out"
+        );
 
         let mut config = TalosConfig {
             context: String::new(),
