@@ -422,3 +422,19 @@ fn a_load_of_a_file_that_cannot_be_read_is_the_default_with_a_problem() {
     assert!(loaded.value.is_empty());
     assert!(loaded.problem.unwrap().contains("could not be read"));
 }
+
+#[test]
+fn a_limited_document_refuses_a_large_file_and_a_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = shared(&directory).limited_to(16);
+    std::fs::write(document.path(), "{\"a\": \"0123456789abcdef\"}").unwrap();
+    let loaded = document.load();
+    assert!(loaded.value.is_empty());
+    assert!(loaded.problem.unwrap().contains("larger than 16 bytes"));
+    std::fs::write(document.path(), "{\"a\": 1}").unwrap();
+    assert_eq!(document.load().value["a"], 1);
+    std::fs::remove_file(document.path()).unwrap();
+    assert!(document.load().problem.is_none());
+    std::fs::create_dir(document.path()).unwrap();
+    assert!(document.load().problem.unwrap().contains("regular file"));
+}

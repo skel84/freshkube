@@ -50,6 +50,7 @@ impl Dir {
             path: self.0.join(name),
             layout,
             mode,
+            limit: None,
             value: PhantomData,
         }
     }
@@ -61,10 +62,20 @@ pub struct Document<T> {
     path: PathBuf,
     layout: Layout,
     mode: u32,
+    limit: Option<u64>,
     value: PhantomData<fn() -> T>,
 }
 
 impl<T> Document<T> {
+    /// Reads at most `bytes` of the file, and only a regular file. One that
+    /// is larger, or is not a regular file (a directory, a FIFO), is
+    /// unusable: the default, with a problem. Only reads are bounded; a
+    /// save writes what it is given.
+    pub fn limited_to(mut self, bytes: u64) -> Self {
+        self.limit = Some(bytes);
+        self
+    }
+
     /// The file at `path`, holding a `T`, for a caller that has the whole
     /// path and not a directory and a name ([`Dir::document`]).
     pub fn at(path: &Path, layout: Layout, mode: u32) -> Self {
@@ -72,6 +83,7 @@ impl<T> Document<T> {
             path: path.to_path_buf(),
             layout,
             mode,
+            limit: None,
             value: PhantomData,
         }
     }
@@ -104,8 +116,9 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
     /// returned and not turned into the default. A file that parses wrongly
     /// is still the default with a problem: it holds nothing worth keeping.
     fn read(&self) -> std::io::Result<Loaded<T>> {
-        let bytes = match std::fs::read(&self.path) {
-            Ok(bytes) => bytes,
+        let bytes = match self.read_bytes() {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(why)) => return Ok(self.unusable(why)),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Loaded {
                     value: T::default(),
@@ -121,6 +134,27 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
             },
             Err(error) => self.unusable(format!("could not be parsed: {}", describe(&error))),
         })
+    }
+
+    /// The file's bytes, or why they are not to be used (past the limit,
+    /// not a regular file). An I/O error is the outer error.
+    fn read_bytes(&self) -> std::io::Result<Result<Vec<u8>, String>> {
+        use std::io::Read as _;
+        let Some(limit) = self.limit else {
+            return std::fs::read(&self.path).map(Ok);
+        };
+        // Checked before opening, so a FIFO never blocks the open.
+        if !std::fs::metadata(&self.path)?.is_file() {
+            return Ok(Err("is not a regular file".into()));
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(&self.path)?
+            .take(limit + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > limit {
+            return Ok(Err(format!("is larger than {limit} bytes")));
+        }
+        Ok(Ok(bytes))
     }
 
     fn unusable(&self, why: String) -> Loaded<T> {
