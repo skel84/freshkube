@@ -1,0 +1,1 @@
+- Diagnostics: example data is built in the core crate; nothing changes on screen
