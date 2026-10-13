@@ -51,7 +51,7 @@ impl LifecycleScreen {
         } else {
             v_flex()
                 .children(alerts.iter().enumerate().map(|(ix, alert)| {
-                    let (tone, icon, label) = health_tone(&alert.health);
+                    let (tone, icon, label) = alert_look(&alert.health);
                     let item = Item::Alert(alert.key.clone());
                     let selected = self.selected.as_ref() == Some(&item);
                     h_flex()
@@ -420,6 +420,9 @@ fn support_line(talos: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::support_line;
+    use crate::screens::lifecycle::alert_look;
+    use crate::ui::Tone;
+    use freshkube_core::HealthIndicator;
 
     #[test]
     fn the_support_line_reads_for_every_talos() {
@@ -429,5 +432,22 @@ mod tests {
             "Talos v0.1.0 isn't in the support table"
         );
         assert!(support_line(Some("v1.8.0")).starts_with("Talos v1.8.0 supports v1."));
+    }
+
+    #[test]
+    fn an_alert_keeps_its_tone_icon_and_word() {
+        let rows = [
+            (HealthIndicator::Healthy, Tone::Good, "OK"),
+            (HealthIndicator::Warning, Tone::Warn, "Warning"),
+            (HealthIndicator::Error, Tone::Crit, "Error"),
+            (HealthIndicator::Pending, Tone::Unknown, "Unknown"),
+            (HealthIndicator::Info, Tone::Accent, "Info"),
+            (HealthIndicator::Unknown, Tone::Unknown, "Unknown"),
+        ];
+        for (health, tone, word) in rows {
+            let (got_tone, icon, label) = alert_look(&health);
+            assert_eq!((got_tone, label), (tone, word), "{health:?}");
+            assert_eq!(icon.is_some(), health == HealthIndicator::Info);
+        }
     }
 }

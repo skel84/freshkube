@@ -9,6 +9,7 @@ use crate::{
     presentation::{self, Health, NodeSummary},
     ui::{self, dp},
 };
+use freshkube_core::HasHealth;
 use freshkube_ui::status::Segment;
 use freshkube_ui::{menu, page, table};
 use gpui_kit::prelude::*;
@@ -381,7 +382,7 @@ impl SystemServices {
                 let health = status.health;
                 table::status_chip(
                     header.id(&format!("tally-{}", status.what.replace(' ', "-"))),
-                    ui::health_tone(health),
+                    ui::health_tone(health.health()).0,
                     self.counts[status_index(health)],
                     status.what,
                     self.health == Some(health),

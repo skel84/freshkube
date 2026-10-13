@@ -8,12 +8,14 @@
 //! every source answered (or isn't served) is it the empty state.
 use std::collections::{BTreeMap, BTreeSet};
 
+use freshkube_core::resources::FailureKind;
 use freshkube_core::workloads::WorkloadKind;
 use freshkube_delivery::applications::read::{ARGOCD, MAX_ARGO_NAMESPACES, PART_OF};
 use freshkube_delivery::applications::{
     Application, ArgoFound, Coverage, CoverageState, Derived, Evidence, Member, MemberKind,
     MemberRef, Note, Rule, SessionKey, SourceKind,
 };
+use freshkube_delivery::words;
 use gpui_kit::SharedString;
 
 /// The rules in precedence order, as the table groups them.
@@ -491,14 +493,19 @@ impl Short {
                         .namespace_only
                         .insert(c.session.clone(), scope_words(namespaces, found));
                 }
-                state if state.is_unknown() => {
+                CoverageState::Capped(_)
+                | CoverageState::NamespaceNotFound(_)
+                | CoverageState::Refused(_)
+                | CoverageState::Unreadable(_)
+                | CoverageState::Unreachable(_)
+                | CoverageState::NotInWorkspace(_) => {
                     short
                         .unread
                         .entry(c.source.rule())
                         .or_default()
                         .insert(c.session.clone());
                 }
-                _ => {}
+                CoverageState::Read | CoverageState::NotInstalled(_) => {}
             }
         }
         short
@@ -648,7 +655,7 @@ fn row(app: &Application, short: &Short, labels: &Labels) -> AppRow {
                 .iter()
                 .map(|words| format!("{words}; Applications in other namespaces aren't listed"))
                 .collect::<Vec<_>>(),
-            _ => scope.clone(),
+            Rule::Kargo | Rule::PartOf | Rule::Manual => scope.clone(),
         };
         fields.push(("Argo CD", capital(&read.join("\n")).into()));
     }
@@ -697,11 +704,15 @@ fn missing_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     let mut absent: Vec<(String, Vec<&'static str>)> = Vec::new();
     for c in coverage {
         let head = match &c.state {
-            CoverageState::Unreachable(why) => {
-                format!("Couldn't reach {}: {why}", labels.of(&c.session))
-            }
+            CoverageState::Unreachable(why) => words::unreachable(&labels.of(&c.session), why),
             CoverageState::NotInWorkspace(why) => why.clone(),
-            _ => continue,
+            CoverageState::Read
+            | CoverageState::Capped(_)
+            | CoverageState::NamespaceOnly { .. }
+            | CoverageState::NamespaceNotFound(_)
+            | CoverageState::NotInstalled(_)
+            | CoverageState::Refused(_)
+            | CoverageState::Unreadable(_) => continue,
         };
         let rule = rule_words(c.source.rule());
         match absent.iter_mut().find(|(seen, _)| *seen == head) {
@@ -780,7 +791,17 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
                     .or_default()
                     .insert(labels.of(&c.session));
             }
-            _ => {}
+            (CoverageState::NotInstalled(_), Rule::PartOf | Rule::Manual)
+            | (
+                CoverageState::Read
+                | CoverageState::Capped(_)
+                | CoverageState::NamespaceNotFound(_)
+                | CoverageState::Refused(_)
+                | CoverageState::Unreadable(_)
+                | CoverageState::Unreachable(_)
+                | CoverageState::NotInWorkspace(_),
+                _,
+            ) => {}
         }
     }
     let on = |clusters: &BTreeSet<String>| match clusters.len() {
@@ -789,10 +810,10 @@ fn legend_lines(coverage: &[Coverage], labels: &Labels) -> Vec<SharedString> {
     };
     let mut lines: Vec<SharedString> = Vec::new();
     if !kargo.is_empty() {
-        lines.push(format!("Kargo isn't served on {}", on(&kargo)).into());
+        lines.push(words::failed(FailureKind::NotFound, "Kargo", &on(&kargo), "").into());
     }
     if !argo.is_empty() {
-        lines.push(format!("Argo CD isn't served on {}", on(&argo)).into());
+        lines.push(words::failed(FailureKind::NotFound, "Argo CD", &on(&argo), "").into());
     }
     for (words, clusters) in namespace_only {
         lines.push(
@@ -840,7 +861,11 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
             | CoverageState::Unreadable(why)
             | CoverageState::Unreachable(why)
             | CoverageState::NotInWorkspace(why) => why.clone().into(),
-            _ => SharedString::default(),
+            CoverageState::Read
+            | CoverageState::Capped(_)
+            | CoverageState::NamespaceOnly { .. }
+            | CoverageState::NamespaceNotFound(_)
+            | CoverageState::NotInstalled(_) => SharedString::default(),
         }
     };
     if !refused.is_empty() {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::DebugOptions;
 
 #[gpui_kit::test]
 fn header_chips_filter_health_without_changing_the_talos_target(cx: &mut TestAppContext) {
@@ -491,7 +492,7 @@ fn node_logs_startup_opens_a_folded_node_without_a_table_click(cx: &mut TestAppC
     cx.update_window(handle, |_, window, cx| {
         assert!(pilot.read(cx).node_workspace.healthy_collapsed());
         pilot.update(cx, |pilot, cx| {
-            pilot.startup_selection(Some("node-logs"), None, None, window, cx);
+            pilot.startup_selection(&DebugOptions::default().with_page("node-logs"), window, cx);
         });
         window.render_frame(cx);
         let view = pilot.read(cx);
