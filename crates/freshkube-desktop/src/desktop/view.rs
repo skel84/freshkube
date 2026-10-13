@@ -135,11 +135,14 @@ impl Render for Pilot {
                     view.set_appearance(Appearance::Dark, window, cx)
                 }),
             )
-            .when(self.menu_platform.app_menu() == AppMenu::Button, |this| {
-                this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
-                    view.open_app_menu(false, window, cx)
-                }))
-            })
+            .when(
+                self.chrome.menu_platform.app_menu() == AppMenu::Button,
+                |this| {
+                    this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
+                        view.open_app_menu(false, window, cx)
+                    }))
+                },
+            )
             .child(
                 self.chrome.parts.header.clone().cached(
                     StyleRefinement::default()

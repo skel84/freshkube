@@ -338,18 +338,6 @@ pub(crate) struct Pilot {
     /// Set without Talos: contexts come from a kubeconfig and only the
     /// Resources page reads.
     kubernetes_only: Option<kubernetes_only::KubernetesOnly>,
-    /// The platform whose menu the window has: the one it runs on, but a
-    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`
-    /// (`DebugOptions::app_menu_button`), and tests choose.
-    menu_platform: freshkube_ui::platform::Platform,
-    /// The menu button's menu while it's open, and its dismissal's
-    /// subscription.
-    app_menu_popup: Option<(Entity<gpui_kit::component::menu::PopupMenu>, Subscription)>,
-    /// What had the keyboard when the menu button was pressed, before its
-    /// popover took it: the view the menu's entries act on.
-    app_menu_focus: Option<FocusHandle>,
-    /// What the installed menus state, to set them again only on a change.
-    menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
@@ -922,7 +910,7 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            chrome: shell::Chrome::new(cx),
+            chrome: shell::Chrome::new(app_menu::menu_platform(options.debug.app_menu_button), cx),
             dock,
             overview_page,
             node_workspace,
@@ -954,10 +942,6 @@ impl Pilot {
             restored_taken: None,
             age_label,
             switcher: Vec::new(),
-            menu_platform: app_menu::menu_platform(options.debug.app_menu_button),
-            app_menu_popup: None,
-            app_menu_focus: None,
-            menu_state: None,
             kubeconfig_draft: Default::default(),
             navigation: shell::Navigation::new(navigation_file, cx),
             fixture: options.fixture,

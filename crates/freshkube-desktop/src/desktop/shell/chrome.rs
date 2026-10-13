@@ -36,10 +36,26 @@ pub(in crate::desktop) struct Chrome {
     pub(in crate::desktop) forwards: Entity<ForwardsIndicator>,
     /// The theme the user chose: the system's, light or dark.
     pub(in crate::desktop) appearance: Appearance,
+    /// The platform whose menu the window has: the one it runs on, but a
+    /// debug build shows the menu button with `FRESHKUBE_APP_MENU=button`
+    /// (`DebugOptions::app_menu_button`), and tests choose.
+    pub(in crate::desktop) menu_platform: freshkube_ui::platform::Platform,
+    /// The menu button's menu while it's open, and its dismissal's
+    /// subscription.
+    pub(in crate::desktop) app_menu_popup:
+        Option<(Entity<gpui_kit::component::menu::PopupMenu>, Subscription)>,
+    /// What had the keyboard when the menu button was pressed, before its
+    /// popover took it: the view the menu's entries act on.
+    pub(in crate::desktop) app_menu_focus: Option<FocusHandle>,
+    /// What the installed menus state, to set them again only on a change.
+    pub(in crate::desktop) menu_state: Option<crate::desktop::app_menu::MenuState>,
 }
 
 impl Chrome {
-    pub(in crate::desktop) fn new(cx: &mut Context<Pilot>) -> Self {
+    pub(in crate::desktop) fn new(
+        menu_platform: freshkube_ui::platform::Platform,
+        cx: &mut Context<Pilot>,
+    ) -> Self {
         Self {
             parts: ChromeParts::new(cx),
             countdown: cx.new(|_| Countdown {
@@ -51,6 +67,10 @@ impl Chrome {
             fps: cx.new(super::fps::Fps::new),
             forwards: cx.new(ForwardsIndicator::new),
             appearance: Appearance::System,
+            menu_platform,
+            app_menu_popup: None,
+            app_menu_focus: None,
+            menu_state: None,
         }
     }
 
