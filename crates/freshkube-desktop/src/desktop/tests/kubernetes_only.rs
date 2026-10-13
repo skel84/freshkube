@@ -2,7 +2,7 @@ use super::*;
 
 #[gpui_kit::test]
 fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("services"), None);
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, kubeconfig_file("services"), None);
     wait_until(cx, handle, "the kubeconfig to load", |_, cx| {
         !view.read(cx).contexts.is_empty()
     });
@@ -51,7 +51,7 @@ fn kubernetes_status(window: &gpui_kit::Window) -> String {
 
 #[gpui_kit::test]
 fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("ctrl-tab"), None);
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, kubeconfig_file("ctrl-tab"), None);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Overview);
@@ -87,7 +87,7 @@ fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext)
 fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
     cx: &mut TestAppContext,
 ) {
-    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("contexts"), None);
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, kubeconfig_file("contexts"), None);
     wait_until(cx, handle, "lab to refuse", |window, _| {
         kubernetes_status(window).starts_with("Couldn't connect to lab: ")
     });
@@ -150,7 +150,7 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
 #[gpui_kit::test]
 fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
     let path = kubeconfig_file("talos-pages");
-    let (_runtime, handle, view) = kubernetes_only(cx, path.clone(), None);
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, path.clone(), None);
     // Settings lists the files read, and the read runs on Tokio, which
     // `run_until_parked` doesn't wait for.
     let read = view.clone();
@@ -208,7 +208,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn kubernetes_only_control_plane_offers_a_talosconfig(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("rail"), None);
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, kubeconfig_file("rail"), None);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         area(window, cx, "nav-control-plane");
@@ -228,7 +228,8 @@ fn kubernetes_only_control_plane_offers_a_talosconfig(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn kubernetes_only_never_swaps_in_another_context(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = kubernetes_only(cx, kubeconfig_file("asked-for"), Some("prod"));
+    let (_runtime, handle, view) =
+        mount_kubernetes_only(cx, kubeconfig_file("asked-for"), Some("prod"));
     wait_until(cx, handle, "prod to be missing", |window, _| {
         kubernetes_status(window).starts_with("Couldn't connect to prod: ")
     });
@@ -280,7 +281,7 @@ fn show_health(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<P
 #[gpui_kit::test]
 fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppContext) {
     let (_runtime, handle, view) =
-        kubernetes_only(cx, kubeconfig_file("health-refused"), Some("staging"));
+        mount_kubernetes_only(cx, kubeconfig_file("health-refused"), Some("staging"));
     show_health(cx, handle, &view);
     let reason = kubernetes_only_health_failure(cx, handle, &view, "staging to refuse");
     cx.update_window(handle, |_, window, cx| {
@@ -314,7 +315,8 @@ fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppCont
 
 #[gpui_kit::test]
 fn kubernetes_only_health_says_the_kubeconfig_is_missing_and_retries(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = kubernetes_only(cx, scratch("no-such-health-kubeconfig"), None);
+    let (_runtime, handle, view) =
+        mount_kubernetes_only(cx, scratch("no-such-health-kubeconfig"), None);
     show_health(cx, handle, &view);
     let reason = kubernetes_only_health_failure(cx, handle, &view, "the kubeconfig to fail");
     cx.update_window(handle, |_, window, cx| {
@@ -336,7 +338,7 @@ fn kubernetes_only_health_says_the_kubeconfig_is_missing_and_retries(cx: &mut Te
 
 #[gpui_kit::test]
 fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = kubernetes_only(cx, scratch("no-such-kubeconfig"), None);
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, scratch("no-such-kubeconfig"), None);
     wait_until(cx, handle, "the kubeconfig to fail", |window, _| {
         kubernetes_status(window).starts_with("No kubeconfig loaded: ")
     });
@@ -398,7 +400,7 @@ users:
 
 /// The window `--kubernetes-only --kubeconfig <path>` opens. Never the
 /// ambient kubeconfig: the path is always explicit.
-fn kubernetes_only(
+fn mount_kubernetes_only(
     cx: &mut TestAppContext,
     kubeconfig: std::path::PathBuf,
     context: Option<&str>,
@@ -456,7 +458,7 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
         KUBECONFIG.replace("https://127.0.0.1:1", &format!("http://{address}")),
     )
     .unwrap();
-    let (_runtime, handle, view) = kubernetes_only(cx, config, Some("lab"));
+    let (_runtime, handle, view) = mount_kubernetes_only(cx, config, Some("lab"));
     let observed = view.clone();
     cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
         observed.read(cx).kube_source().is_some()
