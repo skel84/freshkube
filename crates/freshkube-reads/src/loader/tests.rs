@@ -1,3 +1,4 @@
+use crate::test_support::until;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 use gpui_kit::{AppContext, Entity, TestAppContext};
@@ -47,19 +48,6 @@ fn load(
     });
 }
 
-/// Runs GPUI's executor until `done`, while Tokio works on its own threads,
-/// or fails after a few seconds.
-fn until(cx: &mut TestAppContext, done: impl Fn() -> bool) {
-    for _ in 0..500 {
-        cx.run_until_parked();
-        if done() {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    panic!("the condition never held");
-}
-
 #[gpui_kit::test]
 fn an_answer_lands_for_the_latest_request(cx: &mut TestAppContext) {
     let (runtime, screen) = mount(cx);
@@ -79,7 +67,7 @@ fn an_answer_lands_for_the_latest_request(cx: &mut TestAppContext) {
         screen.loader.revision()
     });
     send.send(Ok(7)).unwrap();
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     screen.read_with(cx, |screen, _| {
         assert_eq!(screen.loader.data(), Some(&7));
         assert!(!screen.loader.is_loading());
@@ -113,10 +101,10 @@ fn a_late_answer_for_an_old_identity_is_dropped(cx: &mut TestAppContext) {
         cx,
     );
     new.send(Ok(2)).unwrap();
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     // The replaced read's job was cancelled, dropping its work: its answer
     // has nowhere to go.
-    until(cx, || old.is_closed());
+    until(cx, |_| old.is_closed());
     assert!(old.send(Ok(1)).is_err());
     cx.run_until_parked();
     assert_eq!(delivered.get(), 1);
@@ -154,7 +142,7 @@ fn reset_clears_data_and_drops_the_read_in_flight(cx: &mut TestAppContext) {
     );
     screen.update(cx, |screen, _| screen.loader.reset());
     // Reset cancelled the job, dropping its work.
-    until(cx, || send.is_closed());
+    until(cx, |_| send.is_closed());
     assert!(send.send(Ok(2)).is_err());
     cx.run_until_parked();
     assert_eq!(delivered.get(), 0);
@@ -190,7 +178,7 @@ fn a_changed_identity_clears_the_data(cx: &mut TestAppContext) {
         assert!(screen.loader.last_successful().is_none());
     });
     send.send(Ok(2)).unwrap();
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     screen.read_with(cx, |screen, _| assert_eq!(screen.loader.data(), Some(&2)));
 }
 
@@ -214,7 +202,7 @@ fn a_refresh_failure_keeps_the_data_marked_stale(cx: &mut TestAppContext) {
         assert_eq!(screen.loader.data(), Some(&1), "kept while it refreshes");
     });
     send.send(Err("offline".into())).unwrap();
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     screen.read_with(cx, |screen, _| {
         assert_eq!(screen.loader.data(), Some(&1));
         assert_eq!(screen.loader.error(), Some("offline"));
@@ -238,7 +226,7 @@ fn a_read_past_its_deadline_fails_in_its_own_words(cx: &mut TestAppContext) {
         delivered.clone(),
         cx,
     );
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     screen.read_with(cx, |screen, _| {
         assert!(screen.loader.data().is_none());
         assert_eq!(screen.loader.error(), Some("Loading the number timed out"));
@@ -266,7 +254,7 @@ fn hiding_drops_the_read_and_keeps_the_data(cx: &mut TestAppContext) {
         assert!(!screen.loader.is_visible());
     });
     // Hiding cancelled the job, dropping its work.
-    until(cx, || send.is_closed());
+    until(cx, |_| send.is_closed());
     assert!(send.send(Ok(2)).is_err());
     cx.run_until_parked();
     assert_eq!(delivered.get(), 0);
@@ -295,7 +283,7 @@ fn showing_reads_again_past_the_threshold_and_not_before(cx: &mut TestAppContext
         cx,
     );
     send.send(Ok(7)).unwrap();
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
     screen.update(cx, |screen, cx| {
         screen.loader.set_visible(false, policy, cx)
@@ -374,7 +362,7 @@ fn a_failed_refresh_reads_again_on_showing(cx: &mut TestAppContext) {
         cx,
     );
     send.send(Ok(1)).unwrap();
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     let (send, answer) = oneshot::channel();
     load(
         &screen,
@@ -386,7 +374,7 @@ fn a_failed_refresh_reads_again_on_showing(cx: &mut TestAppContext) {
         cx,
     );
     send.send(Err("offline".into())).unwrap();
-    until(cx, || delivered.get() == 2);
+    until(cx, |_| delivered.get() == 2);
     let policy = OnShow::ReadIfOlder(Duration::from_secs(30));
     screen.update(cx, |screen, cx| {
         screen.loader.set_visible(false, policy, cx)
@@ -419,7 +407,7 @@ fn a_read_after_showing_again_lands(cx: &mut TestAppContext) {
         assert!(!screen.loader.is_loading());
         screen.loader.revision()
     });
-    until(cx, || cut.is_closed());
+    until(cx, |_| cut.is_closed());
     let reads_again = screen.update(cx, |screen, cx| screen.loader.set_visible(true, policy, cx));
     assert!(reads_again);
     let (send, answer) = oneshot::channel();
@@ -434,7 +422,7 @@ fn a_read_after_showing_again_lands(cx: &mut TestAppContext) {
     );
     screen.read_with(cx, |screen, _| assert!(screen.loader.is_loading()));
     send.send(Ok(4)).unwrap();
-    until(cx, || delivered.get() == 1);
+    until(cx, |_| delivered.get() == 1);
     screen.read_with(cx, |screen, _| {
         assert_eq!(screen.loader.data(), Some(&4));
         assert!(!screen.loader.is_loading());

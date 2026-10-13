@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 #[gpui_kit::test]
 fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
@@ -18,27 +19,20 @@ fn kubeconfig_file(name: &str) -> std::path::PathBuf {
     path
 }
 
-/// Renders until `ready` holds, letting Tokio work land between frames.
+// Renders until `ready` holds, letting Tokio work land between frames (`freshkube_ui::real_io`).
 fn wait_until(
     cx: &mut TestAppContext,
     handle: AnyWindowHandle,
     what: &str,
     ready: impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) -> bool,
 ) {
-    for _ in 0..1000 {
-        cx.run_until_parked();
-        let done = cx
-            .update_window(handle, |_, window, cx| {
-                window.render_frame(cx);
-                ready(window, cx)
-            })
-            .unwrap();
-        if done {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    panic!("timed out waiting for {what}");
+    freshkube_ui::real_io::until_io(cx, what, |cx| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            ready(window, cx)
+        })
+        .unwrap()
+    });
 }
 
 fn kubernetes_status(window: &gpui_kit::Window) -> String {
@@ -500,7 +494,7 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
     .unwrap();
     let (_runtime, handle, view) = mount_kubernetes_only(cx, config, Some("lab"));
     let observed = view.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         observed.read(cx).kube_source().is_some()
     })
     .await;
@@ -521,10 +515,8 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
         })
     })
     .unwrap();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
-        received.load(Ordering::SeqCst)
-    })
-    .await;
+    cx.wait_for_io(handle, move |_, _| received.load(Ordering::SeqCst))
+        .await;
     let completion = cx.update(|cx| {
         view.update(cx, |view, _| {
             // Simulate a replacement access independently of the existing

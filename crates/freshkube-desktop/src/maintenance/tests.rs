@@ -12,7 +12,8 @@ use freshkube_core::maintenance::{
     MaintenanceAction, MaintenanceError, MaintenanceEvent, SourceAvailability,
     TalosReadinessEvidence, TalosVersionEvidence,
 };
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use freshkube_ui::real_io::RealIo;
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, TestAppContext,
     component::{Root, Theme, ThemeMode},
@@ -29,7 +30,6 @@ use std::{
 use talos_rs::{DiskInfo, InsecureVersionInfo, VolumeStatus};
 
 const NODE: &str = "192.0.2.10";
-const WAIT: Duration = Duration::from_secs(10);
 
 /// A scripted stand-in for the node. It records which actions reached it.
 #[derive(Clone)]
@@ -322,7 +322,7 @@ async fn wait_phase(
     expected: BootstrapPhase,
 ) {
     let view = view.clone();
-    cx.wait_for(handle, WAIT, move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         view.read(cx).session.as_ref().map(|s| &s.phase) == Some(&expected)
     })
     .await;
@@ -397,7 +397,7 @@ async fn reach_apply_confirmation(
     wait_phase(cx, handle, view, BootstrapPhase::ConfigurationReady).await;
     click(cx, handle, "maint-review-read");
     let watched = view.clone();
-    cx.wait_for(handle, WAIT, move |_, cx| watched.read(cx).review.is_some())
+    cx.wait_for_io(handle, move |_, cx| watched.read(cx).review.is_some())
         .await;
     click(cx, handle, "maint-review-request");
     assert_eq!(
@@ -596,7 +596,7 @@ async fn example_data_stops_at_the_review(cx: &mut TestAppContext) {
         MaintenanceView::example(runtime, None, window, cx)
     });
     let watched = view.clone();
-    cx.wait_for(handle, WAIT, move |_, cx| watched.read(cx).review.is_some())
+    cx.wait_for_io(handle, move |_, cx| watched.read(cx).review.is_some())
         .await;
     assert_eq!(phase(cx, &view), Some(BootstrapPhase::ConfigurationReady));
     assert!(present(cx, handle, "maint-review"));
@@ -764,7 +764,7 @@ async fn bootstrap_shows_progress_blocks_closing_and_cancel_frees_the_slot(
 
     click(cx, handle, "maint-cancel");
     wait_phase(cx, handle, &view, BootstrapPhase::Cancelled).await;
-    cx.wait_for(handle, WAIT, |_, cx| Operations::current(cx).is_none())
+    cx.wait_for_io(handle, |_, cx| Operations::current(cx).is_none())
         .await;
     assert!(slot_free(cx));
     assert!(label(cx, handle, "maint-phase").contains("Cancelled"));
@@ -789,7 +789,7 @@ async fn readiness_that_is_not_proven_is_unknown_and_never_complete(cx: &mut Tes
     assert_eq!(world.count("bootstrap"), 1);
     click(cx, handle, "maint-poll");
     let watched = view.clone();
-    cx.wait_for(handle, WAIT, move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         watched
             .read(cx)
             .session

@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 #[gpui_kit::test]
 async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAppContext) {
@@ -17,10 +18,8 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
     })
     .unwrap();
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
-        !observed.read(cx).live.connecting
-    })
-    .await;
+    cx.wait_for_io(handle, move |_, cx| !observed.read(cx).live.connecting)
+        .await;
     // Connected, the page asks for a project, not for a connection.
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -53,7 +52,7 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
         })
     });
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let page = observed.read(cx);
         !page.live.view.is_loading()
     })
@@ -225,10 +224,8 @@ async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut Te
     cx.update_window(handle, |_, window, cx| window.click("obs-connect", cx))
         .unwrap();
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
-        observed.read(cx).live.error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, move |_, cx| observed.read(cx).live.error.is_some())
+        .await;
     cx.update_window(handle, |_, window, cx| {
         assert!(page.read(cx).live.provider.is_none());
         assert_eq!(
@@ -298,7 +295,7 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
     })
     .unwrap();
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         observed.read(cx).live.provider.is_some()
     })
     .await;
@@ -310,7 +307,7 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
     });
     let (saved, account_name) = (store.clone(), key_account.clone());
     let path = file.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+    cx.wait_for_io(handle, move |_, _| {
         saved.keys.lock().unwrap().contains_key(&account_name)
             && std::fs::read_to_string(&path).is_ok_and(|text| text.contains("p2"))
     })
@@ -334,7 +331,7 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
     let (_second_runtime, second, reopened) =
         super::super::tests::mount_remembering(cx, &preferences, store.clone());
     let observed = reopened.clone();
-    cx.wait_for(second, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(second, move |_, cx| {
         observed
             .read(cx)
             .live
@@ -358,7 +355,7 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
     })
     .unwrap();
     let (saved, account_name, path) = (store.clone(), key_account.clone(), file.clone());
-    cx.wait_for(second, std::time::Duration::from_secs(5), move |_, _| {
+    cx.wait_for_io(second, move |_, _| {
         !saved.keys.lock().unwrap().contains_key(&account_name)
             && std::fs::read_to_string(&path)
                 .is_ok_and(|text| text.contains("\"reconnect\": false"))
@@ -378,7 +375,7 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
     })
     .unwrap();
     let observed = reopened.clone();
-    cx.wait_for(second, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(second, move |_, cx| {
         observed
             .read(cx)
             .memory

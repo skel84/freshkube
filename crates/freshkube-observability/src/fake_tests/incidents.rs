@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 #[gpui_kit::test]
 async fn incidents_keep_identity_stale_evidence_and_read_only_links(cx: &mut TestAppContext) {
@@ -109,7 +110,7 @@ async fn incident_loaded(
     page: &gpui_kit::Entity<ObservabilityPage>,
 ) {
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let live = &observed.read(cx).live;
         !live.incidents.is_loading() && !live.incident.is_loading()
     })
@@ -134,7 +135,7 @@ async fn incidents_drop_delayed_replaced_hidden_and_project_answers(cx: &mut Tes
         })
     });
     let paths = server.paths.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+    cx.wait_for_io(handle, move |_, _| {
         paths
             .lock()
             .unwrap()
@@ -169,7 +170,7 @@ async fn incidents_drop_delayed_replaced_hidden_and_project_answers(cx: &mut Tes
     })
     .unwrap();
     let paths = server.paths.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+    cx.wait_for_io(handle, move |_, _| {
         paths
             .lock()
             .unwrap()

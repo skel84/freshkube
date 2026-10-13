@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 #[gpui_kit::test]
 fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
@@ -467,10 +468,8 @@ async fn a_talosconfig_that_fails_to_load_ends_the_services_wait(cx: &mut TestAp
     // Never the user's default talosconfig: a missing file.
     let options = GpuiOptions::new(Some(scratch("no-such-talosconfig-services")), None, 100);
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     cx.update(|cx| {
         let pilot = view.read(cx);
         // Neither page waits on an overview that will never be asked.

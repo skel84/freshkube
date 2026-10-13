@@ -7,7 +7,8 @@ mod traces;
 
 use super::{Destination, ObservabilityPage, Report, Status, tests::mount};
 use freshkube_core::coroot as api;
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use freshkube_ui::real_io::RealIo;
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AppContext, TestAppContext};
 use std::sync::{
     Arc, Mutex,
@@ -153,10 +154,8 @@ async fn loaded(
     page: &gpui_kit::Entity<ObservabilityPage>,
 ) {
     let page = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
-        !page.read(cx).live.apps.is_loading()
-    })
-    .await;
+    cx.wait_for_io(handle, move |_, cx| !page.read(cx).live.apps.is_loading())
+        .await;
 }
 
 fn incident_wire(key: &str) -> serde_json::Value {
@@ -169,10 +168,8 @@ async fn settled(
     page: &gpui_kit::Entity<ObservabilityPage>,
 ) {
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
-        !observed.read(cx).live.connecting
-    })
-    .await;
+    cx.wait_for_io(handle, move |_, cx| !observed.read(cx).live.connecting)
+        .await;
 }
 
 fn span_wire(id: &str, parent: &str, at: i64, ms: f64, error: bool) -> serde_json::Value {
