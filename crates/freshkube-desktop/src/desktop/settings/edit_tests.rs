@@ -4,11 +4,9 @@ use super::tests::launch;
 use super::{Notice, Origin};
 use crate::desktop::Page;
 use freshkube_core::workspace::{self, Loaded};
-use gpui_kit::{
-    AppContext, TestAppContext,
-    test::{TestAppContextExt, TestWindowExt},
-};
-use std::{path::Path, time::Duration};
+use freshkube_ui::real_io::RealIo;
+use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
+use std::path::Path;
 
 const TWO: &str = r#"{"version":1,"clusters":[
     {"id":"mgmt","role":"core","context":"acme-mgmt"},
@@ -42,7 +40,7 @@ pub(super) async fn saved(
     view: &gpui_kit::Entity<crate::desktop::Pilot>,
 ) {
     let view = view.clone();
-    cx.wait_for(handle, Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         // A click starts the save at once; it is over when it has answered.
         view.read(cx).settings_page.read(cx).saving.is_none()
     })

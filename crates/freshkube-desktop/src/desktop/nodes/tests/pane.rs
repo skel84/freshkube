@@ -74,7 +74,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-cp-fra1-01")
         );
-        assert_eq!(pilot.read(cx).page, Page::Nodes);
+        assert_eq!(pilot.read(cx).navigation.page, Page::Nodes);
     })
     .unwrap();
 }

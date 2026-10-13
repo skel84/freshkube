@@ -25,7 +25,7 @@ fn target_picker_and_tiles_change_the_target_node(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let pilot = view.read(cx);
-        assert_eq!(pilot.page, Page::SystemServices);
+        assert_eq!(pilot.navigation.page, Page::SystemServices);
         assert_eq!(pilot.selected_node.as_deref(), Some("talos-wk-fra1-01"));
         assert!(
             window
@@ -63,7 +63,7 @@ fn silent_node_is_unknown_not_failed(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Overview);
+        assert_eq!(view.read(cx).navigation.page, Page::Overview);
     })
     .unwrap();
 }

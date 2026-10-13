@@ -123,7 +123,7 @@ impl Pilot {
             .size_full()
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
-            .track_scroll(&self.rail_scroll)
+            .track_scroll(&self.navigation.rail_scroll)
             .items_center()
             .py(dp(12.))
             .gap(dp(4.));
@@ -136,7 +136,7 @@ impl Pilot {
                 children += 1;
             }
             for area in *section {
-                if *area == self.area {
+                if *area == self.navigation.area {
                     active = Some(children);
                 }
                 rail = rail.child(self.rail_button(*area, cx));
@@ -145,21 +145,21 @@ impl Pilot {
         }
         // A short window or large text scrolls the rail; keep the active
         // area in view whenever it, or the room, changes.
-        let key = (self.area, super::column::room(window));
-        if self.rail_revealed != Some(key)
+        let key = (self.navigation.area, super::column::room(window));
+        if self.navigation.rail_revealed != Some(key)
             && super::column::reveal_item(
-                &self.rail_scroll,
-                &mut self.rail_reveal_pass,
+                &self.navigation.rail_scroll,
+                &mut self.navigation.rail_reveal_pass,
                 key,
                 active,
                 window,
             )
         {
-            self.rail_revealed = Some(key);
+            self.navigation.rail_revealed = Some(key);
         }
         super::column::icon_strip(
             rail,
-            &self.rail_scroll,
+            &self.navigation.rail_scroll,
             "nav-rail-scrollbar",
             cx.theme().sidebar,
         )
@@ -177,8 +177,8 @@ impl Pilot {
 
     fn rail_button(&self, area: Area, cx: &Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let active = self.area == area;
-        let mark = self.rail_marks.areas.get(&area).cloned();
+        let active = self.navigation.area == area;
+        let mark = self.navigation.rail_marks.areas.get(&area).cloned();
         let why = mark.as_ref().map(|(_, why)| why.clone());
         let tone = mark.map(|(tone, _)| {
             if tone == Tone::Crit {

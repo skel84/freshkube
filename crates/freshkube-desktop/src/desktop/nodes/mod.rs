@@ -501,8 +501,8 @@ impl Pilot {
     pub(super) fn rebuild_joined_nodes(&mut self, cx: &mut Context<Self>) {
         let shown = self.shown_page(cx);
         self.publish_reading(cx);
-        self.column_changed();
-        self.column_state.prepare(
+        self.navigation.column_changed();
+        self.navigation.column_state.prepare(
             self.registry
                 .active()
                 .kubernetes_summary
@@ -591,8 +591,8 @@ impl Pilot {
                 .unwrap_or("The refresh failed.");
             display = display.talos_stale(reason.to_owned().into());
         }
-        self.column_changed();
-        self.rail_marks =
+        self.navigation.column_changed();
+        self.navigation.rail_marks =
             crate::desktop::shell::RailMarks::from_cards(&display.cards, self.fixture);
         let attention = Arc::new(crate::presentation::attention::build(
             &rows,
@@ -670,7 +670,7 @@ impl Pilot {
 
     pub(super) fn sync_node_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let nodes = self.node_workspace.read(cx);
-        let shown = self.page == Page::Nodes && nodes.open;
+        let shown = self.navigation.page == Page::Nodes && nodes.open;
         let tab = nodes.tab;
         let (pods, document, history) = (
             nodes.pods.clone(),

@@ -17,6 +17,8 @@ pub mod motion;
 pub mod page;
 pub mod palette;
 pub mod platform;
+#[cfg(feature = "testing")]
+pub mod real_io;
 pub mod source_list;
 pub mod split_size;
 pub mod squares;

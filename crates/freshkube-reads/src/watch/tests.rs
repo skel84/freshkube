@@ -1,3 +1,4 @@
+use crate::test_support::until;
 use std::{
     sync::{
         Arc,
@@ -184,19 +185,6 @@ fn queue(
         "the stream passed on {} of {target} items in {TURNS} turns",
         forwarded.load(Ordering::SeqCst)
     );
-}
-
-/// Runs GPUI's executor until `done`, while Tokio works on its own threads,
-/// or fails after a few seconds.
-fn until(cx: &mut TestAppContext, done: impl Fn(&mut TestAppContext) -> bool) {
-    for _ in 0..500 {
-        cx.run_until_parked();
-        if done(cx) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    panic!("the condition never held");
 }
 
 fn seen(screen: &Entity<Screen>, cx: &mut TestAppContext) -> Vec<u32> {

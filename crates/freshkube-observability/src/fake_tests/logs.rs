@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 async fn logs_read(
     cx: &mut TestAppContext,
@@ -6,7 +7,7 @@ async fn logs_read(
     page: &gpui_kit::Entity<ObservabilityPage>,
 ) {
     let page = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let page = page.read(cx);
         page.live.logs_job.is_some() && !page.live.logs.is_loading() && !page.live.view.is_loading()
     })
@@ -62,7 +63,7 @@ async fn logs_are_read_then_refreshed_with_since_and_a_failure_keeps_them(cx: &m
     cx.update(|cx| page.update(cx, |page, cx| page.refresh_current(cx)));
     // The banner itself: the page keeps the report away while it reads its
     // applications again, so the failure can be in before there is a banner.
-    cx.wait_for(handle, std::time::Duration::from_secs(5), |window, _| {
+    cx.wait_for_io(handle, |window, _| {
         window.try_find("obs-logs-failed").is_some()
     })
     .await;
@@ -82,7 +83,7 @@ async fn logs_are_read_then_refreshed_with_since_and_a_failure_keeps_them(cx: &m
     })
     .unwrap();
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         observed.read(cx).live_logs.failure().is_none()
     })
     .await;
@@ -110,7 +111,7 @@ async fn a_first_read_that_fails_says_so_with_retry(cx: &mut TestAppContext) {
             })
         });
         let observed = page.clone();
-        cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        cx.wait_for_io(handle, move |_, cx| {
             let page = observed.read(cx);
             !page.live.view.is_loading()
                 && !page.live.logs.is_loading()

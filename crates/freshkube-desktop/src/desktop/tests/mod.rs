@@ -23,7 +23,7 @@ mod visible;
 use super::{Area, ColumnReveal, GpuiOptions, NodeView, Page, Pilot, probe};
 use crate::logs::TalosPanel;
 pub(crate) use freshkube_ui::layout_check::settle_header;
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
     AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext,
     component::{ActiveTheme, Theme, ThemeMode},

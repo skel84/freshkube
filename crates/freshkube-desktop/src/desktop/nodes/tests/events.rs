@@ -102,7 +102,7 @@ fn a_pane_attention_row_opens_its_destination(cx: &mut TestAppContext) {
             let nodes = pilot.node_workspace.read(cx);
             assert_eq!((nodes.selected.as_ref(), nodes.tab), (Some(key), *tab));
         }
-        other => assert_ne!(pilot.page, Page::Nodes, "{other:?}"),
+        other => assert_ne!(pilot.navigation.page, Page::Nodes, "{other:?}"),
     });
 }
 
