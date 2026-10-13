@@ -98,7 +98,7 @@ impl Pilot {
         if self.overview.apply(&request, collected.cluster) {
             let fresh = !self.overview.is_stale() && self.overview.error().is_none();
             if fresh {
-                self.overview_succeeded();
+                self.overview_succeeded(cx);
             }
             self.sync_nodes(window, cx);
             if fresh {

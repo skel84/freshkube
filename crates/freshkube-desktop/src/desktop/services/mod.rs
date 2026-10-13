@@ -265,12 +265,14 @@ impl Pilot {
     pub(super) fn push_services(&self, cx: &mut App) {
         let reading = ServicesReading::of(&self.services);
         self.node_workspace
+            .read(cx)
             .services
+            .clone()
             .update(cx, |services, cx| services.set_reading(reading, cx));
     }
 
     /// Where the Talos overview and the node stand, for the tab.
-    fn node_services_state(&self) -> NodeServicesState {
+    fn node_services_state(&self, cx: &App) -> NodeServicesState {
         let talos = match self.overview.data() {
             Some(cluster) => TalosReading::Answered {
                 cluster: cluster.name.clone(),
@@ -297,6 +299,7 @@ impl Pilot {
             }),
             kubelet_pods: self
                 .node_workspace
+                .read(cx)
                 .row()
                 .map(|row| row.kubelet_pods.clone())
                 .unwrap_or("Pods on this node".into()),
@@ -305,16 +308,20 @@ impl Pilot {
 
     /// Hands the tab where things stand; it redraws only for a change.
     pub(super) fn push_node_services_state(&self, cx: &mut App) {
-        let state = self.node_services_state();
+        let state = self.node_services_state(cx);
         self.node_workspace
+            .read(cx)
             .services
+            .clone()
             .update(cx, |services, cx| services.set_state(state, cx));
     }
 
     /// The service selected on the node pane's tab.
     pub(super) fn selected_service(&self, cx: &App) -> Option<String> {
         self.node_workspace
+            .read(cx)
             .services
+            .clone()
             .read(cx)
             .selected()
             .map(str::to_owned)
@@ -322,7 +329,9 @@ impl Pilot {
 
     pub(super) fn select_service(&self, service: Option<String>, cx: &mut App) {
         self.node_workspace
+            .read(cx)
             .services
+            .clone()
             .update(cx, |services, cx| services.select(service, cx));
     }
 
@@ -350,12 +359,20 @@ impl Pilot {
 #[cfg(test)]
 impl Pilot {
     pub(super) fn service_scroll(&self, cx: &App) -> ScrollHandle {
-        self.node_workspace.services.read(cx).scroll.clone()
+        self.node_workspace
+            .read(cx)
+            .services
+            .clone()
+            .read(cx)
+            .scroll
+            .clone()
     }
 
     pub(super) fn service_focused(&self, window: &Window, cx: &App) -> bool {
         self.node_workspace
+            .read(cx)
             .services
+            .clone()
             .read(cx)
             .focus
             .is_focused(window)

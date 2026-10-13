@@ -21,7 +21,7 @@ use super::overview::{OverviewEvent, OverviewPage};
 use super::pages::PageId;
 use super::settings::SettingsPage;
 use super::system_services::{ServiceEvent, SystemServices};
-use super::{Page, PageHost, Pilot, nodes};
+use super::{Page, Pilot, nodes};
 use crate::applications::{ApplicationsPage, SwitchLink};
 use crate::monitoring::page::{MonitoringEvent, MonitoringPage};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
@@ -48,17 +48,6 @@ where
     window.subscribe(page, cx, move |_, event: &E, window, cx| {
         on_event(&event.clone().into(), window, cx)
     })
-}
-
-impl EventEmitter<ScreenEvent> for PageHost {}
-
-/// Nodes, drawn from the shell's state.
-impl ScreenPanel for PageHost {
-    fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
-
-    fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
-
-    fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
 }
 
 impl EventEmitter<ScreenEvent> for OverviewPage {}
@@ -297,7 +286,7 @@ impl Pilot {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn page_handles(
         overview: &Entity<OverviewPage>,
-        nodes: &Entity<PageHost>,
+        nodes: &Entity<nodes::Nodes>,
         services: &Entity<SystemServices>,
         monitoring: &Entity<MonitoringPage>,
         observability: &Entity<ObservabilityPage>,
@@ -346,14 +335,14 @@ impl Pilot {
 
     /// The handle of the page that shows: the node pane's selected tab
     /// when it is a Talos screen and Nodes shows it, or else the page's.
-    pub(super) fn shown_page(&self) -> Option<ScreenHandle> {
-        self.pages.get(&self.shown_id()).cloned()
+    pub(super) fn shown_page(&self, cx: &App) -> Option<ScreenHandle> {
+        self.pages.get(&self.shown_id(cx)).cloned()
     }
 
     /// Every page that shows: the one [`shown_page`](Self::shown_page)
     /// names and, when that is the node pane's screen, Nodes around it.
-    pub(super) fn shown_pages(&self) -> Vec<ScreenHandle> {
-        let id = self.shown_id();
+    pub(super) fn shown_pages(&self, cx: &App) -> Vec<ScreenHandle> {
+        let id = self.shown_id(cx);
         let around = (id != self.page.id()).then(|| self.page.id());
         [Some(id), around]
             .into_iter()
@@ -362,9 +351,9 @@ impl Pilot {
             .collect()
     }
 
-    fn shown_id(&self) -> PageId {
+    fn shown_id(&self, cx: &App) -> PageId {
         (self.page == Page::Nodes)
-            .then(|| self.node_workspace.pane_screen())
+            .then(|| self.node_workspace.read(cx).pane_screen())
             .flatten()
             .unwrap_or(self.page.id())
     }

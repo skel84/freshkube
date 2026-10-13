@@ -25,7 +25,7 @@ fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut Test
                 },
             );
             assert_eq!(pilot.read(cx).selected_node, before);
-            assert!(!pilot.read(cx).node_workspace.open);
+            assert!(!pilot.read(cx).node_workspace.read(cx).open);
         }
     })
     .unwrap();
@@ -45,7 +45,7 @@ fn nodes_columns_preserve_row_identity(cx: &mut TestAppContext) {
         );
         window.click("nodes-columns", cx);
         window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace;
+        let nodes = &pilot.read(cx).node_workspace.read(cx);
         let before_columns = nodes.columns.len();
         let services_menu = nodes
             .menu_columns
@@ -65,16 +65,17 @@ fn nodes_columns_preserve_row_identity(cx: &mut TestAppContext) {
             pilot
                 .read(cx)
                 .node_workspace
+                .read(cx)
                 .hidden_columns
                 .contains(&super::super::table::Field::Services)
         );
         assert_eq!(
-            pilot.read(cx).node_workspace.columns.len(),
+            pilot.read(cx).node_workspace.read(cx).columns.len(),
             before_columns - 1
         );
-        window.click("node-talos-cp-fra1-01", cx);
+        crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
-        let key = pilot.read(cx).node_workspace.selected.clone();
+        let key = pilot.read(cx).node_workspace.read(cx).selected.clone();
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-cp-fra1-01")
@@ -86,18 +87,19 @@ fn nodes_columns_preserve_row_identity(cx: &mut TestAppContext) {
         assert_eq!(window.find("node-talos-cp-fra1-01").selected(), Some(true));
         window.click("nodes-view-table", cx);
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.selected, key);
+        assert_eq!(pilot.read(cx).node_workspace.read(cx).selected, key);
         assert_eq!(window.find("node-talos-cp-fra1-01").selected(), Some(true));
         assert!(window.try_find(("nodes-sort", 8usize)).is_none());
         assert!(
             pilot
                 .read(cx)
                 .node_workspace
+                .read(cx)
                 .hidden_columns
                 .contains(&super::super::table::Field::Services)
         );
         assert_eq!(
-            pilot.read(cx).node_workspace.columns.len(),
+            pilot.read(cx).node_workspace.read(cx).columns.len(),
             before_columns - 1
         );
     })
@@ -161,54 +163,62 @@ fn a_sideways_scroll_keeps_each_node_name_in_view_once(cx: &mut TestAppContext) 
     use gpui_kit::{ElementId, ScrollDelta, point, px};
     // Narrow enough to scroll sideways, tall enough for several rows.
     let (_runtime, handle, pilot) = fixture(cx, 760., 880.);
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("nav-nodes", cx);
-        // At text size 20 the healthy group's toggle is below the fold.
-        crate::desktop::tests::expand_healthy_nodes(window, cx);
-        crate::text_size::set(20., cx);
-        window.render_frame(cx);
-        let rows: Vec<(ElementId, String)> = (pilot.read(cx).node_workspace.rows.iter())
-            .map(|row| (row.id.clone().into(), row.name.to_string()))
-            .collect();
-        let shown: Vec<_> = (rows.into_iter())
-            .filter(|(id, _)| window.try_find(id.clone()).is_some())
-            .collect();
-        assert!(shown.len() >= 2, "{shown:?}");
-        let left = |window: &mut gpui_kit::Window, row: &ElementId| {
-            window
-                .within(row.clone())
-                .find("node-row-name")
-                .bounds()
-                .left()
-        };
-        let names: Vec<_> = shown.iter().map(|(row, _)| left(window, row)).collect();
-        let header = window.find(("nodes-sort", 1usize)).bounds().left();
-        // Column 2 starts at the pinned run's edge, where its label stays
-        // once scrolled; column 3 starts clear of the scroll's 120.
-        let edge = window.find(("nodes-sort", 2usize)).bounds().left();
-        let role = window.find(("nodes-sort", 3usize)).bounds().left();
-        assert!(role - edge > px(120.), "{:?}", role - edge);
-        window.scroll(
-            "nodes-table-scroll",
-            ScrollDelta::Pixels(point(px(-120.), px(0.))),
-            cx,
-        );
-        window.render_frame(cx);
-        let moved = role - window.find(("nodes-sort", 3usize)).bounds().left();
-        assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
-        // `find` fails on an id that resolves twice.
-        assert!((window.find(("nodes-sort", 1usize)).bounds().left() - header).abs() <= px(1.5));
-        for ((row, _), name) in shown.iter().zip(names) {
-            assert!((left(window, row) - name).abs() <= px(1.5));
-        }
-        let (row, name) = shown[0].clone();
-        window.within(row).click("node-row-name", cx);
-        window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.open);
-        assert_eq!(pilot.read(cx).selected_node.as_deref(), Some(name.as_str()));
-    })
-    .unwrap();
+    let name = cx
+        .update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("nav-nodes", cx);
+            // At text size 20 the healthy group's toggle is below the fold.
+            crate::desktop::tests::expand_healthy_nodes(window, cx);
+            crate::text_size::set(20., cx);
+            window.render_frame(cx);
+            let rows: Vec<(ElementId, String)> =
+                (pilot.read(cx).node_workspace.read(cx).rows.iter())
+                    .map(|row| (row.id.clone().into(), row.name.to_string()))
+                    .collect();
+            let shown: Vec<_> = (rows.into_iter())
+                .filter(|(id, _)| window.try_find(id.clone()).is_some())
+                .collect();
+            assert!(shown.len() >= 2, "{shown:?}");
+            let left = |window: &mut gpui_kit::Window, row: &ElementId| {
+                window
+                    .within(row.clone())
+                    .find("node-row-name")
+                    .bounds()
+                    .left()
+            };
+            let names: Vec<_> = shown.iter().map(|(row, _)| left(window, row)).collect();
+            let header = window.find(("nodes-sort", 1usize)).bounds().left();
+            // Column 2 starts at the pinned run's edge, where its label stays
+            // once scrolled; column 3 starts clear of the scroll's 120.
+            let edge = window.find(("nodes-sort", 2usize)).bounds().left();
+            let role = window.find(("nodes-sort", 3usize)).bounds().left();
+            assert!(role - edge > px(120.), "{:?}", role - edge);
+            window.scroll(
+                "nodes-table-scroll",
+                ScrollDelta::Pixels(point(px(-120.), px(0.))),
+                cx,
+            );
+            window.render_frame(cx);
+            let moved = role - window.find(("nodes-sort", 3usize)).bounds().left();
+            assert!((f32::from(moved) - 120.).abs() <= 1.5, "{moved:?}");
+            // `find` fails on an id that resolves twice.
+            assert!(
+                (window.find(("nodes-sort", 1usize)).bounds().left() - header).abs() <= px(1.5)
+            );
+            for ((row, _), name) in shown.iter().zip(names) {
+                assert!((left(window, row) - name).abs() <= px(1.5));
+            }
+            let (row, name) = shown[0].clone();
+            window.within(row).click("node-row-name", cx);
+            name
+        })
+        .unwrap();
+    // The click reaches the shell once the update ends.
+    cx.run_until_parked();
+    pilot.read_with(cx, |pilot, cx| {
+        assert!(pilot.node_workspace.read(cx).open);
+        assert_eq!(pilot.selected_node.as_deref(), Some(name.as_str()));
+    });
 }
 
 #[gpui_kit::test]
@@ -224,7 +234,7 @@ fn default_columns_fit_without_sideways_scroll_when_healthy_is_folded_or_expande
             crate::text_size::set(text, cx);
             window.render_frame(cx);
             for expanded in [false, true] {
-                if pilot.read(cx).node_workspace.healthy_collapsed() == expanded {
+                if pilot.read(cx).node_workspace.read(cx).healthy_collapsed() == expanded {
                     window.click("nodes-healthy-toggle", cx);
                     window.render_frame(cx);
                 }
@@ -232,7 +242,7 @@ fn default_columns_fit_without_sideways_scroll_when_healthy_is_folded_or_expande
                 let last = window.find(("nodes-sort", 8usize)).bounds();
                 assert!(last.right() <= viewport.right() + px(1.),
                     "Services overflows at text {text}, expanded={expanded}: {last:?} in {viewport:?}");
-                let nodes = &pilot.read(cx).node_workspace;
+                let nodes = &pilot.read(cx).node_workspace.read(cx);
                 assert!(crate::ui::dp_px(nodes.table_width, window) <= viewport.size.width,
                     "column width {} exceeds viewport {:?}", nodes.table_width, viewport);
                 let name = window.find(("nodes-sort", 1usize)).bounds();
@@ -278,7 +288,7 @@ fn a_short_window_scrolls_the_frame_and_keeps_the_list_usable(cx: &mut TestAppCo
         // The table's frame, header and legend run to the end of the
         // scrolled page; its hairlines sit outside the measured scroll.
         let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window) - px(2.);
-        let scroll = pilot.read(cx).node_workspace.page_scroll.clone();
+        let scroll = pilot.read(cx).node_workspace.read(cx).page_scroll.clone();
         assert!(scroll.max_offset().y > px(0.), "the frame doesn't scroll");
         let end = window.find("nodes-page").bounds().bottom() + scroll.max_offset().y;
         let table = window.find("nodes-table-scroll").bounds();
@@ -292,7 +302,7 @@ fn a_short_window_scrolls_the_frame_and_keeps_the_list_usable(cx: &mut TestAppCo
         // closing it starts the frame at the top again.
         scroll.set_offset(point(px(0.), px(0.)));
         pilot.update(cx, |pilot, cx| {
-            let key = pilot.node_workspace.rows[0].key.clone();
+            let key = pilot.node_workspace.read(cx).rows[0].key.clone();
             pilot.open_node(key, window, cx);
         });
         window.render_frame(cx);
@@ -329,7 +339,7 @@ fn a_tall_window_keeps_the_frame_still_and_the_table_filling_it(cx: &mut TestApp
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        let scroll = pilot.read(cx).node_workspace.page_scroll.clone();
+        let scroll = pilot.read(cx).node_workspace.read(cx).page_scroll.clone();
         assert_eq!(scroll.max_offset().y, px(0.));
         // The legend sits under the rows, at the page's foot.
         let page = window.find("nodes-page").bounds();
@@ -398,7 +408,7 @@ fn stacked_node_logs_scroll_their_body_to_the_controls_then_the_lines(cx: &mut T
             "{pane:?} under {table:?}"
         );
         let content = window.find("node-inspector-content").bounds();
-        let body = pilot.read(cx).node_workspace.logs_scroll.clone();
+        let body = pilot.read(cx).node_workspace.read(cx).logs_scroll.clone();
         assert!(
             body.max_offset().y > px(0.),
             "the stacked log body doesn't scroll"
@@ -443,7 +453,7 @@ fn stacked_node_logs_scroll_their_body_to_the_controls_then_the_lines(cx: &mut T
         );
 
         // A wheel over the log scrolls the log, not the body or the frame.
-        let frame = pilot.read(cx).node_workspace.page_scroll.clone();
+        let frame = pilot.read(cx).node_workspace.read(cx).page_scroll.clone();
         let (scrolled, framed) = (body.offset().y, frame.offset().y);
         // At the part of the log that shows; its centre is below the fold.
         wheel(window, shown.center(), 120., cx);
@@ -500,10 +510,10 @@ fn node_logs_in_a_tall_window_keep_the_frame_still(cx: &mut TestAppContext) {
         for _ in 0..3 {
             window.render_frame(cx);
         }
-        let frame = pilot.read(cx).node_workspace.page_scroll.clone();
+        let frame = pilot.read(cx).node_workspace.read(cx).page_scroll.clone();
         assert_eq!(frame.max_offset().y, px(0.));
         // Nor does the log's body scroll inside the inspector.
-        let body = pilot.read(cx).node_workspace.logs_scroll.clone();
+        let body = pilot.read(cx).node_workspace.read(cx).logs_scroll.clone();
         assert_eq!(body.max_offset().y, px(0.));
         let pane_bounds = window.find("node-pane").bounds();
         let viewport = window.find("logs-viewport").bounds();
@@ -529,8 +539,10 @@ fn a_narrow_window_at_large_text_shows_one_card_to_a_row(cx: &mut TestAppContext
         window.render_frame(cx);
         assert_eq!(super::super::cards::card_columns(window), 1);
         let list = window.find("nodes-cards").bounds();
-        let first = pilot.read(cx).node_workspace.lines[0];
-        let first = pilot.read(cx).node_workspace.rows[first].id.clone();
+        let first = pilot.read(cx).node_workspace.read(cx).lines[0];
+        let first = pilot.read(cx).node_workspace.read(cx).rows[first]
+            .id
+            .clone();
         let card = window.find(first).bounds();
         assert_eq!(card.left(), list.left());
         assert_eq!(card.right(), list.right());
@@ -548,12 +560,12 @@ fn the_table_beside_the_inspector_scrolls_sideways_with_its_names_pinned(cx: &mu
     cx.update_window(handle, |_, window, cx| {
         open_first_node(window, cx);
         let table = window.find("nodes-table-scroll").bounds();
-        let columns = pilot.read(cx).node_workspace.table_width;
+        let columns = pilot.read(cx).node_workspace.read(cx).table_width;
         assert!(
             crate::ui::dp_px(columns, window) > table.size.width,
             "the table fits its columns in {table:?}"
         );
-        let rows: Vec<ElementId> = (pilot.read(cx).node_workspace.rows.iter())
+        let rows: Vec<ElementId> = (pilot.read(cx).node_workspace.read(cx).rows.iter())
             .map(|row| row.id.clone().into())
             .filter(|id: &ElementId| window.try_find(id.clone()).is_some())
             .collect();
