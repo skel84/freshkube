@@ -125,5 +125,6 @@ def main():
             with open(summary, "a") as out:
                 out.write(f"- {line}\n")
 
+
 if __name__ == "__main__":
     main()
