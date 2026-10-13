@@ -36,3 +36,9 @@ pub fn failed(kind: FailureKind, what: &str, entry: &str, why: &str) -> String {
         FailureKind::NotFound => format!("{what} isn't served on {entry}"),
     }
 }
+
+/// `⟨entry⟩ ⟨why⟩`: an entry that answered but didn't finish, with `why`
+/// the reason (`didn't finish reading within 30 s`).
+pub fn unfinished(entry: &str, why: &str) -> String {
+    format!("{entry} {why}")
+}

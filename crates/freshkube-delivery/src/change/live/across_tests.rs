@@ -90,7 +90,7 @@ async fn read_across(
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| {
             let result = match unreachable.contains(&entry.id.as_str()) {
-                true => Err("connection refused".to_owned()),
+                true => Err(Failure::new(FailureKind::Unreachable, "connection refused")),
                 false => Ok(entry_reader(&entry.id, world(edit))),
             };
             async move { result }
@@ -194,7 +194,7 @@ async fn builds_unreachable_keep_the_rest_and_say_so() {
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| {
             let result = match entry.id.as_str() {
-                "ci-d" => Err("connection refused".to_owned()),
+                "ci-d" => Err(Failure::new(FailureKind::Unreachable, "connection refused")),
                 id => Ok(entry_reader(id, world(|_| {}))),
             };
             async move { result }
@@ -425,7 +425,7 @@ async fn the_open_entry_is_read_through_the_open_connection() {
         |entry: Entry| {
             connected.borrow_mut().push(entry.id.clone());
             let reader = entry_reader(&entry.id, world(edit));
-            async move { Ok::<_, String>(reader) }
+            async move { Ok::<_, Failure>(reader) }
         },
         BUDGET,
     );
@@ -450,11 +450,14 @@ async fn the_open_entry_unreached_is_named_by_its_context() {
         &place.sources,
         Some(Open::<'_, FixtureReader> {
             entry: Some("core-a"),
-            reader: Err("no answer within 5 s".into()),
+            reader: Err(Failure::new(
+                FailureKind::Unreachable,
+                "no answer within 5 s",
+            )),
         }),
         |entry: Entry| {
             let reader = entry_reader(&entry.id, world(|_| {}));
-            async move { Ok::<_, String>(reader) }
+            async move { Ok::<_, Failure>(reader) }
         },
         BUDGET,
     );
@@ -497,7 +500,7 @@ async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| {
             let reader = entry_reader(&entry.id, world());
-            async move { Ok::<_, String>(reader) }
+            async move { Ok::<_, Failure>(reader) }
         },
         list::BUDGET,
     );

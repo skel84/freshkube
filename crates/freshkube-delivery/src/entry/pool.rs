@@ -35,7 +35,8 @@ use tokio::time::Instant;
 use super::{MAX_AT_ONCE, OPEN};
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
 use crate::shared::SharedReader;
-use freshkube_core::resources::Failure;
+use crate::words;
+use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 
 /// How long a destination's entry may take, connecting and reading: room
@@ -72,22 +73,45 @@ impl Place {
 /// Why a part wasn't read, in the words Applications uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Unread {
-    /// No entry holds it, or the one chosen is gone: the words say which.
-    Missing(String),
+    /// No entry holds it, or the one chosen is gone: the words say which. A
+    /// [`FailureKind::Config`].
+    Missing(Failure),
     /// The entry couldn't be reached by its deadline: a connect deadline,
     /// DNS, TLS, or its exec plugin failed or waits for a sign-in.
-    Unreachable { entry: String, why: String },
-    /// The entry answered, but not everything asked of it did in time.
-    Unfinished { entry: String, why: String },
+    Unreachable { entry: String, why: Failure },
+    /// The entry answered, but not everything asked of it did in time. A
+    /// [`FailureKind::Timeout`].
+    Unfinished { entry: String, why: Failure },
 }
 
 impl Unread {
+    /// No entry holds it.
+    pub fn missing(why: impl Into<String>) -> Self {
+        Unread::Missing(Failure::new(FailureKind::Config, why))
+    }
+
+    /// `entry` wasn't reached, for a reason with no kind of its own.
+    pub fn unreachable(entry: impl Into<String>, why: impl Into<String>) -> Self {
+        Unread::Unreachable {
+            entry: entry.into(),
+            why: Failure::new(FailureKind::Unreachable, why),
+        }
+    }
+
+    /// `entry` answered but didn't finish by `until`.
+    pub fn unfinished(entry: impl Into<String>, until: &Until) -> Self {
+        Unread::Unfinished {
+            entry: entry.into(),
+            why: Failure::new(FailureKind::Timeout, until.unfinished()),
+        }
+    }
+
     /// The state in a sentence that names the entry.
     pub fn words(&self) -> String {
         match self {
-            Unread::Missing(why) => why.clone(),
-            Unread::Unreachable { entry, why } => format!("Couldn't reach {entry}: {why}"),
-            Unread::Unfinished { entry, why } => format!("{entry} {why}"),
+            Unread::Missing(why) => words::failed(why.kind, "", "", &why.message),
+            Unread::Unreachable { entry, why } => words::unreachable(entry, &why.message),
+            Unread::Unfinished { entry, why } => words::unfinished(entry, &why.message),
         }
     }
 
@@ -107,7 +131,7 @@ impl Unread {
         match self {
             Unread::Missing(why)
             | Unread::Unreachable { why, .. }
-            | Unread::Unfinished { why, .. } => why,
+            | Unread::Unfinished { why, .. } => &why.message,
         }
     }
 }
@@ -248,42 +272,51 @@ impl<O: Reader, E: Reader> Reader for Via<O, E> {
 /// unreachable in its own name.
 pub async fn reach<'r, R, C, F, Fut>(
     place: Place,
-    open: Option<Result<&'r R, &str>>,
+    open: Option<Result<&'r R, &Failure>>,
     connect: F,
     until: &Until,
 ) -> Result<Via<&'r R, C>, Unread>
 where
     F: FnOnce(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
-    let unreachable = |entry: &str, why: String| Unread::Unreachable {
+    let unreachable = |entry: &str, why: Failure| Unread::Unreachable {
         entry: entry.to_owned(),
         why,
     };
     let entry = match &place {
-        Place::Missing(why) => return Err(Unread::Missing(why.clone())),
+        Place::Missing(why) => return Err(Unread::missing(why.clone())),
         Place::Open => OPEN.to_owned(),
         Place::Entry(entry) => entry.id.clone(),
     };
     if until.passed() {
         return Err(unreachable(
             &entry,
-            format!("not read within the read's {} s", until.budget.as_secs()),
+            Failure::new(
+                FailureKind::Timeout,
+                format!("not read within the read's {} s", until.budget.as_secs()),
+            ),
         ));
     }
     match place {
         Place::Missing(_) => unreachable!("answered above"),
         Place::Open => match open {
             Some(Ok(reader)) => Ok(Via::Open(reader)),
-            Some(Err(why)) => Err(unreachable(&entry, why.to_owned())),
-            None => Err(unreachable(&entry, "no cluster is open".into())),
+            Some(Err(why)) => Err(unreachable(&entry, why.clone())),
+            None => Err(unreachable(
+                &entry,
+                Failure::new(FailureKind::Unreachable, "no cluster is open"),
+            )),
         },
         Place::Entry(chosen) => match until.bound(connect(chosen)).await {
             Some(Ok(reader)) => Ok(Via::Entry(reader)),
             Some(Err(why)) => Err(unreachable(&entry, why)),
             None => Err(unreachable(
                 &entry,
-                format!("no answer within {}", until.within()),
+                Failure::new(
+                    FailureKind::Timeout,
+                    format!("no answer within {}", until.within()),
+                ),
             )),
         },
     }
@@ -295,7 +328,7 @@ pub struct Open<'a, R> {
     /// The workspace entry it is, if it is one.
     pub entry: Option<&'a str>,
     /// Its reader, or why there is none.
-    pub reader: Result<&'a R, String>,
+    pub reader: Result<&'a R, Failure>,
 }
 
 /// Where a part was read, so what it shows opens there.
@@ -318,7 +351,7 @@ pub(crate) type PoolReader<'p, R, C> = Via<&'p SharedReader<&'p R>, Client<C>>;
 pub struct Pool<'a, R, C, F> {
     sources: &'a Sources,
     open_entry: Option<&'a str>,
-    open: Option<Result<SharedReader<&'a R>, String>>,
+    open: Option<Result<SharedReader<&'a R>, Failure>>,
     connect: F,
     slots: Mutex<HashMap<String, Slot<C>>>,
     connecting: Semaphore,
@@ -332,7 +365,7 @@ where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     /// A pool for `sources`, with `open` the open connection, `connect`
     /// making a client for any other entry, and `budget` the whole read's,
@@ -408,10 +441,7 @@ where
         }
         match self.sources.entry(id) {
             Some(entry) => self.place(Place::Entry(entry.clone()), until).await,
-            None => Err(Unread::Unreachable {
-                entry: id.to_owned(),
-                why: "it wasn't connected to".into(),
-            }),
+            None => Err(Unread::unreachable(id, "it wasn't connected to")),
         }
     }
 
@@ -430,8 +460,8 @@ where
             let open = self
                 .open
                 .as_ref()
-                .map(|open| open.as_ref().map_err(|why| why.as_str()));
-            let no_entry = |_| async { Err::<C, _>(String::new()) };
+                .map(|open| open.as_ref().map_err(|why| why));
+            let no_entry = |_| async { Err::<C, _>(Failure::new(FailureKind::Config, "")) };
             // The open cluster is named by its entry when it is one.
             let named = |unread| match (unread, self.open_entry) {
                 (Unread::Unreachable { entry, why }, Some(open)) if entry == OPEN => {
@@ -514,7 +544,7 @@ mod tests {
             None::<Open<'_, FixtureReader>>,
             |_: Entry| {
                 connects.set(connects.get() + 1);
-                async { Ok::<_, String>(FixtureReader::default()) }
+                async { Ok::<_, Failure>(FixtureReader::default()) }
             },
             BUDGET,
         );
@@ -537,9 +567,12 @@ mod tests {
             &sources,
             Some(Open::<'_, FixtureReader> {
                 entry: Some("core"),
-                reader: Err("no answer within 5 s".into()),
+                reader: Err(Failure::new(
+                    FailureKind::Unreachable,
+                    "no answer within 5 s",
+                )),
             }),
-            |_: Entry| async { Ok::<_, String>(FixtureReader::default()) },
+            |_: Entry| async { Ok::<_, Failure>(FixtureReader::default()) },
             BUDGET,
         );
         let Err(unread) = pool.part(Part::ArgoCd).await else {
@@ -564,7 +597,7 @@ mod tests {
                     most.set(most.get().max(now.get()));
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     now.set(now.get() - 1);
-                    Ok::<_, String>(FixtureReader::default())
+                    Ok::<_, Failure>(FixtureReader::default())
                 }
             },
             BUDGET,
@@ -584,7 +617,7 @@ mod tests {
         let pool = Pool::new(
             &sources,
             None::<Open<'_, FixtureReader>>,
-            |_: Entry| std::future::pending::<Result<FixtureReader, String>>(),
+            |_: Entry| std::future::pending::<Result<FixtureReader, Failure>>(),
             BUDGET,
         );
         let Err(unread) = pool.part(Part::Kargo).await else {
@@ -615,7 +648,9 @@ mod tests {
                 entry: None,
                 reader: Ok(&reader),
             }),
-            |_: Entry| async { Err::<FixtureReader, _>("never".to_owned()) },
+            |_: Entry| async {
+                Err::<FixtureReader, _>(Failure::new(FailureKind::Unreachable, "never"))
+            },
             Duration::ZERO,
         );
         for part in Part::ALL {
@@ -626,9 +661,11 @@ mod tests {
             &sources,
             Some(Open::<FixtureReader> {
                 entry: None,
-                reader: Err("Unauthorized".into()),
+                reader: Err(Failure::new(FailureKind::Unreachable, "Unauthorized")),
             }),
-            |_: Entry| async { Err::<FixtureReader, _>("never".to_owned()) },
+            |_: Entry| async {
+                Err::<FixtureReader, _>(Failure::new(FailureKind::Unreachable, "never"))
+            },
             BUDGET,
         );
         let Err(unread) = pool.part(Part::Kargo).await else {

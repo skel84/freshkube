@@ -8,6 +8,7 @@ use crate::change::Phase;
 use crate::fixtures::FixtureReader;
 use crate::kargo::{GROUP, parse_freight, parse_stage};
 use crate::source::Truncation;
+use freshkube_core::resources::{Failure, FailureKind};
 
 fn now() -> DateTime<Utc> {
     DateTime::from_timestamp(1_760_000_000, 0).unwrap()
@@ -712,7 +713,7 @@ async fn read_across(at: &live::Where, unreachable: &'static str) -> Read {
         None::<Open<'_, FixtureReader>>,
         |entry: Entry| async move {
             match entry.id == unreachable {
-                true => Err("connection refused".to_owned()),
+                true => Err(Failure::new(FailureKind::Unreachable, "connection refused")),
                 false => Ok(two_projects(None)),
             }
         },

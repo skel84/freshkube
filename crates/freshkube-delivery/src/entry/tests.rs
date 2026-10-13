@@ -190,7 +190,7 @@ async fn entries_connect_without_waiting_on_each_other() {
             // The first never answers within its deadline.
             "env-1" => {
                 tokio::time::sleep(CONNECT_DEADLINE).await;
-                Err("no answer".to_owned())
+                Err(Failure::new(FailureKind::Unreachable, "no answer"))
             }
             _ => Ok(entry.id),
         }
@@ -203,7 +203,10 @@ async fn entries_connect_without_waiting_on_each_other() {
     );
     let ids: Vec<&str> = connected.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(ids, ["env-1", "env-2", "env-3", "env-4", "env-5", "env-6"]);
-    assert_eq!(connected[0].1, Err("no answer".to_owned()));
+    assert_eq!(
+        connected[0].1,
+        Err(Failure::new(FailureKind::Unreachable, "no answer"))
+    );
     assert_eq!(connected[5].1, Ok("env-6".to_owned()));
 }
 
@@ -308,8 +311,9 @@ async fn a_credential_plugin_waiting_for_a_sign_in_ends_at_the_connect_deadline(
         "{:?}",
         started.elapsed()
     );
+    assert_eq!(error.kind, FailureKind::Timeout);
     assert_eq!(
-        error,
+        error.message,
         "no answer within 300 ms; a credential plugin may be waiting for a sign-in"
     );
 }
@@ -323,7 +327,7 @@ async fn a_credential_plugin_that_fails_is_said_without_its_output() {
         .await
         .err()
         .expect("the plugin fails");
-    assert_eq!(error, "its credential plugin failed");
+    assert_eq!(error.message, "its credential plugin failed");
 }
 
 #[tokio::test]
@@ -337,7 +341,8 @@ async fn a_context_no_kubeconfig_has_is_said() {
         .await
         .err()
         .expect("no such context");
-    assert_eq!(error, "the kubeconfig has no context cluster-z");
+    assert_eq!(error.kind, FailureKind::Config);
+    assert_eq!(error.message, "the kubeconfig has no context cluster-z");
 }
 
 #[tokio::test]
@@ -346,9 +351,10 @@ async fn an_open_connection_that_failed_says_why() {
     let checked = check_all(
         &sources,
         &[],
-        Some(Err::<&FixtureReader, _>(
-            "its credential plugin failed".into(),
-        )),
+        Some(Err::<&FixtureReader, _>(Failure::new(
+            FailureKind::Unauthorized,
+            "its credential plugin failed",
+        ))),
     )
     .await;
     let failed = Reach::unreachable("its credential plugin failed");
@@ -459,7 +465,7 @@ async fn a_talos_entry_outside_the_kubeconfigs_is_opened_through_its_talosconfig
         .err()
         .expect("no talosconfig");
     assert_eq!(
-        error,
+        error.message,
         format!("its talosconfig {} couldn't be read", missing.display())
     );
     // Its Talos context, else its context; never the file's current one.
@@ -474,7 +480,10 @@ async fn a_talos_entry_outside_the_kubeconfigs_is_opened_through_its_talosconfig
             .await
             .err()
             .expect("no such Talos context");
-        assert_eq!(error, format!("its talosconfig has no context {named}"));
+        assert_eq!(
+            error.message,
+            format!("its talosconfig has no context {named}")
+        );
     }
 }
 
@@ -489,5 +498,5 @@ async fn a_talos_entry_in_the_kubeconfigs_is_opened_with_its_context() {
         .await
         .err()
         .expect("the plugin fails");
-    assert_eq!(error, "its credential plugin failed");
+    assert_eq!(error.message, "its credential plugin failed");
 }

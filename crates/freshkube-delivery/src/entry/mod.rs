@@ -185,7 +185,7 @@ fn bounded<R: Reader>(reader: R) -> Deadline<R> {
 
 /// A client for the context `context` of the merged `kubeconfigs`, within
 /// [`CONNECT_DEADLINE`]. The error is a short reason, without credentials.
-pub async fn connect(kubeconfigs: Vec<PathBuf>, context: String) -> Result<EntryReader, String> {
+pub async fn connect(kubeconfigs: Vec<PathBuf>, context: String) -> Result<EntryReader, Failure> {
     connect_within(kubeconfigs, context, CONNECT_DEADLINE).await
 }
 
@@ -194,10 +194,13 @@ pub(crate) async fn connect_within(
     kubeconfigs: Vec<PathBuf>,
     context: String,
     limit: Duration,
-) -> Result<EntryReader, String> {
+) -> Result<EntryReader, Failure> {
     match open_listed(kubeconfigs, context.clone(), limit).await? {
         Some(client) => Ok(reader(client)),
-        None => Err(format!("the kubeconfig has no context {context}")),
+        None => Err(Failure::new(
+            FailureKind::Config,
+            format!("the kubeconfig has no context {context}"),
+        )),
     }
 }
 
@@ -207,7 +210,7 @@ async fn open_listed(
     kubeconfigs: Vec<PathBuf>,
     context: String,
     limit: Duration,
-) -> Result<Option<kube::Client>, String> {
+) -> Result<Option<kube::Client>, Failure> {
     // Without Talos nothing else may have chosen the TLS provider yet.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let runtime = tokio::runtime::Handle::current();
@@ -219,7 +222,8 @@ async fn open_listed(
         if report.context(&context).is_none() {
             return Ok(None);
         }
-        let kubeconfig = kubeconfig.ok_or("no kubeconfig file could be read")?;
+        let kubeconfig = kubeconfig
+            .ok_or_else(|| Failure::new(FailureKind::Config, "no kubeconfig file could be read"))?;
         let options = KubeConfigOptions {
             context: Some(context),
             ..KubeConfigOptions::default()
@@ -228,25 +232,40 @@ async fn open_listed(
             // kube's messages can quote credential sources; keep them out.
             let mut config = Config::from_custom_kubeconfig(kubeconfig, &options)
                 .await
-                .map_err(|_| "its kubeconfig entry couldn't be loaded".to_owned())?;
+                .map_err(|_| {
+                    Failure::new(
+                        FailureKind::Config,
+                        "its kubeconfig entry couldn't be loaded",
+                    )
+                })?;
             config.connect_timeout = Some(limit);
             config.read_timeout = Some(REQUEST_DEADLINE);
             freshkube_core::kube_client::client(config)
                 .map(Some)
                 .map_err(|error| match error.is_exec() {
-                    true => "its credential plugin failed".to_owned(),
-                    false => error.message("its client couldn't be made"),
+                    true => Failure::new(FailureKind::Unauthorized, "its credential plugin failed"),
+                    false => Failure::new(
+                        FailureKind::Other,
+                        error.message("its client couldn't be made"),
+                    ),
                 })
         })
     });
     match tokio::time::timeout(limit, setup).await {
-        Err(_) => Err(format!(
-            "no answer within {}; a credential plugin may be waiting for a sign-in",
-            within(limit)
+        Err(_) => Err(Failure::new(
+            FailureKind::Timeout,
+            format!(
+                "no answer within {}; a credential plugin may be waiting for a sign-in",
+                within(limit)
+            ),
         )),
-        Ok(Err(_)) => Err("the connection worker stopped".into()),
+        Ok(Err(_)) => Err(stopped()),
         Ok(Ok(answer)) => answer,
     }
+}
+
+fn stopped() -> Failure {
+    Failure::new(FailureKind::Other, "the connection worker stopped")
 }
 
 /// `5 s`, `200 ms`.
@@ -262,7 +281,10 @@ fn within(limit: Duration) -> String {
 /// kubeconfig its control plane serves, through its talosconfig's context
 /// (`talos_context`, else `context`; never the file's current one). Within
 /// [`CONNECT_DEADLINE`] either way.
-pub async fn connect_entry(kubeconfigs: Vec<PathBuf>, entry: Entry) -> Result<EntryReader, String> {
+pub async fn connect_entry(
+    kubeconfigs: Vec<PathBuf>,
+    entry: Entry,
+) -> Result<EntryReader, Failure> {
     let Some(talosconfig) = entry.talosconfig.clone() else {
         return connect(kubeconfigs, entry.context).await;
     };
@@ -273,9 +295,12 @@ pub async fn connect_entry(kubeconfigs: Vec<PathBuf>, entry: Entry) -> Result<En
     let context = entry.talos_context.unwrap_or(entry.context);
     let left = CONNECT_DEADLINE.saturating_sub(started.elapsed());
     match tokio::time::timeout(left, through_talos(talosconfig, context, CONNECT_DEADLINE)).await {
-        Err(_) => Err(format!(
-            "Talos gave no kubeconfig within {}",
-            within(CONNECT_DEADLINE)
+        Err(_) => Err(Failure::new(
+            FailureKind::Timeout,
+            format!(
+                "Talos gave no kubeconfig within {}",
+                within(CONNECT_DEADLINE)
+            ),
         )),
         Ok(Err(why)) => Err(why),
         // Credentials the cluster rejects are asked for again next time.
@@ -289,20 +314,26 @@ async fn through_talos(
     talosconfig: PathBuf,
     context: String,
     limit: Duration,
-) -> Result<(kube::Client, served::Key), String> {
+) -> Result<(kube::Client, served::Key), Failure> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let shown = talosconfig.display().to_string();
     let (talos_context, key) = tokio::task::spawn_blocking(move || {
-        let config = talos_rs::config::TalosConfig::load_from(&talosconfig)
-            .map_err(|_| format!("its talosconfig {shown} couldn't be read"))?;
-        let found = config
-            .get_context(&context)
-            .cloned()
-            .map_err(|_| format!("its talosconfig has no context {context}"))?;
-        Ok::<_, String>((found, served::key(talosconfig, context)))
+        let config = talos_rs::config::TalosConfig::load_from(&talosconfig).map_err(|_| {
+            Failure::new(
+                FailureKind::Config,
+                format!("its talosconfig {shown} couldn't be read"),
+            )
+        })?;
+        let found = config.get_context(&context).cloned().map_err(|_| {
+            Failure::new(
+                FailureKind::Config,
+                format!("its talosconfig has no context {context}"),
+            )
+        })?;
+        Ok::<_, Failure>((found, served::key(talosconfig, context)))
     })
     .await
-    .map_err(|_| "the connection worker stopped".to_owned())??;
+    .map_err(|_| stopped())??;
     // Talos signs a new admin certificate for every kubeconfig it serves:
     // one per talosconfig and context is kept for the session, in memory.
     let kubeconfig = match served::get(&key) {
@@ -310,13 +341,25 @@ async fn through_talos(
         None => {
             let talos = talos_rs::client::TalosClient::from_context(&talos_context)
                 .await
-                .map_err(|_| "its Talos endpoints couldn't be reached".to_owned())?;
-            let served = talos
-                .kubeconfig()
-                .await
-                .map_err(|_| "its control plane gave no kubeconfig through Talos".to_owned())?;
-            let kubeconfig: kube::config::Kubeconfig = serde_yaml::from_str(&served)
-                .map_err(|_| "the kubeconfig its control plane gave couldn't be read".to_owned())?;
+                .map_err(|_| {
+                    Failure::new(
+                        FailureKind::Unreachable,
+                        "its Talos endpoints couldn't be reached",
+                    )
+                })?;
+            let served = talos.kubeconfig().await.map_err(|_| {
+                Failure::new(
+                    FailureKind::Unreachable,
+                    "its control plane gave no kubeconfig through Talos",
+                )
+            })?;
+            let kubeconfig: kube::config::Kubeconfig =
+                serde_yaml::from_str(&served).map_err(|_| {
+                    Failure::new(
+                        FailureKind::Config,
+                        "the kubeconfig its control plane gave couldn't be read",
+                    )
+                })?;
             served::store(key.clone(), kubeconfig.clone());
             kubeconfig
         }
@@ -329,16 +372,26 @@ async fn through_talos(
     };
     let mut config = Config::from_custom_kubeconfig(kubeconfig, &options)
         .await
-        .map_err(|_| "the kubeconfig its control plane gave couldn't be loaded".to_owned())?;
+        .map_err(|_| {
+            Failure::new(
+                FailureKind::Config,
+                "the kubeconfig its control plane gave couldn't be loaded",
+            )
+        })?;
     config.connect_timeout = Some(limit);
     config.read_timeout = Some(REQUEST_DEADLINE);
     freshkube_core::kube_client::client(config)
         .map(|client| (client, key))
-        .map_err(|error| error.message("its client couldn't be made"))
+        .map_err(|error| {
+            Failure::new(
+                FailureKind::Other,
+                error.message("its client couldn't be made"),
+            )
+        })
 }
 
 /// An entry's id, and its client or why there is none.
-pub type Connected = (String, Result<EntryReader, String>);
+pub type Connected = (String, Result<EntryReader, Failure>);
 
 /// Clients for `entries`, at most [`MAX_AT_ONCE`] connecting at a time, in
 /// the order given, each with its entry's id. Each connects within its own
@@ -390,6 +443,16 @@ impl Reach {
     /// No entry holds the part.
     pub fn missing(why: impl Into<String>) -> Self {
         Reach::Missing(Failure::new(FailureKind::Config, why))
+    }
+
+    /// The entry wasn't reached, for `failure`'s reason: a deadline stays a
+    /// timeout, anything else is a failure to reach.
+    pub fn unreached(failure: Failure) -> Self {
+        let kind = match failure.kind {
+            FailureKind::Timeout => FailureKind::Timeout,
+            _ => FailureKind::Unreachable,
+        };
+        Reach::Unreachable(Failure::new(kind, failure.message))
     }
 
     /// The entry wasn't reached, for a reason with no kind of its own.
@@ -568,7 +631,7 @@ pub const OPEN: &str = "the open cluster";
 pub async fn check_all<R: Reader>(
     sources: &Sources,
     kubeconfigs: &[PathBuf],
-    open: Option<Result<&R, String>>,
+    open: Option<Result<&R, Failure>>,
 ) -> Checked {
     let mut entries: Vec<Entry> = Vec::new();
     let chosen = sources.iter().map(|(_, chosen)| chosen);
@@ -582,7 +645,7 @@ pub async fn check_all<R: Reader>(
     let readers = connect_all(kubeconfigs, entries).await;
     let open = open
         .as_ref()
-        .map(|open| open.as_ref().map_err(String::clone));
+        .map(|open| open.as_ref().map_err(Failure::clone));
     let target = |chosen: &Chosen| -> Result<Target<'_, R>, Reach> {
         match chosen {
             Chosen::NoEntry(_) | Chosen::Gone(_) => {
@@ -590,12 +653,12 @@ pub async fn check_all<R: Reader>(
             }
             Chosen::Open => match &open {
                 Some(Ok(reader)) => Ok(Target::Open(reader)),
-                Some(Err(why)) => Err(Reach::unreachable(why.clone())),
+                Some(Err(why)) => Err(Reach::unreached(why.clone())),
                 None => Err(Reach::unreachable("no cluster is open")),
             },
             Chosen::Entry { entry, .. } => match readers.iter().find(|(id, _)| id == &entry.id) {
                 Some((_, Ok(reader))) => Ok(Target::Entry(reader)),
-                Some((_, Err(why))) => Err(Reach::unreachable(why.clone())),
+                Some((_, Err(why))) => Err(Reach::unreached(why.clone())),
                 None => Err(Reach::unreachable("it wasn't connected to")),
             },
         }

@@ -285,7 +285,7 @@ pub async fn follow<R: Reader>(
 }
 
 /// A pool of the open connection alone.
-type Alone<'a, R> = Pool<'a, R, Never, fn(Entry) -> std::future::Ready<Result<Never, String>>>;
+type Alone<'a, R> = Pool<'a, R, Never, fn(Entry) -> std::future::Ready<Result<Never, Failure>>>;
 
 fn alone_pool<'a, R: Reader>(reader: &'a R, place: &'a Place) -> Alone<'a, R> {
     Pool::new(
@@ -295,9 +295,10 @@ fn alone_pool<'a, R: Reader>(reader: &'a R, place: &'a Place) -> Alone<'a, R> {
             reader: Ok(reader),
         }),
         |_| {
-            std::future::ready(Err(
-                "the workspace of one reads the open cluster alone".into()
-            ))
+            std::future::ready(Err(Failure::new(
+                FailureKind::Config,
+                "the workspace of one reads the open cluster alone",
+            )))
         },
         BUDGET,
     )
@@ -316,7 +317,7 @@ where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     let couldnt = |why: String| {
         format!(
@@ -348,10 +349,7 @@ where
             }));
         }
         None => {
-            let unread = Unread::Unfinished {
-                entry: at.label,
-                why: until.unfinished(),
-            };
+            let unread = Unread::unfinished(at.label, &until);
             return Err(couldnt(unread.words()));
         }
     };
@@ -371,7 +369,7 @@ where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     let (kargo, builds, argocd) = futures::join!(
         part(pool, place, Part::Kargo),
@@ -417,7 +415,7 @@ where
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     let label = place.at(part).label;
     pool.part(part).await.map_err(|unread| unread.named(label))
@@ -436,7 +434,7 @@ async fn read_environments<R, C, F, Fut>(
     R: Reader,
     C: Reader,
     F: Fn(Entry) -> Fut,
-    Fut: Future<Output = Result<C, String>>,
+    Fut: Future<Output = Result<C, Failure>>,
 {
     let mut contexts: Vec<&str> = evidence
         .destinations
@@ -480,11 +478,7 @@ async fn read_environments<R, C, F, Fut>(
                     .await
                     .ok_or_else(|| {
                         let entry = place.at_context(context).label;
-                        Unread::Unfinished {
-                            entry,
-                            why: until.unfinished(),
-                        }
-                        .words()
+                        Unread::unfinished(entry, &until).words()
                     }),
                 Err(unread) => Err(match unread {
                     // The open cluster is named as the page names it.
