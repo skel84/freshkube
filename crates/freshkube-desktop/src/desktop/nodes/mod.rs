@@ -96,7 +96,7 @@ pub(super) struct Nodes {
     query_text: String,
     search_keys: Vec<String>,
     /// The status bar's segment while Nodes shows.
-    pub(super) status: freshkube_ui::status::Segment,
+    status: freshkube_ui::status::Segment,
     _query_subscription: Subscription,
     /// The node document's Escape, stepping back from its last level.
     _document_subscription: Subscription,
@@ -194,9 +194,10 @@ pub(super) enum NodesEvent {
 impl EventEmitter<NodesEvent> for Nodes {}
 impl EventEmitter<crate::screens::ScreenEvent> for Nodes {}
 
-/// Nodes draws what the shell hands it; the shell runs its reads and
-/// tells it where things stand.
+/// Nodes draws the rows and status line the shell hands it, and reads its
+/// nodes' use itself while its page shows.
 impl crate::screens::ScreenPanel for Nodes {
+    /// Nodes reads no Talos target; the shell picks it from Nodes' events.
     fn set_source(
         &mut self,
         _: Option<crate::screens::ScreenSource>,
@@ -205,9 +206,43 @@ impl crate::screens::ScreenPanel for Nodes {
     ) {
     }
 
+    /// The Kubernetes connection it reads nodes' use from.
+    fn set_page_source(
+        &mut self,
+        source: crate::screens::PageSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_metrics_source(source.kube, window, cx)
+    }
+
+    /// Shown on its page and around a pane screen alike, so the use read
+    /// follows the page, not the pane.
+    fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_metrics_visible(visible, window, cx)
+    }
+
     fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
 
     fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The line the shell derives from the Talos overview and the summary
+    /// session (`Pilot::rebuild_nodes_meta`).
+    fn status(&mut self, _: &App) -> Option<freshkube_ui::status::Segment> {
+        Some(self.status.clone())
+    }
+
+    /// The table's while it draws loading rows; the open pane's screen's
+    /// once the pane covers the table or its tab shows a Talos screen.
+    fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
+        let table = self.view == NodeView::Table
+            && !(self.open && self.expanded)
+            && freshkube_ui::table::TableSource::loading(self).is_some();
+        if table {
+            return Some(self.loading_motion.clone());
+        }
+        self.pane_handle()?.loading_motion(cx)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -341,12 +376,6 @@ impl Nodes {
             attention_stale: None,
         }
     }
-    /// The motion over the table's loading rows, which the shell mounts
-    /// beside the cached page, so its frames redraw neither.
-    pub(super) fn loading_motion(&self) -> &Entity<freshkube_ui::table::LoadingMotion> {
-        &self.loading_motion
-    }
-
     /// The Talos screen the open pane shows, when its tab is one.
     pub(super) fn pane_screen(&self) -> Option<super::pages::PageId> {
         self.open.then(|| self.tab.screen()).flatten()
@@ -640,7 +669,6 @@ impl Pilot {
     }
 
     pub(super) fn sync_node_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.sync_node_metrics(window, cx);
         let nodes = self.node_workspace.read(cx);
         let shown = self.page == Page::Nodes && nodes.open;
         let tab = nodes.tab;

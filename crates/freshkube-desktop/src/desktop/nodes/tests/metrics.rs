@@ -406,8 +406,8 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
 
 /// The node-usage read follows Nodes' page, not the pane: opening a node
 /// and moving between its tabs, a Talos screen's included, neither stops
-/// nor restarts it, and leaving Nodes stops it. PR 3 of #579 moves the
-/// read onto Nodes' `set_visible`, which must keep this schedule.
+/// nor restarts it, and leaving Nodes stops it. The read runs from Nodes'
+/// `set_visible` and `set_page_source`; this pins that schedule.
 #[gpui_kit::test]
 fn node_metrics_keep_reading_while_the_pane_shows_a_screen(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);

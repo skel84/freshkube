@@ -14,6 +14,7 @@ use freshkube_delivery::change::example::Shape;
 use freshkube_delivery::change::live::{self, Place};
 use freshkube_delivery::changes::example as changes_example;
 use freshkube_delivery::entry::{self, pool};
+use freshkube_reads::OnShow;
 
 use super::*;
 use crate::applications::across::{Across, Alone};
@@ -22,6 +23,8 @@ use crate::resources::KubeAccess;
 
 /// A change read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
+/// Showing the page reads again once what it has is [`FRESH_FOR`] old.
+pub(super) const ON_SHOW: OnShow = OnShow::ReadIfOlder(FRESH_FOR);
 /// How long one change's read may take before it fails whole: past
 /// core's budget, at which it answers with what was read in time.
 const DEADLINE: Duration = Duration::from_secs(live::BUDGET.as_secs() + 15);
@@ -96,9 +99,7 @@ impl ChangePage {
     /// Reads the change again, whatever is in flight. With a window at
     /// hand, example data answers at once.
     pub(super) fn read(&mut self, window: Option<&Window>, cx: &mut Context<Self>) {
-        self.stop();
-        let request = self.snapshot.begin(self.fetch.identity());
-        self.pending = true;
+        let request = self.loader.start(self.fetch.identity());
         match self.fetch.clone() {
             Fetch::Example {
                 project,
@@ -114,10 +115,11 @@ impl ChangePage {
                     Some(window) if delay.is_zero() => self.answer(&request, result, window, cx),
                     _ => {
                         let handle = self.window;
-                        self.task = Some(cx.spawn(async move |this, cx| {
+                        let task = cx.spawn(async move |this, cx| {
                             cx.background_executor().timer(delay).await;
                             deliver(this, handle, request, result, cx);
-                        }));
+                        });
+                        self.loader.run(None, task);
                     }
                 }
             }
@@ -153,14 +155,14 @@ impl ChangePage {
                             .map_err(|failure| failure.message)
                     },
                 );
-                self.job = Some(job);
                 let handle = self.window;
-                self.task = Some(cx.spawn(async move |this, cx| {
+                let task = cx.spawn(async move |this, cx| {
                     let result = receiver
                         .await
                         .unwrap_or_else(|_| Err("Reading the change stopped".into()));
                     deliver(this, handle, request, result, cx);
-                }));
+                });
+                self.loader.run(Some(job), task);
             }
         }
         cx.notify();
@@ -176,34 +178,21 @@ impl ChangePage {
         cx: &mut Context<Self>,
     ) {
         let answered = result.is_ok();
-        if !self.pending || !self.snapshot.apply(request, result) {
+        if !self.loader.land(request, result, cx) {
             return;
         }
-        self.pending = false;
-        self.job = None;
-        self.task = None;
-        if answered {
-            self.read_at = Some(cx.background_executor().now());
-        }
-        self.stale = self.snapshot.data().and(self.snapshot.error()).map(|why| {
+        self.stale = self.loader.data().and(self.loader.error()).map(|why| {
             let text = format!("Showing the last read. {why}");
             let label = format!("Couldn't read again: {text}");
             (text.into(), label.into())
         });
-        if let Some(change) = self.snapshot.data().filter(|_| answered).cloned() {
+        if let Some(change) = self.loader.data().filter(|_| answered).cloned() {
             self.show(change);
             if let Some(stage) = self.stage.take() {
                 self.select_stage(&stage, window, cx);
             }
         }
         cx.notify();
-    }
-
-    /// Drops the read in flight; what was read stays.
-    fn stop(&mut self) {
-        self.pending = false;
-        self.job = None;
-        self.task = None;
     }
 
     /// Shown, the page reads unless what it has is fresh; hidden, it drops
@@ -213,18 +202,12 @@ impl ChangePage {
             return;
         }
         self.visible = visible;
+        let reads_again = self.loader.set_visible(visible, ON_SHOW, cx);
         if !visible {
-            self.stop();
             cx.notify();
             return;
         }
-        let now = cx.background_executor().now();
-        let fresh = self.snapshot.data().is_some()
-            && !self.snapshot.is_stale()
-            && self
-                .read_at
-                .is_some_and(|at| now.saturating_duration_since(at) < FRESH_FOR);
-        if !fresh {
+        if reads_again {
             self.read(None, cx);
         }
     }
@@ -250,7 +233,7 @@ impl ChangePage {
             place.mapping = across.mapping;
             place.sources = across.sources;
             *kubeconfig = across.kubeconfig;
-            self.read_at = None;
+            self.loader.expire();
             self.refresh(cx);
         }
         cx.notify();
@@ -265,17 +248,16 @@ impl ChangePage {
 
     /// Why the change couldn't be read, when nothing was.
     pub(super) fn failure(&self) -> Option<&str> {
-        self.snapshot
+        self.loader
             .data()
             .is_none()
-            .then(|| self.snapshot.error())
+            .then(|| self.loader.error())
             .flatten()
-            .map(String::as_str)
     }
 
     /// The loading rows, until the first answer.
     pub(super) fn loading_rows(&self) -> Option<&kit::LoadingRows> {
-        (self.pending && self.snapshot.data().is_none() && self.snapshot.error().is_none())
+        (self.loader.is_loading() && self.loader.data().is_none() && self.loader.error().is_none())
             .then_some(&self.loading)
     }
 
@@ -304,12 +286,12 @@ fn deliver(
 #[cfg(test)]
 impl ChangePage {
     pub(crate) fn is_reading(&self) -> bool {
-        self.pending
+        self.loader.is_loading()
     }
 
     /// Whether an answer was shown.
     pub(crate) fn answered(&self) -> bool {
-        self.snapshot.data().is_some()
+        self.loader.data().is_some()
     }
 
     /// The selection's actions, as the Inspector's footer labels them.
@@ -332,15 +314,13 @@ impl ChangePage {
 
     /// An answer, as a read brings it.
     pub(crate) fn read_answer(&mut self, change: Change, window: &Window, cx: &mut Context<Self>) {
-        let request = self.snapshot.begin(self.fetch.identity());
-        self.pending = true;
+        let request = self.loader.start(self.fetch.identity());
         self.answer(&request, Ok(change), window, cx);
     }
 
     /// A read that failed, as a refused or unreachable cluster answers.
     pub(crate) fn fail_read(&mut self, why: &str, window: &Window, cx: &mut Context<Self>) {
-        let request = self.snapshot.begin(self.fetch.identity());
-        self.pending = true;
+        let request = self.loader.start(self.fetch.identity());
         self.answer(&request, Err(why.into()), window, cx);
     }
 }

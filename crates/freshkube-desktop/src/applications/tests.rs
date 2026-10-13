@@ -253,6 +253,8 @@ fn a_stale_read_is_read_again_when_shown(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// It reads again at 35 s under either rule for a cut refresh;
+/// `a_refresh_cut_short_by_hiding_reads_again_on_showing` tells them apart.
 #[gpui_kit::test]
 fn a_read_dropped_on_hide_leaves_the_last_answer_as_old_as_it_was(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
@@ -270,6 +272,34 @@ fn a_read_dropped_on_hide_leaves_the_last_answer_as_old_as_it_was(cx: &mut TestA
     .unwrap();
     // At 35 s the answer is 35 s old, whatever started at 25 s.
     cx.executor().advance_clock(Duration::from_secs(10));
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-applications", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+        assert!(window.find(CART).visible(), "shown while it reads again");
+    })
+    .unwrap();
+}
+
+/// A refresh a hide cuts short never finished, so what shows is no newer
+/// than before it: showing again reads, however recent the last answer.
+#[gpui_kit::test]
+fn a_refresh_cut_short_by_hiding_reads_again_on_showing(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
+    // Answered at 0 s; a refresh at 5 s is dropped on hide.
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.update_window(handle, |_, window, cx| {
+        page(&view, cx).update(cx, |page, _| page.set_hold(true));
+        window.click("applications-refresh", cx);
+        window.render_frame(cx);
+        assert!(page(&view, cx).read(cx).is_reading());
+        window.click("nav-overview", cx);
+        window.render_frame(cx);
+        assert!(!page(&view, cx).read(cx).is_reading());
+    })
+    .unwrap();
+    // At 6 s the answer is 6 s old, yet the refresh never finished.
+    cx.executor().advance_clock(Duration::from_secs(1));
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-applications", cx);
         window.render_frame(cx);
@@ -672,7 +702,7 @@ fn the_same_applications_show_whichever_entry_is_open(cx: &mut TestAppContext) {
             let page = page(&view, cx);
             let page = page.read(cx);
             assert_eq!(page.names(), first, "with {active} open");
-            let read = page.snapshot.data().expect("read");
+            let read = page.loader.data().expect("read");
             let connections = page.connections(read);
             // Kargo's parts open where Kargo is read: here once cicd-fra
             // is open, else a switch away.
