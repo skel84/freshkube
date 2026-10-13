@@ -434,7 +434,8 @@ impl Pilot {
                     .read(cx)
                     .link_is_current(source, app, subject)
                     && self
-                        .source().kube
+                        .source()
+                        .kube
                         .is_some_and(|source| source.id == subject.access())
                 {
                     self.open_object(

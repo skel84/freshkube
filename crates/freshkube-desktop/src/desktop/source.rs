@@ -35,13 +35,16 @@ impl Pilot {
                     .context
                     .as_deref()
                     .map(resources::example::connection);
-                let kube = self.applied.context.clone().zip(id.clone()).map(|(context, id)| {
-                    ClusterSource {
+                let kube = self
+                    .applied
+                    .context
+                    .clone()
+                    .zip(id.clone())
+                    .map(|(context, id)| ClusterSource {
                         id,
                         context,
                         access: ClusterAccess::Example,
-                    }
-                });
+                    });
                 (self.screen_on(None), kube, id)
             }
             // Kubernetes-only mode reads no Talos overview, so no screen

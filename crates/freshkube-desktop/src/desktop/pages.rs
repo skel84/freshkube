@@ -818,7 +818,8 @@ impl Pilot {
                 .map_err(|error| error.to_string())
             },
             move |this, cx| {
-                this.source().kube
+                this.source()
+                    .kube
                     .is_none_or(|source| source.id != connection)
                     || this.resources.read(cx).detail_identity(cx).is_some()
             },

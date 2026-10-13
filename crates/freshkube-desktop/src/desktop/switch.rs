@@ -424,7 +424,11 @@ impl Pilot {
         let Some(connection) = &object.connection else {
             return LinkRoute::Here;
         };
-        if self.source().kube_identity.is_some_and(|open| open == *connection) {
+        if self
+            .source()
+            .kube_identity
+            .is_some_and(|open| open == *connection)
+        {
             return LinkRoute::Here;
         }
         let refused = || {
@@ -555,7 +559,8 @@ impl Pilot {
         let applied = self.applied.clone();
         let left = std::mem::take(&mut self.active_definition);
         let revision = self.current_revision();
-        self.registry.retire_connection(self.source().kube_identity, &left);
+        self.registry
+            .retire_connection(self.source().kube_identity, &left);
         self.pending_link = None;
         self.registry.activate(
             SessionKey::Entry(entry.id.clone()),

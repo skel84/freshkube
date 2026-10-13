@@ -11,8 +11,8 @@ use gpui_kit::{AnyWindowHandle, AppContext, Bounds, Entity, Pixels, TestAppConte
 use tokio::runtime::Runtime;
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{
-    KEYBOARD_PAUSE, ClusterAccess, ClusterSource, ListView, NotServed, ResourcesScreen, WATCH_COALESCE,
-    row_id,
+    ClusterAccess, ClusterSource, KEYBOARD_PAUSE, ListView, NotServed, ResourcesScreen,
+    WATCH_COALESCE, row_id,
 };
 use crate::resources::example;
 use crate::resources::model::{ReadState, ResourceIdentity, ResourceRow};

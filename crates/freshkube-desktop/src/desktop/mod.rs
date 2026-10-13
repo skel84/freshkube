@@ -53,26 +53,18 @@ use crate::{
     monitoring::page::{MonitoringPage, TalosNodes},
     mutation::{self, Operations},
     presentation::{self, NodeSummary},
-    resources::{
-        self, ClusterAccess, ClusterSource, ResourcesScreen, custom::CustomResources, navigation,
-        shell as pod_shell,
-    },
-    screens::{
-        LifecycleScreen, LiveSource, PageSource, ScreenEvent, ScreenHandle, ScreenSource,
-        WorkloadsScreen,
-    },
+    resources::{self, ResourcesScreen, custom::CustomResources, navigation, shell as pod_shell},
+    screens::{LifecycleScreen, ScreenEvent, ScreenHandle, WorkloadsScreen},
     state::Snapshot,
     text_size, theme,
     ui::clock,
 };
-use freshkube_core::cluster_overview::{
-    ClusterOverview, ClusterOverviewCollector, KubeconfigSelection,
-};
+use freshkube_core::cluster_overview::{ClusterOverview, KubeconfigSelection};
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::{ActiveTheme, Theme, TitleBar, input::InputState, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 use talos_rs::{ServiceInfo, TalosClient};
 use tokio::runtime::Handle;
 
