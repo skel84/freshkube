@@ -506,6 +506,12 @@ impl Pilot {
     /// one told what it already knows does nothing.
     pub(super) fn sync_visible(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let shown = self.shown_pages(cx);
+        // The node pane draws the very screens the shell tells.
+        debug_assert!(
+            (self.node_workspace.read(cx).screens.iter())
+                .all(|(id, screen)| self.pages.get(id) == Some(screen)),
+            "Nodes' screens and the shell's pages are out of step"
+        );
         for handle in self.pages.values() {
             handle.set_visible(shown.contains(handle), window, cx);
         }

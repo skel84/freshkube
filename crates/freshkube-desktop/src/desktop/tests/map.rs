@@ -97,7 +97,7 @@ fn register(
                 let heard = BTreeMap::from([(id, page.clone())]);
                 let subscriptions = Pilot::subscribe_pages(&heard, window, cx);
                 view._subscriptions.extend(subscriptions);
-                view.pages.insert(id, page);
+                crate::desktop::testing::put_page(view, id, page, cx);
             })
         })
         .unwrap();
@@ -266,4 +266,27 @@ fn nodes_and_its_pane_screen_hear_they_show_in_key_order(cx: &mut TestAppContext
     for round in take().chunks(2) {
         assert_eq!(round, ["nodes hidden", "processes hidden"]);
     }
+}
+
+/// The node pane draws the four screens the shell's map holds: the same
+/// handles, so the screen that hears it shows is the one on screen.
+#[gpui_kit::test]
+fn the_node_pane_draws_the_screens_in_the_shells_map(cx: &mut TestAppContext) {
+    use super::super::pages::PageId;
+    let (_runtime, _handle, view) = fixture(cx, 1280., 820.);
+    view.read_with(cx, |pilot, cx| {
+        let screens = &pilot.node_workspace.read(cx).screens;
+        assert_eq!(
+            screens.keys().copied().collect::<Vec<_>>(),
+            [
+                PageId::Processes,
+                PageId::Storage,
+                PageId::Network,
+                PageId::Diagnostics
+            ]
+        );
+        for (id, screen) in screens {
+            assert!(pilot.pages.get(id) == Some(screen), "{id:?}");
+        }
+    });
 }

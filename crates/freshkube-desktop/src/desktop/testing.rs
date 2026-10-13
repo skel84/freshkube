@@ -99,6 +99,22 @@ pub(super) fn root_pilot(window: &gpui_kit::Window, cx: &gpui_kit::App) -> Entit
 /// `update_window` never sees, so this hands the shell that event at once;
 /// `table::a_row_click_opens_its_node_once_the_shell_hears_it` proves the
 /// click itself.
+/// Puts `page` in the shell's map under `id`, and in the node pane's when
+/// the pane embeds that screen, so both draw and tell the same one.
+pub(super) fn put_page(
+    view: &mut Pilot,
+    id: super::pages::PageId,
+    page: crate::screens::ScreenHandle,
+    cx: &mut gpui_kit::App,
+) {
+    view.node_workspace.update(cx, |nodes, _| {
+        if let Some(screen) = nodes.screens.get_mut(&id) {
+            *screen = page.clone();
+        }
+    });
+    view.pages.insert(id, page);
+}
+
 pub(super) fn click_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &str) {
     assert!(window.find(id.to_string()).visible(), "{id} is drawn");
     let pilot = root_pilot(window, cx);

@@ -86,11 +86,12 @@ impl Fakes {
             fake("monitoring", cx),
         );
         cx.update(|cx| {
-            view.update(cx, |view, _| {
-                view.pages.insert(PageId::Nodes, nodes.clone());
-                view.pages.insert(PageId::Etcd, etcd.clone());
-                view.pages.insert(PageId::Processes, processes.clone());
-                view.pages.insert(PageId::Monitoring, monitoring.clone());
+            view.update(cx, |view, cx| {
+                use crate::desktop::testing::put_page;
+                put_page(view, PageId::Nodes, nodes.clone(), cx);
+                put_page(view, PageId::Etcd, etcd.clone(), cx);
+                put_page(view, PageId::Processes, processes.clone(), cx);
+                put_page(view, PageId::Monitoring, monitoring.clone(), cx);
             })
         });
         fakes
