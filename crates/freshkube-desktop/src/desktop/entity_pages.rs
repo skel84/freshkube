@@ -12,10 +12,12 @@
 //!
 //! Overview, Nodes and System services have handles too. The shell feeds
 //! what they draw, so their hooks do nothing, but for System services'
-//! status line and row actions.
+//! status line and row actions, and Overview's cards, attention rows and
+//! buttons, which ask the shell through their events.
 
 use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
+use super::overview::{OverviewEvent, OverviewPage};
 use super::pages::PageId;
 use super::settings::SettingsPage;
 use super::system_services::{ServiceEvent, SystemServices};
@@ -50,9 +52,30 @@ where
 
 impl EventEmitter<ScreenEvent> for PageHost {}
 
-/// Overview and Nodes, drawn from the shell's state.
+/// Nodes, drawn from the shell's state.
 impl ScreenPanel for PageHost {
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+}
+
+impl EventEmitter<ScreenEvent> for OverviewPage {}
+
+/// Overview draws what the shell hands it; it makes no requests, so it has
+/// no source, visibility or refresh of its own.
+impl ScreenPanel for OverviewPage {
+    fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn subscribe_page(
+        this: &Entity<Self>,
+        on_event: PageEventFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<Subscription> {
+        vec![hear::<_, OverviewEvent>(this, &on_event, window, cx)]
+    }
 
     fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
 
@@ -268,9 +291,12 @@ impl ScreenPanel for SettingsPage {
 }
 
 impl Pilot {
-    /// The handles of the pages that aren't Talos screens, by their keys.
+    /// The handles of the pages that aren't Talos screens, by their keys:
+    /// one argument a page.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn page_handles(
-        [overview, nodes]: [&Entity<PageHost>; 2],
+        overview: &Entity<OverviewPage>,
+        nodes: &Entity<PageHost>,
         services: &Entity<SystemServices>,
         monitoring: &Entity<MonitoringPage>,
         observability: &Entity<ObservabilityPage>,
@@ -381,6 +407,7 @@ impl Pilot {
                     .update(cx, |custom, cx| custom.not_served(&group, cx));
             }
             PageEvent::Service(event) => self.service_event(event, window, cx),
+            PageEvent::Overview(event) => self.overview_event(event, window, cx),
         }
     }
 

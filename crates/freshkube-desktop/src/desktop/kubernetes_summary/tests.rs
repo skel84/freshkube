@@ -71,7 +71,7 @@ fn initial_sync_does_not_show_partial_pages_as_a_complete_count(cx: &mut TestApp
                 .is_none()
         );
         assert_eq!(
-            app.overview_display
+            app.overview_display(cx)
                 .cards
                 .iter()
                 .find(|card| card.id == "tile-pods")
@@ -204,8 +204,8 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
                 .total,
             count + 1
         );
-        let card = app
-            .overview_display
+        let display = app.overview_display(cx);
+        let card = display
             .cards
             .iter()
             .find(|card| card.id == "tile-events")

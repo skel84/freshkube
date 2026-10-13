@@ -415,7 +415,7 @@ impl Pilot {
         if self.shown_page() != shown {
             self.sync_visible_soon(cx);
         }
-        self.overview_display = crate::presentation::overview::Overview::build(
+        let mut display = crate::presentation::overview::Overview::build(
             &self.node_workspace.rows,
             &self.nodes,
             self.registry
@@ -433,15 +433,12 @@ impl Pilot {
                 .error()
                 .map(String::as_str)
                 .unwrap_or("The refresh failed.");
-            self.overview_display =
-                std::mem::take(&mut self.overview_display).talos_stale(reason.to_owned().into());
+            display = display.talos_stale(reason.to_owned().into());
         }
         self.column_changed();
-        self.rail_marks = crate::desktop::shell::RailMarks::from_cards(
-            &self.overview_display.cards,
-            self.fixture,
-        );
-        self.attention = crate::presentation::attention::build(
+        self.rail_marks =
+            crate::desktop::shell::RailMarks::from_cards(&display.cards, self.fixture);
+        self.attention = Arc::new(crate::presentation::attention::build(
             &self.node_workspace.rows,
             self.registry
                 .active()
@@ -451,7 +448,12 @@ impl Pilot {
             self.overview.data(),
             self.kube_identity().as_deref(),
             chrono::Utc::now(),
-        );
+        ));
+        let attention = self.attention.clone();
+        self.overview_page.update(cx, |overview, cx| {
+            overview.set_display(Arc::new(display), cx);
+            overview.set_attention(attention, cx);
+        });
     }
 
     pub(super) fn open_node(&mut self, key: NodeKey, window: &mut Window, cx: &mut Context<Self>) {

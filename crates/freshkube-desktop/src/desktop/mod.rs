@@ -27,6 +27,7 @@ mod settings;
 mod shell;
 #[cfg(any(debug_assertions, feature = "stress"))]
 mod startup;
+mod states;
 mod switch;
 #[cfg(test)]
 mod switch_tests;
@@ -82,6 +83,7 @@ use tokio::runtime::Handle;
 
 pub(crate) use freshkube_probe::probe;
 
+pub(crate) use overview::OverviewEvent;
 pub(crate) use pages::Page;
 use pages::{Area, ColumnReveal, PageId};
 pub(crate) use system_services::ServiceEvent;
@@ -286,10 +288,10 @@ impl Render for Countdown {
     }
 }
 
-/// Overview and Nodes are drawn by the shell itself; hosting each in a view
-/// of its own lets GPUI reuse the last frame until the shell's state changes,
-/// like the screens, which are views already. A host is its page's handle,
-/// whose hooks do nothing: the shell feeds what it draws.
+/// Nodes is drawn by the shell itself; hosting it in a view of its own lets
+/// GPUI reuse the last frame until the shell's state changes, like the
+/// screens, which are views already. A host is its page's handle, whose
+/// hooks do nothing: the shell feeds what it draws.
 struct PageHost {
     pilot: WeakEntity<Pilot>,
     page: Page,
@@ -301,9 +303,8 @@ impl Render for PageHost {
         let page = self.page;
         self.pilot
             .update(cx, |pilot, cx| match page {
-                Page::Overview => pilot.render_overview(window, cx),
                 Page::Nodes => pilot.render_nodes(window, cx),
-                _ => unreachable!("only Overview and Nodes have a host"),
+                _ => unreachable!("only Nodes has a host"),
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
@@ -385,7 +386,7 @@ pub(crate) struct Pilot {
     forwards: Entity<ForwardsIndicator>,
     /// Logs under the page, in tabs; app-wide, like the forwards.
     pub(crate) dock: Entity<dock::Dock>,
-    overview_page: Entity<PageHost>,
+    overview_page: Entity<overview::OverviewPage>,
     nodes_page: Entity<PageHost>,
     node_workspace: nodes::Nodes,
     node_pods: Entity<ResourcesScreen>,
@@ -475,9 +476,8 @@ pub(crate) struct Pilot {
     menu_state: Option<app_menu::MenuState>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     page: Page,
-    overview_display: crate::presentation::overview::Overview,
-    attention: crate::presentation::attention::Attention,
-    attention_expanded: bool,
+    /// What needs attention, for a node's pane; Overview holds the same.
+    attention: Arc<crate::presentation::attention::Attention>,
     health_filter: HealthFilter,
     appearance: Appearance,
     automatic: bool,
@@ -867,11 +867,9 @@ impl Pilot {
             remaining: 1.,
             visible: false,
         });
+        let age_label = cx.new(|_| switch::AgeLabel::new());
+        let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
         let pilot = cx.weak_entity();
-        let overview_page = cx.new(|_| PageHost {
-            pilot: pilot.clone(),
-            page: Page::Overview,
-        });
         let nodes_page = cx.new(|_| PageHost {
             pilot,
             page: Page::Nodes,
@@ -881,13 +879,14 @@ impl Pilot {
         node_workspace.rebuild_columns(!options.kubernetes_only);
         let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
         let mut subscriptions = Vec::new();
-        // The hosted pages read the shell's state, so whatever notifies the
-        // shell redraws them; the countdown tick notifies only its ring.
-        let hosted = [overview_page.clone(), nodes_page.clone()];
-        subscriptions.push(cx.observe(&cx.entity(), move |_, _, cx| {
-            for page in &hosted {
-                page.update(cx, |_, cx| cx.notify());
-            }
+        // Nodes' host reads the shell's state, so whatever notifies the
+        // shell redraws it; the countdown tick notifies only its ring.
+        // Overview hears where things stand then, and redraws only when that
+        // changed.
+        let hosted = nodes_page.clone();
+        subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
+            pilot.push_overview_state(cx);
+            hosted.update(cx, |_, cx| cx.notify());
         }));
         // The status bar shows the running operation; the window refuses to
         // close under it. Cached screens may read the slot too.
@@ -986,7 +985,8 @@ impl Pilot {
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         pages.extend(Self::page_handles(
-            [&overview_page, &nodes_page],
+            &overview_page,
+            &nodes_page,
             &system_services,
             &monitoring,
             &observability,
@@ -1092,7 +1092,7 @@ impl Pilot {
             entry_generation: 0,
             switcher_revision: 0,
             restored_taken: None,
-            age_label: cx.new(|_| switch::AgeLabel::new()),
+            age_label,
             switcher: Vec::new(),
             settings_open: false,
             menu_platform: app_menu::menu_platform(),
@@ -1101,9 +1101,7 @@ impl Pilot {
             menu_state: None,
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
-            overview_display: Default::default(),
             attention: Default::default(),
-            attention_expanded: false,
             health_filter: HealthFilter::All,
             appearance: Appearance::System,
             automatic: true,
@@ -1194,7 +1192,8 @@ impl Pilot {
             .document
             .update(cx, |pane, cx| pane.close(cx));
         self.sync_node_visibility(window, cx);
-        self.attention_expanded = false;
+        self.overview_page
+            .update(cx, |overview, cx| overview.collapse(cx));
         self.object_open_job = None;
         self.object_open_task = None;
         self.object_open_sequence = self.object_open_sequence.wrapping_add(1);

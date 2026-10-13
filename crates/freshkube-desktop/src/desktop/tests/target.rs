@@ -18,6 +18,11 @@ fn target_picker_and_tiles_change_the_target_node(cx: &mut TestAppContext) {
         window.click("nav-overview", cx);
         window.render_frame(cx);
         window.click("tile-services", cx);
+    })
+    .unwrap();
+    // Overview asks the shell, which hears it once the click's effects run.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let pilot = view.read(cx);
         assert_eq!(pilot.page, Page::SystemServices);

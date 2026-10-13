@@ -254,6 +254,60 @@ fn cached_overview_redraws_after_data_and_theme_change(cx: &mut TestAppContext) 
     );
 }
 
+/// Overview is a view of its own: a notify of the shell that changes none
+/// of what it shows leaves it as drawn, while its cards, its attention
+/// list, a change of state, Show all, the theme and the text size redraw it
+/// once each.
+#[gpui_kit::test]
+fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        draw(window, cx);
+        draw(window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+        let before = count("overview");
+        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| draw(window, cx))
+            .unwrap();
+        count("overview") - before
+    };
+    let shell = redrawn(&|_, cx| cx.notify());
+    let cards = redrawn(&|view, cx| view.rebuild_joined_nodes(cx));
+    let attention = redrawn(&|view, cx| {
+        let attention = view.attention.clone();
+        view.overview_page
+            .update(cx, |page, cx| page.set_attention(attention, cx));
+    });
+    let state = redrawn(&|view, cx| {
+        view.config_error = Some("unreadable".into());
+        cx.notify();
+    });
+    let unchanged = redrawn(&|_, cx| cx.notify());
+    let show_all = redrawn(&|view, cx| view.expand_attention(cx));
+    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let text_size = redrawn(&|_, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
+    assert_eq!(
+        [
+            shell, cards, attention, state, unchanged, show_all, cached, text_size
+        ],
+        [0, 1, 1, 1, 0, 1, 1, 1]
+    );
+    let before = count("overview");
+    cx.update_window(handle, |_, window, cx| {
+        Theme::change(ThemeMode::Dark, Some(window), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| draw(window, cx))
+        .unwrap();
+    assert_eq!(count("overview") - before, 1, "a theme change redraws it");
+}
+
 /// System services is a cached view of its own: a notify of the shell
 /// leaves it as drawn, while its nodes, a changed Talos reading and the
 /// global redraw each draw it again.
