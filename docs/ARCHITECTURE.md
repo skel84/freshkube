@@ -46,7 +46,7 @@ There are three ways to be a page on main. #579 is moving them to one trait. Its
 | Observability | `ObservabilityPage` | `crates/freshkube-observability/src/lib.rs` |
 | Applications | `ApplicationsPage` | `crates/freshkube-desktop/src/applications/` |
 | Settings | `SettingsPage`; only its Delivery sources list has `set_source` and `set_visible`, and it drops its check on hide | `crates/freshkube-desktop/src/desktop/settings/` (`sources/mod.rs`) |
-| System services | `SystemServices`; no `set_source` or `set_visible`: the shell reads the services itself (`Pilot.service_job`, `desktop/services.rs`) and pushes `set_nodes` and `set_reading` | `crates/freshkube-desktop/src/desktop/system_services/` |
+| System services | `SystemServices`; no `set_source` or `set_visible`: the shell pushes the node roster's services with `set_nodes` (`desktop/target.rs`, `desktop/mod.rs`) and the read state with `set_reading`; the page makes no requests | `crates/freshkube-desktop/src/desktop/system_services/` |
 
 Resources, Monitoring, Observability and Applications cancel their reads on hide. Custom Resources (`resources/custom.rs`), the dock (`desktop/dock/`) and Command-K search (`desktop/search/`) are entities too, but are not pages: they sit beside whatever page shows.
 
@@ -99,7 +99,7 @@ There are about a dozen event types and two ways to subscribe. `PageEvent` (`scr
 
 - Talos side: `crates/freshkube-desktop/src/fixture.rs` (the cluster and its nodes, and the hold knobs), plus `screens/<name>/example.rs` for each screen but etcd, whose example is in `screens/etcd/mod.rs`; `crates/freshkube-desktop/examples/fixture.rs` runs it standalone.
 - Resources: `crates/freshkube-desktop/src/resources/example/` (objects, the acme workspace's Kargo and Argo CD kinds); `resources/shell/example.rs` (a local shell); `crates/freshkube-desktop/src/forwards/example.rs` (a loopback listener).
-- Applications and changes: `crates/freshkube-desktop/src/applications/example.rs`; in delivery, `crates/freshkube-delivery/src/applications/example.rs`, `change/example.rs`, `changes/example.rs` and `fixtures.rs`.
+- Applications and changes: `crates/freshkube-desktop/src/applications/example.rs`; in delivery, `crates/freshkube-delivery/src/applications/example.rs`, `change/example.rs` and `changes/example.rs`. Its `fixtures.rs` is a fake cluster for tests only (`#[cfg(test)]`), not example data.
 - Monitoring and Observability: `crates/freshkube-core/src/monitoring/example.rs`; `crates/freshkube-observability/src/example.rs`, `application/example.rs`, `logs/example.rs`.
 - Maintenance mode: `crates/freshkube-desktop/src/maintenance/example.rs`.
 - The shared components on invented data: `crates/freshkube-workbench/src/stories/`.
