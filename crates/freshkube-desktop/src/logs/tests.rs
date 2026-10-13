@@ -113,8 +113,8 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
 
 #[gpui_kit::test]
 async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut TestAppContext) {
-    // Tokio's producer uses real time. Let GPUI park for external wakes
-    // rather than racing through its deterministic test-clock timers.
+    // The example writer runs on GPUI's clock, but `wait_for` below waits
+    // in real time: let GPUI park rather than race through its timers.
     cx.executor().allow_parking();
     let (_runtime, panel, handle) = mount(cx);
     let (collected, initial_next_id) = cx
@@ -218,7 +218,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
         |window, cx| {
             let view = panel.read(cx);
             // Use a monotonic arrival identity, not bounded buffer size,
-            // and observe six real producer ticks with GPUI still driven.
+            // and see no line land for 120 ms with GPUI still driven.
             assert_eq!(view.next_line_id(), stopped_next_id);
             assert!(!view.source().collection_active);
             assert!(!view.source().stream.is_running());
