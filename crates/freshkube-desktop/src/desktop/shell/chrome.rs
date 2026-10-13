@@ -138,11 +138,7 @@ pub(in crate::desktop) struct CachedPart {
 }
 
 impl CachedPart {
-    fn new(
-        pilot: &Entity<Pilot>,
-        part: Part,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(pilot: &Entity<Pilot>, part: Part, cx: &mut Context<Self>) -> Self {
         Self {
             pilot: pilot.downgrade(),
             part,
