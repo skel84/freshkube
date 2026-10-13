@@ -843,11 +843,6 @@ impl Pilot {
             cx.subscribe_in(&node_services, window, |view, _, event, window, cx| {
                 view.node_services_event(event, window, cx)
             }),
-            cx.observe_window_appearance(window, |this, window, cx| {
-                if this.chrome.appearance == Appearance::System {
-                    Theme::sync_system_appearance(Some(window), cx);
-                }
-            }),
             // Batches arriving while Logs is hidden never notify; the shell
             // shows only what start, stop and the visible page change.
             cx.observe(&logs, |_, _, cx| cx.notify()),
@@ -910,7 +905,11 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            chrome: shell::Chrome::new(app_menu::menu_platform(options.debug.app_menu_button), cx),
+            chrome: shell::Chrome::new(
+                app_menu::menu_platform(options.debug.app_menu_button),
+                window,
+                cx,
+            ),
             dock,
             overview_page,
             node_workspace,
