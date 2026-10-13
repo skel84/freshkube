@@ -14,23 +14,7 @@ impl Render for Pilot {
             window.on_next_frame(|_, _| WINDOW.mark());
         }
         let column = self.navigation.lay_out(window);
-        let page = match self.navigation.page {
-            // Not cached: a cached view that draws again makes every cached
-            // view inside it draw again, so a cursor moving over one chart
-            // would redraw all the panels. Drawn with the shell, the page
-            // only places its cached panels, and only the one under the
-            // pointer draws again.
-            Page::Monitoring => self.monitoring.clone().into_any_element(),
-            page if self.kubernetes_only.is_some() && page.needs_talos() => {
-                self.render_needs_talosconfig(cx)
-            }
-            // Pages redraw when their own state changes, not with the shell.
-            page => self
-                .pages
-                .get(&page.id())
-                .map(|page| page.view().cached(cached_page_style()).into_any_element())
-                .unwrap_or_else(|| div().into_any_element()),
-        };
+        let page = self.render_page(cx);
         let root = v_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -91,6 +75,27 @@ impl Pilot {
                     },
                 ))
             })
+    }
+
+    /// The page shown, drawn beside the cached chrome.
+    fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        match self.navigation.page {
+            // Not cached: a cached view that draws again makes every cached
+            // view inside it draw again, so a cursor moving over one chart
+            // would redraw all the panels. Drawn with the shell, the page
+            // only places its cached panels, and only the one under the
+            // pointer draws again.
+            Page::Monitoring => self.monitoring.clone().into_any_element(),
+            page if self.kubernetes_only.is_some() && page.needs_talos() => {
+                self.render_needs_talosconfig(cx)
+            }
+            // Pages redraw when their own state changes, not with the shell.
+            page => self
+                .pages
+                .get(&page.id())
+                .map(|page| page.view().cached(cached_page_style()).into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
+        }
     }
 
     /// The flash over the shown page's changed rows, mounted beside the
