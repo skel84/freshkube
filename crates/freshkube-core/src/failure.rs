@@ -67,8 +67,11 @@ impl Failure {
             | TalosError::ConfigParse(_)
             | TalosError::ConfigInvalid(_)
             | TalosError::ContextNotFound(_)
-            | TalosError::NoEndpoints(_) => FailureKind::Config,
-            _ => FailureKind::Other,
+            | TalosError::NoEndpoints(_)
+            | TalosError::Base64Decode(_)
+            | TalosError::Tls(_)
+            | TalosError::NoHomeDirectory => FailureKind::Config,
+            TalosError::Io(_) => FailureKind::Other,
         };
         // A status keeps the server's own message as the detail, since the
         // kind's label already says what the code means; the words
@@ -327,6 +330,13 @@ mod tests {
         }
         let misleading = TalosError::Grpc(tonic::Status::new(Code::Internal, "permission denied"));
         assert_eq!(Failure::from(&misleading).kind, FailureKind::Other);
+        for config in [
+            TalosError::Tls("handshake".into()),
+            TalosError::NoHomeDirectory,
+            TalosError::Base64Decode(base64::DecodeError::InvalidLength(1)),
+        ] {
+            assert_eq!(Failure::from(&config).kind, FailureKind::Config);
+        }
         let refused = TalosError::Connection("connection refused".into());
         assert_eq!(Failure::from(&refused).kind, FailureKind::Unreachable);
     }
