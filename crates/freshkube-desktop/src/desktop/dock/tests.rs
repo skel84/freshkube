@@ -2048,3 +2048,46 @@ fn a_tab_saved_on_all_containers_comes_back_on_all_of_them(cx: &mut TestAppConte
     assert!(again.tabs[0].all_containers);
     assert_eq!(again.tabs[0].container.as_deref(), Some("gateway"));
 }
+
+/// What the app writes to `navigation.json` for a given state, byte for
+/// byte: the example `freshkube-prefs` round-trips too. It is driven
+/// through the file's own setters, so a change to what they write shows
+/// here as well as in that example.
+#[gpui_kit::test]
+fn navigation_json_is_what_the_setters_write(cx: &mut TestAppContext) {
+    use crate::navigation_file::{DOCK_HEIGHT, DRAWER_WIDTH, NavigationFile};
+    use freshkube_ui::inspector::width_key;
+    use freshkube_ui::split_size::SizeStore as _;
+
+    let directory = tempfile::tempdir().unwrap();
+    let file = NavigationFile::open(Some(&directory.path().join("preferences.json")));
+    let dock = SavedDock {
+        open: true,
+        maximized: false,
+        selected: None,
+        tabs: vec![SavedTab {
+            kind: "pods".into(),
+            context: "lab".into(),
+            namespace: "payments".into(),
+            name: "api-0".into(),
+            container: Some("api".into()),
+            previous: false,
+            all_containers: false,
+            shell: false,
+        }],
+    };
+    cx.update(|cx| {
+        file.set_collapsed(true, cx);
+        file.set_dock(&dock, cx);
+        file.save(DOCK_HEIGHT, 320., cx);
+        file.save(DRAWER_WIDTH, 480., cx);
+        file.save(width_key("nodes"), 360., cx);
+        file.set_active_cluster("cluster-a", cx);
+    });
+    cx.run_until_parked();
+    let written = std::fs::read_to_string(directory.path().join("navigation.json")).unwrap();
+    assert_eq!(
+        written,
+        include_str!("../../../../freshkube-prefs/src/examples/navigation.json")
+    );
+}

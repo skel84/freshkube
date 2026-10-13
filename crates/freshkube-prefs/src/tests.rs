@@ -118,11 +118,15 @@ fn round_trip(name: &str, layout: Layout, example: &str) {
     assert!(loaded.problem.is_none(), "{:?}", loaded.problem);
     assert!(!loaded.value.is_empty());
     document.save(&loaded.value).unwrap();
-    assert_eq!(
-        std::fs::read_to_string(document.path()).unwrap(),
-        example,
-        "{name} changed"
-    );
+    // Key order follows serde_json's `preserve_order`, which another crate
+    // in the build may turn on, so this compares the values and the size
+    // and trailing newline; desktop's test of `navigation.json` compares the
+    // bytes the app writes.
+    let written = std::fs::read_to_string(document.path()).unwrap();
+    let parsed = |text: &str| serde_json::from_str::<Value>(text).unwrap();
+    assert_eq!(parsed(&written), parsed(example), "{name} changed");
+    assert_eq!(written.len(), example.len(), "{name} changed layout");
+    assert!(written.ends_with("}\n"), "{name} lost its newline");
 }
 
 #[test]

@@ -430,39 +430,4 @@ mod tests {
         assert!(text.contains("\"future\":1"), "{text}");
         std::fs::remove_dir_all(directory).unwrap();
     }
-
-    /// The bytes the app writes for one state of the user's choices, as the
-    /// example `navigation.json` that `freshkube-prefs` round-trips.
-    #[gpui_kit::test]
-    fn the_file_the_app_writes_is_the_committed_example(cx: &mut TestAppContext) {
-        let directory = directory("navigation-example");
-        let preferences = directory.join("preferences.json");
-        let file = NavigationFile::open(Some(&preferences));
-        let dock: crate::desktop::dock::SavedDock = serde_json::from_value(serde_json::json!({
-            "open": true,
-            "selected": 0,
-            "tabs": [{
-                "kind": "pods",
-                "context": "cluster-a",
-                "namespace": "shop",
-                "name": "shop-api-7d9f",
-                "container": "api"
-            }]
-        }))
-        .unwrap();
-        cx.update(|cx| {
-            file.set_collapsed(true, cx);
-            file.set_dock(&dock, cx);
-            file.save(DOCK_HEIGHT, 320., cx);
-            file.save(DRAWER_WIDTH, 480., cx);
-            file.save(width_key("nodes"), 360., cx);
-            file.set_active_cluster("cluster-a", cx);
-        });
-        cx.run_until_parked();
-        assert_eq!(
-            std::fs::read_to_string(directory.join("navigation.json")).unwrap(),
-            include_str!("../../freshkube-prefs/src/examples/navigation.json")
-        );
-        std::fs::remove_dir_all(directory).unwrap();
-    }
 }
