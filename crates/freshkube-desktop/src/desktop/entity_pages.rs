@@ -20,6 +20,7 @@ use crate::screens::{
     PageEvent, PageEventFn, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
 };
 use freshkube_core::resources::builtin;
+use freshkube_ui::status::Segment;
 
 /// Hears one event type of a page's and hands it on as a [`PageEvent`].
 fn hear<P, E>(
@@ -68,6 +69,10 @@ impl ScreenPanel for ResourcesScreen {
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         ResourcesScreen::refresh(self, window, cx)
+    }
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(ResourcesScreen::status(self).clone())
     }
 }
 
@@ -127,6 +132,10 @@ impl ScreenPanel for ObservabilityPage {
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.refresh_current(cx)
     }
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(ObservabilityPage::status(self).clone())
+    }
 }
 
 impl EventEmitter<ScreenEvent> for ApplicationsPage {}
@@ -161,6 +170,11 @@ impl ScreenPanel for ApplicationsPage {
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         ApplicationsPage::refresh(self, cx)
     }
+
+    /// On Changes, its Changes list's line.
+    fn status(&mut self, cx: &App) -> Option<Segment> {
+        Some(ApplicationsPage::status(self, cx))
+    }
 }
 
 impl EventEmitter<ScreenEvent> for SettingsPage {}
@@ -181,6 +195,10 @@ impl ScreenPanel for SettingsPage {
 
     /// Its checks run only from Check sources.
     fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(self.status.clone())
+    }
 }
 
 impl Pilot {

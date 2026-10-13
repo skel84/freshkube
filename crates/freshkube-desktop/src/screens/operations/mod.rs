@@ -947,9 +947,9 @@ impl ScreenPanel for OperationsScreen {
         window.focus(&self.focus, cx);
     }
 
-    fn status(&mut self) -> Option<&Segment> {
+    fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync_status();
-        self.status.as_ref().and_then(|(_, line)| line.as_ref())
+        self.status.as_ref().and_then(|(_, line)| line.clone())
     }
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {

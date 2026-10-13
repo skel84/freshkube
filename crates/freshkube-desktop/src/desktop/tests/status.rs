@@ -113,8 +113,8 @@ impl crate::screens::ScreenPanel for SegmentScreen {
 
     fn refresh(&mut self, _: &mut gpui_kit::Window, _: &mut gpui_kit::Context<Self>) {}
 
-    fn status(&mut self) -> Option<&freshkube_ui::status::Segment> {
-        self.0.as_ref()
+    fn status(&mut self, _: &gpui_kit::App) -> Option<freshkube_ui::status::Segment> {
+        self.0.clone()
     }
 }
 

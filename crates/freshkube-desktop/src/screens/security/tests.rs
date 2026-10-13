@@ -531,8 +531,8 @@ fn the_endpoints_and_volume_target_are_status_parts(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, "talos-cp-fra1-01");
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
-        let line = screen.update(cx, |screen, _| {
-            screen.status().expect("a segment").text(None).clone()
+        let line = screen.update(cx, |screen, cx| {
+            screen.status(cx).expect("a segment").text(None).clone()
         });
         let parts: Vec<&str> = line.split(" · ").collect();
         assert!(parts[1].starts_with("endpoints "), "{line}");

@@ -156,9 +156,9 @@ impl ScreenPanel for LifecycleScreen {
         window.focus(&self.focus, cx);
     }
 
-    fn status(&mut self) -> Option<&Segment> {
+    fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync_status();
-        self.status.as_ref()
+        self.status.clone()
     }
 
     fn manual_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {

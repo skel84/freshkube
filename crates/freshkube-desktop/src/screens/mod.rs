@@ -231,8 +231,10 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
     /// The page's line in the status bar, which the shell draws while the
     /// screen is the visible page. The shell reads it before the screen
     /// renders, so derive it here when its inputs changed, as Resources
-    /// does, and notify when they change; `None` draws no segment.
-    fn status(&mut self) -> Option<&freshkube_ui::status::Segment> {
+    /// does, and notify when they change; `None` draws no segment. A page
+    /// whose line is another entity's, as Applications' on its Changes
+    /// list, reads it through `cx`.
+    fn status(&mut self, _cx: &App) -> Option<freshkube_ui::status::Segment> {
         None
     }
 
@@ -297,7 +299,7 @@ impl ScreenHandle {
                 T::subscribe_page(&heard, on_event, window, cx)
             }),
             motion: Rc::new(move |cx| motion.read(cx).loading_motion(cx)),
-            status: Rc::new(move |cx| status.update(cx, |screen, _| screen.status().cloned())),
+            status: Rc::new(move |cx| status.update(cx, |screen, cx| screen.status(cx))),
             embedded: Rc::new(move |value, cx| {
                 embedded.update(cx, |screen, cx| screen.set_embedded(value, cx))
             }),
