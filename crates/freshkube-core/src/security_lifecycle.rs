@@ -1444,7 +1444,7 @@ async fn collect_etcd_pre_operation(
         Ok(members) => members,
         Err(error) => {
             return SourceSnapshot::Unavailable {
-                reason: format!("Talos etcd member list is unavailable: {}", error.message),
+                reason: etcd_members_unavailable(&error),
             };
         }
     };
