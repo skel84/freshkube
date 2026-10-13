@@ -33,7 +33,7 @@ pub(in crate::desktop) struct Chrome {
     /// The frame-rate readout in the status bar.
     pub(in crate::desktop) fps: Entity<super::fps::Fps>,
     /// The status bar's port forwards, which redraw on their own.
-    pub(in crate::desktop) forwards: Entity<ForwardsIndicator>,
+    pub(super) forwards: Entity<ForwardsIndicator>,
     /// The theme the user chose: the system's, light or dark.
     pub(in crate::desktop) appearance: Appearance,
     /// The platform whose menu the window has: the one it runs on, but a
@@ -114,7 +114,7 @@ impl Render for Countdown {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::desktop) enum Part {
+enum Part {
     Header,
     Rail,
     Column,
@@ -138,7 +138,7 @@ pub(in crate::desktop) struct CachedPart {
 }
 
 impl CachedPart {
-    pub(in crate::desktop) fn new(
+    fn new(
         pilot: &Entity<Pilot>,
         part: Part,
         cx: &mut Context<Self>,
@@ -211,7 +211,7 @@ pub(in crate::desktop) struct ChromeParts {
 }
 
 impl ChromeParts {
-    pub(in crate::desktop) fn new(cx: &mut Context<Pilot>) -> Self {
+    fn new(cx: &mut Context<Pilot>) -> Self {
         let pilot = cx.entity();
         let mut part = |part| cx.new(|cx| CachedPart::new(&pilot, part, cx));
         Self {
