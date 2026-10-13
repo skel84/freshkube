@@ -52,7 +52,7 @@ use crate::{
     monitoring::history::HistoryView,
     monitoring::page::{MonitoringPage, TalosNodes},
     mutation::{self, Operations},
-    presentation::{self, Health, LoadHistory, NodeSummary},
+    presentation::{self, LoadHistory, NodeSummary},
     resources::{
         self, KubeAccess, KubeSource, ResourcesScreen, custom::CustomResources, navigation,
         shell as pod_shell,
@@ -70,11 +70,7 @@ use freshkube_core::cluster_overview::{
     ClusterOverview, ClusterOverviewCollector, KubeconfigSelection,
 };
 use freshkube_core::resources::{ResourceKind, builtin};
-use gpui_kit::component::{
-    ActiveTheme, Theme, ThemeMode, TitleBar,
-    input::{InputEvent, InputState},
-    v_flex,
-};
+use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, TitleBar, input::InputState, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
@@ -101,23 +97,6 @@ pub(crate) use freshkube_ui::layout_check;
 pub(crate) enum NodeView {
     Cards,
     Table,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HealthFilter {
-    All,
-    Unhealthy,
-    Unknown,
-}
-
-impl HealthFilter {
-    fn accepts(self, health: Health) -> bool {
-        match self {
-            HealthFilter::All => true,
-            HealthFilter::Unhealthy => health == Health::Unhealthy,
-            HealthFilter::Unknown => health == Health::Unknown,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -335,7 +314,6 @@ pub(crate) struct Pilot {
     loaded_config_path: Option<PathBuf>,
     applied: AppliedConfig,
     path: Entity<InputState>,
-    service_filter: Entity<InputState>,
     contexts: Vec<String>,
     /// Node counts for contexts that loaded at least once this session.
     context_nodes: BTreeMap<String, usize>,
@@ -372,11 +350,11 @@ pub(crate) struct Pilot {
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
     services: Snapshot<Vec<ServiceInfo>, Target, String>,
-    service_display: services::ServiceDisplay,
+    /// The node pane's System services tab, fed `services`.
+    node_services: Entity<services::NodeServices>,
     nodes: Vec<NodeSummary>,
     load_history: LoadHistory,
     selected_node: Option<String>,
-    selected_service: Option<String>,
     logs: Entity<LogPanel>,
     countdown: Entity<Countdown>,
     fps: Entity<shell::fps::Fps>,
@@ -478,7 +456,6 @@ pub(crate) struct Pilot {
     page: Page,
     /// What needs attention, for a node's pane; Overview holds the same.
     attention: Arc<crate::presentation::attention::Attention>,
-    health_filter: HealthFilter,
     appearance: Appearance,
     automatic: bool,
     elapsed: Duration,
@@ -489,12 +466,6 @@ pub(crate) struct Pilot {
     fixture_tick: u64,
     focus: FocusHandle,
     node_focus: FocusHandle,
-    service_focus: FocusHandle,
-    /// Scrolls the Services page, or the node's Services tab.
-    service_scroll: ScrollHandle,
-    /// The selected service changed by pointer or keyboard, so a stacked
-    /// layout brings its details into view once they are laid out.
-    reveal_service: bool,
     /// The window the shell draws in, for what changes the shown page
     /// without one at hand (`Pilot::sync_visible_soon`).
     window: AnyWindowHandle,
@@ -857,8 +828,7 @@ impl Pilot {
                 cx,
             )
         });
-        let service_filter =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Filter services"));
+        let node_services = cx.new(|cx| services::NodeServices::new(window, cx));
         let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
@@ -886,6 +856,7 @@ impl Pilot {
         let hosted = nodes_page.clone();
         subscriptions.push(cx.observe(&cx.entity(), move |pilot, _, cx| {
             pilot.push_overview_state(cx);
+            pilot.push_node_services_state(cx);
             hosted.update(cx, |_, cx| cx.notify());
         }));
         // The status bar shows the running operation; the window refuses to
@@ -964,11 +935,8 @@ impl Pilot {
             cx.notify();
         }));
         subscriptions.extend([
-            cx.subscribe_in(&service_filter, window, |view, _, event, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    view.rebuild_service_rows(cx);
-                    cx.notify();
-                }
+            cx.subscribe_in(&node_services, window, |view, _, event, window, cx| {
+                view.node_services_event(event, window, cx)
             }),
             cx.observe_window_appearance(window, |this, window, cx| {
                 if this.appearance == Appearance::System {
@@ -978,7 +946,6 @@ impl Pilot {
             // Batches arriving while Logs is hidden never notify; the shell
             // shows only what start, stop and the visible page change.
             cx.observe(&logs, |_, _, cx| cx.notify()),
-            cx.observe(&service_filter, |_, _, cx| cx.notify()),
         ]);
         let applications =
             cx.new(|cx| crate::applications::ApplicationsPage::new(runtime.clone(), window, cx));
@@ -1015,7 +982,6 @@ impl Pilot {
                 context: options.context,
             },
             path,
-            service_filter,
             contexts: Vec::new(),
             context_nodes: BTreeMap::new(),
             context_display: shell::ContextDisplay::default(),
@@ -1029,11 +995,10 @@ impl Pilot {
             object_open_task: None,
             object_open_sequence: 0,
             services: Snapshot::default(),
-            service_display: services::ServiceDisplay::default(),
+            node_services,
             nodes: Vec::new(),
             load_history: LoadHistory::default(),
             selected_node: None,
-            selected_service: None,
             logs,
             countdown,
             fps: cx.new(shell::fps::Fps::new),
@@ -1102,7 +1067,6 @@ impl Pilot {
             kubeconfig_draft: Default::default(),
             page: Page::Overview,
             attention: Default::default(),
-            health_filter: HealthFilter::All,
             appearance: Appearance::System,
             automatic: true,
             elapsed: Duration::ZERO,
@@ -1111,9 +1075,6 @@ impl Pilot {
             fixture_tick: 0,
             focus: cx.focus_handle(),
             node_focus: cx.focus_handle(),
-            service_focus: cx.focus_handle(),
-            service_scroll: ScrollHandle::new(),
-            reveal_service: false,
             window: window.window_handle(),
             _subscriptions: subscriptions,
             config_job: None,
@@ -1176,11 +1137,9 @@ impl Pilot {
         self.service_task = None;
         self.service_job = None;
         self.selected_node = None;
-        self.selected_service = None;
         self.nodes.clear();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&[], cx));
-        self.service_display = services::ServiceDisplay::default();
         self.load_history.clear();
         self.overview = Snapshot::default();
         self.system_services
@@ -1198,7 +1157,7 @@ impl Pilot {
         self.object_open_task = None;
         self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
         self.services = Snapshot::default();
-        self.rebuild_service_rows(cx);
+        self.push_services(cx);
         self.logs
             .update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
         self.push_source(window, cx);
@@ -1377,7 +1336,7 @@ impl Pilot {
             ScreenEvent::RefreshSummary => self.refresh_summary(window, cx),
             ScreenEvent::RetryCluster => self.refresh(window, cx),
             ScreenEvent::OpenLogs(service) => {
-                self.selected_service = Some(service.clone());
+                self.select_service(Some(service.clone()), cx);
                 self.open_logs(window, cx);
             }
             ScreenEvent::SelectNode(node) => {
@@ -1388,7 +1347,7 @@ impl Pilot {
                     return;
                 }
                 self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);
-                self.selected_service = Some(service.clone());
+                self.select_service(Some(service.clone()), cx);
                 self.open_logs(window, cx);
             }
         }

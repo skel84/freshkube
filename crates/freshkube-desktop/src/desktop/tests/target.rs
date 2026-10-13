@@ -47,11 +47,21 @@ fn silent_node_is_unknown_not_failed(cx: &mut TestAppContext) {
         assert!(card.label().unwrap().contains(SILENT_NODE));
         pick_target(window, cx, 5);
         open_node_tab(window, cx, super::super::nodes::NodeTab::Services);
+    })
+    .unwrap();
+    // The tab hears the new node once the shell's effects run, and the
+    // shell hears its button the same way.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(SILENT_NODE));
         assert!(window.find("back-to-overview").visible());
         assert!(window.try_find("services-region").is_none());
         window.click("back-to-overview", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Overview);
     })

@@ -282,7 +282,7 @@ fn confirming_a_restart_in_example_mode_simulates_it_and_frees_the_slot(cx: &mut
         assert!(result.contains("Example data"), "{result}");
         assert!(result.contains("containerd"), "{result}");
         assert_eq!(
-            view.read(cx).selected_service.as_deref(),
+            view.read(cx).selected_service(cx).as_deref(),
             Some("containerd")
         );
     })

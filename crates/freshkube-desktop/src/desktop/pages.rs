@@ -711,7 +711,7 @@ impl Pilot {
     }
 
     pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(service) = self.selected_service.clone() {
+        if let Some(service) = self.selected_service(cx) {
             if let Some(name) = self.selected_node.clone() {
                 self.open_node_by_name(&name, super::nodes::NodeTab::Logs, window, cx);
             }

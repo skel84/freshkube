@@ -12,7 +12,10 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     let old_epoch = cx.update(|cx| {
-        assert_eq!(view.read(cx).selected_service.as_deref(), Some("kubelet"));
+        assert_eq!(
+            view.read(cx).selected_service(cx).as_deref(),
+            Some("kubelet")
+        );
         view.read(cx).epoch
     });
     cx.update_window(handle, |_, window, cx| {
@@ -28,7 +31,7 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
         assert!(pilot.epoch > old_epoch);
         assert_eq!(pilot.applied.context.as_deref(), Some("staging-eu"));
         assert_eq!(pilot.selected_node.as_deref(), Some("stg-cp-01"));
-        assert!(pilot.selected_service.is_none());
+        assert!(pilot.selected_service(cx).is_none());
         assert!(
             window
                 .find("applied-config")
@@ -59,7 +62,10 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
+        assert_eq!(
+            view.read(cx).selected_service(cx).as_deref(),
+            Some("auditd")
+        );
         assert!(
             window
                 .find("selected-service")
@@ -69,7 +75,7 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
         );
         // The selection scrolled the stacked details into view; the
         // filter is back at the page's top.
-        let scroll = view.read(cx).service_scroll.clone();
+        let scroll = view.read(cx).service_scroll(cx);
         scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
         window.render_frame(cx);
         window.click("service-filter", cx);
@@ -79,7 +85,10 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
+        assert_eq!(
+            view.read(cx).selected_service(cx).as_deref(),
+            Some("auditd")
+        );
         assert!(
             window
                 .within("services-region")
@@ -104,7 +113,10 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
+        assert_eq!(
+            view.read(cx).selected_service(cx).as_deref(),
+            Some("auditd")
+        );
         assert_eq!(
             window.within("services-region").find("auditd").selected(),
             Some(true)
@@ -134,12 +146,12 @@ fn service_arrows_step_through_the_filtered_rows(cx: &mut TestAppContext) {
             // A click puts the keyboard on the list; the selection is then
             // a service the filter hides.
             window.within("services-region").click("apid", cx);
-            view.update(cx, |pilot, _| {
-                pilot.selected_service = Some("auditd".into())
+            view.update(cx, |pilot, cx| {
+                pilot.select_service(Some("auditd".into()), cx)
             });
             window.press(key, cx);
             assert_eq!(
-                view.read(cx).selected_service.as_deref(),
+                view.read(cx).selected_service(cx).as_deref(),
                 Some("apid"),
                 "{key}"
             );
@@ -169,7 +181,7 @@ fn a_selected_service_brings_its_stacked_details_into_view(cx: &mut TestAppConte
                 if expanded {
                     view.update(cx, |view, cx| view.toggle_node_expanded(cx));
                 }
-                let scroll = view.read(cx).service_scroll.clone();
+                let scroll = view.read(cx).service_scroll(cx);
                 // Draws until no view asks for another frame, so the count
                 // after an action is the reveal's alone.
                 let settle = |window: &mut gpui_kit::Window, cx: &mut gpui_kit::App| {
@@ -238,8 +250,11 @@ fn a_selected_service_brings_its_stacked_details_into_view(cx: &mut TestAppConte
                 let before = scroll.offset().y;
                 window.press("down", cx);
                 check(window, cx, "keyboard", before);
-                assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
-                assert!(view.read(cx).service_focus.is_focused(window));
+                assert_eq!(
+                    view.read(cx).selected_service(cx).as_deref(),
+                    Some("auditd")
+                );
+                assert!(view.read(cx).service_focused(window, cx));
                 // A refresh keeps the selection and reveals nothing.
                 scroll.set_offset(gpui_kit::point(px(0.), px(0.)));
                 settle(window, cx);
@@ -253,7 +268,10 @@ fn a_selected_service_brings_its_stacked_details_into_view(cx: &mut TestAppConte
             window.render_frame(cx);
             window.simulate_next_frame(cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).selected_service.as_deref(), Some("auditd"));
+            assert_eq!(
+                view.read(cx).selected_service(cx).as_deref(),
+                Some("auditd")
+            );
             assert_eq!(scroll.offset().y, px(0.), "{case}: the refresh revealed");
         })
         .unwrap();
@@ -286,7 +304,10 @@ fn health_filter_narrows_the_list_and_shows_the_unhealthy_message(cx: &mut TestA
         window.click("health-all", cx);
         window.render_frame(cx);
         assert!(window.within("services-region").find("apid").visible());
-        assert_eq!(view.read(cx).selected_service.as_deref(), Some("kubelet"));
+        assert_eq!(
+            view.read(cx).selected_service(cx).as_deref(),
+            Some("kubelet")
+        );
     })
     .unwrap();
 }
@@ -409,7 +430,10 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
         window.render_frame(cx);
         assert_eq!(view.read(cx).page, Page::Nodes);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
-        assert_eq!(view.read(cx).selected_service.as_deref(), Some("kubelet"));
+        assert_eq!(
+            view.read(cx).selected_service(cx).as_deref(),
+            Some("kubelet")
+        );
         assert_eq!(
             view.read(cx).node_workspace.tab,
             super::super::nodes::NodeTab::Services

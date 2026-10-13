@@ -50,11 +50,14 @@ impl Pilot {
         )))
     }
 
-    /// Asks before restarting the selected service on the target node.
-    pub(super) fn confirm_restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(service_id) = self.selected_service.clone() else {
-            return;
-        };
+    /// Asks before restarting `service_id`, the tab's selection, on the
+    /// target node.
+    pub(super) fn confirm_restart(
+        &mut self,
+        service_id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (Some(fingerprint), Some(node), Some(cluster)) = (
             self.restart_fingerprint(&service_id),
             self.selected_summary().cloned(),

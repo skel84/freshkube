@@ -1,7 +1,8 @@
 //! The tab's drawing: its states, toolbar, list and the selected service's
 //! details.
-use super::super::{HealthFilter, NextService, Page, Pilot, PreviousService, clock};
+use super::super::{NextService, PreviousService, clock};
 use super::restart::RestartNotices;
+use super::{HealthFilter, NodeServices, NodeServicesEvent, ServiceNode, TalosReading};
 use crate::mutation::Operations;
 use crate::palette::palette;
 use crate::presentation::{self, Health};
@@ -20,17 +21,13 @@ use gpui_kit::*;
 
 const LIST_WIDTH: f32 = 330.;
 
-impl Pilot {
-    pub(in crate::desktop) fn render_services(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+impl Render for NodeServices {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let node = match self.services_state(cx) {
             Ok(node) => node,
             Err(state) => {
                 // Nothing to reveal; a later list mustn't jump for it.
-                self.reveal_service = false;
+                self.reveal = false;
                 return state;
             }
         };
@@ -41,7 +38,7 @@ impl Pilot {
         let wide = crate::screens::embedded_width(window) >= 760.;
         // Stacked, the details sit under the list: a new selection brings
         // them into view, or nothing would show that it changed.
-        let reveal = std::mem::take(&mut self.reveal_service) && !wide;
+        let reveal = std::mem::take(&mut self.reveal) && !wide;
         let detail = if reveal {
             self.revealing(detail, cx)
         } else {
@@ -67,14 +64,15 @@ impl Pilot {
         let body = v_flex()
             .gap(dp(12.))
             .children(super::super::states::stale_banner(
-                super::super::states::StaleTalos::of(&self.overview).as_ref(),
-                &self.on_config_action(cx),
+                self.state.stale_talos.as_ref(),
+                &self.on_config,
                 cx,
             ))
             .children(
-                self.services
-                    .error()
-                    .filter(|_| !self.overview.is_stale())
+                self.reading
+                    .error
+                    .as_ref()
+                    .filter(|_| self.state.stale_talos.is_none())
                     .map(|error| {
                         ui::warning_banner(
                             Some("Services didn't refresh.".into()),
@@ -87,17 +85,19 @@ impl Pilot {
             .child(toolbar)
             .child(split);
         super::super::states::page_scroll("services-page")
-            .track_scroll(&self.service_scroll)
+            .track_scroll(&self.scroll)
             .test_support()
             .child(body)
             .into_any_element()
     }
+}
 
+impl NodeServices {
     /// Wraps the stacked details so that, once laid out, the page scrolls
     /// the least that shows them whole, or their top when they are taller
     /// than the page.
     fn revealing(&self, detail: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        let scroll = self.service_scroll.clone();
+        let scroll = self.scroll.clone();
         let view = cx.entity().downgrade();
         div()
             .on_prepaint(move |details, window, _| {
@@ -125,34 +125,29 @@ impl Pilot {
     /// The node whose services show, or what shows instead: a config
     /// error, an unreachable cluster, the skeleton while loading, no node
     /// or a node that isn't responding.
-    fn services_state(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Result<presentation::NodeSummary, AnyElement> {
-        if let Some(error) = self.config_error.clone() {
+    fn services_state(&self, cx: &mut Context<Self>) -> Result<ServiceNode, AnyElement> {
+        let state = &self.state;
+        if let Some(error) = state.config_error.clone() {
             return Err(super::super::states::config_error_state(
                 error,
-                self.kubernetes_only.is_some(),
-                &self.on_config_action(cx),
+                state.kubernetes_only,
+                &self.on_config,
                 cx,
             ));
         }
-        if self.overview.data().is_none() {
-            if let Some(error) = self
-                .overview
-                .error()
-                .filter(|_| !self.overview.is_loading())
-            {
+        match &state.talos {
+            TalosReading::Answered { .. } => {}
+            TalosReading::Unreachable(error) => {
                 return Err(super::super::states::unreachable_state(
-                    self.applied.context.as_deref().unwrap_or_default(),
-                    error.to_owned(),
-                    &self.on_config_action(cx),
+                    &state.context,
+                    error.clone(),
+                    &self.on_config,
                     cx,
                 ));
             }
-            return Err(self.services_skeleton(cx));
+            TalosReading::Loading => return Err(self.services_skeleton(cx)),
         }
-        let Some(node) = self.selected_summary().cloned() else {
+        let Some(node) = state.node.clone() else {
             return Err(ui::empty_state(
                 IconName::Server,
                 "No node selected",
@@ -163,7 +158,7 @@ impl Pilot {
             )
             .into_any_element());
         };
-        if !node.responding && self.services.data().is_none() && !self.services.is_loading() {
+        if !node.responding && self.reading.services.is_none() && !self.reading.loading {
             return Err(ui::empty_state(
                 IconName::Unplug,
                 format!("{} isn't responding", node.name),
@@ -177,7 +172,7 @@ impl Pilot {
                         .primary()
                         .icon(IconName::LayoutDashboard)
                         .label("Back to Overview")
-                        .on_click(cx.listener(|view, _, window, cx| view.navigate(Page::Overview, window, cx)))
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(NodeServicesEvent::Overview)))
                         .into_any_element(),
                 ],
                 cx,
@@ -195,7 +190,7 @@ impl Pilot {
             .flex_wrap()
             .child(
                 div().w(dp(240.)).child(
-                    Input::new(&self.service_filter)
+                    Input::new(&self.filter)
                         .id("service-filter")
                         .aria_label("Filter services by name")
                         .small()
@@ -208,27 +203,26 @@ impl Pilot {
                     .small()
                     .child(
                         Button::new("health-all")
-                            .label(self.service_display.labels[0].clone())
+                            .label(self.display.labels[0].clone())
                             .selected(filter == HealthFilter::All),
                     )
                     .child(
                         Button::new("health-unhealthy")
-                            .label(self.service_display.labels[1].clone())
+                            .label(self.display.labels[1].clone())
                             .selected(filter == HealthFilter::Unhealthy),
                     )
                     .child(
                         Button::new("health-unknown")
-                            .label(self.service_display.labels[2].clone())
+                            .label(self.display.labels[2].clone())
                             .selected(filter == HealthFilter::Unknown),
                     )
                     .on_click(cx.listener(|view, selected: &Vec<usize>, _, cx| {
-                        view.health_filter = match selected.first() {
+                        let filter = match selected.first() {
                             Some(1) => HealthFilter::Unhealthy,
                             Some(2) => HealthFilter::Unknown,
                             _ => HealthFilter::All,
                         };
-                        view.rebuild_service_rows(cx);
-                        cx.notify();
+                        view.set_health_filter(filter, cx);
                     })),
             )
             .child(div().flex_1())
@@ -237,30 +231,30 @@ impl Pilot {
                     .ghost()
                     .small()
                     .size(dp(ui::CONTROL_HEIGHT))
-                    .icon(ui::refresh_icon(self.services.is_loading(), cx))
+                    .icon(ui::refresh_icon(self.reading.loading, cx))
                     .accessibility_label("Refresh services")
-                    .tooltip(if self.services.is_loading() {
+                    .tooltip(if self.reading.loading {
                         "Refreshing…"
                     } else {
                         "Refresh services"
                     })
-                    .disabled(self.services.is_loading() || self.selected_node.is_none())
-                    .on_click(cx.listener(|view, _, window, cx| view.refresh_services(window, cx))),
+                    .disabled(self.reading.loading || self.state.node.is_none())
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(NodeServicesEvent::Refresh))),
             )
     }
 
     fn services_list(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let visible = &self.service_display.visible;
-        let reported = self.services.data().is_some_and(|all| !all.is_empty());
+        let visible = &self.display.visible;
+        let reported = !self.reading.all().is_empty();
         v_flex()
             .id("services-region")
             .test_support()
             .aria_label("Services on the target node; use Up and Down to select")
             .key_context("TalosServices")
-            .track_focus(&self.service_focus)
-            .on_action(cx.listener(|view, _: &PreviousService, _, cx| view.step_service(-1, cx)))
-            .on_action(cx.listener(|view, _: &NextService, _, cx| view.step_service(1, cx)))
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|view, _: &PreviousService, _, cx| view.step(-1, cx)))
+            .on_action(cx.listener(|view, _: &NextService, _, cx| view.step(1, cx)))
             .p_1()
             .gap(dp(1.))
             .rounded(px(10.))
@@ -269,7 +263,7 @@ impl Pilot {
             .bg(p.surface)
             .when(visible.is_empty(), |this| {
                 this.child(div().px_2p5().py_3p5().text_color(p.muted).child(
-                    if self.services.is_loading() {
+                    if self.reading.loading {
                         "Loading services…"
                     } else if !reported {
                         "This node didn't report any services."
@@ -280,7 +274,7 @@ impl Pilot {
             })
             .children(visible.iter().map(|service| {
                 let health = presentation::service_health(service);
-                let selected = self.selected_service.as_ref() == Some(&service.id);
+                let selected = self.selected.as_ref() == Some(&service.id);
                 let id = service.id.clone();
                 h_flex()
                     .id(SharedString::from(service.id.clone()))
@@ -335,20 +329,16 @@ impl Pilot {
                             .child(service.state.clone()),
                     )
                     .on_click(cx.listener(move |view, _, window, cx| {
-                        view.selected_service = Some(id.clone());
-                        view.reveal_service = true;
-                        window.focus(&view.service_focus, cx);
+                        view.selected = Some(id.clone());
+                        view.reveal = true;
+                        window.focus(&view.focus, cx);
                         cx.notify();
                     }))
             }))
             .into_any_element()
     }
 
-    fn service_detail(
-        &self,
-        node: &presentation::NodeSummary,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn service_detail(&self, node: &ServiceNode, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let frame = v_flex()
             .id("selected-service")
@@ -361,13 +351,8 @@ impl Pilot {
             .border_color(p.line)
             .bg(p.surface)
             .min_w_0();
-        let Some(service) = self
-            .services
-            .data()
-            .and_then(|services| {
-                presentation::selected_service(services, self.selected_service.as_deref())
-            })
-            .cloned()
+        let Some(service) =
+            presentation::selected_service(self.reading.all(), self.selected.as_deref()).cloned()
         else {
             return frame
                 .aria_label("No service selected")
@@ -388,8 +373,8 @@ impl Pilot {
             .filter(|message| !message.is_empty())
             .unwrap_or_else(|| "No health message available".into());
         let snapshot = self
-            .services
-            .last_successful()
+            .reading
+            .last_successful
             .map(clock)
             .unwrap_or_else(|| "not yet refreshed".into());
         let row = |label: &'static str, value: AnyElement| {
@@ -414,15 +399,15 @@ impl Pilot {
             .filter(|notice| {
                 notice.node == node.name
                     && notice.service == service.id
-                    && self
-                        .overview
-                        .data()
-                        .is_some_and(|cluster| cluster.name == notice.context)
+                    && matches!(
+                        &self.state.talos,
+                        TalosReading::Answered { cluster } if *cluster == notice.context
+                    )
             });
         let busy = Operations::current(cx);
         let restart_blocked = if !node.responding {
             Some("The node isn't answering the Talos API".to_owned())
-        } else if self.services.is_loading() || self.services.is_stale() {
+        } else if self.reading.loading || self.reading.stale {
             Some("Wait for a fresh service list before restarting".to_owned())
         } else {
             busy.as_ref()
@@ -435,15 +420,8 @@ impl Pilot {
                     Button::new("kubelet-node-pods")
                         .link()
                         .small()
-                        .label(
-                            self.node_workspace
-                                .row()
-                                .map(|row| row.kubelet_pods.clone())
-                                .unwrap_or("Pods on this node".into()),
-                        )
-                        .on_click(cx.listener(|view, _, window, cx| {
-                            view.show_node_tab(super::super::nodes::NodeTab::Pods, window, cx)
-                        })),
+                        .label(self.state.kubelet_pods.clone())
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(NodeServicesEvent::Pods))),
                 )
             })
             .aria_label(format!(
@@ -524,7 +502,7 @@ impl Pilot {
                         h_flex()
                             .gap_2()
                             .child(snapshot)
-                            .when(self.services.is_stale(), |this| {
+                            .when(self.reading.stale, |this| {
                                 this.child(ui::tag(Tone::Warn, None, "Stale", cx))
                             })
                             .into_any_element(),
@@ -540,9 +518,7 @@ impl Pilot {
                             .small()
                             .icon(IconName::ScrollText)
                             .label(format!("Open {} logs", service.id))
-                            .on_click(
-                                cx.listener(|view, _, window, cx| view.open_logs(window, cx)),
-                            ),
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(NodeServicesEvent::Logs))),
                     )
                     .child(
                         Button::new("service-restart")
@@ -552,9 +528,12 @@ impl Pilot {
                             .label(restart_label)
                             .disabled(restart_blocked.is_some())
                             .when_some(restart_blocked, |this, reason| this.tooltip(reason))
-                            .on_click(
-                                cx.listener(|view, _, window, cx| view.confirm_restart(window, cx)),
-                            ),
+                            .on_click({
+                                let service = service.id.clone();
+                                cx.listener(move |_, _, _, cx| {
+                                    cx.emit(NodeServicesEvent::Restart(service.clone()))
+                                })
+                            }),
                     )
                     .child(
                         Button::new("copy-health-message")
@@ -626,7 +605,7 @@ impl Pilot {
                     ),
             );
         super::super::states::page_scroll("services-page")
-            .track_scroll(&self.service_scroll)
+            .track_scroll(&self.scroll)
             .test_support()
             .child(body)
             .into_any_element()
