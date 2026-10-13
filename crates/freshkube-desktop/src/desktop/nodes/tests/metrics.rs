@@ -441,3 +441,59 @@ fn node_metrics_keep_reading_while_the_pane_shows_a_screen(cx: &mut TestAppConte
     assert!(!visible);
     assert_ne!(after, generation, "leaving Nodes stops the read");
 }
+
+/// Node usage reads while Nodes shows, whatever its pane does, and drops
+/// its read the moment another page shows (#617's review, item 2).
+#[gpui_kit::test]
+fn node_usage_follows_the_nodes_page_through_its_pane(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            let reading = |pilot: &super::super::Pilot, cx: &gpui_kit::App| {
+                let metrics = &pilot.node_workspace.read(cx).metrics;
+                // Hidden, it holds no read and no delivery.
+                if !metrics.visible {
+                    assert!(metrics.delivery.is_none() && metrics.job.is_none());
+                }
+                metrics.visible
+            };
+            let rows = pilot.node_workspace.read(cx).rows.clone();
+            let (first, second) = (rows[0].key.clone(), rows[1].key.clone());
+            let mut steps = Vec::new();
+            pilot.navigate(Page::Nodes, window, cx);
+            pilot.open_node(first, window, cx);
+            pilot.show_node_tab(NodeTab::Processes, window, cx);
+            steps.push(("processes", reading(pilot, cx)));
+            pilot.open_node(second, window, cx);
+            assert_eq!(pilot.node_workspace.read(cx).tab, NodeTab::Processes);
+            steps.push(("another node on processes", reading(pilot, cx)));
+            pilot.show_node_tab(NodeTab::Logs, window, cx);
+            steps.push(("logs", reading(pilot, cx)));
+            pilot.close_node(window, cx);
+            steps.push(("closed", reading(pilot, cx)));
+            pilot.navigate(Page::Etcd, window, cx);
+            steps.push(("etcd", reading(pilot, cx)));
+            pilot.navigate(Page::Nodes, window, cx);
+            steps.push(("back after etcd", reading(pilot, cx)));
+            pilot.navigate(Page::Overview, window, cx);
+            steps.push(("overview", reading(pilot, cx)));
+            let name = rows[0].name.to_string();
+            pilot.open_node_by_name(&name, NodeTab::Storage, window, cx);
+            steps.push(("opened from overview", reading(pilot, cx)));
+            assert_eq!(
+                steps,
+                [
+                    ("processes", true),
+                    ("another node on processes", true),
+                    ("logs", true),
+                    ("closed", true),
+                    ("etcd", false),
+                    ("back after etcd", true),
+                    ("overview", false),
+                    ("opened from overview", true),
+                ]
+            );
+        });
+    })
+    .unwrap();
+}
