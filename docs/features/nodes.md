@@ -1,0 +1,15 @@
+# The Nodes workspace
+
+The behaviour of the Nodes page and its node pane, moved from [AGENTS.md](../../AGENTS.md) unchanged: the paragraph starting "The Nodes workspace (`desktop/nodes/`)…".
+
+Code:
+
+- `crates/freshkube-desktop/src/desktop/nodes/` is the workspace: `join.rs` (both summaries), `projection.rs`, `table.rs`, `cards.rs`, `header.rs`, `metrics.rs`, `resource.rs` and `view.rs`.
+- The pane embeds the node screens in `crates/freshkube-desktop/src/screens/` and the log view of `crates/freshkube-logs/src/`.
+
+Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit::test]`, found with `git grep -l '#\[test\]\|#\[tokio::test\]\|#\[gpui_kit::test\]'` run over `desktop/nodes/`):
+
+- `crates/freshkube-desktop/src/desktop/nodes/tests/`: `cards.rs`, `keys.rs`, `layout.rs`, `metrics.rs`, `pane.rs`, `projection.rs`, `table.rs`; inline tests in `cards.rs`, `header.rs`, `join.rs`, `metrics.rs`, `mod.rs`, `projection.rs`, `resource.rs`, `table.rs`, `view.rs`.
+
+The Nodes workspace (`desktop/nodes/`) joins both summaries when they change. Its table scrolls horizontally with its header when narrow, including beside the node's inspector, keeping each row's glyph and name at the left edge; names stay on one line and their row tooltip holds the full name. Beside the node's pane the table keeps its filter, groups and folded healthy rows, and a filter that hides the open node keeps its pane and selection. Its retained pane is an `Inspector` in `inspector::split` (width saved under `nodes`), and embeds the existing node screens and log view; they lay out by the inspector's width (`screens::set_node_pane_width`), not the window's. Its Pods list has its own field selector and filter, drops a previous node's watch by epoch, and opens objects in the main Resources pane. Node Events and YAML use a separate resource pane limited to those views. Enter on a node, a click on a pane tab or a click in the pane moves the keyboard into the pane: to the tab's list, document, log or screen, or to the tab strip for a screen that takes no keys. A click on a row leaves it on the table. Command-Shift-] and [ give it to the new tab's log (Logs) or screen (Processes, Storage, Network, Diagnostics), and to the table for the other tabs. On the table, H shows or folds the healthy nodes while they may fold (the filter and the pane type it); a right-click selects a node as the arrows do, the pane opening only if it was open, and offers Open and the fold, each with its key, and the healthy group keeps only its chevron. Escape steps back as on Resources: the filter clears, then leaves; a tab steps back through its own levels (the Pods list's filter, the Processes find, which clears and then leaves, the Events or YAML find and selection, a log's search and selection), then hands the keyboard to the table with the pane left open, an expanded one giving the table its room back first; the table clears its filter, then closes the pane, keeping the node selected.
+

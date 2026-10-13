@@ -82,6 +82,10 @@ jobs:
           python3 --version
           scripts/changelog.test.sh
           scripts/changelog.sh check
+      - name: Docs link check
+        # Every relative link and anchor in AGENTS.md and docs/ resolves. It
+        # runs here, not in the macOS job, which docs-only changes skip.
+        run: scripts/check-docs.sh
 
   check:
     name: Check, lint and test (macOS)

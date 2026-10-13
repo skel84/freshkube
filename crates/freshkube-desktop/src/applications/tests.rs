@@ -646,7 +646,7 @@ fn example_entries() -> Vec<String> {
 /// entry is open; only where each part opens follows the open one.
 #[gpui_kit::test]
 fn the_same_applications_show_whichever_entry_is_open(cx: &mut TestAppContext) {
-    use freshkube_core::applications::SessionKey;
+    use freshkube_delivery::applications::SessionKey;
     let (_runtime, handle, view) = open(cx, 1280., 880., |_| {});
     let first = cx
         .update_window(handle, |_, window, cx| {
@@ -798,7 +798,7 @@ fn an_unreachable_destination_says_so_by_name(cx: &mut TestAppContext) {
 fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
     use super::example;
     use crate::resources::{KubeAccess, KubeSource};
-    use freshkube_core::applications::{ArgoFound, ArgoScope};
+    use freshkube_delivery::applications::{ArgoFound, ArgoScope};
 
     let mut inputs = example::inputs(Variant::Acme);
     for session in &mut inputs.sessions {
@@ -843,9 +843,9 @@ fn a_live_read_follows_each_stages_current_freight() {
     use super::change::{Changes, LiveChanges};
     use super::example;
     use crate::resources::{KubeAccess, KubeSource};
-    use freshkube_core::applications::{ArgoFound, ArgoScope, KargoProjectRead};
-    use freshkube_core::delivery::kargo::parse_stage;
-    use freshkube_core::delivery::source::Source;
+    use freshkube_delivery::applications::{ArgoFound, ArgoScope, KargoProjectRead};
+    use freshkube_delivery::source::Source;
+    use freshkube_delivery::testing::parse_stage;
 
     let stage = |name: &str, current: &[&str]| {
         let items: serde_json::Map<String, serde_json::Value> = current
@@ -951,7 +951,7 @@ fn a_live_read_follows_the_workspace_and_the_entry_it_is(cx: &mut TestAppContext
 #[test]
 fn a_live_read_keys_each_entry_and_opens_the_open_one_here() {
     use crate::resources::{KubeAccess, KubeSource};
-    use freshkube_core::applications::{Asked, Inputs, SessionInputs, SessionKey};
+    use freshkube_delivery::applications::{Asked, Inputs, SessionInputs, SessionKey};
     let source = KubeSource {
         id: "connection-1".into(),
         context: "admin@lab".into(),

@@ -111,7 +111,7 @@ pub fn discover_contexts(sources: &[PathBuf]) -> KubeconfigReport {
 
 /// Reads each source once: the report, and every readable source merged into
 /// one kubeconfig as kubectl merges them (`None` when none could be read).
-pub(crate) fn load(sources: &[PathBuf]) -> (KubeconfigReport, Option<Kubeconfig>) {
+pub fn load(sources: &[PathBuf]) -> (KubeconfigReport, Option<Kubeconfig>) {
     let mut report = KubeconfigReport {
         sources: sources.to_vec(),
         revision: crate::ConfigurationRevision::from_kubeconfig_sources(sources),

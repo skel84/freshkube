@@ -4,7 +4,7 @@
 //! reads it as it is; the column reads nothing of its own.
 use super::*;
 use display::{AppRow, RULES, rule_index, rule_label};
-use freshkube_core::applications::Rule;
+use freshkube_delivery::applications::Rule;
 
 /// One application's row.
 #[derive(Clone, Debug, PartialEq)]

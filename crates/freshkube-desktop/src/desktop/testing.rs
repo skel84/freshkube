@@ -1,3 +1,7 @@
+//! The shared harness for the shell's UI tests: mounting a `Pilot` on example
+//! or explicit options, and the page, kind and node-tab openers. Dialogs run
+//! with reduced motion (the test clock can't advance their animation).
+
 use super::{GpuiOptions, NodeView, Page, Pilot};
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
