@@ -167,12 +167,14 @@ impl<T: Serialize + DeserializeOwned + Default> Document<T> {
         std::fs::set_permissions(temporary, permissions)
     }
 
+    /// Windows has no Unix mode: the file keeps what the directory gives it.
     #[cfg(not(unix))]
     fn give_permissions(
         &self,
         _temporary: &Path,
         _existing: Option<std::fs::Permissions>,
     ) -> std::io::Result<()> {
+        let _ = self.mode;
         Ok(())
     }
 }
