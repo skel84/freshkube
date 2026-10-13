@@ -111,7 +111,7 @@ As a mutation check, deleting the `measure_viewport` call in `measure_rows` make
 Profile a release build of the offline `fixture` example. It loads no cluster credentials. On macOS, with the screen unlocked, since a covered window or locked screen stops GPUI drawing:
 
 1. Apply two temporary patches, and revert both afterwards:
-    - In `desktop/mod.rs`, drop `#[cfg(debug_assertions)]` above the `FRESHKUBE_PAGE` check, so the page switch works in release.
+    - Drop the `#[cfg(any(debug_assertions, feature = "stress"))]` on `DebugOptions::from_env` (`debug_options.rs`), on `mod startup` and on the `open_startup_page` call in `Pilot::new` (`desktop/mod.rs`), so `FRESHKUBE_PAGE` works in release.
     - In `fixture.rs`, read the line count in `logs()` from an environment variable (here `PERF_FIXTURE_LOGS`) instead of the fixed 170.
 2. Build with `cargo build --release -p freshkube-desktop --example fixture`.
 3. Launch with `PERF_FIXTURE_LOGS=5000 FRESHKUBE_PAGE=logs target/release/examples/fixture &` and note the PID.

@@ -1,5 +1,6 @@
 use crate::{
-    DebugOptions, Theme,
+    DebugOptions,
+    debug_options::Theme,
     desktop::{Area, Page, tests::fixture},
     resources::{KubeAccess, Tab},
 };

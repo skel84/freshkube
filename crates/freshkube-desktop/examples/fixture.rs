@@ -2,7 +2,8 @@
 fn main() -> color_eyre::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     freshkube_desktop::run(
-        freshkube_desktop::GpuiOptions::fixture(),
+        freshkube_desktop::GpuiOptions::fixture()
+            .with_debug(freshkube_desktop::DebugOptions::from_env()),
         runtime.handle().clone(),
     )
 }

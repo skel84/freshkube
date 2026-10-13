@@ -3,7 +3,7 @@
 //! The caller owns Tokio and keeps it alive for the native event loop.
 use std::path::{Path, PathBuf};
 
-pub use debug_options::{DebugOptions, Sidebar, Theme};
+pub use debug_options::DebugOptions;
 
 #[derive(Clone, Debug)]
 pub struct GpuiOptions {
@@ -29,6 +29,7 @@ pub struct GpuiOptions {
     hold_talos: bool,
     /// The debug knobs the binary parsed (`DebugOptions::from_env`); startup
     /// reads them here, never from the environment.
+    #[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
     debug: DebugOptions,
 }
 
@@ -296,6 +297,9 @@ mod actions;
 mod applications;
 mod backend;
 mod connection_preferences;
+// Only a debug or stress build reads the knobs; elsewhere `from_env` is the
+// default and the parser has no caller.
+#[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
 mod debug_options;
 mod desktop;
 mod fixture;

@@ -10,14 +10,14 @@ use freshkube_ui::motion::Choice;
 
 /// `FRESHKUBE_THEME`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Theme {
+pub(crate) enum Theme {
     Light,
     Dark,
 }
 
 /// `FRESHKUBE_SIDEBAR`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Sidebar {
+pub(crate) enum Sidebar {
     Collapsed,
     Expanded,
 }
@@ -64,7 +64,7 @@ impl DebugOptions {
 
     /// Parses the knobs from `var`, which answers a name with its value. A
     /// value that is not UTF-8 counts as unset, except the dashboard's path.
-    pub fn parse(var: impl Fn(&str) -> Option<OsString>) -> Self {
+    pub(crate) fn parse(var: impl Fn(&str) -> Option<OsString>) -> Self {
         let text = |name: &str| var(name).and_then(|value| value.into_string().ok());
         Self {
             page: text("FRESHKUBE_PAGE"),
@@ -90,24 +90,14 @@ impl DebugOptions {
         }
     }
 
-    pub fn with_page(mut self, page: impl Into<String>) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_page(mut self, page: impl Into<String>) -> Self {
         self.page = Some(page.into());
         self
     }
-    pub fn with_kind(mut self, kind: impl Into<String>) -> Self {
-        self.kind = Some(kind.into());
-        self
-    }
-    pub fn with_theme(mut self, theme: Theme) -> Self {
+    #[cfg(test)]
+    pub(crate) fn with_theme(mut self, theme: Theme) -> Self {
         self.theme = Some(theme);
-        self
-    }
-    pub fn with_log_search(mut self, query: impl Into<String>) -> Self {
-        self.log_search = Some(query.into());
-        self
-    }
-    pub fn with_window_size(mut self, size: impl Into<String>) -> Self {
-        self.window_size = Some(size.into());
         self
     }
 

@@ -1,6 +1,9 @@
 //! Debug and stress entry points for fixture visual checks.
 use super::*;
-use crate::{DebugOptions, Sidebar, Theme};
+use crate::{
+    DebugOptions,
+    debug_options::{Sidebar, Theme},
+};
 
 pub(super) fn window_size(value: Option<&str>) -> Size<Pixels> {
     value
