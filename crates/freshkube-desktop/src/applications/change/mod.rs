@@ -24,15 +24,14 @@ mod tests;
 mod view;
 
 use std::collections::BTreeSet;
-use std::time::Instant;
 
 use chrono::{DateTime, Local, Utc};
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::resources::ResourceKind;
-use freshkube_core::snapshot::Snapshot;
 use freshkube_delivery::applications::SessionKey;
 use freshkube_delivery::change::{Change, Destination, Object, Phase, Reach, Shows, Stage, Target};
 use freshkube_delivery::join::Confidence;
+use freshkube_reads::Loader;
 use freshkube_ui::inspector::{self, InspectorSplit, Pane, Stacked};
 use freshkube_ui::table::{self as kit, TableState};
 use freshkube_ui::ui::Tone;
@@ -40,7 +39,6 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::links::Connections;
-use crate::backend::OwnedJob;
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{LogsAt, LogsRequest, ResourceLink, Tab, model::ObjectRef};
@@ -238,12 +236,10 @@ pub(crate) struct ChangePage {
     /// What reads the change, and the read: its answer, its failure, and
     /// whether one is in flight.
     fetch: Fetch,
-    snapshot: Snapshot<Change, String, String>,
-    pending: bool,
-    job: Option<OwnedJob>,
-    task: Option<Task<()>>,
-    /// When the shown change's answer arrived, on the executor's clock.
-    read_at: Option<Instant>,
+    /// The read, keyed by the change, and the work in flight. It is hidden
+    /// while the page is, and its answer's age decides whether showing
+    /// reads.
+    loader: Loader<Change, String>,
     visible: bool,
     /// The window the page shows in, where an answer selects its Stage.
     window: AnyWindowHandle,
@@ -305,16 +301,14 @@ impl ChangePage {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let change = fetch.unread();
+        let mut loader = Loader::default();
+        loader.set_visible(visible, read::ON_SHOW, cx);
         let mut page = Self {
             page_link: page_link(&change),
             copied: false,
             change,
             fetch,
-            snapshot: Snapshot::default(),
-            pending: false,
-            job: None,
-            task: None,
-            read_at: None,
+            loader,
             visible,
             window: window.window_handle(),
             stage: stage.map(str::to_owned),
