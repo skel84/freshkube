@@ -14,7 +14,7 @@ pub(in crate::desktop) struct Navigation {
     pub(in crate::desktop) resource_kind: ResourceKind,
     pub(in crate::desktop) last_kind: ResourceKind,
     /// The kind each built-in group showed last, by group slug.
-    pub(in crate::desktop) group_kinds: BTreeMap<&'static str, String>,
+    pub(super) group_kinds: BTreeMap<&'static str, String>,
     /// The custom kind shown last, which Custom Resources opens again.
     pub(in crate::desktop) last_custom: Option<ResourceKind>,
     /// The Control plane page shown last.
@@ -25,24 +25,24 @@ pub(in crate::desktop) struct Navigation {
     /// The expanded column's lines, keyboard and scroll.
     pub(in crate::desktop) column_list: freshkube_ui::source_list::SourceList<ColumnKey>,
     /// The column's line that `column_reveal` lands on, derived with it.
-    pub(in crate::desktop) column_reveal_line: Option<usize>,
+    pub(super) column_reveal_line: Option<usize>,
     /// Whether the column's rows to reveal have all arrived.
-    pub(in crate::desktop) column_settled: bool,
+    pub(super) column_settled: bool,
     /// Whether what the column shows changed since its lines were derived.
-    pub(in crate::desktop) column_stale: bool,
+    pub(super) column_stale: bool,
     /// A column row to scroll into view on the next frame.
     pub(in crate::desktop) column_reveal: Option<ColumnReveal>,
     /// The column row scrolled into view and waiting to clear the fades.
-    pub(in crate::desktop) column_reveal_pass: Option<ColumnReveal>,
+    pub(super) column_reveal_pass: Option<ColumnReveal>,
     /// The icon rail, which scrolls when the window is short or the text
     /// large.
     pub(in crate::desktop) rail_scroll: ScrollHandle,
     /// The collapsed column's icons, which scroll in the same way.
-    pub(in crate::desktop) compact_column_scroll: ScrollHandle,
+    pub(super) compact_column_scroll: ScrollHandle,
     /// The active area, and the room it had, last scrolled into view.
-    pub(in crate::desktop) rail_revealed: Option<(Area, Room)>,
+    pub(super) rail_revealed: Option<(Area, Room)>,
     /// The rail button scrolled into view and waiting to clear the fades.
-    pub(in crate::desktop) rail_reveal_pass: Option<(Area, Room)>,
+    pub(super) rail_reveal_pass: Option<(Area, Room)>,
     /// The Observability column's list, which scrolls when the window is
     /// short or the text large.
     pub(in crate::desktop) obs_column_scroll: ScrollHandle,
@@ -87,9 +87,7 @@ impl Navigation {
             rail_marks: Default::default(),
         }
     }
-}
 
-impl Navigation {
     pub(in crate::desktop) fn column_collapsed(&self, window: &Window) -> bool {
         self.column_state.collapsed_in(window)
     }
@@ -122,7 +120,8 @@ impl Navigation {
         }
     }
 
-    /// The fixed sidebar row the page shown sits on.
+    /// The fixed sidebar row the page shown sits on. `Pilot::show_row`
+    /// (`pages.rs`) is its inverse: the two tables must agree for Ctrl-Tab.
     pub(in crate::desktop) fn current_row(&self) -> usize {
         match self.page {
             Page::Overview => 0,

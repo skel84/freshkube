@@ -435,7 +435,9 @@ impl Pilot {
         self.navigate_from_keyboard(page, window, cx);
     }
 
-    pub(super) fn show_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens a fixed sidebar row. `Navigation::current_row` is its inverse:
+    /// keep the two tables in step.
+    fn show_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.kubernetes_only.is_some() && row >= 6 {
             return;
         }
