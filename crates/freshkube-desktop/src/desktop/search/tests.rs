@@ -67,9 +67,9 @@ fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
             assert!(!window.has_active_dialog(cx));
             let view = pilot.read(cx);
             if query == "Security" {
-                assert_eq!(view.page, Page::Security);
+                assert_eq!(view.navigation.page, Page::Security);
             } else if query == "talos-wk-fra1-02" {
-                assert_eq!(view.page, Page::Nodes);
+                assert_eq!(view.navigation.page, Page::Nodes);
                 assert_eq!(
                     view.node_workspace
                         .read(cx)
@@ -86,7 +86,7 @@ fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
                 } else {
                     &secret
                 };
-                assert_eq!(view.page, Page::Resources);
+                assert_eq!(view.navigation.page, Page::Resources);
                 assert_eq!(view.resources.read(cx).detail_identity(cx), Some(expected));
                 assert_eq!(view.resources.read(cx).detail_tab(cx), Tab::Overview);
                 assert!(
@@ -129,7 +129,7 @@ fn refusal_is_visible_and_other_groups_still_open(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert_eq!(pilot.read(cx).page, Page::Overview));
+    cx.update(|cx| assert_eq!(pilot.read(cx).navigation.page, Page::Overview));
 }
 
 #[gpui_kit::test]

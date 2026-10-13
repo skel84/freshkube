@@ -87,16 +87,16 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
             window.find("nav-k8s-deployments.apps").selected(),
             Some(true)
         );
-        let focus = view.read(cx).column_list.focus_handle().clone();
+        let focus = view.read(cx).navigation.column_list.focus_handle().clone();
         window.focus(&focus, cx);
         window.render_frame(cx);
-        let cursor = |cx: &gpui_kit::App| view.read(cx).column_list.cursor().cloned();
+        let cursor = |cx: &gpui_kit::App| view.read(cx).navigation.column_list.cursor().cloned();
         // The keyboard starts on the page's row.
         assert_eq!(cursor(cx), Some(ColumnKey::Kind("pods")));
         window.press("down", cx);
         assert_eq!(cursor(cx), Some(ColumnKey::Kind("deployments.apps")));
         assert_eq!(
-            view.read(cx).resource_kind.key(),
+            view.read(cx).navigation.resource_kind.key(),
             "pods",
             "only Enter opens"
         );
@@ -113,6 +113,7 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
         window.press("end", cx);
         let last = view
             .read(cx)
+            .navigation
             .column_list
             .lines()
             .iter()
@@ -126,8 +127,11 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
         window.press("down", cx);
         window.press("down", cx);
         window.press("enter", cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
-        assert_eq!(view.read(cx).resource_kind.key(), "deployments.apps");
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
+        assert_eq!(
+            view.read(cx).navigation.resource_kind.key(),
+            "deployments.apps"
+        );
         window.render_frame(cx);
         assert_eq!(
             window.find("nav-k8s-deployments.apps").selected(),
@@ -144,7 +148,10 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
         window.press("down", cx);
         window.press("escape", cx);
         assert!(!focus.is_focused(window));
-        assert_eq!(view.read(cx).resource_kind.key(), "deployments.apps");
+        assert_eq!(
+            view.read(cx).navigation.resource_kind.key(),
+            "deployments.apps"
+        );
     })
     .unwrap();
 }
@@ -154,7 +161,7 @@ fn the_column_moves_and_opens_with_the_keyboard(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_column_hands_the_keyboard_to_the_page_when_it_folds(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    let focus = cx.update(|cx| view.read(cx).column_list.focus_handle().clone());
+    let focus = cx.update(|cx| view.read(cx).navigation.column_list.focus_handle().clone());
     let focus_column = |cx: &mut TestAppContext| {
         cx.update_window(handle, |_, window, cx| {
             window.focus(&focus, cx);
@@ -201,7 +208,7 @@ fn the_column_hands_the_keyboard_to_the_page_when_it_folds(cx: &mut TestAppConte
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(!view.read(cx).area.has_column());
+        assert!(!view.read(cx).navigation.area.has_column());
         assert!(!focus.is_focused(window));
         assert!(window.focused(cx).is_some());
     })
@@ -223,7 +230,7 @@ fn the_column_reaches_every_namespace(cx: &mut TestAppContext) {
             .map(|ix| SharedString::from(format!("team-{ix:02}")))
             .collect();
         view.update(cx, |pilot, cx| {
-            pilot.column_state.namespaces = names
+            pilot.navigation.column_state.namespaces = names
                 .iter()
                 .map(|name| (name.clone(), "1".into()))
                 .collect();
@@ -239,6 +246,7 @@ fn the_column_reaches_every_namespace(cx: &mut TestAppContext) {
         );
         let pilot = view.read(cx);
         let Some(Line::Menu(menu)) = pilot
+            .navigation
             .column_list
             .lines()
             .iter()
@@ -274,7 +282,7 @@ fn the_column_draws_for_itself_alone(cx: &mut TestAppContext) {
         .is_empty()
     );
     assert!(chrome_redrawn(cx, handle, |_, cx| health.update(cx, |_, cx| cx.notify())).is_empty());
-    let focus = cx.update(|cx| view.read(cx).column_list.focus_handle().clone());
+    let focus = cx.update(|cx| view.read(cx).navigation.column_list.focus_handle().clone());
     cx.update_window(handle, |_, window, cx| window.focus(&focus, cx))
         .unwrap();
     cx.run_until_parked();
@@ -289,7 +297,7 @@ fn the_column_draws_for_itself_alone(cx: &mut TestAppContext) {
         ["chrome.column"]
     );
     assert_eq!(
-        cx.update(|cx| view.read(cx).column_list.cursor().cloned()),
+        cx.update(|cx| view.read(cx).navigation.column_list.cursor().cloned()),
         Some(super::super::shell::ColumnKey::Kind("deployments.apps"))
     );
 }
@@ -351,7 +359,7 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("section-observability", cx);
-        assert_eq!(pilot.read(cx).page, Page::Observability);
+        assert_eq!(pilot.read(cx).navigation.page, Page::Observability);
         window.render_frame(cx);
         assert!(window.find("refresh").visible());
         window.click("nav-collapse", cx);
@@ -445,7 +453,8 @@ fn collapsed_observability_column_scrolls_its_active_item_into_view(cx: &mut Tes
             );
             // Nor does a fade over a cut edge dim it (#406).
             let fade = crate::ui::dp_px(28., window);
-            let (top, bottom) = super::super::shell::cut_edges(&pilot.read(cx).obs_column_scroll);
+            let (top, bottom) =
+                super::super::shell::cut_edges(&pilot.read(cx).navigation.obs_column_scroll);
             assert!(
                 (!top || item.top() >= list.top() + fade - px(0.5))
                     && (!bottom || item.bottom() <= list.bottom() - fade + px(0.5)),
@@ -503,8 +512,8 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
         let edges = |pilot: &Entity<Pilot>, cx: &gpui_kit::App| {
             let pilot = pilot.read(cx);
             (
-                cut_edges(&pilot.rail_scroll),
-                cut_edges(&pilot.obs_column_scroll),
+                cut_edges(&pilot.navigation.rail_scroll),
+                cut_edges(&pilot.navigation.obs_column_scroll),
             )
         };
         // Overview, at the top, leaves only the rail's bottom cut.
@@ -518,7 +527,7 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
         // bottom; the rail shows Observability clear of its fades.
         let column = edges(&pilot, cx).1;
         assert!(column.1, "{column:?}");
-        let rail = pilot.read(cx).rail_scroll.clone();
+        let rail = pilot.read(cx).navigation.rail_scroll.clone();
         assert_clear_of_fades(window, "nav-rail", "nav-observability", &rail);
         for _ in 0..30 {
             window.scroll(
@@ -548,9 +557,15 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.render_frame(cx);
         let pilot = pilot.read(cx);
-        assert_eq!(cut_edges(&pilot.rail_scroll), (false, false));
-        assert_eq!(cut_edges(pilot.column_list.scroll()), (false, false));
-        assert_eq!(cut_edges(&pilot.obs_column_scroll), (false, false));
+        assert_eq!(cut_edges(&pilot.navigation.rail_scroll), (false, false));
+        assert_eq!(
+            cut_edges(pilot.navigation.column_list.scroll()),
+            (false, false)
+        );
+        assert_eq!(
+            cut_edges(&pilot.navigation.obs_column_scroll),
+            (false, false)
+        );
     })
     .unwrap();
 }
@@ -594,7 +609,7 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
         let page = pilot.read(cx).observability.clone();
         page.update(cx, |page, cx| page.open(Destination::Deployments, cx));
         settle(window, cx);
-        let scroll = pilot.read(cx).obs_column_scroll.clone();
+        let scroll = pilot.read(cx).navigation.obs_column_scroll.clone();
         assert_clear_of_fades(
             window,
             "obs-navigation-scroll",
@@ -616,7 +631,7 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
         window.click("nav-collapse", cx);
         settle(window, cx);
         assert!(!pilot.read(cx).column_collapsed(window));
-        let column = pilot.read(cx).column_list.scroll().clone();
+        let column = pilot.read(cx).navigation.column_list.scroll().clone();
         assert_clear_of_fades(window, "nav-column-list", "nav-obs-deployments", &column);
         // From a short column, a kind low in a long group; the column's
         // scroll is shared by every area.
@@ -629,7 +644,7 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
         // And the rail shows Control plane, low in it, as Command-9 opens.
         pilot.update(cx, |pilot, cx| pilot.navigate(Page::Lifecycle, window, cx));
         settle(window, cx);
-        let rail = pilot.read(cx).rail_scroll.clone();
+        let rail = pilot.read(cx).navigation.rail_scroll.clone();
         assert_clear_of_fades(window, "nav-rail", "nav-control-plane", &rail);
     })
     .unwrap();
@@ -672,7 +687,8 @@ fn a_rail_wheel_redraws_the_rail_alone(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     let after = chrome_counts();
-    let scrolled = cx.read(|cx| super::super::shell::cut_edges(&pilot.read(cx).rail_scroll).0);
+    let scrolled =
+        cx.read(|cx| super::super::shell::cut_edges(&pilot.read(cx).navigation.rail_scroll).0);
     assert!(scrolled, "the wheel scrolled the rail");
     assert!(
         after[1] > before[1],

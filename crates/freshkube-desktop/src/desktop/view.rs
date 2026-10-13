@@ -21,9 +21,9 @@ impl Render for Pilot {
         let column = self.column_width(window);
         if column.is_none() {
             // A kind outside every column has no row to reveal.
-            self.column_reveal = None;
+            self.navigation.column_reveal = None;
         }
-        let page = match self.page {
+        let page = match self.navigation.page {
             // Not cached: a cached view that draws again makes every cached
             // view inside it draw again, so a cursor moving over one chart
             // would redraw all the panels. Drawn with the shell, the page
@@ -83,7 +83,7 @@ impl Render for Pilot {
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
             // Each handler is there only while it can act, so the menus grey
             // it otherwise and its key goes on to whatever else binds it.
-            .when(self.area.has_column(), |this| {
+            .when(self.navigation.area.has_column(), |this| {
                 this.on_action(
                     cx.listener(|view, _: &ToggleColumn, window, cx| {
                         view.toggle_column(window, cx)
@@ -107,7 +107,7 @@ impl Render for Pilot {
                 ))
             })
             .on_action(cx.listener(|view, _: &OpenSettings, _, cx| {
-                view.settings_open = true;
+                view.navigation.settings_open = true;
                 cx.notify();
             }))
             .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
@@ -178,7 +178,7 @@ impl Pilot {
         cx: &App,
     ) -> Option<Entity<freshkube_ui::table::FlashLayer<crate::resources::model::ResourceIdentity>>>
     {
-        match self.page {
+        match self.navigation.page {
             Page::Resources => self.resources.read(cx).flash_layer(),
             _ => None,
         }
@@ -194,7 +194,7 @@ impl Pilot {
         &self,
         cx: &App,
     ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
-        match self.page {
+        match self.navigation.page {
             Page::Resources => self.resources.read(cx).loading_motion(),
             Page::Observability => self.observability.read(cx).loading_motion(cx),
             Page::Applications => self.applications.read(cx).loading_motion(cx),

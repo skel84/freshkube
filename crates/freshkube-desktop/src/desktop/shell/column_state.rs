@@ -48,14 +48,14 @@ impl ColumnState {
 impl Pilot {
     pub(in crate::desktop) fn column_collapsed(&self, window: &Window) -> bool {
         if window.viewport_size().width / ui::dp_px(1., window) < 1000. {
-            self.column_state.narrow_override.unwrap_or(true)
+            self.navigation.column_state.narrow_override.unwrap_or(true)
         } else {
-            self.column_state.collapsed
+            self.navigation.column_state.collapsed
         }
     }
     /// The column's width, when the area has one.
     pub(in crate::desktop) fn column_width(&self, window: &Window) -> Option<f32> {
-        self.area.has_column().then(|| {
+        self.navigation.area.has_column().then(|| {
             if self.column_collapsed(window) {
                 52.
             } else {
@@ -71,15 +71,21 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.area.has_column() {
+        if !self.navigation.area.has_column() {
             return;
         }
         let collapsed = !self.column_collapsed(window);
-        self.column_state.collapsed = collapsed;
-        self.column_state.narrow_override =
+        self.navigation.column_state.collapsed = collapsed;
+        self.navigation.column_state.narrow_override =
             (window.viewport_size().width / ui::dp_px(1., window) < 1000.).then_some(collapsed);
-        self.column_state.save(cx);
-        if collapsed && self.column_list.focus_handle().is_focused(window) {
+        self.navigation.column_state.save(cx);
+        if collapsed
+            && self
+                .navigation
+                .column_list
+                .focus_handle()
+                .is_focused(window)
+        {
             self.focus_page(window, cx);
         }
         self.notify_cached(cx);
@@ -95,7 +101,12 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.column_list.focus_handle().is_focused(window) {
+        if self
+            .navigation
+            .column_list
+            .focus_handle()
+            .is_focused(window)
+        {
             cx.defer_in(window, |this, window, cx| this.focus_page(window, cx));
         }
     }

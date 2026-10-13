@@ -24,7 +24,7 @@ impl Pilot {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
             named = names.then(|| context.clone());
             status
-        } else if (self.page == Page::Nodes && self.node_workspace.read(cx).shows_logs())
+        } else if (self.navigation.page == Page::Nodes && self.node_workspace.read(cx).shows_logs())
             && self.config_error.is_none()
         {
             self.render_logs_status(cx)
@@ -255,13 +255,13 @@ impl Pilot {
     /// derives its segment when its data changes, so this only reads it;
     /// only the visible page is read, so a hidden one's never shows.
     fn page_segment(&mut self, cx: &mut Context<Self>) -> Option<(SharedString, Segment)> {
-        let id: SharedString = match self.page {
+        let id: SharedString = match self.navigation.page {
             Page::Resources => "resource-scope".into(),
             Page::Observability => "obs-scope".into(),
             Page::SystemServices if self.kubernetes_only.is_some() => return None,
             page => format!("{}-scope", page.slug()).into(),
         };
-        let page = self.pages.get(&self.page.id())?.clone();
+        let page = self.pages.get(&self.navigation.page.id())?.clone();
         Some((id, page.status(cx)?))
     }
 }

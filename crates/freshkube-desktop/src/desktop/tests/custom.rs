@@ -15,7 +15,7 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
         window.click("nav-collapse", cx);
         window.render_frame(cx);
         assert_eq!(window.find("nav-k8s-group-custom").selected(), Some(true));
-        assert_eq!(view.read(cx).page, Page::Overview);
+        assert_eq!(view.read(cx).navigation.page, Page::Overview);
         assert!(shown_in_column(window, "nav-k8s-api-velero.io"));
         let group = "nav-k8s-api-cert-manager.io";
         assert_eq!(window.find(group).expanded(), Some(false));
@@ -36,9 +36,9 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
         reveal(window, cx, certificates);
         window.click(certificates, cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(
-            view.read(cx).resource_kind.key(),
+            view.read(cx).navigation.resource_kind.key(),
             "certificates.cert-manager.io"
         );
         assert_eq!(window.find(certificates).selected(), Some(true));
@@ -51,7 +51,7 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
         area(window, cx, "nav-overview");
         assert!(window.try_find(certificates).is_none());
         area(window, cx, "nav-k8s-group-custom");
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(window.find(certificates).selected(), Some(true));
         let kind = crate::resources::example::kind("certificaterequests.cert-manager.io").unwrap();
         view.update(cx, |view, cx| view.open_kind(kind, window, cx));
@@ -183,17 +183,23 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
             window.find("nav-k8s-custom-status").label(),
             Some("Discovering…")
         );
-        assert_eq!(view.read(cx).column_reveal, Some(ColumnReveal::Custom));
+        assert_eq!(
+            view.read(cx).navigation.column_reveal,
+            Some(ColumnReveal::Custom)
+        );
         window.scroll(
             "nav-column",
             gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(40.))),
             cx,
         );
-        assert_eq!(view.read(cx).column_reveal, None);
+        assert_eq!(view.read(cx).navigation.column_reveal, None);
 
         view.update(cx, reopen);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).column_reveal, Some(ColumnReveal::Custom));
+        assert_eq!(
+            view.read(cx).navigation.column_reveal,
+            Some(ColumnReveal::Custom)
+        );
         view.update(cx, |view, cx| {
             view.custom.update(cx, |custom, cx| custom.retry(cx))
         });
@@ -204,7 +210,7 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).column_reveal, None);
+        assert_eq!(view.read(cx).navigation.column_reveal, None);
         assert!(shown_in_column(window, "nav-k8s-api-velero.io"));
         assert!(window.try_find(certificates).is_some());
     })

@@ -54,7 +54,7 @@ fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext)
     let (_runtime, handle, view) = mount_kubernetes_only(cx, kubeconfig_file("ctrl-tab"), None);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Overview);
+        assert_eq!(view.read(cx).navigation.page, Page::Overview);
         for (page, kind) in [
             (Page::Nodes, None),
             (Page::Resources, Some("namespaces")),
@@ -65,19 +65,19 @@ fn kubernetes_only_ctrl_tab_skips_pages_that_need_talos(cx: &mut TestAppContext)
         ] {
             window.press("ctrl-tab", cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, page);
+            assert_eq!(view.read(cx).navigation.page, page);
             if let Some(kind) = kind {
-                assert_eq!(view.read(cx).resource_kind.key(), kind);
+                assert_eq!(view.read(cx).navigation.resource_kind.key(), kind);
             }
         }
         for key in ["secondary-6", "secondary-7", "secondary-8", "secondary-9"] {
             window.press(key, cx);
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, Page::Overview);
+            assert_eq!(view.read(cx).navigation.page, Page::Overview);
         }
         window.press("ctrl-shift-tab", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(window.find("resource-body").focused(), Some(true));
     })
     .unwrap();
@@ -92,7 +92,7 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
         kubernetes_status(window).starts_with("Couldn't connect to lab: ")
     });
     cx.update_window(handle, |_, window, cx| {
-        assert_eq!(view.read(cx).page, Page::Overview);
+        assert_eq!(view.read(cx).navigation.page, Page::Overview);
         view.update(cx, |view, cx| view.open_builtin("pods", window, cx));
     })
     .unwrap();
@@ -105,7 +105,7 @@ fn kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one(
         let pilot = view.read(cx);
         assert_eq!(pilot.contexts, ["lab", "staging"]);
         assert_eq!(pilot.applied.context.as_deref(), Some("lab"));
-        assert_eq!(pilot.page, Page::Resources);
+        assert_eq!(pilot.navigation.page, Page::Resources);
         assert_eq!(pilot.context_display.detail.as_ref(), "Couldn't connect");
         contexts(window, cx);
         assert_eq!(window.find(("context", 0usize)).selected(), Some(true));
@@ -174,7 +174,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         }) {
             view.update(cx, |view, cx| view.navigate(page, window, cx));
             window.render_frame(cx);
-            assert_eq!(view.read(cx).page, page);
+            assert_eq!(view.read(cx).navigation.page, page);
             assert!(window.find("needs-talosconfig").visible(), "{page:?}");
         }
         // Monitoring reads the cluster's Prometheus, which needs no Talos.
@@ -186,7 +186,7 @@ fn kubernetes_only_talos_pages_ask_for_a_talosconfig(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("browse-kubernetes", cx);
         window.render_frame(cx);
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert!(window.try_find("needs-talosconfig").is_none());
 
         view.update(cx, |view, cx| view.navigate(Page::Etcd, window, cx));
@@ -213,7 +213,7 @@ fn kubernetes_only_control_plane_offers_a_talosconfig(cx: &mut TestAppContext) {
         window.render_frame(cx);
         area(window, cx, "nav-control-plane");
         // The area shows why it is empty and keeps the page.
-        assert_eq!(view.read(cx).page, Page::Overview);
+        assert_eq!(view.read(cx).navigation.page, Page::Overview);
         assert!(window.try_find("nav-etcd").is_none());
         window.click("add-talosconfig", cx);
     })

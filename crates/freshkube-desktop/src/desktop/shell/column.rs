@@ -162,9 +162,9 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.area.has_column() {
+        if !self.navigation.area.has_column() {
             // A kind outside every column has no row to reveal.
-            self.column_reveal = None;
+            self.navigation.column_reveal = None;
             self.release_column_focus(window, cx);
             return None;
         }
@@ -174,31 +174,31 @@ impl Pilot {
         }
         self.derive_column(cx);
         let p = palette(cx);
-        if self.area == Area::Observability {
-            let scroll = self.column_list.scroll().clone();
+        if self.navigation.area == Area::Observability {
+            let scroll = self.navigation.column_list.scroll().clone();
             self.reveal_destination(false, &scroll, window, cx);
-        } else if let Some(key) = self.column_reveal.clone()
+        } else if let Some(key) = self.navigation.column_reveal.clone()
             && reveal_item(
-                self.column_list.scroll(),
-                &mut self.column_reveal_pass,
+                self.navigation.column_list.scroll(),
+                &mut self.navigation.column_reveal_pass,
                 key,
-                self.column_reveal_line,
+                self.navigation.column_reveal_line,
                 window,
             )
             // Rows still being discovered will grow the column; it is
             // revealed again once they arrive.
-            && self.column_settled
+            && self.navigation.column_settled
         {
-            self.column_reveal = None;
+            self.navigation.column_reveal = None;
         }
-        let list = source_list::list(&mut self.column_list, window, cx).on_scroll_wheel(
+        let list = source_list::list(&mut self.navigation.column_list, window, cx).on_scroll_wheel(
             cx.listener(|view, _, _, _| {
-                view.column_reveal = None;
-                view.column_reveal_pass = None;
+                view.navigation.column_reveal = None;
+                view.navigation.column_reveal_pass = None;
             }),
         );
-        let scroll = self.column_list.scroll().clone();
-        let footer = (self.area == Area::Observability).then(|| {
+        let scroll = self.navigation.column_list.scroll().clone();
+        let footer = (self.navigation.area == Area::Observability).then(|| {
             div()
                 .flex_none()
                 .px(dp(source_list::PADDING))
@@ -210,7 +210,7 @@ impl Pilot {
             v_flex()
                 .id("nav-column")
                 .test_support()
-                .aria_label(self.area.label())
+                .aria_label(self.navigation.area.label())
                 .w(dp(COLUMN_WIDTH))
                 .flex_none()
                 .h_full()
@@ -218,7 +218,7 @@ impl Pilot {
                 .border_r_1()
                 .border_color(p.line)
                 .child(source_list::title(
-                    self.area.label(),
+                    self.navigation.area.label(),
                     self.collapse_button(cx),
                     cx,
                 ))

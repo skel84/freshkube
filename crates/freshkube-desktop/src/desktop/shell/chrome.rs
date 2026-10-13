@@ -73,7 +73,7 @@ impl Chrome {
                 if chrome
                     .pilot
                     .upgrade()
-                    .is_some_and(|pilot| shows(pilot.read(cx).area))
+                    .is_some_and(|pilot| shows(pilot.read(cx).navigation.area))
                 {
                     chrome.redraw(cx);
                 }
@@ -149,7 +149,7 @@ impl ChromeParts {
                     let shows = column
                         .pilot
                         .upgrade()
-                        .is_some_and(|pilot| pilot.read(cx).area == Area::Applications);
+                        .is_some_and(|pilot| pilot.read(cx).navigation.area == Area::Applications);
                     if shows {
                         column.redraw(cx);
                     }

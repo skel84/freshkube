@@ -343,7 +343,7 @@ impl Pilot {
     /// names and, when that is the node pane's screen, Nodes around it.
     pub(super) fn shown_pages(&self, cx: &App) -> Vec<ScreenHandle> {
         let id = self.shown_id(cx);
-        let around = (id != self.page.id()).then(|| self.page.id());
+        let around = (id != self.navigation.page.id()).then(|| self.navigation.page.id());
         [Some(id), around]
             .into_iter()
             .flatten()
@@ -352,10 +352,10 @@ impl Pilot {
     }
 
     fn shown_id(&self, cx: &App) -> PageId {
-        (self.page == Page::Nodes)
+        (self.navigation.page == Page::Nodes)
             .then(|| self.node_workspace.read(cx).pane_screen())
             .flatten()
-            .unwrap_or(self.page.id())
+            .unwrap_or(self.navigation.page.id())
     }
 
     /// What a page asks of the shell.

@@ -159,7 +159,7 @@ pub(crate) fn screen<T: 'static>(pilot: &Entity<Pilot>, cx: &gpui_kit::App) -> E
 /// Choose through the Nodes page, then return to the previously visible view.
 pub(crate) fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
     let view = root_pilot(window, cx);
-    let page = view.read(cx).page;
+    let page = view.read(cx).navigation.page;
     let tab = view.read(cx).node_workspace.read(cx).tab;
     window.click("nav-nodes", cx);
     window.render_frame(cx);

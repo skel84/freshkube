@@ -35,7 +35,7 @@ impl Pilot {
             this.startup_selection(&debug, window, cx);
             let collapsed = debug.sidebar.map(|sidebar| sidebar == Sidebar::Collapsed);
             if let Some(collapsed) = collapsed {
-                this.column_state.preview(collapsed);
+                this.navigation.column_state.preview(collapsed);
                 this.notify_cached(cx);
                 cx.notify();
             }

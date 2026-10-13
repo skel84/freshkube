@@ -96,9 +96,9 @@ impl Pilot {
                     ),
                 ]
                 .into_iter()
-                .filter(|(_, _, area, _)| !minimal || self.area == *area)
+                .filter(|(_, _, area, _)| !minimal || self.navigation.area == *area)
                 .map(|(id, label, area, icon)| {
-                    let selected = self.area == area;
+                    let selected = self.navigation.area == area;
                     Button::new(SharedString::from(format!("section-{id}")))
                         .ghost()
                         .small()
@@ -170,7 +170,7 @@ impl Pilot {
                     .font_weight(ui::HEADING_WEIGHT)
                     .truncate()
                     .child(self.page_title())
-                    .when(self.page == Page::Nodes, |this| {
+                    .when(self.navigation.page == Page::Nodes, |this| {
                         this.cursor_pointer().on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|view, _, window, cx| view.close_node(window, cx)),
@@ -178,7 +178,7 @@ impl Pilot {
                     }),
             )
             .when_some(
-                (self.page == Page::Nodes)
+                (self.navigation.page == Page::Nodes)
                     .then(|| self.node_workspace.read(cx).crumb())
                     .flatten(),
                 |this, (node, tab)| {
@@ -468,11 +468,11 @@ impl Pilot {
         };
         Popover::new("settings-popover")
             .anchor(Anchor::TopRight)
-            .open(self.settings_open)
+            .open(self.navigation.settings_open)
             .on_open_change(move |open, window, cx| {
                 let open = *open;
                 _ = open_pilot.update(cx, |view, cx| {
-                    view.settings_open = open;
+                    view.navigation.settings_open = open;
                     cx.notify();
                 });
                 if !open {

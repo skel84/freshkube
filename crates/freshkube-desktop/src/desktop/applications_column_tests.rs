@@ -41,6 +41,7 @@ fn applications(
 fn lines(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<(String, Option<ColumnKey>)> {
     cx.update(|cx| {
         view.read(cx)
+            .navigation
             .column_list
             .lines()
             .iter()
@@ -76,7 +77,7 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
         "in the table's order, and no overrides section without one"
     );
     cx.update_window(handle, |_, window, cx| {
-        let rows = view.read(cx).column_list.lines();
+        let rows = view.read(cx).navigation.column_list.lines();
         assert!(!rows[0].row().unwrap().is_current(), "Changes doesn't show");
         let all = rows[1].row().unwrap();
         assert_eq!(all.counted().map(|c| c.as_ref()), Some("6"));
@@ -158,11 +159,11 @@ fn a_row_opens_its_application_and_all_applications_the_list(cx: &mut TestAppCon
 #[gpui_kit::test]
 fn the_column_opens_an_application_from_the_keyboard(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let focus = cx.update(|cx| view.read(cx).column_list.focus_handle().clone());
+    let focus = cx.update(|cx| view.read(cx).navigation.column_list.focus_handle().clone());
     cx.update_window(handle, |_, window, cx| {
         window.focus(&focus, cx);
         window.render_frame(cx);
-        let cursor = |cx: &gpui_kit::App| view.read(cx).column_list.cursor().cloned();
+        let cursor = |cx: &gpui_kit::App| view.read(cx).navigation.column_list.cursor().cloned();
         assert_eq!(cursor(cx), Some(ColumnKey::AllApplications));
         window.press("down", cx);
         assert_eq!(
@@ -187,7 +188,7 @@ fn the_column_opens_an_application_from_the_keyboard(cx: &mut TestAppContext) {
             "argocd:applicationset/argocd/catalog"
         );
         assert!(open.read(cx).focus_handle().is_focused(window));
-        assert_eq!(view.read(cx).page, Page::Applications);
+        assert_eq!(view.read(cx).navigation.page, Page::Applications);
     })
     .unwrap();
 }
@@ -220,7 +221,7 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
                 retry,
                 "{variant:?}"
             );
-            let all = view.read(cx).column_list.lines()[0]
+            let all = view.read(cx).navigation.column_list.lines()[0]
                 .row()
                 .unwrap()
                 .counted()
@@ -297,7 +298,7 @@ fn the_column_names_the_rest_in_a_menu(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let list = view.read(cx).column_list.lines();
+        let list = view.read(cx).navigation.column_list.lines();
         let rows = list
             .iter()
             .filter(|line| {
