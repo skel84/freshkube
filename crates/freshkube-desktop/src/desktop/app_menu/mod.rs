@@ -304,7 +304,7 @@ impl Pilot {
         let state = MenuState {
             sidebar: self.navigation.area.has_column() && !self.navigation.column_collapsed(window),
             dock: self.dock.read(cx).is_open(),
-            appearance: self.appearance,
+            appearance: self.chrome.appearance,
         };
         if self.menu_state != Some(state) {
             self.menu_state = Some(state);

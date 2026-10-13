@@ -68,7 +68,7 @@ use freshkube_core::cluster_overview::{
     ClusterOverview, ClusterOverviewCollector, KubeconfigSelection,
 };
 use freshkube_core::resources::{ResourceKind, builtin};
-use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, TitleBar, input::InputState, v_flex};
+use gpui_kit::component::{ActiveTheme, Theme, TitleBar, input::InputState, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
@@ -353,7 +353,6 @@ pub(crate) struct Pilot {
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
-    appearance: Appearance,
     fixture: bool,
     /// Example data holds the Talos overview and the Kubernetes summary
     /// (`DebugOptions::hold`), so the pages that wait for them stay loading.
@@ -857,7 +856,7 @@ impl Pilot {
                 view.node_services_event(event, window, cx)
             }),
             cx.observe_window_appearance(window, |this, window, cx| {
-                if this.appearance == Appearance::System {
+                if this.chrome.appearance == Appearance::System {
                     Theme::sync_system_appearance(Some(window), cx);
                 }
             }),
@@ -961,7 +960,6 @@ impl Pilot {
             menu_state: None,
             kubeconfig_draft: Default::default(),
             navigation: shell::Navigation::new(navigation_file, cx),
-            appearance: Appearance::System,
             fixture: options.fixture,
             fixture_hold: options.fixture && (options.hold_talos || hold.talos),
             fixture_tick: 0,
@@ -1525,12 +1523,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.appearance = appearance;
-        match appearance {
-            Appearance::System => Theme::sync_system_appearance(Some(window), cx),
-            Appearance::Light => Theme::change(ThemeMode::Light, Some(window), cx),
-            Appearance::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
-        }
+        self.chrome.set_appearance(appearance, window, cx);
         cx.notify();
     }
 

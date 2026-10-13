@@ -18,6 +18,7 @@
 use super::*;
 use crate::desktop::probe;
 use crate::forwards::ForwardsIndicator;
+use gpui_kit::component::{Theme, ThemeMode};
 use std::time::Duration;
 
 pub(in crate::desktop) struct Chrome {
@@ -33,6 +34,8 @@ pub(in crate::desktop) struct Chrome {
     pub(in crate::desktop) fps: Entity<super::fps::Fps>,
     /// The status bar's port forwards, which redraw on their own.
     pub(in crate::desktop) forwards: Entity<ForwardsIndicator>,
+    /// The theme the user chose: the system's, light or dark.
+    pub(in crate::desktop) appearance: Appearance,
 }
 
 impl Chrome {
@@ -47,6 +50,22 @@ impl Chrome {
             elapsed: Duration::ZERO,
             fps: cx.new(super::fps::Fps::new),
             forwards: cx.new(ForwardsIndicator::new),
+            appearance: Appearance::System,
+        }
+    }
+
+    /// Follows `appearance`: the system's, or a theme of its own.
+    pub(in crate::desktop) fn set_appearance(
+        &mut self,
+        appearance: Appearance,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.appearance = appearance;
+        match appearance {
+            Appearance::System => Theme::sync_system_appearance(Some(window), cx),
+            Appearance::Light => Theme::change(ThemeMode::Light, Some(window), cx),
+            Appearance::Dark => Theme::change(ThemeMode::Dark, Some(window), cx),
         }
     }
 }

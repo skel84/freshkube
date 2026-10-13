@@ -313,7 +313,7 @@ pub(super) fn settings_content(
             view.kubernetes_only.is_some(),
             view.config_loading,
             view.chrome.automatic,
-            view.appearance,
+            view.chrome.appearance,
         )
     };
     let text_size = text_size::current(cx);
