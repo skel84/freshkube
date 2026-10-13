@@ -369,7 +369,7 @@ impl Pilot {
     /// Reinspect local files at the refresh boundary. Unchanged access keeps
     /// its watch and selection, including while a failed transport retries.
     pub(super) fn refresh_kubernetes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.elapsed = Duration::ZERO;
+        self.chrome.elapsed = Duration::ZERO;
         if self.config_loading {
             return;
         }

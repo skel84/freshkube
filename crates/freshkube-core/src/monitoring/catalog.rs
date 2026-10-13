@@ -129,6 +129,7 @@ pub struct FolderDashboard {
     pub path: PathBuf,
     /// The dashboard's title, or the file's name when it doesn't read.
     pub title: String,
+    // String exception: a local dashboard's read/parse message is displayed without classification.
     pub outcome: Result<Arc<str>, String>,
 }
 
@@ -144,6 +145,7 @@ pub struct Folder {
 /// Reads every `.json` file directly in `path` (not its subfolders) as a
 /// dashboard. A file that isn't one is listed with the reason, so the
 /// column never hides it.
+// String exception: the local folder-read message is displayed without classifying a cluster failure.
 pub fn read_folder(path: &Path) -> Result<Folder, String> {
     let entries = std::fs::read_dir(path)
         .map_err(|error| format!("Couldn't read {}: {error}", path.display()))?;

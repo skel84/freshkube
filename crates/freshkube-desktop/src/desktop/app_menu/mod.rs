@@ -304,10 +304,10 @@ impl Pilot {
         let state = MenuState {
             sidebar: self.navigation.area.has_column() && !self.navigation.column_collapsed(window),
             dock: self.dock.read(cx).is_open(),
-            appearance: self.appearance,
+            appearance: self.chrome.appearance,
         };
-        if self.menu_state != Some(state) {
-            self.menu_state = Some(state);
+        if self.chrome.menu_state != Some(state) {
+            self.chrome.menu_state = Some(state);
             cx.set_menus(menus(Platform::current(), &state));
         }
     }
@@ -324,16 +324,19 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.app_menu_popup.is_some() {
+        if self.chrome.app_menu_popup.is_some() {
             return;
         }
         let focus = if from_button {
-            self.app_menu_focus.take()
+            self.chrome.app_menu_focus.take()
         } else {
             window.focused(cx)
         }
         .unwrap_or_else(|| self.focus.clone());
-        let menus = menus(self.menu_platform, &self.menu_state.unwrap_or_default());
+        let menus = menus(
+            self.chrome.menu_platform,
+            &self.chrome.menu_state.unwrap_or_default(),
+        );
         // The window answers for that view; the app's `is_action_available`
         // can't see the window it is called from, so it adds only the global
         // actions.
@@ -355,20 +358,24 @@ impl Pilot {
         });
         popup.focus_handle(cx).focus(window, cx);
         let closed = cx.subscribe_in(&popup, window, |view, _, _: &DismissEvent, _, cx| {
-            view.app_menu_popup = None;
-            view.app_menu_focus = None;
+            view.chrome.app_menu_popup = None;
+            view.chrome.app_menu_focus = None;
             cx.notify();
         });
-        self.app_menu_popup = Some((popup, closed));
+        self.chrome.app_menu_popup = Some((popup, closed));
         cx.notify();
     }
 
     /// The menu button and its menu, where there is no menu bar.
     pub(super) fn render_menu_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.menu_platform.app_menu() != AppMenu::Button {
+        if self.chrome.menu_platform.app_menu() != AppMenu::Button {
             return None;
         }
-        let popup = self.app_menu_popup.as_ref().map(|(popup, _)| popup.clone());
+        let popup = self
+            .chrome
+            .app_menu_popup
+            .as_ref()
+            .map(|(popup, _)| popup.clone());
         let shell = cx.entity().downgrade();
         Some(
             Popover::new("app-menu-popover")
@@ -395,8 +402,8 @@ impl Pilot {
                     // Only while it's closed: a press that closes the menu
                     // finds the menu's own focus.
                     cx.listener(|view, _, window, cx| {
-                        if view.app_menu_popup.is_none() {
-                            view.app_menu_focus = window.focused(cx);
+                        if view.chrome.app_menu_popup.is_none() {
+                            view.chrome.app_menu_focus = window.focused(cx);
                         }
                     }),
                 ))

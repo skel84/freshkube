@@ -477,7 +477,15 @@ pub fn empty_state(
                         .media(
                             EmptyMedia::new()
                                 .with_variant(EmptyMediaVariant::Icon)
-                                .child(Icon::new(icon).size(dp(20.))),
+                                .child(
+                                    svg()
+                                        .path(icon.path())
+                                        .id((ElementId::from("empty-state-icon"), icon.path()))
+                                        .test_support()
+                                        .flex_shrink_0()
+                                        .size(dp(20.))
+                                        .text_color(p.ink),
+                                ),
                         )
                         .title(
                             EmptyTitle::new()

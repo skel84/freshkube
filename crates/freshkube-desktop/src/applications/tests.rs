@@ -393,6 +393,35 @@ fn a_refused_read_with_nothing_found_is_never_empty(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_refused_state_holds_a_packaged_icon_at_every_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) =
+        open(cx, 1280., 880., |page| page.set_variant(Variant::Refused));
+    for size in [12., 13., 14., 16., 18., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(size, cx);
+            window.render_frame(cx);
+            let state = window.find("applications-refused");
+            let icon = window.within("applications-refused").find((
+                gpui_kit::ElementId::from("empty-state-icon"),
+                "icons/lock.svg",
+            ));
+            assert!(icon.visible());
+            let side = crate::ui::dp_px(20., window);
+            assert!((icon.bounds().size.width - side).abs() <= px(0.5));
+            assert!((icon.bounds().size.height - side).abs() <= px(0.5));
+            assert!(state.bounds().contains(&icon.bounds().center()));
+            // A laid-out SVG can still be blank when its asset isn't packaged.
+            assert!(
+                gpui_kit::AssetSource::load(&crate::theme::AppAssets, "icons/lock.svg")
+                    .unwrap()
+                    .is_some()
+            );
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 fn nothing_served_anywhere_is_the_empty_state(cx: &mut TestAppContext) {
     let (_runtime, handle, view) =
         open(cx, 1280., 880., |page| page.set_variant(Variant::Unserved));
