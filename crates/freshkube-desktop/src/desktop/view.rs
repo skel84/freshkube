@@ -1,15 +1,11 @@
 use super::*;
-use crate::ui::dp;
 use freshkube_probe::first_frame::FirstFrame;
 
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
         let _span = crate::perf::span("shell.render");
-        self.chrome
-            .fps
-            .read(cx)
-            .frame_started(cx.background_executor().now());
+        self.chrome.frame_started(cx);
         // `FRESHKUBE_FIRST_FRAME=1` prints when the window first draws,
         // whatever page it opens on and in release builds too: the release
         // smoke check waits for this line.
@@ -44,35 +40,15 @@ impl Render for Pilot {
         let root = self.navigation.listen(root, cx);
         let root = self.chrome.listen(root, cx);
         self.listen(root, cx)
-            .child(
-                self.chrome.parts.header.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
-                        .flex_none(),
-                ),
-            )
+            .child(self.chrome.parts.header())
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_1()
                     .min_h_0()
-                    .child(
-                        self.chrome.parts.rail.clone().cached(
-                            StyleRefinement::default()
-                                .w(dp(RAIL_WIDTH))
-                                .h_full()
-                                .flex_none(),
-                        ),
-                    )
-                    .children(column.map(|width| {
-                        self.chrome
-                            .parts
-                            .column
-                            .clone()
-                            .cached(StyleRefinement::default().w(dp(width)).h_full().flex_none())
-                    }))
+                    .child(self.chrome.parts.rail())
+                    .children(column.map(|width| self.chrome.parts.column(width)))
                     .child(self.render_page_cell(page, window, cx)),
             )
             // Drawn by the shell, so it keeps up with the pages it reads.

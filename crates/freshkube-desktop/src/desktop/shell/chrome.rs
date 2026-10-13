@@ -102,6 +102,15 @@ impl Chrome {
 }
 
 impl Chrome {
+    /// Tells the frame-rate readout that the shell's frame started.
+    pub(in crate::desktop) fn frame_started(&self, cx: &App) {
+        self.fps
+            .read(cx)
+            .frame_started(cx.background_executor().now());
+    }
+}
+
+impl Chrome {
     /// Adds the chrome's actions to the shell's root: Settings, About, the
     /// appearance and the menu button. Their handlers run on `Pilot`.
     pub(in crate::desktop) fn listen(&self, root: Div, cx: &mut Context<Pilot>) -> Div {
@@ -240,9 +249,9 @@ impl Render for CachedPart {
 
 /// The shell's cached parts, made once with the shell.
 pub(in crate::desktop) struct ChromeParts {
-    pub(in crate::desktop) header: Entity<CachedPart>,
-    pub(in crate::desktop) rail: Entity<CachedPart>,
-    pub(in crate::desktop) column: Entity<CachedPart>,
+    header: Entity<CachedPart>,
+    rail: Entity<CachedPart>,
+    pub(super) column: Entity<CachedPart>,
 }
 
 impl ChromeParts {
@@ -254,6 +263,35 @@ impl ChromeParts {
             rail: part(Part::Rail),
             column: part(Part::Column),
         }
+    }
+}
+
+impl ChromeParts {
+    /// The header, cached across the window at its height.
+    pub(in crate::desktop) fn header(&self) -> impl IntoElement {
+        self.header.clone().cached(
+            StyleRefinement::default()
+                .w_full()
+                .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
+                .flex_none(),
+        )
+    }
+
+    /// The rail, cached at its width.
+    pub(in crate::desktop) fn rail(&self) -> impl IntoElement {
+        self.rail.clone().cached(
+            StyleRefinement::default()
+                .w(dp(RAIL_WIDTH))
+                .h_full()
+                .flex_none(),
+        )
+    }
+
+    /// The column, cached at `width`, which `Navigation::lay_out` gives.
+    pub(in crate::desktop) fn column(&self, width: f32) -> impl IntoElement {
+        self.column
+            .clone()
+            .cached(StyleRefinement::default().w(dp(width)).h_full().flex_none())
     }
 }
 
