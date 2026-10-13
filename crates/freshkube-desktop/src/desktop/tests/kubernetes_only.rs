@@ -284,6 +284,15 @@ fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppCont
         mount_kubernetes_only(cx, kubeconfig_file("health-refused"), Some("staging"));
     show_health(cx, handle, &view);
     let reason = kubernetes_only_health_failure(cx, handle, &view, "staging to refuse");
+    // Health can say why before the connection's own check has answered.
+    wait_until(cx, handle, "the connection to fail", |_, cx| {
+        let pilot = view.read(cx);
+        let kube = pilot.kubernetes_only.as_ref().unwrap();
+        matches!(
+            &kube.connection,
+            super::super::kubernetes_only::KubeConnection::Failed(error) if *error == reason
+        )
+    });
     cx.update_window(handle, |_, window, cx| {
         let pilot = view.read(cx);
         let kube = pilot.kubernetes_only.as_ref().unwrap();
@@ -297,12 +306,11 @@ fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppCont
         window.click("screen-retry", cx);
     })
     .unwrap();
-    // The shell takes Health's event once the click's update ends.
-    cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        assert_eq!(kubernetes_status(window), "Connecting to staging…");
-    })
-    .unwrap();
+    // Retry reads the kubeconfig again and shows "Connecting…" while it
+    // does. Against a refusal that is over in an instant, so the status
+    // can already be back to the failure before a frame draws it: the
+    // test doesn't look for it, and "Connecting…" is covered where the
+    // connection holds (`kubernetes_only_lists_kubeconfig_contexts_and_connects_to_the_current_one`).
     wait_until(cx, handle, "staging to refuse again", |window, _| {
         kubernetes_status(window).starts_with("Couldn't connect to staging: ")
     });

@@ -423,8 +423,8 @@ fn example_reflects_the_degraded_worker(cx: &mut TestAppContext) {
             .expect("flannel pod on the degraded worker");
         assert_eq!(flannel.node.as_deref(), Some("talos-wk-fra1-02"));
         // The counts go to the status bar's line; the header keeps none.
-        let line = screen.update(cx, |screen, _| {
-            screen.status().expect("a segment").text(None).clone()
+        let line = screen.update(cx, |screen, cx| {
+            screen.status(cx).expect("a segment").text(None).clone()
         });
         assert!(line.contains(" deployments · "), "{line}");
         assert!(line.contains("pods "), "{line}");

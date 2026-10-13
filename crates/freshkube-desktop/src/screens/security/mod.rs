@@ -127,9 +127,9 @@ impl ScreenPanel for SecurityScreen {
         window.focus(&self.focus, cx);
     }
 
-    fn status(&mut self) -> Option<&Segment> {
+    fn status(&mut self, _: &App) -> Option<Segment> {
         self.sync_status();
-        self.status.as_ref().map(|(_, line)| line)
+        self.status.as_ref().map(|(_, line)| line.clone())
     }
 
     fn loading_motion(&self, cx: &App) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {

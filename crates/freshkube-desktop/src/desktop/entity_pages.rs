@@ -2,24 +2,34 @@
 //! [`ScreenHandle`] as the Talos screens, and what the shell does with
 //! what every page asks of it.
 //!
-//! Resources, Monitoring, Observability, Applications and Settings hear
-//! [`set_visible`](ScreenPanel::set_visible) through their handle, which is
-//! where they drop their reads on hide, and the shell hears their events
-//! through it as [`PageEvent`]s. Their sources, refreshes and status still
-//! go the old way until #579's step 3 keeps every page in one map.
+//! Every page's handle sits in the shell's one map (`Pilot::pages`).
+//! Resources, Monitoring, Observability, Applications and Settings take
+//! their part of the shell's [`PageSource`] through it and hear
+//! [`set_visible`](ScreenPanel::set_visible), which is where they drop
+//! their reads on hide; those with a refresh or a status line give it
+//! through it, and the shell hears their events through it as
+//! [`PageEvent`]s.
+//!
+//! Overview, Nodes and System services have handles too. The shell feeds
+//! what they draw, so their hooks do nothing, but for System services'
+//! status line and row actions.
 
 use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
+use super::pages::PageId;
 use super::settings::SettingsPage;
-use super::{Page, Pilot};
+use super::system_services::{ServiceEvent, SystemServices};
+use super::{Page, PageHost, Pilot, nodes};
 use crate::applications::{ApplicationsPage, SwitchLink};
 use crate::monitoring::page::{MonitoringEvent, MonitoringPage};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
 use crate::resources::{self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen};
 use crate::screens::{
-    PageEvent, PageEventFn, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
+    PageEvent, PageEventFn, PageSource, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
 };
 use freshkube_core::resources::builtin;
+use freshkube_ui::status::Segment;
+use std::collections::BTreeMap;
 
 /// Hears one event type of a page's and hands it on as a [`PageEvent`].
 fn hear<P, E>(
@@ -38,13 +48,53 @@ where
     })
 }
 
+impl EventEmitter<ScreenEvent> for PageHost {}
+
+/// Overview and Nodes, drawn from the shell's state.
+impl ScreenPanel for PageHost {
+    fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+}
+
+impl EventEmitter<ScreenEvent> for SystemServices {}
+
+/// System services lists what the shell's Talos overview read; it makes no
+/// requests, so it has no source, visibility or refresh of its own.
+impl ScreenPanel for SystemServices {
+    fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn subscribe_page(
+        this: &Entity<Self>,
+        on_event: PageEventFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<Subscription> {
+        vec![hear::<_, ServiceEvent>(this, &on_event, window, cx)]
+    }
+
+    fn activate(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(self.status.clone())
+    }
+}
+
 impl EventEmitter<ScreenEvent> for ResourcesScreen {}
 
 /// Resources lists and watches only while shown.
 impl ScreenPanel for ResourcesScreen {
-    /// Resources reads no Talos target; its connection still arrives
-    /// through `push_source`'s own call.
+    /// Resources reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The Kubernetes connection it lists from.
+    fn set_page_source(&mut self, source: PageSource, window: &mut Window, cx: &mut Context<Self>) {
+        ResourcesScreen::set_source(self, source.kube, window, cx)
+    }
 
     fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
         ResourcesScreen::set_visible(self, visible, window, cx)
@@ -69,15 +119,23 @@ impl ScreenPanel for ResourcesScreen {
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         ResourcesScreen::refresh(self, window, cx)
     }
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(ResourcesScreen::status(self).clone())
+    }
 }
 
 impl EventEmitter<ScreenEvent> for MonitoringPage {}
 
 /// Monitoring finds Prometheus and asks its panels only while shown.
 impl ScreenPanel for MonitoringPage {
-    /// Monitoring reads no Talos target; its cluster still arrives through
-    /// `push_source`'s own call.
+    /// Monitoring reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The cluster it finds Prometheus in.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        MonitoringPage::set_source(self, source.cluster(), cx)
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         MonitoringPage::set_visible(self, visible, cx)
@@ -104,9 +162,13 @@ impl EventEmitter<ScreenEvent> for ObservabilityPage {}
 
 /// Observability reads Coroot only while shown.
 impl ScreenPanel for ObservabilityPage {
-    /// Observability reads no Talos target; its access still arrives
-    /// through `push_source`'s own call.
+    /// Observability reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The connection's id, which it keys Coroot's access by.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        ObservabilityPage::set_source(self, source.access(), cx)
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         ObservabilityPage::set_visible(self, visible, cx)
@@ -127,6 +189,10 @@ impl ScreenPanel for ObservabilityPage {
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.refresh_current(cx)
     }
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(ObservabilityPage::status(self).clone())
+    }
 }
 
 impl EventEmitter<ScreenEvent> for ApplicationsPage {}
@@ -134,9 +200,13 @@ impl EventEmitter<ScreenEvent> for ApplicationsPage {}
 /// Applications, its Changes list and its change page read only while
 /// shown.
 impl ScreenPanel for ApplicationsPage {
-    /// Applications reads no Talos target; its connection and entry still
-    /// arrive through `push_source`'s own call.
+    /// Applications reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The connection, and the workspace entry it is.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        ApplicationsPage::set_source(self, source.kube, source.entry, cx)
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         ApplicationsPage::set_visible(self, visible, cx)
@@ -161,15 +231,25 @@ impl ScreenPanel for ApplicationsPage {
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         ApplicationsPage::refresh(self, cx)
     }
+
+    /// On Changes, its Changes list's line.
+    fn status(&mut self, cx: &App) -> Option<Segment> {
+        Some(ApplicationsPage::status(self, cx))
+    }
 }
 
 impl EventEmitter<ScreenEvent> for SettingsPage {}
 
 /// Settings' Delivery sources drops a check in flight on hide.
 impl ScreenPanel for SettingsPage {
-    /// Settings reads no Talos target; its sources' connection still
-    /// arrives through `push_source`'s own call.
+    /// Settings reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
+
+    /// The connection its Delivery sources check with.
+    fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        self.sources
+            .update(cx, |sources, cx| sources.set_source(source.kube, cx));
+    }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
         self.sources
@@ -181,27 +261,38 @@ impl ScreenPanel for SettingsPage {
 
     /// Its checks run only from Check sources.
     fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn status(&mut self, _: &App) -> Option<Segment> {
+        Some(self.status.clone())
+    }
 }
 
 impl Pilot {
-    /// The entity pages' handles, in the order the shell told them they
-    /// showed or hid before they had them.
+    /// The handles of the pages that aren't Talos screens, by their keys.
     pub(super) fn page_handles(
+        [overview, nodes]: [&Entity<PageHost>; 2],
+        services: &Entity<SystemServices>,
         monitoring: &Entity<MonitoringPage>,
         observability: &Entity<ObservabilityPage>,
         applications: &Entity<ApplicationsPage>,
         settings: &Entity<SettingsPage>,
         resources: &Entity<ResourcesScreen>,
-    ) -> Vec<(Page, ScreenHandle)> {
-        vec![
-            (Page::Monitoring, ScreenHandle::new(monitoring.clone())),
+    ) -> [(PageId, ScreenHandle); 8] {
+        [
+            (PageId::Overview, ScreenHandle::new(overview.clone())),
+            (PageId::Nodes, ScreenHandle::new(nodes.clone())),
+            (PageId::SystemServices, ScreenHandle::new(services.clone())),
+            (PageId::Monitoring, ScreenHandle::new(monitoring.clone())),
             (
-                Page::Observability,
+                PageId::Observability,
                 ScreenHandle::new(observability.clone()),
             ),
-            (Page::Applications, ScreenHandle::new(applications.clone())),
-            (Page::Settings, ScreenHandle::new(settings.clone())),
-            (Page::Resources, ScreenHandle::new(resources.clone())),
+            (
+                PageId::Applications,
+                ScreenHandle::new(applications.clone()),
+            ),
+            (PageId::Settings, ScreenHandle::new(settings.clone())),
+            (PageId::Resources, ScreenHandle::new(resources.clone())),
         ]
     }
 
@@ -211,13 +302,13 @@ impl Pilot {
     /// a subscription hears only what is emitted after the update it was
     /// made in.
     pub(super) fn subscribe_pages(
-        pages: &[(Page, ScreenHandle)],
+        pages: &BTreeMap<PageId, ScreenHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
         let pilot = cx.weak_entity();
         let mut subscriptions = Vec::new();
-        for (_, page) in pages {
+        for page in pages.values() {
             let pilot = pilot.clone();
             subscriptions.extend(page.subscribe(window, cx, move |event, window, cx| {
                 let _ = pilot.update(cx, |this, cx| this.page_event(event, window, cx));
@@ -226,15 +317,15 @@ impl Pilot {
         subscriptions
     }
 
-    /// The handle of the page that shows: a Talos screen, on its own page
-    /// or in the node pane's selected tab, or an entity page.
+    /// The handle of the page that shows: the node pane's selected tab
+    /// when it is a Talos screen and Nodes shows it, or else the page's.
     pub(super) fn shown_page(&self) -> Option<ScreenHandle> {
-        self.active_screen().or_else(|| {
-            self.pages
-                .iter()
-                .find(|(page, _)| *page == self.page)
-                .map(|(_, handle)| handle.clone())
-        })
+        let pane = self.page == Page::Nodes && self.node_workspace.open;
+        let id = pane
+            .then(|| self.node_workspace.tab.screen())
+            .flatten()
+            .unwrap_or(self.page.id());
+        self.pages.get(&id).cloned()
     }
 
     /// What a page asks of the shell.
@@ -289,7 +380,22 @@ impl Pilot {
                 self.custom
                     .update(cx, |custom, cx| custom.not_served(&group, cx));
             }
+            PageEvent::Service(event) => self.service_event(event, window, cx),
         }
+    }
+
+    /// A System services row's Logs or Open node.
+    fn service_event(&mut self, event: &ServiceEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let (node, service, tab) = match event {
+            ServiceEvent::Logs(node, service) => (node, service, nodes::NodeTab::Logs),
+            ServiceEvent::Open(node, service) => (node, service, nodes::NodeTab::Services),
+        };
+        self.open_node_by_name(node, tab, window, cx);
+        self.selected_service = Some(service.clone());
+        if tab == nodes::NodeTab::Logs {
+            self.open_logs(window, cx);
+        }
+        cx.notify();
     }
 
     fn observability_event(

@@ -5,7 +5,7 @@ use crate::{
     ui::Tone,
 };
 use freshkube_core::{
-    HasHealth, HealthIndicator,
+    HasHealth,
     kubernetes_summary::NodeSummary as KubernetesNode,
     node_health::{
         KubernetesNodeState, NodeAssessment, NodeProblem, TalosNodeFacts, TalosNodeState,
@@ -228,7 +228,7 @@ fn row(
         service_problem: counts.unhealthy > 0,
         name: name.into(),
         role,
-        tone: node_tone(assessment.health()),
+        tone: crate::ui::health_tone(assessment.health()).0,
         kubernetes: kubernetes.cloned(),
         talos: talos.cloned(),
         ready: readiness_label(assessment.kubernetes()),
@@ -262,16 +262,6 @@ fn row(
     row.chips = chips(&row);
     row.facts = facts(&row);
     row
-}
-
-fn node_tone(health: HealthIndicator) -> Tone {
-    match health {
-        HealthIndicator::Healthy => Tone::Good,
-        HealthIndicator::Warning => Tone::Warn,
-        HealthIndicator::Error => Tone::Crit,
-        HealthIndicator::Pending | HealthIndicator::Unknown => Tone::Unknown,
-        HealthIndicator::Info => Tone::Accent,
-    }
 }
 
 fn readiness_label(state: KubernetesNodeState) -> &'static str {
