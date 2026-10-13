@@ -49,7 +49,10 @@ impl<T> Source<T> {
         match failure.kind {
             FailureKind::NotFound => Self::NotInstalled(message),
             FailureKind::Forbidden | FailureKind::Unauthorized => Self::Refused(message),
-            _ => Self::Unreadable(message),
+            FailureKind::Config
+            | FailureKind::Unreachable
+            | FailureKind::Timeout
+            | FailureKind::Other => Self::Unreadable(message),
         }
     }
 
@@ -142,7 +145,10 @@ pub fn printable(failure: &Failure) -> String {
         }
         FailureKind::Unreachable => "the server could not be reached".into(),
         FailureKind::Timeout => "the request timed out".into(),
-        _ => redact_message(&failure.message),
+        FailureKind::Unauthorized
+        | FailureKind::Forbidden
+        | FailureKind::NotFound
+        | FailureKind::Other => redact_message(&failure.message),
     }
 }
 

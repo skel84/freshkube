@@ -24,6 +24,9 @@ pub(super) fn mount(
     width: f32,
     height: f32,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    // Tests build clients against loopback servers, which the environment's
+    // proxy must not take: a hermetic value that keeps only the proxy pair.
+    crate::ambient::install_for_tests();
     cx.update(|cx| {
         gpui_kit::init(cx);
         crate::theme::install(cx);

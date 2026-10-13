@@ -142,7 +142,11 @@ impl ExecFailure {
                 let message = match kind {
                     FailureKind::Forbidden => "Not allowed to run a shell in this pod".to_owned(),
                     FailureKind::NotFound => "The pod or container was not found".to_owned(),
-                    _ => format!("The API server refused the shell ({status})"),
+                    FailureKind::Config
+                    | FailureKind::Unreachable
+                    | FailureKind::Timeout
+                    | FailureKind::Unauthorized
+                    | FailureKind::Other => format!("The API server refused the shell ({status})"),
                 };
                 Failure::new(kind, message)
             }
