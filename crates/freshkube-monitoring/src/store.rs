@@ -252,9 +252,26 @@ mod tests {
 
     /// The example file in `freshkube-prefs`, as the app writes it: what
     /// loads from it saves back byte for byte.
+    // The committed example uses POSIX paths, which Windows does not treat as absolute.
+    #[cfg(unix)]
     #[test]
     fn the_example_file_round_trips_byte_for_byte() {
-        let example = include_str!("../../freshkube-prefs/src/examples/monitoring.json");
+        round_trip(
+            include_str!("../../freshkube-prefs/src/examples/monitoring.json"),
+            "/home/acme/dashboards",
+        );
+    }
+
+    /// The same round trip with a Windows path, written inline.
+    #[cfg(not(unix))]
+    #[test]
+    fn the_example_file_round_trips_byte_for_byte_off_unix() {
+        let example = include_str!("../../freshkube-prefs/src/examples/monitoring.json")
+            .replace("/home/acme/dashboards", "C:\\\\acme\\\\dashboards");
+        round_trip(&example, "C:\\acme\\dashboards");
+    }
+
+    fn round_trip(example: &str, folder: &str) {
         let directory = std::env::temp_dir().join(format!(
             "freshkube-monitoring-example-{}-{}",
             std::process::id(),
@@ -265,7 +282,7 @@ mod tests {
         let preferences = directory.join("preferences.json");
         std::fs::write(file(&preferences), example).unwrap();
         let saved = load(&preferences);
-        assert_eq!(saved.folder, Some(PathBuf::from("/home/acme/dashboards")));
+        assert_eq!(saved.folder, Some(PathBuf::from(folder)));
         assert_eq!((saved.services.len(), saved.choices.len()), (1, 2));
         MonitoringStore::new(&preferences, saved)
             .save_latest()
