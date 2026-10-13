@@ -9,6 +9,10 @@ use futures::future::BoxFuture;
 use std::fmt;
 use std::sync::Arc;
 
+mod direct;
+
+pub use direct::DirectAccess;
+
 /// Hands out a Kubernetes client for one cluster. An implementation may
 /// build it once and reuse it; it decides when to build it again.
 pub trait KubeClientSource: Send + Sync {
