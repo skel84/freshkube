@@ -79,20 +79,13 @@ fn shortcut(key: &str) -> SharedString {
 }
 
 impl Pilot {
-    /// Says that what the column shows changed: its next draw derives its
-    /// lines again, and draws that only redraw it, such as a hover's, read
-    /// them as they are.
-    pub(in crate::desktop) fn column_changed(&mut self) {
-        self.column_stale = true;
-    }
-
     /// Derives the column's lines from what the shell and its pages show
     /// now, once after they change.
     pub(super) fn derive_column(&mut self, cx: &App) {
-        if !std::mem::take(&mut self.column_stale) {
+        if !std::mem::take(&mut self.navigation.column_stale) {
             return;
         }
-        let derived = match self.area {
+        let derived = match self.navigation.area {
             Area::Group(slug) => self.group_lines(slug, cx),
             Area::Custom => self.custom_lines(cx),
             Area::Monitoring => ColumnLines::new(self.monitoring_lines(cx)),
@@ -101,14 +94,14 @@ impl Pilot {
             Area::Applications => ColumnLines::new(self.applications_lines(cx)),
             _ => ColumnLines::new(Vec::new()),
         };
-        self.column_list.set_lines(derived.lines);
-        self.column_reveal_line = derived.reveal;
-        self.column_settled = derived.settled;
+        self.navigation.column_list.set_lines(derived.lines);
+        self.navigation.column_reveal_line = derived.reveal;
+        self.navigation.column_settled = derived.settled;
     }
 
     /// The mark the rail's dots put on a row.
     fn marked(&self, row: Row<ColumnKey>, target: RowTarget) -> Row<ColumnKey> {
-        match self.rail_marks.row(target) {
+        match self.navigation.rail_marks.row(target) {
             Some((tone, why)) => row.mark(*tone, why.clone()),
             None => row,
         }
@@ -121,7 +114,7 @@ impl Pilot {
             page.title(),
         )
         .icon(column::page_icon(page))
-        .current(self.page == page);
+        .current(self.navigation.page == page);
         if let Some(key) = key {
             row = row.shortcut(shortcut(key));
         }
@@ -131,13 +124,11 @@ impl Pilot {
     /// A built-in group's kinds, after Health for Workloads and then its
     /// namespaces, and the row of a kind to reveal.
     fn group_lines(&self, slug: &'static str, cx: &App) -> ColumnLines {
-        let Some(group) = navigation::NAVIGATION
-            .iter()
-            .find(|group| group.slug == slug)
-        else {
+        let Some(group) = kinds::NAVIGATION.iter().find(|group| group.slug == slug) else {
             return ColumnLines::new(Vec::new());
         };
-        let current = (self.page == Page::Resources).then(|| self.resource_kind.key());
+        let current =
+            (self.navigation.page == Page::Resources).then(|| self.navigation.resource_kind.key());
         let mut lines = Vec::new();
         if slug == "workloads" {
             lines.push(self.page_line(Page::Health, Some("5")).into());
@@ -149,7 +140,7 @@ impl Pilot {
                 .current(current.as_deref() == Some(*key));
             self.marked(row, RowTarget::Kind(key)).into()
         }));
-        let reveal = match &self.column_reveal {
+        let reveal = match &self.navigation.column_reveal {
             Some(ColumnReveal::Kind(key)) => group
                 .items
                 .iter()
@@ -170,8 +161,9 @@ impl Pilot {
     /// Workloads' namespaces, with their pods counted.
     fn namespace_lines(&self, lines: &mut Vec<Line<ColumnKey>>, cx: &App) {
         let chosen = self.resources.read(cx).namespace();
-        let pods = self.page == Page::Resources && self.resource_kind.is_pod();
-        let namespaces = &self.column_state.namespaces;
+        let pods =
+            self.navigation.page == Page::Resources && self.navigation.resource_kind.is_pod();
+        let namespaces = &self.navigation.column_state.namespaces;
         lines.push(Section::new("nav-namespaces", "Namespaces").into());
         lines.push(
             Row::new(
@@ -181,7 +173,7 @@ impl Pilot {
             )
             .icon(IconName::Folders)
             .current(pods && chosen.is_none())
-            .count(self.column_state.total.clone(), None)
+            .count(self.navigation.column_state.total.clone(), None)
             .into(),
         );
         lines.extend(
@@ -227,18 +219,17 @@ impl Pilot {
     /// the kinds of each open group; where a reveal lands among them; and
     /// whether discovery has settled enough to stop revealing it.
     fn custom_lines(&self, cx: &App) -> ColumnLines {
-        let reveal = self.column_reveal.as_ref();
-        let current = (self.page == Page::Resources).then(|| self.resource_kind.key());
+        let reveal = self.navigation.column_reveal.as_ref();
+        let current =
+            (self.navigation.page == Page::Resources).then(|| self.navigation.resource_kind.key());
         let current = current.as_deref();
         // The API group of the kind shown, when it is a custom kind.
         let current_group = current
-            .filter(|key| navigation::group_of(key).is_none())
-            .map(|_| self.resource_kind.group.as_str());
+            .filter(|key| kinds::group_of(key).is_none())
+            .map(|_| self.navigation.resource_kind.group.as_str());
         // A custom kind to reveal, and the group it is in.
         let reveal_kind = match reveal {
-            Some(ColumnReveal::Kind(key)) if navigation::group_of(key).is_none() => {
-                Some(key.as_str())
-            }
+            Some(ColumnReveal::Kind(key)) if kinds::group_of(key).is_none() => Some(key.as_str()),
             _ => None,
         };
         let reveal_group = match reveal {
@@ -356,7 +347,7 @@ impl Pilot {
     /// The built-in dashboards, then the user's folder or how to add one.
     fn monitoring_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
         let monitoring = self.monitoring.read(cx);
-        let open = (self.page == Page::Monitoring).then(|| monitoring.chosen());
+        let open = (self.navigation.page == Page::Monitoring).then(|| monitoring.chosen());
         let entry = |entry: &Entry| -> Line<ColumnKey> {
             let mut row = Row::new(
                 ColumnKey::Dashboard(entry.id.clone()),
@@ -464,7 +455,7 @@ impl Pilot {
         let page = self.applications.read(cx);
         let column = page.column();
         let shown = page.shown_application(cx);
-        let here = self.page == Page::Applications;
+        let here = self.navigation.page == Page::Applications;
         let listing = here && shown.is_none() && !page.changes_shown();
         // Changes leads; the workspace's delivery sources will sit under it.
         let changes = Row::new(ColumnKey::Changes, "nav-changes", "Changes")
@@ -493,7 +484,7 @@ impl Pilot {
             lines.push(line.into());
             return lines;
         }
-        let shown = shown.filter(|_| self.page == Page::Applications);
+        let shown = shown.filter(|_| self.navigation.page == Page::Applications);
         let mut listed = 0;
         for section in &column.sections {
             if listed == COLUMN_APPLICATIONS {
@@ -669,11 +660,11 @@ impl SourceListHost for Pilot {
     type Key = ColumnKey;
 
     fn source_list(&mut self) -> &mut freshkube_ui::source_list::SourceList<ColumnKey> {
-        &mut self.column_list
+        &mut self.navigation.column_list
     }
 
     fn open(&mut self, key: &ColumnKey, window: &mut Window, cx: &mut Context<Self>) {
-        self.column_changed();
+        self.navigation.column_changed();
         match key.clone() {
             ColumnKey::Page(page) => self.navigate_from_keyboard(page, window, cx),
             ColumnKey::Kind(key) => self.open_builtin(key, window, cx),
@@ -692,7 +683,7 @@ impl SourceListHost for Pilot {
                 .monitoring
                 .update(cx, |monitoring, cx| monitoring.read_folder(cx)),
             ColumnKey::Settings => {
-                self.settings_open = true;
+                self.navigation.settings_open = true;
                 cx.notify();
             }
             ColumnKey::Destination(item) => {

@@ -34,7 +34,7 @@ fn coroot_links_resolve_real_subjects_and_reject_old_providers(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(
             view.read(cx).resources.read(cx).detail_identity(cx),
             Some(&pod)
@@ -49,7 +49,7 @@ fn coroot_links_resolve_real_subjects_and_reject_old_providers(cx: &mut TestAppC
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update(|cx| assert_eq!(view.read(cx).page, Page::Observability));
+    cx.update(|cx| assert_eq!(view.read(cx).navigation.page, Page::Observability));
 }
 
 #[gpui_kit::test]
@@ -93,7 +93,7 @@ fn coroot_links_open_without_asking_while_a_shell_runs(cx: &mut TestAppContext) 
     assert!(!cx.has_pending_prompt());
     cx.read(|cx| {
         assert_eq!(shell::running_anywhere(cx), running);
-        assert_eq!(view.read(cx).page, Page::Resources);
+        assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(
             view.read(cx).resources.read(cx).detail_identity(cx),
             Some(&pods[1])

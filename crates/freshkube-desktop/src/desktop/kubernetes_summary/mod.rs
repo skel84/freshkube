@@ -59,7 +59,7 @@ impl Pilot {
     }
 
     pub(super) fn deliver_summary_nodes(&self, cx: &mut Context<Self>) {
-        let subscription = (self.page == super::Page::Lifecycle)
+        let subscription = (self.navigation.page == super::Page::Lifecycle)
             .then_some(self.registry.active().summary_session.as_ref())
             .flatten()
             .and_then(|session| {

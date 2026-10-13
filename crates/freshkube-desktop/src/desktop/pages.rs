@@ -417,21 +417,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current = match self.page {
-            Page::Overview => 0,
-            Page::Nodes => 1,
-            Page::Resources if self.resource_kind.key() == "namespaces" => 2,
-            Page::Resources if self.resource_kind.key() == "events" => 3,
-            // Between Events and Health, which has no row of its own.
-            Page::Monitoring | Page::Observability | Page::Applications | Page::Settings => 3,
-            Page::Health => 4,
-            Page::Resources => 5,
-            Page::Etcd => 6,
-            Page::SystemServices => 7,
-            Page::Security => 8,
-            Page::Lifecycle => 9,
-            Page::Operations => 10,
-        };
+        let current = self.navigation.current_row();
         let count = if self.kubernetes_only.is_some() {
             6
         } else {
@@ -441,14 +427,24 @@ impl Pilot {
         self.show_row(next, window, cx);
     }
 
-    pub(super) fn show_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// A page's key: opens it, but not a Talos page without Talos.
+    pub(super) fn show_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        if self.kubernetes_only.is_some() && page.needs_talos() {
+            return;
+        }
+        self.navigate_from_keyboard(page, window, cx);
+    }
+
+    /// Opens a fixed sidebar row. `Navigation::current_row` is its inverse:
+    /// keep the two tables in step.
+    fn show_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.kubernetes_only.is_some() && row >= 6 {
             return;
         }
         match row {
             2 => self.open_builtin("namespaces", window, cx),
             3 => self.open_builtin("events", window, cx),
-            5 => self.open_kind(self.last_kind.clone(), window, cx),
+            5 => self.open_kind(self.navigation.last_kind.clone(), window, cx),
             _ => self.navigate_from_keyboard(
                 match row {
                     0 => Page::Overview,
@@ -470,30 +466,30 @@ impl Pilot {
     /// list, or the shell when it has none.
     pub(super) fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
-        if self.page == Page::Resources {
+        if self.navigation.page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
-        } else if self.page == Page::Observability {
+        } else if self.navigation.page == Page::Observability {
             self.observability
                 .update(cx, |page, cx| page.focus(window, cx));
-        } else if self.page == Page::SystemServices {
+        } else if self.navigation.page == Page::SystemServices {
             self.system_services
                 .update(cx, |services, cx| services.focus(window, cx));
-        } else if self.page == Page::Applications {
+        } else if self.navigation.page == Page::Applications {
             self.applications
                 .update(cx, |page, cx| page.focus_shown(window, cx));
-        } else if self.page == Page::Settings {
+        } else if self.navigation.page == Page::Settings {
             self.settings_page
                 .update(cx, |settings, cx| settings.focus(window, cx));
-        } else if self.page == Page::Monitoring {
+        } else if self.navigation.page == Page::Monitoring {
             let focus = self.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
-        } else if self.page == Page::Nodes && self.node_workspace.read(cx).shows_logs() {
+        } else if self.navigation.page == Page::Nodes && self.node_workspace.read(cx).shows_logs() {
             self.logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
         } else if let Some(screen) = self.active_screen(cx) {
             screen.focus(window, cx);
-        } else if self.page == Page::Nodes {
+        } else if self.navigation.page == Page::Nodes {
             let focus = self.node_workspace.read(cx).focus.clone();
             window.focus(&focus, cx);
         }
@@ -552,12 +548,12 @@ impl Pilot {
     /// screens load when shown and stay idle while hidden.
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_object_open();
-        self.page = page;
-        self.column_changed();
+        self.navigation.page = page;
+        self.navigation.column_changed();
         self.deliver_summary_nodes(cx);
-        let area = Area::of(page, &self.resource_kind);
+        let area = Area::of(page, &self.navigation.resource_kind);
         if area == Area::ControlPlane {
-            self.last_control = page;
+            self.navigation.last_control = page;
         }
         self.set_area(area, cx);
         self.sync_node_visibility(window, cx);
@@ -566,7 +562,8 @@ impl Pilot {
         }
         // However the page was reached, its kind shows in the column.
         if page == Page::Resources {
-            self.column_reveal = Some(ColumnReveal::Kind(self.resource_kind.key()));
+            self.navigation.column_reveal =
+                Some(ColumnReveal::Kind(self.navigation.resource_kind.key()));
         }
         // `sync_node_visibility` has told every page whether it shows.
         if page == Page::Resources {
@@ -594,22 +591,11 @@ impl Pilot {
             self.navigate_from_keyboard(Page::Nodes, window, cx);
             return;
         }
-        if !matches!(kind.key().as_str(), "namespaces" | "events") {
-            self.last_kind = kind.clone();
+        if self.navigation.remember_kind(&kind) {
+            self.custom
+                .update(cx, |custom, cx| custom.reveal(&kind, cx));
         }
-        let key = kind.key();
-        match navigation::group_of(&key) {
-            Some(group) => {
-                self.group_kinds.insert(group, key);
-            }
-            None if !matches!(key.as_str(), "namespaces" | "events") => {
-                self.last_custom = Some(kind.clone());
-                self.custom
-                    .update(cx, |custom, cx| custom.reveal(&kind, cx));
-            }
-            None => {}
-        }
-        self.resource_kind = kind.clone();
+        self.navigation.resource_kind = kind.clone();
         self.resources
             .update(cx, |resources, cx| resources.set_kind(kind, window, cx));
         self.navigate_from_keyboard(Page::Resources, window, cx);
@@ -637,11 +623,11 @@ impl Pilot {
         } else {
             RAIL_WIDTH
         });
-        if self.area == area {
+        if self.navigation.area == area {
             return;
         }
-        self.area = area;
-        self.column_changed();
+        self.navigation.area = area;
+        self.navigation.column_changed();
         self.custom
             .update(cx, |custom, cx| custom.set_open(area == Area::Custom, cx));
         cx.notify();
@@ -661,20 +647,14 @@ impl Pilot {
             Area::Applications => self.navigate_from_keyboard(Page::Applications, window, cx),
             Area::Settings => self.navigate_from_keyboard(Page::Settings, window, cx),
             Area::Group(slug) => {
-                let key = self.group_kinds.get(slug).cloned().or_else(|| {
-                    navigation::NAVIGATION
-                        .iter()
-                        .find(|group| group.slug == slug)
-                        .and_then(|group| group.items.first())
-                        .map(|(_, key)| (*key).to_owned())
-                });
-                if let Some(key) = key {
+                if let Some(key) = self.navigation.group_key(slug) {
                     self.open_builtin(&key, window, cx);
                 }
             }
             Area::Custom => {
                 // A kind from another connection may not be served here.
                 let last = self
+                    .navigation
                     .last_custom
                     .as_ref()
                     .and_then(|kind| self.custom.read(cx).kind(&kind.key()));
@@ -686,15 +666,17 @@ impl Pilot {
             Area::ControlPlane if self.kubernetes_only.is_some() => {
                 self.set_area(Area::ControlPlane, cx);
             }
-            Area::ControlPlane => self.navigate_from_keyboard(self.last_control, window, cx),
+            Area::ControlPlane => {
+                self.navigate_from_keyboard(self.navigation.last_control, window, cx)
+            }
         }
     }
 
     /// Shows Custom Resources' column, discovering its groups.
     pub(super) fn show_custom(&mut self, cx: &mut Context<Self>) {
         self.set_area(Area::Custom, cx);
-        self.column_reveal = Some(ColumnReveal::Custom);
-        self.column_changed();
+        self.navigation.column_reveal = Some(ColumnReveal::Custom);
+        self.navigation.column_changed();
         cx.notify();
     }
 
@@ -702,18 +684,10 @@ impl Pilot {
         self.custom
             .update(cx, |custom, cx| custom.toggle_group(name, cx));
         if self.custom.read(cx).is_group_open(name) {
-            self.column_reveal = Some(ColumnReveal::ApiGroup(name.to_owned()));
+            self.navigation.column_reveal = Some(ColumnReveal::ApiGroup(name.to_owned()));
         }
-        self.column_changed();
+        self.navigation.column_changed();
         cx.notify();
-    }
-
-    /// The title bar's name for the page shown.
-    pub(super) fn page_title(&self) -> SharedString {
-        match self.page {
-            Page::Resources => resources::title(&self.resource_kind),
-            page => page.title().into(),
-        }
     }
 
     pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {

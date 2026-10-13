@@ -179,7 +179,10 @@ fn a_page_in_the_map_hears_the_shell_in_key_order_and_is_heard(cx: &mut TestAppC
         .filter(|line| line.ends_with("refresh"))
         .collect();
     assert_eq!(refreshed, ["settings refresh"]);
-    assert_eq!(cx.update(|cx| view.read(cx).page), Page::Monitoring);
+    assert_eq!(
+        cx.update(|cx| view.read(cx).navigation.page),
+        Page::Monitoring
+    );
     let told: Vec<_> = heard
         .iter()
         .filter(|line| line.ends_with("shown") || line.ends_with("hidden"))

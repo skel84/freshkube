@@ -27,7 +27,7 @@ fn the_gear_opens_settings_with_the_example_workspace(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open_settings(window, cx);
-        assert_eq!(view.read(cx).page, Page::Settings);
+        assert_eq!(view.read(cx).navigation.page, Page::Settings);
         // Six invented clusters.
         for id in [
             "core-fra",
