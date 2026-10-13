@@ -143,6 +143,13 @@ impl PageSource {
     }
 }
 
+impl PartialEq for ScreenHandle {
+    /// The same page, by its entity.
+    fn eq(&self, other: &Self) -> bool {
+        self.view().entity_id() == other.view().entity_id()
+    }
+}
+
 impl ScreenHandle {
     /// Hands the page the shell's whole source; it takes what it reads.
     #[cfg_attr(

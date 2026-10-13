@@ -495,6 +495,9 @@ pub(crate) struct Pilot {
     /// The selected service changed by pointer or keyboard, so a stacked
     /// layout brings its details into view once they are laid out.
     reveal_service: bool,
+    /// The window the shell draws in, for what changes the shown page
+    /// without one at hand (`Pilot::sync_visible_soon`).
+    window: AnyWindowHandle,
     _subscriptions: Vec<Subscription>,
     config_job: Option<OwnedJob>,
     overview_job: Option<OwnedJob>,
@@ -725,7 +728,7 @@ impl Pilot {
 
     /// Routes the node pane's Pods list's and the dock's events to the
     /// shell; the entity pages' come through their handles
-    /// (`register_pages`).
+    /// (`subscribe_pages`).
     fn subscribe_page_events(
         subscriptions: &mut Vec<Subscription>,
         pages: PageEntities<'_>,
@@ -1153,6 +1156,7 @@ impl Pilot {
             service_focus: cx.focus_handle(),
             service_scroll: ScrollHandle::new(),
             reveal_service: false,
+            window: window.window_handle(),
             _subscriptions: subscriptions,
             config_job: None,
             overview_job: None,

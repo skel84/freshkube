@@ -183,13 +183,6 @@ impl ScreenPanel for SettingsPage {
     fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
 }
 
-impl PartialEq for ScreenHandle {
-    /// The same page, by its entity.
-    fn eq(&self, other: &Self) -> bool {
-        self.view().entity_id() == other.view().entity_id()
-    }
-}
-
 impl Pilot {
     /// The entity pages' handles, in the order the shell told them they
     /// showed or hid before they had them.

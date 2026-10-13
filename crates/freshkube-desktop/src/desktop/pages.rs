@@ -422,7 +422,7 @@ impl Pilot {
         }
     }
 
-    /// Tells every page whether it shows, through its handle: the one
+    /// Tells every page with a handle whether it shows: the one
     /// [`shown_page`](Self::shown_page) names shows and every other hides,
     /// so a node pane's screen shows only while Nodes is up with its tab
     /// selected. A page drops its reads on hide; one told what it already
@@ -433,6 +433,17 @@ impl Pilot {
         for handle in pages.chain(self.screens.iter().map(|(_, handle)| handle)) {
             handle.set_visible(shown.as_ref() == Some(handle), window, cx);
         }
+    }
+
+    /// [`sync_visible`](Self::sync_visible) for a change made without the
+    /// window at hand, once the update that made it ends.
+    pub(super) fn sync_visible_soon(&self, cx: &mut Context<Self>) {
+        let (window, pilot) = (self.window, cx.weak_entity());
+        cx.defer(move |cx| {
+            _ = window.update(cx, |_, window, cx| {
+                _ = pilot.update(cx, |this, cx| this.sync_visible(window, cx));
+            });
+        });
     }
 
     pub(super) fn navigate_from_keyboard(
@@ -473,7 +484,7 @@ impl Pilot {
         if page == Page::Resources {
             self.column_reveal = Some(ColumnReveal::Kind(self.resource_kind.key()));
         }
-        self.sync_visible(window, cx);
+        // `sync_node_visibility` has told every page whether it shows.
         if page == Page::Resources {
             self.resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
