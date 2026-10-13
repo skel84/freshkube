@@ -159,6 +159,7 @@ impl ScreenHandle {
 
     /// Hears the page's requests, as [`PageEvent`]s, while the
     /// subscriptions are kept.
+    #[must_use = "dropping the subscriptions stops the page's events"]
     pub(crate) fn subscribe(
         &self,
         window: &mut Window,

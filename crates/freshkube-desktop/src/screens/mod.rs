@@ -191,14 +191,15 @@ pub(crate) trait ScreenPanel: Render + EventEmitter<ScreenEvent> + Sized {
 
     /// The page showed or hid. Pages that own reads drop them on hide; the
     /// screens' [`Loader`] gets its hook in #582 (#578's step 4), and until
-    /// then a screen does nothing here. The shell calls it before
-    /// [`activate`](Self::activate), which a shown screen still gets: it
-    /// doesn't replace it.
+    /// then a screen does nothing here. From #579's step 2 the shell calls
+    /// it before [`activate`](Self::activate), which a shown screen still
+    /// gets: it doesn't replace it.
     fn set_visible(&mut self, _visible: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     /// Hears the page's requests as [`PageEvent`](page::PageEvent)s. A screen emits
     /// [`ScreenEvent`] alone; a page that emits other types subscribes each
     /// here and converts it.
+    #[must_use = "dropping the subscriptions stops the page's events"]
     fn subscribe_page(
         this: &Entity<Self>,
         on_event: PageEventFn,
