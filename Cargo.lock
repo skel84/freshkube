@@ -2495,6 +2495,7 @@ dependencies = [
  "freshkube-logs",
  "freshkube-monitoring",
  "freshkube-observability",
+ "freshkube-prefs",
  "freshkube-probe",
  "freshkube-reads",
  "freshkube-terminal",
@@ -2569,6 +2570,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "freshkube-prefs"
+version = "0.14.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

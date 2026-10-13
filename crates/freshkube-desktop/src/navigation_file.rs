@@ -13,7 +13,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use freshkube_core::prefs::{Dir, Document, Layout};
+use freshkube_prefs::{Dir, Document, Layout};
 use freshkube_ui::split_size::{SizeKey, SizeStore};
 use gpui_kit::{App, Global};
 use serde_json::{Map, Value};
