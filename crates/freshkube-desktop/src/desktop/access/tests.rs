@@ -50,7 +50,7 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 list.start(
                     crate::forwards::ForwardSpec {
                         runtime: view.runtime.clone(),
-                        access: resources::ClusterAccess::Example,
+                        access: resources::ClusterAccess::EXAMPLE,
                         target: freshkube_core::resources::ForwardTarget::of(
                             &resources::example::kind("pods").unwrap(),
                             &pod.name,

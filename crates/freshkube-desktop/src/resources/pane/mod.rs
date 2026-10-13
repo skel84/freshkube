@@ -518,7 +518,7 @@ impl DetailPane {
         self.read_seq += 1;
         let seq = self.read_seq;
         self.follow.begin(cx.background_executor().now());
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             let result = example::document(&target.identity, live::now())
                 .map(DocumentView::new)
                 .ok_or_else(|| {
@@ -658,7 +658,7 @@ impl DetailPane {
         };
         let target = detail.target.clone();
         let identity = target.identity.clone();
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             let events = example::events(&identity, live::now());
             self.apply_events(&identity, seq, EventUpdate::Reset(events), cx);
             return;
@@ -729,7 +729,7 @@ impl DetailPane {
         detail.reveals.insert(key.clone(), Reveal::Reading);
         self.feedback = None;
         cx.notify();
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             let result = example::secret_value(&identity, &key, live::now()).ok_or_else(|| {
                 Failure::new(FailureKind::NotFound, "Example data has no such value")
             });

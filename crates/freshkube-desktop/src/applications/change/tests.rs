@@ -1274,7 +1274,7 @@ fn another_source_drops_the_change(cx: &mut TestAppContext) {
                 Some(ClusterSource {
                     id: "connection-other".into(),
                     context: "other".into(),
-                    access: ClusterAccess::Example,
+                    access: ClusterAccess::EXAMPLE,
                 }),
                 None,
                 cx,
@@ -1299,7 +1299,7 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
         change(&view, cx).unwrap().update(cx, |page, _| {
             page.fetch = Fetch::Live {
                 runtime: runtime.handle().clone(),
-                access: ClusterAccess::Example,
+                access: ClusterAccess::EXAMPLE,
                 place: Box::new(Place {
                     // The open example cluster's key, as live objects carry.
                     cluster: "core-fra".into(),

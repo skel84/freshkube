@@ -876,7 +876,7 @@ fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
     let source = ClusterSource {
         id: "connection-1".into(),
         context: "homelab".into(),
-        access: ClusterAccess::Example,
+        access: ClusterAccess::EXAMPLE,
     };
     for entry in [None, Some("cicd-fra"), Some("core-fra"), Some("dev-fra")] {
         let read = super::Read::live(&inputs, &source, entry);
@@ -938,7 +938,7 @@ fn a_live_read_follows_each_stages_current_freight() {
     let source = ClusterSource {
         id: "connection-1".into(),
         context: "core-fra".into(),
-        access: ClusterAccess::Example,
+        access: ClusterAccess::EXAMPLE,
     };
     let live = LiveChanges::of(&inputs, &source);
     assert_eq!(live.argocd_namespace, "gitops");
@@ -1014,7 +1014,7 @@ fn a_live_read_keys_each_entry_and_opens_the_open_one_here() {
     let source = ClusterSource {
         id: "connection-1".into(),
         context: "admin@lab".into(),
-        access: ClusterAccess::Example,
+        access: ClusterAccess::EXAMPLE,
     };
     let inputs = Inputs {
         sessions: ["cicd-fra", "core-fra", "dev-fra"]

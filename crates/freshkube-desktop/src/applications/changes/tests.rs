@@ -490,7 +490,7 @@ fn another_connection_drops_the_read_in_flight_and_its_rows(cx: &mut TestAppCont
                 Some(crate::resources::ClusterSource {
                     id: "example:other".into(),
                     context: "other".into(),
-                    access: crate::resources::ClusterAccess::Example,
+                    access: crate::resources::ClusterAccess::EXAMPLE,
                 }),
                 cx,
             );

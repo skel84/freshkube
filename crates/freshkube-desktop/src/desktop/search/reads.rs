@@ -33,7 +33,7 @@ impl Search {
                     continue;
                 }
                 let kind = builtin(key).unwrap();
-                if matches!(source.access, ClusterAccess::Example) {
+                if matches!(source.access, ClusterAccess::Example(_)) {
                     let objects = resources::example::read(
                         &source.context,
                         key,

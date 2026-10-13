@@ -857,7 +857,7 @@ impl ResourcesScreen {
         }
         let kind = self.kind.clone();
         let namespace = self.namespace.clone().filter(|_| kind.namespaced);
-        if let ClusterAccess::Example = source.access {
+        if let ClusterAccess::Example(_) = source.access {
             if self.hold {
                 return;
             }
@@ -1147,7 +1147,7 @@ impl ResourcesScreen {
         self.namespace_generation = self.namespace_generation.wrapping_add(1);
         let generation = self.namespace_generation;
         let access = match source.access {
-            ClusterAccess::Example => {
+            ClusterAccess::Example(_) => {
                 self.namespaces = example::namespaces();
                 self.sync_namespace_choices(window, cx);
                 return;

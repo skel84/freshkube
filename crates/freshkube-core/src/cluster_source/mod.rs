@@ -35,8 +35,9 @@ pub trait KubeClientSource: Send + Sync {
 /// How a cluster is reached.
 #[derive(Clone)]
 pub enum ClusterAccess {
-    /// Made-up data for `--fixture`; nothing is contacted.
-    Example,
+    /// Made-up data for `--fixture`; nothing is contacted. The hold names
+    /// what it never answers.
+    Example(Hold),
     /// The Kubernetes client the Talos side sets up for its cluster.
     Talos(Box<TalosAccess>),
     /// A kubeconfig context, without Talos.
@@ -47,13 +48,16 @@ pub enum ClusterAccess {
 }
 
 impl ClusterAccess {
+    /// Example data that answers everything.
+    pub const EXAMPLE: Self = Self::Example(Hold::NONE);
+
     pub fn is_example(&self) -> bool {
-        matches!(self, ClusterAccess::Example)
+        matches!(self, ClusterAccess::Example(_))
     }
 
     pub async fn client(&self) -> Result<kube::Client, String> {
         match self {
-            ClusterAccess::Example => Err("Example data has no Kubernetes client".into()),
+            ClusterAccess::Example(_) => Err("Example data has no Kubernetes client".into()),
             ClusterAccess::Talos(talos) => talos.client().await,
             ClusterAccess::Direct(direct) => {
                 direct.connect().await.map(|connection| connection.client)
@@ -66,7 +70,7 @@ impl ClusterAccess {
     /// example data keeps nothing.
     pub fn forget(&self) {
         match self {
-            ClusterAccess::Example => {}
+            ClusterAccess::Example(_) => {}
             ClusterAccess::Talos(talos) => talos.forget(),
             ClusterAccess::Direct(direct) => direct.forget(),
             ClusterAccess::Live(source) => source.forget(),
@@ -77,7 +81,7 @@ impl ClusterAccess {
 impl fmt::Debug for ClusterAccess {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ClusterAccess::Example => f.write_str("Example"),
+            ClusterAccess::Example(_) => f.write_str("Example"),
             ClusterAccess::Talos(_) => f.write_str("Talos"),
             ClusterAccess::Direct(_) => f.write_str("Direct"),
             ClusterAccess::Live(_) => f.write_str("Live"),
@@ -121,7 +125,7 @@ mod tests {
 
     #[tokio::test]
     async fn example_has_no_client() {
-        let access = ClusterAccess::Example;
+        let access = ClusterAccess::EXAMPLE;
         assert!(access.is_example());
         assert_eq!(
             access.client().await.err().as_deref(),
@@ -156,6 +160,6 @@ mod tests {
         access.clone().forget();
         assert_eq!(counting.1.load(Ordering::SeqCst), 2);
         // Example data keeps no client.
-        ClusterAccess::Example.forget();
+        ClusterAccess::EXAMPLE.forget();
     }
 }

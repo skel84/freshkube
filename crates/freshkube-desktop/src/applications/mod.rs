@@ -450,7 +450,7 @@ impl ApplicationsPage {
         let live = self
             .source
             .as_ref()
-            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example));
+            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example(_)));
         if reads_elsewhere && live {
             self.loader.expire();
             if self.visible {
@@ -486,7 +486,7 @@ impl ApplicationsPage {
             return Connections::default();
         };
         let connections = match &source.access {
-            ClusterAccess::Example => {
+            ClusterAccess::Example(_) => {
                 example::connections(&source.id, self.clusters.active.as_deref())
             }
             _ => Connections::new(
@@ -520,7 +520,7 @@ impl ApplicationsPage {
     /// whichever arrives first, the switch or the read.
     fn connections(&self, read: &Read) -> Connections {
         let connections = match &self.source {
-            Some(source) if matches!(source.access, ClusterAccess::Example) => {
+            Some(source) if matches!(source.access, ClusterAccess::Example(_)) => {
                 example::connections(&source.id, self.clusters.active.as_deref())
             }
             _ => read.connections.clone(),
@@ -588,7 +588,7 @@ impl ApplicationsPage {
         };
         let request = self.loader.start((source.id.clone(), self.entry.clone()));
         match &source.access {
-            ClusterAccess::Example => {
+            ClusterAccess::Example(_) => {
                 // Held, it stays in flight, so the page keeps its loading
                 // rows.
                 if self.hold {

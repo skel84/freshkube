@@ -129,7 +129,7 @@ impl Pilot {
             applied_revision: 0,
         });
         self.sync_unread_health(cx);
-        if matches!(source.access, ClusterAccess::Example) {
+        if matches!(source.access, ClusterAccess::Example(_)) {
             self.start_fixture_summary(window, cx);
             return;
         }

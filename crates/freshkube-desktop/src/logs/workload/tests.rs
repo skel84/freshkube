@@ -76,7 +76,7 @@ fn pods(workload: &ResourceIdentity, selector: &str) -> Vec<WorkloadPod> {
 fn show(view: &Entity<WorkloadLogView>, workload: &ResourceIdentity, cx: &mut App) {
     let selector = selector(workload);
     view.update(cx, |view, cx| {
-        view.show_workload(Some(workload.clone()), Some(ClusterAccess::Example), cx);
+        view.show_workload(Some(workload.clone()), Some(ClusterAccess::EXAMPLE), cx);
         view.want(cx);
         view.set_selector(selector, cx);
     });
@@ -85,7 +85,7 @@ fn show(view: &Entity<WorkloadLogView>, workload: &ResourceIdentity, cx: &mut Ap
 /// Opens the Logs tab with no selector known, so the test feeds the pods.
 fn show_fed(view: &Entity<WorkloadLogView>, workload: &ResourceIdentity, cx: &mut App) {
     view.update(cx, |view, cx| {
-        view.show_workload(Some(workload.clone()), Some(ClusterAccess::Example), cx);
+        view.show_workload(Some(workload.clone()), Some(ClusterAccess::EXAMPLE), cx);
         view.want(cx);
     });
 }
@@ -158,7 +158,7 @@ fn nothing_is_read_until_the_tab_shows_then_every_pod_is_followed(cx: &mut TestA
     assert!(expected.len() > 3, "{}", expected.len());
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.show_workload(Some(api.clone()), Some(ClusterAccess::Example), cx);
+            view.show_workload(Some(api.clone()), Some(ClusterAccess::EXAMPLE), cx);
             view.set_selector(Some(selector.clone()), cx);
         });
         window.render_frame(cx);

@@ -42,7 +42,7 @@ impl Mounted {
         self.step(cx, |_, cx| {
             self.pane.update(cx, |pane, cx| {
                 pane.set_context("homelab".into(), cx);
-                pane.open(target, ClusterAccess::Example, "1", Duration::ZERO, cx)
+                pane.open(target, ClusterAccess::EXAMPLE, "1", Duration::ZERO, cx)
             });
         });
     }

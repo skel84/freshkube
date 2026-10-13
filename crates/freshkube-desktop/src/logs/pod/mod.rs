@@ -1171,7 +1171,7 @@ impl Stream for PodLogView {
             .position
             .time()
             .map(|_| self.source().position);
-        if let ClusterAccess::Example = access {
+        if let ClusterAccess::Example(_) = access {
             self.start_example(&pod, &container, resume.is_some(), cx);
             return;
         }
