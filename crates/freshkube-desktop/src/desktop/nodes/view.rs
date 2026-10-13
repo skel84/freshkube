@@ -91,14 +91,24 @@ impl Nodes {
             })
             .key_context("NodeWorkspace")
             .track_focus(&self.focus)
-            .on_action(self.send::<super::super::NextNode>(NodesEvent::Step(1)))
-            .on_action(self.send::<super::super::PreviousNode>(NodesEvent::Step(-1)))
+            .on_action(
+                cx.listener(|_, _: &super::super::NextNode, _, cx| cx.emit(NodesEvent::Step(1))),
+            )
+            .on_action(
+                cx.listener(|_, _: &super::super::PreviousNode, _, cx| {
+                    cx.emit(NodesEvent::Step(-1))
+                }),
+            )
             .on_action(cx.listener(|view, _: &ExpandNode, _, cx| view.toggle_expanded(cx)))
-            .on_action(self.send::<CloseNode>(NodesEvent::Close))
-            .on_action(self.send::<crate::logs::ClearSelection>(NodesEvent::Back))
-            .on_action(self.send::<BackNode>(NodesEvent::Back))
-            .on_action(self.send::<NextNodeTab>(NodesEvent::StepTab(1)))
-            .on_action(self.send::<PreviousNodeTab>(NodesEvent::StepTab(-1)))
+            .on_action(cx.listener(|_, _: &CloseNode, _, cx| cx.emit(NodesEvent::Close)))
+            .on_action(
+                cx.listener(|_, _: &crate::logs::ClearSelection, _, cx| cx.emit(NodesEvent::Back)),
+            )
+            .on_action(cx.listener(|_, _: &BackNode, _, cx| cx.emit(NodesEvent::Back)))
+            .on_action(cx.listener(|_, _: &NextNodeTab, _, cx| cx.emit(NodesEvent::StepTab(1))))
+            .on_action(
+                cx.listener(|_, _: &PreviousNodeTab, _, cx| cx.emit(NodesEvent::StepTab(-1))),
+            )
             .on_action(cx.listener(|view, _: &ToggleHealthyNodes, window, cx| {
                 // H is the table's; the filter and the pane type it, and
                 // the cards show no fold to flip.
@@ -108,29 +118,23 @@ impl Nodes {
                 view.toggle_healthy();
                 cx.notify();
             }))
-            .on_action({
-                let nodes = cx.weak_entity();
-                let shell = self.shell.clone();
-                move |_: &OpenNode, window, cx| {
-                    use freshkube_ui::table::{self, TableSource};
-                    // Enter opens a node from the list alone; anywhere else
-                    // in the workspace, such as on a focused button, it
-                    // keeps its own meaning.
-                    let key = nodes.update(cx, |view, cx| {
-                        if !view.focus.is_focused(window) {
-                            cx.propagate();
-                            return None;
-                        }
-                        view.selected
-                            .clone()
-                            .filter(|key| view.line_of(key).is_some())
-                            .or_else(|| table::step(view, 1, cx))
-                    });
-                    if let (Ok(Some(key)), Some(shell)) = (key, &shell) {
-                        shell(NodesEvent::Open { key, focus: true }, window, cx);
-                    }
+            .on_action(cx.listener(|view, _: &OpenNode, window, cx| {
+                use freshkube_ui::table::{self, TableSource};
+                // Enter opens a node from the list alone; anywhere else in
+                // the workspace, such as on a focused button, it keeps its
+                // own meaning.
+                if !view.focus.is_focused(window) {
+                    return cx.propagate();
                 }
-            })
+                if let Some(key) = view
+                    .selected
+                    .clone()
+                    .filter(|key| view.line_of(key).is_some())
+                    .or_else(|| table::step(view, 1, cx))
+                {
+                    cx.emit(NodesEvent::Open { key, focus: true });
+                }
+            }))
             .when(!expanded, |this| {
                 this.child(freshkube_ui::page::toolbar(cx).child(self.nodes_header(window, cx)))
             })
@@ -174,7 +178,7 @@ impl Nodes {
                         Button::new("nodes-retry")
                             .primary()
                             .label("Retry")
-                            .on_click(self.send(NodesEvent::Refresh))
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(NodesEvent::Refresh)))
                             .into_any_element(),
                     ],
                     cx,
@@ -386,7 +390,7 @@ impl Nodes {
                     .icon(IconName::X)
                     .tooltip("Close node pane")
                     .accessibility_label("Close node pane")
-                    .on_click(self.send(NodesEvent::Close)),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(NodesEvent::Close))),
             )
     }
 
@@ -430,7 +434,10 @@ impl Nodes {
                             cx,
                         ))
                     })
-                    .on_click(self.send(NodesEvent::Tab(*tab)))
+                    .on_click(cx.listener({
+                        let tab = *tab;
+                        move |_, _, _, cx| cx.emit(NodesEvent::Tab(tab))
+                    }))
             }))
             .when(self.more, |this| {
                 this.child(
@@ -441,29 +448,23 @@ impl Nodes {
                             .label("More")
                             .dropdown_caret(true)
                             .dropdown_menu({
-                                let shell = self.shell.clone();
+                                let nodes = cx.weak_entity();
                                 move |menu, _, _| {
-                                    let events = shell.clone();
-                                    let yaml = shell.clone();
+                                    let events = nodes.clone();
+                                    let yaml = nodes.clone();
                                     menu.item(PopupMenuItem::new("Events").on_click(
-                                        move |_, window, cx| {
-                                            if let Some(shell) = &events {
-                                                shell(NodesEvent::Tab(NodeTab::Events), window, cx);
-                                            }
+                                        move |_, _, cx| {
+                                            let _ = events.update(cx, |_, cx| {
+                                                cx.emit(NodesEvent::Tab(NodeTab::Events))
+                                            });
                                         },
                                     ))
                                     .item(
-                                        PopupMenuItem::new("YAML").on_click(
-                                            move |_, window, cx| {
-                                                if let Some(shell) = &yaml {
-                                                    shell(
-                                                        NodesEvent::Tab(NodeTab::Yaml),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            },
-                                        ),
+                                        PopupMenuItem::new("YAML").on_click(move |_, _, cx| {
+                                            let _ = yaml.update(cx, |_, cx| {
+                                                cx.emit(NodesEvent::Tab(NodeTab::Yaml))
+                                            });
+                                        }),
                                     )
                                 }
                             }),
@@ -512,12 +513,10 @@ fn measure_log_body(
 impl Nodes {
     /// The node pane's attention rows, from what the shell handed Nodes.
     fn render_node_attention(&self, node: &str, cx: &Context<Self>) -> AnyElement {
-        let shell = self.shell.clone();
+        let nodes = cx.weak_entity();
         let on_open: super::super::overview::attention::OnOpen =
-            std::rc::Rc::new(move |destination, window, cx| {
-                if let Some(shell) = &shell {
-                    shell(NodesEvent::Destination(destination), window, cx);
-                }
+            std::rc::Rc::new(move |destination, _, cx| {
+                _ = nodes.update(cx, |_, cx| cx.emit(NodesEvent::Destination(destination)));
             });
         super::super::overview::attention::render_attention(
             &self.attention,
