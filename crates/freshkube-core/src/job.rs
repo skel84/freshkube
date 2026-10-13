@@ -23,15 +23,20 @@ impl Drop for OwnedJob {
 
 /// Runs `work` on Tokio under `deadline`. Dropping the job or the receiver
 /// cancels it, so a screen that moves on never receives a late result.
-pub fn spawn_job<T, F>(
+///
+/// The error type is the caller's: `on_timeout` is the error a missed
+/// deadline answers with, a [`Failure`](crate::failure::Failure) or a
+/// `String`.
+pub fn spawn_job<T, E, F>(
     runtime: &Handle,
     deadline: Duration,
-    timeout_message: String,
+    on_timeout: E,
     work: F,
-) -> (OwnedJob, oneshot::Receiver<Result<T, String>>)
+) -> (OwnedJob, oneshot::Receiver<Result<T, E>>)
 where
     T: Send + 'static,
-    F: Future<Output = Result<T, String>> + Send + 'static,
+    E: Send + 'static,
+    F: Future<Output = Result<T, E>> + Send + 'static,
 {
     let (mut sender, receiver) = oneshot::channel();
     let task = runtime.spawn(async move {
@@ -39,7 +44,7 @@ where
             biased;
             _ = sender.closed() => {}
             result = tokio::time::timeout(deadline, work) => {
-                let _ = sender.send(result.unwrap_or_else(|_| Err(timeout_message)));
+                let _ = sender.send(result.unwrap_or_else(|_| Err(on_timeout)));
             }
         }
     });

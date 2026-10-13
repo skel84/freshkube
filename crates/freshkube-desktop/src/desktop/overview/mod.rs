@@ -137,6 +137,7 @@ impl Pilot {
         let reason = self
             .overview
             .error()
+            .map(String::as_str)
             .unwrap_or("The refresh failed.")
             .to_owned();
         Some(ui::warning_banner(

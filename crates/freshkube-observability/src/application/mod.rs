@@ -440,7 +440,7 @@ impl ObservabilityPage {
                 "Couldn't read this application"
             },
             "Nothing is shown as missing: a failed read says nothing about the application's health.",
-            self.live.view.error().map(str::to_owned),
+            self.live.view.error().cloned(),
             vec![
                 action("obs-app-retry", "Retry")
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx)))
