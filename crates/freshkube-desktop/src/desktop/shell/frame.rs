@@ -258,10 +258,6 @@ impl Pilot {
         let id: SharedString = match self.page {
             Page::Resources => "resource-scope".into(),
             Page::Observability => "obs-scope".into(),
-            Page::Nodes => {
-                let status = self.node_workspace.read(cx).status.clone();
-                return Some(("nodes-scope".into(), status));
-            }
             Page::SystemServices if self.kubernetes_only.is_some() => return None,
             page => format!("{}-scope", page.slug()).into(),
         };

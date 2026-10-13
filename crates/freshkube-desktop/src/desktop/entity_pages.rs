@@ -11,9 +11,10 @@
 //! [`PageEvent`]s.
 //!
 //! Overview, Nodes and System services have handles too. The shell feeds
-//! what they draw, so their hooks do nothing, except that System services
-//! gives its status line, and System services and Overview ask the shell
-//! through their own events.
+//! what they draw, so most of their hooks do nothing: System services and
+//! Nodes give their status lines, Nodes its loading motion and its read of
+//! its nodes' use (`desktop/nodes/metrics.rs`), and System services and
+//! Overview ask the shell through their own events.
 
 use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
@@ -281,8 +282,7 @@ impl ScreenPanel for SettingsPage {
 
 impl Pilot {
     /// The handles of the pages that aren't Talos screens, by their keys:
-    /// one argument a page. The list shrinks again as Nodes becomes an
-    /// entity of its own (#579).
+    /// one argument a page.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn page_handles(
         overview: &Entity<OverviewPage>,

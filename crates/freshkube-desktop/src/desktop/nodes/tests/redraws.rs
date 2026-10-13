@@ -188,8 +188,8 @@ fn the_first_history_source_draws_the_chart(cx: &mut TestAppContext) {
     assert!(first > 0, "the chart shows");
 }
 
-/// A new source for node usage rebuilds the table's usage cells and draws
-/// them.
+/// A new source for node usage, as the shell hands every page, rebuilds
+/// the table's usage cells and draws them.
 #[gpui_kit::test]
 fn a_metrics_source_change_redraws_the_usage_cells(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = settled(NodeTab::Overview, cx);
@@ -197,7 +197,7 @@ fn a_metrics_source_change_redraws_the_usage_cells(cx: &mut TestAppContext) {
         pilot
             .node_workspace
             .update(cx, |nodes, _| nodes.metrics.source = Some("another".into()));
-        pilot.sync_node_metrics(window, cx);
+        pilot.push_source(window, cx);
     });
     assert!(redraws > 0);
 }
