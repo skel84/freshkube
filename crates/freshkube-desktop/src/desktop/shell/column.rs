@@ -168,7 +168,7 @@ impl Pilot {
             self.release_column_focus(window, cx);
             return None;
         }
-        if self.column_collapsed(window) {
+        if self.navigation.column_collapsed(window) {
             self.release_column_focus(window, cx);
             return Some(self.render_collapsed_column(window, cx));
         }

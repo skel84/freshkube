@@ -180,7 +180,7 @@ fn the_column_hands_the_keyboard_to_the_page_when_it_folds(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-b", cx);
         window.render_frame(cx);
-        assert!(view.read(cx).column_collapsed(window));
+        assert!(view.read(cx).navigation.column_collapsed(window));
         assert!(!focus.is_focused(window));
         assert!(window.focused(cx).is_some(), "the page has the keyboard");
         window.press("secondary-b", cx);
@@ -192,7 +192,7 @@ fn the_column_hands_the_keyboard_to_the_page_when_it_folds(cx: &mut TestAppConte
     cx.simulate_window_resize(handle, size(px(760.), px(560.)));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(view.read(cx).column_collapsed(window));
+        assert!(view.read(cx).navigation.column_collapsed(window));
         assert!(!focus.is_focused(window));
         assert!(window.focused(cx).is_some());
     })
@@ -363,7 +363,7 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
         window.render_frame(cx);
         assert!(window.find("refresh").visible());
         window.click("nav-collapse", cx);
-        assert!(pilot.read(cx).column_collapsed(window));
+        assert!(pilot.read(cx).navigation.column_collapsed(window));
         window.click("nav-obs-traces", cx);
         assert_eq!(
             pilot.read(cx).observability.read(cx).destination(),
@@ -376,18 +376,18 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
         window.press("enter", cx);
         assert_eq!(pilot.read(cx).observability.read(cx).hours(), 24);
         window.press("secondary-b", cx);
-        assert!(!pilot.read(cx).column_collapsed(window));
+        assert!(!pilot.read(cx).navigation.column_collapsed(window));
     })
     .unwrap();
     // An expanded preference still yields to a narrow window, then returns.
     cx.simulate_window_resize(handle, size(px(760.), px(560.)));
     cx.update_window(handle, |_, window, cx| {
-        assert!(pilot.read(cx).column_collapsed(window));
+        assert!(pilot.read(cx).navigation.column_collapsed(window));
     })
     .unwrap();
     cx.simulate_window_resize(handle, size(px(1280.), px(880.)));
     cx.update_window(handle, |_, window, cx| {
-        assert!(!pilot.read(cx).column_collapsed(window));
+        assert!(!pilot.read(cx).navigation.column_collapsed(window));
     })
     .unwrap();
 }
@@ -398,13 +398,13 @@ fn monitoring_breadcrumb_opens_a_collapsed_dashboards_column(cx: &mut TestAppCon
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| pilot.navigate(Page::Monitoring, window, cx));
         window.render_frame(cx);
-        assert!(pilot.read(cx).column_collapsed(window));
+        assert!(pilot.read(cx).navigation.column_collapsed(window));
         window.click("monitoring-dashboards", cx);
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(!pilot.read(cx).column_collapsed(window));
+        assert!(!pilot.read(cx).navigation.column_collapsed(window));
         window.render_frame(cx);
         // An open column stays open.
         window.click("monitoring-dashboards", cx);
@@ -412,7 +412,7 @@ fn monitoring_breadcrumb_opens_a_collapsed_dashboards_column(cx: &mut TestAppCon
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        assert!(!pilot.read(cx).column_collapsed(window));
+        assert!(!pilot.read(cx).navigation.column_collapsed(window));
     })
     .unwrap();
 }
@@ -429,7 +429,7 @@ fn collapsed_observability_column_scrolls_its_active_item_into_view(cx: &mut Tes
             pilot.navigate(Page::Observability, window, cx)
         });
         window.render_frame(cx);
-        assert!(pilot.read(cx).column_collapsed(window));
+        assert!(pilot.read(cx).navigation.column_collapsed(window));
     })
     .unwrap();
     for destination in [
@@ -479,7 +479,7 @@ fn every_expanded_column_puts_its_caption_and_rows_in_one_place(cx: &mut TestApp
         ] {
             pilot.update(cx, |pilot, cx| pilot.navigate(page, window, cx));
             window.render_frame(cx);
-            assert!(!pilot.read(cx).column_collapsed(window));
+            assert!(!pilot.read(cx).navigation.column_collapsed(window));
             let toggle = window.find("nav-collapse").bounds();
             let row = window.find(first).bounds();
             seen.push((page, toggle, row));
@@ -619,7 +619,7 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
         // Larger text cuts the column the item was revealed in.
         crate::text_size::set(20., cx);
         settle(window, cx);
-        assert!(pilot.read(cx).column_collapsed(window));
+        assert!(pilot.read(cx).navigation.column_collapsed(window));
         assert_ne!(super::super::shell::cut_edges(&scroll), (false, false));
         assert_clear_of_fades(
             window,
@@ -630,7 +630,7 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
         // Expanded, its rows are taller, in the source list.
         window.click("nav-collapse", cx);
         settle(window, cx);
-        assert!(!pilot.read(cx).column_collapsed(window));
+        assert!(!pilot.read(cx).navigation.column_collapsed(window));
         let column = pilot.read(cx).navigation.column_list.scroll().clone();
         assert_clear_of_fades(window, "nav-column-list", "nav-obs-deployments", &column);
         // From a short column, a kind low in a long group; the column's
@@ -706,11 +706,11 @@ fn fog_narrow_sidebar_can_be_expanded_manually(cx: &mut TestAppContext) {
             pilot.navigate(Page::Observability, window, cx)
         });
         window.render_frame(cx);
-        assert!(pilot.read(cx).column_collapsed(window));
+        assert!(pilot.read(cx).navigation.column_collapsed(window));
         window.click("nav-collapse", cx);
-        assert!(!pilot.read(cx).column_collapsed(window));
+        assert!(!pilot.read(cx).navigation.column_collapsed(window));
         window.click("nav-collapse", cx);
-        assert!(pilot.read(cx).column_collapsed(window));
+        assert!(pilot.read(cx).navigation.column_collapsed(window));
     })
     .unwrap();
 }

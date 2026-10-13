@@ -88,3 +88,22 @@ impl Navigation {
         }
     }
 }
+
+impl Navigation {
+    pub(in crate::desktop) fn column_collapsed(&self, window: &Window) -> bool {
+        self.column_state.collapsed_in(window)
+    }
+    /// The column's width, when the area has one.
+    pub(in crate::desktop) fn column_width(&self, window: &Window) -> Option<f32> {
+        self.area.has_column().then(|| {
+            if self.column_collapsed(window) {
+                52.
+            } else {
+                COLUMN_WIDTH
+            }
+        })
+    }
+    pub(in crate::desktop) fn layout_chrome(&self, window: &Window) {
+        crate::screens::set_chrome_width(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
+    }
+}

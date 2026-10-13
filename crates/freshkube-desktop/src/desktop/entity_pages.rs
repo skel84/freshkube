@@ -398,7 +398,7 @@ impl Pilot {
                 MonitoringEvent::History => self.push_history(cx),
                 // The column lists the dashboards; an open one stays open.
                 MonitoringEvent::Dashboards => {
-                    if self.column_collapsed(window) {
+                    if self.navigation.column_collapsed(window) {
                         self.toggle_column(window, cx);
                     }
                 }

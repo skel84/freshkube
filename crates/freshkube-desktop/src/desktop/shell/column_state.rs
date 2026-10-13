@@ -41,31 +41,20 @@ impl ColumnState {
         self.collapsed = collapsed;
         self.narrow_override = Some(collapsed);
     }
+    /// Whether the column is folded at this window's width: a narrow
+    /// window folds it unless the user opened it there.
+    pub(super) fn collapsed_in(&self, window: &Window) -> bool {
+        if window.viewport_size().width / ui::dp_px(1., window) < 1000. {
+            self.narrow_override.unwrap_or(true)
+        } else {
+            self.collapsed
+        }
+    }
     fn save(&self, cx: &App) {
         self.file.set_collapsed(self.collapsed, cx);
     }
 }
 impl Pilot {
-    pub(in crate::desktop) fn column_collapsed(&self, window: &Window) -> bool {
-        if window.viewport_size().width / ui::dp_px(1., window) < 1000. {
-            self.navigation.column_state.narrow_override.unwrap_or(true)
-        } else {
-            self.navigation.column_state.collapsed
-        }
-    }
-    /// The column's width, when the area has one.
-    pub(in crate::desktop) fn column_width(&self, window: &Window) -> Option<f32> {
-        self.navigation.area.has_column().then(|| {
-            if self.column_collapsed(window) {
-                52.
-            } else {
-                COLUMN_WIDTH
-            }
-        })
-    }
-    pub(in crate::desktop) fn layout_chrome(&self, window: &Window) {
-        crate::screens::set_chrome_width(RAIL_WIDTH + self.column_width(window).unwrap_or(0.));
-    }
     pub(in crate::desktop) fn toggle_column(
         &mut self,
         window: &mut Window,
@@ -74,7 +63,7 @@ impl Pilot {
         if !self.navigation.area.has_column() {
             return;
         }
-        let collapsed = !self.column_collapsed(window);
+        let collapsed = !self.navigation.column_collapsed(window);
         self.navigation.column_state.collapsed = collapsed;
         self.navigation.column_state.narrow_override =
             (window.viewport_size().width / ui::dp_px(1., window) < 1000.).then_some(collapsed);
