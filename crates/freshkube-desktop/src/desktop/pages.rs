@@ -69,6 +69,40 @@ impl PageId {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::PageId::{self, *};
+
+    /// The key order is what the shell tells pages in: every page that
+    /// isn't a screen sorts before every screen, and the screens keep
+    /// [`PageId::SCREENS`]' order.
+    #[test]
+    fn the_pages_sort_before_the_screens() {
+        // A new key fails to compile here until it is placed.
+        let screen = |id: PageId| match id {
+            Overview | Nodes | SystemServices | Monitoring | Observability | Applications
+            | Settings | Resources => false,
+            Processes | Storage | Network | Diagnostics | Etcd | Health | Security | Lifecycle
+            | Operations => true,
+        };
+        let pages = [
+            Overview,
+            Nodes,
+            SystemServices,
+            Monitoring,
+            Observability,
+            Applications,
+            Settings,
+            Resources,
+        ];
+        let keys: Vec<_> = pages.into_iter().chain(PageId::SCREENS).collect();
+        assert!(keys.is_sorted());
+        for id in keys {
+            assert_eq!(id.is_screen(), screen(id), "{id:?}");
+        }
+    }
+}
+
 /// A row of the navigation column to scroll into view; scrolling is
 /// minimal, so a row already in view stays put.
 #[derive(Clone, Debug, PartialEq, Eq)]

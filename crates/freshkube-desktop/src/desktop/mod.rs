@@ -303,7 +303,8 @@ impl Render for PageHost {
         self.pilot
             .update(cx, |pilot, cx| match page {
                 Page::Overview => pilot.render_overview(window, cx),
-                _ => pilot.render_nodes(window, cx),
+                Page::Nodes => pilot.render_nodes(window, cx),
+                _ => unreachable!("only Overview and Nodes have a host"),
             })
             .unwrap_or_else(|_| div().into_any_element())
     }

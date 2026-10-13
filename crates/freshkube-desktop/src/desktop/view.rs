@@ -198,11 +198,7 @@ impl Pilot {
             Page::Resources => self.resources.read(cx).loading_motion(),
             Page::Observability => self.observability.read(cx).loading_motion(cx),
             Page::Applications => self.applications.read(cx).loading_motion(cx),
-            _ if self.kubernetes_only.is_some()
-                && !matches!(self.page, Page::Overview | Page::Health | Page::Nodes) =>
-            {
-                None
-            }
+            page if self.kubernetes_only.is_some() && page.needs_talos() => None,
             Page::Nodes => {
                 let workspace = &self.node_workspace;
                 let table = workspace.view == NodeView::Table
