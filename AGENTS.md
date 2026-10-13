@@ -23,6 +23,8 @@ src/main.rs              the `freshkube` binary: CLI options → desktop app
 
 Keep cluster logic in `freshkube-core` and presentation in `freshkube-desktop`. A screen calls core functions with real Rust types; there is no serialization boundary. Shared components live in `freshkube-ui`, which depends on neither; desktop reaches its modules by their old paths (`crate::ui`, `crate::palette`, `crate::theme`, `crate::text_size`, `crate::meters`). Monitoring is `freshkube-monitoring`, which desktop reaches as `crate::monitoring`; it sits under desktop and uses only core, `talos-rs`, `freshkube-ui` and `freshkube-probe`, so Resources and Observability depend on it, never the other way. Observability is `freshkube-observability`, which desktop reaches as `crate::observability`; it uses core, `freshkube-ui`, `freshkube-logs`, `freshkube-graph` and `freshkube-monitoring`, and names nothing of desktop: the shell turns its `ObservabilityEvent`s into navigation, and desktop's tests reach its fixture links through its `testing` feature. Reads are `freshkube-reads`, whose `Loader` the screens own; it uses only core, GPUI Kit and Tokio, and names nothing of `freshkube-ui` or desktop. A new page draws with `freshkube_ui::page` and `freshkube_ui::table` ([DESIGN.md](docs/DESIGN.md#in-code)).
 
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) describes the crate graph, the ways to be a page, the session and source, reads, events, example data and the debug knobs, each with its module path.
+
 ### Module layout
 
 Split code by concern, not by line count. A long file with one tight concern is fine; a file whose parts share private state only because they sit together is not.
@@ -33,8 +35,6 @@ Split code by concern, not by line count. A long file with one tight concern is 
 - **Keep small unit tests inline** in `#[cfg(test)] mod tests { … }`. When a module's tests are large, as UI tests usually are, put them in a sibling `tests.rs` (`#[cfg(test)] mod tests;`). It stays a child module, so the tests keep their access to private fields.
 - **Keep functions short.** A `render` that runs to hundreds of lines is harder to follow than a long file; split it into `render_*` helpers.
 - **Split a file when a step works on it,** not in a sweeping pass. Make the split its own commit with no logic changes, so the unchanged tests prove it.
-
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) describes the crate graph, the ways to be a page, the session and source, reads, events, example data and the debug knobs, each with its module path.
 
 [docs/ROADMAP.md](docs/ROADMAP.md) sets the order of work and its ground rules. When a step lands, move it to Done with its commit in the same change. [docs/REFERENCES.md](docs/REFERENCES.md) maps the reference checkouts and the source-reuse policy. [docs/DESIGN.md](docs/DESIGN.md) holds the chosen look: tokens, type, status glyphs, the app frame and table rules.
 
