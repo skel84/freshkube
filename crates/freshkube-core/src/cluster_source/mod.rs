@@ -15,9 +15,11 @@ use std::fmt;
 use std::sync::Arc;
 
 mod direct;
+mod hold;
 mod talos;
 
 pub use direct::DirectAccess;
+pub use hold::Hold;
 pub use talos::{AppliedAccess, LiveSource, TalosAccess};
 
 /// Hands out a Kubernetes client for one cluster. An implementation may

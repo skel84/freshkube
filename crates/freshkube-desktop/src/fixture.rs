@@ -7,36 +7,7 @@ use talos_rs::{
     ServiceHealth, ServiceInfo, VersionInfo,
 };
 
-/// What example data never answers, so the pages that wait for it stay on
-/// their loading rows, for captures and the stress binary:
-/// `FRESHKUBE_FIXTURE_HOLD=talos` holds the Talos overview and the
-/// Kubernetes summary (Nodes, System services, Operations), `lists` the
-/// Resources lists, `coroot` Observability's applications, incidents and
-/// traces, `monitoring` the dashboard's panels, `applications` the
-/// Applications list, `all` every one. Parsed into `DebugOptions`, which
-/// debug and stress builds fill and a release build leaves empty.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Hold {
-    pub(crate) talos: bool,
-    pub(crate) lists: bool,
-    pub(crate) coroot: bool,
-    pub(crate) monitoring: bool,
-    pub(crate) applications: bool,
-}
-
-impl Hold {
-    /// The holds a `FRESHKUBE_FIXTURE_HOLD` value names; an unknown or
-    /// missing one holds nothing.
-    pub(crate) fn parse(value: &str) -> Self {
-        Self {
-            talos: matches!(value, "talos" | "all"),
-            lists: matches!(value, "lists" | "all"),
-            coroot: matches!(value, "coroot" | "all"),
-            monitoring: matches!(value, "monitoring" | "all"),
-            applications: matches!(value, "applications" | "all"),
-        }
-    }
-}
+pub(crate) use freshkube_core::cluster_source::Hold;
 
 pub(crate) const CONTEXTS: [&str; 4] = [
     "prod-fra",
