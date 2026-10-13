@@ -121,7 +121,8 @@ fn read_applied_config_leniently(
 ) -> Result<(PathBuf, TalosConfig, ContextCatalog, ConfigIdentity), String> {
     let path = match applied.path {
         Some(path) => path,
-        None => TalosConfig::default_path().map_err(|error| error.to_string())?,
+        None => freshkube_core::ambient::default_talosconfig_path()
+            .map_err(|error| error.to_string())?,
     };
     let path = std::path::absolute(path)
         .map_err(|error| format!("Cannot resolve talosconfig path: {error}"))?;

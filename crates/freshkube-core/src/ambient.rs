@@ -31,6 +31,8 @@ use std::sync::OnceLock;
 /// The environment values core reads, as plain data.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ambient {
+    /// `TALOSCONFIG`, as set (empty included): the Talos configuration file.
+    pub talosconfig: Option<OsString>,
     /// `FRESHKUBE_KUBECONFIG`: a path list.
     pub freshkube_kubeconfig: Option<OsString>,
     /// `KUBECONFIG`: a path list.
@@ -58,6 +60,7 @@ impl Ambient {
                 .find(|value| !value.is_empty())
         };
         Self {
+            talosconfig: lookup("TALOSCONFIG"),
             freshkube_kubeconfig: lookup("FRESHKUBE_KUBECONFIG"),
             kubeconfig: lookup("KUBECONFIG"),
             home,
@@ -95,9 +98,25 @@ fn set_once(cell: &OnceLock<Ambient>, ambient: Ambient) -> Result<(), ()> {
     }
 }
 
+/// The Talos configuration file used when none is named: `TALOSCONFIG`, else
+/// `~/.talos/config` (`TalosConfig::default_path`, from the installed values).
+pub fn default_talosconfig_path() -> Result<PathBuf, talos_rs::TalosError> {
+    default_talosconfig_path_in(get())
+}
+
+fn default_talosconfig_path_in(ambient: &Ambient) -> Result<PathBuf, talos_rs::TalosError> {
+    talos_rs::TalosConfig::default_path_in(ambient.talosconfig.as_deref(), ambient.home.as_deref())
+}
+
+/// Loads the Talos configuration at the default path.
+pub fn load_default_talosconfig() -> Result<talos_rs::TalosConfig, talos_rs::TalosError> {
+    talos_rs::TalosConfig::load_from(&default_talosconfig_path()?)
+}
+
 /// The installed values, or an empty set when none were installed.
 pub fn get() -> &'static Ambient {
     static EMPTY: Ambient = Ambient {
+        talosconfig: None,
         freshkube_kubeconfig: None,
         kubeconfig: None,
         home: None,
@@ -132,6 +151,34 @@ mod tests {
         assert!(set_once(&cell, one.clone()).is_ok());
         assert!(set_once(&cell, one).is_ok());
         assert!(set_once(&cell, Ambient::default()).is_err());
+    }
+
+    #[test]
+    fn the_default_talosconfig_follows_talosconfig_then_home() {
+        let path = |talosconfig: Option<&str>, home: Option<&str>| {
+            default_talosconfig_path_in(&Ambient {
+                talosconfig: talosconfig.map(OsString::from),
+                home: home.map(PathBuf::from),
+                ..Ambient::default()
+            })
+            .ok()
+        };
+        assert_eq!(
+            path(Some("/t/config"), Some("/h")),
+            Some("/t/config".into())
+        );
+        assert_eq!(path(None, Some("/h")), Some("/h/.talos/config".into()));
+        // Set but empty wins, as `TalosConfig::default_path` always did.
+        assert_eq!(path(Some(""), Some("/h")), Some(PathBuf::new()));
+        assert_eq!(path(None, None), None);
+    }
+
+    #[test]
+    fn talosconfig_is_read_as_set() {
+        let ambient = Ambient::from_lookup(lookup(&[("TALOSCONFIG", "")]), None);
+        assert_eq!(ambient.talosconfig, Some(OsString::new()));
+        let ambient = Ambient::from_lookup(lookup(&[("TALOSCONFIG", "/t")]), None);
+        assert_eq!(ambient.talosconfig, Some(OsString::from("/t")));
     }
 
     #[test]
