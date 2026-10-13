@@ -5,7 +5,8 @@ use crate::GpuiOptions;
 use crate::forwards::{self, ForwardSpec};
 use crate::resources::{KubeAccess, example, live, shell};
 use freshkube_core::resources::{ForwardTarget, builtin};
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use freshkube_ui::real_io::RealIo;
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 
 /// A kubeconfig whose server refuses at once, so nothing leaves this machine,
@@ -73,10 +74,8 @@ async fn the_error_state_chooses_a_kubeconfig_and_connects_nothing_until_a_conte
     let directory = guard.path();
     let file = kubeconfig(directory);
     let (_runtime, handle, view) = broken_talos(cx, directory);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
 
     // Cancelling the chooser changes nothing.
     click(cx, handle, "use-kubernetes-only");
@@ -96,10 +95,8 @@ async fn the_error_state_chooses_a_kubeconfig_and_connects_nothing_until_a_conte
     click(cx, handle, "use-kubernetes-only");
     let chosen = file.clone();
     cx.simulate_path_prompt_response(move |_| Some(vec![chosen.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).contexts == ["alpha", "beta"]
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["alpha", "beta"])
+        .await;
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -121,7 +118,7 @@ async fn the_error_state_chooses_a_kubeconfig_and_connects_nothing_until_a_conte
     click(cx, handle, "context-switcher");
     click_context(cx, handle, 1);
     cx.update(|cx| assert_eq!(view.read(cx).applied.context.as_deref(), Some("beta")));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+    cx.wait_for_io(handle, |_, _| {
         saved(directory).is_some_and(|saved| {
             saved["mode"] == "kubernetes"
                 && saved["context"] == "beta"
@@ -169,14 +166,14 @@ async fn a_remembered_launch_keeps_remembering_and_a_talosconfig_returns_to_talo
     let options = GpuiOptions::kubernetes_only(None, None, 100)
         .with_preferences_in(Some(preferences.clone()), false);
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).applied.context.as_deref() == Some("beta")
     })
     .await;
     // Another context there is remembered too.
     click(cx, handle, "context-switcher");
     click_context(cx, handle, 0);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+    cx.wait_for_io(handle, |_, _| {
         saved(directory).is_some_and(|saved| saved["context"] == "alpha")
     })
     .await;
@@ -192,12 +189,12 @@ async fn a_remembered_launch_keeps_remembering_and_a_talosconfig_returns_to_talo
     click(cx, handle, "browse-config");
     let chosen = talosconfig.clone();
     cx.simulate_path_prompt_response(move |_| Some(vec![chosen.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         let view = view.read(cx);
         view.kubernetes_only.is_none() && view.contexts == ["gamma"]
     })
     .await;
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, _| {
+    cx.wait_for_io(handle, |_, _| {
         saved(directory).is_some_and(|saved| {
             saved.get("mode").is_none() && saved["talosconfig"] == talosconfig.to_str().unwrap()
         })
@@ -286,10 +283,8 @@ async fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppConte
     cx.simulate_prompt_answer("End the shell");
     // The switch waits for the session to end, which can finish off the
     // GPUI executor.
-    cx.wait_for(handle, std::time::Duration::from_secs(5), |_, cx| {
-        view.read(cx).kubernetes_only.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).kubernetes_only.is_some())
+        .await;
     assert!(cx.read(shell::running_anywhere).is_empty());
 }
 
@@ -339,13 +334,11 @@ async fn a_kubeconfig_without_contexts_gets_its_own_error_state(cx: &mut TestApp
     let empty = directory.join("empty");
     std::fs::write(&empty, "apiVersion: v1\nkind: Config\n").unwrap();
     let (_runtime, handle, view) = broken_talos(cx, directory);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     click(cx, handle, "use-kubernetes-only");
     cx.simulate_path_prompt_response(move |_| Some(vec![empty.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         let view = view.read(cx);
         view.kubernetes_only.is_some() && view.config_error.is_some()
     })
@@ -376,7 +369,7 @@ async fn choosing_another_kubeconfig_in_settings_connects_to_none(cx: &mut TestA
     cx.executor().allow_parking();
     let options = GpuiOptions::kubernetes_only(Some(first), Some("beta".into()), 100);
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).applied.context.as_deref() == Some("beta")
     })
     .await;
@@ -384,7 +377,7 @@ async fn choosing_another_kubeconfig_in_settings_connects_to_none(cx: &mut TestA
         view.update(cx, |view, cx| view.use_kubeconfig_file(second, window, cx))
     })
     .unwrap();
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         let view = view.read(cx);
         view.contexts == ["alpha", "beta"] && view.applied.context.is_none()
     })
@@ -404,20 +397,16 @@ async fn picked(
     context: &str,
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     let (runtime, handle, view) = broken_talos(cx, directory);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     click(cx, handle, "use-kubernetes-only");
     let chosen = file.to_path_buf();
     cx.simulate_path_prompt_response(move |_| Some(vec![chosen.clone()]));
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
-        view.read(cx).contexts == ["alpha", "beta"]
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["alpha", "beta"])
+        .await;
     click(cx, handle, "context-switcher");
     click_context(cx, handle, 1);
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).applied.context.as_deref() == Some(context)
     })
     .await;
@@ -438,7 +427,7 @@ async fn going_back_to_talos_inspects_the_picked_context_not_the_current_one(
         view.update(cx, |view, cx| view.leave_kubernetes_only(window, cx))
     })
     .unwrap();
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).kubeconfig_draft.inspection.is_some()
     })
     .await;
@@ -471,7 +460,7 @@ async fn a_picked_context_the_file_lacks_is_refused_and_the_current_one_is_not_t
         view.update(cx, |view, cx| view.leave_kubernetes_only(window, cx))
     })
     .unwrap();
-    cx.wait_for(handle, std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         view.read(cx).kubeconfig_draft.inspection.is_some()
     })
     .await;

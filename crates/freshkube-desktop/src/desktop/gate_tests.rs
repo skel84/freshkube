@@ -2,6 +2,7 @@
 //! show the failure, and only an answered overview can say "No node selected".
 
 use crate::DebugOptions;
+use freshkube_ui::real_io::RealIo;
 use std::time::Duration;
 
 use super::pages::Page;
@@ -14,10 +15,9 @@ use crate::screens::{
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::px;
 use gpui_kit::size;
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Context, Entity, TestAppContext, Window};
 
-const PATIENCE: Duration = Duration::from_secs(5);
 /// What a page shows while its first answer is to come: its table's
 /// loading rows.
 const WAITING: [&str; 9] = [
@@ -110,7 +110,7 @@ async fn pages_wait_while_the_overview_loads_and_show_data_once_it_answers(
     cx.run_until_parked();
     for page in PAGES {
         show_page(cx, handle, &view, page);
-        cx.wait_for(handle, PATIENCE, |window, _| {
+        cx.wait_for_io(handle, |window, _| {
             settled(window) && window.try_find(data_of(page)).is_some()
         })
         .await;
@@ -234,7 +234,7 @@ async fn retry_after_a_failed_first_read_waits_and_then_shows_data(cx: &mut Test
         })
     })
     .unwrap();
-    cx.wait_for(handle, PATIENCE, |window, _| {
+    cx.wait_for_io(handle, |window, _| {
         settled(window) && window.try_find(data_of(Page::Etcd)).is_some()
     })
     .await;
@@ -248,10 +248,8 @@ async fn a_new_talosconfig_path_does_not_show_the_old_error(cx: &mut TestAppCont
     let missing = std::env::temp_dir().join(format!("freshkube-tests-{}-gate", std::process::id()));
     let (_runtime, handle, view) =
         mount(cx, GpuiOptions::new(Some(missing), None, 100), 1280., 820.);
-    cx.wait_for(handle, Duration::from_secs(2), |_, cx| {
-        view.read(cx).config_error.is_some()
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| view.read(cx).config_error.is_some())
+        .await;
     cx.update(|cx| assert!(matches!(crate::screens::reading(cx), Reading::Failed(_))));
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| pilot.load_configuration(window, cx));
@@ -303,7 +301,7 @@ async fn kubernetes_only_health_waits_for_the_summary_then_shows_it(cx: &mut Tes
         })
     })
     .unwrap();
-    cx.wait_for(handle, PATIENCE, |window, _| {
+    cx.wait_for_io(handle, |window, _| {
         settled(window) && window.try_find(data_of(Page::Health)).is_some()
     })
     .await;
@@ -327,7 +325,7 @@ async fn kubernetes_only_health_without_a_context_asks_for_one(cx: &mut TestAppC
         });
     })
     .unwrap();
-    cx.wait_for(handle, PATIENCE, |window, _| {
+    cx.wait_for_io(handle, |window, _| {
         settled(window)
             && window.try_find("health-no-context").is_none()
             && window.try_find(data_of(Page::Health)).is_some()

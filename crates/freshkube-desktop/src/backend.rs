@@ -320,14 +320,15 @@ pub(crate) fn services(
     (OwnedJob::new(task), receiver)
 }
 
-pub(crate) fn stream(
-    runtime: Handle,
+/// Follows `services` on the target node into `sender` until every
+/// service's stream ends. Run it on Tokio; dropping it stops them all.
+pub(crate) async fn stream(
     client: TalosClient,
     target: Target,
     services: Vec<ServiceId>,
     tail: i32,
-) -> (OwnedJob, mpsc::Receiver<StreamEvent>) {
-    let (sender, receiver) = mpsc::channel(STREAM_QUEUE_CAPACITY);
+    sender: mpsc::Sender<StreamEvent>,
+) {
     let tail = bounded_tail(tail);
     let (unique, overflow) = bounded_services(services);
     if overflow || target.address.is_empty() {
@@ -336,18 +337,16 @@ pub(crate) fn stream(
         } else {
             "At most 16 services can be followed at once"
         };
-        let task = runtime.spawn(async move {
-            if let Some(service) = unique.into_iter().next() {
-                let _ = sender
-                    .send(StreamEvent {
-                        target,
-                        service,
-                        result: Err(message.into()),
-                    })
-                    .await;
-            }
-        });
-        return (OwnedJob::new(task), receiver);
+        if let Some(service) = unique.into_iter().next() {
+            let _ = sender
+                .send(StreamEvent {
+                    target,
+                    service,
+                    result: Err(message.into()),
+                })
+                .await;
+        }
+        return;
     }
     let node_client = client.with_node(&target.address);
     let pumps = unique
@@ -363,7 +362,7 @@ pub(crate) fn stream(
         })
         .collect::<Vec<_>>();
     drop(sender);
-    (supervise(&runtime, pumps), receiver)
+    supervised(pumps).await;
 }
 
 fn bounded_tail(tail: i32) -> i32 {
@@ -385,17 +384,24 @@ fn bounded_services(services: Vec<ServiceId>) -> (Vec<ServiceId>, bool) {
 
 /// JoinSet owns every child, including idle transports. Aborting the owner
 /// drops the set and aborts children; closing the receiver wakes every pump.
+async fn supervised<F>(pumps: Vec<F>)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    let mut children = JoinSet::new();
+    for pump in pumps {
+        children.spawn(pump);
+    }
+    while children.join_next().await.is_some() {}
+}
+
+/// `supervised` on its own job, as the lifecycle tests own it.
+#[cfg(test)]
 fn supervise<F>(runtime: &Handle, pumps: Vec<F>) -> OwnedJob
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    OwnedJob::new(runtime.spawn(async move {
-        let mut children = JoinSet::new();
-        for pump in pumps {
-            children.spawn(pump);
-        }
-        while children.join_next().await.is_some() {}
-    }))
+    OwnedJob::new(runtime.spawn(supervised(pumps)))
 }
 
 /// Generic factoring is for lifecycle tests, not a mock Talos transport.

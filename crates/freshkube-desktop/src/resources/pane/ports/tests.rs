@@ -1,10 +1,11 @@
+use freshkube_ui::real_io::RealIo;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
 use freshkube_core::resources::builtin;
 use gpui_kit::component::Root;
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, SharedString, TestAppContext, px, size};
 use tokio::runtime::Runtime;
 
@@ -14,9 +15,6 @@ use crate::resources::detail::DetailTarget;
 use crate::resources::pane::DetailPane;
 use crate::resources::screen::KubeAccess;
 use crate::resources::{example, live};
-
-/// How long, in test time, a forward may take to bind.
-const PATIENCE: Duration = Duration::from_secs(5);
 
 struct Mounted {
     _runtime: Runtime,
@@ -87,7 +85,7 @@ impl Mounted {
     /// get one: the example binds on the blocking pool.
     async fn settle(&self, cx: &mut TestAppContext) {
         let list = self.list.clone();
-        cx.wait_for(self.window, PATIENCE, move |_, cx| {
+        cx.wait_for_io(self.window, move |_, cx| {
             list.read(cx)
                 .items
                 .iter()
@@ -248,7 +246,7 @@ async fn other_port_forwards_any_number_and_refuses_text(cx: &mut TestAppContext
     // The example pods serve 8080 only.
     assert_eq!(fetch(port.unwrap()).unwrap(), "");
     let list = pane.list.clone();
-    cx.wait_for(pane.window, Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(pane.window, move |_, cx| {
         let view = list.read(cx).get(id, cx).unwrap();
         view.read(cx)
             .display

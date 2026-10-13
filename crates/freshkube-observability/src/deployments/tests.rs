@@ -361,6 +361,25 @@ mod wanted {
         }
     }
 
+    /// The example's revisions are named for the wall-clock minute they are
+    /// made in (`application/example.rs`'s `hour`), and the page keeps its
+    /// selection by that name, so a refresh across a minute edge falls back to
+    /// the newest revision. Starts the test with this much of its minute left.
+    const MINUTE_MARGIN: std::time::Duration = std::time::Duration::from_secs(3);
+
+    /// Waits out the end of the wall-clock minute when the test would span it.
+    fn clear_of_minute_edge() {
+        let into = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+            % 60_000;
+        let left = std::time::Duration::from_millis(60_000 - into);
+        if left < MINUTE_MARGIN {
+            std::thread::sleep(left + std::time::Duration::from_millis(50));
+        }
+    }
+
     /// The example page on the shell's connection, asked for `link`.
     fn asked(
         cx: &mut TestAppContext,
@@ -370,6 +389,7 @@ mod wanted {
         AnyWindowHandle,
         Entity<ObservabilityPage>,
     ) {
+        clear_of_minute_edge();
         let (runtime, handle, page) = mount(cx, true);
         cx.update(|cx| {
             page.update(cx, |page, cx| {

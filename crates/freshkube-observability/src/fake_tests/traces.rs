@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 async fn traced(
     cx: &mut TestAppContext,
@@ -6,7 +7,7 @@ async fn traced(
     page: &gpui_kit::Entity<ObservabilityPage>,
 ) {
     let page = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let live = &page.read(cx).live;
         !live.tracing.is_loading() && !live.trace.is_loading()
     })
@@ -123,8 +124,7 @@ async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
             page.refresh(cx);
         })
     });
-    cx.wait_for(handle, std::time::Duration::from_secs(5), profiled(&page))
-        .await;
+    cx.wait_for_io(handle, profiled(&page)).await;
     let path = last_path(&server, "/profiling");
     assert!(path.contains("query=cpu"));
     // The profile asked for is the page's application's.
@@ -168,8 +168,7 @@ async fn profiling_draws_a_flame_graph_and_compares_with_the_window_before(
         window.click("obs-live-profile-compare", cx);
     })
     .unwrap();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), profiled(&page))
-        .await;
+    cx.wait_for_io(handle, profiled(&page)).await;
     let path = last_path(&server, "/profiling");
     assert!(
         path.contains("diff") && path.contains("profile_cpu"),
@@ -285,7 +284,7 @@ async fn traces_and_profiling_first_read_failures_show_retry_and_recover(cx: &mu
                 })
             });
             let observed = page.clone();
-            cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+            cx.wait_for_io(handle, move |_, cx| {
                 let page = observed.read(cx);
                 match destination {
                     Destination::Traces => page.live.tracing.error().is_some(),
@@ -306,7 +305,7 @@ async fn traces_and_profiling_first_read_failures_show_retry_and_recover(cx: &mu
             })
             .unwrap();
             let observed = page.clone();
-            cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+            cx.wait_for_io(handle, move |_, cx| {
                 let page = observed.read(cx);
                 match destination {
                     Destination::Traces => page.live.tracing.data().is_some(),
@@ -426,7 +425,7 @@ async fn an_application_reads_coroots_own_view(cx: &mut TestAppContext) {
         })
     });
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         !observed.read(cx).live.view.is_loading()
     })
     .await;

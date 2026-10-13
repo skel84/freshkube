@@ -1,4 +1,5 @@
 use super::*;
+use freshkube_ui::real_io::RealIo;
 
 /// Waits until `count` requests named `part`, and the page read the
 /// application.
@@ -11,7 +12,7 @@ async fn sent(
     count: usize,
 ) {
     let (observed, paths) = (page.clone(), server.paths.clone());
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let paths = paths.lock().unwrap();
         paths.iter().filter(|p| p.contains(part)).count() >= count
             && !observed.read(cx).live.view.is_loading()
@@ -29,7 +30,7 @@ async fn responded(
     count: usize,
 ) {
     let answered = server.responded.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+    cx.wait_for_io(handle, move |_, _| {
         let answered = answered.lock().unwrap();
         answered.iter().filter(|p| p.contains(part)).count() >= count
     })
@@ -64,7 +65,7 @@ async fn revision_read(
     page: &gpui_kit::Entity<ObservabilityPage>,
 ) {
     let observed = page.clone();
-    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+    cx.wait_for_io(handle, move |_, cx| {
         let page = observed.read(cx);
         let failed = page.revision_observations.list_error().is_some();
         !page.live.view.is_loading()

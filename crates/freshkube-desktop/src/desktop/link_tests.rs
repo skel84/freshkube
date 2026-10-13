@@ -7,9 +7,10 @@ use crate::GpuiOptions;
 use crate::resources::model::ObjectRef;
 use crate::resources::{self, example, live};
 use freshkube_core::resources::builtin;
+use freshkube_ui::real_io::RealIo;
 
 use gpui_kit::AppContext;
-use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+use gpui_kit::test::TestWindowExt;
 use gpui_kit::{AnyWindowHandle, Entity, TestAppContext};
 
 fn key(id: &str) -> SessionKey {
@@ -298,10 +299,8 @@ async fn the_header_names_a_picked_entry_whose_kubeconfig_cannot_be_read(cx: &mu
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
     // A switch while the startup read is out is refused ("Still reading the
     // configuration"), which left the first entry's name on a slow runner.
-    cx.wait_for(handle, std::time::Duration::from_secs(30), |_, cx| {
-        !view.read(cx).config_loading
-    })
-    .await;
+    cx.wait_for_io(handle, |_, cx| !view.read(cx).config_loading)
+        .await;
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.switch_cluster("lab".into(), window, cx)
@@ -311,7 +310,7 @@ async fn the_header_names_a_picked_entry_whose_kubeconfig_cannot_be_read(cx: &mu
     cx.run_until_parked();
     // Named at once, whatever the read does; then it reads as failed.
     cx.read(|cx| assert_eq!(view.read(cx).context_display.name.as_ref(), "acme-lab"));
-    cx.wait_for(handle, std::time::Duration::from_secs(30), |_, cx| {
+    cx.wait_for_io(handle, |_, cx| {
         matches!(
             view.read(cx).context_display.state,
             super::shell::Connection::Failed
