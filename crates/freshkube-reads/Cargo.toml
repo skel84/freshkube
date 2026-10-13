@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "The owners of Freshkube's cluster reads: a Loader keeps one read's answer for one identity and the Tokio work that fills it"
+description = "The owners of Freshkube's cluster reads: a Loader keeps one read's answer for one identity and the Tokio work that fills it, a Watch one stream's"
 
 [lib]
 # This library has no doctests; re-enable them if an example is added.
@@ -18,8 +18,8 @@ freshkube-core.workspace = true
 tokio.workspace = true
 
 [features]
-# Test hooks for crates whose screens own a loader (`begin`, `apply`,
-# `is_stale`); turned on from dev-dependencies.
+# Test hooks for crates whose screens own a loader or a watch (`begin`, `apply`,
+# `is_stale`, `is_visible`); turned on from dev-dependencies.
 testing = []
 
 [dev-dependencies]
