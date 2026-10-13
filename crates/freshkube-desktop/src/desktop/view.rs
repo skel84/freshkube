@@ -1,16 +1,11 @@
 use super::*;
-use crate::ui::dp;
 use freshkube_probe::first_frame::FirstFrame;
-use freshkube_ui::platform::{About, AppMenu, OpenAppMenu, OpenSettings};
 
 impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
         let _span = crate::perf::span("shell.render");
-        self.chrome
-            .fps
-            .read(cx)
-            .frame_started(cx.background_executor().now());
+        self.chrome.frame_started(cx);
         // `FRESHKUBE_FIRST_FRAME=1` prints when the window first draws,
         // whatever page it opens on and in release builds too: the release
         // smoke check waits for this line.
@@ -18,71 +13,43 @@ impl Render for Pilot {
         if WINDOW.pending() {
             window.on_next_frame(|_, _| WINDOW.mark());
         }
-        self.navigation.layout_chrome(window);
-        let column = self.navigation.column_width(window);
-        if column.is_none() {
-            // A kind outside every column has no row to reveal.
-            self.navigation.column_reveal = None;
-        }
-        let page = match self.navigation.page {
-            // Not cached: a cached view that draws again makes every cached
-            // view inside it draw again, so a cursor moving over one chart
-            // would redraw all the panels. Drawn with the shell, the page
-            // only places its cached panels, and only the one under the
-            // pointer draws again.
-            Page::Monitoring => self.monitoring.clone().into_any_element(),
-            page if self.kubernetes_only.is_some() && page.needs_talos() => {
-                self.render_needs_talosconfig(cx)
-            }
-            // Pages redraw when their own state changes, not with the shell.
-            page => self
-                .pages
-                .get(&page.id())
-                .map(|page| page.view().cached(cached_page_style()).into_any_element())
-                .unwrap_or_else(|| div().into_any_element()),
-        };
-        v_flex()
+        let column = self.navigation.lay_out(window);
+        let page = self.render_page(cx);
+        let root = v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .key_context(freshkube_ui::page::SHELL_CONTEXT)
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
-            .on_action(cx.listener(|view, _: &ShowOverview, window, cx| {
-                view.show_page(Page::Overview, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowNodes, window, cx| {
-                view.show_page(Page::Nodes, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowNamespaces, window, cx| {
-                view.open_builtin("namespaces", window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowEvents, window, cx| {
-                view.open_builtin("events", window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowHealth, window, cx| {
-                view.show_page(Page::Health, window, cx)
-            }))
-            .on_action(
-                cx.listener(|view, _: &ShowEtcd, window, cx| {
-                    view.show_page(Page::Etcd, window, cx)
-                }),
+            .track_focus(&self.focus);
+        let root = self.navigation.listen(root, cx);
+        let root = self.chrome.listen(root, cx);
+        self.listen(root, cx)
+            .child(self.chrome.parts.header())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_1()
+                    .min_h_0()
+                    .child(self.chrome.parts.rail())
+                    .children(column.map(|width| self.chrome.parts.column(width)))
+                    .child(self.render_page_cell(page, window, cx)),
             )
-            .on_action(cx.listener(|view, _: &ShowSystemServices, window, cx| {
-                view.show_page(Page::SystemServices, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowSecurity, window, cx| {
-                view.show_page(Page::Security, window, cx)
-            }))
-            .on_action(cx.listener(|view, _: &ShowLifecycle, window, cx| {
-                view.show_page(Page::Lifecycle, window, cx)
-            }))
-            .on_action(
-                cx.listener(|view, _: &NextScreen, window, cx| view.adjacent_row(true, window, cx)),
-            )
-            .on_action(cx.listener(|view, _: &PreviousScreen, window, cx| {
-                view.adjacent_row(false, window, cx)
-            }))
+            // Drawn by the shell, so it keeps up with the pages it reads.
+            .child(self.render_status_bar(window, cx))
+            // After the page, so it has drawn its rows when these render.
+            .children(self.page_loading_motion(cx))
+            .children(self.page_flash(cx))
+    }
+}
+
+impl Pilot {
+    /// Adds the actions only the shell can answer to its root: Refresh,
+    /// which reads the session's sources and the shown page again; the
+    /// session's previous and next context; Go to kind, the search palette
+    /// the shell holds; and the dock's tabs, which can be open on any page.
+    fn listen(&self, root: Div, cx: &mut Context<Self>) -> Div {
+        root.on_action(cx.listener(|view, _: &Refresh, window, cx| view.refresh_now(window, cx)))
             .on_action(cx.listener(|view, _: &PreviousContext, window, cx| {
                 view.adjacent_context(false, window, cx)
             }))
@@ -92,13 +59,6 @@ impl Render for Pilot {
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
             // Each handler is there only while it can act, so the menus grey
             // it otherwise and its key goes on to whatever else binds it.
-            .when(self.navigation.area.has_column(), |this| {
-                this.on_action(
-                    cx.listener(|view, _: &ToggleColumn, window, cx| {
-                        view.toggle_column(window, cx)
-                    }),
-                )
-            })
             .when(self.dock.read(cx).has_tabs(), |this| {
                 this.on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
                     view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
@@ -115,74 +75,29 @@ impl Render for Pilot {
                     },
                 ))
             })
-            .on_action(cx.listener(|view, _: &OpenSettings, _, cx| {
-                view.navigation.settings_open = true;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
-            .on_action(
-                cx.listener(|view, _: &app_menu::UseSystemAppearance, window, cx| {
-                    view.set_appearance(Appearance::System, window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|view, _: &app_menu::UseLightAppearance, window, cx| {
-                    view.set_appearance(Appearance::Light, window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|view, _: &app_menu::UseDarkAppearance, window, cx| {
-                    view.set_appearance(Appearance::Dark, window, cx)
-                }),
-            )
-            .when(
-                self.chrome.menu_platform.app_menu() == AppMenu::Button,
-                |this| {
-                    this.on_action(cx.listener(|view, _: &OpenAppMenu, window, cx| {
-                        view.open_app_menu(false, window, cx)
-                    }))
-                },
-            )
-            .child(
-                self.chrome.parts.header.clone().cached(
-                    StyleRefinement::default()
-                        .w_full()
-                        .h(dp(freshkube_ui::page::APP_HEADER_HEIGHT))
-                        .flex_none(),
-                ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        self.chrome.parts.rail.clone().cached(
-                            StyleRefinement::default()
-                                .w(dp(RAIL_WIDTH))
-                                .h_full()
-                                .flex_none(),
-                        ),
-                    )
-                    .children(column.map(|width| {
-                        self.chrome
-                            .parts
-                            .column
-                            .clone()
-                            .cached(StyleRefinement::default().w(dp(width)).h_full().flex_none())
-                    }))
-                    .child(self.render_page_cell(page, window, cx)),
-            )
-            // Drawn by the shell, so it keeps up with the pages it reads.
-            .child(self.render_status_bar(window, cx))
-            // After the page, so it has drawn its rows when these render.
-            .children(self.page_loading_motion(cx))
-            .children(self.page_flash(cx))
     }
-}
 
-impl Pilot {
+    /// The page shown, drawn beside the cached chrome.
+    fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        match self.navigation.page {
+            // Not cached: a cached view that draws again makes every cached
+            // view inside it draw again, so a cursor moving over one chart
+            // would redraw all the panels. Drawn with the shell, the page
+            // only places its cached panels, and only the one under the
+            // pointer draws again.
+            Page::Monitoring => self.monitoring.clone().into_any_element(),
+            page if self.kubernetes_only.is_some() && page.needs_talos() => {
+                self.render_needs_talosconfig(cx)
+            }
+            // Pages redraw when their own state changes, not with the shell.
+            page => self
+                .pages
+                .get(&page.id())
+                .map(|page| page.view().cached(cached_page_style()).into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
+        }
+    }
+
     /// The flash over the shown page's changed rows, mounted beside the
     /// page and the cached chrome as the loading motion is. Only
     /// Resources lists flash.

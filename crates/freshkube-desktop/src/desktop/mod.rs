@@ -409,80 +409,13 @@ impl Pilot {
     /// The shell's global key bindings, by key context.
     fn bind_shell_keys(cx: &mut App) {
         freshkube_ui::source_list::bind_keys(cx);
+        cx.bind_keys([KeyBinding::new(
+            "secondary-r",
+            Refresh,
+            Some(freshkube_ui::page::SHELL_CONTEXT),
+        )]);
+        shell::Navigation::bind_keys(cx);
         cx.bind_keys([
-            KeyBinding::new(
-                "secondary-r",
-                Refresh,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-b",
-                ToggleColumn,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-1",
-                ShowOverview,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-2",
-                ShowNodes,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-3",
-                ShowNamespaces,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-4",
-                ShowEvents,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-5",
-                ShowHealth,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-6",
-                ShowEtcd,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-7",
-                ShowSystemServices,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-8",
-                ShowSecurity,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "secondary-9",
-                ShowLifecycle,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            // macOS's bar shows and binds an action's first binding, and
-            // GPUI hands AppKit the name `tab`, of which AppKit keeps the
-            // T: ⌃T would switch screens. The Tab character itself, in a
-            // context nothing draws, binds nothing here, and AppKit shows
-            // no key for it, since Control-Tab moves its focus.
-            KeyBinding::new("ctrl-\t", NextScreen, Some(MENU_BAR_ONLY)),
-            KeyBinding::new("ctrl-shift-\t", PreviousScreen, Some(MENU_BAR_ONLY)),
-            // Reaches the screens without a number of their own.
-            KeyBinding::new(
-                "ctrl-tab",
-                NextScreen,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
-            KeyBinding::new(
-                "ctrl-shift-tab",
-                PreviousScreen,
-                Some(freshkube_ui::page::SHELL_CONTEXT),
-            ),
             KeyBinding::new(
                 "alt-up",
                 PreviousContext,
