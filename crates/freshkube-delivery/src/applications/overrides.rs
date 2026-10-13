@@ -130,8 +130,9 @@ fn merge_into(apps: &mut Apps, merge: &Merge, unmatched: &mut Vec<Unmatched>) {
             continue;
         };
         let into = apps.get_mut(&merge.into).expect("checked above");
-        for member in from.members {
+        for mut member in from.members {
             if !into.members.iter().any(|m| m.at == member.at) {
+                member.basis = Basis::Override;
                 into.members.push(member);
             }
         }
