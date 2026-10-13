@@ -161,7 +161,7 @@ fn health_label(health: HealthState) -> &'static str {
     }
 }
 
-fn health_tone(health: HealthState) -> Tone {
+pub(super) fn health_tone(health: HealthState) -> Tone {
     match health {
         HealthState::Failing => Tone::Crit,
         HealthState::Degraded => Tone::Warn,

@@ -836,7 +836,7 @@ fn unavailable_sources(view: &LifecycleView, rows: &[NodeRow]) -> Vec<String> {
     out
 }
 
-fn health_tone(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static str) {
+pub(super) fn health_tone(health: &HealthIndicator) -> (Tone, Option<IconName>, &'static str) {
     match health {
         HealthIndicator::Healthy => (Tone::Good, None, "OK"),
         HealthIndicator::Warning => (Tone::Warn, None, "Warning"),
