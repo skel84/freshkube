@@ -3,7 +3,7 @@ impl Search {
     pub(super) fn begin(
         &mut self,
         local: Vec<Entry>,
-        source: Option<KubeSource>,
+        source: Option<ClusterSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -33,7 +33,7 @@ impl Search {
                     continue;
                 }
                 let kind = builtin(key).unwrap();
-                if matches!(source.access, KubeAccess::Example) {
+                if matches!(source.access, ClusterAccess::Example) {
                     let objects = resources::example::read(
                         &source.context,
                         key,

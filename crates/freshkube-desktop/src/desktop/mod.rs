@@ -54,7 +54,7 @@ use crate::{
     mutation::{self, Operations},
     presentation::{self, NodeSummary},
     resources::{
-        self, KubeAccess, KubeSource, ResourcesScreen, custom::CustomResources, navigation,
+        self, ClusterAccess, ClusterSource, ResourcesScreen, custom::CustomResources, navigation,
         shell as pod_shell,
     },
     screens::{

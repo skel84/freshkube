@@ -26,7 +26,7 @@ use crate::backend::{self, OwnedJob};
 use crate::forwards;
 use crate::logs::choice_label;
 use crate::resources::model::ResourceIdentity;
-use crate::resources::screen::KubeAccess;
+use crate::resources::screen::ClusterAccess;
 use crate::stream_status::Status;
 use crate::terminal::{TerminalEvent, TerminalSize, TerminalView};
 use crate::ui::Tone;
@@ -107,7 +107,7 @@ enum Session {
 
 pub(crate) struct ShellView {
     runtime: Handle,
-    access: Option<KubeAccess>,
+    access: Option<ClusterAccess>,
     pod: Option<ResourceIdentity>,
     containers: PodContainers,
     /// Whether `containers` was read for this pod yet.
@@ -175,7 +175,7 @@ impl ShellView {
     }
 
     /// Fresh handles for the same connection.
-    pub(crate) fn set_access(&mut self, access: KubeAccess) {
+    pub(crate) fn set_access(&mut self, access: ClusterAccess) {
         self.access = Some(access);
     }
 
@@ -184,7 +184,7 @@ impl ShellView {
     pub(crate) fn show_pod(
         &mut self,
         pod: Option<ResourceIdentity>,
-        access: Option<KubeAccess>,
+        access: Option<ClusterAccess>,
         cx: &mut Context<Self>,
     ) {
         if access.is_some() {
@@ -348,7 +348,7 @@ impl ShellView {
         window.focus(&self.terminal.focus_handle(cx), cx);
         let size = self.terminal.read(cx).size();
         let seq = self.seq;
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             let shell = ExampleShell::new(&pod.name, &container, size);
             let greeting = shell.start();
             self.session = Some(Session::Example(shell));

@@ -432,10 +432,10 @@ fn access_replacement_rejects_old_batches_with_the_same_object_name_and_uid(
             "homelab".into(),
             freshkube_core::ConfigurationRevision::default(),
         );
-        KubeSource {
+        ClusterSource {
             id: access.id(),
             context: "homelab".into(),
-            access: KubeAccess::Direct(access),
+            access: ClusterAccess::Direct(access),
         }
     };
     let previous = source();

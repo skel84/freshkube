@@ -19,7 +19,7 @@ use crate::desktop::dock::DockEvent;
 use crate::desktop::{OverviewEvent, ServiceEvent};
 use crate::monitoring::page::MonitoringEvent;
 use crate::observability::{ObservabilityEvent, RevisionLink};
-use crate::resources::{KubeSource, NodePodsEvent, NotServed, ResourceLink};
+use crate::resources::{ClusterSource, NodePodsEvent, NotServed, ResourceLink};
 
 /// What hears a page's requests; a page that emits several types hands
 /// each subscription a clone.
@@ -133,7 +133,7 @@ pub(crate) struct PageSource {
     /// The Talos target and its cluster snapshot, for the Talos screens.
     pub(crate) screen: Option<ScreenSource>,
     /// The Kubernetes connection, for Resources, the dock and Applications.
-    pub(crate) kube: Option<KubeSource>,
+    pub(crate) kube: Option<ClusterSource>,
     /// The workspace entry the connection is, handed with it, so a read
     /// never names one entry's cluster with another's.
     pub(crate) entry: Option<String>,

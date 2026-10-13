@@ -24,7 +24,7 @@ mod source;
 mod tests;
 
 use crate::backend;
-use crate::resources::{KubeAccess, KubeSource};
+use crate::resources::{ClusterAccess, ClusterSource};
 use crate::ui::{self, dp};
 use freshkube_core::resources::{Failure, FailureKind};
 use freshkube_core::snapshot::Request;
@@ -112,7 +112,7 @@ pub(crate) struct SourcesList {
     kubeconfig: Option<std::path::PathBuf>,
     example: bool,
     /// The open connection, which the workspace of one reads.
-    source: Option<KubeSource>,
+    source: Option<ClusterSource>,
     check: Check,
     /// Owns the check's completion and work; `check` keeps its display state.
     read: Loader<(), CheckIdentity>,
@@ -168,7 +168,7 @@ impl SourcesList {
     /// of the one before is forgotten.
     pub(in crate::desktop) fn set_source(
         &mut self,
-        source: Option<KubeSource>,
+        source: Option<ClusterSource>,
         cx: &mut Context<Self>,
     ) {
         if self.source.as_ref().map(|s| &s.id) == source.as_ref().map(|s| &s.id) {
@@ -233,7 +233,7 @@ impl SourcesList {
             || (self.reads_open()
                 && matches!(
                     self.source.as_ref().map(|s| &s.access),
-                    Some(KubeAccess::Example)
+                    Some(ClusterAccess::Example)
                 ));
         if example {
             self.read.resolve(self.identity(), Ok(()));

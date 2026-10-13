@@ -760,7 +760,7 @@ impl Pilot {
     /// neither has it.
     fn resolve_local_identity(
         &self,
-        source: &resources::KubeSource,
+        source: &resources::ClusterSource,
         kind: &ResourceKind,
         object: &resources::model::ObjectRef,
         mut identity: resources::model::ResourceIdentity,
@@ -795,7 +795,7 @@ impl Pilot {
     #[allow(clippy::too_many_arguments)]
     fn resolve_identity_remote(
         &mut self,
-        source: resources::KubeSource,
+        source: resources::ClusterSource,
         kind: ResourceKind,
         object: resources::model::ObjectRef,
         mut identity: resources::model::ResourceIdentity,

@@ -369,7 +369,7 @@ impl DetailPane {
         let identity = self.detail.as_ref().unwrap().target.identity.clone();
         self.links_seq = self.links_seq.wrapping_add(1);
         let sequence = self.links_seq;
-        if matches!(access, KubeAccess::Example) {
+        if matches!(access, ClusterAccess::Example) {
             let links = example_links(&identity, &view.document);
             self.finish_links(&identity, sequence, links, cx);
             return;

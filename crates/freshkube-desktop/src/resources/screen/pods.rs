@@ -12,7 +12,7 @@ use super::super::model::ResourceIdentity;
 use super::super::projection::{Cause, Group, Grouping};
 use super::super::store::Usage;
 use super::super::{LogsRequest, ResourceLink, detail::DetailTarget, example};
-use super::{KubeAccess, ResourcesScreen};
+use super::{ClusterAccess, ResourcesScreen};
 use crate::backend;
 use crate::desktop::nodes::{NodeRow, NodeTab};
 use crate::screens::SCREEN_DEADLINE;
@@ -236,7 +236,7 @@ impl ResourcesScreen {
         let generation = self.usage_generation;
         // Example use applies at once, as example rows do; later ticks
         // drift it.
-        let example = matches!(source.access, KubeAccess::Example);
+        let example = matches!(source.access, ClusterAccess::Example);
         if example {
             self.apply_usage(generation, Ok(example::pod_usage(&source.context, 0)), cx);
         }
@@ -248,7 +248,7 @@ impl ResourcesScreen {
                     cx.background_executor().timer(USAGE_INTERVAL).await;
                 }
                 let result = match &source.access {
-                    KubeAccess::Example => Ok(example::pod_usage(&source.context, tick)),
+                    ClusterAccess::Example => Ok(example::pod_usage(&source.context, tick)),
                     access => {
                         let access = access.clone();
                         let namespace = namespace.clone();

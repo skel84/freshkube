@@ -31,7 +31,7 @@ use super::streams::{self, Clock, MAX_STREAMS, StreamKey, StreamSet, StreamSourc
 use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::STREAM_QUEUE_CAPACITY;
 use crate::resources::model::ResourceIdentity;
-use crate::resources::{KubeAccess, LogsAt, example, live};
+use crate::resources::{ClusterAccess, LogsAt, example, live};
 use crate::stream_status::Status;
 use crate::ui::Tone;
 use controls::Controls;
@@ -102,7 +102,7 @@ pub(super) struct Note {
 
 pub(crate) struct PodLogs {
     runtime: Handle,
-    access: Option<KubeAccess>,
+    access: Option<ClusterAccess>,
     pod: Option<ResourceIdentity>,
     containers: PodContainers,
     /// Whether `containers` was read for this pod yet.
@@ -660,7 +660,7 @@ impl StreamSource for PodLogs {
         &mut self.reads
     }
 
-    fn access(&self) -> Option<KubeAccess> {
+    fn access(&self) -> Option<ClusterAccess> {
         self.access.clone()
     }
 
@@ -709,14 +709,14 @@ pub(crate) trait PodLogPanel: Sized + 'static {
     fn for_pods(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self;
 
     /// Fresh handles for the same connection.
-    fn set_access(&mut self, access: KubeAccess);
+    fn set_access(&mut self, access: ClusterAccess);
 
     /// Shows the logs of `pod`, or of none. Another pod starts over: its
     /// containers are read again and nothing streams until it is wanted.
     fn show_pod(
         &mut self,
         pod: Option<ResourceIdentity>,
-        access: Option<KubeAccess>,
+        access: Option<ClusterAccess>,
         cx: &mut Context<Self>,
     );
 
@@ -767,14 +767,14 @@ impl PodLogPanel for PodLogView {
         })
     }
 
-    fn set_access(&mut self, access: KubeAccess) {
+    fn set_access(&mut self, access: ClusterAccess) {
         self.source_mut().access = Some(access);
     }
 
     fn show_pod(
         &mut self,
         pod: Option<ResourceIdentity>,
-        access: Option<KubeAccess>,
+        access: Option<ClusterAccess>,
         cx: &mut Context<Self>,
     ) {
         if access.is_some() {
@@ -1171,7 +1171,7 @@ impl Stream for PodLogView {
             .position
             .time()
             .map(|_| self.source().position);
-        if let KubeAccess::Example = access {
+        if let ClusterAccess::Example = access {
             self.start_example(&pod, &container, resume.is_some(), cx);
             return;
         }

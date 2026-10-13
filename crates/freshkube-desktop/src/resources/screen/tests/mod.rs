@@ -11,7 +11,7 @@ use gpui_kit::{AnyWindowHandle, AppContext, Bounds, Entity, Pixels, TestAppConte
 use tokio::runtime::Runtime;
 // Not `super::*`: gpui_kit's glob would shadow the built-in `#[test]`.
 use super::{
-    KEYBOARD_PAUSE, KubeAccess, KubeSource, ListView, NotServed, ResourcesScreen, WATCH_COALESCE,
+    KEYBOARD_PAUSE, ClusterAccess, ClusterSource, ListView, NotServed, ResourcesScreen, WATCH_COALESCE,
     row_id,
 };
 use crate::resources::example;
@@ -26,11 +26,11 @@ fn kind(key: &str) -> ResourceKind {
     example::kind(key).unwrap()
 }
 
-fn source(context: &str) -> KubeSource {
-    KubeSource {
+fn source(context: &str) -> ClusterSource {
+    ClusterSource {
         id: example::connection(context),
         context: context.into(),
-        access: KubeAccess::Example,
+        access: ClusterAccess::Example,
     }
 }
 

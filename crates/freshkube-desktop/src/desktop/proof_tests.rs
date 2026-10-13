@@ -700,7 +700,7 @@ async fn a_forward_keeps_running_on_its_own_connection_through_a_switch(cx: &mut
     let resource = builtin("pods").unwrap();
     let spec = crate::forwards::ForwardSpec {
         runtime: runtime.handle().clone(),
-        access: resources::KubeAccess::Example,
+        access: resources::ClusterAccess::Example,
         target: ForwardTarget::of(&resource, &pod.name, &pod.uid).unwrap(),
         identity: pod.clone(),
         context: "core-fra".into(),

@@ -2,7 +2,7 @@
 use super::{Page, Pilot};
 use crate::{
     backend::{self, OwnedJob},
-    resources::{self, KubeAccess, KubeSource, model::ObjectRef},
+    resources::{self, ClusterAccess, ClusterSource, model::ObjectRef},
     ui::dp,
 };
 use freshkube_core::resources::{ResourceKind, builtin};
@@ -55,7 +55,7 @@ impl Search {
         cx.notify();
     }
 
-    pub(super) fn needs_source(&self, source: Option<&KubeSource>) -> bool {
+    pub(super) fn needs_source(&self, source: Option<&ClusterSource>) -> bool {
         self.open && self.source_id.as_deref() != source.map(|source| source.id.as_str())
     }
     pub(super) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -102,7 +102,7 @@ impl Search {
 impl Pilot {
     pub(super) fn sync_search_source(
         &self,
-        source: Option<KubeSource>,
+        source: Option<ClusterSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

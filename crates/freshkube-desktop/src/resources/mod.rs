@@ -19,7 +19,7 @@ pub(crate) mod talos;
 pub(crate) use pane::{DetailEvent, DetailPane, Tab};
 #[cfg(test)]
 pub(crate) use screen::row_id;
-pub(crate) use screen::{KubeAccess, KubeSource, NodePodsEvent, NotServed, ResourcesScreen, title};
+pub(crate) use screen::{ClusterAccess, ClusterSource, NodePodsEvent, NotServed, ResourcesScreen, title};
 
 /// Navigation requested by an explicit relationship link in a resource pane.
 #[derive(Clone, Debug, PartialEq)]

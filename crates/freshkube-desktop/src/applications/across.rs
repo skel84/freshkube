@@ -12,7 +12,7 @@ use freshkube_delivery::change::live::Mapping;
 use freshkube_delivery::entry::{self, Deadline, EntryReader};
 use freshkube_delivery::read::ReadOnlyClient;
 
-use crate::resources::KubeAccess;
+use crate::resources::ClusterAccess;
 
 /// The workspace as a live change read sees it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -37,7 +37,7 @@ impl Across {
     /// `alone` says; beside other entries, it has theirs.
     pub(crate) async fn open(
         &self,
-        access: &KubeAccess,
+        access: &ClusterAccess,
         alone: Alone,
     ) -> Result<Result<EntryReader, Failure>, String> {
         open_reader(access, self.alone().then_some(alone)).await
@@ -64,7 +64,7 @@ pub(crate) enum Alone {
 /// is made within their deadline, so a client being made again holds up
 /// no other entry, and why it couldn't be is its own entry's.
 pub(crate) async fn open_reader(
-    access: &KubeAccess,
+    access: &ClusterAccess,
     alone: Option<Alone>,
 ) -> Result<Result<EntryReader, Failure>, String> {
     if alone.is_some() {
@@ -82,8 +82,8 @@ pub(crate) async fn open_reader(
 }
 
 /// The open connection's client, or why it couldn't be had. The kind is a
-/// guess, `Unreachable`, until `KubeAccess` returns a `Failure` of its own.
-async fn client_or_failure(access: &KubeAccess) -> Result<kube::Client, Failure> {
+/// guess, `Unreachable`, until `ClusterAccess` returns a `Failure` of its own.
+async fn client_or_failure(access: &ClusterAccess) -> Result<kube::Client, Failure> {
     access
         .client()
         .await
