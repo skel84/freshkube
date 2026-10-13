@@ -30,7 +30,7 @@ mod startup;
 mod switch;
 #[cfg(test)]
 mod switch_tests;
-pub(crate) mod system_services;
+mod system_services;
 mod target;
 #[cfg(test)]
 mod testing;
@@ -84,6 +84,7 @@ pub(crate) use freshkube_probe::probe;
 
 pub(crate) use pages::Page;
 use pages::{Area, ColumnReveal, PageId};
+pub(crate) use system_services::ServiceEvent;
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
 /// A key context no element draws: a binding in it only gives macOS's bar

@@ -16,8 +16,8 @@ use gpui_kit::{App, FocusHandle, Subscription, Window};
 
 use super::{ScreenEvent, ScreenHandle, ScreenSource};
 use crate::applications::SwitchLink;
+use crate::desktop::ServiceEvent;
 use crate::desktop::dock::DockEvent;
-use crate::desktop::system_services::ServiceEvent;
 use crate::monitoring::page::MonitoringEvent;
 use crate::observability::{ObservabilityEvent, RevisionLink};
 use crate::resources::{KubeSource, NodePodsEvent, NotServed, ResourceLink};
