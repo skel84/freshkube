@@ -13,6 +13,9 @@ use gpui_kit::{
 use super::*;
 use crate::probe;
 
+#[path = "history_tests.rs"]
+mod history_recovery;
+
 const NOW: i64 = 1_700_003_600;
 
 fn example_source() -> ClusterSource {
@@ -1811,6 +1814,10 @@ async fn a_discovery_404_shows_the_failed_candidate_words(cx: &mut TestAppContex
 struct FakeCluster {
     url: String,
     forgot: std::sync::atomic::AtomicUsize,
+    asked: std::sync::atomic::AtomicUsize,
+    replacement: std::sync::Mutex<Option<String>>,
+    gate: std::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    fail_rebuild: std::sync::atomic::AtomicBool,
 }
 
 impl FakeCluster {
@@ -1818,6 +1825,10 @@ impl FakeCluster {
         std::sync::Arc::new(Self {
             url,
             forgot: Default::default(),
+            asked: Default::default(),
+            replacement: Default::default(),
+            gate: Default::default(),
+            fail_rebuild: Default::default(),
         })
     }
 
@@ -1828,8 +1839,25 @@ impl FakeCluster {
 
 impl KubeClientSource for FakeCluster {
     fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
-        let config = kube::Config::new(self.url.parse().unwrap());
-        Box::pin(async move { kube::Client::try_from(config).map_err(|error| error.to_string()) })
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let replacement = self.replacement.lock().unwrap();
+        let url = if self.forgot() > 0 {
+            replacement.as_ref().unwrap_or(&self.url)
+        } else {
+            &self.url
+        };
+        let config = kube::Config::new(url.parse().unwrap());
+        let gate = self.gate.lock().unwrap().take();
+        let fail = self.forgot() > 0 && self.fail_rebuild.load(std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                _ = gate.await;
+            }
+            if fail {
+                return Err("The replacement client did not build".into());
+            }
+            kube::Client::try_from(config).map_err(|error| error.to_string())
+        })
     }
 
     fn forget(&self) {
