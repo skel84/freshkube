@@ -257,7 +257,8 @@ impl Pilot {
     /// change to the read: a new node, a request, an answer, a reset.
     pub(super) fn push_services(&self, cx: &mut App) {
         let reading = ServicesReading::of(&self.services);
-        self.node_services
+        self.node_workspace
+            .services
             .update(cx, |services, cx| services.set_reading(reading, cx));
     }
 
@@ -298,17 +299,23 @@ impl Pilot {
     /// Hands the tab where things stand; it redraws only for a change.
     pub(super) fn push_node_services_state(&self, cx: &mut App) {
         let state = self.node_services_state();
-        self.node_services
+        self.node_workspace
+            .services
             .update(cx, |services, cx| services.set_state(state, cx));
     }
 
     /// The service selected on the node pane's tab.
     pub(super) fn selected_service(&self, cx: &App) -> Option<String> {
-        self.node_services.read(cx).selected().map(str::to_owned)
+        self.node_workspace
+            .services
+            .read(cx)
+            .selected()
+            .map(str::to_owned)
     }
 
     pub(super) fn select_service(&self, service: Option<String>, cx: &mut App) {
-        self.node_services
+        self.node_workspace
+            .services
             .update(cx, |services, cx| services.select(service, cx));
     }
 
@@ -336,10 +343,14 @@ impl Pilot {
 #[cfg(test)]
 impl Pilot {
     pub(super) fn service_scroll(&self, cx: &App) -> ScrollHandle {
-        self.node_services.read(cx).scroll.clone()
+        self.node_workspace.services.read(cx).scroll.clone()
     }
 
     pub(super) fn service_focused(&self, window: &Window, cx: &App) -> bool {
-        self.node_services.read(cx).focus.is_focused(window)
+        self.node_workspace
+            .services
+            .read(cx)
+            .focus
+            .is_focused(window)
     }
 }

@@ -497,7 +497,7 @@ impl Pilot {
         } else if let Some(screen) = self.active_screen() {
             screen.focus(window, cx);
         } else if self.page == Page::Nodes {
-            window.focus(&self.node_focus, cx);
+            window.focus(&self.node_workspace.focus, cx);
         }
     }
 

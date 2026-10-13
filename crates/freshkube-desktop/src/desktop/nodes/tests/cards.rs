@@ -129,7 +129,9 @@ fn arrows_scroll_the_card_grid_to_the_selected_cards_row(cx: &mut TestAppContext
         let fourth = pilot.read(cx).node_workspace.lines[3];
         let fourth = pilot.read(cx).node_workspace.rows[fourth].id.clone();
         assert!(window.try_find(fourth.clone()).is_none());
-        pilot.update(cx, |pilot, cx| window.focus(&pilot.node_focus, cx));
+        pilot.update(cx, |pilot, cx| {
+            window.focus(&pilot.node_workspace.focus, cx)
+        });
         for _ in 0..4 {
             window.press("down", cx);
             window.render_frame(cx);

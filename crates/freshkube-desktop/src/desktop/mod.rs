@@ -49,10 +49,9 @@ use crate::{
     forwards::ForwardsIndicator,
     logs::{LogPanel, TalosPanel},
     maintenance::MaintenanceView,
-    monitoring::history::HistoryView,
     monitoring::page::{MonitoringPage, TalosNodes},
     mutation::{self, Operations},
-    presentation::{self, LoadHistory, NodeSummary},
+    presentation::{self, NodeSummary},
     resources::{
         self, KubeAccess, KubeSource, ResourcesScreen, custom::CustomResources, navigation,
         shell as pod_shell,
@@ -350,10 +349,7 @@ pub(crate) struct Pilot {
     object_open_task: Option<Task<()>>,
     object_open_sequence: u64,
     services: Snapshot<Vec<ServiceInfo>, Target, String>,
-    /// The node pane's System services tab, fed `services`.
-    node_services: Entity<services::NodeServices>,
     nodes: Vec<NodeSummary>,
-    load_history: LoadHistory,
     selected_node: Option<String>,
     logs: Entity<LogPanel>,
     countdown: Entity<Countdown>,
@@ -367,7 +363,6 @@ pub(crate) struct Pilot {
     overview_page: Entity<overview::OverviewPage>,
     nodes_page: Entity<PageHost>,
     node_workspace: nodes::Nodes,
-    node_pods: Entity<ResourcesScreen>,
     /// Every page's handle by its key. The shell hands each its source,
     /// tells each whether it shows and hears each through it, in key order:
     /// the pages that aren't Talos screens, then the screens.
@@ -392,8 +387,6 @@ pub(crate) struct Pilot {
     monitoring: Entity<MonitoringPage>,
     observability: Entity<crate::observability::ObservabilityPage>,
     column_state: shell::ColumnState,
-    /// The node pane's CPU and memory, when the context has a Prometheus.
-    node_history: Entity<HistoryView>,
     /// The rail's area, whose pages or kinds the column lists.
     area: Area,
     /// The kind each built-in group showed last, by group slug.
@@ -465,7 +458,6 @@ pub(crate) struct Pilot {
     fixture_hold: bool,
     fixture_tick: u64,
     focus: FocusHandle,
-    node_focus: FocusHandle,
     /// The window the shell draws in, for what changes the shown page
     /// without one at hand (`Pilot::sync_visible_soon`).
     window: AnyWindowHandle,
@@ -828,7 +820,6 @@ impl Pilot {
                 cx,
             )
         });
-        let node_services = cx.new(|cx| services::NodeServices::new(window, cx));
         let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
@@ -847,7 +838,8 @@ impl Pilot {
         let mut node_workspace = nodes::Nodes::new(runtime.clone(), window, cx);
         // The header the loading rows sit under before anything answers.
         node_workspace.rebuild_columns(!options.kubernetes_only);
-        let node_pods = cx.new(|cx| ResourcesScreen::new(runtime.clone(), window, cx));
+        let node_pods = node_workspace.pods.clone();
+        let node_services = node_workspace.services.clone();
         let mut subscriptions = Vec::new();
         // Nodes' host reads the shell's state, so whatever notifies the
         // shell redraws it; the countdown tick notifies only its ring.
@@ -995,9 +987,7 @@ impl Pilot {
             object_open_task: None,
             object_open_sequence: 0,
             services: Snapshot::default(),
-            node_services,
             nodes: Vec::new(),
-            load_history: LoadHistory::default(),
             selected_node: None,
             logs,
             countdown,
@@ -1008,7 +998,6 @@ impl Pilot {
             overview_page,
             nodes_page,
             node_workspace,
-            node_pods,
             pages,
             health,
             lifecycle,
@@ -1027,7 +1016,6 @@ impl Pilot {
             monitoring,
             observability,
             column_state: shell::ColumnState::new(navigation),
-            node_history: cx.new(|_| HistoryView::new(runtime.clone(), "node")),
             area: Area::Overview,
             group_kinds: BTreeMap::new(),
             last_custom: None,
@@ -1074,7 +1062,6 @@ impl Pilot {
             fixture_hold: options.fixture && options.hold_talos,
             fixture_tick: 0,
             focus: cx.focus_handle(),
-            node_focus: cx.focus_handle(),
             window: window.window_handle(),
             _subscriptions: subscriptions,
             config_job: None,
@@ -1143,7 +1130,7 @@ impl Pilot {
         self.nodes.clear();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&[], cx));
-        self.load_history.clear();
+        self.node_workspace.load_history.clear();
         self.overview = Snapshot::default();
         self.system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
@@ -1500,7 +1487,7 @@ impl Pilot {
         self.sync_search_source(kube.clone(), window, cx);
         self.custom
             .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
-        self.node_pods.update(cx, |resources, cx| {
+        self.node_workspace.pods.update(cx, |resources, cx| {
             resources.set_source(kube.clone(), window, cx)
         });
         self.dock.update(cx, |dock, cx| {
@@ -1514,7 +1501,8 @@ impl Pilot {
     /// Hands pod and node history the Monitoring page's Prometheus.
     fn push_history(&mut self, cx: &mut Context<Self>) {
         let history = self.monitoring.read(cx).history();
-        self.node_history
+        self.node_workspace
+            .history
             .update(cx, |view, cx| view.set_source(history.clone(), cx));
         self.resources
             .update(cx, |resources, cx| resources.set_history(history, cx));
@@ -1535,7 +1523,8 @@ impl Pilot {
             page.refresh(window, cx);
         }
         if self.page == Page::Nodes {
-            self.node_history
+            self.node_workspace
+                .history
                 .update(cx, |history, cx| history.refresh(cx));
         }
     }
@@ -1609,7 +1598,7 @@ impl Pilot {
             self.fixture_tick += 1;
             let nodes =
                 presentation::node_summaries(&fixture::cluster(&context, self.fixture_tick));
-            self.load_history.record(&nodes);
+            self.node_workspace.load_history.record(&nodes);
         }
     }
 
@@ -1619,7 +1608,7 @@ impl Pilot {
             return;
         };
         let nodes = presentation::node_summaries(cluster);
-        self.load_history.record(&nodes);
+        self.node_workspace.load_history.record(&nodes);
         if let Some(context) = self.applied.context.clone() {
             self.context_nodes.insert(context, nodes.len());
         }
@@ -1685,7 +1674,7 @@ impl Pilot {
         App::notify(cx, self.overview_page.entity_id());
         App::notify(cx, self.system_services.entity_id());
         App::notify(cx, self.nodes_page.entity_id());
-        App::notify(cx, self.node_pods.entity_id());
+        App::notify(cx, self.node_workspace.pods.entity_id());
         App::notify(cx, self.node_workspace.document.entity_id());
     }
 

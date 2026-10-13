@@ -97,7 +97,7 @@ impl Pilot {
                 this.overflow_y_scroll().restrict_scroll_to_axis()
             })
             .key_context("NodeWorkspace")
-            .track_focus(&self.node_focus)
+            .track_focus(&self.node_workspace.focus)
             .on_action(cx.listener(|view, _: &super::super::NextNode, window, cx| {
                 view.step_joined_node(1, window, cx)
             }))
@@ -123,7 +123,7 @@ impl Pilot {
             .on_action(cx.listener(|view, _: &ToggleHealthyNodes, window, cx| {
                 // H is the table's; the filter and the pane type it, and
                 // the cards show no fold to flip.
-                if !view.node_focus.is_focused(window)
+                if !view.node_workspace.focus.is_focused(window)
                     || view.node_workspace.view == NodeView::Cards
                 {
                     return cx.propagate();
@@ -136,7 +136,7 @@ impl Pilot {
                 // Enter opens a node from the list alone; anywhere else in
                 // the workspace, such as on a focused button, it keeps its
                 // own meaning.
-                if !view.node_focus.is_focused(window) {
+                if !view.node_workspace.focus.is_focused(window) {
                     return cx.propagate();
                 }
                 if let Some(key) = view
@@ -313,7 +313,7 @@ impl Pilot {
                         )
                         .when_some(row.talos.as_ref(), |this, node| {
                             this.child(ui::sparkline(
-                                self.load_history.get(&node.name),
+                                self.node_workspace.load_history.get(&node.name),
                                 node.cores,
                                 cx,
                             ))
@@ -324,8 +324,8 @@ impl Pilot {
                                 this.child(ui::meter(memory.percent(), memory.level(), cx))
                             },
                         )
-                        .when(self.node_history.read(cx).shows(), |this| {
-                            this.child(self.node_history.clone())
+                        .when(self.node_workspace.history.read(cx).shows(), |this| {
+                            this.child(self.node_workspace.history.clone())
                         })
                         .children(row.facts.iter().map(|(label, value)| {
                             h_flex()
@@ -335,8 +335,8 @@ impl Pilot {
                         })),
                 )
                 .into_any_element(),
-            NodeTab::Pods => inset(self.node_pods.clone().into_any_element()),
-            NodeTab::Services => inset(self.node_services.clone().into_any_element()),
+            NodeTab::Pods => inset(self.node_workspace.pods.clone().into_any_element()),
+            NodeTab::Services => inset(self.node_workspace.services.clone().into_any_element()),
             NodeTab::Logs => {
                 // In a short window the body scrolls inside the inspector:
                 // it's as tall as its room and the log's toolbar and
