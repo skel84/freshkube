@@ -554,9 +554,11 @@ impl ClusterOverviewCollector {
                     message: error.to_string(),
                 })
             }
-            None => TalosConfig::load_default().map_err(|error| ClusterOverviewError::ConfigLoad {
-                path: String::new(),
-                message: error.to_string(),
+            None => crate::ambient::load_default_talosconfig().map_err(|error| {
+                ClusterOverviewError::ConfigLoad {
+                    path: String::new(),
+                    message: error.to_string(),
+                }
             }),
         }
     }

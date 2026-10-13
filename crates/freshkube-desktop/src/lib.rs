@@ -198,7 +198,7 @@ impl GpuiOptions {
 /// remembered Kubernetes-only choice means Talos is not wanted.
 pub fn default_talosconfig_exists() -> bool {
     talos_available(preferences_path().as_deref(), || {
-        talos_rs::config::TalosConfig::default_path()
+        freshkube_core::ambient::default_talosconfig_path()
             .is_ok_and(|path| default_talosconfig_present(&path))
     })
 }
@@ -344,7 +344,7 @@ pub fn run(options: GpuiOptions, runtime: tokio::runtime::Handle) -> color_eyre:
 }
 
 #[cfg(feature = "stress")]
-pub use stress::TerminalWorkload;
+pub use stress::{Appearance, StressOptions, TerminalWorkload, install as install_stress_options};
 
 /// Opens a window with only a terminal, fed a synthetic stream, for the
 /// stress harness and visual checks.
