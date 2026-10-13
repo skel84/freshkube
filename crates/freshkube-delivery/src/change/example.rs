@@ -990,6 +990,8 @@ pub enum Shape {
     /// Everything read.
     #[default]
     Whole,
+    /// Argo CD installed in five namespaces, two past the read cap.
+    Spread,
     /// `cicd-fra`, where Kargo and the builds are read, couldn't be
     /// reached: no Freight answers.
     KargoUnreachable,
@@ -1009,7 +1011,7 @@ impl Shape {
     /// The words of what wasn't read, as a live read says it.
     fn words(self) -> Option<String> {
         match self {
-            Self::Whole => None,
+            Self::Whole | Self::Spread => None,
             Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
@@ -1032,11 +1034,15 @@ impl Shape {
     /// `change` as this shape reads it: an error when its Freight couldn't
     /// be read at all.
     pub fn apply(self, mut change: Change) -> Result<Change, Failure> {
+        if self == Self::Spread {
+            spread(&mut change);
+            return Ok(change);
+        }
         let Some(why) = self.words() else {
             return Ok(change);
         };
         match self {
-            Self::Whole => {}
+            Self::Whole | Self::Spread => {}
             Self::KargoUnreachable => {
                 return Err(Failure::new(
                     FailureKind::Unreachable,
@@ -1102,6 +1108,66 @@ impl Shape {
         };
         change.missing.push(Missing::new(gap, why));
         Ok(change)
+    }
+}
+
+/// Where Argo CD is installed in the spread example, in discovery order.
+pub const SPREAD_NAMESPACES: [&str; 5] = ["delivery", "gitops", "platform", "sandbox", "tenants"];
+
+/// A spread Application's namespace, shared by the Applications inputs
+/// and their change trails. The dev and stage Applications exercise the
+/// second and third discovered namespaces.
+pub fn spread_namespace(application: &str) -> &'static str {
+    match application
+        .strip_prefix("checkout-")
+        .or_else(|| application.strip_prefix("cart-"))
+    {
+        Some("dev") => SPREAD_NAMESPACES[1],
+        Some("stage") => SPREAD_NAMESPACES[2],
+        _ => SPREAD_NAMESPACES[0],
+    }
+}
+
+/// The same namespace scope and omissions as the live read, with the
+/// Application's namespace visible in its row, Inspector and actions.
+fn spread(change: &mut Change) {
+    for hop in &mut change.hops {
+        let Shows::Hop(detail) = &mut hop.shows else {
+            continue;
+        };
+        if detail.kind != "Argo CD Application" {
+            continue;
+        }
+        let namespace = spread_namespace(&detail.title);
+        hop.detail = format!("{} · {namespace}", hop.detail);
+        detail.fields.push(mono("Application namespace", namespace));
+        for action in &mut detail.actions {
+            match &mut action.target {
+                Target::Resource { object, .. } if object.kind == "Application" => {
+                    object.namespace = namespace.into();
+                }
+                Target::Browser { label, address } if label == "Open in Argo CD" => {
+                    *address = Address::parse(ARGOCD_PAGE)
+                        .map(|base| base.join(["applications", namespace, detail.title.as_str()]))
+                        .ok();
+                }
+                _ => {}
+            }
+        }
+    }
+    let cap = crate::applications::read::MAX_ARGO_NAMESPACES;
+    let namespaces = SPREAD_NAMESPACES[..cap]
+        .iter()
+        .map(|ns| (*ns).into())
+        .collect::<Vec<_>>();
+    let found = crate::applications::ArgoFound::Labelled {
+        skipped: SPREAD_NAMESPACES[cap..]
+            .iter()
+            .map(|ns| (*ns).into())
+            .collect(),
+    };
+    if let Some(note) = crate::applications::read::argo_namespace_note(CORE, &namespaces, &found) {
+        change.missing.push(Missing::new(Gap::Unreadable, note));
     }
 }
 

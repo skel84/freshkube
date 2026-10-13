@@ -3,29 +3,27 @@
 use std::{collections::HashMap, time::Duration};
 
 use freshkube_core::resources::{FailureKind, NodeUsage, list_node_usage};
+use freshkube_reads::{Loader, OnShow};
 
 use super::*;
-use crate::{
-    backend::{self, OwnedJob},
-    resources::KubeAccess,
-    screens::SCREEN_DEADLINE,
-    state::{Request, Snapshot},
-};
+use crate::{backend, resources::KubeAccess, screens::SCREEN_DEADLINE, state::Request};
 
 const INTERVAL: Duration = Duration::from_secs(15);
+const ON_SHOW: OnShow = OnShow::ReadIfOlder(Duration::ZERO);
+
+type Usage = HashMap<String, NodeUsage>;
 
 pub(super) struct Metrics {
     runtime: tokio::runtime::Handle,
     /// The connection the shell last handed Nodes, read while it shows.
     kube: Option<crate::resources::KubeSource>,
     pub(super) source: Option<String>,
+    /// The owner needs visibility for source changes and arriving example rows;
+    /// the loader hears the same changes through `set_visible`.
     pub(super) visible: bool,
     /// Example mode answers from the rows themselves, so new rows answer at once.
     example: bool,
-    pub(super) generation: u64,
-    pub(super) snapshot: Snapshot<HashMap<String, NodeUsage>, String, String>,
-    pub(super) job: Option<OwnedJob>,
-    pub(super) delivery: Option<Task<()>>,
+    pub(super) snapshot: Loader<Usage, String>,
 }
 
 impl Metrics {
@@ -36,39 +34,31 @@ impl Metrics {
             source: None,
             visible: false,
             example: false,
-            generation: 0,
-            snapshot: Snapshot::default(),
-            job: None,
-            delivery: None,
+            snapshot: Loader::default(),
         }
-    }
-
-    fn cancel(&mut self) {
-        self.generation = self.generation.wrapping_add(1);
-        self.delivery = None;
-        self.job = None;
     }
 
     pub(super) fn apply(
         &mut self,
-        generation: u64,
+        revision: u64,
         request: &Request<String>,
         result: Result<Vec<NodeUsage>, String>,
+        cx: &App,
     ) -> bool {
-        if !self.visible || generation != self.generation {
+        // Resetting a loader forgets its snapshot's request sequence. Its
+        // revision also rejects a late answer after switching away and back
+        // to the same source, as the old owner's generation did.
+        if !self.visible || revision != self.snapshot.revision() {
             return false;
         }
-        let result = result.map(|rows| {
-            rows.into_iter()
-                .map(|row| (row.name.clone(), row))
-                .collect()
-        });
-        let applied = self.snapshot.apply(request, result);
-        if applied {
-            self.job = None;
-        }
-        applied
+        self.snapshot.land(request, result.map(usage_by_name), cx)
     }
+}
+
+fn usage_by_name(rows: Vec<NodeUsage>) -> Usage {
+    rows.into_iter()
+        .map(|row| (row.name.clone(), row))
+        .collect()
 }
 
 impl Nodes {
@@ -109,10 +99,11 @@ impl Nodes {
         if metrics.source == id && metrics.visible == visible {
             return;
         }
-        metrics.cancel();
         if metrics.source != id {
-            metrics.snapshot = Snapshot::default();
+            metrics.snapshot.reset();
         }
+        let read_again = metrics.snapshot.set_visible(visible, ON_SHOW, cx);
+        let changed_source = metrics.source != id;
         metrics.source = id;
         metrics.visible = visible;
         metrics.example = source
@@ -120,105 +111,88 @@ impl Nodes {
             .is_some_and(|source| matches!(source.access, KubeAccess::Example));
         self.rebuild_resource_cells();
         cx.notify();
-        if !visible {
-            return;
+        if visible
+            && (changed_source || read_again)
+            && let Some(source) = source
+        {
+            self.read_metrics(source, window, cx);
         }
-        let Some(source) = source else {
-            return;
-        };
-        let generation = self.metrics.generation;
-        let example = matches!(source.access, KubeAccess::Example);
-        if example {
-            let request = self.metrics.snapshot.begin(source.id.clone());
+    }
+
+    /// Each read's loader task delivers its answer, waits the same interval,
+    /// then hands ownership to the next read. Hiding also drops that wait.
+    fn read_metrics(
+        &mut self,
+        source: crate::resources::KubeSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let request = self.metrics.snapshot.start(source.id.clone());
+        let revision = self.metrics.snapshot.revision();
+        let (job, receiver) = if self.metrics.example {
             let rows = self.example_node_usage();
-            self.metrics.apply(generation, &request, Ok(rows));
+            self.metrics.apply(revision, &request, Ok(rows), cx);
             self.rebuild_resource_cells();
-        }
-        self.metrics.delivery = Some(cx.spawn_in(window, async move |this, cx| {
-            loop {
-                if example {
-                    cx.background_executor().timer(INTERVAL).await;
-                }
-                let started = this.update(cx, |nodes, cx| {
-                    let metrics = &mut nodes.metrics;
-                    if !metrics.visible
-                        || metrics.generation != generation
-                        || metrics.source.as_ref() != Some(&source.id)
-                    {
-                        return None;
-                    }
-                    let request = metrics.snapshot.begin(source.id.clone());
-                    if example {
-                        let rows = nodes.example_node_usage();
-                        nodes.metrics.apply(generation, &request, Ok(rows));
-                        nodes.rebuild_resource_cells();
-                        cx.notify();
-                        return Some(None);
-                    }
-                    let access = source.access.clone();
-                    let (job, receiver) = backend::spawn_job(
-                        &metrics.runtime,
-                        SCREEN_DEADLINE,
-                        "Reading nodes' use timed out".into(),
-                        async move {
-                            let client = access.client().await?;
-                            list_node_usage(&client)
-                                .await
-                                .map_err(|failure| match failure.kind {
-                                    FailureKind::NotFound => {
-                                        "metrics-server isn't installed".to_owned()
-                                    }
-                                    FailureKind::Forbidden => {
-                                        "Not permitted to read nodes' use".to_owned()
-                                    }
-                                    _ => failure.to_string(),
-                                })
-                        },
-                    );
-                    metrics.job = Some(job);
-                    Some(Some((request, receiver)))
-                });
-                let Ok(Some(started)) = started else {
-                    break;
-                };
-                if let Some((request, receiver)) = started {
-                    let result = receiver
+            (None, None)
+        } else {
+            let access = source.access.clone();
+            let (job, receiver) = backend::spawn_job(
+                &self.metrics.runtime,
+                SCREEN_DEADLINE,
+                "Reading nodes' use timed out".into(),
+                async move {
+                    let client = access.client().await?;
+                    list_node_usage(&client)
                         .await
-                        .unwrap_or_else(|_| Err("Reading nodes' use stopped".into()));
-                    let applied = this.update(cx, |nodes, cx| {
-                        if !nodes.metrics.apply(generation, &request, result) {
-                            return false;
-                        }
-                        nodes.rebuild_resource_cells();
-                        cx.notify();
-                        true
-                    });
-                    if !matches!(applied, Ok(true)) {
-                        break;
+                        .map_err(|failure| match failure.kind {
+                            FailureKind::NotFound => "metrics-server isn't installed".to_owned(),
+                            FailureKind::Forbidden => "Not permitted to read nodes' use".to_owned(),
+                            _ => failure.to_string(),
+                        })
+                },
+            );
+            (Some(job), Some(receiver))
+        };
+        let task = cx.spawn_in(window, async move |this, cx| {
+            if let Some(receiver) = receiver {
+                let result = receiver
+                    .await
+                    .unwrap_or_else(|_| Err("Reading nodes' use stopped".into()));
+                let applied = this.update(cx, |nodes, cx| {
+                    if !nodes.metrics.apply(revision, &request, result, cx) {
+                        return false;
                     }
-                    cx.background_executor().timer(INTERVAL).await;
+                    nodes.rebuild_resource_cells();
+                    cx.notify();
+                    true
+                });
+                if !matches!(applied, Ok(true)) {
+                    return;
                 }
             }
-        }));
+            cx.background_executor().timer(INTERVAL).await;
+            _ = this.update_in(cx, |nodes, window, cx| {
+                if nodes.metrics.visible && nodes.metrics.source.as_ref() == Some(&source.id) {
+                    nodes.read_metrics(source, window, cx);
+                    cx.notify();
+                }
+            });
+        });
+        self.metrics.snapshot.run(job, task);
     }
-}
 
-impl Nodes {
     /// Example samples follow the rows as they arrive: a summary that lands
     /// after the page shows must not wait for the next tick to draw its use.
     pub(super) fn refresh_example_metrics(&mut self) {
-        let metrics = &self.metrics;
-        let Some(source) = metrics
-            .source
-            .clone()
-            .filter(|_| metrics.example && metrics.visible)
-        else {
+        if !self.metrics.example || !self.metrics.visible {
             return;
-        };
-        let generation = metrics.generation;
-        let rows = self.example_node_usage();
-        let request = self.metrics.snapshot.begin(source);
-        self.metrics.apply(generation, &request, Ok(rows));
+        }
+        let rows = usage_by_name(self.example_node_usage());
+        // This is a projection of new fixture rows, not another poll. Keep
+        // the loader's existing interval task while updating its samples.
+        if let Some(data) = self.metrics.snapshot.data_mut() {
+            *data = rows;
+        }
     }
 
     /// Deterministic fixture samples on the summary's node identities. No API

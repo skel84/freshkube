@@ -536,12 +536,16 @@ fn rows_are_cached_until_the_data_or_the_filters_change(cx: &mut TestAppContext)
     cx.update_window(handle.into(), |_, window, cx| {
         window.render_frame(cx);
         let computed = || crate::desktop::probe::count("workloads.rows");
+        let cached_row = |cx: &gpui_kit::App| match screen.read(cx).line(0, cx).unwrap() {
+            table::Line::Row(row) => row.data as *const _,
+            table::Line::Group(_) => unreachable!("Workloads draws every line as a row"),
+        };
         let first = screen.read(cx).rows();
+        let first_cached_row = cached_row(cx);
         let base = computed();
         window.render_frame(cx);
         window.press("down", cx);
-        let again = screen.read(cx).rows();
-        assert!(std::rc::Rc::ptr_eq(&first, &again));
+        assert!(std::ptr::eq(first_cached_row, cached_row(cx)));
         assert_eq!(computed(), base, "nothing it depends on changed");
         // Unhealthy only.
         window.click("only-unhealthy", cx);

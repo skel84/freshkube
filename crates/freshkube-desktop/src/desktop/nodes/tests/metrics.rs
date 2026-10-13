@@ -113,15 +113,15 @@ fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut Te
             let nodes = pilot.node_workspace.clone();
             nodes.read_with(cx, |nodes, _| {
                 assert!(!nodes.metrics.visible);
-                assert!(nodes.metrics.delivery.is_none());
-                assert!(nodes.metrics.job.is_none());
+                assert!(!nodes.metrics.snapshot.is_visible());
+                assert!(!nodes.metrics.snapshot.is_loading());
             });
             pilot.navigate(Page::Nodes, window, cx);
-            let (generation, request) = nodes.update(cx, |nodes, _| {
+            let (generation, request) = nodes.update(cx, |nodes, cx| {
                 let metrics = &mut nodes.metrics;
                 assert!(metrics.visible);
-                assert!(metrics.delivery.is_some());
-                let generation = metrics.generation;
+                assert!(metrics.snapshot.is_visible());
+                let generation = metrics.snapshot.revision();
                 let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
                 assert!(metrics.apply(
                     generation,
@@ -140,11 +140,17 @@ fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut Te
                             usage: Amounts::default(),
                             sampled_at: None
                         }
-                    ])
+                    ]),
+                    cx
                 ));
                 assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
                 let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
-                assert!(metrics.apply(generation, &request, Err("denied".into())));
+                assert!(metrics.apply(
+                    metrics.snapshot.revision(),
+                    &request,
+                    Err("denied".into()),
+                    cx
+                ));
                 assert_eq!(
                     metrics.snapshot.data().unwrap()["talos-wk-fra1-02"]
                         .usage
@@ -165,18 +171,18 @@ fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut Te
                     .metrics
                     .snapshot
                     .begin(nodes.metrics.source.clone().unwrap());
-                (generation, request)
+                (nodes.metrics.snapshot.revision(), request)
             });
             pilot.navigate(Page::Overview, window, cx);
-            nodes.update(cx, |nodes, _| {
-                assert!(nodes.metrics.delivery.is_none());
-                assert!(nodes.metrics.job.is_none());
-                assert!(!nodes.metrics.apply(generation, &request, Ok(vec![])));
+            nodes.update(cx, |nodes, cx| {
+                assert!(!nodes.metrics.snapshot.is_visible());
+                assert!(!nodes.metrics.snapshot.is_loading());
+                assert!(!nodes.metrics.apply(generation, &request, Ok(vec![]), cx));
             });
             pilot.navigate(Page::Nodes, window, cx);
-            let (generation, old_id, request) = nodes.update(cx, |nodes, _| {
+            let (generation, old_id, request) = nodes.update(cx, |nodes, cx| {
                 let metrics = &mut nodes.metrics;
-                let generation = metrics.generation;
+                let generation = metrics.snapshot.revision();
                 let token = metrics.snapshot.begin(metrics.source.clone().unwrap());
                 assert!(metrics.apply(
                     generation,
@@ -185,17 +191,18 @@ fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut Te
                         name: "old-source".into(),
                         usage: Amounts::default(),
                         sampled_at: None
-                    }])
+                    }]),
+                    cx
                 ));
                 assert!(metrics.snapshot.data().unwrap().contains_key("old-source"));
                 let old_id = metrics.source.clone();
                 let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
-                (generation, old_id, request)
+                (metrics.snapshot.revision(), old_id, request)
             });
             pilot.applied.context = Some("different".into());
             pilot.push_source(window, cx);
-            nodes.update(cx, |nodes, _| {
-                assert!(!nodes.metrics.apply(generation, &request, Ok(vec![])));
+            nodes.update(cx, |nodes, cx| {
+                assert!(!nodes.metrics.apply(generation, &request, Ok(vec![]), cx));
                 assert_ne!(nodes.metrics.source, old_id);
                 assert!(
                     !nodes
@@ -261,6 +268,7 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
     let (runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.executor().allow_parking();
     for replace_context in [false, true] {
+        let (delivery, mut delivered) = tokio::sync::oneshot::channel::<()>();
         let (job, receiver) = crate::backend::spawn_job(
             &runtime.handle().clone(),
             std::time::Duration::from_secs(60),
@@ -270,22 +278,36 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
         cx.update_window(handle, |_, window, cx| {
             pilot.update(cx, |pilot, cx| {
                 pilot.navigate(Page::Nodes, window, cx);
-                pilot
-                    .node_workspace
-                    .update(cx, |nodes, _| nodes.metrics.job = Some(job));
+                pilot.node_workspace.update(cx, |nodes, cx| {
+                    let source = nodes.metrics.source.clone().unwrap();
+                    nodes.metrics.snapshot.start(source);
+                    let task = cx.spawn(async move |_, _| {
+                        let _delivery = delivery;
+                        std::future::pending().await
+                    });
+                    nodes.metrics.snapshot.run(Some(job), task);
+                });
                 if replace_context {
                     pilot.applied.context = Some("replacement".into());
                     pilot.push_source(window, cx);
                 } else {
                     pilot.navigate(Page::Overview, window, cx);
                 }
-                assert!(pilot.node_workspace.read(cx).metrics.job.is_none());
+                assert!(!pilot.node_workspace.read(cx).metrics.snapshot.is_loading());
                 if !replace_context {
-                    assert!(pilot.node_workspace.read(cx).metrics.delivery.is_none());
+                    assert!(!pilot.node_workspace.read(cx).metrics.snapshot.is_visible());
                 }
             });
         })
         .unwrap();
+        cx.run_until_parked();
+        assert!(
+            matches!(
+                delivered.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Closed)
+            ),
+            "the workspace must drop the delivery task"
+        );
         assert!(
             runtime.block_on(receiver).is_err(),
             "the workspace must abort the pending job"
@@ -296,16 +318,16 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
     })
     .unwrap();
     let before = pilot.read_with(cx, |pilot, cx| {
-        pilot.node_workspace.read(cx).metrics.generation
+        pilot.node_workspace.read(cx).metrics.snapshot.revision()
     });
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(45));
     cx.run_until_parked();
     pilot.read_with(cx, |pilot, cx| {
         let metrics = &pilot.node_workspace.read(cx).metrics;
-        assert_eq!(metrics.generation, before);
-        assert!(metrics.job.is_none());
-        assert!(metrics.delivery.is_none());
+        assert_eq!(metrics.snapshot.revision(), before);
+        assert!(!metrics.snapshot.is_loading());
+        assert!(!metrics.snapshot.is_visible());
     });
 }
 
@@ -414,7 +436,10 @@ fn node_metrics_keep_reading_while_the_pane_shows_a_screen(cx: &mut TestAppConte
     let read = |cx: &mut TestAppContext| {
         pilot.read_with(cx, |pilot, cx| {
             let metrics = &pilot.node_workspace.read(cx).metrics;
-            (metrics.visible, metrics.generation)
+            (
+                metrics.visible,
+                (metrics.snapshot.revision(), metrics.snapshot.is_visible()),
+            )
         })
     };
     cx.update_window(handle, |_, window, cx| {
@@ -453,7 +478,7 @@ fn node_usage_follows_the_nodes_page_through_its_pane(cx: &mut TestAppContext) {
                 let metrics = &pilot.node_workspace.read(cx).metrics;
                 // Hidden, it holds no read and no delivery.
                 if !metrics.visible {
-                    assert!(metrics.delivery.is_none() && metrics.job.is_none());
+                    assert!(!metrics.snapshot.is_visible() && !metrics.snapshot.is_loading());
                 }
                 metrics.visible
             };
@@ -493,6 +518,104 @@ fn node_usage_follows_the_nodes_page_through_its_pane(cx: &mut TestAppContext) {
                     ("opened from overview", true),
                 ]
             );
+        });
+    })
+    .unwrap();
+}
+
+/// The loader owns the poll's wait as well as its delivery. Arriving fixture
+/// rows update the samples without moving the next poll; repeated polls keep
+/// running, and hiding drops the wait before showing reads immediately again.
+#[gpui_kit::test]
+fn node_metrics_keep_the_poll_interval_when_example_rows_arrive(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Nodes, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let revision = |cx: &mut TestAppContext| {
+        pilot.read_with(cx, |pilot, cx| {
+            pilot.node_workspace.read(cx).metrics.snapshot.revision()
+        })
+    };
+    let first = revision(cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(14));
+    cx.run_until_parked();
+    assert_eq!(revision(cx), first);
+    cx.update_window(handle, |_, _, cx| {
+        pilot
+            .read(cx)
+            .node_workspace
+            .clone()
+            .update(cx, |nodes, _| {
+                let row = std::sync::Arc::make_mut(&mut nodes.rows)
+                    .iter_mut()
+                    .find(|row| row.kubernetes.is_some())
+                    .unwrap();
+                let node = row.kubernetes.as_mut().unwrap();
+                node.requests.cpu_millis = Some(1.);
+                let name = node.name.clone();
+                nodes.refresh_example_metrics();
+                let sample = &nodes.metrics.snapshot.data().unwrap()[&name];
+                assert_eq!(sample.usage.cpu_millis, Some(75.));
+            });
+    })
+    .unwrap();
+    assert_eq!(revision(cx), first);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    let second = revision(cx);
+    assert!(second > first);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(15));
+    cx.run_until_parked();
+    assert!(revision(cx) > second);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let hidden = revision(cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(45));
+    cx.run_until_parked();
+    assert_eq!(revision(cx), hidden);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Nodes, window, cx));
+    })
+    .unwrap();
+    assert!(revision(cx) > hidden);
+}
+
+#[gpui_kit::test]
+fn a_late_node_metrics_answer_is_rejected_after_returning_to_the_same_source(
+    cx: &mut TestAppContext,
+) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Nodes, window, cx);
+            let nodes = pilot.node_workspace.clone();
+            let (revision, request, source) = nodes.update(cx, |nodes, _| {
+                let metrics = &mut nodes.metrics;
+                let request = metrics.snapshot.begin(metrics.source.clone().unwrap());
+                (metrics.snapshot.revision(), request, metrics.source.clone())
+            });
+            let original = pilot.applied.context.clone();
+            pilot.applied.context = Some("replacement".into());
+            pilot.push_source(window, cx);
+            pilot.applied.context = original;
+            pilot.push_source(window, cx);
+            nodes.update(cx, |nodes, cx| {
+                let metrics = &mut nodes.metrics;
+                assert_eq!(metrics.source, source);
+                let current = metrics.snapshot.begin(metrics.source.clone().unwrap());
+                assert!(!metrics.apply(revision, &request, Ok(vec![]), cx));
+                assert!(metrics.apply(metrics.snapshot.revision(), &current, Ok(vec![]), cx));
+            });
         });
     })
     .unwrap();
