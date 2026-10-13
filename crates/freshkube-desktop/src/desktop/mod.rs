@@ -309,7 +309,6 @@ pub(crate) struct Pilot {
     nodes: Vec<NodeSummary>,
     selected_node: Option<String>,
     logs: Entity<LogPanel>,
-    fps: Entity<shell::fps::Fps>,
     chrome: shell::Chrome,
     /// The status bar's port forwards, which redraw on their own.
     forwards: Entity<ForwardsIndicator>,
@@ -927,7 +926,6 @@ impl Pilot {
             nodes: Vec::new(),
             selected_node: None,
             logs,
-            fps: cx.new(shell::fps::Fps::new),
             chrome: shell::Chrome::new(cx),
             forwards: cx.new(ForwardsIndicator::new),
             dock,

@@ -7,7 +7,8 @@ impl Render for Pilot {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         probe::hit("shell");
         let _span = crate::perf::span("shell.render");
-        self.fps
+        self.chrome
+            .fps
             .read(cx)
             .frame_started(cx.background_executor().now());
         // `FRESHKUBE_FIRST_FRAME=1` prints when the window first draws,

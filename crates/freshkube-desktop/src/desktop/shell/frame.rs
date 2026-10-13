@@ -65,7 +65,7 @@ impl Pilot {
                             .child(page)
                     })),
             )
-            .right(right.child(self.fps.clone()))
+            .right(right.child(self.chrome.fps.clone()))
             .into_any_element()
     }
 
