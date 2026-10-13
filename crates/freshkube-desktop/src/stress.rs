@@ -275,7 +275,7 @@ pub(crate) fn run_terminal(workload: TerminalWorkload) -> color_eyre::Result<()>
         .run(move |cx| {
             gpui_kit::init(cx);
             crate::theme::install(cx);
-            crate::text_size::install(None, cx);
+            crate::text_size::install_with(None, crate::DebugOptions::from_env().text_size, cx);
             match std::env::var("FRESHKUBE_STRESS_APPEARANCE").as_deref() {
                 Ok("light") => Theme::change(ThemeMode::Light, None, cx),
                 Ok("dark") => Theme::change(ThemeMode::Dark, None, cx),

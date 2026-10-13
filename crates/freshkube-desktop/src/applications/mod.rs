@@ -315,6 +315,8 @@ impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 impl ApplicationsPage {
     pub(crate) fn new(
         runtime: tokio::runtime::Handle,
+        variant: Variant,
+        hold: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -328,7 +330,7 @@ impl ApplicationsPage {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let split = InspectorSplit::new(PREFIX, cx);
-        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), cx));
+        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), hold, variant.shape(), cx));
         // The change page's links, from a change the list opened.
         let links = cx.subscribe(&changes, |_, _, event, cx| match event {
             ChangesEvent::Open(link) => cx.emit(link.as_ref().clone()),
@@ -342,8 +344,8 @@ impl ApplicationsPage {
             runtime,
             source: None,
             visible: false,
-            variant: Variant::from_env(),
-            hold: crate::fixture::hold().applications,
+            variant,
+            hold,
             entry: None,
             snapshot: Snapshot::default(),
             pending: false,

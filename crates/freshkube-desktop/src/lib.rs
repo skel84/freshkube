@@ -25,7 +25,7 @@ pub struct GpuiOptions {
     preferences: Option<PathBuf>,
     keyring: bool,
     /// Example data holds the Talos overview and the summary
-    /// (`fixture::hold`).
+    /// (`fixture::Hold`).
     hold_talos: bool,
     /// The debug knobs the binary parsed (`DebugOptions::from_env`); startup
     /// reads them here, never from the environment.
@@ -111,7 +111,6 @@ impl GpuiOptions {
     pub fn fixture() -> Self {
         Self {
             fixture: true,
-            hold_talos: fixture::hold().talos,
             ..Self::new(None, None, 100)
         }
     }

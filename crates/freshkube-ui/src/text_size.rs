@@ -32,15 +32,25 @@ impl Global for TextSize {}
 /// Applies the size saved in `preferences`, or the default, and binds the
 /// shortcuts. Call it once, after `theme::install`.
 pub fn install(preferences: Option<PathBuf>, cx: &mut App) {
-    let size = preferences.as_deref().and_then(saved).unwrap_or(BASE_TEXT);
-    // Debug builds can start at a size, for visual checks, without
-    // saving it.
-    #[cfg(debug_assertions)]
-    let size = std::env::var("FRESHKUBE_TEXT_SIZE")
+    install_with(preferences, None, cx)
+}
+
+/// The step `FRESHKUBE_TEXT_SIZE` names: one of `STEPS`, else `None`.
+pub fn parse(value: &str) -> Option<f32> {
+    value
+        .parse::<f32>()
         .ok()
-        .and_then(|size| size.parse::<f32>().ok())
         .filter(|size| STEPS.contains(size))
-        .unwrap_or(size);
+}
+
+/// [`install`], starting at `start` instead of the saved size when given,
+/// for visual checks: the choice is not saved. The caller parses it from
+/// the debug knobs (`parse`).
+pub fn install_with(preferences: Option<PathBuf>, start: Option<f32>, cx: &mut App) {
+    let size = start
+        .filter(|size| STEPS.contains(size))
+        .or_else(|| preferences.as_deref().and_then(saved))
+        .unwrap_or(BASE_TEXT);
     cx.set_global(TextSize { size, preferences });
     cx.bind_keys([
         // Command-Shift-= arrives as `+`. macOS's View menu shows the first

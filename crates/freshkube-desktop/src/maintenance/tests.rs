@@ -592,7 +592,9 @@ async fn the_review_draws_each_row_as_a_document_line(cx: &mut TestAppContext) {
 #[cfg(debug_assertions)]
 #[gpui_kit::test]
 async fn example_data_stops_at_the_review(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = mount_with(cx, MaintenanceView::example);
+    let (_runtime, handle, view) = mount_with(cx, |runtime, window, cx| {
+        MaintenanceView::example(runtime, None, window, cx)
+    });
     let watched = view.clone();
     cx.wait_for(handle, WAIT, move |_, cx| watched.read(cx).review.is_some())
         .await;
