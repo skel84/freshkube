@@ -388,7 +388,6 @@ impl Nodes {
     }
 
     fn render_node_tabs(&self, row: &NodeRow, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
         let collecting = self.collecting;
         let workspace = self;
         // Events and YAML sit in More, so while one shows, More is the
@@ -414,9 +413,11 @@ impl Nodes {
                 inspector::tab(tab.id(), label, *tab == self.tab, cx)
                     .when(*tab == NodeTab::Logs && collecting, |this| {
                         this.child(
-                            gpui_kit::component::Icon::new(IconName::Circle)
-                                .text_color(p.good)
-                                .size(dp(7.)),
+                            ui::badge_dot(ui::Tone::Good, None, cx)
+                                .id("node-logs-collecting")
+                                .test_support()
+                                .role(gpui_kit::Role::Image)
+                                .aria_label("Collecting logs"),
                         )
                     })
                     .when(*tab == NodeTab::Services && row.service_problem, |this| {
