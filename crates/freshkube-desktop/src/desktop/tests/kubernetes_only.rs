@@ -370,3 +370,138 @@ fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut T
     })
     .unwrap();
 }
+
+/// A kubeconfig whose server refuses at once, so nothing leaves this
+/// machine, with a fake token.
+const KUBECONFIG: &str = "apiVersion: v1
+kind: Config
+current-context: lab
+clusters:
+- name: lab
+  cluster:
+    server: https://127.0.0.1:1
+contexts:
+- name: lab
+  context:
+    cluster: lab
+    user: lab
+- name: staging
+  context:
+    cluster: lab
+    user: lab
+    namespace: web
+users:
+- name: lab
+  user:
+    token: not-a-real-token
+";
+
+/// The window `--kubernetes-only --kubeconfig <path>` opens. Never the
+/// ambient kubeconfig: the path is always explicit.
+fn kubernetes_only(
+    cx: &mut TestAppContext,
+    kubeconfig: std::path::PathBuf,
+    context: Option<&str>,
+) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
+    // Reading and connecting run on Tokio and wake GPUI from there.
+    cx.executor().allow_parking();
+    let options = GpuiOptions::kubernetes_only(Some(kubeconfig), context.map(Into::into), 100);
+    mount(cx, options, 1280., 860.)
+}
+
+#[gpui_kit::test]
+async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change(
+    cx: &mut TestAppContext,
+) {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let server_runtime = tokio::runtime::Runtime::new().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let received = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (seen, gate) = (received.clone(), release.clone());
+    let server = server_runtime.spawn(async move {
+        let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let (seen, gate) = (seen.clone(), gate.clone());
+            tokio::spawn(async move {
+                let mut request = vec![0u8; 16384];
+                let n = socket.read(&mut request).await.unwrap();
+                let request = String::from_utf8_lossy(&request[..n]);
+                let (status, body) = if request.starts_with("GET /api/v1/namespaces/prod/pods/later ") {
+                    assert!(request.contains("PartialObjectMetadata"));
+                    seen.store(true, Ordering::SeqCst);
+                    gate.notified().await;
+                    (200, serde_json::json!({"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"namespace":"prod","name":"later","uid":"old-access-uid"}}))
+                } else if request.starts_with("GET /version ") {
+                    (200, serde_json::json!({"major":"1","minor":"32","gitVersion":"v1.32.0","gitCommit":"fixture","gitTreeState":"clean","buildDate":"2026-01-01T00:00:00Z","goVersion":"go1.24","compiler":"gc","platform":"test"}))
+                } else {
+                    (404, serde_json::json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"NotFound","code":404,"message":"No fixture for this endpoint"}))
+                };
+                let body = body.to_string();
+                let response = format!("HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                _ = socket.write_all(response.as_bytes()).await;
+            });
+        }
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config");
+    std::fs::write(
+        &config,
+        KUBECONFIG.replace("https://127.0.0.1:1", &format!("http://{address}")),
+    )
+    .unwrap();
+    let (_runtime, handle, view) = kubernetes_only(cx, config, Some("lab"));
+    let observed = view.clone();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, cx| {
+        observed.read(cx).kube_source().is_some()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.open_object(
+                crate::resources::example::kind("pods").unwrap(),
+                crate::resources::model::ObjectRef {
+                    connection: None,
+                    namespace: "prod".into(),
+                    name: "later".into(),
+                    uid: String::new(),
+                },
+                crate::resources::Tab::Overview,
+                window,
+                cx,
+            );
+        })
+    })
+    .unwrap();
+    cx.wait_for(handle, std::time::Duration::from_secs(5), move |_, _| {
+        received.load(Ordering::SeqCst)
+    })
+    .await;
+    let completion = cx.update(|cx| {
+        view.update(cx, |view, _| {
+            // Simulate a replacement access independently of the existing
+            // epoch/sequence guards, leaving the delayed worker alive.
+            view.fixture = true;
+            view.applied.context = Some("replacement".into());
+            view.object_open_task.take().unwrap()
+        })
+    });
+    release.notify_one();
+    completion.await;
+    cx.read(|cx| {
+        assert!(
+            view.read(cx)
+                .resources
+                .read(cx)
+                .detail_identity(cx)
+                .is_none()
+        )
+    });
+    server.abort();
+}

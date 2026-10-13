@@ -24,7 +24,7 @@ Taken with the user on 3 October 2026.
 
 - **Option 2.** Freshkube depends on `grafaui-model` and `grafaui-prometheus` as git dependencies pinned to a revision, and draws its own Console panels. Grafaui stays its own app and keeps working unchanged. Plot code from `grafaui-desktop` (axes, projection, hover) may be lifted where it fits. It is the user's own MIT code, but its origin is still noted in the module.
 - **Read-only, GET only.** Queries go through the service proxy as GET, so they stay within the read verbs. A 403 says "Not allowed to query Prometheus (services/proxy)", never an empty dashboard.
-- **Coroot separately.** The completed [H1–H7 fixtures](DESIGN.md#h1h7-observability-prototype) remain separate from Prometheus Monitoring. The planned live workspace will read Coroot's analysis through the user's `coroot-rs` library; [COROOT.md](COROOT.md) records the integration order and missing client capabilities. This does not change Monitoring's transport.
+- **Coroot separately.** The completed [H1–H7 fixtures](DESIGN.md#h1h7-observability) remain separate from Prometheus Monitoring. The planned live workspace will read Coroot's analysis through the user's `coroot-rs` library; [COROOT.md](COROOT.md) records the integration order and missing client capabilities. This does not change Monitoring's transport.
 - **No panel editor and no Explore screen,** as F4 says.
 
 Defaults the plan follows until the user says otherwise:
