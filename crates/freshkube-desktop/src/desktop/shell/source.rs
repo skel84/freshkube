@@ -434,7 +434,10 @@ impl Pilot {
                 .icon(item.icon())
                 .current(active);
                 if let Some(count) = incidents.filter(|_| item == Destination::Incidents) {
-                    row = row.count(count.to_owned(), self.fixture.then_some(Tone::Crit));
+                    row = row.count(
+                        count.to_owned(),
+                        self.mode().is_example().then_some(Tone::Crit),
+                    );
                 }
                 row.into()
             })
@@ -535,7 +538,7 @@ impl Pilot {
 
     /// The Talos pages, or without a talosconfig, how to add one.
     fn control_plane_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
-        if self.kubernetes_only.is_some() {
+        if !self.mode().has_talos() {
             return vec![
                 Prose::new("talosconfig-needed", "Talos views need a talosconfig")
                     .action("add-talosconfig", "Add a talosconfig", ColumnKey::Settings)
