@@ -7,9 +7,9 @@ use std::rc::Rc;
 use freshkube_ui::dock::{self, Frame};
 use freshkube_ui::menu;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
-use gpui_kit::component::{ElementExt as _, Sizable as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, ElementExt as _, Sizable as _, v_flex};
 
 use super::feed::FeedState;
 use super::*;
@@ -46,12 +46,13 @@ impl Dock {
             .row("dock-tab-row", active)
             .children(self.tabs.iter().map(|tab| {
                 let id = tab.id;
+                let this = cx.entity().downgrade();
                 let close = dock::close_button(format!("dock-tab-{id}-close"), &tab.title)
                     .on_click(cx.listener(move |dock, _, window, cx| {
                         cx.stop_propagation();
                         dock.close_tab(id, window, cx);
                     }));
-                dock::tab(
+                let tab = dock::tab(
                     format!("dock-tab-{id}"),
                     tab.title.clone(),
                     Some(id) == self.selected,
@@ -60,6 +61,11 @@ impl Dock {
                 )
                 .when_some(shell_tip(tab), |this, tip| this.tooltip(tip))
                 .on_click(cx.listener(move |dock, _, window, cx| dock.select(id, true, window, cx)))
+                // Select and focus before Kit records the focus to restore.
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |dock, _, window, cx| dock.select_for_menu(id, window, cx)),
+                )
                 // A middle-click closes the tab, as in a browser.
                 .on_mouse_down(
                     MouseButton::Middle,
@@ -67,10 +73,150 @@ impl Dock {
                         cx.stop_propagation();
                         dock.close_tab(id, window, cx);
                     }),
-                )
-                .into_any_element()
+                );
+                // The popup inherits its trigger's text style. Keep it in
+                // the UI font, outside the selected tab's semibold label.
+                div()
+                    .id(format!("dock-tab-{id}-menu"))
+                    .font_family(cx.theme().font_family.clone())
+                    .font_weight(FontWeight::NORMAL)
+                    .child(tab)
+                    .context_menu(move |menu, window, cx| {
+                        let Ok(focus) = this.update(cx, |dock, cx| {
+                            if dock.open {
+                                dock.take_focus(window, cx);
+                            }
+                            dock.focus.clone()
+                        }) else {
+                            return menu;
+                        };
+                        Self::tab_menu(menu, Some(id), focus, this.clone(), window, cx)
+                    })
+                    .into_any_element()
             }))
             .into_any_element()
+    }
+
+    fn select_for_menu(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open {
+            self.select(id, false, window, cx);
+        } else if self.position(id).is_some() {
+            // Keep a minimized bar in place: Kit draws a context menu
+            // only while its trigger contains the original press position.
+            self.selected = Some(id);
+            self.schedule_save(cx);
+            cx.notify();
+        }
+        // This focus is drawn even before the newly selected tab's lines
+        // arrive. Kit can safely remember it; the builder then focuses the
+        // lines, which the shared menu restores on dismissal.
+        if !self.focus.contains_focused(window, cx) {
+            self.return_focus = window.focused(cx);
+        }
+        window.focus(&self.focus, cx);
+    }
+
+    /// Both triggers use the same entries and act only while their tab
+    /// remains open and selected, even if the dock changes under the menu.
+    fn tab_menu(
+        menu: PopupMenu,
+        selected: Option<u64>,
+        focus: FocusHandle,
+        this: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<PopupMenu>,
+    ) -> PopupMenu {
+        Self::watch_tab_menu(selected, this.clone(), window, cx);
+        let live = {
+            let this = this.clone();
+            move |cx: &App| Self::menu_subject(&this, selected, cx)
+        };
+        let has = selected.is_some();
+        let item = |label: &'static str,
+                    close: fn(&mut Dock, u64, &mut Window, &mut Context<Dock>)| {
+            let this = this.clone();
+            PopupMenuItem::new(label)
+                .disabled(!has)
+                .on_click(move |_, window, cx| {
+                    if let Some(id) = selected.filter(|_| Self::menu_subject(&this, selected, cx)) {
+                        _ = this.update(cx, |dock, cx| {
+                            window.focus(&dock.focus, cx);
+                            let count = dock.tabs.len();
+                            close(dock, id, window, cx);
+                            dock.focus_after_menu_close(count, window, cx);
+                        });
+                    }
+                })
+        };
+        let close = menu::MenuAction::new("Close", CloseDockTab).enabled(has);
+        menu::actions(menu, vec![close], &focus, live, window, cx)
+            .item(item("Close others", Dock::close_others))
+            .item(item("Close to the right", Dock::close_to_right))
+            .separator()
+            .item(item("Close all", |dock, _, window, cx| {
+                dock.close_all(window, cx)
+            }))
+    }
+
+    fn watch_tab_menu(
+        selected: Option<u64>,
+        owner: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut Context<PopupMenu>,
+    ) {
+        // The dock is cached. Kit changes its element-local open state
+        // on dismissal, so invalidate the owner to drop the cached menu's
+        // dispatch path and its focus-taking prepaint.
+        cx.subscribe_in(
+            &cx.entity(),
+            window,
+            move |menu, _, _: &DismissEvent, window, cx| {
+                _ = owner.update(cx, |_, cx| cx.notify());
+                let owner = owner.clone();
+                let menu_focus = menu.focus_handle(cx);
+                // Finish after the cached trigger has dropped its menu.
+                // An explicit focus move, such as a dialog's input, wins.
+                window.on_next_frame(move |window, cx| {
+                    _ = owner.update(cx, |dock, cx| {
+                        let focused = window.focused(cx);
+                        let restore = focused.is_none()
+                            || focused.as_ref() == Some(&dock.focus)
+                            || focused == dock.return_focus
+                            || menu_focus.contains_focused(window, cx);
+                        if restore
+                            && selected.is_some_and(|id| {
+                                dock.selected == Some(id) && dock.position(id).is_some()
+                            })
+                        {
+                            if dock.open {
+                                dock.take_focus(window, cx);
+                            } else {
+                                window.focus(&dock.focus, cx);
+                            }
+                        }
+                        cx.notify();
+                    });
+                });
+            },
+        )
+        .detach();
+    }
+
+    /// A close normally focuses the next tab's lines. A minimized dock
+    /// draws only its bar, so keep its keys on that drawn focus instead.
+    fn focus_after_menu_close(&self, before: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open && !self.tabs.is_empty() && self.tabs.len() < before {
+            window.focus(&self.focus, cx);
+        }
+    }
+
+    fn menu_subject(this: &WeakEntity<Self>, selected: Option<u64>, cx: &App) -> bool {
+        selected.is_some_and(|id| {
+            this.upgrade().is_some_and(|dock| {
+                let dock = dock.read(cx);
+                dock.selected == selected && dock.position(id).is_some()
+            })
+        })
     }
 
     fn render_chrome(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -79,37 +225,7 @@ impl Dock {
         let focus = self.focus.clone();
         let menu = dock::chrome_button("dock-menu", IconName::Ellipsis, "Close tabs")
             .dropdown_menu(move |menu, window, cx| {
-                let item = |label: &'static str,
-                            enabled: bool,
-                            close: fn(&mut Dock, u64, &mut Window, &mut Context<Dock>)| {
-                    let this = this.clone();
-                    PopupMenuItem::new(label)
-                        .disabled(!enabled)
-                        .on_click(move |_, window, cx| {
-                            if let Some(id) = selected {
-                                _ = this.update(cx, |dock, cx| close(dock, id, window, cx));
-                            }
-                        })
-                };
-                let has = selected.is_some();
-                // Close is the key's: it closes the selected tab, while
-                // that is still the tab the menu opened for.
-                let live = {
-                    let this = this.clone();
-                    move |cx: &App| {
-                        has && this
-                            .upgrade()
-                            .is_some_and(|dock| dock.read(cx).selected == selected)
-                    }
-                };
-                let close = menu::MenuAction::new("Close", CloseDockTab).enabled(has);
-                menu::actions(menu, vec![close], &focus, live, window, cx)
-                    .item(item("Close others", has, Dock::close_others))
-                    .item(item("Close to the right", has, Dock::close_to_right))
-                    .separator()
-                    .item(item("Close all", has, |dock, _, window, cx| {
-                        dock.close_all(window, cx)
-                    }))
+                Self::tab_menu(menu, selected, focus.clone(), this.clone(), window, cx)
             });
         let open = self.open;
         let maximized = self.maximized;
@@ -292,7 +408,9 @@ impl Render for Dock {
             .track_focus(&self.focus)
             .on_action(cx.listener(|dock, _: &CloseDockTab, window, cx| {
                 if let Some(id) = dock.selected {
+                    let count = dock.tabs.len();
                     dock.close_tab(id, window, cx);
+                    dock.focus_after_menu_close(count, window, cx);
                 }
             }))
             .on_action(cx.listener(|dock, _: &LeaveDock, window, cx| dock.leave(window, cx)))

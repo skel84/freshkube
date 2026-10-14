@@ -1,0 +1,1 @@
+- Right-click a dock tab to select it and open its Close, Close others, Close to the right and Close all menu, with the Close shortcut shown.
