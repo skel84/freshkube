@@ -61,7 +61,7 @@ cargo fmt --all -- --check
 scripts/check-style.sh            # pages use the shared components; see DESIGN.md "Checks"
 ```
 
-For the inner loop, use `cargo test -p <crate> --lib <filter>` while iterating on a library crate, then run `cargo clippy -p <crate> --all-targets -- -D warnings` once at the end. Save the full workspace test/clippy/fmt and style checks above for before submitting the PR for review; all remain required.
+For the inner loop, use `cargo test -p <crate> --lib <filter>` while iterating on a library crate, then run `cargo clippy -p <crate> --all-targets -- -D warnings` once at the end. Save the full workspace test/clippy/fmt and style checks above for before submitting the PR for review; all remain required, and clippy and fmt must pass clean.
 
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
 
@@ -171,103 +171,17 @@ scripts/smoke.sh stop
 - One worktree uses the screen at a time: build before you start, keep the session short, always `stop`, and let another worktree's check finish.
 - Keep interaction logic in UI tests too; a smoke test adds to them, it doesn't replace them.
 
-## Talos Linux Reference
+## Diagnostics
 
-### Network Ports
+Diagnostic checks follow these rules; [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md) has them with examples, the checklist for a new check, and the Talos ports and Machine API methods we use.
 
-| Port | Protocol | Service | Used By |
-|------|----------|---------|---------|
-| 50000 | TCP | apid (Talos API) | talosctl, control plane nodes |
-| 50001 | TCP | trustd | Worker nodes for TLS certs |
-| 6443 | TCP | kube-apiserver | kubectl, kubelets |
-| 2379 | TCP | etcd client | kube-apiserver |
-| 2380 | TCP | etcd peer | etcd cluster members |
-| 10250 | TCP | kubelet | kube-apiserver |
-| 10259 | TCP | kube-scheduler | Health checks |
-| 10257 | TCP | kube-controller-manager | Health checks |
-
-### Talos Machine API Methods
-
-Key gRPC methods we use (all in `MachineService`):
-
-| Method | Description |
-|--------|-------------|
-| `Version` | Get Talos version |
-| `ServiceList` | List all services |
-| `ServiceRestart` | Restart a service |
-| `Logs` | Stream service logs |
-| `Memory` | Memory usage |
-| `LoadAvg` | CPU load averages |
-| `CPUInfo` | CPU info |
-| `Processes` | Process list |
-| `NetworkDeviceStats` | Network interface stats |
-| `Netstat` | Network connections |
-| `Read` | Read file from node |
-| `Dmesg` | Kernel ring buffer |
-| `EtcdStatus` | etcd member status |
-| `EtcdMemberList` | etcd cluster members |
-| `EtcdAlarmList` | etcd alarms |
-| `Kubeconfig` | Get kubeconfig |
-| `ApplyConfiguration` | Apply config patch |
-| `PacketCapture` | Capture packets (pcap) |
-| `Reboot` | Reboot node |
-| `Shutdown` | Shutdown node |
-
-### COSI Resource API - NOT EXTERNALLY ACCESSIBLE
-
-> **IMPORTANT:** The COSI State API is an **internal service** and is **NOT exposed** through port 50000.
-
-**Do NOT attempt to implement COSI gRPC client code** - it will fail with `PermissionDenied`. Use `talosctl get` as a subprocess instead.
-
----
-
-## Core Philosophies
-
-### 1. State Over Logs
-
-**The most important principle for diagnostics:**
-
-> Check actual system state, not log messages. Logs are history; APIs and files are truth.
-
-```rust
-// GOOD: Direct state check
-let healthy = client.read_file("/run/flannel/subnet.env").await.is_ok();
-
-// GOOD: K8s API query for current state
-let pods = kube_client.list::<Pod>(&params).await?;
-
-// BAD: Log parsing for health determination
-let logs = client.logs("kubelet", 100).await?;
-let healthy = !logs.contains("error");  // DON'T DO THIS
-```
-
-### 2. Reliability Hierarchy
-
-When implementing any check, prefer data sources in this order:
-
-| Tier | Source Type | Example | Reliability |
-|------|-------------|---------|-------------|
-| 1 | File/procfs state | `/run/flannel/subnet.env` | Highest |
-| 2 | API responses | Talos API, K8s API | High |
-| 3 | Log parsing | kubelet logs | Last resort |
-
-### 3. Graceful Degradation
-
-When data sources are unavailable, degrade gracefully:
-
-```rust
-// Good: Show unknown state, don't crash
-match client.read_file("/some/path").await {
-    Ok(content) => DiagnosticCheck::pass(...),
-    Err(_) => DiagnosticCheck::unknown("check_id", "Check Name"),
-}
-```
-
-### 4. No False Positives
-
-A diagnostic showing failure for a healthy system is worse than showing unknown.
-
----
+- **State over logs** is the most important principle: check actual system state, not log messages. Logs are history; APIs and files are truth.
+- Prefer file or procfs state (`/run/flannel/subnet.env`), then API responses (Talos API, K8s API); parse logs only as a last resort, and then validate their timestamps.
+- Degrade gracefully: when a data source is unavailable, show unknown (`DiagnosticCheck::unknown`), don't crash.
+- No false positives: a diagnostic showing failure for a healthy system is worse than showing unknown.
+- Find the source of truth first, use the `DiagnosticCheck` constructors (`pass`, `fail`, `warn`, `unknown`) and provide an actionable fix where possible. Implement `HasHealth` for health enums in core; desktop maps it to a tag's tone and icon with `ui::health_tone`.
+- Before merging a check: create its error condition, fix it and see the check show healthy; disconnect the API and see no crash; make sure old log messages don't affect the current state.
+- The COSI State API is internal and not exposed through port 50000: don't implement a COSI gRPC client (it fails with `PermissionDenied`); run `talosctl get` as a subprocess.
 
 ## Code Patterns
 
@@ -277,38 +191,6 @@ Use desktop's `state::Snapshot<T, I, E>` for a value read for one identity and, 
 
 Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`.
 
-### Using HasHealth Trait
-
-Implement `HasHealth` for health-related enums in core; the desktop app maps health to a `ui::Tone` for tags and colours:
-
-```rust
-// In core
-impl HasHealth for MyStatus {
-    fn health(&self) -> HealthIndicator {
-        match self {
-            MyStatus::Good => HealthIndicator::Healthy,
-            MyStatus::Bad => HealthIndicator::Error,
-        }
-    }
-}
-
-// In freshkube-desktop - any HasHealth value maps to a tone and icon for a tag
-let (tone, icon) = ui::health_tone(health.health());
-let tag = ui::tag(tone, icon, "Healthy", cx);
-```
-
-### Diagnostic Checks
-
-```rust
-// Creating checks
-DiagnosticCheck::pass("memory", "Memory", "2.1 GB / 4.0 GB (52%)")
-DiagnosticCheck::fail("cni", "CNI", "Not initialized", Some(fix))
-DiagnosticCheck::warn("cpu_load", "CPU Load", "High load: 4.5")
-DiagnosticCheck::unknown("etcd", "Etcd")  // When data unavailable
-```
-
----
-
 ## Adding a screen
 
 1. Pick the page's type from [DESIGN.md](docs/DESIGN.md#page-types) (table page, dashboard, canvas or detail pane) and build it from that type's shared components: the page header, the table, group rows, status glyphs and states. Don't draw your own title, table, glyphs or radii; `scripts/check-style.sh` fails on them, and its allowlist is empty and only shrinks, so there is no exception to add. A table page's line (context, counts, state, refresh time) goes in the status bar through `ScreenPanel::status` and a `status::Segment`, not under its header. Its row actions act on the selection, from the toolbar, keys and the shared row context menu (`TableSource::menu_focus` and `row_menu`), never from a button on the row. A selection's details go in the shared Inspector (`freshkube_ui::inspector`, change 9 in DESIGN.md), beside the table or stacked under it, not in a card of its own.
@@ -316,8 +198,6 @@ DiagnosticCheck::unknown("etcd", "Etcd")  // When data unavailable
 3. Implement `ScreenPanel` in `screens/<name>.rs`, or `screens/<name>/mod.rs` once it mixes concerns. The screen owns its requests (`OwnedJob`), its data and its offline example data.
 4. Put cluster logic in `freshkube-core` and keep the screen to presentation.
 5. Add UI tests for loading, empty, failure and the main interactions. A table page also calls `desktop::layout_check::assert_table_page` (`freshkube_ui::layout_check`, behind its `testing` feature, as is `settle_header`), which measures its header, rows, group rows, edge-to-edge frame and title against Pods' sizes; a page with several lists calls its halves, `assert_edge_frame` and `assert_table`, a padded page of cards, such as a dashboard, `assert_page_frame`, and a screen embedded under a tab that names it (`PageHeader::untitled`), `assert_untitled_edge_frame`. A page with an Inspector also calls `assert_inspector`, beside and stacked. Then smoke it beside Pods at the same size, theme and text size ([Smoke tests](#smoke-tests)).
-
-Diagnostic checks follow the reliability rules below: find the source of truth first, use the `DiagnosticCheck` constructors, provide an actionable fix where possible, and return `unknown` rather than failing when data is unavailable.
 
 ## Quick reference
 
@@ -342,33 +222,6 @@ Diagnostic checks follow the reliability rules below: find the source of truth f
 - Use a VIP for the Talos API endpoint (it fails when etcd is down)
 - Duplicate health indicator logic (use the `HasHealth` trait)
 - Compute display data in `render`
-
-### Reliability Checklist for New Checks
-
-- [ ] What is the source of truth for this state?
-- [ ] Can we check that source directly (file, API)?
-- [ ] If using logs, do we validate timestamps?
-- [ ] What happens if the data source is unavailable?
-- [ ] Can this check produce false positives?
-- [ ] Is the failure mode graceful?
-
----
-
-## Testing
-
-```sh
-cargo test --workspace
-```
-
-### Before Merging
-
-1. **No false positives:** Create error condition, fix it, verify check shows healthy
-2. **Graceful degradation:** Disconnect API, verify no crashes
-3. **Stale log immunity:** Ensure old log messages don't affect current state
-4. **Zero warnings:** `cargo clippy --workspace --all-targets -- -D warnings` should pass clean
-5. **Formatting:** `cargo fmt --all -- --check` should pass
-
----
 
 ## Features
 
