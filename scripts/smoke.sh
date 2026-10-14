@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Smoke-test the running app on macOS: start it on a page, capture its window,
-# press keys and click, the way a person would. See AGENTS.md, "Smoke tests".
+# press keys and click, the way a person would. See AGENTS.md, "Smoke tests",
+# and docs/SMOKE.md.
 #
 #   scripts/smoke.sh start [--page SLUG] [--theme light|dark] [--size WxH] [--release] [-- APP_ARGS...]
 #   scripts/smoke.sh start --story SLUG [--theme light|dark] [--size WxH]   the workbench on a story
