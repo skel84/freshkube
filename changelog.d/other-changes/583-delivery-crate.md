@@ -1,1 +1,0 @@
-- **Internal:** the delivery chain and applications code moved out of `freshkube-core` into a new `freshkube-delivery` crate, so it builds and tests apart from core; the app behaves as before.

@@ -1,1 +1,0 @@
-- **Kubernetes summary:** workloads are read straight from each controller, without a whole-cluster pass per object.

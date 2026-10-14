@@ -1,1 +1,0 @@
-- **Node logs:** show a filled green dot on the Logs tab while collecting, including when another tab is open.

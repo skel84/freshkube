@@ -1,1 +1,0 @@
-- **Internal:** Every page now gets the cluster it reads, whether example data, Talos access or a kubeconfig context, from a single builder in one place. Nothing changes on screen.

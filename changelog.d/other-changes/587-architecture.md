@@ -1,1 +1,0 @@
-- **Docs:** `docs/ARCHITECTURE.md` describes the crates and their direction, the ways to be a page, the session and source, reads and the events a page sends the shell.
