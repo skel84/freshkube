@@ -25,7 +25,7 @@ use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
-use freshkube_core::cluster_source::ClusterSource;
+use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 use freshkube_core::monitoring::QueryError;
 use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task, WeakEntity};
 use tokio::runtime::Handle;
@@ -139,8 +139,6 @@ pub struct MonitoringPage {
     form: Option<source::SourceForm>,
     /// Unix seconds now. Tests fix it, so example data is the same each run.
     now: fn() -> i64,
-    /// Example data never answers: [`hold_examples`](Self::hold_examples).
-    hold: bool,
 }
 
 impl EventEmitter<MonitoringEvent> for MonitoringPage {}
@@ -181,17 +179,9 @@ impl MonitoringPage {
             secret_queue: None,
             form: None,
             now: || chrono::Utc::now().timestamp(),
-            hold: false,
         };
         page.read_folder(cx);
         page
-    }
-
-    /// Example data never answers, so every panel stays on its loading
-    /// state, for captures (`FRESHKUBE_FIXTURE_HOLD=monitoring`). A real
-    /// source still answers.
-    pub fn hold_examples(&mut self) {
-        self.hold = true;
     }
 
     pub fn catalog(&self) -> &Catalog {
@@ -269,6 +259,16 @@ impl MonitoringPage {
             self.connect(cx);
         }
         cx.notify();
+    }
+
+    /// Example data whose source holds it, so every panel stays on its
+    /// loading state, for captures (`FRESHKUBE_FIXTURE_HOLD=monitoring`). A
+    /// real source still answers.
+    fn held(&self) -> bool {
+        matches!(
+            self.source.as_ref().map(|source| &source.access),
+            Some(ClusterAccess::Example(hold)) if hold.monitoring
+        )
     }
 
     fn example(&self) -> bool {

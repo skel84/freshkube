@@ -316,7 +316,7 @@ impl MonitoringPage {
     /// example data; none while example data is held.
     fn query_source(&self) -> Option<Source> {
         match &self.connection {
-            Connection::Example if self.hold => None,
+            Connection::Example if self.held() => None,
             Connection::Example => {
                 let seed = self.board.as_ref().map_or("", |board| &board.seed);
                 Some(Source::Example(ExampleSource::new(seed)))
@@ -515,7 +515,7 @@ impl MonitoringPage {
     /// or with GPUI not drawing, shows them.
     #[cfg(any(debug_assertions, feature = "stress"))]
     pub fn answer_example_now(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.connection, Connection::Example) || self.hold {
+        if !matches!(self.connection, Connection::Example) || self.held() {
             return;
         }
         let Some(board) = &self.board else {
