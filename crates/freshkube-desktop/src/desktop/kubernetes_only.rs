@@ -178,7 +178,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(kube) = self.kubernetes_only.as_mut() else {
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
             return;
         };
         kube.sources = report.sources.clone();
@@ -259,7 +259,7 @@ impl Pilot {
     ) {
         if self.mode().is_example() {
             self.applied.context = context;
-            if let Some(kube) = self.kubernetes_only.as_mut() {
+            if let Some(kube) = self.mode.kubernetes_only_mut() {
                 kube.choosing &= self.applied.context.is_none();
             }
             self.invalidate_target(window, cx);
@@ -267,7 +267,7 @@ impl Pilot {
             self.prepare_context_display(window, cx);
             return;
         }
-        let Some(kube) = self.kubernetes_only.as_mut() else {
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
             return;
         };
         kube.choosing &= context.is_none();
@@ -292,7 +292,7 @@ impl Pilot {
         if self.mode().is_example() {
             return;
         }
-        let Some(kube) = self.kubernetes_only.as_mut() else {
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
             return;
         };
         let Some(access) = kube.access.clone() else {
@@ -337,7 +337,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(kube) = self.kubernetes_only.as_mut() else {
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
             return;
         };
         // Node selection doesn't replace compatible Kubernetes access.
@@ -405,7 +405,7 @@ impl Pilot {
                 .await
                 .unwrap_or_else(|_| Err("Reading the kubeconfig stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                let Some(kube) = view.kubernetes_only.as_mut() else {
+                let Some(kube) = view.mode.kubernetes_only_mut() else {
                     return;
                 };
                 if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
@@ -431,7 +431,7 @@ impl Pilot {
                 cx.notify();
             });
         });
-        let kube = self.kubernetes_only.as_mut().unwrap();
+        let kube = self.mode.kubernetes_only_mut().unwrap();
         kube.revision_check = Some((job, task));
         if retrying {
             kube.connection = KubeConnection::Connecting;
@@ -471,7 +471,7 @@ impl Pilot {
             if view.registry.active().prompted_access != Some(replacement) {
                 return;
             }
-            let Some(kube) = view.kubernetes_only.as_mut() else {
+            let Some(kube) = view.mode.kubernetes_only_mut() else {
                 return;
             };
             if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
@@ -501,7 +501,7 @@ impl Pilot {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
-            let Some(kube) = this.kubernetes_only.as_mut() else {
+            let Some(kube) = this.mode.kubernetes_only_mut() else {
                 return;
             };
             kube.explicit = Some(path);
@@ -593,7 +593,7 @@ impl Pilot {
                     .unwrap_or_default(),
             };
         }
-        self.kubernetes_only = Some(kube);
+        self.mode.set_kubernetes_only(kube);
         self.sync_nodes_source_mode(cx);
         if self.mode().is_example() {
             self.contexts = crate::fixture::CONTEXTS
@@ -614,7 +614,7 @@ impl Pilot {
     /// checked against it as usual. The context picked here goes with it;
     /// with none picked, the file's own current context applies as before.
     pub(super) fn leave_kubernetes_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(kube) = self.kubernetes_only.take() else {
+        let Some(kube) = self.mode.leave_kubernetes_only() else {
             return;
         };
         let picked = self.applied.context.take();
@@ -644,8 +644,8 @@ impl Pilot {
         };
         let glyph = |tone: Tone| ui::status_glyph(tone, cx);
         let connection = self
-            .kubernetes_only
-            .as_ref()
+            .mode()
+            .kubernetes_only()
             .map(|kube| kube.connection.clone())
             .unwrap_or(KubeConnection::Idle);
         let names = self.config_error.is_none()
@@ -659,8 +659,8 @@ impl Pilot {
             match connection {
                 KubeConnection::Idle
                     if self
-                        .kubernetes_only
-                        .as_ref()
+                        .mode()
+                        .kubernetes_only()
                         .is_some_and(|kube| kube.choosing) =>
                 {
                     (
@@ -747,7 +747,7 @@ pub(super) fn settings_section(
     cx: &App,
 ) -> AnyElement {
     let p = palette(cx);
-    let Some(kube) = pilot.read(cx).kubernetes_only.as_ref() else {
+    let Some(kube) = pilot.read(cx).mode().kubernetes_only() else {
         return div().into_any_element();
     };
     let browse_pilot = pilot.downgrade();
@@ -821,7 +821,7 @@ mod tests {
         let (_runtime, handle, view) = fixture(cx, 1280., 820.);
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |view, cx| {
-                view.fixture = false;
+                view.mode.set_example(false);
                 let mut kube = KubernetesOnly::new(Some(path.clone()), None);
                 kube.sources = report.sources.clone();
                 kube.revision = report.revision;
@@ -831,7 +831,7 @@ mod tests {
                 kube.connection = KubeConnection::Connected {
                     version: "synthetic".into(),
                 };
-                view.kubernetes_only = Some(kube);
+                view.mode.set_kubernetes_only(kube);
                 view.applied.context = Some("chosen".into());
                 view.ensure_summary(window, cx);
                 let observation = view
@@ -867,7 +867,7 @@ mod tests {
                     cx,
                 );
                 assert_eq!(
-                    view.kubernetes_only.as_ref().unwrap().connection,
+                    view.mode().kubernetes_only().unwrap().connection,
                     KubeConnection::Connected {
                         version: "after node".into()
                     }
@@ -883,7 +883,10 @@ mod tests {
                     &observation
                 );
 
-                view.kubernetes_only.as_mut().unwrap().connection_generation = 1;
+                view.mode
+                    .kubernetes_only_mut()
+                    .unwrap()
+                    .connection_generation = 1;
                 view.kube_connection_received(
                     access.clone(),
                     0,
@@ -893,7 +896,7 @@ mod tests {
                     cx,
                 );
                 assert_eq!(
-                    view.kubernetes_only.as_ref().unwrap().connection,
+                    view.mode().kubernetes_only().unwrap().connection,
                     KubeConnection::Connected {
                         version: "after node".into()
                     }
@@ -932,11 +935,11 @@ mod tests {
 
                 view.kube_connection_received(access, 0, false, Ok("obsolete".into()), window, cx);
                 assert_eq!(
-                    view.kubernetes_only.as_ref().unwrap().connection,
+                    view.mode().kubernetes_only().unwrap().connection,
                     KubeConnection::Connecting
                 );
-                view.kubernetes_only.as_mut().unwrap().job = None;
-                view.kubernetes_only.as_mut().unwrap().task = None;
+                view.mode.kubernetes_only_mut().unwrap().job = None;
+                view.mode.kubernetes_only_mut().unwrap().task = None;
                 view.stop_summary();
             });
         })
@@ -956,7 +959,7 @@ mod tests {
         let (_runtime, handle, view) = fixture(cx, 1280., 820.);
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |view, cx| {
-                view.fixture = false;
+                view.mode.set_example(false);
                 let mut kube = KubernetesOnly::new(Some(path.clone()), None);
                 kube.sources = report.sources.clone();
                 kube.revision = report.revision;
@@ -966,7 +969,7 @@ mod tests {
                 kube.connection = KubeConnection::Connected {
                     version: "synthetic".into(),
                 };
-                view.kubernetes_only = Some(kube);
+                view.mode.set_kubernetes_only(kube);
                 view.applied.context = Some("chosen".into());
                 view.ensure_summary(window, cx);
                 let old = view
@@ -1001,8 +1004,8 @@ mod tests {
                 view.apply_summary(late, health, window, cx);
                 assert!(view.registry.active().kubernetes_summary.data().is_none());
 
-                view.kubernetes_only.as_mut().unwrap().job = None;
-                view.kubernetes_only.as_mut().unwrap().task = None;
+                view.mode.kubernetes_only_mut().unwrap().job = None;
+                view.mode.kubernetes_only_mut().unwrap().task = None;
                 view.stop_summary();
             });
         })

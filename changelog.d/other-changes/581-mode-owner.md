@@ -1,0 +1,1 @@
+- **Internal:** The window keeps whether it shows example data, and whether Talos is part of the session, in one place that every part of the app asks. Nothing changes on screen.
