@@ -124,3 +124,172 @@ pub fn security(
         volume_encryption: SourceSnapshot::Available(volumes),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 2, 12, 0, 0).unwrap()
+    }
+
+    fn snapshot(name: &str, control_plane: bool, now: DateTime<Utc>) -> SecurityAuditSnapshot {
+        security(
+            &ExampleNode::new(name, control_plane, None),
+            "example",
+            "192.0.2.30:50000",
+            vec!["192.0.2.10:50000".into(), "192.0.2.11:50000".into()],
+            now,
+        )
+    }
+
+    fn volumes(snapshot: &SecurityAuditSnapshot) -> Vec<(&str, EncryptionProvider)> {
+        snapshot
+            .volume_encryption
+            .value()
+            .unwrap()
+            .iter()
+            .map(|volume| (volume.volume_name.as_str(), volume.provider.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn control_plane_and_worker_keep_identity_and_use_their_encryption_providers() {
+        let control = snapshot("example-control", true, now());
+        let mut worker = snapshot("example-worker", false, now());
+        assert_eq!(
+            control.identity,
+            SourceSnapshot::Available(ClusterIdentity {
+                context_name: "example".into(),
+                endpoint_addresses: vec!["192.0.2.10:50000".into(), "192.0.2.11:50000".into()],
+                target_addresses: vec!["192.0.2.30:50000".into()],
+            })
+        );
+        assert_eq!(
+            volumes(&control),
+            vec![
+                ("STATE", EncryptionProvider::Tpm),
+                ("EPHEMERAL", EncryptionProvider::Tpm)
+            ]
+        );
+        assert_eq!(
+            volumes(&worker),
+            vec![
+                ("STATE", EncryptionProvider::Kms),
+                ("EPHEMERAL", EncryptionProvider::Kms)
+            ]
+        );
+        worker.volume_encryption = control.volume_encryption.clone();
+        assert_eq!(worker, control);
+    }
+
+    #[test]
+    fn unencrypted_worker_keeps_state_encrypted_and_only_ephemeral_unencrypted() {
+        let healthy = snapshot("example-worker", false, now());
+        let mut unencrypted = snapshot("example-wk-fra1-02", false, now());
+        assert_eq!(
+            volumes(&unencrypted),
+            vec![
+                ("STATE", EncryptionProvider::Tpm),
+                ("EPHEMERAL", EncryptionProvider::None)
+            ]
+        );
+        unencrypted.volume_encryption = healthy.volume_encryption.clone();
+        assert_eq!(unencrypted, healthy);
+    }
+
+    #[test]
+    fn certificates_keep_their_lifetimes_and_near_expiry_relative_to_now() {
+        for now in [now(), now() + Duration::days(60) + Duration::hours(7)] {
+            let snapshot = snapshot("example-control", true, now);
+            let talos = snapshot.talosconfig_certificates.value().unwrap();
+            let kubernetes = snapshot.talos_kubeconfig_certificates.value().unwrap();
+            assert_eq!(talos.len(), 2);
+            assert_eq!(kubernetes.len(), 2);
+            for (cert, name, source, days, lifetime, expiry, is_ca) in [
+                (
+                    &talos[0],
+                    "Talos CA",
+                    CertificateSource::TalosConfigCa,
+                    3_410,
+                    3_650,
+                    CertificateExpiryStatus::Valid,
+                    true,
+                ),
+                (
+                    &talos[1],
+                    "talosconfig",
+                    CertificateSource::TalosConfigClient,
+                    318,
+                    365,
+                    CertificateExpiryStatus::Valid,
+                    false,
+                ),
+                (
+                    &kubernetes[0],
+                    "Kubernetes CA (cluster)",
+                    CertificateSource::TalosKubeconfigCa,
+                    3_322,
+                    3_650,
+                    CertificateExpiryStatus::Valid,
+                    true,
+                ),
+                (
+                    &kubernetes[1],
+                    "kubeconfig (admin)",
+                    CertificateSource::TalosKubeconfigClient,
+                    21,
+                    365,
+                    CertificateExpiryStatus::ExpiringSoon,
+                    false,
+                ),
+            ] {
+                assert_eq!(cert.name, name);
+                assert_eq!(cert.source, source);
+                assert_eq!(cert.days_remaining, days);
+                assert_eq!(cert.expiry, expiry);
+                assert_eq!(cert.is_ca, is_ca);
+                assert_eq!(
+                    cert.not_after,
+                    now + Duration::days(days) + Duration::hours(3)
+                );
+                assert_eq!(cert.not_before, cert.not_after - Duration::days(lifetime));
+            }
+            assert_eq!(talos[0].subject, "O=talos, CN=example");
+            assert!(
+                talos
+                    .iter()
+                    .all(|cert| cert.issuer == "O=talos, CN=example")
+            );
+            assert_eq!(kubernetes[0].subject, "O=kubernetes, CN=example");
+            assert!(
+                kubernetes
+                    .iter()
+                    .all(|cert| cert.issuer == "O=kubernetes, CN=example")
+            );
+        }
+    }
+
+    #[test]
+    fn admin_role_matches_the_talos_client_certificate_on_every_node() {
+        for (name, control_plane) in [
+            ("example-control", true),
+            ("example-worker", false),
+            ("example-wk-fra1-02", false),
+        ] {
+            let snapshot = snapshot(name, control_plane, now());
+            assert_eq!(
+                snapshot.rbac,
+                SourceSnapshot::Available(RbacAudit {
+                    role: "os:admin".into(),
+                    certificate_subject: "O=os:admin".into(),
+                })
+            );
+            let talos_client = &snapshot.talosconfig_certificates.value().unwrap()[1];
+            assert_eq!(talos_client.subject, "O=os:admin");
+            let kubernetes_client = &snapshot.talos_kubeconfig_certificates.value().unwrap()[1];
+            assert_eq!(kubernetes_client.subject, "O=system:masters, CN=admin");
+        }
+    }
+}
