@@ -1,13 +1,13 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     AnyElement, AvailableSpace, Context, FontWeight, HighlightStyle, Hsla, ListSizingBehavior,
-    Render, Role, SharedString, StyledText, TestSupportExt, Window,
+    MouseButton, Render, Role, SharedString, StyledText, TestSupportExt, Window,
     component::{
         ActiveTheme, Disableable, ElementExt, Icon, Selectable, Sizable,
         button::{Button, ButtonVariants},
         h_flex,
         input::{self, Input},
-        menu::{DropdownMenu, PopupMenuItem},
+        menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
         scroll::{ScrollableElement, Scrollbar, ScrollbarMode},
         tooltip::Tooltip,
         v_flex, v_virtual_list,
@@ -25,7 +25,7 @@ use super::{
     PagePrevious, PreviousLine, SEARCH_CONTEXT, StayInSearch,
     review::{Mark, shown_message},
 };
-use freshkube_ui::menu::{Find, FindNext, FindPrevious};
+use freshkube_ui::menu::{self, Find, FindNext, FindPrevious, MenuAction};
 use freshkube_ui::palette::{Palette, palette};
 use freshkube_ui::tooltip::FollowTooltip as _;
 use freshkube_ui::ui::{self, dp};
@@ -90,7 +90,7 @@ impl<S: LogSource> LogView<S> {
             entry.text_without_timestamp()
         });
         let wrapped = self.wrapped;
-        h_flex()
+        let row = h_flex()
             .id(SharedString::from(format!(
                 "log-line-{}-{id}",
                 self.generation
@@ -196,8 +196,104 @@ impl<S: LogSource> LogView<S> {
                         cx.notify();
                     }
                 }),
+            );
+        if measuring {
+            return row.into_any_element();
+        }
+        self.render_line_menu(row, id, cx)
+    }
+
+    fn render_line_menu(
+        &self,
+        row: impl IntoElement,
+        id: u64,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let generation = self.generation;
+        let view = cx.entity().downgrade();
+        let focus = self.focus.clone();
+        // The popup inherits the trigger's font. Keep it in the UI font
+        // around the monospace row, as the shared table does.
+        div()
+            .id(SharedString::from(format!(
+                "log-line-{generation}-{id}-menu"
+            )))
+            .w_full()
+            .when(!self.wrapped, |element| element.min_w(self.unwrapped_width))
+            .font_family(cx.theme().font_family.clone())
+            .child(row)
+            // Select and focus before Kit captures the focus to restore.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, window, cx| {
+                    this.select_line_for_menu(generation, id, window, cx);
+                }),
             )
+            .context_menu(move |popup, window, cx| {
+                let subject = view.clone();
+                let live = move |cx: &gpui_kit::App| {
+                    subject.upgrade().is_some_and(|view| {
+                        let view = view.read(cx);
+                        view.generation == generation
+                            && view.review.selected.contains(&id)
+                            && view.review.row_for_id(id).is_some()
+                    })
+                };
+                menu::actions(
+                    popup,
+                    vec![
+                        MenuAction::new("Copy", input::Copy),
+                        MenuAction::new("Select all", input::SelectAll),
+                    ],
+                    &focus,
+                    live.clone(),
+                    window,
+                    cx,
+                )
+                .separator()
+                .item(PopupMenuItem::new("Find").action(Box::new(Find)).on_click({
+                    let focus = focus.clone();
+                    move |_, window, cx| {
+                        if !live(cx) {
+                            return;
+                        }
+                        let (focus, live) = (focus.clone(), live.clone());
+                        // Kit can draw the popup once more before its
+                        // dismissal is delivered, taking focus back from
+                        // the search. Run the same Find action once the
+                        // popup has left the dispatch tree.
+                        window.defer(cx, move |window, cx| {
+                            if live(cx) {
+                                focus.focus(window, cx);
+                                focus.dispatch_action(&Find, window, cx);
+                            }
+                        });
+                    }
+                }))
+            })
             .into_any_element()
+    }
+
+    fn select_line_for_menu(
+        &mut self,
+        generation: u64,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.generation != generation {
+            return;
+        }
+        // A batch may have reordered or evicted the rendered line.
+        let Some(row_ix) = self.review.row_for_id(id) else {
+            return;
+        };
+        self.set_following(false, cx);
+        if !self.review.selected.contains(&id) {
+            self.review.select(row_ix, false, false);
+        }
+        self.focus.focus(window, cx);
+        cx.notify();
     }
 
     /// A note between lines, such as a restart, centred between two rules.
