@@ -623,7 +623,7 @@ impl Pilot {
                     .update_in(cx, |view, window, cx| {
                         view.chrome.elapsed += Duration::from_secs(1);
                         if view.chrome.automatic
-                            && view.kubernetes_only.is_none()
+                            && view.mode().has_talos()
                             && view.chrome.elapsed >= AUTO_REFRESH
                             && !view.overview.is_loading()
                             && !view.config_loading
@@ -653,7 +653,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.fixture {
+        if self.mode().is_example() {
             self.contexts = fixture::CONTEXTS
                 .iter()
                 .map(|name| (*name).into())
@@ -768,7 +768,7 @@ impl Pilot {
         // Initial shell focus makes contextual commands available without a click.
         window.focus(&self.focus, cx);
         // Without Talos, the one page that reads is the first one shown.
-        if self.kubernetes_only.is_some() {
+        if !self.mode().has_talos() {
             self.navigate_from_keyboard(Page::Overview, window, cx);
         }
         #[cfg(any(debug_assertions, feature = "stress"))]
@@ -1030,7 +1030,7 @@ impl Pilot {
     /// Applies the talosconfig path typed in Settings and reloads contexts.
     /// Without Talos, a path switches the window to Talos.
     fn apply_config_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fixture || self.config_loading {
+        if self.mode().is_example() || self.config_loading {
             return;
         }
         self.unless_shell(window, cx, Self::use_config_path);
@@ -1039,7 +1039,7 @@ impl Pilot {
     fn use_config_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.leave_entry(cx);
         let draft = self.path.read(cx).value().to_string();
-        if self.kubernetes_only.is_some() {
+        if !self.mode().has_talos() {
             // The default talosconfig is what's missing.
             if draft.trim().is_empty() {
                 return;
@@ -1058,7 +1058,7 @@ impl Pilot {
     /// Opens the native file picker; a chosen file fills the Talosconfig
     /// field and is applied at once. Cancelling leaves everything unchanged.
     fn browse_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fixture || self.config_loading {
+        if self.mode().is_example() || self.config_loading {
             return;
         }
         let selection = cx.prompt_for_paths(PathPromptOptions {
@@ -1111,8 +1111,7 @@ impl Pilot {
             // With nothing reading yet, Health's Retry reads the kubeconfig
             // and connects again too.
             ScreenEvent::RefreshSummary
-                if self.kubernetes_only.is_some()
-                    && self.registry.active().summary_session.is_none() =>
+                if !self.mode().has_talos() && self.registry.active().summary_session.is_none() =>
             {
                 self.refresh(window, cx)
             }
@@ -1207,7 +1206,7 @@ impl Pilot {
     }
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.kubernetes_only.is_some() {
+        if !self.mode().has_talos() {
             self.refresh_kubernetes(window, cx);
             self.ensure_summary(window, cx);
             return;
@@ -1218,7 +1217,7 @@ impl Pilot {
         self.chrome.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
         self.publish_reading(cx);
-        if self.fixture && self.hold.talos {
+        if self.mode().is_example() && self.hold.talos {
             // Loading until the hold is released, which only a test does.
             // Coroot's examples don't wait for Talos, so Observability has
             // its source, and its own hold, at once.
@@ -1228,7 +1227,7 @@ impl Pilot {
             cx.notify();
             return;
         }
-        if self.fixture {
+        if self.mode().is_example() {
             self.fixture_tick += 1;
             let context = self.applied.context.clone().unwrap_or_default();
             self.overview
@@ -1379,7 +1378,7 @@ impl Pilot {
         (
             1. - self.chrome.elapsed.as_secs_f32() / AUTO_REFRESH.as_secs_f32(),
             self.chrome.automatic
-                && self.kubernetes_only.is_none()
+                && self.mode().has_talos()
                 && self.overview.data().is_some()
                 && !loading,
         )

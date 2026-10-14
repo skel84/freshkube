@@ -43,7 +43,7 @@ impl Pilot {
     ) -> AnyElement {
         let p = palette(cx);
         let current = self.applied.context.as_deref() == Some(context);
-        let connection = self.kubernetes_only.as_ref().map(|kube| &kube.connection);
+        let connection = self.mode().kubernetes_only().map(|kube| &kube.connection);
         let (tone, tip) = if !current {
             (Tone::Unknown, "Not loaded yet")
         } else if let Some(connection) = connection {

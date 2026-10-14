@@ -69,7 +69,7 @@ impl Pilot {
             .into_iter()
             .filter(|page| {
                 *page != Page::Resources
-                    && (self.kubernetes_only.is_none()
+                    && (self.mode().has_talos()
                         || !matches!(
                             page,
                             Page::Etcd

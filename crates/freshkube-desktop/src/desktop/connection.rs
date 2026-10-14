@@ -9,7 +9,7 @@ struct ConnectionSaveError;
 
 impl Pilot {
     pub(super) fn remember_connection(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fixture || self.kubernetes_only.is_some() {
+        if self.mode().is_example() || !self.mode().has_talos() {
             return;
         }
         let (Some(store), Some(path), Some(context)) = (
@@ -29,12 +29,12 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.fixture {
+        if self.mode().is_example() {
             return;
         }
         let (Some(store), Some(kube), Some(context)) = (
             self.connection_store.clone(),
-            self.kubernetes_only.as_ref(),
+            self.mode().kubernetes_only(),
             self.applied.context.clone(),
         ) else {
             return;
