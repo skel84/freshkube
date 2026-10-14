@@ -17,6 +17,7 @@ freshkube-core.workspace = true
 freshkube-delivery.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
+freshkube-nav.workspace = true
 freshkube-observability.workspace = true
 freshkube-prefs.workspace = true
 freshkube-probe.workspace = true
