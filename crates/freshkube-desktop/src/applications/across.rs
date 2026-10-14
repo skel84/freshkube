@@ -68,7 +68,11 @@ pub(crate) async fn open_reader(
     alone: Option<Alone>,
 ) -> Result<Result<EntryReader, Failure>, String> {
     if alone.is_some() {
-        return access.client().await.map(|client| Ok(wrap(client, alone))).map_err(|failure| failure.message);
+        return access
+            .client()
+            .await
+            .map(|client| Ok(wrap(client, alone)))
+            .map_err(|failure| failure.message);
     }
     let client = tokio::time::timeout(entry::CONNECT_DEADLINE, client_or_failure(access))
         .await

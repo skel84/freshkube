@@ -4,7 +4,9 @@ use std::{future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use talos_rs::TalosClient;
 
-use crate::cluster_overview::{ClusterOverview, ClusterOverviewCollector, K8sError, KubeconfigSelection};
+use crate::cluster_overview::{
+    ClusterOverview, ClusterOverviewCollector, K8sError, KubeconfigSelection,
+};
 use crate::failure::{Failure, FailureKind};
 use crate::{AccessIdentity, ConfigurationRevision};
 
@@ -48,8 +50,7 @@ impl LiveSource {
     pub async fn kubernetes_with_source(
         &self,
     ) -> Result<(kube::Client, String, Option<String>), Failure> {
-        kubernetes_setup(self.collector.kubernetes_client_with_source(&self.cluster))
-        .await
+        kubernetes_setup(self.collector.kubernetes_client_with_source(&self.cluster)).await
     }
 }
 
@@ -149,7 +150,12 @@ async fn check_configuration(
         ConfigurationRevision::for_talos_sources(path.as_deref(), &selection)
     })
     .await
-    .map_err(|_| Failure::new(FailureKind::Other, "Inspecting the access configuration stopped"))?;
+    .map_err(|_| {
+        Failure::new(
+            FailureKind::Other,
+            "Inspecting the access configuration stopped",
+        )
+    })?;
     if revision != configuration {
         return Err(Failure::new(
             FailureKind::Config,
@@ -183,7 +189,9 @@ mod tests {
                 "K8s API error: timed out",
             ),
         ] {
-            let failure = kubernetes_setup(async { Err::<(), _>(error) }).await.unwrap_err();
+            let failure = kubernetes_setup(async { Err::<(), _>(error) })
+                .await
+                .unwrap_err();
             assert_eq!(failure, Failure::new(FailureKind::Other, message));
         }
     }
@@ -195,7 +203,10 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             failure,
-            Failure::new(FailureKind::Timeout, "Setting up the Kubernetes client timed out"),
+            Failure::new(
+                FailureKind::Timeout,
+                "Setting up the Kubernetes client timed out"
+            ),
         );
     }
 
@@ -206,11 +217,17 @@ mod tests {
         let kubeconfig = directory.path().join("kubeconfig");
         std::fs::write(&path, "configuration-a").unwrap();
         std::fs::write(&kubeconfig, "configuration-a").unwrap();
-        let selection = KubeconfigSelection::File { path: kubeconfig, context: None };
+        let selection = KubeconfigSelection::File {
+            path: kubeconfig,
+            context: None,
+        };
         let configuration = ConfigurationRevision::for_talos_sources(Some(&path), &selection);
         let failure = Failure::new(FailureKind::Forbidden, "setup refused");
         assert_eq!(
-            pinned(Some(path), selection, configuration, async { Err::<(), _>(failure.clone()) }).await,
+            pinned(Some(path), selection, configuration, async {
+                Err::<(), _>(failure.clone())
+            })
+            .await,
             Err(failure),
         );
     }
@@ -222,18 +239,29 @@ mod tests {
         let kubeconfig = directory.path().join("kubeconfig");
         std::fs::write(&path, "configuration-a").unwrap();
         std::fs::write(&kubeconfig, "configuration-a").unwrap();
-        let selection = KubeconfigSelection::File { path: kubeconfig, context: None };
+        let selection = KubeconfigSelection::File {
+            path: kubeconfig,
+            context: None,
+        };
         let configuration = ConfigurationRevision::for_talos_sources(Some(&path), &selection);
         std::fs::write(&path, "configuration-b").unwrap();
         let connected = std::cell::Cell::new(false);
         let failure = pinned(Some(path), selection, configuration, async {
             connected.set(true);
             Ok(())
-        }).await.unwrap_err();
-        assert!(!connected.get(), "replaced access must not poll the connector");
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            !connected.get(),
+            "replaced access must not poll the connector"
+        );
         assert_eq!(
             failure,
-            Failure::new(FailureKind::Config, "Access configuration changed; refresh to reconnect"),
+            Failure::new(
+                FailureKind::Config,
+                "Access configuration changed; refresh to reconnect"
+            ),
         );
     }
 }

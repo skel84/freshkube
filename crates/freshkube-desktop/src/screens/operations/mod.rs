@@ -778,10 +778,16 @@ async fn run_client<T>(
     connect: impl Future<Output = Result<T, Failure>>,
 ) -> Result<T, Failure> {
     let Some(previewed) = previewed else {
-        return Err(Failure::new(FailureKind::Config, "The preview didn't record its access; refresh and review again"));
+        return Err(Failure::new(
+            FailureKind::Config,
+            "The preview didn't record its access; refresh and review again",
+        ));
     };
     if confirmed.map(|access| access.identity) != Some(previewed.identity) {
-        return Err(Failure::new(FailureKind::Config, "Access changed since the preview; refresh and review again"));
+        return Err(Failure::new(
+            FailureKind::Config,
+            "Access changed since the preview; refresh and review again",
+        ));
     }
     previewed.client(connect).await
 }
@@ -1517,7 +1523,10 @@ async fn preview_live(
     endpoint: InspectionTarget,
     key: PreviewKey,
 ) -> Result<Preview, String> {
-    let kubernetes = access.client(live.kubernetes()).await.map_err(|failure| failure.message)?;
+    let kubernetes = access
+        .client(live.kubernetes())
+        .await
+        .map_err(|failure| failure.message)?;
     let checked = tokio::time::timeout(
         PREFLIGHT_TIMEOUT,
         preflight_nodes(&kubernetes, live.client.clone(), endpoint, &key.targets),

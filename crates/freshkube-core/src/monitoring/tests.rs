@@ -11,9 +11,9 @@ use k8s_openapi::api::core::v1::Service;
 use kube::client::Body;
 use serde_json::{Value, json};
 
-use crate::failure::{Failure, FailureKind};
 use super::transport::scrape_interval as scrape_interval_of;
 use super::*;
+use crate::failure::{Failure, FailureKind};
 
 /// Every request the fake API saw, as `METHOD path?query`.
 type Seen = Arc<Mutex<Vec<String>>>;

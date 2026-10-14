@@ -134,7 +134,10 @@ mod tests {
         assert!(access.is_example());
         assert_eq!(
             access.client().await.err(),
-            Some(Failure::new(FailureKind::Config, "Example data has no Kubernetes client"))
+            Some(Failure::new(
+                FailureKind::Config,
+                "Example data has no Kubernetes client"
+            ))
         );
     }
 
@@ -153,7 +156,10 @@ mod tests {
         );
         // A clone shares the source, so its caching is the source's.
         let copy = source.clone();
-        assert_eq!(copy.access.client().await.err(), Some(Failure::new(FailureKind::Other, "asked 2")));
+        assert_eq!(
+            copy.access.client().await.err(),
+            Some(Failure::new(FailureKind::Other, "asked 2"))
+        );
         assert_eq!(counting.0.load(Ordering::SeqCst), 2);
     }
 

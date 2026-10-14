@@ -735,7 +735,9 @@ impl DetailPane {
                 async move {
                     let client = match access.client().await {
                         Ok(client) => client,
-                        Err(error) => return Ok(Err(Failure::new(FailureKind::Other, error.message))),
+                        Err(error) => {
+                            return Ok(Err(Failure::new(FailureKind::Other, error.message)));
+                        }
                     };
                     Ok(reveal_secret_value(
                         &client,

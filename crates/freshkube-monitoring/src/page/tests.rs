@@ -1883,7 +1883,10 @@ impl KubeClientSource for FakeCluster {
                 _ = gate.await;
             }
             if fail {
-                return Err(Failure::new(FailureKind::Other, "The replacement client did not build"));
+                return Err(Failure::new(
+                    FailureKind::Other,
+                    "The replacement client did not build",
+                ));
             }
             kube::Client::try_from(config).map_err(|error| {
                 let message = error.to_string();

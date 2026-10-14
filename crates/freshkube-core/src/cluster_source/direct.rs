@@ -124,7 +124,10 @@ async fn check_revision(
     })
     .await
     .map_err(|_| {
-        Failure::new(FailureKind::Other, "Reading the Kubernetes configuration stopped")
+        Failure::new(
+            FailureKind::Other,
+            "Reading the Kubernetes configuration stopped",
+        )
     })?;
     if current == expected {
         Ok(())
@@ -229,11 +232,17 @@ mod tests {
     }
 
     /// Fails after a moment, counting attempts.
-    fn refused(_: Vec<PathBuf>, context: String) -> BoxFuture<'static, Result<Connection, Failure>> {
+    fn refused(
+        _: Vec<PathBuf>,
+        context: String,
+    ) -> BoxFuture<'static, Result<Connection, Failure>> {
         ATTEMPTS.fetch_add(1, Ordering::SeqCst);
         async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            Err(Failure::new(FailureKind::Unreachable, format!("{context} refused")))
+            Err(Failure::new(
+                FailureKind::Unreachable,
+                format!("{context} refused"),
+            ))
         }
         .boxed()
     }
