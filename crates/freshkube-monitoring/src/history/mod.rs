@@ -131,9 +131,6 @@ pub struct HistoryView {
     _subscriptions: Vec<Subscription>,
     /// Unix seconds now. Tests fix it, so example data is the same each run.
     now: fn() -> i64,
-    /// How many times the panels were asked, for tests.
-    #[cfg(test)]
-    asks: usize,
 }
 
 impl HistoryView {
@@ -154,8 +151,6 @@ impl HistoryView {
             _release: None,
             _subscriptions: Vec::new(),
             now: || chrono::Utc::now().timestamp(),
-            #[cfg(test)]
-            asks: 0,
         }
     }
 
@@ -373,10 +368,7 @@ impl HistoryView {
         self.generation += 1;
         let generation = self.generation;
         self.asked = Some(now);
-        #[cfg(test)]
-        {
-            self.asks += 1;
-        }
+        freshkube_probe::probe::hit("monitoring.history.ask");
         self.requests = dashboard
             .panels
             .into_iter()
@@ -478,11 +470,6 @@ impl HistoryView {
     #[cfg(any(test, feature = "testing"))]
     pub fn reading(&self) -> bool {
         self.requests.iter().any(Option::is_some)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn asks(&self) -> usize {
-        self.asks
     }
 
     #[cfg(test)]
