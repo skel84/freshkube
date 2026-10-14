@@ -1,4 +1,56 @@
 use super::*;
+use gpui_kit::{Modifiers, MouseButton, VisualTestContext, point};
+
+#[gpui_kit::test]
+fn dragging_the_docks_top_edge_grows_its_workload_log_tab(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1320., 861.);
+    let dock = dock(&pilot, cx);
+    let api = objects(&pilot, "deployments.apps", |_, name| name == "api", cx);
+    open_logs(handle, &pilot, "deployments.apps", &api[0], cx);
+    settle(handle, cx);
+
+    let (before, start) = cx
+        .update_window(handle, |_, window, _| {
+            let bounds = window.find("dock").bounds();
+            // Kit's leading handle occupies the first five pixels inside
+            // the dock. Its native element id is dock-edge; its bounds
+            // aren't registered with test_support, so use the dock's edge.
+            (bounds, point(bounds.center().x, bounds.top() + px(2.)))
+        })
+        .unwrap();
+    let stored = cx.update(|cx| dock.read(cx).height());
+    let mut mouse = VisualTestContext::from_window(handle, cx);
+    mouse.simulate_mouse_move(start, None, Modifiers::default());
+    mouse.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+    for step in 1..=30 {
+        mouse.simulate_mouse_move(
+            point(start.x, start.y - px(step as f32 * 5.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        mouse.update(|window, cx| window.simulate_next_frame(cx));
+    }
+    mouse.update(|_, cx| assert!(cx.has_active_drag(), "the handle started a drag"));
+    mouse.simulate_mouse_up(
+        point(start.x, start.y - px(150.)),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    settle(handle, cx);
+
+    cx.update_window(handle, |_, window, cx| {
+        let after = window.find("dock").bounds();
+        assert!(
+            after.size.height > before.size.height + px(140.),
+            "dragging up 150 px must grow the dock: before {before:?}, after {after:?}, \
+             stored height {stored} -> {}",
+            dock.read(cx).height()
+        );
+        assert!((after.bottom() - before.bottom()).abs() <= px(1.));
+        assert!(dock.read(cx).height() > stored + 140.);
+    })
+    .unwrap();
+}
 
 #[gpui_kit::test]
 fn the_dock_resizes_minimizes_below_its_least_and_fits_the_window(cx: &mut TestAppContext) {
