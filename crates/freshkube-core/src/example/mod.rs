@@ -3,9 +3,11 @@
 use crate::diagnostic_runner::{LoadAverageSnapshot, MemorySnapshot, ServiceSnapshot};
 
 mod diagnostics;
+mod network;
 mod processes;
 
 pub use diagnostics::diagnostics;
+pub use network::{kubespan, network};
 pub use processes::processes;
 
 /// The node facts example data is built from.
@@ -14,6 +16,7 @@ pub struct ExampleNode {
     control_plane: bool,
     cores: Option<usize>,
     address: String,
+    responding: bool,
     memory: Option<MemorySnapshot>,
     load: Option<LoadAverageSnapshot>,
     services: Vec<ServiceSnapshot>,
@@ -27,10 +30,18 @@ impl ExampleNode {
             control_plane,
             cores,
             address: String::new(),
+            responding: false,
             memory: None,
             load: None,
             services: Vec::new(),
         }
+    }
+
+    /// Adds the node facts needed by the Network and KubeSpan example builders.
+    pub fn with_network(mut self, address: impl Into<String>, responding: bool) -> Self {
+        self.address = address.into();
+        self.responding = responding;
+        self
     }
 
     /// Adds the node-local facts needed by the Diagnostics example builder.
