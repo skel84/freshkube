@@ -353,21 +353,21 @@ impl Pilot {
     ) {
         if self.applied.context.as_ref() == Some(&context) {
             // Choosing the context again retries one that failed.
-            if self.kubernetes_only.is_some() {
+            if !self.mode().has_talos() {
                 self.refresh_kubernetes(window, cx);
             }
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
             this.leave_entry(cx);
-            if this.kubernetes_only.is_some() {
+            if !this.mode().has_talos() {
                 this.use_kube_context(Some(context), window, cx);
                 return;
             }
             this.applied.context = Some(context);
             this.remember_connection(window, cx);
             this.invalidate_target(window, cx);
-            if this.fixture {
+            if this.mode().is_example() {
                 this.seed_fixture_history(cx);
             }
             this.refresh(window, cx);
@@ -418,18 +418,14 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let current = self.navigation.current_row();
-        let count = if self.kubernetes_only.is_some() {
-            6
-        } else {
-            11
-        };
+        let count = if !self.mode().has_talos() { 6 } else { 11 };
         let next = (current as isize + if forward { 1 } else { -1 }).rem_euclid(count) as usize;
         self.show_row(next, window, cx);
     }
 
     /// A page's key: opens it, but not a Talos page without Talos.
     pub(super) fn show_page(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
-        if self.kubernetes_only.is_some() && page.needs_talos() {
+        if !self.mode().has_talos() && page.needs_talos() {
             return;
         }
         self.navigate_from_keyboard(page, window, cx);
@@ -438,7 +434,7 @@ impl Pilot {
     /// Opens a fixed sidebar row. `Navigation::current_row` is its inverse:
     /// keep the two tables in step.
     fn show_row(&mut self, row: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if self.kubernetes_only.is_some() && row >= 6 {
+        if !self.mode().has_talos() && row >= 6 {
             return;
         }
         match row {
@@ -663,7 +659,7 @@ impl Pilot {
                     None => self.show_custom(cx),
                 }
             }
-            Area::ControlPlane if self.kubernetes_only.is_some() => {
+            Area::ControlPlane if !self.mode().has_talos() => {
                 self.set_area(Area::ControlPlane, cx);
             }
             Area::ControlPlane => {
@@ -773,7 +769,7 @@ impl Pilot {
                 .identity_named(&object.namespace, &object.name)
             {
                 identity = found;
-            } else if self.fixture
+            } else if self.mode().is_example()
                 && let Some((_, rows)) = resources::example::read(
                     &source.context,
                     &kind.key(),
