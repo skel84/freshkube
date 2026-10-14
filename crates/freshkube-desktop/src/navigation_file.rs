@@ -24,8 +24,8 @@ const DOCK: &str = "dock";
 const WORKSPACE: &str = "workspace";
 const ACTIVE: &str = "active";
 
-/// Resources' drawer width: one for the page, whatever kind it shows.
-pub(crate) const DRAWER_WIDTH: SizeKey = SizeKey::new("drawer", "resources");
+/// Resources' drawer width, which Resources keeps.
+pub(crate) use crate::resources::DRAWER_WIDTH;
 /// The dock's height, one for the app, inside the dock's object.
 pub(crate) const DOCK_HEIGHT: SizeKey = SizeKey::new(DOCK, "height");
 

@@ -314,7 +314,6 @@ mod resources;
 mod screens;
 mod secrets;
 mod state;
-mod stream_status;
 #[cfg(feature = "stress")]
 mod stress;
 mod ui;
@@ -325,7 +324,7 @@ use freshkube_monitoring as monitoring;
 // Observability's Coroot pages, by their old path.
 use freshkube_observability as observability;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
-use freshkube_ui::{meters, palette, text_size, theme};
+use freshkube_ui::{meters, palette, stream_status, text_size, theme};
 
 /// Where the app keeps its preferences: `preferences.json` in
 /// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`

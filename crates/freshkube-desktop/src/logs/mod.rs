@@ -32,7 +32,7 @@ pub(crate) use freshkube_logs::{ClearSelection, Columns, DownloadLines, LogSourc
 // Only the debug start-up's log search names it.
 #[cfg(debug_assertions)]
 pub(crate) use freshkube_observability::CorootLogView;
-pub(crate) use pod::{PodLogPanel, PodLogView, choice_label, role_heading};
+pub(crate) use pod::{PodLogPanel, PodLogView};
 pub(crate) use talos::{TalosLogs, TalosPanel};
 pub(crate) use workload::{WorkloadLogPanel, WorkloadLogView};
 
