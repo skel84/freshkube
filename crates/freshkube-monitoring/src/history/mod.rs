@@ -9,17 +9,21 @@
 #[cfg(test)]
 mod tests;
 
+use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::cluster_source::ClusterAccess;
+use freshkube_core::job::spawn_job;
 use freshkube_core::monitoring::{
-    Endpoint, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError, Source,
-    cluster_client,
+    Endpoint, ErrorKind, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError,
+    Source, cluster_client,
     history::{self, Subject},
     model::{data::QueryContext, time::TimeWindow},
     prometheus::Variables,
 };
+use freshkube_core::snapshot::Request;
+use freshkube_reads::{Loader, OnShow};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
@@ -29,7 +33,6 @@ use gpui_kit::{
 use tokio::runtime::Handle;
 
 use super::panel::{Linked, PanelEvent, PanelView};
-use super::request::{self, Request};
 use crate::page::{MonitoringEvent, MonitoringPage};
 use crate::ui::{self, dp};
 
@@ -38,6 +41,8 @@ const SPAN: u64 = 3600;
 const EVERY: Duration = Duration::from_secs(60);
 const POINTS: usize = 120;
 const DEADLINE: Duration = Duration::from_secs(30);
+const TIMED_OUT: &str = "Prometheus didn't answer in time";
+const PANEL_NAMES: [&str; 2] = ["cpu", "memory"];
 
 /// Where the history comes from, as the Monitoring page knows it.
 #[derive(Clone)]
@@ -106,6 +111,14 @@ impl HistorySource {
     }
 }
 
+/// The same subject through a replaced client is a different read.
+#[derive(Clone, PartialEq, Eq)]
+struct HistoryIdentity {
+    source: (String, Option<Endpoint>, bool, u64, Option<EntityId>),
+    subject: Subject,
+    panel: &'static str,
+}
+
 pub struct HistoryView {
     runtime: Handle,
     /// Tells this view's panels apart from another's, as
@@ -120,10 +133,9 @@ pub struct HistoryView {
     linked: Linked,
     /// When the panels were last asked, in Unix seconds.
     asked: Option<i64>,
-    /// Each panel's read in flight.
-    requests: Vec<Option<Request>>,
-    /// Each replacement, cancellation and read invalidates old deliveries.
-    generation: u64,
+    /// Persistent completion owners: replacement panels never reuse an
+    /// earlier read's token, even when the source or subject returns.
+    reads: [Loader<(), HistoryIdentity>; 2],
     timer: Option<Task<()>>,
     /// Connection changes reach history without a shell or dashboard read.
     _connection: Option<Subscription>,
@@ -144,8 +156,7 @@ impl HistoryView {
             panels: Vec::new(),
             linked: Linked::default(),
             asked: None,
-            requests: Vec::new(),
-            generation: 0,
+            reads: std::array::from_fn(|_| Loader::default()),
             timer: None,
             _connection: None,
             _release: None,
@@ -179,7 +190,7 @@ impl HistoryView {
             // Another cluster's answers never show as this one's.
             self.rebuild(cx);
         } else {
-            self.forget();
+            self.forget(cx);
         }
         self.sync_consumer(cx);
         self.read(cx);
@@ -205,13 +216,19 @@ impl HistoryView {
         }
         self.visible = visible;
         self.sync_consumer(cx);
+        // Freshness stays with `asked`, including failed answers. The
+        // loader's success-time threshold would change that rule.
+        let cut = self.reads.iter().any(Loader::is_loading);
+        for read in &mut self.reads {
+            read.set_visible(visible, OnShow::Never, cx);
+        }
         if visible {
             self.read(cx);
         } else {
             // A read cut short is asked again on showing; a recent answer
             // is kept.
-            if self.requests.iter().any(Option::is_some) {
-                self.forget();
+            if cut {
+                self.asked = None;
             }
             self.timer = None;
         }
@@ -231,9 +248,10 @@ impl HistoryView {
     }
 
     /// Drops what was asked; the panels keep their answers.
-    fn forget(&mut self) {
-        self.generation += 1;
-        self.requests.clear();
+    fn forget(&mut self, cx: &mut Context<Self>) {
+        for read in &mut self.reads {
+            read.set_visible(false, OnShow::Never, cx);
+        }
         self.asked = None;
     }
 
@@ -294,7 +312,7 @@ impl HistoryView {
 
     /// New panels for the subject, with nothing answered.
     fn rebuild(&mut self, cx: &mut Context<Self>) {
-        self.forget();
+        self.forget(cx);
         self.panels.clear();
         self.linked = Linked::default();
         self._subscriptions.clear();
@@ -302,11 +320,10 @@ impl HistoryView {
             return;
         };
         let dashboard = history::dashboard(subject);
-        let names = ["cpu", "memory"];
         self.panels = dashboard
             .panels
             .iter()
-            .zip(names)
+            .zip(PANEL_NAMES)
             .map(|(spec, name)| {
                 let id = format!("{}-{name}", self.prefix);
                 let spec = Rc::new(spec.clone());
@@ -365,48 +382,94 @@ impl HistoryView {
     fn ask(&mut self, source: HistorySource, subject: Subject, now: i64, cx: &mut Context<Self>) {
         let window = TimeWindow::new(now, SPAN, POINTS);
         let dashboard = history::dashboard(&subject);
-        self.generation += 1;
-        let generation = self.generation;
         self.asked = Some(now);
         freshkube_probe::probe::hit("monitoring.history.ask");
-        self.requests = dashboard
-            .panels
-            .into_iter()
-            .enumerate()
-            .map(|(index, spec)| {
-                let (source, subject) = (source.clone(), subject.clone());
-                let answered_source = source.clone();
-                let example = source.example();
-                let work = async move {
-                    let source = source.source(subject).await?;
-                    let context = QueryContext {
-                        window,
-                        variables: Default::default(),
-                    };
-                    source
-                        .query_panel(&spec, &context, &Variables::default())
-                        .await
+        for (index, (spec, name)) in dashboard.panels.into_iter().zip(PANEL_NAMES).enumerate() {
+            let identity = HistoryIdentity {
+                source: source.key(),
+                subject: subject.clone(),
+                panel: name,
+            };
+            let (source, subject) = (source.clone(), subject.clone());
+            let example = source.example();
+            let work = async move {
+                let source = source.source(subject).await?;
+                let context = QueryContext {
+                    window,
+                    variables: Default::default(),
                 };
-                Some(request::run(
-                    example,
-                    &self.runtime,
-                    DEADLINE,
-                    work,
-                    cx,
-                    move |this, result, cx| {
-                        if this.visible
-                            && this.generation == generation
-                            && this
-                                .source
-                                .as_ref()
-                                .is_some_and(|source| source.key() == answered_source.key())
-                        {
-                            this.answered(index, window, result, cx);
-                        }
-                    },
-                ))
-            })
-            .collect();
+                source
+                    .query_panel(&spec, &context, &Variables::default())
+                    .await
+            };
+            self.run_panel(index, identity, window, example, work, cx);
+        }
+    }
+
+    /// The panels own their data; the loader owns only completion and the
+    /// work. Keep the typed error until the accepted answer reaches them.
+    fn run_panel(
+        &mut self,
+        index: usize,
+        identity: HistoryIdentity,
+        window: TimeWindow,
+        example: bool,
+        work: impl Future<Output = Result<PanelResult, QueryError>> + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.reads[index].set_visible(true, OnShow::Never, cx);
+        let request = self.reads[index].start(identity.clone());
+        let done = move |this: &mut Self, result, cx: &mut Context<Self>| {
+            if this.visible
+                && this
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| source.key() == identity.source)
+                && this.subject.as_ref() == Some(&identity.subject)
+            {
+                this.land_panel(index, &request, window, result, cx);
+            }
+        };
+        let (job, task) = if example {
+            let work = cx.background_spawn(work);
+            let task = cx.spawn(async move |this, cx| {
+                let result = work.await;
+                _ = this.update(cx, |this, cx| done(this, result, cx));
+            });
+            (None, task)
+        } else {
+            let (job, receiver) = spawn_job(
+                &self.runtime,
+                DEADLINE,
+                QueryError::new(ErrorKind::TimedOut, TIMED_OUT),
+                work,
+            );
+            let task = cx.spawn(async move |this, cx| {
+                let Ok(result) = receiver.await else {
+                    return;
+                };
+                _ = this.update(cx, |this, cx| done(this, result, cx));
+            });
+            (Some(job), task)
+        };
+        self.reads[index].run(job, task);
+    }
+
+    fn land_panel(
+        &mut self,
+        index: usize,
+        request: &Request<HistoryIdentity>,
+        window: TimeWindow,
+        result: Result<PanelResult, QueryError>,
+        cx: &mut Context<Self>,
+    ) {
+        let completion = result
+            .as_ref()
+            .map(|_| ())
+            .map_err(|error| error.message.clone());
+        if self.reads[index].land(request, completion, cx) {
+            self.answered(index, window, result, cx);
+        }
     }
 
     fn answered(
@@ -416,9 +479,6 @@ impl HistoryView {
         result: Result<PanelResult, QueryError>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(request) = self.requests.get_mut(index) {
-            *request = None;
-        }
         let Some(panel) = self.panels.get(index) else {
             return;
         };
@@ -442,12 +502,13 @@ impl HistoryView {
     /// a screenshot taken before the executor runs shows them.
     #[cfg(any(debug_assertions, feature = "stress"))]
     pub fn answer_example_now(&mut self, cx: &mut Context<Self>) {
-        let (Some(source), Some(subject)) = (&self.source, &self.subject) else {
+        let (Some(source), Some(subject)) = (&self.source, self.subject.clone()) else {
             return;
         };
         if !source.example() {
             return;
         }
+        self.forget(cx);
         let now = (self.now)();
         let window = TimeWindow::new(now, SPAN, POINTS);
         let example = ExampleSource::new(&subject.seed());
@@ -455,9 +516,8 @@ impl HistoryView {
             window,
             variables: Default::default(),
         };
-        self.requests.clear();
         self.asked = Some(now);
-        for (panel, spec) in self.panels.iter().zip(history::dashboard(subject).panels) {
+        for (panel, spec) in self.panels.iter().zip(history::dashboard(&subject).panels) {
             let result = example.query_panel(&spec, &context, &Variables::default());
             panel.update(cx, |panel, cx| match result {
                 Ok(result) => panel.set_result(result, window, cx),
@@ -469,7 +529,7 @@ impl HistoryView {
     /// Whether a read is in flight, for tests.
     #[cfg(any(test, feature = "testing"))]
     pub fn reading(&self) -> bool {
-        self.requests.iter().any(Option::is_some)
+        self.reads.iter().any(Loader::is_loading)
     }
 
     #[cfg(test)]

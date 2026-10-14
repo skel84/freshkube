@@ -274,3 +274,128 @@ fn a_rebuilt_client_reads_again_through_it(cx: &mut TestAppContext) {
     assert_eq!(asks(), 2);
     assert_eq!(answered(cx, &history), 2);
 }
+
+fn cpu_identity(view: &HistoryView) -> HistoryIdentity {
+    HistoryIdentity {
+        source: view.source.as_ref().unwrap().key(),
+        subject: view.subject.clone().unwrap(),
+        panel: "cpu",
+    }
+}
+
+fn cpu_result(subject: &Subject, window: TimeWindow) -> PanelResult {
+    let source = ExampleSource::new(&subject.seed());
+    let spec = history::dashboard(subject).panels.remove(0);
+    let context = QueryContext {
+        window,
+        variables: Default::default(),
+    };
+    source
+        .query_panel(&spec, &context, &Variables::default())
+        .unwrap()
+}
+
+#[gpui_kit::test]
+fn returning_to_the_same_subject_rejects_its_earlier_answer(cx: &mut TestAppContext) {
+    let (_runtime, _handle, history) = mount(cx);
+    update(cx, &history, |view, cx| {
+        view.set_source(example(), cx);
+        view.set_subject(pod("api"), cx);
+        view.set_visible(true, cx);
+        let identity = cpu_identity(view);
+        let old = view.reads[0].start(identity.clone());
+        view.set_subject(pod("checkout"), cx);
+        view.set_subject(pod("api"), cx);
+        let window = TimeWindow::new(NOW, SPAN, POINTS);
+        view.land_panel(
+            0,
+            &old,
+            window,
+            Ok(cpu_result(&identity.subject, window)),
+            cx,
+        );
+        assert!(
+            view.reads[0].is_loading(),
+            "an old answer ended the current read"
+        );
+        assert!(
+            !view.panels[0].read(cx).is_ready(),
+            "an old answer reached the new panel"
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(answered(cx, &history), 2);
+}
+
+#[gpui_kit::test]
+fn showing_again_rejects_an_answer_from_before_the_hide(cx: &mut TestAppContext) {
+    let (_runtime, _handle, history) = mount(cx);
+    update(cx, &history, |view, cx| {
+        view.set_source(example(), cx);
+        view.set_subject(pod("api"), cx);
+        view.set_visible(true, cx);
+        let identity = cpu_identity(view);
+        let old = view.reads[0].start(identity.clone());
+        view.set_visible(false, cx);
+        view.set_visible(true, cx);
+        let window = TimeWindow::new(NOW, SPAN, POINTS);
+        view.land_panel(
+            0,
+            &old,
+            window,
+            Ok(cpu_result(&identity.subject, window)),
+            cx,
+        );
+        assert!(
+            view.reads[0].is_loading(),
+            "an old answer ended the resumed read"
+        );
+        assert!(
+            !view.panels[0].read(cx).is_ready(),
+            "a cut read answered after showing"
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(answered(cx, &history), 2);
+}
+
+#[gpui_kit::test]
+fn a_recent_failed_answer_keeps_the_ask_time_on_showing(cx: &mut TestAppContext) {
+    let (_runtime, _handle, history) = mount(cx);
+    let before = freshkube_probe::probe::count("monitoring.history.ask");
+    update(cx, &history, |view, cx| {
+        view.set_source(example(), cx);
+        view.set_subject(pod("api"), cx);
+        view.set_visible(true, cx);
+        view.run_panel(
+            0,
+            cpu_identity(view),
+            TimeWindow::new(NOW, SPAN, POINTS),
+            true,
+            async { Err(QueryError::refused()) },
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(answered(cx, &history), 1);
+    update(cx, &history, |view, cx| {
+        assert!(!view.reading());
+        assert_eq!(
+            view.reads[0].error(),
+            Some(QueryError::refused().message.as_str())
+        );
+        view.set_visible(false, cx);
+        view.set_visible(true, cx);
+        assert_eq!(view.asked, Some(NOW));
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        freshkube_probe::probe::count("monitoring.history.ask") - before,
+        1
+    );
+    assert_eq!(answered(cx, &history), 1);
+
+    update(cx, &history, |view, cx| view.refresh(cx));
+    cx.run_until_parked();
+    assert_eq!(answered(cx, &history), 2);
+}
