@@ -490,20 +490,7 @@ impl LifecycleCollector {
 
     /// Collects lifecycle information with the existing pinned-source default.
     pub async fn collect(&self, client: &TalosClient) -> LifecycleSnapshot {
-        self.collect_inner(client, None, None, None).await
-    }
-
-    /// Collects using an already identity-validated Kubernetes client (or its
-    /// unavailable reason). Explicit source failure never triggers ambient
-    /// Kubernetes fallback. Context is the applied selection, not saved default.
-    pub async fn collect_with_kubernetes(
-        &self,
-        client: &TalosClient,
-        context: &str,
-        kubernetes: Result<kube::Client, String>,
-    ) -> LifecycleSnapshot {
-        self.collect_inner(client, Some(context), Some(kubernetes), None)
-            .await
+        self.collect_inner(client, None, None).await
     }
 
     /// Uses the session's committed Node evidence; never lists Kubernetes.
@@ -513,7 +500,7 @@ impl LifecycleCollector {
         context: &str,
         roster: SourceSnapshot<Vec<KubernetesNodeRosterEntry>>,
     ) -> LifecycleSnapshot {
-        self.collect_inner(client, Some(context), None, Some(roster))
+        self.collect_inner(client, Some(context), Some(roster))
             .await
     }
 
@@ -521,7 +508,6 @@ impl LifecycleCollector {
         &self,
         client: &TalosClient,
         context: Option<&str>,
-        kubernetes: Option<Result<kube::Client, String>>,
         observed: Option<SourceSnapshot<Vec<KubernetesNodeRosterEntry>>>,
     ) -> LifecycleSnapshot {
         let config = load_selected_talosconfig(self.talosconfig_path.clone(), context).await;
@@ -553,14 +539,8 @@ impl LifecycleCollector {
         let kubernetes_roster = if let Some(roster) = observed {
             roster
         } else {
-            match kubernetes {
-                Some(Ok(client)) => kubernetes_roster_from_client(&client).await,
-                Some(Err(reason)) => SourceSnapshot::Unavailable { reason },
-                None => {
-                    self.collect_kubernetes_roster(client, control_plane_address.as_deref())
-                        .await
-                }
-            }
+            self.collect_kubernetes_roster(client, control_plane_address.as_deref())
+                .await
         };
 
         let node_roster = merge_node_roster(talos_discovery.value(), kubernetes_roster.value());
