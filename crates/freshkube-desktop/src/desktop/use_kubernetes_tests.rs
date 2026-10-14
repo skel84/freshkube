@@ -87,7 +87,7 @@ async fn the_error_state_chooses_a_kubeconfig_and_connects_nothing_until_a_conte
     cx.run_until_parked();
     cx.update(|cx| {
         let view = view.read(cx);
-        assert!(view.kubernetes_only.is_none() && view.config_error.is_some());
+        assert!(view.mode().has_talos() && view.config_error.is_some());
     });
 
     // Choosing the file lists its contexts, including its current one, and
@@ -101,7 +101,7 @@ async fn the_error_state_chooses_a_kubeconfig_and_connects_nothing_until_a_conte
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let pilot = view.read(cx);
-        let kube = pilot.kubernetes_only.as_ref().unwrap();
+        let kube = pilot.mode().kubernetes_only().unwrap();
         assert!(kube.access().is_none());
         assert_eq!(kube.connection, kubernetes_only::KubeConnection::Idle);
         assert_eq!(pilot.applied.context, None);
@@ -191,7 +191,7 @@ async fn a_remembered_launch_keeps_remembering_and_a_talosconfig_returns_to_talo
     cx.simulate_path_prompt_response(move |_| Some(vec![chosen.clone()]));
     cx.wait_for_io(handle, |_, cx| {
         let view = view.read(cx);
-        view.kubernetes_only.is_none() && view.contexts == ["gamma"]
+        view.mode().has_talos() && view.contexts == ["gamma"]
     })
     .await;
     cx.wait_for_io(handle, |_, _| {
@@ -219,12 +219,12 @@ fn the_switcher_offers_kubernetes_only_in_talos_mode_alone(cx: &mut TestAppConte
     click(cx, handle, "use-kubernetes-only-entry");
     assert!(cx.did_prompt_for_paths());
     // Nothing changed until a file is chosen.
-    cx.update(|cx| assert!(view.read(cx).kubernetes_only.is_none()));
+    cx.update(|cx| assert!(view.read(cx).mode().has_talos()));
     cx.simulate_path_prompt_response(move |_| Some(vec![file.clone()]));
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(view.read(cx).kubernetes_only.is_some());
+        assert!(view.read(cx).mode().kubernetes_only().is_some());
     })
     .unwrap();
     click(cx, handle, "context-switcher");
@@ -276,15 +276,17 @@ async fn an_open_shell_is_asked_about_before_leaving_talos(cx: &mut TestAppConte
     assert_eq!(message, format!("End the shell in {}?", pod.name));
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
-    cx.update(|cx| assert!(view.read(cx).kubernetes_only.is_none()));
+    cx.update(|cx| assert!(view.read(cx).mode().has_talos()));
     assert_eq!(cx.read(shell::running_anywhere).len(), 1);
 
     switch(cx);
     cx.simulate_prompt_answer("End the shell");
     // The switch waits for the session to end, which can finish off the
     // GPUI executor.
-    cx.wait_for_io(handle, |_, cx| view.read(cx).kubernetes_only.is_some())
-        .await;
+    cx.wait_for_io(handle, |_, cx| {
+        view.read(cx).mode().kubernetes_only().is_some()
+    })
+    .await;
     assert!(cx.read(shell::running_anywhere).is_empty());
 }
 
@@ -319,7 +321,7 @@ fn an_open_forward_is_not_asked_about_and_keeps_running(cx: &mut TestAppContext)
     .unwrap();
     cx.run_until_parked();
     assert!(!cx.has_pending_prompt());
-    cx.update(|cx| assert!(view.read(cx).kubernetes_only.is_some()));
+    cx.update(|cx| assert!(view.read(cx).mode().kubernetes_only().is_some()));
     assert_eq!(cx.read(forwards::running), 1);
     cx.update(|cx| {
         let stopping = forwards::stop_all(cx);
@@ -340,7 +342,7 @@ async fn a_kubeconfig_without_contexts_gets_its_own_error_state(cx: &mut TestApp
     cx.simulate_path_prompt_response(move |_| Some(vec![empty.clone()]));
     cx.wait_for_io(handle, |_, cx| {
         let view = view.read(cx);
-        view.kubernetes_only.is_some() && view.config_error.is_some()
+        view.mode().kubernetes_only().is_some() && view.config_error.is_some()
     })
     .await;
     // The state names the kubeconfig and its Browse works; the Talos
@@ -383,7 +385,7 @@ async fn choosing_another_kubeconfig_in_settings_connects_to_none(cx: &mut TestA
     })
     .await;
     cx.update(|cx| {
-        let kube = view.read(cx).kubernetes_only.as_ref().unwrap();
+        let kube = view.read(cx).mode().kubernetes_only().unwrap();
         assert!(kube.access().is_none());
         assert_eq!(kube.connection, kubernetes_only::KubeConnection::Idle);
     });

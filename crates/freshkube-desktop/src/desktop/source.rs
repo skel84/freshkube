@@ -1,8 +1,8 @@
 //! What every page is handed, built in one place: the session owner until
-//! #44's session type takes it. It holds no fields of its own; it reads
-//! the shell's and decides, in one match, whether the window shows example
-//! data, a kubeconfig context or a Talos cluster. [`Mode`] answers the same
-//! question for the chrome.
+//! #44's session type takes it. [`Mode`] holds what the window shows;
+//! `Pilot::source` reads it with the shell's other fields and decides, in
+//! one match, whether the window shows example data, a kubeconfig context
+//! or a Talos cluster.
 
 use std::sync::Arc;
 
@@ -20,39 +20,82 @@ use crate::screens::{PageSource, ScreenSource};
 /// What the window shows, as two answers: example data or a live cluster,
 /// and Talos with Kubernetes or Kubernetes alone. They are independent:
 /// example data is Kubernetes-only too after "Use Kubernetes only…" under
-/// `--fixture`, or on the `kubernetes-only` debug page. Readers ask these
-/// questions rather than the shell's fields.
-#[derive(Clone, Copy)]
-pub(super) struct Mode<'a> {
+/// `--fixture`, or on the `kubernetes-only` debug page. The shell keeps one
+/// in `Pilot.mode`; readers ask its questions, and the Kubernetes-only flow
+/// changes it through its methods.
+pub(super) struct Mode {
     example: bool,
-    kubernetes_only: Option<&'a KubernetesOnly>,
+    /// Example data's clock: each refresh of the example cluster takes the
+    /// next tick, so its readings move.
+    tick: u64,
+    kubernetes_only: Option<KubernetesOnly>,
 }
 
-impl<'a> Mode<'a> {
+impl Mode {
+    /// Example data or not, as the launch options chose; nothing changes it
+    /// later.
+    pub(super) fn new(example: bool) -> Self {
+        Self {
+            example,
+            tick: 0,
+            kubernetes_only: None,
+        }
+    }
+
     /// Example data, which reads no cluster.
-    pub(super) fn is_example(self) -> bool {
+    pub(super) fn is_example(&self) -> bool {
         self.example
     }
 
     /// Talos is part of the session: false when a kubeconfig is all it
     /// reads.
-    pub(super) fn has_talos(self) -> bool {
+    pub(super) fn has_talos(&self) -> bool {
         self.kubernetes_only.is_none()
     }
 
     /// The kubeconfig a session without Talos reads, and its connection.
-    pub(super) fn kubernetes_only(self) -> Option<&'a KubernetesOnly> {
-        self.kubernetes_only
+    pub(super) fn kubernetes_only(&self) -> Option<&KubernetesOnly> {
+        self.kubernetes_only.as_ref()
+    }
+
+    pub(super) fn kubernetes_only_mut(&mut self) -> Option<&mut KubernetesOnly> {
+        self.kubernetes_only.as_mut()
+    }
+
+    /// Reads `kube` without Talos from now on.
+    pub(super) fn set_kubernetes_only(&mut self, kube: KubernetesOnly) {
+        self.kubernetes_only = Some(kube);
+    }
+
+    /// Takes Talos back, returning the Kubernetes-only state it ends.
+    pub(super) fn leave_kubernetes_only(&mut self) -> Option<KubernetesOnly> {
+        self.kubernetes_only.take()
+    }
+
+    /// Advances example data's clock and returns the new tick.
+    pub(super) fn next_tick(&mut self) -> u64 {
+        self.tick += 1;
+        self.tick
+    }
+
+    /// Turns example data on or off under a test; for the gate, switch,
+    /// access, Kubernetes summary, dock and Kubernetes-only tests.
+    #[cfg(test)]
+    pub(super) fn set_example(&mut self, example: bool) {
+        self.example = example;
+    }
+
+    /// Example data's clock, for the menu and Nodes table tests.
+    #[cfg(test)]
+    pub(super) fn tick(&self) -> u64 {
+        self.tick
     }
 }
 
 impl Pilot {
     /// What the window shows: example data or not, with Talos or not.
-    pub(super) fn mode(&self) -> Mode<'_> {
-        Mode {
-            example: self.fixture,
-            kubernetes_only: self.kubernetes_only.as_ref(),
-        }
+    pub(super) fn mode(&self) -> &Mode {
+        &self.mode
     }
 
     /// What every page is handed: the Talos target the screens inspect, and

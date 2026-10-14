@@ -161,7 +161,7 @@ fn while_loading(
 ) {
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.fixture = false;
+            pilot.mode.set_example(false);
             pilot.config_loading = true;
             change(pilot, window, cx);
         })

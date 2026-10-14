@@ -313,7 +313,7 @@ fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppCont
     // Health can say why before the connection's own check has answered.
     wait_until(cx, handle, "the connection to fail", |_, cx| {
         let pilot = view.read(cx);
-        let kube = pilot.kubernetes_only.as_ref().unwrap();
+        let kube = pilot.mode().kubernetes_only().unwrap();
         matches!(
             &kube.connection,
             super::super::kubernetes_only::KubeConnection::Failed(error) if *error == reason
@@ -321,7 +321,7 @@ fn kubernetes_only_health_says_why_its_context_cant_be_read(cx: &mut TestAppCont
     });
     cx.update_window(handle, |_, window, cx| {
         let pilot = view.read(cx);
-        let kube = pilot.kubernetes_only.as_ref().unwrap();
+        let kube = pilot.mode().kubernetes_only().unwrap();
         assert!(
             matches!(
                 &kube.connection,
@@ -391,7 +391,7 @@ fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut T
         // Applying no talosconfig keeps the window as it is: the default
         // one is what's missing.
         view.update(cx, |view, cx| view.apply_config_path(window, cx));
-        assert!(view.read(cx).kubernetes_only.is_some());
+        assert!(view.read(cx).mode().kubernetes_only().is_some());
         // A talosconfig switches the window to Talos.
         view.update(cx, |view, cx| {
             let path = scratch("no-such-talosconfig").display().to_string();
@@ -400,7 +400,7 @@ fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut T
             view.apply_config_path(window, cx);
         });
         window.render_frame(cx);
-        assert!(view.read(cx).kubernetes_only.is_none());
+        assert!(view.read(cx).mode().has_talos());
         assert!(window.find("context-switcher").visible());
         assert!(window.try_find("kubernetes-status").is_none());
     })
@@ -521,7 +521,7 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
         view.update(cx, |view, _| {
             // Simulate a replacement access independently of the existing
             // epoch/sequence guards, leaving the delayed worker alive.
-            view.fixture = true;
+            view.mode.set_example(true);
             view.applied.context = Some("replacement".into());
             view.object_open_task.take().unwrap()
         })

@@ -511,7 +511,7 @@ fn reapplying_a_kubeconfig_at_the_same_path_discards_the_old_session(cx: &mut Te
             .unwrap();
             // Exercise the production reload entry point while the local
             // configuration read is pending; no cluster request can start.
-            view.fixture = false;
+            view.mode.set_example(false);
             view.config_loading = true;
             view.apply_kubeconfig(selection, window, cx);
             assert!(view.registry.active().summary_session.is_none());
@@ -523,7 +523,7 @@ fn reapplying_a_kubeconfig_at_the_same_path_discards_the_old_session(cx: &mut Te
                 cx,
             );
             assert!(view.registry.active().kubernetes_summary.data().is_none());
-            view.fixture = true;
+            view.mode.set_example(true);
             view.config_loading = false;
             view.ensure_summary(window, cx);
             assert_ne!(
@@ -547,9 +547,9 @@ fn kubernetes_only_has_no_countdown_or_periodic_summary_apply(cx: &mut TestAppCo
     let previous = cx
         .update_window(handle, |_, window, cx| {
             view.update(cx, |view, cx| {
-                view.kubernetes_only = Some(crate::desktop::kubernetes_only::KubernetesOnly::new(
-                    None, None,
-                ));
+                view.mode.set_kubernetes_only(
+                    crate::desktop::kubernetes_only::KubernetesOnly::new(None, None),
+                );
                 view.navigate(Page::Health, window, cx);
                 assert!(!view.countdown_state().1);
                 view.registry

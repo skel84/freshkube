@@ -329,7 +329,7 @@ fn cancelling_the_shell_question_for_a_kubeconfig_pick_keeps_the_entry(cx: &mut 
     // Example mode ignores kubeconfig picks; let this one through to the question.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.fixture = false;
+            pilot.mode.set_example(false);
             pilot.apply_kubeconfig(KubeconfigSelection::TalosControlPlane, window, cx);
         });
     })
@@ -337,7 +337,7 @@ fn cancelling_the_shell_question_for_a_kubeconfig_pick_keeps_the_entry(cx: &mut 
     assert!(cx.pending_prompt().is_some());
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
-    cx.update(|cx| view.update(cx, |pilot, _| pilot.fixture = true));
+    cx.update(|cx| view.update(cx, |pilot, _| pilot.mode.set_example(true)));
     assert_eq!(active(cx, &view), key("dev-fra"));
 }
 
@@ -357,7 +357,7 @@ async fn a_talosconfig_whose_current_context_names_nothing_still_opens_an_entry(
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert!(pilot.config_error.is_none(), "{:?}", pilot.config_error);
-        assert!(pilot.kubernetes_only.is_none());
+        assert!(pilot.mode().has_talos());
     });
 }
 
@@ -444,7 +444,7 @@ fn a_launch_with_no_named_source_opens_the_first_core_entry_through_its_taloscon
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.registry.active_key(), &key("mgmt"));
-        assert!(pilot.kubernetes_only.is_none());
+        assert!(pilot.mode().has_talos());
         assert_eq!(
             pilot.applied.path.as_deref(),
             Some(guard.path().join("missing-talosconfig").as_path())
@@ -484,7 +484,7 @@ fn the_remembered_entry_wins_and_a_kubeconfig_entry_opens_without_talos(cx: &mut
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.registry.active_key(), &key("dev"));
-        let kube = pilot.kubernetes_only.as_ref().unwrap();
+        let kube = pilot.mode().kubernetes_only().unwrap();
         assert_eq!(
             kube.explicit_file(),
             Some(guard.path().join("missing-kubeconfig").as_path())
@@ -523,7 +523,7 @@ async fn switching_moves_between_a_talos_entry_and_a_kubeconfig_entry_and_rememb
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.registry.active_key(), &key("dev"));
-        assert!(pilot.kubernetes_only.is_some());
+        assert!(pilot.mode().kubernetes_only().is_some());
         assert_eq!(pilot.applied.path, None);
         assert_eq!(
             NavigationFile::global(cx).active_cluster().as_deref(),
@@ -537,7 +537,7 @@ async fn switching_moves_between_a_talos_entry_and_a_kubeconfig_entry_and_rememb
     cx.run_until_parked();
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert!(pilot.kubernetes_only.is_none());
+        assert!(pilot.mode().has_talos());
         assert_eq!(pilot.applied.context.as_deref(), Some("acme-talos"));
         assert_eq!(
             NavigationFile::global(cx).active_cluster().as_deref(),
@@ -601,7 +601,7 @@ async fn a_talos_entry_takes_the_context_it_names_never_the_files_current_one(
         let pilot = view.read(cx);
         // `other` is the file's current context; the entry's `context` is used.
         assert_eq!(pilot.applied.context.as_deref(), Some("acme-mgmt"));
-        assert!(pilot.kubernetes_only.is_none());
+        assert!(pilot.mode().has_talos());
         assert_eq!(pilot.registry.active_key(), &key("mgmt"));
     });
 }
@@ -612,8 +612,10 @@ async fn a_talos_entry_the_file_has_no_context_for_opens_with_its_kubeconfig_con
 ) {
     let guard = talos_folder_with(TALOSCONFIG_ONLY_OTHER, true);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
-    cx.wait_for_io(handle, |_, cx| view.read(cx).kubernetes_only.is_some())
-        .await;
+    cx.wait_for_io(handle, |_, cx| {
+        view.read(cx).mode().kubernetes_only().is_some()
+    })
+    .await;
     cx.read(|cx| {
         let pilot = view.read(cx);
         // The file's current context was not applied.
@@ -856,7 +858,7 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
             NavigationFile::global(cx).active_cluster().as_deref(),
             Some("mgmt")
         );
-        assert!(pilot.kubernetes_only.is_none());
+        assert!(pilot.mode().has_talos());
         assert_eq!(pilot.entry_generation, generation);
         let held = pilot.pending_link.as_ref().unwrap();
         assert_eq!(

@@ -332,19 +332,17 @@ pub(crate) struct Pilot {
     observability: Entity<crate::observability::ObservabilityPage>,
     /// Kubernetes credentials source for the overview roster and screens.
     kubeconfig: KubeconfigSelection,
-    /// Set without Talos: contexts come from a kubeconfig and only the
-    /// Resources page reads.
-    kubernetes_only: Option<kubernetes_only::KubernetesOnly>,
     kubeconfig_draft: kubeconfig::KubeconfigDraft,
     /// Where the shell is: the page, the area, the column and the rail.
     navigation: shell::Navigation,
-    fixture: bool,
+    /// Example data or a live cluster, and Talos or a kubeconfig alone
+    /// (`source::Mode`): what the window shows.
+    mode: source::Mode,
     /// What example data never answers (`DebugOptions::hold`), set once
     /// here: the shell holds the Talos overview and the Kubernetes summary
     /// with `talos`, and every page reads the rest from the example source
     /// `source()` hands it. Nothing is held outside example data.
     hold: Hold,
-    fixture_tick: u64,
     focus: FocusHandle,
     /// The window the shell draws in, for what changes the shown page
     /// without one at hand (`Pilot::sync_visible_soon`).
@@ -663,7 +661,7 @@ impl Pilot {
             self.refresh(window, cx);
         } else if kubernetes_only {
             let kube = kubernetes_only::KubernetesOnly::new(kubeconfig_path, kube_context);
-            self.kubernetes_only = Some(if remembered_kubernetes {
+            self.mode.set_kubernetes_only(if remembered_kubernetes {
                 kube.remembering()
             } else {
                 kube
@@ -886,7 +884,6 @@ impl Pilot {
             monitoring,
             observability,
             kubeconfig: KubeconfigSelection::Automatic,
-            kubernetes_only: None,
             active_definition: Default::default(),
             entry_open: None,
             pending_link: None,
@@ -900,13 +897,12 @@ impl Pilot {
             switcher: Vec::new(),
             kubeconfig_draft: Default::default(),
             navigation,
-            fixture: options.fixture,
+            mode: source::Mode::new(options.fixture),
             hold: if options.fixture {
                 options.debug.hold
             } else {
                 Hold::NONE
             },
-            fixture_tick: 0,
             focus: cx.focus_handle(),
             window: window.window_handle(),
             _subscriptions: subscriptions,
@@ -1228,10 +1224,10 @@ impl Pilot {
             return;
         }
         if self.mode().is_example() {
-            self.fixture_tick += 1;
+            let tick = self.mode.next_tick();
             let context = self.applied.context.clone().unwrap_or_default();
             self.overview
-                .apply(&request, Ok(fixture::cluster(&context, self.fixture_tick)));
+                .apply(&request, Ok(fixture::cluster(&context, tick)));
             self.overview_succeeded(cx);
             self.sync_nodes(window, cx);
             self.refresh_services(window, cx);
@@ -1276,9 +1272,8 @@ impl Pilot {
     fn seed_fixture_history(&mut self, cx: &mut App) {
         let context = self.applied.context.clone().unwrap_or_default();
         for _ in 1..presentation::LOAD_HISTORY_LEN {
-            self.fixture_tick += 1;
-            let nodes =
-                presentation::node_summaries(&fixture::cluster(&context, self.fixture_tick));
+            let tick = self.mode.next_tick();
+            let nodes = presentation::node_summaries(&fixture::cluster(&context, tick));
             self.node_workspace
                 .update(cx, |workspace, _| workspace.load_history.record(&nodes));
         }
@@ -1366,8 +1361,8 @@ impl Pilot {
     /// Whether contexts or a connection are loading, for the refresh button.
     fn loading(&self) -> bool {
         let connecting = self
-            .kubernetes_only
-            .as_ref()
+            .mode()
+            .kubernetes_only()
             .is_some_and(|kube| kube.connection == kubernetes_only::KubeConnection::Connecting);
         self.config_loading || self.overview.is_loading() || connecting
     }
