@@ -129,18 +129,14 @@ impl Pages {
             page
         });
         let observability = cx.new(|cx| {
-            let mut page = crate::observability::ObservabilityPage::new(
-                options.fixture,
+            crate::observability::ObservabilityPage::new(
                 runtime.clone(),
-                options.preferences.as_deref(),
+                // Example data never touches the saved Coroot connection.
+                options.preferences.as_deref().filter(|_| !options.fixture),
                 secrets,
                 window,
                 cx,
-            );
-            if hold.coroot {
-                page.hold_examples();
-            }
-            page
+            )
         });
         let applications = cx.new(|cx| {
             crate::applications::ApplicationsPage::new(

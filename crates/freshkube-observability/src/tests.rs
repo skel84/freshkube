@@ -1,4 +1,5 @@
 use super::{Destination, MatrixRow, ObservabilityPage, Report, example};
+use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, Hold};
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::test::TestWindowExt;
@@ -6,6 +7,17 @@ use gpui_kit::{
     AnyWindowHandle, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled,
     TestAppContext, Window, div, px, size,
 };
+/// The shell's example source, holding Coroot's answers when `held`.
+pub(super) fn example_source(held: bool) -> ClusterSource {
+    ClusterSource {
+        id: "example".into(),
+        context: "example".into(),
+        access: ClusterAccess::Example(Hold {
+            coroot: held,
+            ..Hold::NONE
+        }),
+    }
+}
 pub(super) fn mount(
     cx: &mut TestAppContext,
     fixture: bool,
@@ -77,7 +89,6 @@ fn mount_with(
     let handle = cx.open_window(size(px(width), px(height)), |window, cx| {
         let view = cx.new(|cx| {
             ObservabilityPage::new(
-                fixture,
                 runtime.handle().clone(),
                 preferences,
                 secrets.clone(),
@@ -95,6 +106,10 @@ fn mount_with(
     });
     cx.run_until_parked();
     let page = page.unwrap();
+    if fixture {
+        let source = example_source(false);
+        cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(&source), cx)));
+    }
     cx.update(|cx| page.update(cx, |page, cx| page.set_visible(true, cx)));
     (runtime, handle.into(), page)
 }
@@ -1673,9 +1688,9 @@ fn held_tables_show_the_shared_loading_rows(cx: &mut TestAppContext) {
     }
 }
 
-/// Held examples (`FRESHKUBE_FIXTURE_HOLD=coroot`) forget what the page
-/// answered when it was made, so every table waits on its loading rows and
-/// the rail counts no incidents; without example data it changes nothing.
+/// A held example source (`FRESHKUBE_FIXTURE_HOLD=coroot`) forgets what
+/// the examples answered, so every table waits on its loading rows and the
+/// rail counts no incidents; a live source holds nothing.
 #[gpui_kit::test]
 fn held_examples_forget_what_the_page_answered(cx: &mut TestAppContext) {
     let (_runtime, handle, page) = mount(cx, true);
@@ -1684,7 +1699,8 @@ fn held_examples_forget_what_the_page_answered(cx: &mut TestAppContext) {
         assert!(!page.applications.is_empty());
         assert!(page.incident_count().is_some());
     });
-    cx.update(|cx| page.update(cx, |page, _| page.hold_examples()));
+    let held = example_source(true);
+    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(&held), cx)));
     cx.read(|cx| {
         let page = page.read(cx);
         assert!(page.applications.is_empty());
@@ -1693,6 +1709,9 @@ fn held_examples_forget_what_the_page_answered(cx: &mut TestAppContext) {
         assert!(page.categories.is_empty());
         assert_eq!(page.app_count, "0 apps");
         assert!(page.incident_count().is_none());
+        // The held tables keep their headers, over their loading rows.
+        assert!(!page.incident_columns().is_empty());
+        assert!(!page.revision_columns().is_empty());
     });
     for (destination, table) in [
         (Destination::Applications, "obs-applications-table"),
@@ -1708,6 +1727,10 @@ fn held_examples_forget_what_the_page_answered(cx: &mut TestAppContext) {
     }
 
     let (_runtime, _handle, live) = mount(cx, false);
-    cx.update(|cx| live.update(cx, |page, _| page.hold_examples()));
-    assert!(cx.read(|cx| !live.read(cx).hold));
+    cx.update(|cx| {
+        live.update(cx, |page, cx| {
+            page.set_access(Some("conn-a".into()), None, cx)
+        })
+    });
+    assert!(cx.read(|cx| !live.read(cx).hold && !live.read(cx).fixture));
 }

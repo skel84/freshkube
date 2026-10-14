@@ -90,9 +90,10 @@ pub enum ObservabilityEvent {
 impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 
 pub struct ObservabilityPage {
+    /// The shell's source is example data ([`Self::set_source`]).
     fixture: bool,
-    /// Example data holds its applications, incidents and traces
-    /// ([`Self::hold_examples`]), so their tables stay on their loading rows.
+    /// Example data holds its applications, incidents and traces, as its
+    /// source's hold says, so their tables stay on their loading rows.
     hold: bool,
     /// The shown table's loading rows until its first answer.
     loading: freshkube_ui::table::TableLoading,
@@ -210,7 +211,6 @@ impl ObservabilityPage {
     }
 
     pub fn new(
-        fixture: bool,
         runtime: tokio::runtime::Handle,
         preferences: Option<&std::path::Path>,
         secrets: Option<crate::secrets::Secrets>,
@@ -313,13 +313,8 @@ impl ObservabilityPage {
                 }
             }),
         ];
-        let (nodes, connections) = if fixture {
-            projection::map(&example::map())
-        } else {
-            (Default::default(), Default::default())
-        };
         let mut this = Self {
-            fixture,
+            fixture: false,
             hold: false,
             loading: freshkube_ui::table::TableLoading::new("obs-table", cx),
             live: connection::Live::new(runtime, cx.background_executor().now()),
@@ -327,9 +322,7 @@ impl ObservabilityPage {
             secret,
             auth: 0,
             settings_open: false,
-            memory: preferences
-                .filter(|_| !fixture)
-                .map(|preferences| remember::Memory::new(preferences, secrets)),
+            memory: preferences.map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),
             cluster_ids: vec![],
@@ -354,12 +347,12 @@ impl ObservabilityPage {
             namespace: None,
             query,
             query_text: String::new(),
-            selected_app: fixture.then(|| example::id(example::WORKER)),
+            selected_app: None,
             report: Report::Net,
             report_name: "Net".into(),
             hours: DEFAULT_HOURS,
-            nodes,
-            connections,
+            nodes: Default::default(),
+            connections: Default::default(),
             map_display: map::display(),
             map_split,
             incident_observations: Default::default(),
@@ -381,7 +374,7 @@ impl ObservabilityPage {
             revision_table: freshkube_ui::table::TableState::new("obs-deployments"),
             revision_split,
             compare_profile: true,
-            frames: if fixture { example::flame() } else { vec![] },
+            frames: vec![],
             visible_frames: vec![],
             frame_root: None,
             selected_frame: None,
@@ -405,12 +398,6 @@ impl ObservabilityPage {
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
         };
-        this.visible_frames = (0..this.frames.len()).collect();
-        this.flame_matches = vec![true; this.frames.len()];
-        if fixture && !this.hold {
-            this.apply_applications(&example::applications());
-            this.answer_example_incidents();
-        }
         this.fill_from_memory(window, cx);
         this.project();
         // Every table's header is known before its first answer, which its
