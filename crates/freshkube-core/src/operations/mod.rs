@@ -1586,6 +1586,7 @@ async fn wait_for_node_ready(
     }
 }
 
+// String exception: missing reboot-transition evidence is an operation validation message displayed without failure classification.
 fn require_reboot_transition(observed_transition: bool) -> Result<(), String> {
     if observed_transition {
         Ok(())
