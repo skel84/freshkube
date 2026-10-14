@@ -5,10 +5,12 @@ use crate::diagnostic_runner::{LoadAverageSnapshot, MemorySnapshot, ServiceSnaps
 mod diagnostics;
 mod network;
 mod processes;
+mod security;
 
 pub use diagnostics::diagnostics;
 pub use network::{kubespan, network};
 pub use processes::processes;
+pub use security::security;
 
 /// The node facts example data is built from.
 pub struct ExampleNode {
