@@ -5,14 +5,11 @@
 use std::future::Future;
 use std::time::Duration;
 
-use freshkube_core::monitoring::{ErrorKind, QueryError};
-use gpui_kit::{AppContext, Context, Task};
+use freshkube_core::monitoring::QueryError;
+use gpui_kit::{Context, Task};
 use tokio::runtime::Handle;
 
-use freshkube_core::job::{OwnedJob, spawn_job};
-
-/// What a read past its deadline says.
-const TIMED_OUT: &str = "Prometheus didn't answer in time";
+use freshkube_core::job::OwnedJob;
 
 /// A read in flight. Dropping it cancels the work and its answer.
 pub(crate) struct Request {
@@ -31,30 +28,9 @@ pub(crate) fn run<V: 'static, T: Send + 'static>(
     cx: &mut Context<V>,
     done: impl FnOnce(&mut V, Result<T, QueryError>, &mut Context<V>) + 'static,
 ) -> Request {
-    if example {
-        let work = cx.background_spawn(work);
-        let task = cx.spawn(async move |this, cx| {
-            let result = work.await;
-            _ = this.update(cx, |this, cx| done(this, result, cx));
-        });
-        return Request {
-            _job: None,
-            _task: task,
-        };
-    }
-    let (job, receiver) = spawn_job(runtime, deadline, TIMED_OUT.to_owned(), async move {
-        Ok(work.await)
-    });
-    let task = cx.spawn(async move |this, cx| {
-        let result = match receiver.await {
-            Ok(Ok(result)) => result,
-            Ok(Err(message)) => Err(QueryError::new(ErrorKind::TimedOut, message)),
-            Err(_) => return,
-        };
-        _ = this.update(cx, |this, cx| done(this, result, cx));
-    });
+    let (job, task) = crate::dispatch(example, runtime, deadline, work, cx, done);
     Request {
-        _job: Some(job),
+        _job: job,
         _task: task,
     }
 }
@@ -62,6 +38,9 @@ pub(crate) fn run<V: 'static, T: Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TIMED_OUT;
+    use freshkube_core::monitoring::ErrorKind;
+    use gpui_kit::AppContext;
     use gpui_kit::{Entity, TestAppContext};
 
     /// A view that keeps its request and what it was told.
