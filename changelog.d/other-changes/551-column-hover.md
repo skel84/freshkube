@@ -1,0 +1,1 @@
+- **Columns:** rows appearing under a resting pointer clear their hover fill when the pointer leaves.

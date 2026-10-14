@@ -609,7 +609,7 @@ pub fn list<V: SourceListHost>(
     for (ix, line) in list.lines.iter().enumerate() {
         column = column.child(match line {
             Line::Section(section) => section_line(section, ix == 0, cx),
-            Line::Row(row) => row_line(row, ring == Some(ix), cx),
+            Line::Row(row) => row_line(row, ring == Some(ix), window, cx),
             Line::Note(note) => note_line(note, cx),
             Line::Prose(prose) => prose_line(prose, cx),
             Line::Menu(menu) => menu_line(menu, cx),
@@ -634,8 +634,17 @@ fn section_line<V>(section: &Section, first: bool, cx: &Context<V>) -> AnyElemen
         .into_any_element()
 }
 
-fn row_line<V: SourceListHost>(row: &Row<V::Key>, ring: bool, cx: &mut Context<V>) -> AnyElement {
+fn row_line<V: SourceListHost>(
+    row: &Row<V::Key>,
+    ring: bool,
+    window: &Window,
+    cx: &mut Context<V>,
+) -> AnyElement {
     let p = palette(cx);
+    // The drawing view can be a cached child of the host. GPUI's hover style
+    // records transitions only on mouse movement, so a row first painted
+    // under a resting pointer needs the hover listener's paint-time tracking.
+    let drawing_view = window.current_view();
     let current = row.current;
     let leading = match row.disclosure {
         Some(open) => Icon::new(if open {
@@ -691,7 +700,10 @@ fn row_line<V: SourceListHost>(row: &Row<V::Key>, ring: bool, cx: &mut Context<V
         .text_size(dp(13.))
         .text_color(if current { p.ink } else { p.ink_2 })
         .when(current, |this| this.bg(p.accent_soft))
-        .when(!current, |this| this.hover(|style| style.bg(p.hover)))
+        .when(!current, |this| {
+            this.hover(|style| style.bg(p.hover))
+                .on_hover(move |_, _, cx| cx.notify(drawing_view))
+        })
         .child(leading.flex_none().text_color(p.muted))
         .child(
             div()
@@ -819,8 +831,15 @@ fn menu_line<V: SourceListHost>(menu: &Menu<V::Key>, cx: &mut Context<V>) -> Any
 
 #[cfg(test)]
 mod tests {
-    use super::{Line, Note, Row, Section, SourceList};
-    use gpui_kit::TestAppContext;
+    use super::{Line, Note, Row, Section, SourceList, SourceListHost};
+    use gpui_kit::component::{Root, Theme, ThemeMode};
+    use gpui_kit::prelude::*;
+    use gpui_kit::{
+        AnyWindowHandle, AppContext, Context, Entity, StyleRefinement, TestAppContext, Window, div,
+        point, px, size,
+    };
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     fn lines(current: &'static str) -> Vec<Line<&'static str>> {
         vec![
@@ -877,5 +896,179 @@ mod tests {
             .tooltip("example.io/v1")
             .shortcut("⌘5");
         assert_eq!(row.tip().as_ref(), "A long kind name · ⌘5\nexample.io/v1");
+    }
+
+    struct Host {
+        list: SourceList<()>,
+    }
+
+    impl SourceListHost for Host {
+        type Key = ();
+
+        fn source_list(&mut self) -> &mut SourceList<Self::Key> {
+            &mut self.list
+        }
+
+        fn open(&mut self, _: &Self::Key, _: &mut Window, _: &mut Context<Self>) {}
+    }
+
+    /// The shell keeps the list on its host, but draws it in a cached child.
+    struct Column {
+        host: Entity<Host>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for Column {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            self.host
+                .update(cx, |host, cx| super::list(&mut host.list, window, cx))
+        }
+    }
+
+    struct Shell {
+        column: Entity<Column>,
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                self.column
+                    .clone()
+                    .cached(StyleRefinement::default().w(px(236.)).h(px(200.))),
+            )
+        }
+    }
+
+    fn draw(cx: &mut TestAppContext, handle: AnyWindowHandle) {
+        // A forced render_frame refresh would bypass the cache and hide this bug.
+        // The second draw settles a hover notification deferred from paint.
+        for _ in 0..2 {
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        }
+        cx.run_until_parked();
+    }
+
+    fn move_pointer(cx: &mut TestAppContext, handle: AnyWindowHandle, x: f32) {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_mouse_move(point(px(x), px(15.)), cx);
+        })
+        .unwrap();
+        draw(cx, handle);
+    }
+
+    fn hover_fills(cx: &mut TestAppContext, handle: AnyWindowHandle) -> usize {
+        cx.update_window(handle, |_, window, cx| {
+            let hover = gpui_kit::solid_background(crate::palette::palette(cx).hover);
+            window
+                .painted_quads()
+                .iter()
+                .filter(|quad| quad.background == hover)
+                .count()
+        })
+        .unwrap()
+    }
+
+    #[derive(Clone, Copy)]
+    enum Arrival {
+        Existing,
+        UnderPointer,
+        AwayFromPointer,
+    }
+
+    fn hover_case(cx: &mut TestAppContext, arrival: Arrival) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::theme::install(cx);
+            crate::text_size::install(None, cx);
+            Theme::change(ThemeMode::Light, None, cx);
+            cx.set_reduce_motion(true);
+        });
+        let renders = Rc::new(Cell::new(0));
+        let mut entities = None;
+        let handle = cx.open_window(size(px(400.), px(200.)), |window, cx| {
+            let host = cx.new(|cx| {
+                let mut list = SourceList::new("hover-list", cx);
+                if matches!(arrival, Arrival::Existing) {
+                    list.set_lines(vec![Row::new((), "hover-row", "Sample").into()]);
+                }
+                Host { list }
+            });
+            let column = cx.new(|_| Column {
+                host: host.clone(),
+                renders: renders.clone(),
+            });
+            entities = Some((host, column.clone()));
+            let shell = cx.new(|_| Shell { column });
+            Root::new(shell, window, cx)
+        });
+        let handle = AnyWindowHandle::from(handle);
+        let (host, column) = entities.unwrap();
+        let host_notifications = Rc::new(Cell::new(0));
+        let observed = host_notifications.clone();
+        let _host_observer =
+            cx.update(|cx| cx.observe(&host, move |_, _| observed.set(observed.get() + 1)));
+        draw(cx, handle);
+        move_pointer(cx, handle, 300.);
+        if matches!(arrival, Arrival::UnderPointer) {
+            move_pointer(cx, handle, 20.);
+        }
+        if !matches!(arrival, Arrival::Existing) {
+            host.update(cx, |host, _| {
+                host.list
+                    .set_lines(vec![Row::new((), "hover-row", "Sample").into()]);
+            });
+            column.update(cx, |_, cx| cx.notify());
+            draw(cx, handle);
+        }
+        if !matches!(arrival, Arrival::UnderPointer) {
+            assert_eq!(hover_fills(cx, handle), 0, "insertion away has no fill");
+            let before = renders.get();
+            move_pointer(cx, handle, 20.);
+            assert_eq!(renders.get(), before + 1, "entry redraws once");
+            if matches!(arrival, Arrival::Existing) {
+                let before = renders.get();
+                move_pointer(cx, handle, 21.);
+                assert_eq!(renders.get(), before, "moving inside does not redraw");
+            }
+        }
+        assert_eq!(hover_fills(cx, handle), 1, "the pointer fills the row");
+        let before = renders.get();
+        move_pointer(cx, handle, 300.);
+        assert_eq!(
+            hover_fills(cx, handle),
+            0,
+            "leaving clears the painted fill"
+        );
+        assert_eq!(renders.get(), before + 1, "departure redraws once");
+        move_pointer(cx, handle, 310.);
+        assert_eq!(hover_fills(cx, handle), 0, "a second departure stays clear");
+        assert_eq!(
+            renders.get(),
+            before + 1,
+            "moving away again does not redraw"
+        );
+        assert_eq!(
+            host_notifications.get(),
+            0,
+            "only the drawing view is notified"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_row_appearing_under_a_resting_pointer_clears_its_hover(cx: &mut TestAppContext) {
+        hover_case(cx, Arrival::UnderPointer);
+    }
+
+    #[gpui_kit::test]
+    fn an_existing_row_clears_its_hover_after_pointer_entry(cx: &mut TestAppContext) {
+        hover_case(cx, Arrival::Existing);
+    }
+
+    #[gpui_kit::test]
+    fn a_row_inserted_away_from_the_pointer_clears_its_hover(cx: &mut TestAppContext) {
+        hover_case(cx, Arrival::AwayFromPointer);
     }
 }
