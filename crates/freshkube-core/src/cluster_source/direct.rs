@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::failure::{Failure, FailureKind};
 use crate::resources::{Connection, connect};
 use crate::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 use futures::future::{BoxFuture, FutureExt, Shared};
@@ -11,8 +12,8 @@ use futures::future::{BoxFuture, FutureExt, Shared};
 /// Loading credentials can run an auth plugin; anything slower is stuck.
 const CONNECT_DEADLINE: Duration = Duration::from_secs(30);
 
-type Attempt = Shared<BoxFuture<'static, Result<Connection, String>>>;
-type Connector = fn(Vec<PathBuf>, String) -> BoxFuture<'static, Result<Connection, String>>;
+type Attempt = Shared<BoxFuture<'static, Result<Connection, Failure>>>;
+type Connector = fn(Vec<PathBuf>, String) -> BoxFuture<'static, Result<Connection, Failure>>;
 
 /// One context of the merged kubeconfig files and its client. Every read
 /// of the context joins one connection attempt and, once it succeeds,
@@ -33,7 +34,9 @@ impl DirectAccess {
             async move {
                 connect(sources, context)
                     .await
-                    .map_err(|failure| failure.to_string())
+                    // Callers used the whole display text before this boundary
+                    // carried a kind. They keep that text through `.message`.
+                    .map_err(|failure| Failure::new(failure.kind, failure.to_string()))
             }
             .boxed()
         })
@@ -69,7 +72,7 @@ impl DirectAccess {
     }
 
     /// The connection, joining an attempt already under way.
-    pub async fn connect(&self) -> Result<Connection, String> {
+    pub async fn connect(&self) -> Result<Connection, Failure> {
         let attempt = {
             let mut slot = self.attempt.lock().expect("connection slot");
             slot.get_or_insert_with(|| {
@@ -85,7 +88,9 @@ impl DirectAccess {
                         Ok(connection)
                     })
                     .await
-                    .unwrap_or_else(|_| Err(format!("Connecting to '{context}' timed out")))
+                    .unwrap_or_else(|_| {
+                        Err(Failure::timeout(&format!("Connecting to '{context}'")))
+                    })
                 }
                 .boxed()
                 .shared()
@@ -113,16 +118,21 @@ impl DirectAccess {
 async fn check_revision(
     sources: Arc<[PathBuf]>,
     expected: ConfigurationRevision,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let current = tokio::task::spawn_blocking(move || {
         ConfigurationRevision::from_kubeconfig_sources(&sources)
     })
     .await
-    .map_err(|_| "Reading the Kubernetes configuration stopped".to_owned())?;
+    .map_err(|_| {
+        Failure::new(FailureKind::Other, "Reading the Kubernetes configuration stopped")
+    })?;
     if current == expected {
         Ok(())
     } else {
-        Err("Kubernetes configuration changed; refresh to load it".into())
+        Err(Failure::new(
+            FailureKind::Config,
+            "Kubernetes configuration changed; refresh to load it",
+        ))
     }
 }
 
@@ -136,7 +146,7 @@ mod tests {
     fn replace_during_connect(
         sources: Vec<PathBuf>,
         context: String,
-    ) -> BoxFuture<'static, Result<Connection, String>> {
+    ) -> BoxFuture<'static, Result<Connection, Failure>> {
         async move {
             std::fs::write(&sources[0], "new configuration").unwrap();
             // This fixture bypasses the production connector's TLS provider setup.
@@ -179,8 +189,11 @@ mod tests {
         let result = access.connect().await;
         std::fs::remove_dir_all(directory).unwrap();
         assert_eq!(
-            result.err().as_deref(),
-            Some("Kubernetes configuration changed; refresh to load it")
+            result.err(),
+            Some(Failure::new(
+                FailureKind::Config,
+                "Kubernetes configuration changed; refresh to load it",
+            ))
         );
     }
 
@@ -216,11 +229,11 @@ mod tests {
     }
 
     /// Fails after a moment, counting attempts.
-    fn refused(_: Vec<PathBuf>, context: String) -> BoxFuture<'static, Result<Connection, String>> {
+    fn refused(_: Vec<PathBuf>, context: String) -> BoxFuture<'static, Result<Connection, Failure>> {
         ATTEMPTS.fetch_add(1, Ordering::SeqCst);
         async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            Err(format!("{context} refused"))
+            Err(Failure::new(FailureKind::Unreachable, format!("{context} refused")))
         }
         .boxed()
     }
@@ -245,8 +258,9 @@ mod tests {
             other.forget();
             other.connect().await
         });
-        assert_eq!(first.err().as_deref(), Some("lab refused"));
-        assert_eq!(second.err().as_deref(), Some("lab refused"));
+        let failure = Failure::new(FailureKind::Unreachable, "lab refused");
+        assert_eq!(first.err(), Some(failure.clone()));
+        assert_eq!(second.err(), Some(failure));
         assert_eq!(ATTEMPTS.load(Ordering::SeqCst), 1);
         // A finished attempt answers until forgotten.
         assert!(access.connect().await.is_err());
@@ -255,5 +269,40 @@ mod tests {
         assert!(access.connect().await.is_err());
         assert_eq!(ATTEMPTS.load(Ordering::SeqCst), 2);
         assert_eq!(identity, access.id());
+    }
+
+    #[tokio::test]
+    async fn the_connector_keeps_its_kind_and_preexisting_display_text() {
+        let sources = Vec::new();
+        let access = DirectAccess::new(
+            sources.clone(),
+            "cluster-a".into(),
+            ConfigurationRevision::from_kubeconfig_sources(&sources),
+        );
+        assert_eq!(
+            access.connect().await.err(),
+            Some(Failure::new(
+                FailureKind::Config,
+                "Configuration · Context 'cluster-a' was not found",
+            )),
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_connection_keeps_the_deadline_message() {
+        let sources = Vec::new();
+        let access = DirectAccess::with_connector(
+            sources.clone(),
+            "cluster-a".into(),
+            ConfigurationRevision::from_kubeconfig_sources(&sources),
+            |_, _| std::future::pending().boxed(),
+        );
+        assert_eq!(
+            access.connect().await.err(),
+            Some(Failure::new(
+                FailureKind::Timeout,
+                "Connecting to 'cluster-a' timed out",
+            )),
+        );
     }
 }
