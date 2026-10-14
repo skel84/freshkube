@@ -19,8 +19,8 @@ use super::{
     CONTEXT, DetailEvent, DetailPane, Dismiss, NextTab, PreviousTab, Section, Strip, TABS_CONTEXT,
     Tab,
 };
-use crate::logs::role_heading;
 use crate::palette::palette;
+use crate::resources::containers::role_heading;
 use crate::resources::detail::{Detail, DocumentRead, EventsRead};
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_ui::inspector::{self, Inspector};

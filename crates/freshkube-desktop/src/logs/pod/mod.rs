@@ -30,6 +30,7 @@ use tokio::runtime::Handle;
 use super::streams::{self, Clock, MAX_STREAMS, StreamKey, StreamSet, StreamSource};
 use super::{Columns, DownloadLines, LogSource, LogView};
 use crate::backend::STREAM_QUEUE_CAPACITY;
+use crate::resources::containers::{choice_label, role_heading};
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{ClusterAccess, LogsAt, example, live};
 use crate::stream_status::Status;
@@ -543,34 +544,6 @@ impl PodLogs {
             at.fixed_offset(),
             text,
         )
-    }
-}
-
-/// A container picker's entry: `app · Running`, `migrate · Not started`.
-pub(crate) fn choice_label(container: &Container) -> String {
-    let state = match &container.state {
-        ContainerState::Running(_) => "Running".to_owned(),
-        ContainerState::Waiting(reason)
-            if reason.is_empty()
-                || (container.role == ContainerRole::Init && !container.started()) =>
-        {
-            "Not started".to_owned()
-        }
-        ContainerState::Waiting(reason) => reason.clone(),
-        ContainerState::Terminated(ended) => match ended.reason.as_str() {
-            "" => format!("Exited {}", ended.exit_code),
-            reason => reason.to_owned(),
-        },
-    };
-    format!("{} · {state}", container.name)
-}
-
-/// The heading over a container picker's entries of one role.
-pub(crate) fn role_heading(role: ContainerRole) -> &'static str {
-    match role {
-        ContainerRole::Init => "INIT CONTAINERS",
-        ContainerRole::App => "CONTAINERS",
-        ContainerRole::Ephemeral => "EPHEMERAL",
     }
 }
 

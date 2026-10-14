@@ -7,12 +7,12 @@ use gpui_kit::SharedString;
 /// What the controls of a pod's log, a workload's log and a shell tab say
 /// about their stream, derived when it changes.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Status {
-    pub(crate) tone: ui::Tone,
-    pub(crate) tag: SharedString,
-    pub(crate) text: SharedString,
+pub struct Status {
+    pub tone: ui::Tone,
+    pub tag: SharedString,
+    pub text: SharedString,
     /// Both, for assistive technology and tests.
-    pub(crate) label: SharedString,
+    pub label: SharedString,
 }
 
 impl Default for Status {
@@ -28,7 +28,7 @@ impl Default for Status {
 
 impl Status {
     /// The status for a tag and the words beside it, labelled "tag: text".
-    pub(crate) fn new(tone: ui::Tone, tag: &str, text: &str) -> Self {
+    pub fn new(tone: ui::Tone, tag: &str, text: &str) -> Self {
         let label = match (tag, text) {
             ("", text) => text.to_owned(),
             (tag, "") => tag.to_owned(),
