@@ -38,7 +38,18 @@ scripts/stress.sh terminal-50k terminal 50000
 | `terminal-sample` | the terminal showing its colours, styles and wide characters, for visual checks (`FRESHKUBE_STRESS_APPEARANCE=light` or `dark`) |
 | `monitoring <dashboard.json> [processes]` | opens that dashboard from a folder of its own against a fake Prometheus behind the service proxy, every query answering one series per Go process (67), five for a GC duration summary, a quarter of them ending early; then sweeps the mouse over the top panels, scrolls and hovers again. The run keeps its own home, so Monitoring reads the folder and the remembered Service from there, and `scripts/stress.sh` fails it when it records no `monitoring.*` span after the warm-up, unless its keys only wait and it drew during the warm-up |
 
-A run lasts `FRESHKUBE_STRESS_SECONDS` (30) and leaves the first `FRESHKUBE_STRESS_WARMUP` (5) seconds out of its summary. GPUI stops drawing a covered window or one on a locked screen, so keep the window in front; the script refuses to run on a locked screen.
+The stress binary reads these knobs once into `StressOptions`. Missing or invalid values use the defaults below.
+
+| Knob | Values or default | What it does |
+| --- | --- | --- |
+| `FRESHKUBE_STRESS_KEYS` | space-separated script; default empty | Sends keystrokes as GPUI parses them (`down`, `enter`, `secondary-}`), `wait:<ms>` to pause, and `type:<text>` to type into whatever has focus. `hover:<x0>,<y0>,<x1>,<y1>,<ms>` moves the mouse in a straight line over that many milliseconds, a step a frame; `scroll:<x>,<y>,<dy>` scrolls there. Positions are fractions of the window, so a script fits any window size. |
+| `FRESHKUBE_STRESS_SECONDS` | nonnegative integer seconds; default `30` | Quits after this long. |
+| `FRESHKUBE_STRESS_WARMUP` | nonnegative integer seconds; default `5` | Leaves the first this many seconds out of the summary. |
+| `FRESHKUBE_STRESS_APPEARANCE` | `light` or `dark`; default leaves the theme alone | Picks the terminal window's appearance. |
+| `FRESHKUBE_STRESS_TALOS_RATE` | positive integer lines/s; default no flood | Sets the example Talos log rate. |
+| `FRESHKUBE_STRESS_WORKLOAD_RATE` | positive integer lines/s; default no flood | Sets the example workload log rate. |
+
+A unit test in `stress.rs` checks that this table names every knob `StressOptions::parse` reads and no other. GPUI stops drawing a covered window or one on a locked screen, so keep the window in front; the script refuses to run on a locked screen.
 
 The `stress` feature turns on spans around the work that matters (`freshkube_probe::perf`, which desktop reaches as `crate::perf`); without it they compile to nothing. Each second the run prints, for every span, its count, median, 99th percentile, maximum and total in milliseconds, then the process's CPU share and resident memory:
 
