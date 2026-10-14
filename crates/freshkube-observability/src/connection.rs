@@ -242,6 +242,10 @@ impl ObservabilityPage {
             self.apply_applications(&example::applications());
         }
         self.project();
+        // The headers stay known, so a held table shows them over its
+        // loading rows, as on a first read.
+        self.prepare_incident_columns();
+        self.prepare_revision_columns();
         self.prepare_map();
         self.prepare_report();
     }

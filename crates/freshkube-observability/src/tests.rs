@@ -1709,6 +1709,9 @@ fn held_examples_forget_what_the_page_answered(cx: &mut TestAppContext) {
         assert!(page.categories.is_empty());
         assert_eq!(page.app_count, "0 apps");
         assert!(page.incident_count().is_none());
+        // The held tables keep their headers, over their loading rows.
+        assert!(!page.incident_columns().is_empty());
+        assert!(!page.revision_columns().is_empty());
     });
     for (destination, table) in [
         (Destination::Applications, "obs-applications-table"),
