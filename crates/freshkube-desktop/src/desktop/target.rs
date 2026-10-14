@@ -73,7 +73,7 @@ impl Pilot {
         self.service_job = None;
         self.services = Snapshot::default();
         self.push_services(cx);
-        if self.fixture {
+        if self.mode().is_example() {
             let context = self.applied.context.clone().unwrap_or_default();
             let node = self.selected_node.clone().unwrap_or_default();
             let catalog = fixture::services(&context, &node);
@@ -113,7 +113,7 @@ impl Pilot {
         if self.services.is_loading() {
             return;
         }
-        if self.fixture {
+        if self.mode().is_example() {
             let identity = Target {
                 epoch: self.epoch,
                 context: self.applied.context.clone().unwrap_or_default(),

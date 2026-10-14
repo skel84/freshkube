@@ -532,11 +532,11 @@ impl Pilot {
     /// read under, once they are known: a parked summary is put back only
     /// under the same ones.
     pub(super) fn current_revision(&self) -> Option<ConfigurationRevision> {
-        if self.fixture {
+        if self.mode().is_example() {
             // Example data reads no files, so there is nothing to have changed.
             return Some(ConfigurationRevision::default());
         }
-        match &self.kubernetes_only {
+        match self.mode().kubernetes_only() {
             Some(kube) => (!kube.sources.is_empty()).then_some(kube.revision),
             None => self.registry.active().access_configuration,
         }
@@ -595,11 +595,11 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let was_talos = self.kubernetes_only.is_none();
+        let was_talos = self.mode().has_talos();
         self.entry_open = None;
         self.entry_locate = None;
         self.entry_generation = self.entry_generation.wrapping_add(1);
-        if self.fixture {
+        if self.mode().is_example() {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
             self.seed_fixture_history(cx);

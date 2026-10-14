@@ -85,7 +85,7 @@ impl Pilot {
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session) = &self.registry.active().summary_session {
             session.core.relist();
-            if self.fixture && !self.hold.talos {
+            if self.mode().is_example() && !self.hold.talos {
                 self.publish_fixture(window, cx);
             }
         } else {
@@ -136,7 +136,7 @@ impl Pilot {
         if let Some(super::kubernetes_only::KubernetesOnly {
             connection: super::kubernetes_only::KubeConnection::Connected { version },
             ..
-        }) = &self.kubernetes_only
+        }) = self.mode().kubernetes_only()
         {
             session.version(0, version.clone(), chrono::Utc::now());
         }
