@@ -2,6 +2,8 @@
 
 use crate::diagnostic_runner::{LoadAverageSnapshot, MemorySnapshot, ServiceSnapshot};
 
+/// The example Talos cluster: its contexts, nodes, services and logs.
+pub mod cluster;
 mod diagnostics;
 mod network;
 mod processes;

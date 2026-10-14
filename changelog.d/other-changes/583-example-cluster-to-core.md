@@ -1,0 +1,1 @@
+- **Internal:** the example Talos cluster behind the app's example data moved from the desktop crate into the core crate, so the Resources code can later build apart from the shell; the app behaves as before.
