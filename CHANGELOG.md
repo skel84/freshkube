@@ -4,6 +4,132 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.15.0 (2026-10-14)
+
+### Coroot
+
+- **Folded Observability strip:** in a short window at a larger text size, the
+  folded strip's buttons and the Incidents mark stay clear of its scrollbar
+  ([#525](https://github.com/skel84/freshkube/issues/525)).
+- **Observability filters:** trace and profile filters keep applying after the
+  Coroot project changes
+  ([#501](https://github.com/skel84/freshkube/issues/501)).
+- **Example Deployments:** the example data's selected revision stays selected
+  across refreshes and on coming back to the page, even when the clock crosses
+  a minute ([#634](https://github.com/skel84/freshkube/issues/634)).
+
+### Other changes
+
+- **Dock tab menu:** right-click a dock tab to select it and open the same
+  Close, Close others, Close to the right and Close all menu as the dock's "…"
+  button, with the Close shortcut shown
+  ([#531](https://github.com/skel84/freshkube/issues/531)).
+- **Node logs:** the Logs tab shows a filled green dot while the node's logs
+  are collected, also while another tab is open
+  ([#623](https://github.com/skel84/freshkube/issues/623)).
+- **Changes across Argo CD namespaces:** the Changes list and the change page
+  follow Argo CD Applications in every namespace Argo CD is found in, up to
+  three, and name the namespaces skipped at that cap
+  ([#572](https://github.com/skel84/freshkube/issues/572)).
+- **Dock:** dragging its top edge resizes the dock again, and the chosen height
+  is saved ([#530](https://github.com/skel84/freshkube/issues/530)).
+- **Chart deploy markers:** a deployment marker's label stays whole in a narrow
+  chart's readout, wrapping above its date, and deploy markers are drawn in an
+  ink of their own, apart from the chart's series in both themes, on
+  Observability's charts and Monitoring's dashboards
+  ([#520](https://github.com/skel84/freshkube/issues/520)).
+- **Pod health:** the Kubernetes summary counts a running pod that isn't ready,
+  or a failing init container, the way the pod's details do, and Diagnostics
+  includes init-container faults and running pods that aren't ready
+  ([#498](https://github.com/skel84/freshkube/issues/498)).
+- **Pod shells:** a shell's graceful shutdown finishes when End is followed by
+  closing its tab or quitting, with a bounded cleanup of its connection
+  ([#499](https://github.com/skel84/freshkube/issues/499)).
+- **Port forwards:** a forward that ends while it starts shows Ended with its
+  reason and offers Start again
+  ([#500](https://github.com/skel84/freshkube/issues/500)).
+- **CPU and memory history:** a pod's or node's history recovers a failed
+  Prometheus connection without a visit to Monitoring
+  ([#503](https://github.com/skel84/freshkube/issues/503)).
+- **Talos errors:** a node that refuses, times out or resets a connection says
+  so ("Connection refused - is the node reachable?") instead of "Transport
+  error: transport error", and a gRPC error is worded by its status code,
+  whatever the node wrote in its message
+  ([#584](https://github.com/skel84/freshkube/issues/584)).
+- **Applications:** when every source refuses the read, the empty list shows
+  its lock icon ([#616](https://github.com/skel84/freshkube/issues/616)). A
+  refresh of the list, the Changes list or the change page cut short by leaving
+  the page reads again on coming back
+  ([#582](https://github.com/skel84/freshkube/issues/582)).
+- **Columns:** rows that appear under a resting pointer clear their hover fill
+  when the pointer leaves
+  ([#551](https://github.com/skel84/freshkube/issues/551)).
+- **Kubernetes summary:** workloads are read straight from each controller,
+  without a whole-cluster pass per object
+  ([#502](https://github.com/skel84/freshkube/issues/502)).
+- **Preferences files:** `preferences.json`, `navigation.json`,
+  `connection.json`, `monitoring.json` and `coroot.json` are saved atomically,
+  keep every key, unknown ones included, and keep an existing file's
+  permissions and symlink; an update no longer overwrites a file it could not
+  read. Before, each save replaced `connection.json` with a fresh 0600 file
+  ([#586](https://github.com/skel84/freshkube/issues/586)).
+- **Maintainability pass:** most of this release restructures the code
+  without changing what is on screen, so that pages, reads and failures each
+  work one way ([#578](https://github.com/skel84/freshkube/issues/578)). Every
+  page, Overview, Nodes and System services included, is a view of its own in
+  one map in the shell, which hands it its source, tells it whether it shows,
+  refreshes it and hears it the same way; Overview and Nodes redraw only when
+  what they show changes, no longer with the shell
+  ([#579](https://github.com/skel84/freshkube/issues/579)). The shell is put
+  together from its owners (where it is, its chrome, its pages) in one short
+  constructor, each owner declares the actions it answers, and Command-1…9 name
+  pages instead of row numbers
+  ([#580](https://github.com/skel84/freshkube/issues/580)).
+- **Sources, not modes:** every page gets its cluster (example data, Talos
+  access or a kubeconfig context) from one builder in core, and asks the
+  session whether it shows example data and whether Talos is part of it.
+  Example data for Processes, Diagnostics, Network, Security and Storage is
+  built in core, and what example data holds back for captures and stress runs
+  is part of the example source, so a live cluster can never be held
+  ([#581](https://github.com/skel84/freshkube/issues/581)).
+- **New crates:** `freshkube-reads` gives every read one lifetime: `Loader`
+  keeps one read's answer for one identity and drops a late answer for
+  another, and `Watch` drops what a replaced or stopped stream still sends. The
+  Applications pages, Resources' watch, node, pod and workload logs, Nodes'
+  usage, CPU and memory history and Settings' Delivery sources check use them,
+  reading and stopping when they did before
+  ([#582](https://github.com/skel84/freshkube/issues/582)). The delivery chain
+  and the applications code moved out of core into `freshkube-delivery`, built
+  and tested apart ([#583](https://github.com/skel84/freshkube/issues/583)),
+  and the preferences files go through `freshkube-prefs`
+  ([#586](https://github.com/skel84/freshkube/issues/586)).
+- **Typed failures:** Diagnostics, Maintenance's readiness, the reads behind
+  Security, Lifecycle and Operations' preview, the monitoring markers and
+  delivery's reads fail with a classified `Failure` instead of a string, the
+  words for each kind of failure are written in one place, and the remaining
+  string errors are documented
+  ([#584](https://github.com/skel84/freshkube/issues/584)).
+- **Debug knobs out of the product:** only the binaries' mains read the
+  environment. The `FRESHKUBE_*` knobs are parsed once into `DebugOptions`, and
+  core is handed the kubeconfig variables, home directory, proxy settings and
+  user name as plain values, with the same precedence; a test keeps AGENTS.md's
+  knob table in step with the parser. Release builds still ignore the knobs
+  ([#585](https://github.com/skel84/freshkube/issues/585)).
+- **Docs and tests:** `docs/ARCHITECTURE.md` describes the crates, the ways to
+  be a page, the session and source, reads and events; the Resources, Nodes,
+  frame and Applications behaviour moved from AGENTS.md to
+  [docs/features/](docs/features/), one doc each; and `scripts/check-docs.sh`
+  checks every relative link and anchor in CI
+  ([#587](https://github.com/skel84/freshkube/issues/587)). The shell, dock,
+  Nodes, Resources and Observability tests are split one file per subject
+  ([#588](https://github.com/skel84/freshkube/issues/588)); tests that wait on
+  real I/O wait through one helper that allows 30 s of real time, so a slow
+  machine no longer fails them, and three flaky tests no longer depend on
+  timing ([#609](https://github.com/skel84/freshkube/issues/609)). The Windows
+  tests and the packaged-app first-frame check pass on Windows again,
+  `scripts/smoke.sh` keeps an exported theme and window size, and a release
+  build no longer warns about an unused import.
+
 ## 0.14.0 (2026-10-11)
 
 ### Other changes

@@ -1,1 +1,0 @@
-- **Internal:** Example data now carries what it holds back for captures and stress runs (`FRESHKUBE_FIXTURE_HOLD`) on the example source, and Resources, Nodes, Applications and the Changes list read it from there. Nothing changes on screen.

@@ -1,1 +1,0 @@
-- **Internal:** Monitoring now takes what it holds back for captures (`FRESHKUBE_FIXTURE_HOLD=monitoring`) from the example source, so no page is handed a hold when it is built. Nothing changes on screen.

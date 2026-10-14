@@ -1,1 +1,0 @@
-- **Docs:** `scripts/check-docs.sh` checks every relative link and anchor in `AGENTS.md` and `docs/` in CI, and the Applications, Changes list and change page behaviour moved to [docs/features/applications.md](docs/features/applications.md).

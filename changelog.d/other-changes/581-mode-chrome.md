@@ -1,1 +1,0 @@
-- **Internal:** The window's header, status bar, column and Nodes header now ask the session whether it shows example data and whether Talos is part of it, instead of reading two flags. Nothing changes on screen.

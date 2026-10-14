@@ -1,1 +1,0 @@
-- **Core failures:** document the operation evidence and selected-access String exceptions, and remove the unused lifecycle Kubernetes-client entry point.
