@@ -460,3 +460,257 @@ fn another_question_folds_in_the_shells_it_ends() {
     );
     assert_eq!(two.2, "Switch and end the shells");
 }
+
+/// A real Tokio stream whose Control-C flush pauses until the test releases
+/// it. Recording the bytes and dropping the writer are independent of GPUI.
+pub(crate) struct ClosingTransport {
+    bytes: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    release: Option<tokio::sync::oneshot::Sender<()>>,
+    stdout: Option<tokio::io::DuplexStream>,
+}
+
+struct ClosingWriter {
+    bytes: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    release: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl tokio::io::AsyncWrite for ClosingWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.bytes.lock().unwrap().extend_from_slice(bytes);
+        std::task::Poll::Ready(Ok(bytes.len()))
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let interrupted = self.bytes.lock().unwrap().last() == Some(&3);
+        if interrupted && std::task::ready!(std::pin::Pin::new(&mut self.release).poll(cx)).is_err()
+        {
+            return std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+        }
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for ClosingWriter {
+    fn drop(&mut self) {
+        self.dropped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl ClosingTransport {
+    pub(crate) fn install(shell: &Entity<ShellView>, cx: &mut TestAppContext) -> Self {
+        cx.executor().allow_parking();
+        let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let writer = ClosingWriter {
+            bytes: bytes.clone(),
+            dropped: dropped.clone(),
+            release: gate,
+        };
+        let (stdout, reader) = tokio::io::duplex(64);
+        cx.update(|cx| {
+            shell.update(cx, |view, cx| {
+                view.drop_session(cx);
+                let runtime = view.runtime.clone();
+                let _entered = runtime.enter();
+                let session =
+                    freshkube_core::resources::ExecSession::from_test_streams(writer, reader);
+                view.session = Some(Session::Connecting {
+                    size: view.terminal.read(cx).size(),
+                    _job: OwnedJob::new(view.runtime.spawn(std::future::pending())),
+                    _task: Task::ready(()),
+                });
+                view.state = ShellState::Connecting;
+                view.used = true;
+                view.connected(view.seq, Ok(session), cx);
+            })
+        });
+        cx.run_until_parked();
+        Self {
+            bytes,
+            dropped,
+            release: Some(release),
+            stdout: Some(stdout),
+        }
+    }
+
+    pub(crate) fn wait_for_interrupt(&self, cx: &mut TestAppContext) {
+        freshkube_ui::real_io::until_io(cx, "Control-C", |_| self.bytes() == [3]);
+    }
+
+    pub(crate) fn release(&mut self) {
+        self.release.take().unwrap().send(()).unwrap();
+    }
+
+    pub(crate) fn wait_for_eof(&self, cx: &mut TestAppContext) {
+        freshkube_ui::real_io::until_io(cx, "Control-D", |_| self.bytes() == [3, 4]);
+    }
+
+    pub(crate) fn exit(&mut self) {
+        drop(self.stdout.take());
+    }
+
+    pub(crate) fn wait_for_completion(&self, cx: &mut TestAppContext) {
+        freshkube_ui::real_io::until_io(cx, "closing worker", |cx| {
+            self.dropped.load(std::sync::atomic::Ordering::SeqCst)
+                && cx.read(|cx| {
+                    cx.try_global::<super::Shells>().is_none_or(|shells| {
+                        shells
+                            .closing
+                            .iter()
+                            .all(tokio::task::JoinHandle::is_finished)
+                    })
+                })
+        });
+        assert_eq!(self.bytes(), [3, 4], "one interrupt and one EOF");
+    }
+
+    fn bytes(&self) -> Vec<u8> {
+        self.bytes.lock().unwrap().clone()
+    }
+}
+
+fn request_close(shell: &Mounted, cx: &mut TestAppContext) -> Rc<std::cell::Cell<bool>> {
+    let closed = Rc::new(std::cell::Cell::new(false));
+    let flag = closed.clone();
+    let immediate = cx
+        .update_window(shell.window, |_, window, cx| {
+            super::may_close(window, cx, move |_, _| flag.set(true))
+        })
+        .unwrap();
+    assert!(!immediate, "closing work must postpone quit");
+    assert!(!cx.has_pending_prompt(), "End already gave consent");
+    cx.run_until_parked();
+    assert!(!closed.get());
+    closed
+}
+
+#[gpui_kit::test]
+fn end_then_quit_waits_for_the_transport_without_asking_again(cx: &mut TestAppContext) {
+    let shell = mount(cx);
+    shell.open(cx, &running_pod());
+    let mut transport = ClosingTransport::install(&shell.shell, cx);
+    shell.step(cx, |window, cx| window.click("pod-shell-end", cx));
+    transport.wait_for_interrupt(cx);
+    let closed = request_close(&shell, cx);
+    transport.release();
+    transport.wait_for_eof(cx);
+    transport.exit();
+    freshkube_ui::real_io::until_io(cx, "quit after the worker", |_| closed.get());
+    transport.wait_for_completion(cx);
+    assert!(!cx.has_pending_prompt());
+}
+
+#[gpui_kit::test]
+fn quit_waits_at_most_one_second_for_an_ended_shell(cx: &mut TestAppContext) {
+    let shell = mount(cx);
+    shell.open(cx, &running_pod());
+    let mut transport = ClosingTransport::install(&shell.shell, cx);
+    shell.step(cx, |window, cx| window.click("pod-shell-end", cx));
+    transport.wait_for_interrupt(cx);
+    let closed = request_close(&shell, cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(999));
+    cx.run_until_parked();
+    assert!(!closed.get());
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(1));
+    cx.run_until_parked();
+    assert!(closed.get(), "quit must not wait for the dead transport");
+    transport.release();
+    transport.wait_for_eof(cx);
+    transport.exit();
+    transport.wait_for_completion(cx);
+    assert!(!cx.has_pending_prompt());
+}
+
+#[gpui_kit::test]
+fn end_keeps_final_output_and_restart_rejects_the_old_session(cx: &mut TestAppContext) {
+    use tokio::io::AsyncWriteExt;
+    let shell = mount(cx);
+    shell.open(cx, &running_pod());
+    let mut transport = ClosingTransport::install(&shell.shell, cx);
+    let seq = cx.read(|cx| shell.shell.read(cx).seq);
+    shell.step(cx, |_, cx| {
+        shell.shell.update(cx, |view, cx| {
+            view.terminal
+                .update(cx, |terminal, cx| terminal.feed(b"before end\r\n", cx));
+            view.end(cx);
+            view.end(cx);
+        })
+    });
+    transport.wait_for_interrupt(cx);
+    transport.release();
+    transport.wait_for_eof(cx);
+    shell
+        ._runtime
+        .block_on(
+            transport
+                .stdout
+                .as_mut()
+                .unwrap()
+                .write_all(b"last output\r\n"),
+        )
+        .unwrap();
+    freshkube_ui::real_io::until_io(cx, "final output", |cx| {
+        shell.screen(cx).contains("last output")
+    });
+    transport.exit();
+    transport.wait_for_completion(cx);
+    assert!(shell.screen(cx).contains("before end"));
+    assert_eq!(shell.status(cx), "Ended: You ended the shell.");
+    shell.step(cx, |window, cx| window.click("pod-shell-start", cx));
+    shell.step(cx, |_, cx| {
+        shell.shell.update(cx, |view, cx| {
+            view.apply(
+                seq,
+                freshkube_core::resources::ExecOutput::Bytes(b"old session".to_vec()),
+                cx,
+            );
+            view.apply(
+                seq,
+                freshkube_core::resources::ExecOutput::End(ExecEnd::Closed),
+                cx,
+            );
+        })
+    });
+    assert_eq!(shell.state(cx), ShellState::Running);
+    assert!(!shell.screen(cx).contains("old session"));
+    assert!(!shell.screen(cx).contains("last output"));
+}
+
+#[gpui_kit::test]
+fn quit_is_bounded_when_the_transport_never_closes(cx: &mut TestAppContext) {
+    let shell = mount(cx);
+    shell.open(cx, &running_pod());
+    let mut transport = ClosingTransport::install(&shell.shell, cx);
+    shell.step(cx, |window, cx| window.click("pod-shell-end", cx));
+    transport.wait_for_interrupt(cx);
+    transport.release();
+    transport.wait_for_eof(cx);
+    // The writer accepted both keys, but stdout never answers or closes.
+    let closed = request_close(&shell, cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(closed.get());
+    transport.wait_for_completion(cx);
+    assert!(!cx.has_pending_prompt());
+}
