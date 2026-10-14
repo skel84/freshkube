@@ -649,7 +649,7 @@ fn next_shows_every_matched_line_of_a_tall_row(cx: &mut TestAppContext) {
                 // Laying a row out works only while a frame draws; read
                 // what the reveal measured then.
                 let (id, revealed, line_end) =
-                    panel.read(cx).revealed_line.expect("a revealed line");
+                    panel.read(cx).revealed_line().expect("a revealed line");
                 assert_eq!((id, revealed), (120, line), "{case}");
                 if let Some(&earlier) = line_ends.last() {
                     assert!(
