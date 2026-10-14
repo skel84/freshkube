@@ -7,7 +7,8 @@
 //! reads: it finds Prometheus, resolves the variables, and asks the panels
 //! in or near the viewport. Every change that asks again (a source, a
 //! dashboard, a variable, a range, a refresh) takes a new generation, and
-//! an answer for an older one is dropped. Hiding drops every request.
+//! an answer for an older one is dropped. Hiding drops the page's reads;
+//! a client rebuild requested by a visible history keeps its own lifetime.
 mod board;
 mod catalog;
 mod connection;
@@ -26,7 +27,7 @@ use std::time::Duration;
 
 use freshkube_core::cluster_source::ClusterSource;
 use freshkube_core::monitoring::QueryError;
-use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task};
+use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task, WeakEntity};
 use tokio::runtime::Handle;
 
 use super::request::{self, Request};
@@ -106,6 +107,10 @@ pub struct MonitoringPage {
     connection: Connection,
     /// Counts the Ready clients built again, so history takes the new one.
     clients: u64,
+    /// History reaches this connection owner without retaining the page.
+    owner: WeakEntity<Self>,
+    /// Only the histories currently shown through this connection.
+    histories: Vec<WeakEntity<crate::history::HistoryView>>,
     catalog: Catalog,
     /// The dashboard chosen, kept across contexts.
     chosen: EntryId,
@@ -157,6 +162,8 @@ impl MonitoringPage {
             source: None,
             connection: Connection::None,
             clients: 0,
+            owner: cx.weak_entity(),
+            histories: Vec::new(),
             catalog: Catalog::new(),
             chosen: EntryId::Builtin(freshkube_core::monitoring::builtin::BUILTINS[0].uid),
             board: None,
@@ -200,7 +207,8 @@ impl MonitoringPage {
     }
 
     /// Shows or hides the page. Showing connects and asks what the viewport
-    /// needs; hiding drops every request and the refresh timer.
+    /// needs; hiding drops the page's reads and refresh timer, keeping a
+    /// rebuild requested by a history that still shows.
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if self.visible == visible {
             return;
@@ -213,7 +221,8 @@ impl MonitoringPage {
             self.connect(cx);
             self.start_refresh(cx);
         } else {
-            self.connection.hide();
+            self.histories.retain(|history| history.upgrade().is_some());
+            self.connection.hide(!self.histories.is_empty());
             if let Some(board) = &mut self.board {
                 board.hide();
             }
@@ -234,6 +243,7 @@ impl MonitoringPage {
         }
         self.reset_form();
         self.connection = Connection::None;
+        self.histories.clear();
         cx.emit(MonitoringEvent::History);
         // Another cluster's answers never show as this one's.
         self.board = None;
