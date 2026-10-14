@@ -13,11 +13,11 @@ use tokio::runtime::Runtime;
 use super::{
     Session, ShellEvent, ShellState, ShellView, choices, closing_question, running_anywhere,
 };
-use crate::backend::OwnedJob;
 use crate::resources::detail::DetailTarget;
 use crate::resources::screen::ClusterAccess;
 use crate::resources::{example, live};
-use crate::terminal::TerminalSize;
+use freshkube_core::job::OwnedJob;
+use freshkube_terminal::TerminalSize;
 
 type Emitted = Rc<RefCell<Vec<ShellEvent>>>;
 

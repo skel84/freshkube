@@ -346,7 +346,7 @@ pub(crate) fn run_terminal(
     use gpui_kit::component::{Theme, ThemeMode};
     use gpui_kit::{AppContext, Focusable, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
-    use crate::terminal::{TerminalEvent, TerminalView, streams};
+    use freshkube_terminal::{TerminalEvent, TerminalView, streams};
 
     let appearance = options().appearance;
     gpui_kit::application()
