@@ -8,18 +8,18 @@ Freshkube is a native desktop app, built on GPUI Kit, for Talos Linux and Kubern
 crates/
 ├── talos-rs/            Talos gRPC client
 ├── freshkube-core/      domain logic shared by every screen, no UI types
-├── freshkube-delivery/  the delivery chain (Kargo, Argo CD, builds → pods) and the applications derived from it; no UI types
-├── freshkube-prefs/     the preferences files: a Dir and a typed JSON Document with an atomic save and a keyed update; std, serde and serde_json only
+├── freshkube-delivery/  the delivery chain (Kargo, Argo CD, builds → pods) and its applications; no UI types
+├── freshkube-prefs/     the preferences files: a typed JSON Document per file, saved atomically
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
-├── freshkube-reads/     the owners of cluster reads: Loader<T, I>, one read's answer for one identity and its Tokio work; Watch<T, I>, one stream's batches for one identity
-├── freshkube-logs/      the log view, LogView<S: LogSource>: retention, search, selection, follow, wrap, measured rows
-├── freshkube-terminal/  the terminal view behind the pod shell: an alacritty_terminal grid drawn with GPUI
+├── freshkube-reads/     the owners of cluster reads: Loader<T, I> for one read, Watch<T, I> for one stream
+├── freshkube-logs/      the log view, LogView<S: LogSource>
+├── freshkube-terminal/  the terminal behind the pod shell (alacritty_terminal)
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
 ├── freshkube-graph/     graph layout without GPUI: columns of boxes and the curves between them
 ├── freshkube-monitoring/ Grafana dashboards from the cluster's Prometheus, and the CPU and memory history charts
-├── freshkube-nav/       where a link goes: ResourceLink and its requests, the objects it names and the tabs it opens on; core only, no GPUI
+├── freshkube-nav/       where a link goes: ResourceLink, its requests, objects and tabs; no GPUI
 ├── freshkube-observability/ Coroot's applications, service map, incidents, traces, profiles and logs
-├── freshkube-workbench/ the shared components on invented data, one story at a time; never shipped
+├── freshkube-workbench/ the shared components on invented data; never shipped
 └── freshkube-desktop/   the GPUI Kit application (shell, screens, the log sources)
 src/main.rs              the `freshkube` binary: CLI options → desktop app
 ```
@@ -35,6 +35,7 @@ Split code by concern, not by line count. A long file with one tight concern is 
 - **Turn a module into a directory when it mixes concerns,** or when its code, not counting tests, passes about 1,500 lines. Use `foo/mod.rs` with child modules, as `desktop/`, `resources/` and `logs/` do; don't mix in the `foo.rs` + `foo/` style.
 - **Keep the shared type in `mod.rs` and spread its `impl` blocks over the children.** A child module sees its ancestors' private items, so `freshkube-logs`'s `view.rs` and `measure.rs` use `LogView`'s fields without widening them. A method one child calls from another needs `pub(super)`; sibling modules don't see each other's private items.
 - **Every log view is `LogView<S: LogSource>`** from `freshkube-logs`. A new kind of log adds a source; it never copies the view. A source reaches the view only through the crate's `source_api.rs`, so a source's own methods live in an extension trait that callers import ([ARCHITECTURE.md](docs/ARCHITECTURE.md#log-views)).
+
 - **Keep small unit tests inline** in `#[cfg(test)] mod tests { … }`. When a module's tests are large, as UI tests usually are, put them in a sibling `tests.rs` (`#[cfg(test)] mod tests;`). It stays a child module, so the tests keep their access to private fields.
 - **Keep functions short.** A `render` that runs to hundreds of lines is harder to follow than a long file; split it into `render_*` helpers.
 - **Split a file when a step works on it,** not in a sweeping pass. Make the split its own commit with no logic changes, so the unchanged tests prove it.
@@ -65,25 +66,31 @@ For the inner loop, use `cargo test -p <crate> --lib <filter>` while iterating o
 
 CI, app bundles and releases are described in [docs/MACOS_PACKAGING.md](docs/MACOS_PACKAGING.md#ci): pull requests run the checks above, merges to `main` build bundles, and a `v*` tag drafts a release from them.
 
-Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`, `applications`, `changes` (the Applications column's Changes list, live or example), `settings`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `workload-logs` (payments/api's logs in the dock), `search`, `application` (acme's `checkout` on its application page), `change` (checkout's Freight `wonky-otter` on the change page, prod-ams's promotion gate selected), `kubernetes-only` and `maintenance`, which opens maintenance mode on an invented node (`maintenance/example.rs`) that walks itself to the configuration review and refuses to go further; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. The other knobs are in the table below.
+Debug builds open on a page from `FRESHKUBE_PAGE=<slug>` (`overview`, `nodes`, `health`, `resources`, `etcd`, `system-services`, `security`, `lifecycle`, `operations`, `monitoring`, `applications`, `changes` (the Applications column's Changes list, live or example), `settings`). `FRESHKUBE_PAGE=node-logs` opens the first responding node on its Logs tab. Debug fixture checks also take `node-overview`, `pod-overview`, `workload-logs` (payments/api's logs in the dock), `search`, `application` (acme's `checkout` on its application page), `change` (checkout's Freight `wonky-otter` on the change page, prod-ams's promotion gate selected), `kubernetes-only` and `maintenance`, which opens maintenance mode on an invented node (`maintenance/example.rs`) that walks itself to the configuration review and refuses to go further; with `--fixture`, `monitoring` answers its dashboard from example data at once, so a capture shows it. Their entry points live in `desktop/startup/`. The other knobs are in the tables below: what a page opens on and shows, the window, and the example data. They are one table, split in three for length.
 
 | Knob | Values | What it does | Read by |
 |------|--------|--------------|---------|
 | `FRESHKUBE_PAGE` | a page slug or fixture check above | Opens on that page. | debug and stress builds |
 | `FRESHKUBE_KIND` | a kubectl key (`pods`, `deployments.apps`, `nodes`, …; see `resources/navigation.rs`); with `--fixture` also the example custom kinds, such as `certificates.cert-manager.io` | Opens that Kubernetes kind on the Resources page. | debug and stress builds |
+| `FRESHKUBE_DASHBOARD` | a path | A dashboard of the Monitoring folder, by path. | debug and stress builds |
+| `FRESHKUBE_LOG_SEARCH` | text | With `node-logs` or `observability-application`, types that text into the log's search and, once the example lines arrive, steps to the first match (the application page opens on its Logs report, scrolled to the log). | debug and stress builds |
+| `FRESHKUBE_ETCD` | `lost`, `single`, `alarms` | With `--fixture`, reshapes etcd's example: a lost quorum, a single member, or five alarms. | debug builds |
+
+| Knob | Values | What it does | Read by |
+|------|--------|--------------|---------|
 | `FRESHKUBE_THEME` | `light`, `dark` | Selects appearance without changing saved settings (also the maintenance example's). | debug and stress builds |
 | `FRESHKUBE_SIDEBAR` | `collapsed`, `expanded` | Starts the sidebar in that state. Anything else is ignored. | debug and stress builds |
-| `FRESHKUBE_DASHBOARD` | a path | A dashboard of the Monitoring folder, by path. | debug and stress builds |
 | `FRESHKUBE_WINDOW_SIZE` | `1280x880`, `760x560` | Selects the window bounds without changing saved settings. | debug and stress builds |
 | `FRESHKUBE_MOTION` | `reduced`, `full` | Overrides the OS's reduced-motion setting. | debug and stress builds |
 | `FRESHKUBE_TEXT_SIZE` | `12`, `13`, `14`, `16`, `18`, `20` | Starts at that text size without saving it; 13 is the default. | debug builds |
-| `FRESHKUBE_LOG_SEARCH` | text | With `node-logs` or `observability-application`, types that text into the log's search and, once the example lines arrive, steps to the first match (the application page opens on its Logs report, scrolled to the log). | debug and stress builds |
-| `FRESHKUBE_ETCD` | `lost`, `single`, `alarms` | With `--fixture`, reshapes etcd's example: a lost quorum, a single member, or five alarms. | debug builds |
 | `FRESHKUBE_APP_MENU` | `button` | Shows the Linux menu button on any platform. | debug builds |
+
+| Knob | Values | What it does | Read by |
+|------|--------|--------------|---------|
 | `FRESHKUBE_APPLICATIONS` | `single`, `partial`, `refused`, `unserved`, `failed`, `capped`, `spread`, `not-found`, `unlabelled`, `stages`, `workloads`, `unreachable`, `argo-refused`, `destination` | With `--fixture`, reshapes the Applications example: `core-fra` alone, Kargo refused in `cicd-fra`, every source refused, nothing served, no cluster answering, Argo CD's Applications capped, Argo CD found in five namespaces with two past the cap, Argo CD's namespace not found, nothing labelled as Argo CD's so it is read in `argocd`, its default, `checkout`'s Stages not answering, or Deployments refused in `prod-lon`, `cicd-fra` unreachable, Argo CD refused in `core-fra`, or the destination `dev-fra` unreachable; the last three reshape the change page and the Changes list too (delivery's `change::example::Shape`). | debug and stress builds |
 | `FRESHKUBE_FIXTURE_HOLD` | `talos`, `lists`, `coroot`, `monitoring`, `applications`, `all` | Keeps example data from answering so pages stay on their loading rows: `talos` holds the Talos overview and the Kubernetes summary (Overview, Nodes, System services, Operations), `lists` the Resources lists, `coroot` Observability's applications, incidents and traces, `monitoring` the dashboard's panels, `applications` the Applications list, `all` every one; `scripts/stress.sh … loading <page>` sets it. | debug and stress builds |
 
-The app's binaries parse all of these knobs once into `DebugOptions` (`crates/freshkube-desktop/src/debug_options.rs`) and the pages are handed their value; none reads the environment ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-the-debug-knobs-are-parsed)). A unit test there fails when this table and `DebugOptions` name different knobs. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
+The app's binaries parse all of these knobs once into `DebugOptions` (`crates/freshkube-desktop/src/debug_options.rs`) and the pages are handed their value; none reads the environment ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#where-the-debug-knobs-are-parsed)). A unit test there fails when these tables and `DebugOptions` name different knobs. Use them with `scripts/smoke.sh` (see [Smoke tests](#smoke-tests)).
 
 ## Cluster safety
 
@@ -104,8 +111,10 @@ GPUI suits Rust well: views are entities changed through `update`, `cx.notify()`
 - `render` runs on every frame for every dirty view, and a notify redraws the whole window; even a hover does. Never sort, filter, group or format collections in `render`. Derive display data when the data changes and keep it on the entity.
 - Caching is opt-in. Use `.cached()` views or row caches keyed by a data revision for anything heavy, and give each cache a clear owner that invalidates it.
 - Keep repeating motion out of the cached chrome and the pages: anything that ticks inside a view redraws it and every ancestor each frame. Draw it in a small view beside them, as the shell draws the shown page's `LoadingMotion` beside the page and its cached header, rail and column (`desktop/shell/chrome.rs`). Cache those parts beside the motion, never an ancestor of cached pages: a cached view that draws again draws every cached view inside it again. No Kit `.loading` spinner on a Refresh; use `ui::refresh_icon`.
+
 - Don't run app-wide timers that notify a large view. Give periodic updates (clocks, "updated 5 s ago", ages) to the smallest entity that shows them. A 1-second timer on the shell once redrew everything and made the app feel slow.
 - Render only the rows a frame can show. Use `uniform_list` for fixed-height rows. For rows whose height depends on the width, use `VirtualList` with heights measured by layout, never computed. A plain list needs a hard cap. [docs/LONG_LISTS.md](docs/LONG_LISTS.md) has the rules and the state of each list.
+
 - A `cx.notify()` from `on_prepaint` or paint only marks the view dirty; no frame follows until some input arrives. Geometry learned while drawing (a list's width, a panel's height) must ask for the redraw with `window.on_next_frame`, as the log view does. Headless tests miss this, since `render_frame` draws regardless; check `simulate_next_frame`.
 - Keep `[profile.dev.package."*"] opt-level = 3` in the workspace manifest. Unoptimised GPUI draws a frame about 14× slower, so debug builds without it give a false picture of performance.
 - Measure before and after a change that could cost time. `scripts/stress.sh` runs list, watch-burst and log-flood workloads on a release build against a synthetic API and prints per-span timings, CPU and memory; [docs/PERFORMANCE.md](docs/PERFORMANCE.md) has the workloads and the numbers so far.
@@ -116,9 +125,16 @@ GPUI has its own executor; tonic and kube need Tokio. The binary owns the Tokio 
 
 - Run cluster I/O on Tokio, send the result back to a GPUI task, and update entities there. Never block the UI thread.
 - Give ordinary reads both a source/target identity and a request generation. Keep the Tokio `OwnedJob` and GPUI delivery `Task` on their actual owner; replacement drops both, and completion checks identity/generation before publishing. `Snapshot` tracks data and freshness; it does not cancel work or inspect credentials. [State and request lifetimes](docs/STATE_LIFETIMES.md) describes the current owners and exceptions.
+
 - The shell activates and periodically refreshes only the visible `ScreenPanel`; it sends source updates to every page in its one map, the screens first, and tells every page whether it shows through `ScreenPanel::set_visible` ([who drops what on hide](docs/STATE_LIFETIMES.md#read-job-and-delivery-ownership)). New page-owned reads should start only while shown; preserve the existing log and user-started session lifetimes below. Dock log tabs are user-started: each reads while it is open, on any page, and stops when it closes.
 - The shell's Kubernetes summary is session-owned: it runs on every page, and selecting a Talos node does not replace the session ([docs/features/shell.md](docs/features/shell.md)).
 - Operations mutations have a separate lifetime: a detached delivery task holds the app-wide operation ticket until core's runner ends. Cancellation is cooperative, before/between steps; await a submitted mutation. Never wrap the submitted run in an ordinary `OwnedJob` or abort it when its screen changes.
+
+### Snapshot and Loader
+
+Use desktop's `state::Snapshot<T, I, E>` for a value read for one identity and, for ordinary inspection reads, `screens::Loader<T>` ([how, with an example](docs/STATE_LIFETIMES.md#snapshot-and-loader-in-brief)): `load` for Tokio work, `resolve` for fixtures, and `reset()` when `set_source` detects a changed target. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
+
+Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`.
 
 ### Learning the API
 
@@ -148,6 +164,7 @@ Headless UI tests render the real app, find elements by id and click or type int
 - `window.render_frame` bypasses view caches. Don't use it to prove that a view was or was not redrawn; use the render probes (`probe::hit`, `probe::count`) from `freshkube-probe`. They count only with its `counting` feature, which a crate turns on from its dev-dependencies, as `freshkube-desktop` does.
 - Element snapshots can't tell whether a button is disabled. Assert the outcome instead: click it and check that nothing changed.
 - A page's event reaches the shell, and the shell's push reaches a page, only after the current update ends. A test that clicks something a page turns into an event, or changes what the shell hands a page, calls `cx.run_until_parked()` outside `update_window` before asserting the result.
+
 - Setting an input's value from code does not emit its change event. Type into it with real input events (`window.input`) when the change handler matters.
 - Tests write only under a fresh temporary directory, never into the crate or the user's home.
 - A test that waits on work in a real Tokio runtime or socket (a fake server, a worker thread) waits through `freshkube_ui::real_io` (`RealIo::wait_for_io`, `until_io`), on the drawn element, the fake's recorded request or the state it then asserts: `wait_for`'s timeout runs on the test clock and can pass before the real work answers, and `run_until_parked` alone can return before it does. The helper's one allowance is 30 s of real time.
@@ -164,8 +181,9 @@ scripts/smoke.sh stop
 ```
 
 - Smoke the pages and flows the change touches, in fixture mode and, when the change reads a cluster or Coroot, against the context the user chose. Run `scripts/smoke.sh pages` when a change reaches the frame, the theme or shared components.
-- Compare a page moved onto the shared components with Pods side by side, at the same size, theme and text size.
+- Compare a page moved onto the shared components with Pods side by side, at the same size, theme and text size, and check that title, padding, header, rows, group rows, glyphs and states line up.
 - Look at every capture yourself, then report what you checked and what you saw: the captures that show the change, anything wrong, and anything you could not check. Judge a page from all of it, not its first screen.
+
 - Open pages with `--page` from a debug binary rather than navigating to them, and click only to exercise the change.
 - Live checks only look and navigate. Never press Operations or maintenance actions, and keep credentials out of captures you share. Sign-ins are the user's: stop and ask.
 - One worktree uses the screen at a time: build before you start, keep the session short, always `stop`, and let another worktree's check finish.
@@ -183,17 +201,10 @@ Diagnostic checks follow these rules; [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 - Before merging a check: create its error condition, fix it and see the check show healthy; disconnect the API and see no crash; make sure old log messages don't affect the current state.
 - The COSI State API is internal and not exposed through port 50000: don't implement a COSI gRPC client (it fails with `PermissionDenied`); run `talosctl get` as a subprocess.
 
-## Code Patterns
-
-### Using Snapshot<T, I, E> and Loader<T>
-
-Use desktop's `state::Snapshot<T, I, E>` for a value read for one identity and, for ordinary inspection reads, `screens::Loader<T>` ([how, with an example](docs/STATE_LIFETIMES.md#snapshot-and-loader-in-brief)): `load` for Tokio work, `resolve` for fixtures, and `reset()` when `set_source` detects a changed target. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
-
-Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`.
-
 ## Adding a screen
 
 1. Pick the page's type from [DESIGN.md](docs/DESIGN.md#page-types) (table page, dashboard, canvas or detail pane) and build it from that type's shared components: the page header, the table, group rows, status glyphs and states. Don't draw your own title, table, glyphs or radii; `scripts/check-style.sh` fails on them, and its allowlist is empty and only shrinks, so there is no exception to add. A table page's line (context, counts, state, refresh time) goes in the status bar through `ScreenPanel::status` and a `status::Segment`, not under its header. Its row actions act on the selection, from the toolbar, keys and the shared row context menu (`TableSource::menu_focus` and `row_menu`), never from a button on the row. A selection's details go in the shared Inspector (`freshkube_ui::inspector`, change 9 in DESIGN.md), beside the table or stacked under it, not in a card of its own.
+
 2. Add cluster pages to `Page` (`desktop/pages.rs`): `ALL`, its slug, its `Area` and column row, and its shortcut. Add inspection views to `PageId` and `PageId::SCREENS`, the screen factory and `Page::id` or `NodeTabs::screen`, according to their scope.
 3. Implement `ScreenPanel` in `screens/<name>.rs`, or `screens/<name>/mod.rs` once it mixes concerns. The screen owns its requests (`OwnedJob`), its data and its offline example data.
 4. Put cluster logic in `freshkube-core` and keep the screen to presentation.
