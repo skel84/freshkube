@@ -648,7 +648,7 @@ impl super::Pilot {
     /// Example data shows the acme workspace and touches no file. A file
     /// the app can't use is left where it is; the page says why.
     pub(super) fn load_workspace(&mut self, cx: &mut Context<Self>) {
-        let (loaded, seen) = match (&self.workspace_file, self.fixture) {
+        let (loaded, seen) = match (&self.workspace_file, self.mode().is_example()) {
             (_, true) => (
                 Loaded::Workspace(workspace::example()),
                 workspace::Seen::Missing,
@@ -656,7 +656,7 @@ impl super::Pilot {
             (Some(file), false) => workspace::load_seen(file),
             (None, false) => (Loaded::Missing, workspace::Seen::Missing),
         };
-        let example = self.fixture;
+        let example = self.mode().is_example();
         let file = self.workspace_file.clone();
         self.settings_page.update(cx, |page, cx| {
             page.file = file;

@@ -80,7 +80,7 @@ impl Pilot {
         let mut warnings: Vec<SharedString> = actions::critical_warning(&service_id)
             .map(|warning| vec![SharedString::from(warning)])
             .unwrap_or_default();
-        if self.fixture {
+        if self.mode().is_example() {
             warnings.push("Example data: nothing will be sent to a node.".into());
         }
         mutation::confirm(
@@ -167,7 +167,7 @@ impl Pilot {
                 service_id: service_id.clone(),
             },
         };
-        if self.fixture {
+        if self.mode().is_example() {
             // Offline: no client, no audit file, no network.
             self.set_restart_notice(&service_id, true, actions::simulated(&fix), cx);
             operations.update(cx, |operations, cx| operations.finish(ticket, cx));
