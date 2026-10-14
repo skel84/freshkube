@@ -392,7 +392,7 @@ impl<S: StreamSource> StreamReads for LogView<S> {
                 }
                 Err(error) => {
                     access.forget();
-                    let update = PodLogUpdate::Failed(Failure::new(FailureKind::Other, error));
+                    let update = PodLogUpdate::Failed(Failure::new(FailureKind::Other, error.message));
                     let _ = feed
                         .send(Fed {
                             key: stream_key,

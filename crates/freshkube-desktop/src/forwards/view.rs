@@ -271,7 +271,7 @@ impl ForwardView {
                         access.forget();
                         return Ok(Err(ForwardFailure::new(
                             ForwardFailureKind::Request(FailureKind::Other),
-                            error,
+                            error.message,
                         )));
                     }
                 };

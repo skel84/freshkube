@@ -1392,7 +1392,7 @@ async fn watch(
         Err(error) => {
             access.forget();
             let _ = sender
-                .send(vec![ResourceEvent::Read(ReadState::Failed(error))])
+                .send(vec![ResourceEvent::Read(ReadState::Failed(error.message))])
                 .await;
             return;
         }

@@ -93,7 +93,7 @@ impl Dock {
                         sender.send_modify(|pods| {
                             pods.failure = Some(freshkube_core::resources::Failure::new(
                                 freshkube_core::resources::FailureKind::Other,
-                                error,
+                                error.message,
                             ))
                         });
                         // Keep the sender until the receiver has seen it.

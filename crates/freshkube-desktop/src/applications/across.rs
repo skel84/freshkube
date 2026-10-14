@@ -68,7 +68,7 @@ pub(crate) async fn open_reader(
     alone: Option<Alone>,
 ) -> Result<Result<EntryReader, Failure>, String> {
     if alone.is_some() {
-        return access.client().await.map(|client| Ok(wrap(client, alone)));
+        return access.client().await.map(|client| Ok(wrap(client, alone))).map_err(|failure| failure.message);
     }
     let client = tokio::time::timeout(entry::CONNECT_DEADLINE, client_or_failure(access))
         .await
@@ -81,13 +81,13 @@ pub(crate) async fn open_reader(
     Ok(client.map(|client| wrap(client, None)))
 }
 
-/// The open connection's client, or why it couldn't be had. The kind is a
-/// guess, `Unreachable`, until `ClusterAccess` returns a `Failure` of its own.
+/// The open connection's client, or why it couldn't be had. Keep this
+/// presentation boundary's established kind and words for delivery.
 async fn client_or_failure(access: &ClusterAccess) -> Result<kube::Client, Failure> {
     access
         .client()
         .await
-        .map_err(|why| Failure::new(FailureKind::Unreachable, why))
+        .map_err(|why| Failure::new(FailureKind::Unreachable, why.message))
 }
 
 /// The reader over the open connection's client.

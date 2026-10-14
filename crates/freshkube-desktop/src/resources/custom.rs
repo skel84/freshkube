@@ -434,7 +434,7 @@ where
                 Ok(client) => client,
                 Err(error) => {
                     access.forget();
-                    return Ok(Err(Failure::new(FailureKind::Other, error)));
+                    return Ok(Err(Failure::new(FailureKind::Other, error.message)));
                 }
             };
             let result = read(client).await;

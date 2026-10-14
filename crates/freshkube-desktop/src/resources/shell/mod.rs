@@ -380,7 +380,7 @@ impl ShellView {
                     Ok(client) => client,
                     Err(error) => {
                         access.forget();
-                        return Ok(Err(Failure::new(FailureKind::Other, error).into()));
+                        return Ok(Err(Failure::new(FailureKind::Other, error.message).into()));
                     }
                 };
                 let result = start_exec(client, request).await;
