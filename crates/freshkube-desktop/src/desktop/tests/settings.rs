@@ -16,6 +16,49 @@ fn settings_shows_the_metrics_source_read_only_for_example_data(cx: &mut TestApp
     .unwrap();
 }
 
+/// Example data never reads or writes the saved Coroot connection, even
+/// when the launch has a preferences folder: the field stays empty, nothing
+/// reconnects, and `coroot.json` is left as it was.
+#[gpui_kit::test]
+async fn example_data_leaves_the_saved_coroot_connection_alone(cx: &mut TestAppContext) {
+    // The live launch reads its kubeconfig on Tokio, which answers here.
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let directory = guard.path();
+    let preferences = directory.join("preferences.json");
+    let saved = directory.join("coroot.json");
+    let contents = r#"{"url": "https://coroot.example.com", "auth": "anonymous", "project": null, "reconnect": false, "remember": false}"#;
+    std::fs::write(&saved, contents).unwrap();
+
+    // A live launch reads it, so the file is one the page would load. The
+    // kubeconfig is missing, so nothing is contacted; its read is waited
+    // for, so no answer arrives after the test.
+    let live = GpuiOptions::kubernetes_only(Some(directory.join("missing")), Some("x".into()), 100)
+        .with_preferences(Some(preferences.clone()));
+    let (_runtime, handle, pilot) = mount(cx, live, 1280., 820.);
+    cx.wait_for_io(handle, |_, cx| !pilot.read(cx).config_loading)
+        .await;
+    cx.update(|cx| {
+        let url = pilot.read(cx).observability.read(cx).coroot_url(cx);
+        assert_eq!(url, "https://coroot.example.com");
+    });
+
+    let example = GpuiOptions::fixture().with_preferences(Some(preferences));
+    let (_runtime, handle, pilot) = mount(cx, example, 1280., 820.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(Page::Observability, window, cx)
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(pilot.read(cx).observability.read(cx).coroot_url(cx), "");
+    });
+    assert_eq!(std::fs::read_to_string(&saved).unwrap(), contents);
+}
+
 #[gpui_kit::test]
 fn browse_is_unavailable_for_example_data(cx: &mut TestAppContext) {
     let (_runtime, handle, _view) = fixture(cx, 1280., 820.);

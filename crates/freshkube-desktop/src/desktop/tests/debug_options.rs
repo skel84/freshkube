@@ -70,6 +70,32 @@ fn the_list_hold_reaches_both_resources_screens(cx: &mut TestAppContext) {
     });
 }
 
+/// Coroot's examples don't wait for Talos: under the Talos hold
+/// Observability still answers them, and only the Coroot hold keeps them
+/// back.
+#[gpui_kit::test]
+fn the_talos_hold_leaves_coroot_to_its_own_hold(cx: &mut TestAppContext) {
+    for coroot in [false, true] {
+        let debug = DebugOptions {
+            hold: Hold {
+                talos: true,
+                coroot,
+                ..Hold::default()
+            },
+            ..DebugOptions::default()
+        };
+        let (_runtime, _handle, pilot) = mount(cx, options(debug), 1280., 880.);
+        cx.update(|cx| {
+            let observability = pilot.read(cx).observability.read(cx);
+            assert_eq!(
+                observability.incident_count().is_none(),
+                coroot,
+                "coroot hold {coroot}"
+            );
+        });
+    }
+}
+
 #[gpui_kit::test]
 fn the_app_menu_button_reaches_the_shell(cx: &mut TestAppContext) {
     let debug = DebugOptions {

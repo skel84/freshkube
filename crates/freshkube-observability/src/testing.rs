@@ -15,6 +15,11 @@ impl ObservabilityPage {
         )
     }
 
+    /// The Coroot address the connection's field holds.
+    pub fn coroot_url(&self, cx: &gpui_kit::App) -> String {
+        self.url.read(cx).value().to_string()
+    }
+
     /// Configure a sanitized Coroot subject for the shell's navigation regression.
     pub fn fixture_link(
         &mut self,
