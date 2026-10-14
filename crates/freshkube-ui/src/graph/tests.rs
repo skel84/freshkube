@@ -367,16 +367,16 @@ fn an_empty_graph_shows_the_source_s_message(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn drawing_never_derives_the_page(cx: &mut TestAppContext) {
     let (handle, map) = open(cx, state(120, 300), 1280., None);
-    let before = cx.update(|cx| map.read(cx).graph.prepared);
+    let before = freshkube_probe::probe::count("graph.prepare");
     cx.update_window(handle, |_, window, cx| {
         for _ in 0..5 {
             window.render_frame(cx);
         }
     })
     .unwrap();
-    assert_eq!(cx.update(|cx| map.read(cx).graph.prepared), before);
+    assert_eq!(freshkube_probe::probe::count("graph.prepare"), before);
     cx.update(|cx| map.update(cx, |map, _| map.graph.set_page(2)));
-    assert_eq!(cx.update(|cx| map.read(cx).graph.prepared), before + 1);
+    assert_eq!(freshkube_probe::probe::count("graph.prepare"), before + 1);
 }
 
 #[gpui_kit::test]

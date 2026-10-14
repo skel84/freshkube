@@ -237,10 +237,6 @@ pub struct GraphState<K> {
     pan: ScrollHandle,
     ids: Ids,
     display: Display,
-    /// How many times the page was derived, so tests can tell that
-    /// drawing never derives it.
-    #[cfg(test)]
-    prepared: usize,
 }
 
 impl<K: Clone + Ord> GraphState<K> {
@@ -259,8 +255,6 @@ impl<K: Clone + Ord> GraphState<K> {
             pan: ScrollHandle::new(),
             ids: Ids::new(prefix),
             display: Display::default(),
-            #[cfg(test)]
-            prepared: 0,
         };
         state.prepare();
         state
@@ -407,10 +401,7 @@ impl<K: Clone + Ord> GraphState<K> {
     /// every call between them. It runs when anything shown changes, never
     /// while drawing.
     fn prepare(&mut self) {
-        #[cfg(test)]
-        {
-            self.prepared += 1;
-        }
+        freshkube_probe::probe::hit("graph.prepare");
         self.visible = (0..self.edges.len())
             .filter(|&ix| !self.problems || self.edges[ix].problem())
             .collect();
