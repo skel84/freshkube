@@ -400,9 +400,8 @@ pub struct LogView<S: LogSource> {
     /// `None` for any other reveal.
     reveal_matched_line: Option<usize>,
     /// The last matched line a reveal brought into view: its row, its line
-    /// and how far down the row the line ends. Tests read it, since laying
-    /// a row out again works only while a frame draws.
-    #[cfg(test)]
+    /// and how far down the row the line ends. Laying a row out again
+    /// works only while a frame draws.
     revealed_line: Option<(u64, usize, Pixels)>,
     review_anchor: Option<ReviewAnchor>,
     anchor_evicted: bool,
@@ -488,7 +487,6 @@ impl<S: LogSource> LogView<S> {
             row_widths: Vec::new(),
             pending_reveal: None,
             reveal_matched_line: None,
-            #[cfg(test)]
             revealed_line: None,
             manual_review: Rc::new(Cell::new(false)),
             row_measurements: BTreeMap::new(),
