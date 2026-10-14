@@ -1,7 +1,8 @@
 //! What every page is handed, built in one place: the session owner until
 //! #44's session type takes it. It holds no fields of its own; it reads
 //! the shell's and decides, in one match, whether the window shows example
-//! data, a kubeconfig context or a Talos cluster.
+//! data, a kubeconfig context or a Talos cluster. [`Mode`] answers the same
+//! question for the chrome.
 
 use std::sync::Arc;
 
@@ -11,11 +12,49 @@ use freshkube_core::cluster_source::{
 };
 
 use super::Pilot;
+use super::kubernetes_only::KubernetesOnly;
 use crate::backend::Target;
 use crate::resources;
 use crate::screens::{PageSource, ScreenSource};
 
+/// What the window shows, as two answers: example data or a live cluster,
+/// and Talos with Kubernetes or Kubernetes alone. They are independent:
+/// example data is Kubernetes-only too after "Use Kubernetes only…" under
+/// `--fixture`, or on the `kubernetes-only` debug page. Readers ask these
+/// questions rather than the shell's fields.
+#[derive(Clone, Copy)]
+pub(super) struct Mode<'a> {
+    example: bool,
+    kubernetes_only: Option<&'a KubernetesOnly>,
+}
+
+impl<'a> Mode<'a> {
+    /// Example data, which reads no cluster.
+    pub(super) fn is_example(self) -> bool {
+        self.example
+    }
+
+    /// Talos is part of the session: false when a kubeconfig is all it
+    /// reads.
+    pub(super) fn has_talos(self) -> bool {
+        self.kubernetes_only.is_none()
+    }
+
+    /// The kubeconfig a session without Talos reads, and its connection.
+    pub(super) fn kubernetes_only(self) -> Option<&'a KubernetesOnly> {
+        self.kubernetes_only
+    }
+}
+
 impl Pilot {
+    /// What the window shows: example data or not, with Talos or not.
+    pub(super) fn mode(&self) -> Mode<'_> {
+        Mode {
+            example: self.fixture,
+            kubernetes_only: self.kubernetes_only.as_ref(),
+        }
+    }
+
     /// What every page is handed: the Talos target the screens inspect, and
     /// the Kubernetes connection with the entry and access it is.
     ///
@@ -28,7 +67,8 @@ impl Pilot {
     /// cluster and its credentials, not the target node, so changing node
     /// keeps a watch; `kube_identity` keeps it while the source is missing.
     pub(super) fn source(&self) -> PageSource {
-        let (screen, kube, kube_identity) = match (self.fixture, &self.kubernetes_only) {
+        let mode = self.mode();
+        let (screen, kube, kube_identity) = match (mode.is_example(), mode.kubernetes_only()) {
             (true, _) => {
                 let id = self
                     .applied

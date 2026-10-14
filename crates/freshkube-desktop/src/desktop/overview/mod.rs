@@ -243,7 +243,7 @@ impl super::Pilot {
     /// Overview.
     pub(super) fn overview_state(&self) -> OverviewState {
         let summary = &self.registry.active().kubernetes_summary;
-        let unreachable = (self.kubernetes_only.is_none()
+        let unreachable = (self.mode().has_talos()
             && self.overview.data().is_none()
             && !self.overview.is_loading())
         .then(|| self.overview.error().cloned())
@@ -251,7 +251,7 @@ impl super::Pilot {
         OverviewState {
             context: self.applied.context.clone().unwrap_or_default().into(),
             config_error: self.config_error.clone(),
-            kubernetes_only: self.kubernetes_only.is_some(),
+            kubernetes_only: !self.mode().has_talos(),
             unreachable,
             stale_talos: StaleTalos::of(&self.overview),
             stale: self.overview.is_stale() || summary.is_stale(),

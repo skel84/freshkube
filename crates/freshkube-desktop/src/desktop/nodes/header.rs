@@ -116,13 +116,13 @@ impl Nodes {
 
 impl Pilot {
     pub(super) fn rebuild_nodes_meta(&mut self, cx: &mut App) {
-        let (context, lead) = match (&self.applied.context, self.fixture) {
+        let (context, lead) = match (&self.applied.context, self.mode().is_example()) {
             (_, true) => (None, Some(Part::new("Example data"))),
             (Some(context), false) => (Some(context.clone()), None),
             (None, false) => (None, Some(Part::new("Not connected"))),
         };
         let mut parts: Vec<Part> = lead.into_iter().collect();
-        if self.kubernetes_only.is_none() {
+        if self.mode().has_talos() {
             parts.push(source_status("Talos", &self.overview));
         }
         let nodes = self

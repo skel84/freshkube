@@ -478,7 +478,7 @@ impl Pilot {
             .config_error
             .as_deref()
             .or_else(|| self.overview.error().map(String::as_str));
-        let reading = if self.kubernetes_only.is_some() || self.overview.data().is_some() {
+        let reading = if !self.mode().has_talos() || self.overview.data().is_some() {
             Reading::Answered
         } else if let Some(failure) = failure {
             Reading::Failed(failure.to_owned().into())
@@ -539,7 +539,7 @@ impl Pilot {
             .or(self.config_error.as_deref())
             .or_else(|| self.overview.error().map(String::as_str))
             .map(|error| error.to_owned().into());
-        let talos = self.kubernetes_only.is_none();
+        let talos = self.mode().has_talos();
         self.node_workspace.update(cx, |nodes, cx| {
             nodes.set_rows(rows, talos_current);
             if nodes
@@ -576,8 +576,8 @@ impl Pilot {
                 .data()
                 .map(|summary| summary.as_ref()),
             self.overview.data(),
-            self.fixture,
-            self.kubernetes_only.is_some(),
+            self.mode().is_example(),
+            !self.mode().has_talos(),
         );
         if self.overview.is_stale() {
             let reason = self
@@ -589,7 +589,7 @@ impl Pilot {
         }
         self.navigation.column_changed();
         self.navigation.rail_marks =
-            crate::desktop::shell::RailMarks::from_cards(&display.cards, self.fixture);
+            crate::desktop::shell::RailMarks::from_cards(&display.cards, self.mode().is_example());
         let attention = Arc::new(crate::presentation::attention::build(
             &rows,
             self.registry

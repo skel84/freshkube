@@ -20,7 +20,7 @@ impl Pilot {
         let mut named = None;
         let left = if let Some(running) = Operations::current(cx) {
             self.render_operation_status(running, cx)
-        } else if self.kubernetes_only.is_some() {
+        } else if !self.mode().has_talos() {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
             named = names.then(|| context.clone());
             status
@@ -189,7 +189,7 @@ impl Pilot {
     /// or the Kubernetes-only tag, and example mode's controls.
     fn render_status_right(&self, compact: bool, cx: &mut Context<Self>) -> Div {
         let p = palette(cx);
-        if self.kubernetes_only.is_some() {
+        if !self.mode().has_talos() {
             h_flex()
                 .flex_none()
                 .gap_3()
@@ -235,7 +235,7 @@ impl Pilot {
                         "Talos auto-refresh off"
                     })
                 })
-                .when(self.fixture, |this| {
+                .when(self.mode().is_example(), |this| {
                     this.child(
                         Button::new("fixture-fail")
                             .ghost()
@@ -245,7 +245,7 @@ impl Pilot {
                             .on_click(cx.listener(|view, _, _, cx| view.simulate_failure(cx))),
                     )
                 })
-                .when(self.fixture, |this| {
+                .when(self.mode().is_example(), |this| {
                     this.child(ui::tag(Tone::Outline, None, "Example data", cx))
                 })
         }
@@ -258,7 +258,7 @@ impl Pilot {
         let id: SharedString = match self.navigation.page {
             Page::Resources => "resource-scope".into(),
             Page::Observability => "obs-scope".into(),
-            Page::SystemServices if self.kubernetes_only.is_some() => return None,
+            Page::SystemServices if !self.mode().has_talos() => return None,
             page => format!("{}-scope", page.slug()).into(),
         };
         let page = self.pages.get(&self.navigation.page.id())?.clone();
@@ -309,8 +309,8 @@ pub(super) fn settings_content(
     let (fixture, kubernetes_only, loading, automatic, appearance) = {
         let view = view.read(cx);
         (
-            view.fixture,
-            view.kubernetes_only.is_some(),
+            view.mode().is_example(),
+            !view.mode().has_talos(),
             view.config_loading,
             view.chrome.automatic,
             view.chrome.appearance,

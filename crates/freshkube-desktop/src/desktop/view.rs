@@ -86,7 +86,7 @@ impl Pilot {
             // only places its cached panels, and only the one under the
             // pointer draws again.
             Page::Monitoring => self.monitoring.clone().into_any_element(),
-            page if self.kubernetes_only.is_some() && page.needs_talos() => {
+            page if !self.mode().has_talos() && page.needs_talos() => {
                 self.render_needs_talosconfig(cx)
             }
             // Pages redraw when their own state changes, not with the shell.
@@ -126,7 +126,7 @@ impl Pilot {
             Page::Resources => self.resources.read(cx).loading_motion(),
             Page::Observability => self.observability.read(cx).loading_motion(cx),
             Page::Applications => self.applications.read(cx).loading_motion(cx),
-            page if self.kubernetes_only.is_some() && page.needs_talos() => None,
+            page if !self.mode().has_talos() && page.needs_talos() => None,
             // Its table's, or the open node's tab's: a node screen's.
             Page::Nodes => self.pages.get(&PageId::Nodes)?.loading_motion(cx),
             Page::SystemServices => {
