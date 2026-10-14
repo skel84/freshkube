@@ -28,8 +28,8 @@ use crate::resources::containers::choice_label;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::ClusterAccess;
 use crate::stream_status::Status;
-use crate::terminal::{TerminalEvent, TerminalSize, TerminalView};
 use crate::ui::Tone;
+use freshkube_terminal::{TerminalEvent, TerminalSize, TerminalView};
 
 mod example;
 #[cfg(test)]

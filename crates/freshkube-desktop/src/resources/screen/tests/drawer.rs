@@ -21,7 +21,7 @@ fn a_clicked_row_shows_its_details_in_the_drawer_over_the_list(cx: &mut TestAppC
             let body = window.find("resource-split").bounds();
             let list = window.find("resource-list-area").bounds();
             assert_eq!(list.size.width, body.size.width);
-            let drawn = crate::desktop::layout_check::assert_drawer(
+            let drawn = freshkube_ui::layout_check::assert_drawer(
                 window,
                 cx,
                 "resource-split",

@@ -1,0 +1,1 @@
+- **Internal:** the Resources code now names the crates it uses (the probes, timings, terminal, monitoring history, layout checks, page width and node tabs) directly instead of through the desktop crate's old paths; the app behaves as before.

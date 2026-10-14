@@ -32,8 +32,8 @@ use super::model::ResourceIdentity;
 use super::screen::ClusterAccess;
 use super::{LogsAt, LogsRequest, ResourceLink, ShellRequest, example, live};
 use crate::backend::{self, OwnedJob};
-use crate::monitoring::history::{HistorySource, HistoryView};
 use freshkube_core::monitoring::history::Subject;
+use freshkube_monitoring::history::{HistorySource, HistoryView};
 
 mod cross_links;
 mod events;

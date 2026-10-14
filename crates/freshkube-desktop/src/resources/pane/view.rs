@@ -556,7 +556,7 @@ impl DetailPane {
 
 impl Render for DetailPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::desktop::probe::hit("resource-detail");
+        freshkube_probe::probe::hit("resource-detail");
         let Some(detail) = self.detail.as_ref() else {
             return div().into_any_element();
         };

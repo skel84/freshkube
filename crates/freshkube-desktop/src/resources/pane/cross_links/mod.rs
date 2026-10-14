@@ -1,9 +1,10 @@
 //! Cached pod relationships and their requests. Rendering reads only these rows.
 use super::*;
-use crate::desktop::nodes::{NodeRow, NodeTab};
+use crate::desktop::nodes::NodeRow;
 use crate::resources::{ResourceLink, model::ObjectRef};
 use freshkube_core::HasHealth;
 use freshkube_core::resources::{ContainerState, ObjectDocument, Owner, PodLinks};
+use freshkube_nav::NodeTab;
 use std::sync::Arc;
 
 mod cause;

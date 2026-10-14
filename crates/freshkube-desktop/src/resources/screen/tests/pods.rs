@@ -336,10 +336,7 @@ fn pods_on_a_node_that_isnt_ready_group_under_it(cx: &mut TestAppContext) {
     );
     assert_eq!(
         links.borrow().as_slice(),
-        [(
-            "talos-home".to_owned(),
-            crate::desktop::nodes::NodeTab::Overview
-        )]
+        [("talos-home".to_owned(), freshkube_nav::NodeTab::Overview)]
     );
 }
 
