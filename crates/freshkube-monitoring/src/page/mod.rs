@@ -26,16 +26,16 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
-use freshkube_core::monitoring::QueryError;
+use freshkube_core::monitoring::{Endpoint, QueryError};
+use freshkube_reads::Loader;
 use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task, WeakEntity};
 use tokio::runtime::Handle;
 
-use super::request::{self, Request};
 use super::store::{MonitoringStore, Saved};
 
 use board::Board;
 pub use catalog::{Catalog, Entry, EntryId, FolderState};
-use connection::Connection;
+use connection::{Connection, ConnectionReads};
 use markers::MarkerState;
 pub use markers::TalosNodes;
 pub use settings::settings_section;
@@ -44,6 +44,56 @@ pub use source::source_section;
 /// How long one request through the proxy may take, past the transport's
 /// own timeout, before the page gives up on it.
 const DEADLINE: Duration = Duration::from_secs(45);
+
+/// Completion identity contains no credentials. The request generation is
+/// the loader's; the page's generation schedules viewport work.
+#[derive(Clone, PartialEq, Eq)]
+struct ReadIdentity {
+    source: Option<String>,
+    client: u64,
+    kind: ReadKind,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum ReadKind {
+    Variables {
+        board: u64,
+    },
+    Panel {
+        board: u64,
+        panel: usize,
+    },
+    Connect {
+        endpoint: Option<Endpoint>,
+    },
+    Confirm {
+        service: freshkube_core::monitoring::PrometheusService,
+    },
+    Rebuild {
+        source: (
+            String,
+            Option<Endpoint>,
+            bool,
+            u64,
+            Option<gpui_kit::EntityId>,
+        ),
+    },
+    KubeMarkers {
+        since: i64,
+    },
+    TalosMarkers {
+        connection: u64,
+        nodes: Vec<(String, String)>,
+        since: i64,
+    },
+    Test {
+        context: String,
+    },
+}
+
+type Read = Loader<(), Option<ReadIdentity>>;
+/// The token also tracks a pending control or panel; it owns no work.
+type Request = freshkube_core::snapshot::Request<Option<ReadIdentity>>;
 
 /// What the page tells the shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -105,6 +155,7 @@ pub struct MonitoringPage {
     visible: bool,
     source: Option<ClusterSource>,
     connection: Connection,
+    connection_reads: ConnectionReads,
     /// Counts the Ready clients built again, so history takes the new one.
     clients: u64,
     /// History reaches this connection owner without retaining the page.
@@ -159,6 +210,7 @@ impl MonitoringPage {
             visible: false,
             source: None,
             connection: Connection::None,
+            connection_reads: ConnectionReads::default(),
             clients: 0,
             owner: cx.weak_entity(),
             histories: Vec::new(),
@@ -212,7 +264,8 @@ impl MonitoringPage {
             self.start_refresh(cx);
         } else {
             self.histories.retain(|history| history.upgrade().is_some());
-            self.connection.hide(!self.histories.is_empty());
+            self.connection
+                .hide(!self.histories.is_empty(), &mut self.connection_reads);
             if let Some(board) = &mut self.board {
                 board.hide();
             }
@@ -232,6 +285,7 @@ impl MonitoringPage {
             return;
         }
         self.reset_form();
+        self.connection_reads.forget();
         self.connection = Connection::None;
         self.histories.clear();
         cx.emit(MonitoringEvent::History);
@@ -254,6 +308,7 @@ impl MonitoringPage {
             self.allow_rebuild();
             self.resolve_variables(cx);
         } else {
+            self.connection_reads.forget();
             self.connection = Connection::None;
             cx.emit(MonitoringEvent::History);
             self.connect(cx);
@@ -302,15 +357,57 @@ impl MonitoringPage {
         .detach();
     }
 
-    /// Runs `work` where its source answers and hands the result to
-    /// `done`, unless the request is dropped first.
+    fn read_identity(&self, kind: ReadKind) -> ReadIdentity {
+        ReadIdentity {
+            source: self.source.as_ref().map(|source| source.id.clone()),
+            client: self.clients,
+            kind,
+        }
+    }
+
+    /// Starts the actual owner's loader and dispatches its typed answer.
+    /// Tokens kept by controls describe pending work, never cancel it.
     fn run<T: Send + 'static>(
-        &self,
+        &mut self,
+        identity: ReadIdentity,
+        slot: impl Fn(&mut Self) -> Option<&mut Read> + Clone + 'static,
         work: impl Future<Output = Result<T, QueryError>> + Send + 'static,
         cx: &mut Context<Self>,
         done: impl FnOnce(&mut Self, Result<T, QueryError>, &mut Context<Self>) + 'static,
     ) -> Request {
-        request::run(self.example(), &self.runtime, DEADLINE, work, cx, done)
+        let request = slot(self)
+            .expect("the read has an owner")
+            .start(Some(identity));
+        let captured = request.clone();
+        let delivery = slot.clone();
+        let (job, task) = crate::dispatch(
+            self.example(),
+            &self.runtime,
+            DEADLINE,
+            work,
+            cx,
+            move |this, result, cx| this.land(&captured, delivery, result, cx, done),
+        );
+        slot(self).expect("the read keeps its owner").run(job, task);
+        request
+    }
+
+    /// Keep the typed result intact for the accepted owner's callback.
+    fn land<T>(
+        &mut self,
+        request: &Request,
+        slot: impl FnOnce(&mut Self) -> Option<&mut Read>,
+        result: Result<T, QueryError>,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(&mut Self, Result<T, QueryError>, &mut Context<Self>),
+    ) {
+        let completion = result
+            .as_ref()
+            .map(|_| ())
+            .map_err(|error| error.message.clone());
+        if slot(self).is_some_and(|read| read.land(request, completion, cx)) {
+            done(self, result, cx);
+        }
     }
 
     /// Asks again on the chosen interval while the page shows.

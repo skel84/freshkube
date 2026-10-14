@@ -73,29 +73,19 @@ pub(crate) enum DetailEvent {
     Link(super::ResourceLink),
 }
 
-/// Where the pane opens: a section of Details, YAML, or the dock's logs.
-/// The strip has two tabs, Details and YAML; Overview, Ports and Events are
-/// sections of Details, one scrolling page.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Tab {
-    /// Details, from the top.
-    Overview,
-    Yaml,
-    /// Details, scrolled to its events.
-    Events,
-    /// Not a tab: asking for it opens the object's logs in the dock, for
-    /// pods and the workloads that run them.
-    Logs,
-    /// Details, scrolled to its ports: pods, Services and the workloads
-    /// that run pods.
-    Ports,
+pub(crate) use freshkube_nav::Tab;
+
+/// The strip's tabs, in order.
+const STRIP: [Tab; 2] = [Tab::Overview, Tab::Yaml];
+
+/// Where a [`Tab`] sits on the pane's strip.
+trait Strip {
+    /// The strip's tab that shows this one.
+    fn page(self) -> Tab;
+    fn index(self) -> usize;
 }
 
-impl Tab {
-    /// The strip's tabs, in order.
-    const STRIP: [Tab; 2] = [Tab::Overview, Tab::Yaml];
-
-    /// The strip's tab that shows this one.
+impl Strip for Tab {
     fn page(self) -> Tab {
         match self {
             Tab::Yaml => Tab::Yaml,
@@ -104,7 +94,7 @@ impl Tab {
     }
 
     fn index(self) -> usize {
-        Tab::STRIP
+        STRIP
             .iter()
             .position(|tab| *tab == self.page())
             .unwrap_or(0)
@@ -187,7 +177,7 @@ pub(crate) struct DetailPane {
     /// `Overview` (Details) or `Yaml`; the node's inspector, which has no
     /// strip, also shows `Events` alone.
     tab: Tab,
-    /// One per tab, in `Tab::STRIP`'s order, so the arrows can move between
+    /// One per tab, in `STRIP`'s order, so the arrows can move between
     /// them.
     tab_focus: [FocusHandle; 2],
     /// Details' scroll, and the section at its top as last drawn.
@@ -922,7 +912,7 @@ impl DetailPane {
     /// Moves `delta` tabs along, wrapping, and returns the tab now shown.
     fn step_tab(&mut self, delta: isize, cx: &mut Context<Self>) -> Option<Tab> {
         self.detail.as_ref()?;
-        let tabs = Tab::STRIP;
+        let tabs = STRIP;
         let next = (self.tab.index() as isize + delta).rem_euclid(tabs.len() as isize) as usize;
         let tab = tabs[next];
         self.show_page(tab, cx);

@@ -16,7 +16,8 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::{
-    CONTEXT, DetailEvent, DetailPane, Dismiss, NextTab, PreviousTab, Section, TABS_CONTEXT, Tab,
+    CONTEXT, DetailEvent, DetailPane, Dismiss, NextTab, PreviousTab, Section, Strip, TABS_CONTEXT,
+    Tab,
 };
 use crate::palette::palette;
 use crate::resources::containers::role_heading;

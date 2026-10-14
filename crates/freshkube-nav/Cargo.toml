@@ -1,0 +1,14 @@
+[package]
+name = "freshkube-nav"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Where a link goes: the objects, tabs and requests pages hand the shell; identities and requests only"
+
+# Core only, for `ResourceKind` and `PodContainers`: no GPUI and nothing of desktop.
+[dependencies]
+freshkube-core.workspace = true
+
+[lib]
+doctest = false

@@ -1,0 +1,51 @@
+//! The tabs a link opens on.
+
+/// Where the pane opens: a section of Details, YAML, or the dock's logs.
+/// The strip has two tabs, Details and YAML; Overview, Ports and Events are
+/// sections of Details, one scrolling page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tab {
+    /// Details, from the top.
+    Overview,
+    Yaml,
+    /// Details, scrolled to its events.
+    Events,
+    /// Not a tab: asking for it opens the object's logs in the dock, for
+    /// pods and the workloads that run them.
+    Logs,
+    /// Details, scrolled to its ports: pods, Services and the workloads
+    /// that run pods.
+    Ports,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NodeTab {
+    #[default]
+    Overview,
+    Pods,
+    Services,
+    Processes,
+    Storage,
+    Network,
+    Diagnostics,
+    Logs,
+    Events,
+    Yaml,
+}
+
+impl NodeTab {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Pods => "Pods",
+            Self::Services => "System services",
+            Self::Processes => "Processes",
+            Self::Storage => "Storage",
+            Self::Network => "Network",
+            Self::Diagnostics => "Diagnostics",
+            Self::Logs => "Logs",
+            Self::Events => "Events",
+            Self::Yaml => "YAML",
+        }
+    }
+}

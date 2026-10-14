@@ -26,7 +26,7 @@ use gpui_kit::{
 };
 
 use super::connection::describe;
-use super::{MonitoringEvent, MonitoringPage, Request};
+use super::{MonitoringEvent, MonitoringPage, Read, ReadKind, Request};
 use crate::palette::palette;
 use crate::store::{Choice, token_account};
 use crate::ui::{self, dp};
@@ -60,6 +60,7 @@ pub(crate) struct SourceForm {
     pub(super) token: Entity<InputState>,
     https: bool,
     pub(super) test: Test,
+    read: Read,
     /// Why the form can't be used as typed, or that it was saved.
     note: Option<SharedString>,
 }
@@ -96,6 +97,7 @@ impl MonitoringPage {
                 token: cx.new(|cx| InputState::new(window, cx).masked(true)),
                 https: false,
                 test: Test::Idle,
+                read: Read::default(),
                 note: None,
             });
         }
@@ -126,6 +128,7 @@ impl MonitoringPage {
         form.filled = Some(context);
         form.mode = mode;
         form.test = Test::Idle;
+        form.read.resolve(None, Ok(()));
         form.note = None;
         form.https = service.as_ref().is_some_and(|service| service.https);
         let set = |input: &Entity<InputState>, value: String, window: &mut Window, cx: &mut App| {
@@ -149,6 +152,7 @@ impl MonitoringPage {
         if let Some(form) = &mut self.form {
             form.mode = mode;
             form.test = Test::Idle;
+            form.read.resolve(None, Ok(()));
             form.note = None;
         }
         cx.notify();
@@ -158,6 +162,7 @@ impl MonitoringPage {
         if let Some(form) = &mut self.form {
             form.https = https;
             form.test = Test::Idle;
+            form.read.resolve(None, Ok(()));
         }
         cx.notify();
     }
@@ -246,15 +251,23 @@ impl MonitoringPage {
                 })
             }
         };
-        let request = self.run(work, cx, |this, result, cx| {
-            if let Some(form) = &mut this.form {
-                form.test = match result {
-                    Ok(message) => Test::Passed(message.into()),
-                    Err(error) => Test::Failed(error.message.into()),
-                };
-            }
-            cx.notify();
-        });
+        let request = self.run(
+            self.read_identity(ReadKind::Test {
+                context: source.context.clone(),
+            }),
+            |this| this.form.as_mut().map(|form| &mut form.read),
+            work,
+            cx,
+            |this, result, cx| {
+                if let Some(form) = &mut this.form {
+                    form.test = match result {
+                        Ok(message) => Test::Passed(message.into()),
+                        Err(error) => Test::Failed(error.message.into()),
+                    };
+                }
+                cx.notify();
+            },
+        );
         if let Some(form) = &mut self.form {
             form.test = Test::Testing(request);
             form.note = None;
@@ -300,6 +313,7 @@ impl MonitoringPage {
         self.keep_choice(context, choice.clone(), cx);
         if let Some(form) = &mut self.form {
             form.test = Test::Idle;
+            form.read.resolve(None, Ok(()));
             form.note = Some("Saved. Monitoring reads from it now.".into());
             let token = matches!(choice, Some(Choice::Url { token: true, .. }));
             form.token.update(cx, |input, cx| {
@@ -351,6 +365,7 @@ impl MonitoringPage {
 
     /// Drops the current connection and looks again if the page shows.
     fn reconnect(&mut self, cx: &mut Context<Self>) {
+        self.connection_reads.forget();
         self.connection = super::connection::Connection::None;
         cx.emit(MonitoringEvent::History);
         self.connect(cx);
@@ -361,6 +376,7 @@ impl MonitoringPage {
         if let Some(form) = &mut self.form {
             form.note = Some(note.into());
             form.test = Test::Idle;
+            form.read.resolve(None, Ok(()));
         }
         cx.notify();
     }
@@ -401,6 +417,7 @@ impl MonitoringPage {
     pub(super) fn reset_form(&mut self) {
         if let Some(form) = &mut self.form {
             form.test = Test::Idle;
+            form.read.resolve(None, Ok(()));
             form.note = None;
         }
     }

@@ -8,11 +8,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use freshkube_core::resources::{
-    EventUpdate, Failure, FailureKind, ObjectDocument, ObjectEvent, ResourceKind, SecretValue,
+    EventUpdate, Failure, FailureKind, ObjectDocument, ObjectEvent, SecretValue,
 };
 use gpui_kit::SharedString;
 
 use super::model::ResourceIdentity;
+pub(crate) use freshkube_nav::DetailTarget;
 
 /// The most events the pane lists; the count still says how many exist.
 pub(crate) const MAX_EVENTS: usize = 200;
@@ -23,13 +24,6 @@ pub(crate) const MAX_MATCHES: usize = 10_000;
 /// An open object is read again at most this often as the list reports
 /// new versions of it.
 pub(crate) const FOLLOW_INTERVAL: Duration = Duration::from_secs(1);
-
-/// The object the pane shows: an identity from the list, with its kind.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct DetailTarget {
-    pub(crate) identity: ResourceIdentity,
-    pub(crate) kind: ResourceKind,
-}
 
 /// One line of YAML, ready to draw.
 #[derive(Clone, Debug)]
