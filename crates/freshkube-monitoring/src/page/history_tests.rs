@@ -267,19 +267,21 @@ fn history_timers_do_not_loop_after_a_failed_rebuild(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let (page, cluster) = ready_history(cx, &runtime, &Replies::new(401), &Replies::new(401));
+    let before = freshkube_probe::probe::count("monitoring.history.ask");
     let history = history(cx, &runtime, &page, pod());
     first_failure(cx, &history, &cluster);
     until_io(cx, "replacement history failures", |cx| {
         cx.read(|cx| {
             page.read(cx).rebuild_name() == "used"
-                && history.read(cx).asks() == 2
+                && freshkube_probe::probe::count("monitoring.history.ask") - before == 2
                 && !history.read(cx).reading()
         })
     });
     for asks in 3..=5 {
         cx.executor().advance_clock(Duration::from_secs(60));
         until_io(cx, "the history timer's failed read", |cx| {
-            cx.read(|cx| history.read(cx).asks() == asks && !history.read(cx).reading())
+            freshkube_probe::probe::count("monitoring.history.ask") - before == asks
+                && cx.read(|cx| !history.read(cx).reading())
         });
         assert_eq!(cluster.forgot(), 1);
         assert_eq!(cluster.asked.load(Ordering::SeqCst), 2);
@@ -292,12 +294,13 @@ fn explicit_history_refresh_resets_the_same_rebuild_bound(cx: &mut TestAppContex
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let replacement = Replies::new(401);
     let (page, cluster) = ready_history(cx, &runtime, &Replies::new(401), &replacement);
+    let before = freshkube_probe::probe::count("monitoring.history.ask");
     let history = history(cx, &runtime, &page, pod());
     first_failure(cx, &history, &cluster);
     until_io(cx, "bounded persistent failure", |cx| {
         cx.read(|cx| {
             page.read(cx).rebuild_name() == "used"
-                && history.read(cx).asks() == 2
+                && freshkube_probe::probe::count("monitoring.history.ask") - before == 2
                 && !history.read(cx).reading()
         })
     });
@@ -519,6 +522,7 @@ fn a_failed_history_client_build_is_bounded_until_explicit_retry(cx: &mut TestAp
     let (page, cluster) = ready_history(cx, &runtime, &Replies::new(401), &Replies::new(200));
     cluster.fail_rebuild.store(true, Ordering::SeqCst);
     let release = hold_client(&cluster);
+    let before = freshkube_probe::probe::count("monitoring.history.ask");
     let history = history(cx, &runtime, &page, pod());
     first_failure(cx, &history, &cluster);
     client_started(cx, &cluster);
@@ -530,7 +534,8 @@ fn a_failed_history_client_build_is_bounded_until_explicit_retry(cx: &mut TestAp
     for asks in 2..=4 {
         cx.executor().advance_clock(Duration::from_secs(60));
         until_io(cx, "another failed history read", |cx| {
-            cx.read(|cx| history.read(cx).asks() == asks && !history.read(cx).reading())
+            freshkube_probe::probe::count("monitoring.history.ask") - before == asks
+                && cx.read(|cx| !history.read(cx).reading())
         });
         // The failed build also evicts its client through core's existing policy.
         assert_eq!(cluster.forgot(), 2);

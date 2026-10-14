@@ -37,6 +37,12 @@ impl<S: LogSource> LogView<S> {
         self.review.current_match.map(|hit| (hit.id, hit.line))
     }
 
+    /// The last revealed match's row identity, message-line index and
+    /// measured line end within the row.
+    pub fn revealed_line(&self) -> Option<(u64, usize, Pixels)> {
+        self.revealed_line
+    }
+
     /// The level chips' counts: Error, Warn, Info, Debug, Unknown.
     pub fn level_counts(&self) -> [usize; 5] {
         self.review.level_counts()

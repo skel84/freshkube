@@ -198,10 +198,7 @@ impl<S: LogSource> LogView<S> {
             let before: Pixels = self.sizes[..ix].iter().map(|row| row.height).sum();
             let top = (before + line_end - list / 2.).max(px(0.));
             self.scroll.set_offset(point(self.scroll.offset().x, -top));
-            #[cfg(test)]
-            {
-                self.revealed_line = Some((self.review.id(ix), line, line_end));
-            }
+            self.revealed_line = Some((self.review.id(ix), line, line_end));
         } else {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
         }
