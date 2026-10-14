@@ -2545,6 +2545,7 @@ dependencies = [
  "freshkube-core",
  "freshkube-prefs",
  "freshkube-probe",
+ "freshkube-reads",
  "freshkube-ui",
  "futures",
  "gpui-kit",

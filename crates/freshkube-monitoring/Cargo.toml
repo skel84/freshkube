@@ -16,6 +16,7 @@ gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
 freshkube-prefs.workspace = true
 freshkube-probe.workspace = true
+freshkube-reads.workspace = true
 freshkube-ui.workspace = true
 # Boot times for the node markers (`TalosNodes`).
 talos-rs.workspace = true

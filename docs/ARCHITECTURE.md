@@ -11,7 +11,7 @@ src/main.rs (freshkube)      → freshkube-desktop, freshkube-probe
 freshkube-desktop            → core, delivery, logs, monitoring, observability, prefs, probe, reads, terminal, ui, talos-rs
 freshkube-observability      → core, delivery, graph, logs, monitoring, prefs, ui
 freshkube-delivery           → core, talos-rs
-freshkube-monitoring         → core, prefs, probe, ui, talos-rs
+freshkube-monitoring         → core, prefs, probe, reads, ui, talos-rs
 freshkube-logs               → core, probe, ui
 freshkube-terminal           → probe, ui
 freshkube-workbench          → graph, probe, ui          (never shipped)
