@@ -3,7 +3,7 @@
 //! commands, and draws a full screen and a colour test, so UI tests and
 //! screenshots exercise the terminal without a cluster.
 
-use crate::terminal::TerminalSize;
+use freshkube_terminal::TerminalSize;
 
 /// What the example shell sends back for some input.
 #[derive(Debug, Default, PartialEq)]
@@ -246,7 +246,7 @@ fn colour_test() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{ExampleShell, Reply};
-    use crate::terminal::TerminalSize;
+    use freshkube_terminal::TerminalSize;
 
     fn shell() -> ExampleShell {
         ExampleShell::new(

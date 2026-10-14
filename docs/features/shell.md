@@ -1,6 +1,6 @@
 # The frame, the Overview and the Kubernetes summary
 
-The behaviour of the app frame, the Overview and the session that feeds them, moved from [AGENTS.md](../../AGENTS.md) unchanged apart from its link paths: the three paragraphs starting "The frame (`desktop/shell/`)…", "Overview derives its cards…" and "The Kubernetes summary session…".
+The behaviour of the app frame, the Overview and the session that feeds them, moved from [AGENTS.md](../../AGENTS.md) unchanged apart from its link paths: the three paragraphs starting "The frame (`desktop/shell/`)…", "Overview derives its cards…" and "The Kubernetes summary session…", and the GPUI rule's detail starting "The shell's Kubernetes summary is session-owned…".
 
 Code:
 
@@ -20,3 +20,4 @@ Overview derives its cards and attention rows when either summary changes (`pres
 
 The Kubernetes summary session (`kubernetes_summary/` in core and desktop) takes a `SubscriptionKey` (applied session/configuration revision, API, scope, selectors and retained representation) and serves only the exact summary key; the returned `Subscription` holds the shared publication and does not retain the key. Summary and visible Lifecycle share the same Node publication; the Resources printer-table watches remain separate. `InitDone` commits a complete replacement, including empty results. Failed or unfinished lists keep previous complete evidence explicitly stale; `Part::loaded()` can return that evidence, so check `is_current()` before inferring absence. A 403 remains `Part::Refused` and does not block other sources. Refresh cancels the watcher generation and relists; 410 relists the affected kind. Context/config replacement drops the `OwnedJob` and all child watches, while selecting a Talos node leaves the cluster session intact. Pods retain compact facts, at most 4 KiB each; object and byte limits fail visibly without evicting live records. Fixture input uses the same reducer with one captured reference time per session.
 
+The shell's Kubernetes summary is session-owned: nine compact reflector stores run on every page and publish after a 500 ms coalescing window. Health and visible Lifecycle consume those observations; selecting a Talos node does not replace the session. The 15 s shell cycle and countdown are for Talos; metrics keep their separate polling schedules.

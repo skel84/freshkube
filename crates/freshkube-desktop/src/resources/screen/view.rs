@@ -460,9 +460,9 @@ fn group_key(cause: &Cause) -> String {
 
 impl Render for ResourcesScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::desktop::probe::hit("resources");
-        let _span = crate::perf::span("table.render");
-        let _page = crate::perf::span("page.render");
+        freshkube_probe::probe::hit("resources");
+        let _span = freshkube_probe::perf::span("table.render");
+        let _page = freshkube_probe::perf::span("page.render");
         self.status();
         // A dock that opens or grows takes the list's room from below;
         // the list scrolls as it lays out to keep its selection in sight.

@@ -505,7 +505,7 @@ pub(super) fn node(
                     cx.stop_propagation();
                     cx.emit(super::super::ResourceLink::Node(
                         destination.clone(),
-                        crate::desktop::nodes::NodeTab::Overview,
+                        freshkube_nav::NodeTab::Overview,
                     ));
                 }),
             ),

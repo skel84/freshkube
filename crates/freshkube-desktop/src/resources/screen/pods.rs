@@ -14,8 +14,9 @@ use super::super::store::Usage;
 use super::super::{LogsRequest, ResourceLink, detail::DetailTarget, example};
 use super::{ClusterAccess, ResourcesScreen};
 use crate::backend;
-use crate::desktop::nodes::{NodeRow, NodeTab};
+use crate::desktop::nodes::NodeRow;
 use crate::screens::SCREEN_DEADLINE;
+use freshkube_nav::NodeTab;
 
 /// How often pods' use is read while the pods list shows.
 pub(super) const USAGE_INTERVAL: Duration = Duration::from_secs(15);
