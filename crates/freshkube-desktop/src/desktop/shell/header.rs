@@ -131,7 +131,7 @@ impl Pilot {
     /// The page shown, and in the node pane, its node and tab.
     fn render_location(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
-        let applied = if let Some(kube) = &self.kubernetes_only {
+        let applied = if let Some(kube) = self.mode().kubernetes_only() {
             format!(
                 "Kubeconfig: {} · Context: {}",
                 kube.files(),
@@ -140,7 +140,7 @@ impl Pilot {
         } else {
             format!(
                 "Config: {} · Context: {} · Node: {}",
-                if self.fixture {
+                if self.mode().is_example() {
                     "Example data".into()
                 } else {
                     self.applied
@@ -300,7 +300,7 @@ impl Pilot {
                                         },
                                     )),
                             )
-                            .when(view.kubernetes_only.is_none(), |this| {
+                            .when(view.mode().has_talos(), |this| {
                                 let popover = popover.clone();
                                 this.child(
                                     Button::new("use-kubernetes-only-entry")
@@ -452,9 +452,9 @@ impl Pilot {
         let pilot = cx.entity().downgrade();
         let open_pilot = pilot.clone();
         let path_input = self.path.clone();
-        let path_label = if self.fixture {
+        let path_label = if self.mode().is_example() {
             "Settings · Example data".to_owned()
-        } else if let Some(kube) = &self.kubernetes_only {
+        } else if let Some(kube) = self.mode().kubernetes_only() {
             format!("Settings · Kubeconfig: {}", kube.files())
         } else {
             format!(

@@ -292,7 +292,7 @@ impl Pilot {
                 .child(button)
                 .child(
                     ui::badge_dot(
-                        if self.fixture {
+                        if self.mode().is_example() {
                             Tone::Crit
                         } else {
                             Tone::Unknown
@@ -328,13 +328,13 @@ impl Pilot {
     pub(super) fn obs_sources_button(&self, collapsed: bool, cx: &Context<Self>) -> Button {
         Button::new("obs-data-sources")
             .ghost().small().icon(IconName::Database)
-            .tooltip(if self.fixture { "Sanitized example observations" } else { "Coroot connection and project" })
+            .tooltip(if self.mode().is_example() { "Sanitized example observations" } else { "Coroot connection and project" })
             .tooltip_placement(Placement::Right)
             .when_else(collapsed, |button| button.size(dp(36.)), |button| {
-                button.w_full().label(if self.fixture { "Example data" } else { "Coroot connection…" })
+                button.w_full().label(if self.mode().is_example() { "Example data" } else { "Coroot connection…" })
             })
             .on_click(cx.listener(|this, _, window, cx| {
-                if this.fixture {
+                if this.mode().is_example() {
                     window.open_dialog(cx, |dialog, _, _| dialog.title("Example data")
                         .child("Sanitized Coroot observations use the same presentation as live data. Later destinations and mutation controls are local previews."));
                 } else {
