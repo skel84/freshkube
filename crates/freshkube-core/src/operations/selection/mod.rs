@@ -81,6 +81,7 @@ pub struct SelectionOutcome {
 pub async fn run_selection(
     request: SelectionRequest,
     talos: TalosClient,
+    // String exception: selected-access setup supplies display-only messages until cluster_source carries typed failures, tracked in #584.
     connect: impl Future<Output = Result<Client, String>>,
     audit: &AuditLog,
     is_cancelled: Arc<CancellationPredicate>,
@@ -112,6 +113,7 @@ pub async fn run_selection(
 async fn run_with_preflight<Check, CheckFuture>(
     request: SelectionRequest,
     talos: Option<TalosClient>,
+    // String exception: selected-access setup supplies display-only messages until cluster_source carries typed failures, tracked in #584.
     connect: impl Future<Output = Result<Client, String>>,
     audit: &AuditLog,
     is_cancelled: Arc<CancellationPredicate>,
