@@ -344,7 +344,7 @@ fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
             // The example overview has no client, as an unreachable Talos
             // endpoint gives: outside example mode nothing can read the
             // summary.
-            pilot.fixture = false;
+            pilot.mode.set_example(false);
             pilot.stop_summary();
             pilot.registry.active_mut().summary_health = None;
             pilot.selected_node = None;
@@ -358,7 +358,7 @@ fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
 
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.fixture = true;
+            pilot.mode.set_example(true);
             pilot.hold.talos = true;
             pilot.ensure_summary(window, cx);
         })

@@ -199,7 +199,7 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     assert!(!cx.read(resources::shell::running_anywhere).is_empty());
     view.update(cx, |view, _| {
         // The replacement fails before connecting: no real cluster is read.
-        view.fixture = false;
+        view.mode.set_example(false);
         view.registry.active_mut().access = Some(access);
         view.registry.active_mut().access_configuration = Some(before);
     });

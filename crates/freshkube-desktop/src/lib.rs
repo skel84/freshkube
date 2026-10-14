@@ -171,7 +171,9 @@ impl GpuiOptions {
         self.keyring = true;
         self
     }
-    pub fn is_fixture(&self) -> bool {
+    /// Starts with the example source: example data, which reads no
+    /// cluster and touches no credentials.
+    pub(crate) fn starts_with_examples(&self) -> bool {
         self.fixture
     }
     pub fn is_kubernetes_only(&self) -> bool {
@@ -390,7 +392,7 @@ mod connection_tests {
         assert_eq!(kube.config_path(), None);
         assert_eq!(kube.kube_context(), Some("kube"));
         let fixture = GpuiOptions::fixture().with_preferences(Some(preferences.clone()));
-        assert!(fixture.is_fixture());
+        assert!(fixture.starts_with_examples());
         assert_eq!(fixture.config_path(), None);
         let maintenance = GpuiOptions::new(None, None, 100)
             .with_maintenance_endpoint("192.0.2.1".into())

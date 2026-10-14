@@ -135,7 +135,7 @@ impl Pilot {
             self.navigate(Page::Observability, window, cx);
         }
         match page {
-            Some("monitoring") if self.fixture => self
+            Some("monitoring") if self.mode().is_example() => self
                 .monitoring
                 .update(cx, |monitoring, cx| monitoring.answer_example_now(cx)),
             Some("node-logs" | "node-overview") => {
@@ -162,12 +162,12 @@ impl Pilot {
                         cx,
                     );
                 }
-                if self.fixture {
+                if self.mode().is_example() {
                     let history = self.node_workspace.read(cx).history.clone();
                     history.update(cx, |history, cx| history.answer_example_now(cx));
                 }
             }
-            Some("pod-overview") if self.fixture => {
+            Some("pod-overview") if self.mode().is_example() => {
                 let context = self.applied.context.as_deref().unwrap_or("prod-fra");
                 if let Some(identity) =
                     resources::example::read(context, "pods", None, chrono::Utc::now().timestamp())
@@ -188,7 +188,7 @@ impl Pilot {
                         .update(cx, |resources, cx| resources.answer_history_now(cx));
                 }
             }
-            Some("workload-logs") if self.fixture => {
+            Some("workload-logs") if self.mode().is_example() => {
                 let context = self.applied.context.as_deref().unwrap_or("prod-fra");
                 let now = chrono::Utc::now().timestamp();
                 if let Some(identity) =
@@ -211,19 +211,19 @@ impl Pilot {
             }
             Some("search") => {
                 self.open_search(window, cx);
-                if self.fixture {
+                if self.mode().is_example() {
                     let search = self.search.clone();
                     search.update(cx, |search, cx| search.startup_query("grafana", window, cx));
                 }
             }
-            Some("application") if self.fixture => {
+            Some("application") if self.mode().is_example() => {
                 self.navigate(Page::Applications, window, cx);
                 self.applications
                     .update(cx, |page, cx| page.open_named("checkout", window, cx));
             }
             // checkout's change, on prod-ams's promotion gate: waiting for
             // someone who may promote.
-            Some("change") if self.fixture => {
+            Some("change") if self.mode().is_example() => {
                 self.navigate(Page::Applications, window, cx);
                 self.applications.update(cx, |page, cx| {
                     page.open_named("checkout", window, cx);
@@ -241,12 +241,15 @@ impl Pilot {
                 self.applications
                     .update(cx, |page, cx| page.show_changes(window, cx));
             }
-            Some("kubernetes-only") if self.fixture => self.fixture_kubernetes_only(window, cx),
+            Some("kubernetes-only") if self.mode().is_example() => {
+                self.fixture_kubernetes_only(window, cx)
+            }
             _ => {}
         }
         if let Some(kind) = kind.and_then(|key| {
             navigation::known(key).and_then(builtin).or_else(|| {
-                self.fixture
+                self.mode()
+                    .is_example()
                     .then(|| resources::example::kind(key))
                     .flatten()
             })
@@ -266,7 +269,7 @@ impl Pilot {
                 .cloned()
                 .unwrap_or_default(),
         };
-        self.kubernetes_only = Some(kube);
+        self.mode.set_kubernetes_only(kube);
         self.overview = Snapshot::default();
         self.nodes.clear();
         self.selected_node = None;

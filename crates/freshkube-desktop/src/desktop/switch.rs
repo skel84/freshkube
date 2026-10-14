@@ -612,7 +612,7 @@ impl Pilot {
             // Until the entry's own kubeconfig context is applied, the
             // control plane's kubeconfig is used, never the ambient files'.
             self.kubeconfig = KubeconfigSelection::TalosControlPlane;
-            self.kubernetes_only = None;
+            self.mode.leave_kubernetes_only();
             self.sync_nodes_source_mode(cx);
             self.applied.path = Some(talosconfig.clone());
             self.applied.context = entry.talos_context.clone();
@@ -651,10 +651,11 @@ impl Pilot {
     ) {
         self.applied.path = None;
         self.applied.context = None;
-        self.kubernetes_only = Some(kubernetes_only::KubernetesOnly::new(
-            kubeconfig,
-            Some(context),
-        ));
+        self.mode
+            .set_kubernetes_only(kubernetes_only::KubernetesOnly::new(
+                kubeconfig,
+                Some(context),
+            ));
     }
 
     /// The Talos context a talosconfig is read with when the entry names

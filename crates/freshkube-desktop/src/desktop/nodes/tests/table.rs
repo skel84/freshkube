@@ -221,13 +221,13 @@ fn the_folded_nodes_controls_do_what_the_controls_do(cx: &mut TestAppContext) {
         // Columns at the page's default, and Refresh never marks the menu.
         assert!(window.try_find("nodes-more-dot").is_none());
         // Refresh reads again, as its button does.
-        let tick = pilot.read(cx).fixture_tick;
+        let tick = pilot.read(cx).mode().tick();
         window.click("nodes-more", cx);
         window.render_frame(cx);
         // Columns, Refresh.
         window.within("popup-menu").click(1usize, cx);
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).fixture_tick, tick + 1);
+        assert_eq!(pilot.read(cx).mode().tick(), tick + 1);
     })
     .unwrap();
     // The first menu finishes closing.
@@ -432,9 +432,11 @@ fn leaving_kubernetes_only_restores_talos_columns_without_waiting_for_a_summary(
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.kubernetes_only = Some(crate::desktop::kubernetes_only::KubernetesOnly::new(
-                None, None,
-            ));
+            pilot
+                .mode
+                .set_kubernetes_only(crate::desktop::kubernetes_only::KubernetesOnly::new(
+                    None, None,
+                ));
             pilot.rebuild_joined_nodes(cx);
             let labels = |pilot: &super::super::Pilot, cx: &gpui_kit::App| {
                 pilot
