@@ -5,14 +5,31 @@
 //! what was looked for and the candidates to pick from), refused and failed.
 use freshkube_core::cluster_source::ClusterAccess;
 use freshkube_core::monitoring::{
-    Backend, Candidate, Discovery, ErrorKind, Prometheus, PrometheusService, QueryError, Tried,
-    cluster_client, confirm, confirm_url, discover, forget_after,
+    Backend, Candidate, Discovery, Endpoint, ErrorKind, Prometheus, PrometheusService, QueryError,
+    Tried, cluster_client, confirm, confirm_url, discover, forget_after,
 };
 use gpui_kit::{Context, EntityId, SharedString, WeakEntity};
 
-use super::{MonitoringEvent, MonitoringPage, Request};
+use super::{MonitoringEvent, MonitoringPage, Read, ReadKind, Request};
 use crate::history::{HistoryKind, HistorySource, HistoryView};
 use crate::store::{Choice, token_account};
+
+/// These owners outlive the display states, so a repeated connection or
+/// confirmation cannot reuse a superseded completion token.
+#[derive(Default)]
+pub(super) struct ConnectionReads {
+    pub(super) looking: Read,
+    pub(super) confirming: Read,
+    pub(super) rebuild: Read,
+}
+
+impl ConnectionReads {
+    pub(super) fn forget(&mut self) {
+        self.looking.resolve(None, Ok(()));
+        self.confirming.resolve(None, Ok(()));
+        self.rebuild.resolve(None, Ok(()));
+    }
+}
 
 pub(super) enum Connection {
     /// Not looked for on this source yet, or the page hid while looking.
@@ -66,10 +83,16 @@ impl Connection {
     }
 
     /// Hiding drops a search in progress; showing starts it again.
-    pub(super) fn hide(&mut self, history_visible: bool) {
+    pub(super) fn hide(&mut self, history_visible: bool, reads: &mut ConnectionReads) {
         match self {
-            Self::Looking { .. } => *self = Self::None,
-            Self::Missing(missing) => missing.confirming = None,
+            Self::Looking { .. } => {
+                reads.looking.resolve(None, Ok(()));
+                *self = Self::None;
+            }
+            Self::Missing(missing) => {
+                reads.confirming.resolve(None, Ok(()));
+                missing.confirming = None;
+            }
             // The next failure may build it again.
             Self::Ready {
                 rebuild: Rebuild::Building { history: true, .. },
@@ -78,7 +101,10 @@ impl Connection {
             Self::Ready {
                 rebuild: rebuild @ Rebuild::Building { .. },
                 ..
-            } => *rebuild = Rebuild::Unused,
+            } => {
+                reads.rebuild.resolve(None, Ok(()));
+                *rebuild = Rebuild::Unused;
+            }
             _ => {}
         }
     }
@@ -193,6 +219,7 @@ impl MonitoringPage {
                 ..
             } = &mut self.connection
         {
+            self.connection_reads.rebuild.resolve(None, Ok(()));
             *rebuild = Rebuild::Unused;
         }
     }
@@ -254,6 +281,10 @@ impl MonitoringPage {
             Some(Choice::Service(service)) => {
                 let access = source.access.clone();
                 self.run(
+                    self.read_identity(ReadKind::Connect {
+                        endpoint: Some(Endpoint::Service(service.clone())),
+                    }),
+                    |this| Some(&mut this.connection_reads.looking),
                     async move {
                         let client = cluster_client(&access).await?;
                         confirm(&client, service)
@@ -267,6 +298,10 @@ impl MonitoringPage {
             Some(Choice::Url { url, token }) => {
                 let token = self.token_reader(&url, token);
                 self.run(
+                    self.read_identity(ReadKind::Connect {
+                        endpoint: Some(Endpoint::Url(url.clone())),
+                    }),
+                    |this| Some(&mut this.connection_reads.looking),
                     async move { confirm_url(url, token.await?).await },
                     cx,
                     |this, result, cx| this.confirmed(result, cx),
@@ -276,6 +311,8 @@ impl MonitoringPage {
                 let remembered = self.saved.services.get(&source.context).cloned();
                 let access = source.access.clone();
                 self.run(
+                    self.read_identity(ReadKind::Connect { endpoint: None }),
+                    |this| Some(&mut this.connection_reads.looking),
                     async move {
                         let client = cluster_client(&access).await?;
                         discover(&client, remembered)
@@ -336,6 +373,8 @@ impl MonitoringPage {
         result: Result<Discovery, QueryError>,
         cx: &mut Context<Self>,
     ) {
+        self.connection_reads.looking.resolve(None, Ok(()));
+        self.connection_reads.confirming.resolve(None, Ok(()));
         match result {
             Ok(Discovery::Found {
                 prometheus,
@@ -364,6 +403,10 @@ impl MonitoringPage {
         };
         let confirming = service.clone();
         let request = self.run(
+            self.read_identity(ReadKind::Confirm {
+                service: service.clone(),
+            }),
+            |this| Some(&mut this.connection_reads.confirming),
             async move {
                 let client = cluster_client(&access).await?;
                 confirm(&client, confirming)
@@ -386,6 +429,7 @@ impl MonitoringPage {
     /// A picked Service that didn't answer joins what was tried; the
     /// candidates stay to pick another.
     fn confirm_failed(&mut self, error: QueryError, cx: &mut Context<Self>) {
+        self.connection_reads.confirming.resolve(None, Ok(()));
         if let Connection::Missing(missing) = &mut self.connection
             && let Some((service, _)) = missing.confirming.take()
         {
@@ -420,6 +464,7 @@ impl MonitoringPage {
                 cx,
             );
         }
+        self.connection_reads.forget();
         self.connection = Connection::Ready {
             prometheus,
             label,
@@ -456,6 +501,10 @@ impl MonitoringPage {
         };
         access.forget();
         let request = self.run(
+            self.read_identity(ReadKind::Rebuild {
+                source: source.key(),
+            }),
+            |this| Some(&mut this.connection_reads.rebuild),
             async move { Ok(prometheus.with_client(cluster_client(&access).await?)) },
             cx,
             move |this, result, cx| {
@@ -483,6 +532,7 @@ impl MonitoringPage {
     /// The Ready Service through its new client, which pod and node history
     /// take too. Without one, the panels keep their errors.
     fn client_rebuilt(&mut self, result: Result<Prometheus, QueryError>, cx: &mut Context<Self>) {
+        self.connection_reads.rebuild.resolve(None, Ok(()));
         let Connection::Ready {
             prometheus,
             rebuild,
@@ -514,6 +564,7 @@ impl MonitoringPage {
 
     /// Asks again after a failure, from the start.
     pub(super) fn retry(&mut self, cx: &mut Context<Self>) {
+        self.connection_reads.forget();
         self.connection = Connection::None;
         cx.emit(MonitoringEvent::History);
         self.connect(cx);

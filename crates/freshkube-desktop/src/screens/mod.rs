@@ -29,7 +29,7 @@ pub(crate) use security::SecurityScreen;
 pub(crate) use storage::StorageScreen;
 pub(crate) use workloads::{Summary as HealthSummary, WorkloadData, WorkloadsScreen};
 
-use std::{rc::Rc, sync::Arc, time::Duration};
+use std::{rc::Rc, sync::Arc};
 
 use freshkube_core::inspection::InspectionTarget;
 use gpui_kit::assets::IconName;
@@ -52,8 +52,8 @@ pub(crate) use freshkube_ui::page::{content_width, inset_width, page_width, set_
 /// their motion, which the shell draws beside the page.
 pub(crate) use freshkube_ui::table::TableLoading;
 
-/// Upper bound for one screen request, including Kubernetes client setup.
-pub(crate) const SCREEN_DEADLINE: Duration = Duration::from_secs(60);
+/// Upper bound for one screen request; it lives in core's `constants`.
+pub(crate) use freshkube_core::constants::SCREEN_DEADLINE;
 
 /// Whether a screen inspects the target node or its whole cluster.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -760,23 +760,9 @@ pub(crate) fn panel(cx: &App) -> Div {
     freshkube_ui::page::card(cx)
 }
 
-/// A labelled value, as in the Services detail pane.
-pub(crate) fn field(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
-    let p = palette(cx);
-    h_flex()
-        .items_start()
-        .gap_4()
-        .child(
-            div()
-                .w(dp(132.))
-                .flex_none()
-                .pt(dp(1.))
-                .text_size(dp(12.))
-                .text_color(p.muted)
-                .child(label),
-        )
-        .child(div().flex_1().min_w_0().text_size(dp(13.)).child(value))
-}
+/// A labelled value, as in the Services detail pane; it lives in
+/// `freshkube_ui::ui`.
+pub(crate) use freshkube_ui::ui::field;
 
 /// A small figure with a caption, for summary rows above a list.
 pub(crate) fn stat(label: &str, value: impl Into<SharedString>, cx: &App) -> Div {

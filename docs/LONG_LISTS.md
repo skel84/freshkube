@@ -112,7 +112,7 @@ Profile a release build of the offline `fixture` example. It loads no cluster cr
 
 1. Apply two temporary patches, and revert both afterwards:
     - Drop the `#[cfg(any(debug_assertions, feature = "stress"))]` on `DebugOptions::from_env` (`debug_options.rs`), on `mod startup` and on the `open_startup_page` call in `Pilot::start` (`desktop/mod.rs`), so `FRESHKUBE_PAGE` works in release.
-    - In `fixture.rs`, read the line count in `logs()` from an environment variable (here `PERF_FIXTURE_LOGS`) instead of the fixed 170.
+    - In core's `example/cluster.rs`, read the line count in `logs()` from an environment variable (here `PERF_FIXTURE_LOGS`) instead of the fixed 170.
 2. Build with `cargo build --release -p freshkube-desktop --example fixture`.
 3. Launch with `PERF_FIXTURE_LOGS=5000 FRESHKUBE_PAGE=logs target/release/examples/fixture &` and note the PID.
 4. Run the resize script below against that PID, with `sample <pid> 12 -file wrap.txt` running at the same time. The terminal needs Accessibility permission to drive System Events.
