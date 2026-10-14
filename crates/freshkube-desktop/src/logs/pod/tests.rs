@@ -351,32 +351,70 @@ fn without_a_restart_there_is_no_previous_instance(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn stop_keeps_what_was_read_and_resume_reads_on_without_repeating(cx: &mut TestAppContext) {
+    use freshkube_core::resources::{LogPosition, PodLogUpdate};
+
+    // A regenerated history must be newer even without a wall-clock tick.
+    const HISTORY_AT: i64 = 1_700_000_000;
     let (_runtime, view, handle) = mount(cx);
-    cx.update_window(handle, |_, window, cx| {
-        show(&view, &running_pod(), cx);
-        window.render_frame(cx);
-        window.click("pod-logs-stream", cx);
-        window.render_frame(cx);
-        assert_eq!(state(&view, cx), StreamState::Stopped);
-        assert_eq!(
-            window.find("pod-logs-status").label(),
-            Some("Stopped: Resume reads on from the last line.")
-        );
-        assert_eq!(lines(&view, cx), 40);
-    })
-    .unwrap();
+    let identity = running_pod();
+    let (history, seeded_at, generation) = cx
+        .update_window(handle, |_, window, cx| {
+            show(&view, &identity, cx);
+            view.update(cx, |view, cx| {
+                let container = view.source().container.as_deref().unwrap();
+                let (updates, writes_on) =
+                    example::pod_log(&identity, container, false, HISTORY_AT);
+                assert!(writes_on);
+                view.reset_lines(&view.source().address());
+                view.source_mut().position = LogPosition::default();
+                view.source_mut().lines = 0;
+                view.apply_updates(updates, cx);
+            });
+            window.render_frame(cx);
+            window.click("pod-logs-stream", cx);
+            window.render_frame(cx);
+            assert_eq!(state(&view, cx), StreamState::Stopped);
+            assert_eq!(
+                window.find("pod-logs-status").label(),
+                Some("Stopped: Resume reads on from the last line.")
+            );
+            assert_eq!(lines(&view, cx), 40);
+            let view = view.read(cx);
+            (
+                view.retained().to_vec(),
+                view.source().position.time().unwrap(),
+                view.generation(),
+            )
+        })
+        .unwrap();
     cx.executor().advance_clock(EXAMPLE_INTERVAL * 3);
     cx.run_until_parked();
-    // Example history is dated from the wall clock, so let a second pass:
-    // reading on must not take it again for new lines.
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     cx.update_window(handle, |_, window, cx| {
+        let container = view.read(cx).source().container.as_deref().unwrap();
+        let (fresh, writes_on) = example::pod_log(&identity, container, false, live::now());
+        assert!(writes_on);
+        let newer = fresh
+            .iter()
+            .filter(|update| {
+                let PodLogUpdate::Line(line) = update else {
+                    return false;
+                };
+                let mut position = LogPosition::default();
+                position.record(line);
+                position.time().is_some_and(|at| at > seeded_at)
+            })
+            .count();
+        assert_eq!(
+            newer, 40,
+            "regenerated history must be newer than the review"
+        );
+        assert_eq!(view.read(cx).retained(), history.as_slice());
         assert_eq!(lines(&view, cx), 40);
-        let generation = view.read(cx).generation();
         window.click("pod-logs-stream", cx);
         assert_eq!(state(&view, cx), StreamState::Streaming);
         // The same review, with nothing read twice.
         assert_eq!(view.read(cx).generation(), generation);
+        assert_eq!(view.read(cx).retained(), history.as_slice());
         assert_eq!(lines(&view, cx), 40);
     })
     .unwrap();
