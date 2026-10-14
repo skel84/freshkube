@@ -392,3 +392,102 @@ fn a_shell_tab_asked_for_by_name_takes_the_picked_pods_uid(cx: &mut TestAppConte
     );
     assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
 }
+
+#[gpui_kit::test]
+fn end_then_tab_close_keeps_the_closing_worker_after_the_view_drops(cx: &mut TestAppContext) {
+    end_then_remove(false, cx);
+}
+
+#[gpui_kit::test]
+fn end_then_tab_close_then_quit_waits_without_a_view_or_another_prompt(cx: &mut TestAppContext) {
+    end_then_remove(true, cx);
+}
+
+fn end_then_remove(quit: bool, cx: &mut TestAppContext) {
+    use std::{cell::Cell, rc::Rc};
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    let id = cx.update(|cx| dock.read(cx).tabs[0].id);
+    let view = shell_view(&dock, 0, cx);
+    let weak = view.downgrade();
+    let mut transport = shell::ClosingTransport::install(&view, cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("pod-shell-end", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    transport.wait_for_interrupt(cx);
+    drop(view);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(format!("dock-tab-{id}-close"), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert!(titles(&dock, cx).is_empty());
+    assert!(weak.upgrade().is_none(), "the tab must release its view");
+    assert!(!cx.has_pending_prompt(), "End already gave consent");
+    let closed = Rc::new(Cell::new(false));
+    if quit {
+        let flag = closed.clone();
+        let immediate = cx
+            .update_window(handle, |_, window, cx| {
+                shell::may_close(window, cx, move |_, _| flag.set(true))
+            })
+            .unwrap();
+        assert!(!immediate, "closing work must postpone quit without a view");
+        cx.run_until_parked();
+        assert!(!closed.get());
+        assert!(!cx.has_pending_prompt());
+    }
+    transport.release();
+    transport.wait_for_eof(cx);
+    transport.exit();
+    transport.wait_for_completion(cx);
+    if quit {
+        freshkube_ui::real_io::until_io(cx, "quit after tab removal", |_| closed.get());
+    }
+    assert!(!cx.has_pending_prompt());
+}
+
+#[gpui_kit::test]
+fn direct_tab_close_can_be_cancelled_then_sends_one_eof(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    let dock = dock(&pilot, cx);
+    let pods = running_pods(&pilot, cx);
+    pick_shell(handle, &pilot, &pods[0], cx);
+    let id = cx.update(|cx| dock.read(cx).tabs[0].id);
+    let view = shell_view(&dock, 0, cx);
+    let weak = view.downgrade();
+    let mut transport = shell::ClosingTransport::install(&view, cx);
+    drop(view);
+    let close = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(format!("dock-tab-{id}-close"), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+    };
+    close(cx);
+    cx.simulate_prompt_answer("Cancel");
+    cx.run_until_parked();
+    assert_eq!(titles(&dock, cx).len(), 1);
+    assert_eq!(shell_state(&dock, 0, cx), ShellState::Running);
+    close(cx);
+    cx.simulate_prompt_answer("End the shell");
+    cx.run_until_parked();
+    draw(handle, cx);
+    assert!(weak.upgrade().is_none());
+    transport.wait_for_interrupt(cx);
+    transport.release();
+    transport.wait_for_eof(cx);
+    transport.exit();
+    transport.wait_for_completion(cx);
+    assert!(!cx.has_pending_prompt());
+}

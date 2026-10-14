@@ -1,0 +1,1 @@
+- **Pod shells:** graceful shutdown survives End followed by tab close or quit, with bounded transport cleanup.
