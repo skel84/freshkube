@@ -468,3 +468,62 @@ async fn a_session_ends_with_its_output() {
     assert!(pipes.output.recv().await.is_none());
     drop((pipes.input, pipes.close, pipes.typed));
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_stalled_shutdown_writer_obeys_the_close_deadline() {
+    for filled in [63, 64] {
+        let mut pipes = pipes();
+        // The fake never reads: either Control-C or Control-D stalls.
+        pipes
+            .streams
+            .stdin
+            .write_all(&vec![0; filled])
+            .await
+            .unwrap();
+        drop(pipes.input);
+        let started = tokio::time::Instant::now();
+        let ran = tokio::time::timeout(
+            INTERRUPT_PAUSE + CLOSE_DEADLINE + Duration::from_secs(1),
+            pipes.streams.run(),
+        )
+        .await
+        .expect("the writer must share the close deadline")
+        .unwrap();
+        assert!(ran.closed);
+        assert_eq!(started.elapsed(), INTERRUPT_PAUSE + CLOSE_DEADLINE);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn closing_bounds_the_entire_worker_not_only_its_streams() {
+    let (dropped, stopped) = oneshot::channel();
+    struct Dropped(Option<oneshot::Sender<()>>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            let _ = self.0.take().unwrap().send(());
+        }
+    }
+    let cleanup = Dropped(Some(dropped));
+    let (close, closing) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        let _cleanup = cleanup;
+        let _ = closing.await;
+        // Stands in for a status wait or final-output delivery that stalls.
+        std::future::pending::<()>().await;
+    });
+    let guard = ExecGuard {
+        task: Some(task),
+        close: Some(close),
+        runtime: tokio::runtime::Handle::current(),
+    };
+    let started = tokio::time::Instant::now();
+    tokio::time::timeout(
+        INTERRUPT_PAUSE + CLOSE_DEADLINE + Duration::from_secs(1),
+        guard.close(),
+    )
+    .await
+    .expect("the whole worker must have a close bound")
+    .unwrap();
+    stopped.await.unwrap();
+    assert_eq!(started.elapsed(), INTERRUPT_PAUSE + CLOSE_DEADLINE);
+}
