@@ -458,3 +458,253 @@ pub fn kubespan(
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    const PORT: u16 = 51820;
+
+    fn node(name: &str, control_plane: bool, address: &str, responding: bool) -> ExampleNode {
+        ExampleNode::new(name, control_plane, None).with_network(address, responding)
+    }
+
+    fn nodes() -> Vec<ExampleNode> {
+        vec![
+            node("example-silent-control", true, "192.0.2.9:50000", false),
+            node("example-control", true, "192.0.2.10:50000", true),
+            node("example-worker", false, "192.0.2.20:50000", true),
+            node("example-wk-fra1-02", false, "192.0.2.21:50000", true),
+        ]
+    }
+
+    fn now() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 1, 2, 12, 0, 0).unwrap()
+    }
+
+    fn snapshot(
+        node: &ExampleNode,
+        nodes: &[ExampleNode],
+        tick: u64,
+        sampled_at: Instant,
+    ) -> NetworkInspectionSnapshot {
+        network(
+            node,
+            InspectionTarget::new(&node.name, "192.0.2.30:50000"),
+            nodes,
+            tick,
+            sampled_at,
+        )
+    }
+
+    #[test]
+    fn control_plane_and_worker_have_their_own_interfaces_sockets_and_services() {
+        let nodes = nodes();
+        let sampled_at = Instant::now();
+        let control = snapshot(&nodes[1], &nodes, 0, sampled_at);
+        let worker = snapshot(&nodes[2], &nodes, 0, sampled_at);
+        assert_eq!(control.sampled_at, sampled_at);
+        assert_eq!(
+            format!("{control:?}"),
+            format!("{:?}", snapshot(&nodes[1], &nodes, 0, sampled_at))
+        );
+        assert_eq!(worker.sampled_at, sampled_at);
+        assert_eq!(
+            control.target,
+            InspectionTarget::new("example-control", "192.0.2.30:50000")
+        );
+        assert_eq!(control.interfaces.len(), 7);
+        assert_eq!(worker.interfaces.len(), 9);
+        let connections = |snapshot: &NetworkInspectionSnapshot| {
+            snapshot.connections.as_ref().unwrap().connections.len()
+        };
+        assert_eq!(connections(&control), 32);
+        assert_eq!(connections(&worker), 16);
+        for (snapshot, has_etcd) in [(&control, true), (&worker, false)] {
+            assert_eq!(
+                snapshot
+                    .services
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .any(|service| service.id == "etcd"),
+                has_etcd
+            );
+            let connections = &snapshot.connections.as_ref().unwrap().connections;
+            assert_eq!(
+                connections
+                    .iter()
+                    .any(|entry| entry.connection.local_port == 6443),
+                has_etcd
+            );
+            assert!(
+                connections
+                    .iter()
+                    .any(|entry| entry.connection.local_ip == "192.0.2.30")
+            );
+            assert!(
+                connections
+                    .iter()
+                    .any(|entry| entry.connection.remote_ip == "192.0.2.10")
+            );
+            assert!(
+                !connections
+                    .iter()
+                    .any(|entry| entry.connection.remote_ip == "192.0.2.9")
+            );
+            assert!(!snapshot.is_partial());
+        }
+        let fallback = snapshot(&nodes[2], &[], 0, sampled_at);
+        assert!(
+            fallback
+                .connections
+                .unwrap()
+                .connections
+                .iter()
+                .any(|entry| entry.connection.remote_ip == "192.0.2.10")
+        );
+    }
+
+    #[test]
+    fn degraded_worker_keeps_socket_pile_up_kubelet_health_and_kubespan_message() {
+        let nodes = nodes();
+        let degraded = snapshot(&nodes[3], &nodes, 3, Instant::now());
+        assert_eq!(degraded.interfaces.len(), 8);
+        assert!(
+            !degraded
+                .interfaces
+                .iter()
+                .any(|interface| interface.stats.name == "kubespan")
+        );
+        let eth0 = &degraded
+            .interfaces
+            .iter()
+            .find(|interface| interface.stats.name == "eth0")
+            .unwrap()
+            .stats;
+        assert_eq!(
+            (eth0.rx_errors, eth0.rx_dropped, eth0.tx_dropped),
+            (37, 9_345, 41)
+        );
+        let connections = &degraded.connections.as_ref().unwrap().connections;
+        assert_eq!(connections.len(), 156);
+        for (state, count) in [
+            (ConnectionState::SynSent, 7),
+            (ConnectionState::TimeWait, 132),
+            (ConnectionState::CloseWait, 1),
+        ] {
+            assert_eq!(
+                connections
+                    .iter()
+                    .filter(|entry| entry.connection.state == state)
+                    .count(),
+                count
+            );
+        }
+        for service in degraded.services.as_ref().unwrap() {
+            assert_eq!(
+                service.health.as_ref().unwrap().healthy,
+                service.id != "kubelet"
+            );
+        }
+        assert_eq!(
+            kubespan(&nodes[3], &nodes, 3, now(), PORT).unwrap_err(),
+            "Example: the kubespanpeerstatus query timed out after 12 s"
+        );
+    }
+
+    #[test]
+    fn nonresponding_peer_keeps_zero_counters_and_unset_handshake() {
+        let nodes = nodes();
+        let peers = kubespan(&nodes[2], &nodes, 3, now(), PORT).unwrap();
+        assert_eq!(peers.len(), 3);
+        assert!(peers.iter().all(|peer| peer.label != "example-worker"));
+        let silent = &peers[0];
+        assert_eq!(silent.id, "examplesilentcontrol00000000000000000000000=");
+        assert_eq!(silent.endpoint.as_deref(), Some("192.0.2.9:51820"));
+        assert_eq!(silent.state, "down");
+        assert_eq!(silent.rtt_ms, None);
+        assert_eq!(
+            silent.last_handshake.as_deref(),
+            Some("0001-01-01T00:00:00Z")
+        );
+        assert_eq!((silent.rx_bytes, silent.tx_bytes), (0, 0));
+        let up = &peers[1];
+        assert_eq!(up.label, "example-control");
+        assert_eq!(up.state, "up");
+        assert_eq!(up.rtt_ms, Some(0.7));
+        assert_eq!(up.last_handshake.as_deref(), Some("2026-01-02T11:59:17Z"));
+        assert_eq!((up.rx_bytes, up.tx_bytes), (20_002_100_000, 15_501_800_000));
+    }
+
+    #[test]
+    fn tick_moves_only_rates_counters_and_handshake_age() {
+        let nodes = nodes();
+        let sampled_at = Instant::now();
+        for node in &nodes[1..] {
+            let first = snapshot(node, &nodes, 0, sampled_at);
+            let mut later = snapshot(node, &nodes, 3, sampled_at);
+            assert!(
+                first
+                    .interfaces
+                    .iter()
+                    .all(|interface| interface.rate.is_none())
+            );
+            assert!(
+                later
+                    .interfaces
+                    .iter()
+                    .all(|interface| interface.rate.is_some())
+            );
+            assert!(later.totals.rx_bytes_per_sec > 0);
+            assert!(later.totals.tx_bytes_per_sec > 0);
+            assert_eq!(later.totals.errors, first.totals.errors);
+            assert_eq!(
+                later.totals.dropped - first.totals.dropped,
+                if node.name.contains("wk-fra1-02") {
+                    33
+                } else {
+                    0
+                }
+            );
+            for (later, first) in later.interfaces.iter_mut().zip(&first.interfaces) {
+                assert!(later.stats.rx_bytes > first.stats.rx_bytes);
+                assert!(later.stats.tx_bytes > first.stats.tx_bytes);
+                assert!(later.stats.rx_packets > first.stats.rx_packets);
+                assert!(later.stats.tx_packets > first.stats.tx_packets);
+                later.stats.rx_bytes = first.stats.rx_bytes;
+                later.stats.tx_bytes = first.stats.tx_bytes;
+                later.stats.rx_packets = first.stats.rx_packets;
+                later.stats.tx_packets = first.stats.tx_packets;
+                later.stats.rx_dropped = first.stats.rx_dropped;
+                later.rate = first.rate.clone();
+            }
+            later.totals = first.totals;
+            assert_eq!(format!("{later:?}"), format!("{first:?}"));
+            let first = kubespan(node, &nodes, 0, now(), PORT);
+            let later = kubespan(node, &nodes, 3, now(), PORT);
+            match (first, later) {
+                (Ok(first), Ok(mut later)) => {
+                    for (ix, (later, first)) in later.iter_mut().zip(&first).enumerate() {
+                        if later.state == "up" {
+                            assert_eq!(later.rx_bytes - first.rx_bytes, 2_100_000);
+                            assert_eq!(later.tx_bytes - first.tx_bytes, 1_800_000);
+                            assert_eq!(
+                                later.last_handshake.as_ref().unwrap(),
+                                &(now() - chrono::Duration::seconds(20 + ix as i64 * 17 + 6))
+                                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                            );
+                            later.rx_bytes = first.rx_bytes;
+                            later.tx_bytes = first.tx_bytes;
+                            later.last_handshake = first.last_handshake.clone();
+                        }
+                    }
+                    assert_eq!(format!("{later:?}"), format!("{first:?}"));
+                }
+                (Err(first), Err(later)) => assert_eq!(first, later),
+                _ => panic!("tick changed KubeSpan availability"),
+            }
+        }
+    }
+}
