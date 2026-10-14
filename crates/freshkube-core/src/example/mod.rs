@@ -6,16 +6,23 @@ mod diagnostics;
 mod network;
 mod processes;
 mod security;
+mod storage;
 
 pub use diagnostics::diagnostics;
 pub use network::{kubespan, network};
 pub use processes::processes;
 pub use security::security;
+pub use storage::storage;
+
+// The unchanged desktop Storage tests build disks for their read-only checks.
+#[cfg(feature = "testing")]
+pub use storage::disk;
 
 /// The node facts example data is built from.
 pub struct ExampleNode {
     name: String,
     control_plane: bool,
+    worker: bool,
     cores: Option<usize>,
     address: String,
     responding: bool,
@@ -30,6 +37,7 @@ impl ExampleNode {
         Self {
             name: name.into(),
             control_plane,
+            worker: !control_plane,
             cores,
             address: String::new(),
             responding: false,
@@ -37,6 +45,12 @@ impl ExampleNode {
             load: None,
             services: Vec::new(),
         }
+    }
+
+    /// Sets whether Storage should include the worker's disks and data volume.
+    pub fn with_storage(mut self, worker: bool) -> Self {
+        self.worker = worker;
+        self
     }
 
     /// Adds the node facts needed by the Network and KubeSpan example builders.
