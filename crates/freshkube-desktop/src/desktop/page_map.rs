@@ -131,7 +131,8 @@ impl Pages {
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
                 runtime.clone(),
-                options.preferences.as_deref(),
+                // Example data never touches the saved Coroot connection.
+                options.preferences.as_deref().filter(|_| !options.fixture),
                 secrets,
                 window,
                 cx,
