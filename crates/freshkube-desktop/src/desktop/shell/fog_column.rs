@@ -143,11 +143,13 @@ impl Pilot {
             }
             _ => {}
         }
-        column::icon_strip(
+        column::folded_strip(
             column,
             &self.navigation.compact_column_scroll,
             "nav-column-scrollbar",
+            "nav-column-scrollbar-lane",
             cx.theme().background,
+            window,
         )
         .id("nav-column")
         .test_support()
@@ -245,21 +247,22 @@ impl Pilot {
             .flex_none()
             .border_r_1()
             .border_color(p.line)
-            .px(dp(8.))
             .py(dp(14.))
             .gap(dp(14.))
-            .child(self.expand_toggle(cx))
+            .child(self.expand_toggle(cx).ml(dp(7.)).w(dp(36.)))
             .child(
-                column::icon_strip(
+                column::folded_strip(
                     rows,
                     &self.navigation.obs_column_scroll,
                     "obs-navigation-scrollbar",
+                    "obs-navigation-scrollbar-lane",
                     cx.theme().background,
+                    window,
                 )
                 .flex_1()
                 .min_h_0(),
             )
-            .child(self.obs_sources_button(true, cx))
+            .child(self.obs_sources_button(true, cx).ml(dp(7.)))
             .into_any_element()
     }
     /// A destination's icon, with the incidents' dot.
@@ -289,6 +292,8 @@ impl Pilot {
         match count {
             Some(_) => div()
                 .relative()
+                .size(dp(36.))
+                .flex_none()
                 .child(button)
                 .child(
                     ui::badge_dot(
@@ -300,6 +305,8 @@ impl Pilot {
                         None,
                         cx,
                     )
+                    .id("nav-obs-incidents-mark")
+                    .test_support()
                     .absolute()
                     .top(dp(3.))
                     .right(dp(3.)),

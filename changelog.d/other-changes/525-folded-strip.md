@@ -1,0 +1,1 @@
+- **Folded sidebar:** buttons and the Incidents mark stay clear of the scrollbar in short windows at larger text sizes.
