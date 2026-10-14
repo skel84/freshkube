@@ -156,6 +156,52 @@ pub(super) fn icon_strip(
     )
 }
 
+/// A folded column keeps its 36 dp buttons beside an 8 dp scrollbar lane,
+/// rather than under the rail's overlay. The 7 dp inset leaves room for
+/// the column's 1 px border at the default text size within its 52 dp width.
+pub(super) fn folded_strip(
+    list: impl IntoElement,
+    scroll: &ScrollHandle,
+    id: &'static str,
+    lane_id: &'static str,
+    background: Hsla,
+    window: &Window,
+) -> Div {
+    let track = ui::dp_px(8., window);
+    let thumb = ui::dp_px(4., window);
+    let inset = ui::dp_px(2., window);
+    h_flex()
+        .pl(dp(7.))
+        .child(
+            with_edge_fades(list, scroll, background)
+                .w(dp(36.))
+                .h_full()
+                .flex_none(),
+        )
+        .child(
+            div()
+                .id(lane_id)
+                .test_support()
+                .relative()
+                .w(dp(8.))
+                .h_full()
+                .flex_none()
+                .child(
+                    Scrollbar::vertical(scroll)
+                        .id(id)
+                        .viewport_from_layout()
+                        .mode(ScrollbarMode::Always)
+                        .styles(|styles| {
+                            styles
+                                .track(|style| style.width(track))
+                                .thumb(|style| style.width(thumb).inset(inset))
+                                .thumb_hover(|style| style.width(thumb).inset(inset))
+                                .thumb_active(|style| style.width(thumb).inset(inset))
+                        }),
+                ),
+        )
+}
+
 impl Pilot {
     pub(in crate::desktop) fn render_column(
         &mut self,
@@ -253,5 +299,200 @@ pub(super) fn page_icon(page: Page) -> IconName {
         Page::Lifecycle => IconName::RefreshCw,
         Page::Operations => IconName::Wrench,
         _ => IconName::Box,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FADE, cut_edges};
+    use crate::desktop::{Page, testing::fixture};
+    use crate::observability::Destination;
+    use crate::{text_size, ui};
+    use gpui_kit::component::{Theme, ThemeMode, scroll::Scrollbar};
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{
+        App, AppContext, Bounds, Pixels, ScrollDelta, ScrollHandle, TestAppContext, Window, point,
+        px,
+    };
+
+    fn settle(window: &mut Window, cx: &mut App) {
+        window.render_frame(cx);
+        for _ in 0..8 {
+            if window.simulate_next_frame(cx) == 0 {
+                return;
+            }
+            window.render_frame(cx);
+        }
+        panic!("folded column did not settle");
+    }
+
+    /// Use the actual lane's bounds, not the whole column. The old strip
+    /// had no lane element: its 16 px overlay occupied the viewport itself.
+    fn usable_bounds(window: &Window, scroll: &ScrollHandle, lane: &str) -> Bounds<Pixels> {
+        let mut visible = scroll.bounds();
+        let right = if let Some(lane) = window.try_find(lane.to_owned()) {
+            lane.bounds().left()
+        } else if scroll.max_offset().y > px(0.) {
+            visible.right() - Scrollbar::width()
+        } else {
+            visible.right()
+        };
+        visible.size.width = visible.size.width.min(right - visible.left());
+        visible
+    }
+
+    fn assert_inside(window: &Window, id: &str, visible: Bounds<Pixels>) {
+        let element = window.find(id.to_owned());
+        let bounds = element.bounds();
+        let tolerance = px(0.5);
+        assert!(
+            element.visible()
+                && bounds.left() >= visible.left() - tolerance
+                && bounds.right() <= visible.right() + tolerance
+                && bounds.top() >= visible.top() - tolerance
+                && bounds.bottom() <= visible.bottom() + tolerance,
+            "{id}: {bounds:?} outside usable strip {visible:?}"
+        );
+    }
+
+    fn assert_incidents(window: &Window, scroll: &ScrollHandle) {
+        let visible = usable_bounds(window, scroll, "obs-navigation-scrollbar-lane");
+        assert_inside(window, "nav-obs-incidents", visible);
+        assert_inside(window, "nav-obs-incidents-mark", visible);
+        assert_inside(
+            window,
+            "nav-obs-incidents-mark",
+            window.find("nav-obs-incidents").bounds(),
+        );
+        let button = window.find("nav-obs-incidents").bounds();
+        let (top, bottom) = cut_edges(scroll);
+        let fade = ui::dp_px(FADE, window);
+        assert!(!top || button.top() >= visible.top() + fade - px(0.5));
+        assert!(!bottom || button.bottom() <= visible.bottom() - fade + px(0.5));
+        let mark = window
+            .find("nav-obs-incidents-mark")
+            .bounds()
+            .scale(window.scale_factor());
+        assert!(window.painted_quads().iter().any(|quad| {
+            quad.bounds == mark && mark.is_contained_within(&quad.content_mask.bounds)
+        }));
+        assert_thumb_in_lane(window, scroll, "obs-navigation-scrollbar-lane");
+    }
+
+    /// Inspect the painted thumb too: a correctly sized lane is not enough
+    /// if the scrollbar still uses the buttons' viewport for its placement.
+    fn assert_thumb_in_lane(window: &Window, scroll: &ScrollHandle, id: &str) {
+        if scroll.max_offset().y <= px(0.) {
+            return;
+        }
+        let scale = window.scale_factor();
+        let column = window.find("nav-column").bounds().scale(scale);
+        let lane = window.find(id.to_owned()).bounds().scale(scale);
+        let width = ui::dp_px(4., window).scale(scale);
+        let thumbs: Vec<_> = window
+            .painted_quads()
+            .into_iter()
+            .filter(|quad| {
+                (quad.bounds.size.width.0 - width.0).abs() <= 0.5
+                    && quad.bounds.size.height.0 >= 48. * scale
+                    && quad.bounds.is_contained_within(&column)
+            })
+            .collect();
+        assert_eq!(thumbs.len(), 1, "expected one painted thumb in {column:?}");
+        assert!(thumbs[0].bounds.is_contained_within(&lane));
+    }
+
+    #[gpui_kit::test]
+    fn folded_columns_keep_buttons_and_marks_clear_of_the_scrollbar(cx: &mut TestAppContext) {
+        let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+        for theme in [ThemeMode::Light, ThemeMode::Dark] {
+            for text in [20., 18., 13.] {
+                cx.update_window(handle, |_, window, cx| {
+                    Theme::change(theme, Some(window), cx);
+                    text_size::set(text, cx);
+                    pilot.update(cx, |pilot, cx| {
+                        pilot.navigate(Page::Observability, window, cx);
+                        pilot.observability.update(cx, |page, cx| {
+                            page.open(Destination::Incidents, cx);
+                        });
+                    });
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    settle(window, cx);
+                    assert!(pilot.read(cx).navigation.column_collapsed(window));
+                    let scroll = pilot.read(cx).navigation.obs_column_scroll.clone();
+                    assert_incidents(window, &scroll);
+                    window.hover("nav-obs-incidents", cx);
+                    settle(window, cx);
+                    assert_incidents(window, &scroll);
+                    window.hover("obs-navigation-scrollbar-lane", cx);
+                    settle(window, cx);
+                    assert_incidents(window, &scroll);
+                    let lane = window.find("obs-navigation-scrollbar-lane").bounds();
+                    assert!((lane.size.width - ui::dp_px(8., window)).abs() <= px(0.5));
+                    assert!(scroll.bounds().right() <= lane.left() + px(0.5));
+                    let page = pilot.read(cx).observability.clone();
+                    page.update(cx, |page, cx| page.open(Destination::Deployments, cx));
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    settle(window, cx);
+                    let scroll = pilot.read(cx).navigation.obs_column_scroll.clone();
+                    window.scroll(
+                        "obs-navigation-scroll",
+                        ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                        cx,
+                    );
+                    settle(window, cx);
+                    let visible = usable_bounds(window, &scroll, "obs-navigation-scrollbar-lane");
+                    for id in ["nav-obs-deployments", "nav-obs-dashboards"] {
+                        assert_inside(window, id, visible);
+                    }
+                    let page = pilot.read(cx).observability.clone();
+                    page.update(cx, |page, cx| page.open(Destination::Incidents, cx));
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    settle(window, cx);
+                    assert_incidents(window, &pilot.read(cx).navigation.obs_column_scroll);
+                    pilot.update(cx, |pilot, cx| pilot.open_builtin("pods", window, cx));
+                })
+                .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    settle(window, cx);
+                    let scroll = pilot.read(cx).navigation.compact_column_scroll.clone();
+                    window.scroll(
+                        "nav-column",
+                        ScrollDelta::Pixels(point(px(0.), px(1000.))),
+                        cx,
+                    );
+                    settle(window, cx);
+                    let visible = usable_bounds(window, &scroll, "nav-column-scrollbar-lane");
+                    assert_inside(window, "nav-k8s-pods", visible);
+                    window.hover("nav-column-scrollbar-lane", cx);
+                    settle(window, cx);
+                    assert_inside(window, "nav-k8s-pods", visible);
+                    assert_thumb_in_lane(window, &scroll, "nav-column-scrollbar-lane");
+                    window.scroll(
+                        "nav-column",
+                        ScrollDelta::Pixels(point(px(0.), px(-1000.))),
+                        cx,
+                    );
+                    settle(window, cx);
+                    let visible = usable_bounds(window, &scroll, "nav-column-scrollbar-lane");
+                    assert_inside(window, "nav-k8s-cronjobs.batch", visible);
+                    assert_inside(window, "nav-all-namespaces", visible);
+                    window.hover("nav-all-namespaces", cx);
+                    settle(window, cx);
+                    assert_inside(window, "nav-all-namespaces", visible);
+                })
+                .unwrap();
+            }
+        }
     }
 }
