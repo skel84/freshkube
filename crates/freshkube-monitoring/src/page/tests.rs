@@ -13,6 +13,9 @@ use gpui_kit::{
 use super::*;
 use crate::probe;
 
+#[path = "history_tests.rs"]
+mod history_recovery;
+
 const NOW: i64 = 1_700_003_600;
 
 fn example_source() -> ClusterSource {
@@ -1807,10 +1810,21 @@ async fn a_discovery_404_shows_the_failed_candidate_words(cx: &mut TestAppContex
     discovery_failure_is_shown(cx, 404, ErrorKind::NotFound).await;
 }
 
+/// Holds the first provider call after a particular client eviction.
+struct ClientGate {
+    after_forget: usize,
+    receive: tokio::sync::oneshot::Receiver<()>,
+}
+
 /// A live cluster at `fake_api`, counting what it was told to forget.
 struct FakeCluster {
     url: String,
     forgot: std::sync::atomic::AtomicUsize,
+    asked: std::sync::atomic::AtomicUsize,
+    replacement: std::sync::Mutex<Option<String>>,
+    gate: std::sync::Mutex<Option<ClientGate>>,
+    gate_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    fail_rebuild: std::sync::atomic::AtomicBool,
 }
 
 impl FakeCluster {
@@ -1818,6 +1832,11 @@ impl FakeCluster {
         std::sync::Arc::new(Self {
             url,
             forgot: Default::default(),
+            asked: Default::default(),
+            replacement: Default::default(),
+            gate: Default::default(),
+            gate_started: Default::default(),
+            fail_rebuild: Default::default(),
         })
     }
 
@@ -1828,14 +1847,70 @@ impl FakeCluster {
 
 impl KubeClientSource for FakeCluster {
     fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
-        let config = kube::Config::new(self.url.parse().unwrap());
-        Box::pin(async move { kube::Client::try_from(config).map_err(|error| error.to_string()) })
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let forgotten = self.forgot();
+        let replacement = self.replacement.lock().unwrap();
+        let url = if forgotten > 0 {
+            replacement.as_ref().unwrap_or(&self.url)
+        } else {
+            &self.url
+        };
+        let config = kube::Config::new(url.parse().unwrap());
+        let gate = {
+            let mut gate = self.gate.lock().unwrap();
+            if gate
+                .as_ref()
+                .is_some_and(|gate| forgotten >= gate.after_forget)
+            {
+                gate.take().map(|gate| gate.receive)
+            } else {
+                None
+            }
+        };
+        let started = self.gate_started.clone();
+        let fail = forgotten > 0 && self.fail_rebuild.load(std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                started.store(true, std::sync::atomic::Ordering::SeqCst);
+                _ = gate.await;
+            }
+            if fail {
+                return Err("The replacement client did not build".into());
+            }
+            kube::Client::try_from(config).map_err(|error| error.to_string())
+        })
     }
 
     fn forget(&self) {
         self.forgot
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+#[tokio::test]
+async fn the_fake_client_gate_ignores_other_calls_before_and_after_the_rebuild() {
+    use std::sync::atomic::Ordering::SeqCst;
+
+    let cluster = FakeCluster::new("http://127.0.0.1:1".into());
+    let (release, receive) = tokio::sync::oneshot::channel();
+    *cluster.gate.lock().unwrap() = Some(ClientGate {
+        after_forget: 1,
+        receive,
+    });
+    // Ordinary reads before eviction must neither block nor take the gate.
+    cluster.client().await.unwrap();
+    cluster.client().await.unwrap();
+    assert!(!cluster.gate_started.load(SeqCst));
+    cluster.forget();
+    let mut rebuild = cluster.client();
+    assert!(!cluster.gate_started.load(SeqCst));
+    assert!(futures::poll!(rebuild.as_mut()).is_pending());
+    assert!(cluster.gate_started.load(SeqCst));
+    // A concurrent marker read doesn't block on the held rebuild's call.
+    cluster.client().await.unwrap();
+    assert!(!release.is_closed());
+    drop(rebuild);
+    assert!(release.is_closed());
 }
 
 /// The page Ready on a Service of `cluster`, as discovery leaves it, with

@@ -13,6 +13,7 @@ fn example() -> Option<HistorySource> {
         id: "example".into(),
         kind: HistoryKind::Example,
         client: 0,
+        owner: None,
     })
 }
 
@@ -170,6 +171,7 @@ fn another_pod_or_cluster_starts_over(cx: &mut TestAppContext) {
                 id: "other".into(),
                 kind: HistoryKind::Example,
                 client: 0,
+                owner: None,
             }),
             cx,
         )
