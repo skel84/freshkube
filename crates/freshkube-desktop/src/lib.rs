@@ -302,7 +302,6 @@ mod connection_preferences;
 mod debug_options;
 mod desktop;
 mod fixture;
-mod forwards;
 mod logs;
 mod maintenance;
 mod mutation;
@@ -325,6 +324,9 @@ use freshkube_monitoring as monitoring;
 use freshkube_observability as observability;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
 use freshkube_ui::{meters, palette, stream_status, text_size, theme};
+// The app's port forwards live with Resources; the app reaches them by
+// their old path.
+use resources::forwards;
 
 /// Where the app keeps its preferences: `preferences.json` in
 /// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`
