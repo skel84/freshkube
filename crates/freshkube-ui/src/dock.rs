@@ -123,7 +123,8 @@ pub fn frame(frame: Frame, strip: &TabStrip, cx: &App) -> Observed<Stateful<Div>
         .bg(cx.theme().background)
         .border_t_1()
         .border_color(p.line)
-        .on_drag_move::<DockDrag>(move |event: &DragMoveEvent<DockDrag>, window, cx| {
+        // gpui-base 0.7.0's ResizeHandle passes an Rc<T> payload to GPUI.
+        .on_drag_move::<Rc<DockDrag>>(move |event: &DragMoveEvent<Rc<DockDrag>>, window, cx| {
             let bottom = event.bounds.bottom();
             let height = (bottom - event.event.position.y) / dp_px(1., window);
             on_resize(height, window, cx);

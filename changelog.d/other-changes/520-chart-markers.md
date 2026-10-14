@@ -1,0 +1,1 @@
+- Keep deployment marker labels whole in narrow chart readouts, with the date below the wrapping label, and distinguish deployment markers from chart series in both themes.
