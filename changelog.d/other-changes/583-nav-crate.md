@@ -1,0 +1,1 @@
+- **Internal:** the types that say where a link goes (an object, its logs, a shell, a node's tab) moved out of the desktop crate into a new `freshkube-nav` crate, so the Resources and Applications code can later build apart from the shell; the app behaves as before.
