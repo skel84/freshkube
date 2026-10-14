@@ -151,7 +151,7 @@ fn loading_pods(
     cx.update(|cx| cx.set_reduce_motion(false));
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.hold.lists = true;
+            pilot.mode.hold_mut().lists = true;
             pilot.push_source(window, cx);
         });
         open_kind(window, cx, "pods");

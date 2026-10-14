@@ -423,7 +423,7 @@ fn another_cluster_shows_reading_until_it_answers(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         // dev-fra's example source holds its read.
         view.update(cx, |pilot, cx| {
-            pilot.hold.applications = true;
+            pilot.mode.hold_mut().applications = true;
             pilot.switch_cluster("dev-fra".into(), window, cx)
         });
     })

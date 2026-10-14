@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use freshkube_core::cluster_overview::ClusterOverviewCollector;
 use freshkube_core::cluster_source::{
-    AppliedAccess, ClusterAccess, ClusterSource, LiveSource, TalosAccess,
+    AppliedAccess, ClusterAccess, ClusterSource, Hold, LiveSource, TalosAccess,
 };
 
 use super::Pilot;
@@ -17,14 +17,16 @@ use crate::backend::Target;
 use crate::resources;
 use crate::screens::{PageSource, ScreenSource};
 
-/// What the window shows, as two answers: example data or a live cluster,
-/// and Talos with Kubernetes or Kubernetes alone. They are independent:
+/// What the window shows, as two answers: example data, with what it holds
+/// back, or a live cluster, and Talos with Kubernetes or Kubernetes alone. They are independent:
 /// example data is Kubernetes-only too after "Use Kubernetes only…" under
 /// `--fixture`, or on the `kubernetes-only` debug page. The shell keeps one
 /// in `Pilot.mode`; readers ask its questions, and the Kubernetes-only flow
 /// changes it through its methods.
 pub(super) struct Mode {
-    example: bool,
+    /// Example data and what it never answers (`FRESHKUBE_FIXTURE_HOLD`),
+    /// or `None` for a live cluster: a hold is example data's alone.
+    example: Option<Hold>,
     /// Example data's clock: each refresh of the example cluster takes the
     /// next tick, so its readings move.
     tick: u64,
@@ -32,9 +34,9 @@ pub(super) struct Mode {
 }
 
 impl Mode {
-    /// Example data or not, as the launch options chose; nothing changes it
-    /// later.
-    pub(super) fn new(example: bool) -> Self {
+    /// Example data with its hold, or a live cluster, as the launch options
+    /// chose; nothing changes it later.
+    pub(super) fn new(example: Option<Hold>) -> Self {
         Self {
             example,
             tick: 0,
@@ -44,7 +46,18 @@ impl Mode {
 
     /// Example data, which reads no cluster.
     pub(super) fn is_example(&self) -> bool {
+        self.example.is_some()
+    }
+
+    /// Example data and its hold; `None` for a live cluster.
+    pub(super) fn example(&self) -> Option<Hold> {
         self.example
+    }
+
+    /// Example data that never answers Talos, so the overview and the
+    /// Kubernetes summary stay on their loading rows.
+    pub(super) fn holds_talos(&self) -> bool {
+        self.example.is_some_and(|hold| hold.talos)
     }
 
     /// Talos is part of the session: false when a kubeconfig is all it
@@ -80,9 +93,25 @@ impl Mode {
 
     /// Turns example data on or off under a test; for the gate, switch,
     /// access, Kubernetes summary, dock and Kubernetes-only tests.
+    /// Example data turned on starts holding nothing; turned off, its hold
+    /// goes with it.
     #[cfg(test)]
     pub(super) fn set_example(&mut self, example: bool) {
-        self.example = example;
+        if example {
+            self.example.get_or_insert(Hold::NONE);
+        } else {
+            self.example = None;
+        }
+    }
+
+    /// Example data's hold, to change under a test; for the gate, switch,
+    /// access, motion, Resources loading and Applications column tests,
+    /// which all run on example data.
+    #[cfg(test)]
+    pub(super) fn hold_mut(&mut self) -> &mut Hold {
+        self.example
+            .as_mut()
+            .expect("a hold is example data's; this test runs on a live cluster")
     }
 
     /// Example data's clock, for the menu and Nodes table tests.
@@ -111,8 +140,8 @@ impl Pilot {
     /// keeps a watch; `kube_identity` keeps it while the source is missing.
     pub(super) fn source(&self) -> PageSource {
         let mode = self.mode();
-        let (screen, kube, kube_identity) = match (mode.is_example(), mode.kubernetes_only()) {
-            (true, _) => {
+        let (screen, kube, kube_identity) = match (mode.example(), mode.kubernetes_only()) {
+            (Some(hold), _) => {
                 let id = self
                     .applied
                     .context
@@ -126,13 +155,13 @@ impl Pilot {
                     .map(|(context, id)| ClusterSource {
                         id,
                         context,
-                        access: ClusterAccess::Example(self.hold),
+                        access: ClusterAccess::Example(hold),
                     });
                 (self.screen_on(None), kube, id)
             }
             // Kubernetes-only mode reads no Talos overview, so no screen
             // has a target.
-            (false, Some(kubernetes_only)) => {
+            (None, Some(kubernetes_only)) => {
                 let access = kubernetes_only.access();
                 let kube = access.map(|access| ClusterSource {
                     id: access.id(),
@@ -141,7 +170,7 @@ impl Pilot {
                 });
                 (None, kube, access.map(|access| access.id()))
             }
-            (false, None) => {
+            (None, None) => {
                 let live = self.live_source();
                 let screen = live.clone().and_then(|live| self.screen_on(Some(live)));
                 let kube = live.and_then(|live| self.talos_source(live));

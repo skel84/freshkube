@@ -85,7 +85,7 @@ impl Pilot {
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session) = &self.registry.active().summary_session {
             session.core.relist();
-            if self.mode().is_example() && !self.hold.talos {
+            if self.mode().is_example() && !self.mode().holds_talos() {
                 self.publish_fixture(window, cx);
             }
         } else {
@@ -149,7 +149,7 @@ impl Pilot {
     /// The example session: nothing publishes while the hold keeps its data
     /// back, otherwise it is seeded and watched.
     fn start_fixture_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.hold.talos {
+        if self.mode().holds_talos() {
             return;
         }
         self.publish_fixture(window, cx);
