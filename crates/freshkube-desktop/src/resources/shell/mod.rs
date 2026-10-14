@@ -24,7 +24,7 @@ use tokio::task::JoinHandle;
 
 use crate::backend::{self, OwnedJob};
 use crate::forwards;
-use crate::logs::choice_label;
+use crate::resources::containers::choice_label;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::screen::ClusterAccess;
 use crate::stream_status::Status;

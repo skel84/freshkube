@@ -590,6 +590,24 @@ pub fn transparent() -> Hsla {
     transparent_black()
 }
 
+/// A labelled value, as in the Services detail pane.
+pub fn field(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
+    let p = palette(cx);
+    h_flex()
+        .items_start()
+        .gap_4()
+        .child(
+            div()
+                .w(dp(132.))
+                .flex_none()
+                .pt(dp(1.))
+                .text_size(dp(12.))
+                .text_color(p.muted)
+                .child(label),
+        )
+        .child(div().flex_1().min_w_0().text_size(dp(13.)).child(value))
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
