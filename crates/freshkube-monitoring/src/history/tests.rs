@@ -198,29 +198,30 @@ fn another_pod_or_cluster_starts_over(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_shown_history_reads_again_each_minute(cx: &mut TestAppContext) {
     let (_runtime, _handle, history) = mount(cx);
+    let before = freshkube_probe::probe::count("monitoring.history.ask");
     update(cx, &history, |view, cx| {
         view.set_source(example(), cx);
         view.set_subject(pod("api-7f9c6d-2xk4p"), cx);
         view.set_visible(true, cx);
     });
     cx.run_until_parked();
-    let asks = |cx: &mut TestAppContext| cx.read(|cx| history.read(cx).asks());
-    assert_eq!(asks(cx), 1);
+    let asks = || freshkube_probe::probe::count("monitoring.history.ask") - before;
+    assert_eq!(asks(), 1);
 
     // Showing again within the minute keeps the answer; Refresh reads again.
     update(cx, &history, |view, cx| {
         view.set_visible(false, cx);
         view.set_visible(true, cx);
     });
-    assert_eq!(asks(cx), 1);
+    assert_eq!(asks(), 1);
     update(cx, &history, |view, cx| view.refresh(cx));
     cx.run_until_parked();
-    assert_eq!(asks(cx), 2);
+    assert_eq!(asks(), 2);
 
     // The timer fires the next read.
     cx.executor().advance_clock(EVERY);
     cx.run_until_parked();
-    assert_eq!(asks(cx), 3);
+    assert_eq!(asks(), 3);
     assert_eq!(answered(cx, &history), 2);
 }
 
@@ -250,25 +251,26 @@ fn the_cursor_on_one_chart_shows_on_the_other(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_rebuilt_client_reads_again_through_it(cx: &mut TestAppContext) {
     let (_runtime, _handle, history) = mount(cx);
+    let before = freshkube_probe::probe::count("monitoring.history.ask");
     update(cx, &history, |view, cx| {
         view.set_source(example(), cx);
         view.set_subject(pod("api-7f9c6d-2xk4p"), cx);
         view.set_visible(true, cx);
     });
     cx.run_until_parked();
-    let asks = |cx: &mut TestAppContext| cx.read(|cx| history.read(cx).asks());
-    assert_eq!(asks(cx), 1);
+    let asks = || freshkube_probe::probe::count("monitoring.history.ask") - before;
+    assert_eq!(asks(), 1);
 
     // The same source again keeps the answer; one whose client the page
     // built again reads at once, without waiting for the minute.
     update(cx, &history, |view, cx| view.set_source(example(), cx));
-    assert_eq!(asks(cx), 1);
+    assert_eq!(asks(), 1);
     update(cx, &history, |view, cx| {
         let mut source = example();
         source.as_mut().unwrap().client = 1;
         view.set_source(source, cx)
     });
     cx.run_until_parked();
-    assert_eq!(asks(cx), 2);
+    assert_eq!(asks(), 2);
     assert_eq!(answered(cx, &history), 2);
 }
