@@ -5,17 +5,8 @@
 //! The knobs are read by the `stress` binary alone into a [`StressOptions`]
 //! ([`install`]ed before the app starts); nothing here reads the environment.
 //!
-//! - `FRESHKUBE_STRESS_KEYS`: space-separated keystrokes as GPUI parses them
-//!   (`down`, `enter`, `secondary-}`), `wait:<ms>` to pause, and
-//!   `type:<text>` to type into whatever has focus. `hover:<x0>,<y0>,<x1>,<y1>,<ms>`
-//!   moves the mouse in a straight line over that long, a step a frame, and
-//!   `scroll:<x>,<y>,<dy>` scrolls there; positions are fractions of the
-//!   window, so a script fits any window size.
-//! - `FRESHKUBE_STRESS_SECONDS`: quit after this long (default 30).
-//! - `FRESHKUBE_STRESS_WARMUP`: seconds left out of the summary (default 5).
-//! - `FRESHKUBE_STRESS_APPEARANCE`: `light` or `dark` for the terminal window.
-//! - `FRESHKUBE_STRESS_TALOS_RATE`, `FRESHKUBE_STRESS_WORKLOAD_RATE`: lines a
-//!   second of example Talos and workload logs.
+//! The knob table in [docs/PERFORMANCE.md](../../../docs/PERFORMANCE.md#measuring)
+//! documents their values, defaults and key-script syntax.
 //!
 //! Output goes to stderr, numbers only: `perf <second> <name> …` lines, then
 //! `summary <name> …` lines over the run after the warm-up.
@@ -530,6 +521,30 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The knob names PERFORMANCE.md's table documents, in its first column.
+    fn documented_knobs() -> std::collections::BTreeSet<String> {
+        include_str!("../../../docs/PERFORMANCE.md")
+            .lines()
+            .filter_map(|line| line.strip_prefix("| `FRESHKUBE_STRESS_"))
+            .filter_map(|rest| rest.split_once('`'))
+            .map(|(name, _)| format!("FRESHKUBE_STRESS_{name}"))
+            .collect()
+    }
+
+    #[test]
+    fn performance_table_names_every_knob_the_parser_reads_and_no_other() {
+        let read = std::cell::RefCell::new(std::collections::BTreeSet::new());
+        let _ = StressOptions::parse(|name| {
+            read.borrow_mut().insert(name.to_string());
+            None
+        });
+        assert_eq!(
+            read.into_inner(),
+            documented_knobs(),
+            "PERFORMANCE.md's knob table and StressOptions::parse disagree"
+        );
+    }
 
     fn parse(pairs: &'static [(&'static str, &'static str)]) -> StressOptions {
         StressOptions::parse(|name| {
