@@ -14,10 +14,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::cluster_source::ClusterAccess;
-use freshkube_core::job::spawn_job;
 use freshkube_core::monitoring::{
-    Endpoint, ErrorKind, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError,
-    Source, cluster_client,
+    Endpoint, ExampleSource, PanelResult, Prometheus, PrometheusService, QueryError, Source,
+    cluster_client,
     history::{self, Subject},
     model::{data::QueryContext, time::TimeWindow},
     prometheus::Variables,
@@ -41,7 +40,6 @@ const SPAN: u64 = 3600;
 const EVERY: Duration = Duration::from_secs(60);
 const POINTS: usize = 120;
 const DEADLINE: Duration = Duration::from_secs(30);
-const TIMED_OUT: &str = "Prometheus didn't answer in time";
 const PANEL_NAMES: [&str; 2] = ["cpu", "memory"];
 
 /// Where the history comes from, as the Monitoring page knows it.
@@ -430,28 +428,7 @@ impl HistoryView {
                 this.land_panel(index, &request, window, result, cx);
             }
         };
-        let (job, task) = if example {
-            let work = cx.background_spawn(work);
-            let task = cx.spawn(async move |this, cx| {
-                let result = work.await;
-                _ = this.update(cx, |this, cx| done(this, result, cx));
-            });
-            (None, task)
-        } else {
-            let (job, receiver) = spawn_job(
-                &self.runtime,
-                DEADLINE,
-                QueryError::new(ErrorKind::TimedOut, TIMED_OUT),
-                work,
-            );
-            let task = cx.spawn(async move |this, cx| {
-                let Ok(result) = receiver.await else {
-                    return;
-                };
-                _ = this.update(cx, |this, cx| done(this, result, cx));
-            });
-            (Some(job), task)
-        };
+        let (job, task) = crate::dispatch(example, &self.runtime, DEADLINE, work, cx, done);
         self.reads[index].run(job, task);
     }
 

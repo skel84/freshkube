@@ -13,7 +13,7 @@ use gpui_kit::{Context, SharedString};
 use talos_rs::TalosClient;
 
 use super::board::Board;
-use super::{MonitoringPage, Request};
+use super::{MonitoringPage, Read, ReadKind, Request};
 
 /// A read this recent, reaching back as far, is used again.
 const FRESH: i64 = 15;
@@ -50,7 +50,9 @@ pub(super) struct MarkerState {
     /// What couldn't be read, for the toggles' tooltip.
     pub(super) unavailable: Option<SharedString>,
     kube_request: Option<Request>,
+    kube_read: Read,
     talos_request: Option<Request>,
+    talos_read: Read,
     /// How far back the last read reached and when it was asked.
     read: Option<(i64, i64)>,
     pub(super) deploys: bool,
@@ -67,7 +69,9 @@ impl Default for MarkerState {
             all: Vec::new(),
             unavailable: None,
             kube_request: None,
+            kube_read: Read::default(),
             talos_request: None,
+            talos_read: Read::default(),
             read: None,
             deploys: true,
             nodes: true,
@@ -82,15 +86,19 @@ impl MarkerState {
         if self.kube_request.take().is_some() | self.talos_request.take().is_some() {
             self.read = None;
         }
+        self.kube_read.resolve(None, Ok(()));
+        self.talos_read.resolve(None, Ok(()));
     }
 
     /// Another cluster: nothing read so far applies. The toggles stay.
     pub(super) fn forget(&mut self) {
-        *self = Self {
-            deploys: self.deploys,
-            nodes: self.nodes,
-            ..Self::default()
-        };
+        self.hide();
+        self.kube.clear();
+        self.talos.clear();
+        self.all.clear();
+        self.unavailable = None;
+        self.read = None;
+        self.shown = Rc::from([]);
     }
 
     fn merged(&mut self) {
@@ -149,6 +157,7 @@ impl MonitoringPage {
         self.talos = talos;
         self.markers.talos.clear();
         self.markers.talos_request = None;
+        self.markers.talos_read.resolve(None, Ok(()));
         self.markers.read = None;
         self.markers.merged();
         self.push_markers(cx);
@@ -180,6 +189,8 @@ impl MonitoringPage {
         };
         let access = source.access.clone();
         self.markers.kube_request = Some(self.run(
+            self.read_identity(ReadKind::KubeMarkers { since }),
+            |this| Some(&mut this.markers.kube_read),
             async move {
                 let client = cluster_client(&access).await?;
                 Ok(markers::read_markers(client, since).await)
@@ -189,6 +200,12 @@ impl MonitoringPage {
         ));
         if let Some(talos) = self.talos.clone() {
             self.markers.talos_request = Some(self.run(
+                self.read_identity(ReadKind::TalosMarkers {
+                    connection: talos.client.connection_id(),
+                    nodes: talos.nodes.clone(),
+                    since,
+                }),
+                |this| Some(&mut this.markers.talos_read),
                 async move { Ok(markers::boot_markers(talos.client, talos.nodes, since).await) },
                 cx,
                 |this, result, cx| this.boots_read(result, cx),
@@ -205,6 +222,7 @@ impl MonitoringPage {
         cx: &mut Context<Self>,
     ) {
         self.markers.kube_request = None;
+        self.markers.kube_read.resolve(None, Ok(()));
         match result {
             Ok(read) => {
                 self.markers.kube = read.markers;
@@ -225,6 +243,7 @@ impl MonitoringPage {
         cx: &mut Context<Self>,
     ) {
         self.markers.talos_request = None;
+        self.markers.talos_read.resolve(None, Ok(()));
         if let Ok((boots, _)) = result {
             self.markers.talos = boots;
             self.markers.merged();
