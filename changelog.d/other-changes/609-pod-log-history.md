@@ -1,0 +1,1 @@
+- **Test waits:** the pod log resume test seeds past history and checks that regenerated history is newer, proving retained lines are preserved without a wall-clock sleep.
