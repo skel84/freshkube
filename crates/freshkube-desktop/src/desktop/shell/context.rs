@@ -78,15 +78,15 @@ impl Pilot {
             .map(|version| version.as_str())
             .unwrap_or("unknown");
         let count = self.node_workspace.read(cx).rows.len();
-        let connected = if let Some(kube) = &self.kubernetes_only {
+        let connected = if let Some(kube) = self.mode().kubernetes_only() {
             matches!(kube.connection, KubeConnection::Connected { .. })
         } else {
             self.overview.data().is_some()
         };
         let failed = self.config_error.is_some()
             || self
-                .kubernetes_only
-                .as_ref()
+                .mode()
+                .kubernetes_only()
                 .is_some_and(|kube| matches!(kube.connection, KubeConnection::Failed(_)))
             || (!connected && self.overview.error().is_some());
         self.context_display.state = if failed {
@@ -101,7 +101,7 @@ impl Pilot {
         } else if connected {
             format!(
                 "{} · {count} nodes",
-                if self.kubernetes_only.is_some() {
+                if !self.mode().has_talos() {
                     "Kubernetes"
                 } else {
                     "Talos + Kubernetes"
@@ -128,7 +128,7 @@ impl Pilot {
             .iter()
             .map(|(name, count)| (name.clone(), pluralize(*count, "node", "nodes").into()))
             .collect();
-        self.context_display.status = if self.kubernetes_only.is_some() {
+        self.context_display.status = if !self.mode().has_talos() {
             format!("Connected to {full} · Kubernetes {kubernetes}")
         } else {
             format!("Connected to {full} · Talos {talos} · Kubernetes {kubernetes}")

@@ -34,6 +34,12 @@ impl<'a> Mode<'a> {
         self.example
     }
 
+    /// Talos is part of the session: false when a kubeconfig is all it
+    /// reads.
+    pub(super) fn has_talos(self) -> bool {
+        self.kubernetes_only.is_none()
+    }
+
     /// The kubeconfig a session without Talos reads, and its connection.
     pub(super) fn kubernetes_only(self) -> Option<&'a KubernetesOnly> {
         self.kubernetes_only
