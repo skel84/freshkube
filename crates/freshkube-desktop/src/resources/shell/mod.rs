@@ -34,6 +34,8 @@ use crate::ui::Tone;
 mod example;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::ClosingTransport;
 mod view;
 
 use example::ExampleShell;
@@ -94,13 +96,13 @@ enum Session {
         _task: Task<()>,
     },
     Live {
-        /// Dropped when the user ends the session, which closes stdin; the
-        /// rest stays until the end arrives.
+        /// Dropped when the user ends the session; output delivery stays
+        /// until the end arrives.
         input: Option<mpsc::UnboundedSender<ExecInput>>,
         _forward: OwnedJob,
         _delivery: Task<()>,
-        /// Closed rather than dropped, so the shell ends politely.
-        guard: ExecGuard,
+        /// Handed to the app's closing list once ending begins.
+        guard: Option<ExecGuard>,
     },
     Example(ExampleShell),
 }
@@ -464,7 +466,7 @@ impl ShellView {
             input: Some(sender),
             _forward: forward,
             _delivery: delivery,
-            guard,
+            guard: Some(guard),
         });
         self.state = ShellState::Running;
         self.describe(None);
@@ -536,8 +538,8 @@ impl ShellView {
                 self.describe(None);
             }
             ShellState::Running => {
-                match &mut self.session {
-                    Some(Session::Live { input, .. }) => drop(input.take()),
+                match self.session {
+                    Some(Session::Live { .. }) => self.close_live(cx),
                     _ => self.drop_session(cx),
                 }
                 self.terminal.update(cx, |terminal, cx| terminal.end(cx));
@@ -553,13 +555,24 @@ impl ShellView {
     /// closing the connection alone would leave the shell, and whatever
     /// runs in it, running in the container.
     fn drop_session(&mut self, cx: &mut App) {
-        if let Some(Session::Live { guard, .. }) = self.session.take() {
+        self.close_live(cx);
+        self.session.take();
+        self.seq += 1;
+    }
+
+    /// Transfers closing work without dropping final-output delivery or
+    /// changing its generation. The view no longer owns the worker.
+    fn close_live(&mut self, cx: &mut App) {
+        if let Some(Session::Live { input, guard, .. }) = &mut self.session {
+            drop(input.take());
+            let Some(guard) = guard.take() else {
+                return;
+            };
             let closing = guard.close();
             let shells = cx.default_global::<Shells>();
             shells.closing.retain(|task| !task.is_finished());
             shells.closing.push(closing);
         }
-        self.seq += 1;
     }
 
     /// Ends the session for good, as its tab or the window closes or the
@@ -799,13 +812,19 @@ pub(crate) fn may_close(
 ) -> bool {
     let pods = running_anywhere(cx);
     let forwards = forwards::running(cx);
-    if pods.is_empty() && forwards == 0 {
+    let closing = cx
+        .try_global::<Shells>()
+        .is_some_and(|shells| shells.closing.iter().any(|task| !task.is_finished()));
+    if pods.is_empty() && forwards == 0 && !closing {
         return true;
     }
-    let agreed = ask_closing(&pods, forwards, window, cx);
+    let agreed =
+        (!pods.is_empty() || forwards > 0).then(|| ask_closing(&pods, forwards, window, cx));
     window
         .spawn(cx, async move |cx| {
-            if !agreed.await {
+            if let Some(agreed) = agreed
+                && !agreed.await
+            {
                 return;
             }
             if let Ok((ending, stopping)) = cx.update(|_, cx| (end_all(cx), forwards::stop_all(cx)))

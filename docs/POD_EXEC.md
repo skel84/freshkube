@@ -81,8 +81,24 @@ Taken with the user on 2 October 2026.
 | Another page shows | The session keeps running |
 | The shell exits | Ended, with the exit code |
 | The pod is deleted or restarts, or the connection drops | Ended, with the reason |
-| End, or agreeing to any of the above | Control-C, then Control-D 200 ms later; the connection closes once the shell exits, or after 2 s |
-| Quitting the app or closing the window | Ask, then end every session, waiting up to 1 s for them |
+| End, or agreeing to any of the above | Hand closing work to the app; Control-C, then Control-D 200 ms later; the closing worker has a total 2.2 s bound |
+| Quitting the app or closing the window | Ask for running shells, then end every session and wait up to 1 s total, including sessions already closing; End already gave consent |
+
+End transfers the transport guard exactly once to the app-wide `Shells.closing`
+list through `guard.close()`. The view keeps final-output delivery and its
+session generation until completion, so the ended terminal stays selectable;
+starting again clears it and rejects output from the earlier session. Closing
+its dock tab can drop the view without cancelling the closing worker. Quitting
+with only closing work waits without another prompt, even after every shell
+tab has gone. The existing Ended message and controls stay as they are.
+
+Core now bounds the entire worker handed off by `guard.close()` at 200 ms +
+2 s, including Control-C and Control-D writes and flushes, reading/draining,
+status waits and final-output delivery. Previously the shutdown writer could
+wait indefinitely while only the reader had a deadline. A stalled writer now
+shares that deadline; expiry aborts the worker and stops its websocket task.
+The app's separate quit/window-close budget stays at 1 s total for all shells,
+and proceeds when that budget expires even if a worker has not finished.
 
 Ending a session sends keys because closing the connection alone stops nothing: the live check found that the container runtime keeps the terminal open, so the shell and whatever ran in it stayed in the container. Control-C stops the foreground command and Control-D ends the shell at its prompt. A program that ignores them, such as an open editor, keeps running, and the prompt says so. The user chose this over killing the shell's process group with a second exec, which would need `kill` in the image.
 
