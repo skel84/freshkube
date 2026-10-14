@@ -19,9 +19,8 @@ use freshkube_core::format_bytes;
 use freshkube_core::inspection::{
     InspectionSource, InspectionTarget, InspectionUnavailable, KubeSpanSnapshot,
     NetworkConnectionSnapshot, NetworkConnectionsSnapshot, NetworkInspectionRequest,
-    NetworkInspectionSnapshot, NetworkInterfaceSnapshot, NetworkSampleState, NetworkTotals,
-    TalosctlTarget, collect_kubespan_inspection, collect_network_inspection,
-    inspect_network_connections,
+    NetworkInspectionSnapshot, NetworkInterfaceSnapshot, NetworkSampleState, TalosctlTarget,
+    collect_kubespan_inspection, collect_network_inspection,
 };
 use freshkube_core::network::ConnectionDirection;
 use gpui_kit::assets::IconName;
@@ -35,10 +34,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use talos_rs::{
-    ConnectionInfo, ConnectionState, KubeSpanPeerStatus, NetDevRate, NetDevStats, ServiceHealth,
-    ServiceInfo,
-};
+use talos_rs::{ConnectionInfo, ConnectionState, KubeSpanPeerStatus, ServiceHealth, ServiceInfo};
 use tokio::runtime::Handle;
 
 use super::{
