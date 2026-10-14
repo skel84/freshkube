@@ -17,6 +17,7 @@ use crate::{
     ui,
 };
 use freshkube_core::monitoring::history::Subject;
+pub(crate) use freshkube_nav::NodeTab;
 use gpui_kit::{
     component::input::{InputEvent, InputState},
     *,
@@ -27,37 +28,15 @@ use std::{sync::Arc, time::Duration};
 /// The columns the table hides until the user shows them.
 const DEFAULT_HIDDEN: [table::Field; 1] = [table::Field::Load];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum NodeTab {
-    #[default]
-    Overview,
-    Pods,
-    Services,
-    Processes,
-    Storage,
-    Network,
-    Diagnostics,
-    Logs,
-    Events,
-    Yaml,
+/// What the shell draws and shows for a [`NodeTab`]: its element id, and
+/// the retained screen behind it.
+pub(super) trait NodeTabs {
+    fn id(self) -> &'static str;
+    fn screen(self) -> Option<super::pages::PageId>;
 }
 
-impl NodeTab {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Overview => "Overview",
-            Self::Pods => "Pods",
-            Self::Services => "System services",
-            Self::Processes => "Processes",
-            Self::Storage => "Storage",
-            Self::Network => "Network",
-            Self::Diagnostics => "Diagnostics",
-            Self::Logs => "Logs",
-            Self::Events => "Events",
-            Self::Yaml => "YAML",
-        }
-    }
-    pub(super) fn id(self) -> &'static str {
+impl NodeTabs for NodeTab {
+    fn id(self) -> &'static str {
         match self {
             Self::Overview => "node-tab-overview",
             Self::Pods => "node-tab-pods",
@@ -71,7 +50,7 @@ impl NodeTab {
             Self::Yaml => "node-tab-yaml",
         }
     }
-    pub(super) fn screen(self) -> Option<super::pages::PageId> {
+    fn screen(self) -> Option<super::pages::PageId> {
         match self {
             Self::Processes => Some(super::pages::PageId::Processes),
             Self::Storage => Some(super::pages::PageId::Storage),

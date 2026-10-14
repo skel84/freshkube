@@ -15,7 +15,7 @@ use gpui_kit::{AppContext, Context, Entity, SharedString, Subscription, point, p
 
 use super::connection::Connection;
 use super::layout::{self, Layout, SectionShape};
-use super::{EntryId, MonitoringEvent, MonitoringPage, Request};
+use super::{EntryId, MonitoringEvent, MonitoringPage, Read, ReadKind, Request};
 use crate::panel::{Linked, PanelEvent, PanelView};
 
 /// Samples a range is read at: Prometheus's step is the span over these.
@@ -27,6 +27,7 @@ pub(super) struct Slot {
     /// The generation last asked for, and the read in flight.
     pub(super) asked: Option<u64>,
     pub(super) request: Option<Request>,
+    pub(super) read: Read,
     /// The last answer was an error.
     pub(super) failed: bool,
     /// The id of the empty card drawn in its place while it is out of reach.
@@ -62,6 +63,7 @@ pub(super) struct Board {
     selections: Vec<String>,
     pub(super) variables: Option<Variables>,
     pub(super) resolving: Option<Request>,
+    pub(super) variables_read: Read,
     pub(super) controls: Vec<Control>,
     pub(super) variable_error: Option<SharedString>,
     pub(super) time: TimeSettings,
@@ -90,10 +92,12 @@ impl Board {
         if self.resolving.take().is_some() {
             self.variables = None;
         }
+        self.variables_read.resolve(None, Ok(()));
         for slot in &mut self.slots {
             if slot.request.take().is_some() {
                 slot.asked = None;
             }
+            slot.read.resolve(None, Ok(()));
         }
         self.derive_meta();
     }
@@ -216,6 +220,7 @@ impl MonitoringPage {
             selections: Vec::new(),
             variables: None,
             resolving: None,
+            variables_read: Read::default(),
             controls: Vec::new(),
             variable_error: None,
             span: time.start,
@@ -271,6 +276,7 @@ impl MonitoringPage {
                     view,
                     asked: None,
                     request: None,
+                    read: Read::default(),
                     failed: false,
                     placeholder: format!("monitoring-placeholder-{}", placed.key).into(),
                 });
@@ -367,6 +373,13 @@ impl MonitoringPage {
         );
         let window = self.time_window(board.span);
         let request = self.run(
+            self.read_identity(ReadKind::Variables { board: id }),
+            move |this| {
+                this.board
+                    .as_mut()
+                    .filter(|board| board.id == id)
+                    .map(|board| &mut board.variables_read)
+            },
             async move {
                 source
                     .resolve_variables(&definitions, &selections, window)
@@ -380,7 +393,7 @@ impl MonitoringPage {
         }
     }
 
-    fn variables_resolved(
+    pub(super) fn variables_resolved(
         &mut self,
         id: u64,
         result: Result<(Variables, Vec<String>), QueryError>,
@@ -420,6 +433,7 @@ impl MonitoringPage {
             board.window = Some(window);
             for slot in &mut board.slots {
                 slot.request = None;
+                slot.read.resolve(None, Ok(()));
             }
         }
         self.read_markers(window, cx);
@@ -448,6 +462,7 @@ impl MonitoringPage {
             .within(top, bottom)
             .filter(|slot| board.slots[*slot].asked != Some(generation))
             .collect();
+        let id = board.id;
         let context = QueryContext {
             window,
             variables: variables.context_values(),
@@ -456,6 +471,17 @@ impl MonitoringPage {
             let spec = self.board.as_ref().unwrap().slots[index].spec.clone();
             let (source, context, variables) = (source.clone(), context.clone(), variables.clone());
             let request = self.run(
+                self.read_identity(ReadKind::Panel {
+                    board: id,
+                    panel: index,
+                }),
+                move |this| {
+                    this.board
+                        .as_mut()
+                        .filter(|board| board.id == id)
+                        .and_then(|board| board.slots.get_mut(index))
+                        .map(|slot| &mut slot.read)
+                },
                 async move { source.query_panel(&spec, &context, &variables).await },
                 cx,
                 move |this, result, cx| this.answered(index, generation, window, result, cx),
@@ -469,7 +495,7 @@ impl MonitoringPage {
         }
     }
 
-    fn answered(
+    pub(super) fn answered(
         &mut self,
         index: usize,
         generation: u64,
@@ -532,6 +558,7 @@ impl MonitoringPage {
         let generation = self.generation;
         let board = self.board.as_mut().unwrap();
         board.resolving = None;
+        board.variables_read.resolve(None, Ok(()));
         board.selections = (0..board.definitions.len())
             .map(|index| variables.selection(index))
             .collect();
@@ -544,6 +571,7 @@ impl MonitoringPage {
         };
         for slot in &mut board.slots {
             slot.request = None;
+            slot.read.resolve(None, Ok(()));
             slot.asked = Some(generation);
             let result = source.query_panel(&slot.spec, &context, &variables);
             slot.failed = result.is_err();

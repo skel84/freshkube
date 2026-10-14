@@ -6,6 +6,7 @@ use gpui_kit::{AppContext, Context, Entity, Window};
 use std::collections::BTreeMap;
 use tokio::runtime::Handle;
 
+use super::nodes::NodeTabs;
 use super::overview::OverviewPage;
 use super::pages::PageId;
 use super::settings::SettingsPage;
