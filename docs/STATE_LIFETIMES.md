@@ -2,6 +2,31 @@
 
 This describes the implementation reviewed for [#24](https://github.com/skel84/freshkube/issues/24) on main `1c328f3`. Domain queries and mutation policy belong to core; desktop entities own presentation, requests and GPUI delivery. Use the narrowest existing owner, rather than making every feature a `Loader`. Start I/O from lifecycle methods or actions, mutate entities through GPUI contexts, and notify after a coherent change. Never start requests in `render`.
 
+## Snapshot and Loader in brief
+
+Moved from [AGENTS.md](../AGENTS.md), which keeps the rules (#587).
+
+Desktop's [state::Snapshot](../crates/freshkube-desktop/src/state.rs), core's [`snapshot::Snapshot`](../crates/freshkube-core/src/snapshot.rs) with a default identity, retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. Its error type defaults to core's `Failure`; a read that still words its own errors names `String` as the third parameter (`Loader` does), until it moves to `Failure`. This small example uses the same identity labels as its unit tests:
+
+```rust
+use crate::state::Snapshot;
+
+let mut state = Snapshot::<u32, &str, String>::default();
+let initial = state.begin("node-a");
+assert!(state.apply(&initial, Ok(7)));
+let refresh = state.begin("node-a");
+assert!(state.apply(&refresh, Err("offline".into())));
+assert_eq!(state.data(), Some(&7));
+assert!(state.is_stale());
+
+let replacement = state.begin("node-b");
+assert!(state.data().is_none());
+assert!(!state.apply(&refresh, Ok(99)));
+assert!(state.apply(&replacement, Ok(8)));
+```
+
+For ordinary inspection reads, [screens::Loader](../crates/freshkube-desktop/src/screens/loader.rs) is `freshkube-reads`'s [`Loader<T, Target>`](../crates/freshkube-reads/src/loader/mod.rs), which owns `Snapshot<T, Target>`, `Option<OwnedJob>` and `Option<Task<()>>`, with `SCREEN_DEADLINE` plugged in. Use `load(target, &runtime, what, work, slot, cx)` for Tokio work, `resolve(target, result)` for fixtures, and `reset()` when `set_source` detects a changed target. [The etcd example](#ordinary-screen-reads) shows the real call. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
+
 ## Identity and generation
 
 [ACCESS_IDENTITY.md](ACCESS_IDENTITY.md) is the access contract. These identities have different jobs:
@@ -70,7 +95,7 @@ That screen owns `Loader<EtcdHealthSnapshot>`, compares old/new `source.target` 
 
 Keep the GPUI delivery `Task` as well as the `OwnedJob` on the owner. Replacing the pair drops old work and delivery. Use `cx.spawn`/`spawn_in` with weak entities, check the captured identity/generation in `update`/`update_in`, and handle the entity/window disappearing. Cancellation saves work; completion guards establish publication correctness even if an answer raced cancellation. Ordinary read delivery is not detached.
 
-The shell sends `set_source` to all retained `ScreenPanel`s and dispatches `activate`/periodic `refresh` only to the visible one. Every page has a `ScreenHandle` in the shell's one map (`Pilot.pages`) and hears `ScreenPanel::set_visible` through it (`Pilot::sync_visible`), whenever the page or the node pane's tab changes: the pages that show hear `true` and every other `false`. Visibility nests: the page that shows hears `true`, and a node pane's screen hears it too only while Nodes is up with its tab selected, Nodes keeping `true` around it (`Pilot::shown_pages`). Resources, Monitoring, Observability, Applications, Nodes' read of its nodes' use and Settings' Delivery sources drop their reads there. The Talos screens keep its default, which does nothing, so navigation alone leaves generic loaders intact and an in-flight read can finish while hidden, until `Loader` has its hook (#582). Operations' `set_source` only invalidates its preview and audit; `activate` reads them, so a hidden Operations reads nothing for a new target or a same-target update (#44). Adding universal hide cancellation or redesigning that ownership is outside #24. New page-owned work should use an explicit visibility boundary rather than infer cancellation from navigation.
+The shell sends `set_source` to all retained `ScreenPanel`s and dispatches `activate`/periodic `refresh` only to the visible one. Every page has a `ScreenHandle` in the shell's one map (`Pilot.pages`, keyed by `PageId`) and hears `ScreenPanel::set_visible` through it (`Pilot::sync_visible`), whenever the page or the node pane's tab changes, a roster change that closes the pane or drops its tab included: the pages that show hear `true` and every other `false`, in key order, and a page told what it already knows does nothing. Visibility nests: the page that shows hears `true`, and a node pane's screen hears it too only while Nodes is up with its tab selected, Nodes keeping `true` around it (`Pilot::shown_pages`). Nothing else hears `true` at once. Resources, Monitoring, Observability, Applications, Nodes' read of its nodes' use and Settings' Delivery sources drop their reads there. The Talos screens keep its default, which does nothing, so navigation alone leaves generic loaders intact and an in-flight read can finish while hidden, until `Loader` has its hook (#582). Operations' `set_source` only invalidates its preview and audit; `activate` reads them, so a hidden Operations reads nothing for a new target or a same-target update (#44). Adding universal hide cancellation or redesigning that ownership is outside #24. New page-owned work should use an explicit visibility boundary rather than infer cancellation from navigation.
 
 ## Feature owners and visibility
 

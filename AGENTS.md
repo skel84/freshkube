@@ -124,7 +124,7 @@ GPUI has its own executor; tonic and kube need Tokio. The binary owns the Tokio 
 
 - Run cluster I/O on Tokio, send the result back to a GPUI task, and update entities there. Never block the UI thread.
 - Give ordinary reads both a source/target identity and a request generation. Keep the Tokio `OwnedJob` and GPUI delivery `Task` on their actual owner; replacement drops both, and completion checks identity/generation before publishing. `Snapshot` tracks data and freshness; it does not cancel work or inspect credentials. [State and request lifetimes](docs/STATE_LIFETIMES.md) describes the current owners and exceptions.
-- The shell activates and periodically refreshes only the visible `ScreenPanel`; it sends source updates to every page in its one map, the screens first. Every page has a `ScreenHandle` in the shell's one map (`Pilot.pages`, keyed by `PageId`) and hears `ScreenPanel::set_visible` through it: whenever the page or the node pane's tab changes, a roster change that closes the pane or drops its tab included, `Pilot::sync_visible` tells the pages that show `true` and every other `false`, in key order, and a page told what it already knows does nothing. Visibility nests: the page that shows hears `true`, and while Nodes' pane shows a Talos screen in its selected tab, that screen hears `true` inside Nodes, which keeps hearing `true` too (`Pilot::shown_pages`). Nothing else hears `true` at once. A page drops its reads on hide there: Resources, Monitoring, Observability, Applications, Nodes' read of its nodes' use and Settings' Delivery sources do. The Talos screens keep the default, which does nothing, so navigation alone does not cancel a `Loader` until it has its hook (#582). Operations reads its preview and audit only from `activate`, so a hidden Operations reads nothing. New page-owned reads should start only while shown; preserve the existing log and user-started session lifetimes below. Dock log tabs are user-started: each reads while it is open, on any page, and stops when it closes.
+- The shell activates and periodically refreshes only the visible `ScreenPanel`; it sends source updates to every page in its one map, the screens first, and tells every page whether it shows through `ScreenPanel::set_visible` ([who drops what on hide](docs/STATE_LIFETIMES.md#read-job-and-delivery-ownership)). New page-owned reads should start only while shown; preserve the existing log and user-started session lifetimes below. Dock log tabs are user-started: each reads while it is open, on any page, and stops when it closes.
 - The shell's Kubernetes summary is session-owned: nine compact reflector stores run on every page and publish after a 500 ms coalescing window. Health and visible Lifecycle consume those observations; selecting a Talos node does not replace the session. The 15 s shell cycle and countdown are for Talos; metrics keep their separate polling schedules.
 - Operations mutations have a separate lifetime: a detached delivery task holds the app-wide operation ticket until core's runner ends. Cancellation is cooperative, before/between steps; await a submitted mutation. Never wrap the submitted run in an ordinary `OwnedJob` or abort it when its screen changes.
 
@@ -314,26 +314,7 @@ A diagnostic showing failure for a healthy system is worse than showing unknown.
 
 ### Using Snapshot<T, I, E> and Loader<T>
 
-Desktop's [state::Snapshot](crates/freshkube-desktop/src/state.rs), core's [`snapshot::Snapshot`](crates/freshkube-core/src/snapshot.rs) with a default identity, retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. Its error type defaults to core's `Failure`; a read that still words its own errors names `String` as the third parameter (`Loader` does), until it moves to `Failure`. This small example uses the same identity labels as its unit tests:
-
-```rust
-use crate::state::Snapshot;
-
-let mut state = Snapshot::<u32, &str, String>::default();
-let initial = state.begin("node-a");
-assert!(state.apply(&initial, Ok(7)));
-let refresh = state.begin("node-a");
-assert!(state.apply(&refresh, Err("offline".into())));
-assert_eq!(state.data(), Some(&7));
-assert!(state.is_stale());
-
-let replacement = state.begin("node-b");
-assert!(state.data().is_none());
-assert!(!state.apply(&refresh, Ok(99)));
-assert!(state.apply(&replacement, Ok(8)));
-```
-
-For ordinary inspection reads, [screens::Loader](crates/freshkube-desktop/src/screens/loader.rs) is `freshkube-reads`'s [`Loader<T, Target>`](crates/freshkube-reads/src/loader/mod.rs), which owns `Snapshot<T, Target>`, `Option<OwnedJob>` and `Option<Task<()>>`, with `SCREEN_DEADLINE` plugged in. Use `load(target, &runtime, what, work, slot, cx)` for Tokio work, `resolve(target, result)` for fixtures, and `reset()` when `set_source` detects a changed target. [The etcd example](docs/STATE_LIFETIMES.md#ordinary-screen-reads) shows the real call. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
+Use desktop's `state::Snapshot<T, I, E>` for a value read for one identity and, for ordinary inspection reads, `screens::Loader<T>` ([how, with an example](docs/STATE_LIFETIMES.md#snapshot-and-loader-in-brief)): `load` for Tokio work, `resolve` for fixtures, and `reset()` when `set_source` detects a changed target. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
 
 Access identity answers whose data this is; generation answers which request may publish. Follow [ACCESS_IDENTITY.md](docs/ACCESS_IDENTITY.md) when configuration/access changes. Preserve each feature's owner: logs use `LogView<S>`, Monitoring and Observability own their page requests, shells belong to `ShellView`, and forwards belong to the app's `ForwardList`.
 
