@@ -1,4 +1,5 @@
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, Hold, KubeClientSource};
+use freshkube_core::failure::{Failure, FailureKind};
 use freshkube_core::monitoring::{
     Candidate, Discovery, ErrorKind, PrometheusService, QueryError, Rank, Tried,
 };
@@ -1130,8 +1131,8 @@ fn history_reads_where_the_page_found_or_remembers_prometheus(cx: &mut TestAppCo
 struct NoClient;
 
 impl KubeClientSource for NoClient {
-    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
-        Box::pin(async { Err("No kubeconfig".into()) })
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, Failure>> {
+        Box::pin(async { Err(Failure::new(FailureKind::Config, "No kubeconfig")) })
     }
 }
 
@@ -1144,9 +1145,9 @@ struct Forgetting {
 }
 
 impl KubeClientSource for Forgetting {
-    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, Failure>> {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Box::pin(async { Err("No kubeconfig".into()) })
+        Box::pin(async { Err(Failure::new(FailureKind::Config, "No kubeconfig")) })
     }
 
     fn forget(&self) {
@@ -1853,7 +1854,7 @@ impl FakeCluster {
 }
 
 impl KubeClientSource for FakeCluster {
-    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, Failure>> {
         self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let forgotten = self.forgot();
         let replacement = self.replacement.lock().unwrap();
@@ -1882,9 +1883,12 @@ impl KubeClientSource for FakeCluster {
                 _ = gate.await;
             }
             if fail {
-                return Err("The replacement client did not build".into());
+                return Err(Failure::new(FailureKind::Other, "The replacement client did not build"));
             }
-            kube::Client::try_from(config).map_err(|error| error.to_string())
+            kube::Client::try_from(config).map_err(|error| {
+                let message = error.to_string();
+                Failure::new(Failure::from_kube(error).kind, message)
+            })
         })
     }
 
