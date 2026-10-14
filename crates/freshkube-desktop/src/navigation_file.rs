@@ -41,10 +41,6 @@ struct File {
     /// Whether the last save failed, so a directory that stays unwritable
     /// is logged once, not on every change.
     save_failed: AtomicBool,
-    /// How many split sizes were saved, for tests that count a drag's
-    /// writes.
-    #[cfg(test)]
-    sizes_saved: std::sync::atomic::AtomicUsize,
 }
 
 impl Global for NavigationFile {}
@@ -82,8 +78,6 @@ impl NavigationFile {
             value: Mutex::new(value),
             writer: Mutex::new(()),
             save_failed: AtomicBool::new(false),
-            #[cfg(test)]
-            sizes_saved: Default::default(),
         })))
     }
 
@@ -154,14 +148,6 @@ impl NavigationFile {
         });
     }
 
-    /// How many split sizes this file has saved.
-    #[cfg(test)]
-    pub(crate) fn sizes_saved(&self) -> usize {
-        self.0.as_ref().map_or(0, |file| {
-            file.sizes_saved.load(std::sync::atomic::Ordering::Relaxed)
-        })
-    }
-
     fn read<T>(&self, read: impl FnOnce(&Map<String, Value>) -> Option<T>) -> Option<T> {
         let file = self.0.as_ref()?;
         read(&*file.value.lock().ok()?)
@@ -205,10 +191,8 @@ impl SizeStore for NavigationFile {
     }
 
     fn save(&self, key: SizeKey, size: f32, cx: &App) {
-        #[cfg(test)]
-        if let Some(file) = &self.0 {
-            file.sizes_saved
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.0.is_some() {
+            freshkube_probe::probe::hit("navigation.size.save");
         }
         self.change(cx, |map| {
             object(map, key.group).insert(key.name.into(), size.round().into());

@@ -21,6 +21,7 @@ fn the_dock_height_is_written_once_and_survives_a_restart(cx: &mut TestAppContex
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
             .and_then(|value| value["dock"]["height"].as_f64())
     };
+    let before = freshkube_probe::probe::count("navigation.size.save");
     let (_runtime, handle, pilot) = crate::desktop::tests::mount(cx, options(), 1280., 880.);
     let dock = dock(&pilot, cx);
     let pods = running_pods(&pilot, cx);
@@ -33,19 +34,19 @@ fn the_dock_height_is_written_once_and_survives_a_restart(cx: &mut TestAppContex
     })
     .unwrap();
     cx.run_until_parked();
-    let sizes_saved = |cx: &mut TestAppContext| {
-        cx.update(|cx| crate::navigation_file::NavigationFile::global(cx).sizes_saved())
-    };
+    let sizes_saved = || freshkube_probe::probe::count("navigation.size.save") - before;
     assert_eq!(saved(), None, "nothing is written while it moves");
-    assert_eq!(sizes_saved(cx), 0);
+    assert_eq!(sizes_saved(), 0);
     cx.executor()
         .advance_clock(freshkube_ui::split_size::SAVE_DELAY * 2);
     cx.run_until_parked();
     assert_eq!(saved(), Some(420.));
-    assert_eq!(sizes_saved(cx), 1, "the drag writes once");
+    assert_eq!(sizes_saved(), 1, "the drag writes once");
 
     // The next run opens at it, in a window too short to show it all.
+    let before = freshkube_probe::probe::count("navigation.size.save");
     let (_runtime, handle, pilot) = crate::desktop::tests::mount(cx, options(), 1280., 480.);
+    let sizes_saved = || freshkube_probe::probe::count("navigation.size.save") - before;
     let dock = super::dock(&pilot, cx);
     assert_eq!(cx.update(|cx| dock.read(cx).height()), 420.);
     let pods = running_pods(&pilot, cx);
@@ -61,7 +62,7 @@ fn the_dock_height_is_written_once_and_survives_a_restart(cx: &mut TestAppContex
     cx.run_until_parked();
     assert_eq!(cx.update(|cx| dock.read(cx).height()), 420.);
     assert_eq!(saved(), Some(420.));
-    assert_eq!(sizes_saved(cx), 0, "showing it shorter writes nothing");
+    assert_eq!(sizes_saved(), 0, "showing it shorter writes nothing");
     let _ = std::fs::remove_dir_all(&directory);
 }
 
