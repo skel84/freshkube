@@ -19,6 +19,8 @@ pub(super) fn example(source: &ScreenSource) -> Result<DiagnosticSnapshot, Strin
         ));
     }
     let control_plane = node.role == NodeRole::ControlPlane;
+    // The `homelab` context has no Kubernetes source, which exercises the path
+    // where Kubernetes checks are unknown but Talos checks still show.
     let kubernetes_ok = source.target.context != "homelab";
     // System.
     let memory = node.memory.as_ref().map(|memory| MemorySnapshot {
