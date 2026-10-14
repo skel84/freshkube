@@ -1,0 +1,1 @@
+- **Dock:** dragging its top edge resizes the dock and saves the chosen height.
