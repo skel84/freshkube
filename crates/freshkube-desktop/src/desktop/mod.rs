@@ -1220,6 +1220,11 @@ impl Pilot {
         self.publish_reading(cx);
         if self.fixture && self.hold.talos {
             // Loading until the hold is released, which only a test does.
+            // Coroot's examples don't wait for Talos, so Observability has
+            // its source, and its own hold, at once.
+            if let Some(page) = self.pages.get(&PageId::Observability) {
+                page.set_page_source(self.source(), window, cx);
+            }
             cx.notify();
             return;
         }

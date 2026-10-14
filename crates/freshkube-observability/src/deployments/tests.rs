@@ -373,7 +373,7 @@ mod wanted {
         let (runtime, handle, page) = mount(cx, true);
         cx.update(|cx| {
             page.update(cx, |page, cx| {
-                page.set_source(Some(ACCESS.into()), cx);
+                page.set_access(Some(ACCESS.into()), Some(false), cx);
                 page.open_revision(link, cx);
             })
         });
@@ -498,7 +498,11 @@ mod wanted {
     fn another_connection_drops_a_found_revision(cx: &mut TestAppContext) {
         let (_runtime, handle, page) = asked(cx, link("checkout-api", "84c6d7f9b"));
         assert_eq!(outcome(cx, &page), Some(Outcome::Found));
-        cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("another".into()), cx)));
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                page.set_access(Some("another".into()), Some(false), cx)
+            })
+        });
         cx.run_until_parked();
         assert_eq!(outcome(cx, &page), None);
         assert!(!banner_shows(cx, handle));

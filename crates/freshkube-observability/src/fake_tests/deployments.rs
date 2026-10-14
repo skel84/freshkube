@@ -364,7 +364,11 @@ async fn a_revision_asked_for_while_hidden_is_read_once_the_page_shows(cx: &mut 
     let (runtime, handle, page) = mount(cx, false);
     let server = Server::new(&runtime);
     server.deploy_mode.store(1, Ordering::SeqCst);
-    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("conn-a".into()), cx)));
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_access(Some("conn-a".into()), None, cx)
+        })
+    });
     connected(cx, handle, &page, server.url.clone()).await;
     cx.update(|cx| {
         page.update(cx, |page, cx| {
@@ -426,7 +430,11 @@ async fn a_revision_asked_for_needs_the_clusters_association_and_coroots_listing
     let (runtime, handle, page) = mount(cx, false);
     let server = Server::new(&runtime);
     server.deploy_mode.store(1, Ordering::SeqCst);
-    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some("conn-a".into()), cx)));
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_access(Some("conn-a".into()), None, cx)
+        })
+    });
     connected(cx, handle, &page, server.url.clone()).await;
     let link = |name: &str| crate::RevisionLink {
         access: "conn-a".into(),
