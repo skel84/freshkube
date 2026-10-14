@@ -2,32 +2,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::rows::{PodRow, RowOwner};
-
-/// Identifies one observed incarnation of any resource: the connection, the
-/// kubectl resource key (`pods`, `deployments.apps`), the address and the UID
-/// the API server assigned at creation. A session epoch is deliberately not
-/// part of identity, so a relist keeps the selection while the object still
-/// exists; epochs tag batches instead (see `ResourceStore::apply`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(crate) struct ResourceIdentity {
-    pub(crate) connection: String,
-    pub(crate) resource: String,
-    /// Empty for cluster-scoped resources.
-    pub(crate) namespace: String,
-    pub(crate) name: String,
-    pub(crate) uid: String,
-}
-
-impl ResourceIdentity {
-    /// `namespace/name`, or `name` for a cluster-scoped resource.
-    pub(crate) fn address(&self) -> String {
-        if self.namespace.is_empty() {
-            self.name.clone()
-        } else {
-            format!("{}/{}", self.namespace, self.name)
-        }
-    }
-}
+pub(crate) use freshkube_nav::{ObjectRef, ResourceIdentity};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnKind {
@@ -312,27 +287,5 @@ mod tests {
                 SortDirection::Default
             ]
         );
-    }
-}
-
-/// An object link may carry a UID from metadata or a summary.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ObjectRef {
-    pub(crate) namespace: String,
-    pub(crate) name: String,
-    pub(crate) uid: String,
-    /// The cluster the link was made in: a `ResourceIdentity::connection`.
-    /// `None` means the one that is open. A link naming another cluster is
-    /// never opened against this one.
-    pub(crate) connection: Option<String>,
-}
-impl From<ResourceIdentity> for ObjectRef {
-    fn from(identity: ResourceIdentity) -> Self {
-        Self {
-            namespace: identity.namespace,
-            name: identity.name,
-            uid: identity.uid,
-            connection: Some(identity.connection),
-        }
     }
 }

@@ -2494,6 +2494,7 @@ dependencies = [
  "freshkube-graph",
  "freshkube-logs",
  "freshkube-monitoring",
+ "freshkube-nav",
  "freshkube-observability",
  "freshkube-prefs",
  "freshkube-probe",
@@ -2555,6 +2556,13 @@ dependencies = [
  "talos-rs",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "freshkube-nav"
+version = "0.14.0"
+dependencies = [
+ "freshkube-core",
 ]
 
 [[package]]
