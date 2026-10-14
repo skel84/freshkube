@@ -127,7 +127,10 @@ impl Pages {
             crate::observability::ObservabilityPage::new(
                 runtime.clone(),
                 // Example data never touches the saved Coroot connection.
-                options.preferences.as_deref().filter(|_| !options.fixture),
+                options
+                    .preferences
+                    .as_deref()
+                    .filter(|_| !options.starts_with_examples()),
                 secrets,
                 window,
                 cx,

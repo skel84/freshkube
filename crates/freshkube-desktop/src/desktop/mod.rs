@@ -187,7 +187,7 @@ pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<(
             // that stops at the review (`maintenance/example.rs`).
             #[cfg(debug_assertions)]
             let example_maintenance =
-                options.is_fixture() && options.debug.page() == Some("maintenance");
+                options.starts_with_examples() && options.debug.page() == Some("maintenance");
             #[cfg(not(debug_assertions))]
             let example_maintenance = false;
             let window_options = WindowOptions {
@@ -726,8 +726,9 @@ impl Pilot {
     fn start(&mut self, options: GpuiOptions, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(any(debug_assertions, feature = "stress"))]
         let debug = options.debug.clone();
-        let names_source =
-            options.fixture || options.named_source || options.maintenance_endpoint.is_some();
+        let names_source = options.starts_with_examples()
+            || options.named_source
+            || options.maintenance_endpoint.is_some();
         let launched = switch::Launched {
             kubernetes_only: options.kubernetes_only,
             kubeconfig: options.kubeconfig_path.clone(),
@@ -897,8 +898,8 @@ impl Pilot {
             switcher: Vec::new(),
             kubeconfig_draft: Default::default(),
             navigation,
-            mode: source::Mode::new(options.fixture),
-            hold: if options.fixture {
+            mode: source::Mode::new(options.starts_with_examples()),
+            hold: if options.starts_with_examples() {
                 options.debug.hold
             } else {
                 Hold::NONE
