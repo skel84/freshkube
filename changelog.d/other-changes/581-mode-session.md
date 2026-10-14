@@ -1,0 +1,1 @@
+- **Internal:** Switching clusters, Kubernetes-only mode, the page list and links now ask the session whether it shows example data and whether Talos is part of it, instead of reading two flags. Nothing changes on screen.

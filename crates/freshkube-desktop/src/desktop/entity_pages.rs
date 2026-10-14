@@ -408,7 +408,7 @@ impl Pilot {
                 namespace,
                 name,
                 logs,
-            } if self.fixture => self.open_object(
+            } if self.mode().is_example() => self.open_object(
                 builtin("pods").unwrap(),
                 resources::model::ObjectRef {
                     connection: None,

@@ -120,10 +120,10 @@ impl Pilot {
     /// Reads the kubeconfig files and lists their contexts, then connects
     /// to the one asked for, or else the current one.
     pub(super) fn load_kube_contexts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fixture {
+        if self.mode().is_example() {
             return;
         }
-        let Some(kube) = self.kubernetes_only.as_ref() else {
+        let Some(kube) = self.mode().kubernetes_only() else {
             return;
         };
         let explicit = kube.explicit.clone();
@@ -214,7 +214,7 @@ impl Pilot {
     /// kubeconfig or its context couldn't be read. Data the summary already
     /// gave Health stays.
     pub(super) fn sync_unread_health(&mut self, cx: &mut Context<Self>) {
-        let summary = match &self.kubernetes_only {
+        let summary = match self.mode().kubernetes_only() {
             Some(_)
                 if !self.config_loading
                     && self.config_error.is_none()
@@ -236,7 +236,7 @@ impl Pilot {
         };
         self.health
             .update(cx, |health, cx| health.set_summary(summary, cx));
-        let Some(kube) = &self.kubernetes_only else {
+        let Some(kube) = self.mode().kubernetes_only() else {
             return;
         };
         let failure = match (&self.config_error, &kube.connection) {
@@ -257,7 +257,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.fixture {
+        if self.mode().is_example() {
             self.applied.context = context;
             if let Some(kube) = self.kubernetes_only.as_mut() {
                 kube.choosing &= self.applied.context.is_none();
@@ -289,7 +289,7 @@ impl Pilot {
     /// whether the context answers. After a failure, the page lists again
     /// once it does.
     pub(super) fn check_kube_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fixture {
+        if self.mode().is_example() {
             return;
         }
         let Some(kube) = self.kubernetes_only.as_mut() else {
@@ -377,7 +377,7 @@ impl Pilot {
             self.load_kube_contexts(window, cx);
             return;
         }
-        let Some(kube) = self.kubernetes_only.as_ref() else {
+        let Some(kube) = self.mode().kubernetes_only() else {
             return;
         };
         let Some(access) = kube.access.clone() else {
@@ -448,7 +448,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(kube) = self.kubernetes_only.as_ref() else {
+        let Some(kube) = self.mode().kubernetes_only() else {
             return;
         };
         if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
@@ -497,7 +497,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.fixture || self.kubernetes_only.is_none() {
+        if self.mode().is_example() || self.mode().has_talos() {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
@@ -517,7 +517,7 @@ impl Pilot {
     /// contexts and connects to none of them: the user picks the context.
     /// Cancelling changes nothing.
     pub(super) fn choose_kubernetes_only(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.kubernetes_only.is_some() || self.config_loading {
+        if !self.mode().has_talos() || self.config_loading {
             return;
         }
         let selection = cx.prompt_for_paths(PathPromptOptions {
@@ -549,7 +549,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.kubernetes_only.is_some() {
+        if !self.mode().has_talos() {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
@@ -580,8 +580,8 @@ impl Pilot {
         let mut kube = KubernetesOnly::new(Some(path), None).remembering();
         // Example mode connects to nothing, so it takes the first example
         // context at once; a real file waits for the user's pick.
-        kube.choosing = !self.fixture;
-        if self.fixture {
+        kube.choosing = !self.mode().is_example();
+        if self.mode().is_example() {
             kube.connection = KubeConnection::Connected {
                 version: self
                     .registry
@@ -595,7 +595,7 @@ impl Pilot {
         }
         self.kubernetes_only = Some(kube);
         self.sync_nodes_source_mode(cx);
-        if self.fixture {
+        if self.mode().is_example() {
             self.contexts = crate::fixture::CONTEXTS
                 .iter()
                 .map(|name| (*name).into())

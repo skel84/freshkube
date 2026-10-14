@@ -288,7 +288,7 @@ impl Pilot {
         };
         NodeServicesState {
             config_error: self.config_error.clone(),
-            kubernetes_only: self.kubernetes_only.is_some(),
+            kubernetes_only: !self.mode().has_talos(),
             context: self.applied.context.clone().unwrap_or_default(),
             talos,
             stale_talos: StaleTalos::of(&self.overview),

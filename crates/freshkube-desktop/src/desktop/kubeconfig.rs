@@ -56,7 +56,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         // Choosing a file again reloads its credentials even at the same path.
-        if self.fixture
+        if self.mode().is_example()
             || (selection == self.kubeconfig
                 && !matches!(selection, KubeconfigSelection::File { .. }))
         {
@@ -111,7 +111,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.fixture {
+        if self.mode().is_example() {
             return;
         }
         self.kubeconfig_draft.mode = mode;
@@ -162,7 +162,7 @@ impl Pilot {
     /// Opens the native file picker; a chosen file's contexts are read and
     /// its current context is applied when it has a valid one.
     pub(super) fn browse_kubeconfig(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.fixture {
+        if self.mode().is_example() {
             return;
         }
         let selection = cx.prompt_for_paths(PathPromptOptions {
@@ -179,7 +179,7 @@ impl Pilot {
                 return;
             };
             _ = this.update_in(cx, |view, window, cx| {
-                if view.kubernetes_only.is_some() {
+                if !view.mode().has_talos() {
                     view.use_kubeconfig_file(path, window, cx)
                 } else {
                     view.inspect_kubeconfig_file(path, None, window, cx)
@@ -293,7 +293,7 @@ pub(super) fn settings_section(
 ) -> impl IntoElement + use<> {
     let p = palette(cx);
     let view = pilot.read(cx);
-    let fixture = view.fixture;
+    let fixture = view.mode().is_example();
     let draft = &view.kubeconfig_draft;
     let mode = draft.mode;
     let applied_context = match &view.kubeconfig {

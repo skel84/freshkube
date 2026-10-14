@@ -55,7 +55,7 @@ impl Pilot {
                 if self.divert_link(&object, work, window, cx) {
                     return;
                 }
-                if self.fixture {
+                if self.mode().is_example() {
                     let found = resources::example::custom_groups()
                         .into_iter()
                         .filter_map(|group| resources::example::group_kinds(&group.name).ok())
