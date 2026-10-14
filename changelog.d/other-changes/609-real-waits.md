@@ -1,1 +1,0 @@
-- **Test waits:** log stream tests wait for real I/O on the shared allowance, example collection checks use the executor clock, and the fake API releases held lists through a condition variable.

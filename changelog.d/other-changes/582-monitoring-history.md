@@ -1,1 +1,0 @@
-- **Monitoring:** pod and node history use the shared read owner for cancellation and late answers, keeping their existing refresh timing and charts.

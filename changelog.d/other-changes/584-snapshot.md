@@ -1,1 +1,0 @@
-- **Talos errors:** a Talos node that refuses, times out or resets a connection now says so ("Connection refused - is the node reachable?") instead of "Transport error: transport error".

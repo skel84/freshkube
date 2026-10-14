@@ -1,1 +1,0 @@
-- **Applications:** show the lock icon when every source refuses the applications read.

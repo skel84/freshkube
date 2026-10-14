@@ -1,1 +1,0 @@
-- Replace three test-only counters with probes and expose revealed log-line measurements through testing support, preserving the existing assertions.

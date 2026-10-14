@@ -1,1 +1,0 @@
-- **Shell tests:** the shell's UI tests now live in `desktop/tests/`, one file per subject, with their harness in `desktop/testing.rs`; no test changes.

@@ -1,1 +1,0 @@
-- **Stress knobs:** document the parser's knobs in one table and test that the table and parser stay in sync.
