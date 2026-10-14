@@ -231,6 +231,7 @@ impl ExecSession {
             guard: ExecGuard {
                 task: Some(task),
                 close: Some(close),
+                runtime: tokio::runtime::Handle::current(),
             },
         }
     }
@@ -240,19 +241,28 @@ impl ExecSession {
 pub struct ExecGuard {
     task: Option<JoinHandle<()>>,
     close: Option<oneshot::Sender<()>>,
+    runtime: tokio::runtime::Handle,
 }
 
 impl ExecGuard {
     /// Ends the session politely in the background and lets it finish on
-    /// its own, within a couple of seconds. The handle completes when it
-    /// has; dropping the handle doesn't stop it.
+    /// its own, within 200 ms + 2 s, including writes and final delivery.
+    /// The handle completes when it has; dropping the handle doesn't stop it.
     pub fn close(mut self) -> JoinHandle<()> {
+        let deadline = tokio::time::Instant::now() + INTERRUPT_PAUSE + CLOSE_DEADLINE;
         if let Some(close) = self.close.take() {
             let _ = close.send(());
         }
-        self.task
+        let mut task = self
+            .task
             .take()
-            .expect("a guard owns its task until closed")
+            .expect("a guard owns its task until closed");
+        self.runtime.spawn(async move {
+            if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+                task.abort();
+                let _ = task.await;
+            }
+        })
     }
 }
 
@@ -307,6 +317,9 @@ pub async fn start_exec(client: Client, request: ExecRequest) -> Result<ExecSess
     let (output_sink, output) = mpsc::channel(OUTPUT_QUEUE);
     let (close, closing) = oneshot::channel();
     let task = tokio::spawn(async move {
+        // Aborting this worker must also stop kube's websocket task, whose
+        // JoinHandle would otherwise detach when AttachedProcess drops.
+        let mut abort = AbortExec(Some(&process));
         let streams = Streams {
             input: input_queue,
             stdin,
@@ -326,6 +339,10 @@ pub async fn start_exec(client: Client, request: ExecRequest) -> Result<ExecSess
             match status.await {
                 Some(status) => classify_status(&status, ran.output_seen),
                 None => {
+                    // No status means kube's task has already lost its
+                    // status sender. Joining it consumes the process.
+                    abort.0.take();
+                    drop(abort);
                     let broke = process.join().await.err().map(|error| error.to_string());
                     ended_without_status(&client, &request, restarts, broke).await
                 }
@@ -339,8 +356,19 @@ pub async fn start_exec(client: Client, request: ExecRequest) -> Result<ExecSess
         guard: ExecGuard {
             task: Some(task),
             close: Some(close),
+            runtime: tokio::runtime::Handle::current(),
         },
     })
+}
+
+struct AbortExec<'a>(Option<&'a kube::api::AttachedProcess>);
+
+impl Drop for AbortExec<'_> {
+    fn drop(&mut self) {
+        if let Some(process) = self.0 {
+            process.abort();
+        }
+    }
 }
 
 fn terminal_size(size: ExecSize) -> TerminalSize {
@@ -416,7 +444,7 @@ impl<W: AsyncWrite + Unpin, R: AsyncRead + Unpin> Streams<W, R> {
                 // has exited, or at the deadline.
                 let deadline = tokio::time::Instant::now() + INTERRUPT_PAUSE + CLOSE_DEADLINE;
                 let (_, read) = tokio::join!(
-                    end_politely(&mut stdin),
+                    tokio::time::timeout_at(deadline, end_politely(&mut stdin)),
                     tokio::time::timeout_at(deadline, &mut reading),
                 );
                 match read {

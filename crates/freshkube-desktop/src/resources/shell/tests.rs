@@ -490,10 +490,10 @@ impl tokio::io::AsyncWrite for ClosingWriter {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        if self.bytes.lock().unwrap().last() == Some(&3) {
-            if std::task::ready!(std::pin::Pin::new(&mut self.release).poll(cx)).is_err() {
-                return std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
-            }
+        let interrupted = self.bytes.lock().unwrap().last() == Some(&3);
+        if interrupted && std::task::ready!(std::pin::Pin::new(&mut self.release).poll(cx)).is_err()
+        {
+            return std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
         std::task::Poll::Ready(Ok(()))
     }
@@ -515,6 +515,7 @@ impl Drop for ClosingWriter {
 
 impl ClosingTransport {
     pub(crate) fn install(shell: &Entity<ShellView>, cx: &mut TestAppContext) -> Self {
+        cx.executor().allow_parking();
         let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (release, gate) = tokio::sync::oneshot::channel();
@@ -693,4 +694,23 @@ fn end_keeps_final_output_and_restart_rejects_the_old_session(cx: &mut TestAppCo
     assert_eq!(shell.state(cx), ShellState::Running);
     assert!(!shell.screen(cx).contains("old session"));
     assert!(!shell.screen(cx).contains("last output"));
+}
+
+#[gpui_kit::test]
+fn quit_is_bounded_when_the_transport_never_closes(cx: &mut TestAppContext) {
+    let shell = mount(cx);
+    shell.open(cx, &running_pod());
+    let mut transport = ClosingTransport::install(&shell.shell, cx);
+    shell.step(cx, |window, cx| window.click("pod-shell-end", cx));
+    transport.wait_for_interrupt(cx);
+    transport.release();
+    transport.wait_for_eof(cx);
+    // The writer accepted both keys, but stdout never answers or closes.
+    let closed = request_close(&shell, cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(closed.get());
+    transport.wait_for_completion(cx);
+    assert!(!cx.has_pending_prompt());
 }
