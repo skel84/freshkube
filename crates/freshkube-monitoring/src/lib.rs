@@ -8,7 +8,6 @@ pub(crate) mod derive;
 pub mod history;
 pub mod page;
 pub mod panel;
-mod request;
 pub(crate) mod store;
 
 use std::{future::Future, time::Duration};
@@ -57,4 +56,137 @@ fn dispatch<V: 'static, T: Send + 'static>(
         _ = this.update(cx, |this, cx| done(this, result, cx));
     });
     (Some(job), task)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use freshkube_reads::Loader;
+    use freshkube_ui::real_io::until_io;
+    use gpui_kit::{Entity, TestAppContext};
+
+    #[derive(Default)]
+    struct Reader {
+        request: Option<Loader<(), ()>>,
+        answer: Option<Result<u32, QueryError>>,
+    }
+
+    fn read(
+        cx: &mut TestAppContext,
+        example: bool,
+        runtime: &Handle,
+        deadline: Duration,
+        work: impl Future<Output = Result<u32, QueryError>> + Send + 'static,
+    ) -> Entity<Reader> {
+        let reader = cx.new(|_| Reader::default());
+        cx.update(|cx| {
+            reader.update(cx, |reader, cx| {
+                let mut loader = Loader::default();
+                let request = loader.start(());
+                let (job, task) = dispatch(
+                    example,
+                    runtime,
+                    deadline,
+                    work,
+                    cx,
+                    move |reader, result, cx| {
+                        let completion = result
+                            .as_ref()
+                            .map(|_| ())
+                            .map_err(|error| error.message.clone());
+                        if reader
+                            .request
+                            .as_mut()
+                            .is_some_and(|loader| loader.land(&request, completion, cx))
+                        {
+                            reader.answer = Some(result);
+                        }
+                    },
+                );
+                loader.run(job, task);
+                reader.request = Some(loader);
+            })
+        });
+        reader
+    }
+
+    fn answered(
+        cx: &mut TestAppContext,
+        reader: &Entity<Reader>,
+    ) -> Option<Result<u32, QueryError>> {
+        until_io(cx, "the dispatched answer", |cx| {
+            cx.read(|cx| reader.read(cx).answer.is_some())
+        });
+        cx.read(|cx| reader.read(cx).answer.clone())
+    }
+
+    #[gpui_kit::test]
+    fn prometheus_answers_on_the_view(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let reader = read(cx, false, runtime.handle(), Duration::from_secs(5), async {
+            Ok(7)
+        });
+        assert_eq!(answered(cx, &reader), Some(Ok(7)));
+    }
+
+    #[gpui_kit::test]
+    fn a_read_past_its_deadline_times_out(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let never = std::future::pending::<Result<u32, QueryError>>();
+        let reader = read(
+            cx,
+            false,
+            runtime.handle(),
+            Duration::from_millis(20),
+            never,
+        );
+        assert_eq!(
+            answered(cx, &reader),
+            Some(Err(QueryError::new(ErrorKind::TimedOut, TIMED_OUT)))
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_failure_reaches_the_view_as_it_is(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let reader = read(cx, false, runtime.handle(), Duration::from_secs(5), async {
+            Err(QueryError::refused())
+        });
+        assert_eq!(answered(cx, &reader), Some(Err(QueryError::refused())));
+    }
+
+    #[gpui_kit::test]
+    fn a_dropped_request_answers_nothing(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+        let reader = read(
+            cx,
+            false,
+            runtime.handle(),
+            Duration::from_secs(5),
+            async move {
+                _ = receiver.await;
+                Ok(7)
+            },
+        );
+        cx.update(|cx| reader.update(cx, |reader, _| reader.request = None));
+        until_io(cx, "the dropped dispatched work", |_| sender.is_closed());
+        _ = sender.send(());
+        cx.run_until_parked();
+        assert_eq!(cx.read(|cx| reader.read(cx).answer.clone()), None);
+    }
+
+    #[gpui_kit::test]
+    fn example_data_answers_without_tokio(cx: &mut TestAppContext) {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let reader = read(cx, true, runtime.handle(), Duration::from_secs(5), async {
+            Ok(u32::from(Handle::try_current().is_err()))
+        });
+        cx.run_until_parked();
+        assert_eq!(cx.read(|cx| reader.read(cx).answer.clone()), Some(Ok(1)));
+    }
 }
