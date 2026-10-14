@@ -1,4 +1,4 @@
-use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, KubeClientSource};
+use freshkube_core::cluster_source::{ClusterAccess, ClusterSource, Hold, KubeClientSource};
 use freshkube_core::monitoring::{
     Candidate, Discovery, ErrorKind, PrometheusService, QueryError, Rank, Tried,
 };
@@ -1654,8 +1654,14 @@ fn a_short_window_scrolls_the_page_alone_header_and_all(cx: &mut TestAppContext)
 fn held_example_data_leaves_the_table_on_its_loading_rows_with_their_motion(
     cx: &mut TestAppContext,
 ) {
-    let (_runtime, handle, page) = mount(cx, Some(example_source()));
-    cx.update(|cx| page.update(cx, |page, _| page.hold_examples()));
+    let held = ClusterSource {
+        access: ClusterAccess::Example(Hold {
+            monitoring: true,
+            ..Hold::NONE
+        }),
+        ..example_source()
+    };
+    let (_runtime, handle, page) = mount(cx, Some(held));
     show(cx, handle, &page);
     assert!(ready(cx, &page).is_empty());
     let key = cx.read(|cx| {
@@ -1680,7 +1686,8 @@ fn held_example_data_leaves_the_table_on_its_loading_rows_with_their_motion(
     // Once the table answers, the motion goes with its rows.
     cx.update(|cx| {
         page.update(cx, |page, cx| {
-            page.hold = false;
+            // The same example source, no longer held, keeps the board.
+            page.set_source(Some(example_source()), cx);
             page.answer_example_now(cx)
         })
     });
