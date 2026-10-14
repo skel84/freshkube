@@ -211,7 +211,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             view.next_line_id()
         })
         .unwrap();
-    let stopped_at = cx.background_executor().now();
+    let stopped_at = cx.background_executor.now();
     cx.wait_for(
         handle.into(),
         std::time::Duration::from_secs(2),
