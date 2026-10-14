@@ -258,24 +258,47 @@ impl PanelView {
             .flatten();
         // As many rows as the plot is tall, so a short panel never cuts the
         // readout off.
-        let room = (geometry.size.height - dp_px(CHROME, window)) / dp_px(ROW, window);
+        let room = (geometry.size.height - dp_px(CHROME, window) - px(2.)) / dp_px(ROW, window);
         let reach = dp_px(markers::REACH, window) / geometry.width;
         let marker = markers::nearest(&self.placed, x / geometry.width, reach);
-        let fit = (room.max(0.) as usize).saturating_sub(usize::from(marker.is_some()));
+        let fit = room.max(0.) as usize;
         let mut cursor =
             index.and_then(|index| self.cursor_at(&chart, index, fit.clamp(1, READOUT_ROWS)));
         if let Some(cursor) = &mut cursor {
             cursor.marker = marker;
-            cursor.least = least_width(cursor, window);
+            cursor.least = least_width(
+                cursor,
+                marker.and_then(|index| self.placed.get(index)),
+                window,
+            );
         }
-        let key = |c: &Cursor| (c.index, c.marker);
+        let key = |c: &Cursor| (c.index, c.marker, c.width, c.least);
         if self.cursor.as_ref().map(key) == cursor.as_ref().map(key) {
             return;
+        }
+        if let Some(cursor) = &mut cursor {
+            self.fit_marker(cursor, &chart, window);
         }
         let time = cursor.as_ref().map(|cursor| chart.times[cursor.index]);
         self.cursor = cursor;
         self.show_cursor(cx);
         cx.emit(PanelEvent::Cursor(time));
+    }
+
+    /// Shapes the same wrapping label the overlay draws, before choosing
+    /// series rows. The panel and plot stay cached while the cursor moves.
+    fn fit_marker(&self, cursor: &mut Cursor, chart: &Chart, window: &Window) {
+        let Some(marker) = cursor.marker.and_then(|index| self.placed.get(index)) else {
+            return;
+        };
+        let width = readout_width(cursor, window) - dp_px(20., window) - px(2.);
+        let height = markers::readout_height(marker, width, window);
+        let room = self.geometry.get().size.height - dp_px(CHROME, window) - px(2.) - height;
+        let fit = ((room / dp_px(ROW, window)).max(0.) as usize).min(READOUT_ROWS);
+        if let Some(fitted) = self.cursor_at(chart, cursor.index, fit) {
+            cursor.rows = fitted.rows;
+            cursor.more = fitted.more;
+        }
     }
 
     fn pointer_left(&mut self, cx: &mut Context<Self>) {
@@ -380,6 +403,9 @@ impl PanelView {
             .filter(|series| !chart.series[*series].unlisted)
             .collect();
         let more = shown.len().saturating_sub(fit);
+        if fit == 0 {
+            return (Vec::new(), more);
+        }
         if more > 0 {
             // Highest first, a missing value last; the focused series keeps
             // the last row when it falls below.
@@ -437,7 +463,7 @@ impl PanelView {
 
 /// The width of the readout's time line and of its widest swatch and value
 /// row, with its padding and border, as `render_readout` lays them out.
-fn least_width(cursor: &Cursor, window: &Window) -> Pixels {
+fn least_width(cursor: &Cursor, marker: Option<&markers::Placed>, window: &Window) -> Pixels {
     let font = Font {
         family: ui::MONO_FONT.into(),
         ..window.text_style().font()
@@ -467,7 +493,21 @@ fn least_width(cursor: &Cursor, window: &Window) -> Pixels {
         .fold(px(0.), Pixels::max);
     // Swatch, then a gap either side of the values.
     let row = dp_px(12. + 8. + 8., window) + value;
-    time.max(row) + dp_px(2. * 10., window) + px(2.)
+    let marker = marker.map_or(px(0.), |marker| {
+        measure(&marker.time, 11., FontWeight::NORMAL) + dp_px(12. + 8., window)
+    });
+    time.max(row).max(marker) + dp_px(2. * 10., window) + px(2.)
+}
+
+/// A marker readout has a definite width, so its measured and drawn label
+/// wrap at the same place. Other readouts keep their intrinsic width.
+fn readout_width(cursor: &Cursor, window: &Window) -> Pixels {
+    let width = (cursor.room - dp_px(12., window)).max(cursor.least);
+    if cursor.marker.is_some() {
+        width.min(dp_px(markers::READOUT_WIDTH + 20., window) + px(2.))
+    } else {
+        width
+    }
 }
 
 impl Render for CursorOverlay {
@@ -524,7 +564,7 @@ impl CursorOverlay {
         let gap = dp(12.);
         // Within the room on its side, less its gap to the crosshair; names
         // and the count truncate to fit, but the time and values stay whole.
-        let widest = (cursor.room - dp_px(12., window)).max(cursor.least);
+        let widest = readout_width(cursor, window);
         let cell = || h_flex().h(dp(ROW)).flex_none();
         let column = |rows: Vec<AnyElement>| v_flex().flex_none().children(rows);
         let mut swatches = Vec::with_capacity(cursor.rows.len());
@@ -573,6 +613,7 @@ impl CursorOverlay {
                 }
             })
             .max_w(widest)
+            .when(shown.marker.is_some(), |this| this.w(widest))
             .overflow_hidden()
             .px(dp(10.))
             .py(dp(8.))
@@ -618,7 +659,7 @@ impl CursorOverlay {
                 shown
                     .marker
                     .as_ref()
-                    .map(|marker| markers::readout_row(marker, &p)),
+                    .map(|marker| markers::readout_row(marker, &p, &self.id)),
             )
             .child(
                 h_flex()

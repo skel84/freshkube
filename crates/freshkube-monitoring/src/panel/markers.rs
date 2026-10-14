@@ -1,16 +1,16 @@
 //! Deploys and node events across a timeseries: a thin line with a small
-//! triangle at the foot, in accent blue for a deploy and critical red for a
+//! triangle at the foot, in secondary ink for a deploy and critical red for a
 //! node, fainter when the node is Ready again. They are placed on the
 //! chart's window when the markers or the answer change; the cursor's
 //! readout names the one under the pointer.
 use std::rc::Rc;
 
 use freshkube_core::monitoring::markers::{Marker, MarkerKind};
-use gpui_kit::component::h_flex;
+use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, Bounds, Hsla, PathBuilder, Pixels, Point, SharedString, Window, canvas, div, fill,
-    point, px, size,
+    AnyElement, Bounds, Font, FontWeight, Hsla, PathBuilder, Pixels, Point, SharedString,
+    TestSupportExt, TextRun, Window, canvas, div, fill, point, px, size,
 };
 
 use super::cursor::when;
@@ -20,6 +20,43 @@ use crate::ui::{self, dp, dp_px};
 
 /// How near the pointer must come to a marker's line to name it, in dp.
 pub(super) const REACH: f32 = 6.;
+
+/// The widest marker block: its label, glyph and gap, in dp.
+pub(super) const READOUT_WIDTH: f32 = 260. + 12. + 8.;
+
+/// The label and date share this line height, in dp.
+const READOUT_LINE: f32 = 18.;
+
+/// Measures the label's wrapping with the same font and width as its row.
+/// Called when the cursor changes, never in render.
+pub(super) fn readout_height(marker: &Placed, width: Pixels, window: &Window) -> Pixels {
+    let run = TextRun {
+        len: marker.label.len(),
+        font: Font {
+            family: ui::MONO_FONT.into(),
+            weight: FontWeight::NORMAL,
+            ..window.text_style().font()
+        },
+        color: Hsla::default(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let label = window
+        .text_system()
+        .shape_text(
+            marker.label.clone(),
+            dp_px(12., window),
+            &[run],
+            Some((width - dp_px(12. + 8., window)).max(px(1.))),
+            None,
+        )
+        .unwrap_or_default();
+    let height = label.iter().fold(px(0.), |height, line| {
+        height + line.size(dp_px(READOUT_LINE, window)).height
+    });
+    height + dp_px(READOUT_LINE + 2., window)
+}
 
 /// A marker on one chart's window.
 #[derive(Clone, Debug, PartialEq)]
@@ -52,7 +89,8 @@ pub(super) fn place(markers: &[Marker], chart: &Chart) -> Rc<[Placed]> {
 /// A marker's colour, and the opacity of its line and of its triangle.
 pub(super) fn ink(kind: MarkerKind, p: &Palette) -> (Hsla, f32, f32) {
     match kind {
-        MarkerKind::Deploy => (p.accent, 0.55, 1.),
+        // Full opacity keeps the line above 3:1 on the light card too.
+        MarkerKind::Deploy => (p.ink_2, 1., 1.),
         MarkerKind::NodeNotReady | MarkerKind::NodeReboot => (p.crit, 0.55, 1.),
         MarkerKind::NodeReady => (p.crit, 0.25, 0.45),
     }
@@ -121,28 +159,48 @@ pub(crate) fn glyph(color: Hsla, size_dp: f32) -> AnyElement {
     .into_any_element()
 }
 
-/// The readout's row for the marker under the pointer.
-pub(super) fn readout_row(marker: &Placed, p: &Palette) -> AnyElement {
+/// The marker's whole label, wrapping above its date in the readout.
+pub(super) fn readout_row(marker: &Placed, p: &Palette, id: &SharedString) -> AnyElement {
     let (color, _, opacity) = ink(marker.kind, p);
     h_flex()
+        .w_full()
+        .items_start()
         .gap(dp(8.))
         .pb(dp(2.))
-        .child(glyph(color.opacity(opacity), 12.))
-        .child(
-            div()
-                .max_w(dp(260.))
-                .truncate()
-                .text_size(dp(12.))
-                .text_color(p.ink)
-                .child(marker.label.clone()),
-        )
+        .font_family(ui::MONO_FONT)
         .child(
             div()
                 .flex_none()
-                .font_family(ui::MONO_FONT)
-                .text_size(dp(11.))
-                .text_color(p.muted)
-                .child(marker.time.clone()),
+                .pt(dp(3.))
+                .child(glyph(color.opacity(opacity), 12.)),
+        )
+        .child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{id}-readout-marker-label")))
+                        .w_full()
+                        .max_w(dp(260.))
+                        .whitespace_normal()
+                        .line_height(dp(READOUT_LINE))
+                        .text_size(dp(12.))
+                        .text_color(p.ink)
+                        .child(marker.label.clone())
+                        .test_support(),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{id}-readout-marker-time")))
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .line_height(dp(READOUT_LINE))
+                        .text_size(dp(11.))
+                        .text_color(p.muted)
+                        .child(marker.time.clone())
+                        .test_support(),
+                ),
         )
         .into_any_element()
 }
