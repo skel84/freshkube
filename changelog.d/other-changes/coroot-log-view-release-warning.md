@@ -1,1 +1,0 @@
-- A release build no longer warns about an unused Coroot log view import.

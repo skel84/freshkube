@@ -165,14 +165,21 @@ The menus today, and what changes:
 | --- | --- | --- | --- | --- |
 | Row menu | A right-click on a table row or group row (Pods, Nodes, System services, any `TableSource` with `menu_focus`) | The page's actions on the selection | Shown (change 10) | Builds on the shared menu module; no change on screen |
 | Folded controls | A page toolbar's "…" when the window is narrow | Each folded control: Refresh, a segment, a picker, a toggle | None, though the buttons show theirs in their tooltips | A folded control with a key shows it: Refresh `⌘R` (Resources, Nodes, Monitoring, Observability), Processes' Tree `⇧T`, System services' Logs `L` and Open node `O`, Settings' Add `A`, Edit `E`, Remove `⌫`, Move up `⌘⌥↑`, Move down `⌘⌥↓` and Reload `R`, and its destinations' Map `A`, Edit `E` and Remove `⌫`. A folded picker is a submenu of values and shows none, as a picker does (Network's and Storage's `Tab` steps through their views; no view has a key of its own) |
-| Dock tab menu | The dock bar's "…" | Close, Close others, Close to the right, Close all | None; Close is bound to `⌘W` (`Ctrl+Shift+W`) but doesn't say so | Close shows `⌘W` |
+| Dock tab menu | The dock bar's "…" or a right-click on a dock tab | Close, Close others, Close to the right, Close all | Close shows `⌘W` (`Ctrl+Shift+W`); the other entries have no binding | A right-click selects its tab first and opens the same menu |
 | Shell | The pod pane's header | Start shell in ⟨container⟩ | None, none bound | Unchanged |
 | More | The node pane's tab strip when narrow | Events, YAML | None, none bound | Unchanged |
 | Pickers | A picker's button or its folded submenu | Values: namespaces, columns, a container, a pod, the tail, a time range, auto refresh, levels, a node, a project, a category, a limit, an instance | None | Unchanged: a value is chosen, not run, and has no key |
 | Download | A log's toolbar | Visible lines (N), All retained lines (N) | None, none bound | Unchanged |
 | Text fields | A right-click in any Kit input | Cut, Copy, Paste, Select all | The native menu's own | Unchanged: Kit's input draws the system's menu |
 
-No menu is added: context menus on dock tabs, log lines, YAML documents and the terminal are [#531](https://github.com/skel84/freshkube/issues/531)'s, built with this change's builder.
+[#531](https://github.com/skel84/freshkube/issues/531) adds four right-click menus, built with `freshkube_ui::menu` and the focus that binds each surface's actions:
+
+- **Dock tabs.** A right-click selects its tab first and opens the same menu as the dock bar's "…": Close `⌘W` (`Ctrl+Shift+W`), Close others, Close to the right, then a separator and Close all. The menu acts only while that tab remains open and selected.
+- **Log lines.** In the dock and the node pane: Copy `⌘C` (`Ctrl+C`), Select all `⌘A` (`Ctrl+A`), then a separator and Find `⌘F` (`Ctrl+F`). A right-click outside the selected lines selects that line first; one on a selected line keeps the selection, including a selection of separate lines. Copy runs the existing selection-copy action; Select all keeps its existing visible-line scope and limit. The toolbar's Copy and Download keep their existing behaviour. Stream notes and empty space are not log lines and open no line menu.
+- **YAML documents.** In the Resources pane and the node pane: Copy, Select all, then a separator and Find, with the same platform keys and selection rule as log lines. Copy copies the selected lines; the existing whole-document copy control keeps its behaviour. No document menu opens on a placeholder.
+- **Terminals.** Copy `⌘C` (`Ctrl+Shift+C`), Paste `⌘V` (`Ctrl+Shift+V`), then a separator and Leave the terminal `⌘Escape` (`Ctrl+Shift+Q`). Copy is greyed out when nothing is selected. A right-click keeps the terminal's cell selection and never pastes; only choosing Paste runs the existing paste action. The terminal reports no mouse to programs today; when it does, a right-click goes to a program that reads the mouse and opens no menu.
+
+The keys above describe the platform forms; entries obtain their labels from the keymap, never from text added to the menu label. Dismissing a menu returns focus to its surface. A menu whose subject is gone or replaced cannot act on its replacement.
 
 The rules:
 

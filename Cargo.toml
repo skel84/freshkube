@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.14.0"
+version = "0.15.0"
 edition = "2024"
 authors = ["Ken Udovic", "Francesco Cislaghi"]
 license = "MIT"
@@ -79,6 +79,7 @@ freshkube-delivery = { path = "crates/freshkube-delivery" }
 freshkube-graph = { path = "crates/freshkube-graph" }
 freshkube-logs = { path = "crates/freshkube-logs" }
 freshkube-monitoring = { path = "crates/freshkube-monitoring" }
+freshkube-nav = { path = "crates/freshkube-nav" }
 freshkube-observability = { path = "crates/freshkube-observability" }
 freshkube-prefs = { path = "crates/freshkube-prefs" }
 freshkube-probe = { path = "crates/freshkube-probe" }

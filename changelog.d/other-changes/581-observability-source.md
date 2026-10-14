@@ -1,1 +1,0 @@
-- **Internal:** Observability now takes its example data, and what it holds back for captures (`FRESHKUBE_FIXTURE_HOLD=coroot`), from the example source instead of a launch flag. Nothing changes on screen.

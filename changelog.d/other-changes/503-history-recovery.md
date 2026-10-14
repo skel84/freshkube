@@ -1,1 +1,0 @@
-- Monitoring: CPU and memory history recover a failed Prometheus connection without visiting Monitoring.

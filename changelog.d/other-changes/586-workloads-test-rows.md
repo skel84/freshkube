@@ -1,1 +1,0 @@
-- **Workloads:** tests read the cached table rows without keeping a separate test-only field; application behavior is unchanged.
