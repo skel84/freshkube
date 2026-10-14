@@ -53,7 +53,6 @@ impl Pages {
         window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
-        let hold = options.debug.hold;
         let logs = cx.new(|cx| LogPanel::new(runtime.clone(), options.tail, window, cx));
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
@@ -117,16 +116,12 @@ impl Pages {
             std::sync::Arc::new(crate::secrets::SystemStore)
         });
         let monitoring = cx.new(|cx| {
-            let mut page = MonitoringPage::new(
+            MonitoringPage::new(
                 runtime.clone(),
                 options.preferences.as_deref(),
                 secrets.clone(),
                 cx,
-            );
-            if hold.monitoring {
-                page.hold_examples();
-            }
-            page
+            )
         });
         let observability = cx.new(|cx| {
             crate::observability::ObservabilityPage::new(
