@@ -20,7 +20,9 @@ fn settings_shows_the_metrics_source_read_only_for_example_data(cx: &mut TestApp
 /// when the launch has a preferences folder: the field stays empty, nothing
 /// reconnects, and `coroot.json` is left as it was.
 #[gpui_kit::test]
-fn example_data_leaves_the_saved_coroot_connection_alone(cx: &mut TestAppContext) {
+async fn example_data_leaves_the_saved_coroot_connection_alone(cx: &mut TestAppContext) {
+    // The live launch reads its kubeconfig on Tokio, which answers here.
+    cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     let directory = guard.path();
     let preferences = directory.join("preferences.json");
@@ -29,10 +31,13 @@ fn example_data_leaves_the_saved_coroot_connection_alone(cx: &mut TestAppContext
     std::fs::write(&saved, contents).unwrap();
 
     // A live launch reads it, so the file is one the page would load. The
-    // kubeconfig is missing, so nothing is contacted.
+    // kubeconfig is missing, so nothing is contacted; its read is waited
+    // for, so no answer arrives after the test.
     let live = GpuiOptions::kubernetes_only(Some(directory.join("missing")), Some("x".into()), 100)
         .with_preferences(Some(preferences.clone()));
-    let (_runtime, _handle, pilot) = mount(cx, live, 1280., 820.);
+    let (_runtime, handle, pilot) = mount(cx, live, 1280., 820.);
+    cx.wait_for_io(handle, |_, cx| !pilot.read(cx).config_loading)
+        .await;
     cx.update(|cx| {
         let url = pilot.read(cx).observability.read(cx).coroot_url(cx);
         assert_eq!(url, "https://coroot.example.com");
