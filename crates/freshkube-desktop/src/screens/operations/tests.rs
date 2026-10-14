@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use freshkube_core::cluster_overview::KubeconfigSelection;
+use freshkube_core::failure::Failure;
 use freshkube_core::operations::{NodeTarget, OperationKind, OperationStatus};
 use freshkube_core::{AccessIdentity, AccessSessionId, ConfigurationRevision};
 use gpui_kit::component::Root;
@@ -950,7 +951,7 @@ struct FakeApi {
 impl FakeApi {
     /// A fake connector: builds a client for this API, doing `meanwhile`
     /// while it does.
-    async fn connect(self, meanwhile: impl FnOnce()) -> Result<FakeApi, String> {
+    async fn connect(self, meanwhile: impl FnOnce()) -> Result<FakeApi, Failure> {
         self.built.fetch_add(1, Ordering::SeqCst);
         meanwhile();
         Ok(self)
@@ -967,9 +968,9 @@ impl FakeApi {
 /// As core's runner: nothing is submitted until the connection answers, then
 /// the confirmed mutation once.
 async fn submit(
-    connect: impl std::future::Future<Output = Result<FakeApi, String>>,
+    connect: impl std::future::Future<Output = Result<FakeApi, Failure>>,
 ) -> Result<(), String> {
-    let api = connect.await?;
+    let api = connect.await.map_err(|failure| failure.message)?;
     api.mutations.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }

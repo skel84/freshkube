@@ -188,7 +188,7 @@ impl Harness {
             async move {
                 assert!(!scenario.connect_panic, "connection worker panicked");
                 if scenario.connect_error {
-                    Err("access identity could not be revalidated".into())
+                    Err(Failure::new(FailureKind::Config, "access identity could not be revalidated"))
                 } else {
                     Ok(client)
                 }
