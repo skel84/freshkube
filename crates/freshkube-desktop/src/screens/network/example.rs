@@ -36,12 +36,7 @@ pub(super) fn example_kubespan(source: &ScreenSource, tick: u64) -> KubeSpanStat
     let Some(node) = source.node() else {
         return KubeSpanState::Unavailable("Example data has no such node".into());
     };
-    // The unavailable example does not read a clock; core ignores its timestamp.
-    let now = if node.name.contains("wk-fra1-02") {
-        chrono::DateTime::UNIX_EPOCH
-    } else {
-        chrono::Utc::now()
-    };
+    let now = chrono::Utc::now();
     let node = ExampleNode::new(
         node.name.clone(),
         node.role == crate::presentation::Role::ControlPlane,
