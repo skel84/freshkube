@@ -7,6 +7,7 @@ use gpui_kit::{
 use tokio::runtime::{Builder, Runtime};
 
 use freshkube_core::logs::{LogEvent, ServiceId};
+use freshkube_ui::real_io::RealIo;
 
 use super::talos::Collection;
 use super::{LogPanel, TalosPanel};
@@ -113,9 +114,8 @@ fn paused_anchor_survives_arrival_then_labels_eviction_and_rejects_stale_deliver
 
 #[gpui_kit::test]
 async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut TestAppContext) {
-    // The example writer runs on GPUI's clock, but `wait_for` below waits
-    // in real time: let GPUI park rather than race through its timers.
-    cx.executor().allow_parking();
+    // The example writer and Watch::open delivery both run on GPUI's
+    // executor, with no Tokio work, so these waits use the test clock.
     let (_runtime, panel, handle) = mount(cx);
     let (collected, initial_next_id) = cx
         .update_window(handle.into(), |_, window, cx| {
@@ -211,7 +211,7 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
             view.next_line_id()
         })
         .unwrap();
-    let stopped_at = std::time::Instant::now();
+    let stopped_at = cx.background_executor.now();
     cx.wait_for(
         handle.into(),
         std::time::Duration::from_secs(2),
@@ -226,7 +226,10 @@ async fn synthetic_collection_start_stop_and_filters_use_real_controls(cx: &mut 
                 window.find("logs-collection").label(),
                 Some("Start collecting")
             );
-            stopped_at.elapsed() >= std::time::Duration::from_millis(120)
+            cx.background_executor()
+                .now()
+                .saturating_duration_since(stopped_at)
+                >= std::time::Duration::from_millis(120)
         },
     )
     .await;
@@ -667,8 +670,11 @@ async fn a_collection_whose_stream_ends_stops_and_lands_what_it_held(cx: &mut Te
         });
     })
     .unwrap();
-    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
-        !panel.read(cx).source().stream.is_running()
+    cx.wait_for_io(handle.into(), |_, cx| {
+        let view = panel.read(cx);
+        !view.source().stream.is_running()
+            && !view.source().collection_active
+            && holds("held until the stream ends", &panel, cx)
     })
     .await;
     cx.update(|cx| {
@@ -723,7 +729,7 @@ async fn an_earlier_collections_late_batch_on_the_same_node_never_lands(cx: &mut
     let _ = old.try_send(line(&target, "info late from the earlier stream"));
     new.try_send(line(&target, "info from the current stream"))
         .unwrap();
-    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle.into(), |_, cx| {
         holds("from the current stream", &panel, cx)
     })
     .await;
@@ -755,7 +761,7 @@ async fn a_batch_for_another_node_stops_the_stream(cx: &mut TestAppContext) {
             );
         })
     });
-    cx.wait_for(handle.into(), std::time::Duration::from_secs(2), |_, cx| {
+    cx.wait_for_io(handle.into(), |_, cx| {
         !panel.read(cx).source().stream.is_running()
     })
     .await;

@@ -8,7 +8,7 @@ use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// A Kubernetes API on loopback that remembers every request. It answers
@@ -25,7 +25,7 @@ struct FakeApi {
     watching: Arc<AtomicUsize>,
     table_watching: Arc<AtomicUsize>,
     refuse_lists: Arc<AtomicBool>,
-    hold_lists: Arc<AtomicBool>,
+    hold_lists: Arc<(Mutex<bool>, Condvar)>,
 }
 
 struct Request {
@@ -96,9 +96,12 @@ impl FakeApi {
             self.hold_watch(stream, table);
             return;
         }
-        while self.hold_lists.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let (held, released) = &*self.hold_lists;
+        drop(
+            released
+                .wait_while(held.lock().unwrap(), |held| *held)
+                .unwrap(),
+        );
         let body = if table {
             r#"{"kind":"Table","apiVersion":"meta.k8s.io/v1","metadata":{"resourceVersion":"1"},"columnDefinitions":[{"name":"Name","type":"string","format":"name","description":"","priority":0}],"rows":[]}"#
         } else {
@@ -134,6 +137,14 @@ impl FakeApi {
             }
         }
         counter.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    fn hold_lists(&self, hold: bool) {
+        let (held, released) = &*self.hold_lists;
+        *held.lock().unwrap() = hold;
+        if !hold {
+            released.notify_all();
+        }
     }
 
     fn hits(&self) -> usize {
@@ -430,7 +441,7 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
     // reads are held, so the restored summary stays what is on show.
     open_entry(cx, handle, &view, "two");
     settled(cx, &view).await;
-    one.hold_lists.store(true, Ordering::SeqCst);
+    one.hold_lists(true);
     open_entry(cx, handle, &view, "one");
     settled(cx, &view).await;
     assert!(
@@ -439,7 +450,7 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
         .await,
         "an unchanged kubeconfig gets its last summary back"
     );
-    one.hold_lists.store(false, Ordering::SeqCst);
+    one.hold_lists(false);
     assert!(
         within(cx, Duration::from_secs(10), |cx| view
             .read_with(cx, |pilot, _| pilot.last_known_since().is_none())
@@ -452,7 +463,7 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
     open_entry(cx, handle, &view, "two");
     settled(cx, &view).await;
     write_kubeconfig(guard.path(), &one, &two, "a-replaced-token");
-    one.hold_lists.store(true, Ordering::SeqCst);
+    one.hold_lists(true);
     open_entry(cx, handle, &view, "one");
     settled(cx, &view).await;
     // The revision is what a restore is decided by: look only once known,
@@ -471,7 +482,7 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
         .await,
         "a replaced kubeconfig still got the old summary"
     );
-    one.hold_lists.store(false, Ordering::SeqCst);
+    one.hold_lists(false);
 }
 
 // Two example sessions -----------------------------------------------------
