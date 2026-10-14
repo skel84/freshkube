@@ -803,7 +803,7 @@ impl Pilot {
         self.start_object_open(
             "Resolving the object's identity timed out",
             async move {
-                let client = source.access.client().await?;
+                let client = source.access.client().await.map_err(|failure| failure.message)?;
                 freshkube_core::resources::get_metadata(
                     &client,
                     &kind,

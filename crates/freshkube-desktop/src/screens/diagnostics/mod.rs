@@ -395,9 +395,9 @@ impl ScreenPanel for DiagnosticsScreen {
                             warning,
                         },
                     )),
-                    Err(reason) => Err(SourceUnavailable {
+                    Err(failure) => Err(SourceUnavailable {
                         source: "Selected Kubernetes access".to_owned(),
-                        reason,
+                        reason: failure.message,
                     }),
                 };
                 let had_client = access.is_ok();

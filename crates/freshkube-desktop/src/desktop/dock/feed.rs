@@ -122,7 +122,7 @@ impl Dock {
             READ_DEADLINE,
             format!("No answer within {} seconds", READ_DEADLINE.as_secs()),
             async move {
-                let client = access.client().await?;
+                let client = access.client().await.map_err(|failure| failure.message)?;
                 let namespace = Some(identity.namespace.as_str()).filter(|ns| !ns.is_empty());
                 let result = get_object(&client, &kind, namespace, &identity.name).await;
                 if result

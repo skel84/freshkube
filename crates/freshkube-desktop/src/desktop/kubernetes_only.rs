@@ -310,6 +310,7 @@ impl Pilot {
                     .connect()
                     .await
                     .map(|connection| connection.server_version)
+                    .map_err(|failure| failure.message)
             },
         );
         kube.job = Some(job);

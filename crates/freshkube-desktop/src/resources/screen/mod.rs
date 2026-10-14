@@ -1153,7 +1153,7 @@ impl ResourcesScreen {
             SCREEN_DEADLINE,
             "Listing namespaces timed out".into(),
             async move {
-                let client = access.client().await?;
+                let client = access.client().await.map_err(|failure| failure.message)?;
                 let kind = builtin("namespaces").ok_or("Namespaces aren't a known kind")?;
                 let table = list_table(&client, &kind, None, None)
                     .await
