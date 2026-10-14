@@ -225,11 +225,12 @@ mod tests {
         let selection = KubeconfigSelection::File { path: kubeconfig, context: None };
         let configuration = ConfigurationRevision::for_talos_sources(Some(&path), &selection);
         std::fs::write(&path, "configuration-b").unwrap();
+        let connected = std::cell::Cell::new(false);
         let failure = pinned(Some(path), selection, configuration, async {
-            panic!("replaced access must not poll the connector");
-            #[allow(unreachable_code)]
+            connected.set(true);
             Ok(())
         }).await.unwrap_err();
+        assert!(!connected.get(), "replaced access must not poll the connector");
         assert_eq!(
             failure,
             Failure::new(FailureKind::Config, "Access configuration changed; refresh to reconnect"),
