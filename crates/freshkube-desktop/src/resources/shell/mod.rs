@@ -34,6 +34,8 @@ use crate::ui::Tone;
 mod example;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::ClosingTransport;
 mod view;
 
 use example::ExampleShell;

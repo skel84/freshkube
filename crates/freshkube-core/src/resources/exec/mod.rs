@@ -192,6 +192,50 @@ pub struct ExecSession {
     pub guard: ExecGuard,
 }
 
+#[cfg(feature = "testing")]
+impl ExecSession {
+    /// An in-memory transport for tests of the session's UI owner. No API
+    /// request or exec is made; the ordinary stream and guard logic runs.
+    pub fn from_test_streams(
+        stdin: impl AsyncWrite + Unpin + Send + 'static,
+        stdout: impl AsyncRead + Unpin + Send + 'static,
+    ) -> Self {
+        let (input, queue) = mpsc::channel(INPUT_QUEUE);
+        let (sink, output) = mpsc::channel(OUTPUT_QUEUE);
+        let (close, closing) = oneshot::channel();
+        let (sizes, resized) = size_channel::channel(10);
+        let task = tokio::spawn(async move {
+            let _resized = resized;
+            let ran = Streams {
+                input: queue,
+                stdin,
+                stdout,
+                sizes,
+                output: sink.clone(),
+                close: closing,
+            }
+            .run()
+            .await;
+            if let Some(ran) = ran {
+                let end = if ran.closed {
+                    ExecEnd::Closed
+                } else {
+                    ExecEnd::Exited(0)
+                };
+                let _ = sink.send(ExecOutput::End(end)).await;
+            }
+        });
+        Self {
+            input,
+            output,
+            guard: ExecGuard {
+                task: Some(task),
+                close: Some(close),
+            },
+        }
+    }
+}
+
 /// Owns a session's work on Tokio.
 pub struct ExecGuard {
     task: Option<JoinHandle<()>>,

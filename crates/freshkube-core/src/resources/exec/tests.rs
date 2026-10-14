@@ -468,3 +468,21 @@ async fn a_session_ends_with_its_output() {
     assert!(pipes.output.recv().await.is_none());
     drop((pipes.input, pipes.close, pipes.typed));
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_stalled_shutdown_writer_obeys_the_close_deadline() {
+    let mut pipes = pipes();
+    // Fill stdin so even Control-C cannot be written. The fake never reads.
+    pipes.streams.stdin.write_all(&[0; 64]).await.unwrap();
+    drop(pipes.input);
+    let started = tokio::time::Instant::now();
+    let ran = tokio::time::timeout(
+        INTERRUPT_PAUSE + CLOSE_DEADLINE + Duration::from_secs(1),
+        pipes.streams.run(),
+    )
+    .await
+    .expect("the writer must share the close deadline")
+    .unwrap();
+    assert!(ran.closed);
+    assert_eq!(started.elapsed(), INTERRUPT_PAUSE + CLOSE_DEADLINE);
+}
