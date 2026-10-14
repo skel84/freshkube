@@ -14,6 +14,8 @@ use futures::future::BoxFuture;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::failure::{Failure, FailureKind};
+
 mod direct;
 mod hold;
 mod talos;
@@ -25,7 +27,7 @@ pub use talos::{AppliedAccess, LiveSource, TalosAccess};
 /// Hands out a Kubernetes client for one cluster. An implementation may
 /// build it once and reuse it; it decides when to build it again.
 pub trait KubeClientSource: Send + Sync {
-    fn client(&self) -> BoxFuture<'_, Result<kube::Client, String>>;
+    fn client(&self) -> BoxFuture<'_, Result<kube::Client, Failure>>;
 
     /// Drops a reused client after a failure, so the next ask builds it
     /// again. A source that keeps nothing has nothing to drop.
@@ -55,9 +57,12 @@ impl ClusterAccess {
         matches!(self, ClusterAccess::Example(_))
     }
 
-    pub async fn client(&self) -> Result<kube::Client, String> {
+    pub async fn client(&self) -> Result<kube::Client, Failure> {
         match self {
-            ClusterAccess::Example(_) => Err("Example data has no Kubernetes client".into()),
+            ClusterAccess::Example(_) => Err(Failure::new(
+                FailureKind::Config,
+                "Example data has no Kubernetes client",
+            )),
             ClusterAccess::Talos(talos) => talos.client().await,
             ClusterAccess::Direct(direct) => {
                 direct.connect().await.map(|connection| connection.client)
@@ -113,9 +118,9 @@ mod tests {
     struct Counting(AtomicUsize, AtomicUsize);
 
     impl KubeClientSource for Counting {
-        fn client(&self) -> BoxFuture<'_, Result<kube::Client, String>> {
+        fn client(&self) -> BoxFuture<'_, Result<kube::Client, Failure>> {
             let asked = self.0.fetch_add(1, Ordering::SeqCst) + 1;
-            Box::pin(async move { Err(format!("asked {asked}")) })
+            Box::pin(async move { Err(Failure::new(FailureKind::Other, format!("asked {asked}"))) })
         }
 
         fn forget(&self) {
@@ -128,8 +133,8 @@ mod tests {
         let access = ClusterAccess::EXAMPLE;
         assert!(access.is_example());
         assert_eq!(
-            access.client().await.err().as_deref(),
-            Some("Example data has no Kubernetes client")
+            access.client().await.err(),
+            Some(Failure::new(FailureKind::Config, "Example data has no Kubernetes client"))
         );
     }
 
@@ -143,12 +148,12 @@ mod tests {
         };
         assert!(!source.access.is_example());
         assert_eq!(
-            source.access.client().await.err().as_deref(),
-            Some("asked 1")
+            source.access.client().await.err(),
+            Some(Failure::new(FailureKind::Other, "asked 1"))
         );
         // A clone shares the source, so its caching is the source's.
         let copy = source.clone();
-        assert_eq!(copy.access.client().await.err().as_deref(), Some("asked 2"));
+        assert_eq!(copy.access.client().await.err(), Some(Failure::new(FailureKind::Other, "asked 2")));
         assert_eq!(counting.0.load(Ordering::SeqCst), 2);
     }
 
