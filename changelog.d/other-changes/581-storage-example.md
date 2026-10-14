@@ -1,0 +1,1 @@
+- **Example data:** move the Storage example builder into core, preserving its disks, volumes and partial results.
