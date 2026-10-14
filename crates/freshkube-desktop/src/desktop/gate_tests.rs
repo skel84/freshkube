@@ -100,7 +100,7 @@ async fn pages_wait_while_the_overview_loads_and_show_data_once_it_answers(
 
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.hold.talos = false;
+            view.mode.hold_mut().talos = false;
             // The held read still counts as in flight; let the refresh start one.
             view.overview = crate::state::Snapshot::default();
             view.refresh_now(window, cx);
@@ -228,7 +228,7 @@ async fn retry_after_a_failed_first_read_waits_and_then_shows_data(cx: &mut Test
 
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.hold.talos = false;
+            view.mode.hold_mut().talos = false;
             view.overview = crate::state::Snapshot::default();
             view.refresh_now(window, cx);
         })
@@ -296,7 +296,7 @@ async fn kubernetes_only_health_waits_for_the_summary_then_shows_it(cx: &mut Tes
 
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.hold.talos = false;
+            view.mode.hold_mut().talos = false;
             view.refresh_now(window, cx);
         })
     })
@@ -359,7 +359,7 @@ fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.mode.set_example(true);
-            pilot.hold.talos = true;
+            pilot.mode.hold_mut().talos = true;
             pilot.ensure_summary(window, cx);
         })
     })

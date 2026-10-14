@@ -60,7 +60,6 @@ use crate::{
     ui::clock,
 };
 use freshkube_core::cluster_overview::{ClusterOverview, KubeconfigSelection};
-use freshkube_core::cluster_source::Hold;
 use freshkube_core::resources::{ResourceKind, builtin};
 use gpui_kit::component::{ActiveTheme, Theme, TitleBar, input::InputState, v_flex};
 use gpui_kit::prelude::*;
@@ -338,11 +337,6 @@ pub(crate) struct Pilot {
     /// Example data or a live cluster, and Talos or a kubeconfig alone
     /// (`source::Mode`): what the window shows.
     mode: source::Mode,
-    /// What example data never answers (`DebugOptions::hold`), set once
-    /// here: the shell holds the Talos overview and the Kubernetes summary
-    /// with `talos`, and every page reads the rest from the example source
-    /// `source()` hands it. Nothing is held outside example data.
-    hold: Hold,
     focus: FocusHandle,
     /// The window the shell draws in, for what changes the shown page
     /// without one at hand (`Pilot::sync_visible_soon`).
@@ -390,10 +384,16 @@ impl Pilot {
     }
 
     /// What example sources hold from now on, as `FRESHKUBE_FIXTURE_HOLD`
-    /// says at launch; every page hears it with the source pushed here.
+    /// says at launch; every page hears it with the source pushed here. For
+    /// the Applications column, Applications and Applications page tests.
     #[cfg(test)]
-    pub(crate) fn set_hold(&mut self, hold: Hold, window: &mut Window, cx: &mut Context<Self>) {
-        self.hold = hold;
+    pub(crate) fn set_hold(
+        &mut self,
+        hold: freshkube_core::cluster_source::Hold,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        *self.mode.hold_mut() = hold;
         self.push_source(window, cx);
     }
 
@@ -898,12 +898,9 @@ impl Pilot {
             switcher: Vec::new(),
             kubeconfig_draft: Default::default(),
             navigation,
-            mode: source::Mode::new(options.starts_with_examples()),
-            hold: if options.starts_with_examples() {
-                options.debug.hold
-            } else {
-                Hold::NONE
-            },
+            // The one place a hold is set: example data's, from
+            // `DebugOptions::hold`.
+            mode: source::Mode::new(options.starts_with_examples().then_some(options.debug.hold)),
             focus: cx.focus_handle(),
             window: window.window_handle(),
             _subscriptions: subscriptions,
@@ -1214,7 +1211,7 @@ impl Pilot {
         self.chrome.elapsed = Duration::ZERO;
         let request = self.overview.begin(self.applied.clone());
         self.publish_reading(cx);
-        if self.mode().is_example() && self.hold.talos {
+        if self.mode().holds_talos() {
             // Loading until the hold is released, which only a test does.
             // Coroot's examples don't wait for Talos, so Observability has
             // its source, and its own hold, at once.

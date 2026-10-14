@@ -1,0 +1,1 @@
+- **Internal:** What example data holds back for captures and the stress binary (`FRESHKUBE_FIXTURE_HOLD`) is now part of example data itself, set in one place, so a live cluster can never be held. Nothing changes on screen.

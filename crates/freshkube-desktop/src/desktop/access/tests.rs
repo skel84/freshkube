@@ -258,7 +258,7 @@ fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAp
         view.update(cx, |view, cx| {
             // Nothing is published for the new context, so what is left in
             // the session after the change is only what was carried over.
-            view.hold.talos = true;
+            view.mode.hold_mut().talos = true;
             let runtime = view.runtime.clone();
             let session = view.registry.active_mut();
             session.access = Some(access);
