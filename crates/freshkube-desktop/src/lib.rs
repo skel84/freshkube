@@ -302,7 +302,6 @@ mod connection_preferences;
 mod debug_options;
 mod desktop;
 mod fixture;
-mod forwards;
 mod logs;
 mod maintenance;
 mod mutation;
@@ -328,6 +327,9 @@ use freshkube_observability as observability;
 use freshkube_ui::{meters, palette, text_size, theme};
 // The pod shell's terminal view, by its old path.
 use freshkube_terminal as terminal;
+// The app's port forwards live with Resources; the app reaches them by
+// their old path.
+use resources::forwards;
 
 /// Where the app keeps its preferences: `preferences.json` in
 /// `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube`

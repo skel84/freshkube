@@ -5,6 +5,7 @@ pub(crate) mod custom;
 pub(crate) mod detail;
 pub(crate) mod direct;
 pub(crate) mod example;
+pub(super) mod forwards;
 pub(crate) mod live;
 pub(crate) mod model;
 pub(crate) mod navigation;
