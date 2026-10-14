@@ -5,7 +5,7 @@
 //! Every part of the audit is its own source. A part that didn't answer
 //! shows as unknown (and is named in the partial notice), never as failed or
 //! insecure.
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use freshkube_core::HealthIndicator;
 use freshkube_core::security_lifecycle::{
     CertificateAudit, CertificateExpiryStatus, CertificateSource, ClusterIdentity,
