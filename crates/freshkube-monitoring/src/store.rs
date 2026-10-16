@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use freshkube_core::monitoring::PrometheusService;
 use freshkube_prefs::{Document, Layout};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::Error as _};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Saved {
@@ -20,6 +20,30 @@ pub(crate) struct Saved {
     pub(crate) services: BTreeMap<String, PrometheusService>,
     /// The source the user chose, by context name; none is automatic.
     pub(crate) choices: BTreeMap<String, Choice>,
+    /// Unknown keys at the top level and within each context's entries.
+    extra: Map<String, Value>,
+    service_extra: BTreeMap<String, Map<String, Value>>,
+    choice_extra: BTreeMap<String, Map<String, Value>>,
+}
+
+const SERVICE_KEYS: &[&str] = &["namespace", "name", "port", "https", "path"];
+
+fn extra(value: &Value, known: &[&str]) -> Map<String, Value> {
+    value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(key, _)| !known.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn with_extra(mut value: Value, extra: Option<&Map<String, Value>>) -> Value {
+    let mut object = extra.cloned().unwrap_or_default();
+    object.extend(std::mem::take(
+        value.as_object_mut().expect("saved entry is an object"),
+    ));
+    Value::Object(object)
 }
 
 /// A metrics source the user chose for a context instead of discovery.
@@ -107,25 +131,38 @@ impl Serialize for Saved {
         let services: serde_json::Map<String, Value> = self
             .services
             .iter()
-            .map(|(context, service)| (context.clone(), write_service(service)))
+            .map(|(context, service)| {
+                (
+                    context.clone(),
+                    with_extra(write_service(service), self.service_extra.get(context)),
+                )
+            })
             .collect();
         let choices: serde_json::Map<String, Value> = self
             .choices
             .iter()
-            .map(|(context, choice)| (context.clone(), write_choice(choice)))
+            .map(|(context, choice)| {
+                (
+                    context.clone(),
+                    with_extra(write_choice(choice), self.choice_extra.get(context)),
+                )
+            })
             .collect();
-        json!({
-            "dashboards": serde_json::to_value(&self.folder).map_err(S::Error::custom)?,
-            "prometheus": services,
-            "sources": choices,
-        })
+        with_extra(
+            json!({
+                "dashboards": serde_json::to_value(&self.folder).map_err(S::Error::custom)?,
+                "prometheus": services,
+                "sources": choices,
+            }),
+            Some(&self.extra),
+        )
         .serialize(serializer)
     }
 }
 
 /// Lenient, as the file always was: a key that is missing or malformed, and
-/// an entry that is, is left out. Keys this build does not know are not
-/// kept; a save writes only these three.
+/// an entry that is, is left out. Unknown keys at the top level and within
+/// usable entries are written back as read.
 impl<'de> Deserialize<'de> for Saved {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(Self::from_json(&Value::deserialize(deserializer)?))
@@ -156,10 +193,30 @@ impl Saved {
             .into_iter()
             .filter_map(|(context, value)| Some((context, read_choice(value)?)))
             .collect();
+        let service_extra = by_context("prometheus")
+            .into_iter()
+            .filter_map(|(context, value)| {
+                read_service(value)?;
+                Some((context, extra(value, SERVICE_KEYS)))
+            })
+            .collect();
+        let choice_extra = by_context("sources")
+            .into_iter()
+            .filter_map(|(context, value)| {
+                let known = match read_choice(value)? {
+                    Choice::Service(_) => [SERVICE_KEYS, &["kind"]].concat(),
+                    Choice::Url { .. } => vec!["kind", "url", "token"],
+                };
+                Some((context, extra(value, &known)))
+            })
+            .collect();
         Saved {
             folder,
             services,
             choices,
+            extra: extra(value, &["dashboards", "prometheus", "sources"]),
+            service_extra,
+            choice_extra,
         }
     }
 }
@@ -204,6 +261,60 @@ impl MonitoringStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_keys_round_trip_unchanged() {
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-monitoring-unknown-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        let service = json!({
+            "namespace": "metrics", "name": "prometheus", "port": 9090,
+            "https": false, "path": "", "future": {"labels": ["example", null]},
+        });
+        let mut selected_service = service.clone();
+        selected_service["kind"] = "service".into();
+        let mut value = json!({
+            "dashboards": directory.join("dashboards"),
+            "prometheus": {"example": service},
+            "sources": {
+                "example": selected_service,
+                "lab": {
+                    "kind": "url", "url": "https://metrics.example/", "token": false,
+                    "future": {"interval": 7, "enabled": true},
+                },
+            },
+            "future": {"options": [null, false, 7, "example"]},
+        });
+        std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
+        let store = MonitoringStore::new(&preferences, load(&preferences));
+        store.save_latest().unwrap();
+        let read = || {
+            serde_json::from_slice::<Value>(&std::fs::read(file(&preferences)).unwrap()).unwrap()
+        };
+        assert_eq!(read(), value);
+
+        store.update(|saved| {
+            saved.services.get_mut("example").unwrap().port = 9091;
+            saved.choices.insert(
+                "lab".into(),
+                Choice::Url {
+                    url: "https://other.example/".into(),
+                    token: true,
+                },
+            );
+        });
+        value["prometheus"]["example"]["port"] = 9091.into();
+        value["sources"]["lab"]["url"] = "https://other.example/".into();
+        value["sources"]["lab"]["token"] = true.into();
+        store.save_latest().unwrap();
+        assert_eq!(read(), value);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn saves_the_folder_and_services_and_reads_them_back() {

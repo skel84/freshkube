@@ -1,0 +1,1 @@
+- **Preferences:** keep unknown keys when saving Coroot, Monitoring and connection preferences, and use the shared column width cap for the Settings clusters list.
