@@ -943,7 +943,7 @@ impl Streams for WorkloadLogView {
                         Err(error) => {
                             access.forget();
                             latest.send_modify(|pods| {
-                                pods.failure = Some(Failure::new(FailureKind::Other, error))
+                                pods.failure = Some(Failure::new(FailureKind::Other, error.message))
                             });
                             // Keep the watch open, as a refused one stays.
                             latest.closed().await;

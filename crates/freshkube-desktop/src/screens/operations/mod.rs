@@ -47,6 +47,7 @@ use std::{
 };
 
 use freshkube_core::{
+    failure::{Failure, FailureKind},
     indicators::SafetyStatus,
     inspection::{
         EtcdHealthSnapshot, InspectionSource, InspectionTarget, InspectionUnavailable,
@@ -774,13 +775,19 @@ async fn run_live(
 async fn run_client<T>(
     previewed: Option<AppliedAccess>,
     confirmed: Option<AppliedAccess>,
-    connect: impl Future<Output = Result<T, String>>,
-) -> Result<T, String> {
+    connect: impl Future<Output = Result<T, Failure>>,
+) -> Result<T, Failure> {
     let Some(previewed) = previewed else {
-        return Err("The preview didn't record its access; refresh and review again".into());
+        return Err(Failure::new(
+            FailureKind::Config,
+            "The preview didn't record its access; refresh and review again",
+        ));
     };
     if confirmed.map(|access| access.identity) != Some(previewed.identity) {
-        return Err("Access changed since the preview; refresh and review again".into());
+        return Err(Failure::new(
+            FailureKind::Config,
+            "Access changed since the preview; refresh and review again",
+        ));
     }
     previewed.client(connect).await
 }
@@ -1516,7 +1523,10 @@ async fn preview_live(
     endpoint: InspectionTarget,
     key: PreviewKey,
 ) -> Result<Preview, String> {
-    let kubernetes = access.client(live.kubernetes()).await?;
+    let kubernetes = access
+        .client(live.kubernetes())
+        .await
+        .map_err(|failure| failure.message)?;
     let checked = tokio::time::timeout(
         PREFLIGHT_TIMEOUT,
         preflight_nodes(&kubernetes, live.client.clone(), endpoint, &key.targets),

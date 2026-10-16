@@ -106,7 +106,11 @@ impl Pilot {
         self.start_object_open(
             "Resolving the owner's kind timed out",
             async move {
-                let client = source.access.client().await?;
+                let client = source
+                    .access
+                    .client()
+                    .await
+                    .map_err(|failure| failure.message)?;
                 freshkube_core::resources::resolve_owner_kind(&client, &api_version, &kind)
                     .await
                     .map_err(|error| error.to_string())

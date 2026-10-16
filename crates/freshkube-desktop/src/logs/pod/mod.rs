@@ -1167,7 +1167,7 @@ impl Stream for PodLogView {
                     Ok(client) => follow_pod_log(client, request, sender).await,
                     Err(error) => {
                         access.forget();
-                        let failure = Failure::new(FailureKind::Other, error);
+                        let failure = Failure::new(FailureKind::Other, error.message);
                         let _ = sender.send(PodLogUpdate::Failed(failure)).await;
                     }
                 }

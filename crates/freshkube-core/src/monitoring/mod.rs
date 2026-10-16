@@ -299,9 +299,9 @@ impl QueryError {
 /// The cluster's Kubernetes client for a Prometheus read. A failure drops
 /// the client the access reuses, so the next ask builds it again.
 pub async fn cluster_client(access: &ClusterAccess) -> Result<kube::Client, QueryError> {
-    access.client().await.map_err(|message| {
+    access.client().await.map_err(|failure| {
         access.forget();
-        QueryError::new(ErrorKind::Unavailable, message)
+        QueryError::new(ErrorKind::Unavailable, failure.message)
     })
 }
 

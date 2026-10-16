@@ -266,7 +266,7 @@ impl SourcesList {
                             .client()
                             .await
                             .map(entry::reader)
-                            .map_err(|why| Failure::new(FailureKind::Unreachable, why)),
+                            .map_err(|why| Failure::new(FailureKind::Unreachable, why.message)),
                     ),
                     None => None,
                 };

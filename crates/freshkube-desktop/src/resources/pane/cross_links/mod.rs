@@ -381,7 +381,7 @@ impl DetailPane {
             Duration::from_secs(15),
             "Reading pod relationships timed out".to_owned(),
             async move {
-                let client = access.client().await?;
+                let client = access.client().await.map_err(|failure| failure.message)?;
                 Ok(freshkube_core::resources::collect_pod_links(&client, &document).await)
             },
         );

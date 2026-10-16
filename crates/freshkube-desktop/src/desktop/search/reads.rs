@@ -64,7 +64,7 @@ impl Search {
                     Duration::from_secs(5),
                     format!("Listing {key} timed out"),
                     async move {
-                        let client = access.client().await?;
+                        let client = access.client().await.map_err(|failure| failure.message)?;
                         let metadata = freshkube_core::resources::list_metadata(&client, &kind)
                             .await
                             .map_err(|error| error.to_string())?;

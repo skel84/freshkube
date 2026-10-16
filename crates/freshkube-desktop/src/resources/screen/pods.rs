@@ -258,7 +258,8 @@ impl ResourcesScreen {
                             SCREEN_DEADLINE,
                             "Reading pods' use timed out".into(),
                             async move {
-                                let client = access.client().await?;
+                                let client =
+                                    access.client().await.map_err(|failure| failure.message)?;
                                 list_pod_usage(&client, namespace.as_deref()).await.map_err(
                                     |failure| match failure.kind {
                                         FailureKind::NotFound => {

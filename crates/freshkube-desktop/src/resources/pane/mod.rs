@@ -527,7 +527,7 @@ impl DetailPane {
                     Ok(client) => client,
                     Err(error) => {
                         access.forget();
-                        return Ok(Err(Failure::new(FailureKind::Other, error)));
+                        return Ok(Err(Failure::new(FailureKind::Other, error.message)));
                     }
                 };
                 let identity = &target.identity;
@@ -667,7 +667,7 @@ impl DetailPane {
                     access.forget();
                     let _ = sender
                         .send(EventUpdate::Failed {
-                            failure: Failure::new(FailureKind::Other, error),
+                            failure: Failure::new(FailureKind::Other, error.message),
                             retrying: false,
                         })
                         .await;
@@ -735,7 +735,9 @@ impl DetailPane {
                 async move {
                     let client = match access.client().await {
                         Ok(client) => client,
-                        Err(error) => return Ok(Err(Failure::new(FailureKind::Other, error))),
+                        Err(error) => {
+                            return Ok(Err(Failure::new(FailureKind::Other, error.message)));
+                        }
                     };
                     Ok(reveal_secret_value(
                         &client,

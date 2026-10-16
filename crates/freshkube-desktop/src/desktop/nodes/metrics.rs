@@ -141,7 +141,7 @@ impl Nodes {
                 SCREEN_DEADLINE,
                 "Reading nodes' use timed out".into(),
                 async move {
-                    let client = access.client().await?;
+                    let client = access.client().await.map_err(|failure| failure.message)?;
                     list_node_usage(&client)
                         .await
                         .map_err(|failure| match failure.kind {

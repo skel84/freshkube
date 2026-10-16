@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use super::transport::scrape_interval as scrape_interval_of;
 use super::*;
+use crate::failure::{Failure, FailureKind};
 
 /// Every request the fake API saw, as `METHOD path?query`.
 type Seen = Arc<Mutex<Vec<String>>>;
@@ -455,8 +456,8 @@ async fn a_discovery_proxy_404_keeps_the_not_found_kind_and_words() {
 struct Forgets(std::sync::atomic::AtomicUsize);
 
 impl crate::cluster_source::KubeClientSource for Forgets {
-    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, String>> {
-        Box::pin(async { Err("No kubeconfig".into()) })
+    fn client(&self) -> futures::future::BoxFuture<'_, Result<kube::Client, Failure>> {
+        Box::pin(async { Err(Failure::new(FailureKind::Config, "No kubeconfig")) })
     }
 
     fn forget(&self) {
