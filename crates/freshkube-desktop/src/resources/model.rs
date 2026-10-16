@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::rows::{PodRow, RowOwner};
-pub(crate) use freshkube_nav::{ObjectRef, ResourceIdentity};
+pub use freshkube_nav::{ObjectRef, ResourceIdentity};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColumnKind {
@@ -14,7 +14,7 @@ pub(crate) enum ColumnKind {
 
 /// One column the server (or the example data) prints for a kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ResourceColumn {
+pub struct ResourceColumn {
     pub(crate) name: String,
     pub(crate) kind: ColumnKind,
     /// Shown only in the wide view, like `kubectl get -o wide`.
@@ -33,9 +33,9 @@ impl ResourceColumn {
 
 /// A row as printed for its kind. Cells line up with the store's columns.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ResourceRow {
-    pub(crate) identity: ResourceIdentity,
-    pub(crate) cells: Vec<String>,
+pub struct ResourceRow {
+    pub identity: ResourceIdentity,
+    pub cells: Vec<String>,
     /// Creation time in Unix seconds, when known.
     pub(crate) created: Option<i64>,
     pub(crate) terminating: bool,
@@ -58,7 +58,7 @@ impl ResourceRow {
 }
 
 /// Human-readable age with up to two units, as in `kubectl get`.
-pub(crate) fn format_age(seconds: u64) -> String {
+pub fn format_age(seconds: u64) -> String {
     let (days, hours, minutes) = (seconds / 86_400, seconds / 3_600 % 24, seconds / 60 % 60);
     if days >= 365 {
         format!("{}y{}d", days / 365, days % 365)
@@ -167,7 +167,7 @@ pub(crate) fn status_tone(value: &str) -> StatusTone {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ReadState {
+pub enum ReadState {
     Loading,
     Loaded,
     /// The identity may not read this collection.
@@ -191,7 +191,7 @@ impl ReadState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SortKey {
+pub enum SortKey {
     /// A printed column, by index into the store's columns.
     Column(usize),
     /// The namespace, then the name: the Name column when listing all

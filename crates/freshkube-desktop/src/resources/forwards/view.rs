@@ -28,18 +28,18 @@ pub(super) const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// What starting a forward needs.
 #[derive(Clone)]
-pub(crate) struct ForwardSpec {
-    pub(crate) runtime: Handle,
-    pub(crate) access: ClusterAccess,
+pub struct ForwardSpec {
+    pub runtime: Handle,
+    pub access: ClusterAccess,
     /// The object forwarded; its connection is part of it.
-    pub(crate) identity: ResourceIdentity,
-    pub(crate) target: ForwardTarget,
+    pub identity: ResourceIdentity,
+    pub target: ForwardTarget,
     /// The context it was started in, which the list names.
-    pub(crate) context: String,
+    pub context: String,
     /// A container port, or a Service's port.
-    pub(crate) port: u16,
+    pub port: u16,
     /// A port the user typed; `None` is automatic.
-    pub(crate) local_port: Option<u16>,
+    pub local_port: Option<u16>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +69,7 @@ pub(crate) struct Display {
 /// What a row shows, read out so it can be drawn while the app is
 /// borrowed elsewhere.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Row {
+pub struct Row {
     pub(crate) id: u64,
     pub(crate) running: bool,
     pub(crate) address: Option<String>,
@@ -107,13 +107,13 @@ enum Session {
     },
 }
 
-pub(crate) struct ForwardView {
-    pub(crate) id: u64,
+pub struct ForwardView {
+    pub id: u64,
     spec: ForwardSpec,
     watches: Watches,
     listen: Listen,
     /// The port it listened on last, which Start again asks for first.
-    pub(crate) local_port: Option<u16>,
+    pub local_port: Option<u16>,
     pub(crate) phase: Phase,
     status: Option<ForwardStatus>,
     /// Why it ended, once it has.
@@ -168,12 +168,12 @@ impl ForwardView {
         view
     }
 
-    pub(crate) fn running(&self) -> bool {
+    pub fn running(&self) -> bool {
         self.phase != Phase::Ended
     }
 
     /// The port it forwards, when it forwards the object `identity`.
-    pub(crate) fn port_of(&self, identity: &ResourceIdentity) -> Option<u16> {
+    pub fn port_of(&self, identity: &ResourceIdentity) -> Option<u16> {
         (self.spec.identity == *identity).then_some(self.spec.port)
     }
 

@@ -7,7 +7,7 @@ use super::{Session, ShellState, ShellView};
 
 /// A real Tokio stream whose Control-C flush pauses until the test releases
 /// it. Recording the bytes and dropping the writer are independent of GPUI.
-pub(crate) struct ClosingTransport {
+pub struct ClosingTransport {
     bytes: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
     dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
     release: Option<tokio::sync::oneshot::Sender<()>>,
@@ -58,7 +58,7 @@ impl Drop for ClosingWriter {
 }
 
 impl ClosingTransport {
-    pub(crate) fn install(shell: &Entity<ShellView>, cx: &mut TestAppContext) -> Self {
+    pub fn install(shell: &Entity<ShellView>, cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
         let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -95,23 +95,23 @@ impl ClosingTransport {
         }
     }
 
-    pub(crate) fn wait_for_interrupt(&self, cx: &mut TestAppContext) {
+    pub fn wait_for_interrupt(&self, cx: &mut TestAppContext) {
         freshkube_ui::real_io::until_io(cx, "Control-C", |_| self.bytes() == [3]);
     }
 
-    pub(crate) fn release(&mut self) {
+    pub fn release(&mut self) {
         self.release.take().unwrap().send(()).unwrap();
     }
 
-    pub(crate) fn wait_for_eof(&self, cx: &mut TestAppContext) {
+    pub fn wait_for_eof(&self, cx: &mut TestAppContext) {
         freshkube_ui::real_io::until_io(cx, "Control-D", |_| self.bytes() == [3, 4]);
     }
 
-    pub(crate) fn exit(&mut self) {
+    pub fn exit(&mut self) {
         drop(self.stdout.take());
     }
 
-    pub(crate) fn wait_for_completion(&self, cx: &mut TestAppContext) {
+    pub fn wait_for_completion(&self, cx: &mut TestAppContext) {
         freshkube_ui::real_io::until_io(cx, "closing worker", |cx| {
             self.dropped.load(std::sync::atomic::Ordering::SeqCst)
                 && cx.read(|cx| {

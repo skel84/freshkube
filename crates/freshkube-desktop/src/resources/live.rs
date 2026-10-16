@@ -90,7 +90,7 @@ pub(crate) fn parse_timestamp(text: &str) -> Option<i64> {
 }
 
 /// Unix seconds now.
-pub(crate) fn now() -> i64 {
+pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 

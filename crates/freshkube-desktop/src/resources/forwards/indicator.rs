@@ -20,7 +20,7 @@ use crate::palette::palette;
 use crate::ui::{self, dp};
 
 /// The status bar's entry. It redraws only when the list changes.
-pub(crate) struct ForwardsIndicator {
+pub struct ForwardsIndicator {
     list: Entity<ForwardList>,
     panel: Entity<ForwardsPanel>,
     open: bool,
@@ -30,7 +30,7 @@ pub(crate) struct ForwardsIndicator {
 }
 
 impl ForwardsIndicator {
-    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let list = list(cx);
         let panel = cx.new(|cx| ForwardsPanel::new(list.clone(), cx));
         let subscription = cx.observe(&list, |this, _, cx| {
@@ -131,7 +131,7 @@ impl Render for ForwardsPanel {
 /// One forward: what it reaches and where it listens, where it stands,
 /// and what can be done with it now. Its ids start with `prefix`, so the
 /// list and the Ports tab can show the same forward at once.
-pub(crate) fn render_forward(
+pub fn render_forward(
     prefix: &'static str,
     list: &Entity<ForwardList>,
     row: &Row,

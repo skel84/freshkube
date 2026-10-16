@@ -13,7 +13,7 @@ use freshkube_core::resources::{
 use gpui_kit::SharedString;
 
 use super::model::ResourceIdentity;
-pub(crate) use freshkube_nav::DetailTarget;
+pub use freshkube_nav::DetailTarget;
 
 /// The most events the pane lists; the count still says how many exist.
 pub(crate) const MAX_EVENTS: usize = 200;

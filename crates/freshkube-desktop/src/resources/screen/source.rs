@@ -9,7 +9,7 @@ use gpui_kit::ClickEvent;
 use table::{Line, RowStyle, SortOrder, TableRow, TableSource, TableState};
 
 /// What a row's cells read, derived once per row and frame.
-pub(crate) struct RowCells<'a> {
+pub struct RowCells<'a> {
     entry: &'a ResourceEntry,
     node_ready: bool,
     /// Metrics are last known: the read failed or the node isn't ready.

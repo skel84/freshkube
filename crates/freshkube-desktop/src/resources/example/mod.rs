@@ -134,7 +134,7 @@ const WORKLOADS: [(&str, &str, &str, u32); 11] = [
 ];
 
 /// The connection identity of example data for a context.
-pub(crate) fn connection(context: &str) -> String {
+pub fn connection(context: &str) -> String {
     format!("example:{context}")
 }
 
@@ -146,7 +146,7 @@ pub(crate) fn namespaces() -> Vec<String> {
 /// A kind's columns and rows as the server would print them, in one
 /// namespace or all. `None` when example data doesn't include the kind.
 /// The custom API groups discovery lists, by name.
-pub(crate) fn custom_groups() -> Vec<ApiGroup> {
+pub fn custom_groups() -> Vec<ApiGroup> {
     let mut groups: Vec<ApiGroup> = CUSTOM_GROUPS
         .iter()
         .chain(&acme::GROUPS)
@@ -166,7 +166,7 @@ fn custom_kinds()
 }
 
 /// What discovering one example group finds, failures included.
-pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
+pub fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
     let unavailable = "the server is currently unable to handle the request";
     let missing = || {
         Failure::new(
@@ -219,7 +219,7 @@ pub(crate) fn group_kinds(group: &str) -> Result<GroupKinds, Failure> {
 }
 
 /// An example kind by key: built in, or one discovery finds.
-pub(crate) fn kind(key: &str) -> Option<ResourceKind> {
+pub fn kind(key: &str) -> Option<ResourceKind> {
     builtin(key).or_else(|| {
         custom_kinds()
             .map(|(group, version, kind, plural, namespaced)| {
@@ -229,7 +229,7 @@ pub(crate) fn kind(key: &str) -> Option<ResourceKind> {
     })
 }
 
-pub(crate) fn read(
+pub fn read(
     context: &str,
     key: &str,
     namespace: Option<&str>,
@@ -618,11 +618,7 @@ pub(crate) fn ready_pod(context: &str, namespace: &str, app: &str) -> Option<Str
 /// The example pods `selector` picks in `workload`'s namespace, as a
 /// workload's Logs tab watches them. Only `key=value` terms match, which is
 /// all the example workloads use.
-pub(crate) fn workload_pods(
-    workload: &ResourceIdentity,
-    selector: &str,
-    now: i64,
-) -> Vec<WorkloadPod> {
+pub fn workload_pods(workload: &ResourceIdentity, selector: &str, now: i64) -> Vec<WorkloadPod> {
     let Some(context) = workload.connection.strip_prefix("example:") else {
         return Vec::new();
     };
@@ -940,10 +936,10 @@ fn certificates(connection: &str, now: i64) -> Vec<ResourceRow> {
 mod acme;
 mod objects;
 mod summary;
-pub(crate) use objects::{document, events, pod_log, pod_log_line, secret_value};
-pub(crate) use summary::seed_summary;
+pub use objects::{document, events, pod_log, pod_log_line, secret_value};
+pub use summary::seed_summary;
 #[cfg(test)]
-pub(crate) use summary::summary;
+pub use summary::summary;
 #[cfg(test)]
 const TEST_NOW: i64 = 1_790_000_000;
 

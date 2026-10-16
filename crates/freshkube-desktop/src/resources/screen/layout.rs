@@ -58,7 +58,7 @@ pub(super) enum ColumnSource {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct DisplayColumn {
+pub struct DisplayColumn {
     pub(super) label: SharedString,
     pub(super) source: ColumnSource,
     pub(super) kind: ColumnKind,

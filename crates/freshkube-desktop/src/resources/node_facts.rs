@@ -7,31 +7,31 @@ use gpui_kit::SharedString;
 /// group and a pod's "Runs on" card. The Nodes workspace builds it from its
 /// joined node row (`NodeRow::resource_facts`); Resources only reads it.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NodeFacts {
+pub struct NodeFacts {
     /// The Kubernetes node's name, as pods name it.
-    pub(crate) name: String,
+    pub name: String,
     /// Kubernetes reports the node and its Ready condition isn't True.
-    pub(crate) not_ready: bool,
+    pub not_ready: bool,
     /// When that condition last changed, as a Unix time, when known.
-    pub(crate) not_ready_since: Option<i64>,
+    pub not_ready_since: Option<i64>,
     /// "Ready", "NotReady", "Last known", … as the Nodes table words it.
-    pub(crate) ready_label: SharedString,
-    pub(crate) tone: Tone,
+    pub ready_label: SharedString,
+    pub tone: Tone,
     /// Used and total bytes, when Talos reported them.
-    pub(crate) memory: Option<NodeMemory>,
-    pub(crate) memory_label: SharedString,
+    pub memory: Option<NodeMemory>,
+    pub memory_label: SharedString,
     /// Talos doesn't answer for the node right now, so memory is last known.
-    pub(crate) memory_stale: bool,
-    pub(crate) problems: Vec<SharedString>,
+    pub memory_stale: bool,
+    pub problems: Vec<SharedString>,
     /// The node has system services to link to.
-    pub(crate) services: bool,
+    pub services: bool,
     /// Talos's kubelet service, worded, when Talos reports the node.
-    pub(crate) kubelet: Option<(Tone, SharedString)>,
+    pub kubelet: Option<(Tone, SharedString)>,
 }
 
 /// Used and total bytes of a node's memory.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct NodeMemory {
-    pub(crate) used: u64,
-    pub(crate) total: u64,
+pub struct NodeMemory {
+    pub used: u64,
+    pub total: u64,
 }

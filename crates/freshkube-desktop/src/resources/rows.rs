@@ -96,7 +96,7 @@ pub(crate) enum PodState {
 /// `CrashLoopBackOff`, `Error` or `OOMKilled`, in an init container too.
 /// A pod that couldn't start, such as `ImagePullBackOff` or an
 /// unschedulable one, has nothing that died.
-pub(crate) fn died(status: &str) -> bool {
+pub fn died(status: &str) -> bool {
     let status = status.strip_prefix("Init:").unwrap_or(status);
     let reason = status.split([' ', '(']).next().unwrap_or_default();
     matches!(reason, "CrashLoopBackOff" | "Error" | "OOMKilled")

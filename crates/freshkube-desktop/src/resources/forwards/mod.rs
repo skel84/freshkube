@@ -19,10 +19,10 @@ mod indicator;
 mod tests;
 mod view;
 
-pub(crate) use indicator::{ForwardsIndicator, render_forward};
+pub use indicator::{ForwardsIndicator, render_forward};
 #[cfg(test)]
 pub(crate) use view::Phase;
-pub(crate) use view::{ForwardSpec, ForwardView, Row};
+pub use view::{ForwardSpec, ForwardView, Row};
 
 /// How long quitting or closing the window waits for forwards to let their
 /// ports go.
@@ -63,7 +63,7 @@ pub(crate) type Listen =
     Arc<dyn Fn(Option<u16>, u16) -> Result<Listeners, ForwardFailure> + Send + Sync>;
 
 /// Every forward, in the order started.
-pub(crate) struct ForwardList {
+pub struct ForwardList {
     pub(crate) items: Vec<Entity<ForwardView>>,
     /// How many run, for the status bar.
     pub(crate) running: usize,
@@ -81,7 +81,7 @@ struct Forwards(Entity<ForwardList>);
 impl Global for Forwards {}
 
 /// The app's forwards, made on first use.
-pub(crate) fn list(cx: &mut App) -> Entity<ForwardList> {
+pub fn list(cx: &mut App) -> Entity<ForwardList> {
     if let Some(forwards) = cx.try_global::<Forwards>() {
         return forwards.0.clone();
     }
@@ -99,14 +99,14 @@ pub(crate) fn list(cx: &mut App) -> Entity<ForwardList> {
 }
 
 /// How many forwards run anywhere in the app.
-pub(crate) fn running(cx: &App) -> usize {
+pub fn running(cx: &App) -> usize {
     cx.try_global::<Forwards>()
         .map_or(0, |forwards| forwards.0.read(cx).running)
 }
 
 /// Stops every forward, and resolves once their ports are free or
 /// [`CLOSE_GRACE`] has passed.
-pub(crate) fn stop_all(cx: &mut App) -> impl Future<Output = ()> + use<> {
+pub fn stop_all(cx: &mut App) -> impl Future<Output = ()> + use<> {
     let closing = match cx.try_global::<Forwards>() {
         Some(forwards) => {
             let list = forwards.0.clone();
@@ -128,11 +128,7 @@ pub(crate) fn stop_all(cx: &mut App) -> impl Future<Output = ()> + use<> {
 
 impl ForwardList {
     /// Starts a forward and lists it.
-    pub(crate) fn start(
-        &mut self,
-        spec: ForwardSpec,
-        cx: &mut Context<Self>,
-    ) -> Entity<ForwardView> {
+    pub fn start(&mut self, spec: ForwardSpec, cx: &mut Context<Self>) -> Entity<ForwardView> {
         let id = self.next_id;
         self.next_id += 1;
         let watches = self.watches.clone();
@@ -153,7 +149,7 @@ impl ForwardList {
             .cloned()
     }
 
-    pub(crate) fn stop(&mut self, id: u64, cx: &mut Context<Self>) {
+    pub fn stop(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(view) = self.get(id, cx) else {
             return;
         };

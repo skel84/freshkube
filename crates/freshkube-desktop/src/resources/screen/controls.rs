@@ -131,7 +131,7 @@ impl ResourcesScreen {
     /// the read's state and when the rows last changed. It is derived
     /// again only when one of those changes, so the shell can read it on
     /// every frame.
-    pub(crate) fn status(&mut self) -> &Segment {
+    pub fn status(&mut self) -> &Segment {
         let inputs = self.status_inputs();
         let key = &self.status.0;
         let known = (

@@ -1,14 +1,14 @@
 //! The Kubernetes part of the sidebar, grouped as Kubeli groups it.
 
-pub(crate) struct NavGroup {
-    pub(crate) label: &'static str,
+pub struct NavGroup {
+    pub label: &'static str,
     /// Element id suffix: `nav-k8s-group-<slug>`.
-    pub(crate) slug: &'static str,
+    pub slug: &'static str,
     /// (label, kubectl resource key).
-    pub(crate) items: &'static [(&'static str, &'static str)],
+    pub items: &'static [(&'static str, &'static str)],
 }
 
-pub(crate) const NAVIGATION: [NavGroup; 6] = [
+pub const NAVIGATION: [NavGroup; 6] = [
     NavGroup {
         label: "Workloads",
         slug: "workloads",
@@ -112,11 +112,11 @@ pub(crate) const CLUSTER: [(&str, &str); 3] = [
     ("Events", "events"),
 ];
 
-pub(crate) const DEFAULT_KIND: &str = "pods";
+pub const DEFAULT_KIND: &str = "pods";
 
 /// The navigation's own copy of a resource key, if it offers that kind.
 #[cfg(any(debug_assertions, feature = "stress", test))]
-pub(crate) fn known(key: &str) -> Option<&'static str> {
+pub fn known(key: &str) -> Option<&'static str> {
     if let Some((_, key)) = CLUSTER.iter().find(|(_, item)| *item == key) {
         return Some(*key);
     }
@@ -140,7 +140,7 @@ pub(crate) fn label(key: &str) -> Option<&'static str> {
 }
 
 /// The group a resource key sits in.
-pub(crate) fn group_of(key: &str) -> Option<&'static str> {
+pub fn group_of(key: &str) -> Option<&'static str> {
     NAVIGATION
         .iter()
         .find(|group| group.items.iter().any(|(_, item)| *item == key))

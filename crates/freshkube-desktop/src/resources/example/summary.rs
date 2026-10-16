@@ -93,10 +93,7 @@ pub(super) fn extra_rows(
 
 /// Unit-test snapshots use the same reducer as the running fixture.
 #[cfg(test)]
-pub(crate) fn summary(
-    context: &str,
-    now: i64,
-) -> freshkube_core::kubernetes_summary::KubernetesSummary {
+pub fn summary(context: &str, now: i64) -> freshkube_core::kubernetes_summary::KubernetesSummary {
     use freshkube_core::kubernetes_summary::{Session, SessionIdentity};
     let session = Session::new(SessionIdentity::new(connection(context), 0));
     seed_summary(&session, context, now);
@@ -139,7 +136,7 @@ pub(crate) fn summary_objects<T: serde::de::DeserializeOwned>(
 
 /// Seed exactly the reducer used by live list/watch streams. The caller keeps
 /// `now` fixed for the lifetime of a fixture session.
-pub(crate) fn seed_summary(
+pub fn seed_summary(
     session: &freshkube_core::kubernetes_summary::Session,
     context: &str,
     now: i64,

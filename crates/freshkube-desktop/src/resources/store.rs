@@ -9,7 +9,7 @@ use super::rows;
 /// individual upserts and deletes, an atomic reset that replaces the columns
 /// and every row, and changes to the collection's read state.
 #[derive(Clone, Debug)]
-pub(crate) enum ResourceEvent {
+pub enum ResourceEvent {
     Reset(Snapshot),
     Upsert(ResourceRow),
     Delete(ResourceIdentity),
@@ -28,7 +28,7 @@ impl ResourceEvent {
 /// duplicates merged, identities indexed and printed widths counted, so
 /// applying it only swaps it in.
 #[derive(Clone, Debug)]
-pub(crate) struct Snapshot {
+pub struct Snapshot {
     columns: Vec<ResourceColumn>,
     entries: Vec<ResourceEntry>,
     index: HashMap<ResourceIdentity, usize>,

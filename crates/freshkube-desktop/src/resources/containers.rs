@@ -4,7 +4,7 @@
 use freshkube_core::resources::{Container, ContainerRole, ContainerState};
 
 /// A container picker's entry: `app · Running`, `migrate · Not started`.
-pub(crate) fn choice_label(container: &Container) -> String {
+pub fn choice_label(container: &Container) -> String {
     let state = match &container.state {
         ContainerState::Running(_) => "Running".to_owned(),
         ContainerState::Waiting(reason)
@@ -23,7 +23,7 @@ pub(crate) fn choice_label(container: &Container) -> String {
 }
 
 /// The heading over a container picker's entries of one role.
-pub(crate) fn role_heading(role: ContainerRole) -> &'static str {
+pub fn role_heading(role: ContainerRole) -> &'static str {
     match role {
         ContainerRole::Init => "INIT CONTAINERS",
         ContainerRole::App => "CONTAINERS",

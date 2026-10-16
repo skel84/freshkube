@@ -23,22 +23,22 @@ const READ_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Where one discovery read stands.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Discovery<T> {
+pub enum Discovery<T> {
     Reading,
     Loaded(T),
     Failed(Failure),
 }
 
 /// One custom API group, with what the sidebar shows of it derived once.
-pub(crate) struct CustomGroup {
+pub struct CustomGroup {
     group: ApiGroup,
-    pub(crate) name: SharedString,
+    pub name: SharedString,
     /// Element id of its row.
-    pub(crate) id: SharedString,
+    pub id: SharedString,
     /// Its name and served versions, preferred first.
-    pub(crate) tooltip: SharedString,
+    pub tooltip: SharedString,
     /// `None` until the group is first opened.
-    pub(crate) kinds: Option<Discovery<GroupRows>>,
+    pub kinds: Option<Discovery<GroupRows>>,
 }
 
 impl CustomGroup {
@@ -54,23 +54,23 @@ impl CustomGroup {
 }
 
 /// One listable kind of a group as the sidebar shows it.
-pub(crate) struct KindRow {
-    pub(crate) kind: ResourceKind,
+pub struct KindRow {
+    pub kind: ResourceKind,
     /// Its kubectl key, `plural.group`.
-    pub(crate) key: SharedString,
-    pub(crate) id: SharedString,
-    pub(crate) label: SharedString,
-    pub(crate) tooltip: SharedString,
+    pub key: SharedString,
+    pub id: SharedString,
+    pub label: SharedString,
+    pub tooltip: SharedString,
 }
 
 /// What an open group shows once its kinds are discovered.
-pub(crate) struct GroupRows {
-    pub(crate) kinds: Vec<KindRow>,
+pub struct GroupRows {
+    pub kinds: Vec<KindRow>,
     /// Why nothing can be listed, when nothing can.
-    pub(crate) nothing: Option<SharedString>,
+    pub nothing: Option<SharedString>,
     /// Versions that weren't served or couldn't be read while another was:
     /// the row's few words, and each failure in full.
-    pub(crate) partial: Option<(SharedString, SharedString)>,
+    pub partial: Option<(SharedString, SharedString)>,
 }
 
 impl GroupRows {
@@ -144,7 +144,7 @@ impl GroupRows {
 type Job = (OwnedJob, Task<()>);
 type Answer<T> = oneshot::Receiver<Result<Result<T, Failure>, String>>;
 
-pub(crate) struct CustomResources {
+pub struct CustomResources {
     runtime: Handle,
     source: Option<ClusterSource>,
     open: bool,
@@ -158,7 +158,7 @@ pub(crate) struct CustomResources {
 }
 
 impl CustomResources {
-    pub(crate) fn new(runtime: Handle) -> Self {
+    pub fn new(runtime: Handle) -> Self {
         Self {
             runtime,
             source: None,
@@ -171,17 +171,17 @@ impl CustomResources {
         }
     }
 
-    pub(crate) fn is_group_open(&self, name: &str) -> bool {
+    pub fn is_group_open(&self, name: &str) -> bool {
         self.open_groups.contains(name)
     }
 
     /// `None` until the section is first opened on a connection.
-    pub(crate) fn groups(&self) -> Option<&Discovery<Vec<CustomGroup>>> {
+    pub fn groups(&self) -> Option<&Discovery<Vec<CustomGroup>>> {
         self.groups.as_ref()
     }
 
     /// A discovered kind by its kubectl key.
-    pub(crate) fn kind(&self, key: &str) -> Option<ResourceKind> {
+    pub fn kind(&self, key: &str) -> Option<ResourceKind> {
         let Some(Discovery::Loaded(groups)) = &self.groups else {
             return None;
         };
@@ -199,7 +199,7 @@ impl CustomResources {
     /// Another connection forgets what discovery found on the last one and,
     /// if the section is open, discovers again. The same connection only
     /// takes the new access.
-    pub(crate) fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
+    pub fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
         let id = |source: &Option<ClusterSource>| source.as_ref().map(|source| source.id.clone());
         let same = id(&self.source) == id(&source);
         self.source = source;
@@ -222,13 +222,13 @@ impl CustomResources {
         cx.notify();
     }
 
-    pub(crate) fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
+    pub fn set_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if self.open != open {
             self.toggle(cx);
         }
     }
 
-    pub(crate) fn toggle_group(&mut self, name: &str, cx: &mut Context<Self>) {
+    pub fn toggle_group(&mut self, name: &str, cx: &mut Context<Self>) {
         if !self.open_groups.remove(name) {
             self.open_groups.insert(name.to_owned());
             self.discover_kinds(name, false, cx);
@@ -237,7 +237,7 @@ impl CustomResources {
     }
 
     /// Opens the section and `kind`'s group, so the sidebar shows the kind.
-    pub(crate) fn reveal(&mut self, kind: &ResourceKind, cx: &mut Context<Self>) {
+    pub fn reveal(&mut self, kind: &ResourceKind, cx: &mut Context<Self>) {
         self.open = true;
         self.open_groups.insert(kind.group.clone());
         self.discover_groups_once(cx);
@@ -246,7 +246,7 @@ impl CustomResources {
     }
 
     /// Discovers the groups again, then the kinds of every open group.
-    pub(crate) fn retry(&mut self, cx: &mut Context<Self>) {
+    pub fn retry(&mut self, cx: &mut Context<Self>) {
         self.forget();
         if self.open {
             self.discover_groups(cx);
@@ -254,7 +254,7 @@ impl CustomResources {
         cx.notify();
     }
 
-    pub(crate) fn retry_group(&mut self, name: &str, cx: &mut Context<Self>) {
+    pub fn retry_group(&mut self, name: &str, cx: &mut Context<Self>) {
         self.discover_kinds(name, true, cx);
         cx.notify();
     }
@@ -262,7 +262,7 @@ impl CustomResources {
     /// A kind of `name` stopped being served, so what discovery found of the
     /// group may be out of date: a group in view is discovered again, any
     /// other is forgotten until it is shown.
-    pub(crate) fn not_served(&mut self, name: &str, cx: &mut Context<Self>) {
+    pub fn not_served(&mut self, name: &str, cx: &mut Context<Self>) {
         if self.open && self.open_groups.contains(name) {
             self.discover_kinds(name, true, cx);
         } else if let Some(Discovery::Loaded(groups)) = self.groups.as_mut()
@@ -276,7 +276,7 @@ impl CustomResources {
 
     /// Holds discovery at reading, as a slow server would.
     #[cfg(test)]
-    pub(crate) fn hold_reading(&mut self, group: Option<&str>) {
+    pub fn hold_reading(&mut self, group: Option<&str>) {
         match group {
             None => self.groups = Some(Discovery::Reading),
             Some(name) => {

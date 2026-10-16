@@ -79,7 +79,7 @@ pub(super) fn metadata(kind: &str, api_version: &str, row: &ResourceRow, extra: 
 
 /// The full object behind an example row, written as the server would
 /// return it. `None` for anything the example cluster doesn't have.
-pub(crate) fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument> {
+pub fn document(identity: &ResourceIdentity, now: i64) -> Option<ObjectDocument> {
     if identity.resource == "secrets" {
         freshkube_probe::probe::hit("example.secret-document");
     }
@@ -299,7 +299,7 @@ const LOG_MESSAGES: [&str; 8] = [
 ];
 
 /// One example log line as Kubernetes writes it with timestamps.
-pub(crate) fn pod_log_line(sequence: u64, at: DateTime<Utc>) -> String {
+pub fn pod_log_line(sequence: u64, at: DateTime<Utc>) -> String {
     format!(
         "{} {}",
         at.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
@@ -318,7 +318,7 @@ pub(super) fn log_lines(count: i64, step: i64, end: i64) -> impl Iterator<Item =
 /// What following an example container's log reports at once, and whether
 /// it goes on writing. The metrics server refuses its logs, as a viewer
 /// without `pods/log` would see.
-pub(crate) fn pod_log(
+pub fn pod_log(
     identity: &ResourceIdentity,
     container: &str,
     previous: bool,
@@ -610,7 +610,7 @@ pub(super) fn event(
 }
 
 /// Events the example cluster recorded about an object, oldest first.
-pub(crate) fn events(identity: &ResourceIdentity, now: i64) -> Vec<ObjectEvent> {
+pub fn events(identity: &ResourceIdentity, now: i64) -> Vec<ObjectEvent> {
     let Some((row, ix)) = find(identity, now) else {
         return Vec::new();
     };
@@ -772,11 +772,7 @@ pub(crate) fn events(identity: &ResourceIdentity, now: i64) -> Vec<ObjectEvent> 
 }
 
 /// One value of an example Secret, as revealing it would read it.
-pub(crate) fn secret_value(
-    identity: &ResourceIdentity,
-    key: &str,
-    now: i64,
-) -> Option<SecretValue> {
+pub fn secret_value(identity: &ResourceIdentity, key: &str, now: i64) -> Option<SecretValue> {
     let (_, ix) = find(identity, now)?;
     let (_, _, _, data) = SECRETS.get(ix)?;
     let (_, value) = data.iter().find(|(name, _)| *name == key)?;

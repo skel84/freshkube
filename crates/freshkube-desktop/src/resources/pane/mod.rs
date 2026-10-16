@@ -62,7 +62,7 @@ actions!(kube_detail, [Dismiss, NextTab, PreviousTab]);
 
 /// What the pane asks of the page around it.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum DetailEvent {
+pub enum DetailEvent {
     /// The user closed the pane.
     Closed,
     /// The user stepped back to the list; the pane stays open.
@@ -73,7 +73,7 @@ pub(crate) enum DetailEvent {
     Link(super::ResourceLink),
 }
 
-pub(crate) use freshkube_nav::Tab;
+pub use freshkube_nav::Tab;
 
 /// The strip's tabs, in order.
 const STRIP: [Tab; 2] = [Tab::Overview, Tab::Yaml];
@@ -149,7 +149,7 @@ fn local_time(time: DateTime<Utc>) -> String {
 
 type Job = (OwnedJob, Task<()>);
 
-pub(crate) struct DetailPane {
+pub struct DetailPane {
     embedded_node: bool,
     runtime: Handle,
     access: Option<ClusterAccess>,
@@ -229,7 +229,7 @@ fn after(
 }
 
 impl DetailPane {
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("secondary-f", Find, Some(CONTEXT)),
             KeyBinding::new("secondary-a", input::SelectAll, Some(CONTEXT)),
@@ -320,12 +320,12 @@ impl DetailPane {
         }
     }
 
-    pub(crate) fn embed_node(&mut self, tab: Tab, cx: &mut Context<Self>) {
+    pub fn embed_node(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.embedded_node = true;
         self.set_tab(tab, cx);
     }
 
-    pub(crate) fn target_identity(&self) -> Option<&ResourceIdentity> {
+    pub fn target_identity(&self) -> Option<&ResourceIdentity> {
         self.detail.as_ref().map(|detail| &detail.target.identity)
     }
 
@@ -341,13 +341,13 @@ impl DetailPane {
     }
 
     /// The context objects open in, which a forward started here names.
-    pub(crate) fn set_context(&mut self, context: String, cx: &mut Context<Self>) {
+    pub fn set_context(&mut self, context: String, cx: &mut Context<Self>) {
         self.ports.update(cx, |ports, _| ports.set_context(context));
     }
 
     /// Shows `target`, reading it after `delay`. `version` is the one the
     /// list shows. The tab and the search carry over from the last object.
-    pub(crate) fn open(
+    pub fn open(
         &mut self,
         target: DetailTarget,
         access: ClusterAccess,
@@ -409,7 +409,7 @@ impl DetailPane {
         }
     }
 
-    pub(crate) fn close(&mut self, cx: &mut Context<Self>) {
+    pub fn close(&mut self, cx: &mut Context<Self>) {
         self.stop_reads();
         self.shell_choices = Rc::default();
         self.ports
@@ -429,7 +429,7 @@ impl DetailPane {
 
     /// Hiding the page stops every read and hides revealed values; showing
     /// it reads the open object again.
-    pub(crate) fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
+    pub fn set_active(&mut self, active: bool, cx: &mut Context<Self>) {
         if self.active == active {
             return;
         }
@@ -922,7 +922,7 @@ impl DetailPane {
     }
 
     /// Puts the keyboard on the pane.
-    pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
     }
 

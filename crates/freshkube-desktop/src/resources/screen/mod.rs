@@ -94,7 +94,7 @@ actions!(
 /// Where the Resources page reads from. `id` is part of every row's
 /// identity, so rows from one connection are never shown or selected as
 /// another's; the same `id` keeps a running watch across source updates.
-pub(crate) use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
+pub use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 
 /// One entry of the namespace picker; `None` lists every namespace.
 #[derive(Clone, Debug, PartialEq)]
@@ -143,7 +143,7 @@ fn namespace_entries(
 
 /// The element id of a row: derived from what it shows, so a press that
 /// lands after the rows moved can't complete on another object.
-pub(crate) fn row_id(identity: &ResourceIdentity) -> ElementId {
+pub fn row_id(identity: &ResourceIdentity) -> ElementId {
     SharedString::from(format!(
         "resource-row:{}/{}/{}",
         identity.namespace, identity.name, identity.uid
@@ -153,7 +153,7 @@ pub(crate) fn row_id(identity: &ResourceIdentity) -> ElementId {
 
 /// A kind's name for titles: the navigation's label, or a custom kind's
 /// own name.
-pub(crate) fn title(kind: &ResourceKind) -> SharedString {
+pub fn title(kind: &ResourceKind) -> SharedString {
     navigation::label(&kind.key())
         .map(SharedString::from)
         .unwrap_or_else(|| kind.kind.clone().into())
@@ -162,9 +162,9 @@ pub(crate) fn title(kind: &ResourceKind) -> SharedString {
 /// The kind shown isn't served (404), so the sidebar's discovery of its
 /// group may be out of date.
 #[derive(Clone, Debug)]
-pub(crate) struct NotServed(pub(crate) ResourceKind);
+pub struct NotServed(pub ResourceKind);
 
-pub(crate) struct ResourcesScreen {
+pub struct ResourcesScreen {
     field_selector: Option<String>,
     embedded: bool,
     runtime: Handle,
@@ -240,13 +240,13 @@ pub(crate) struct ResourcesScreen {
 impl ResourcesScreen {
     /// Whether the example source holds its lists (`Hold::lists`).
     #[cfg(test)]
-    pub(crate) fn is_holding(&self) -> bool {
+    pub fn is_holding(&self) -> bool {
         self.source.as_ref().is_some_and(
             |source| matches!(source.access, ClusterAccess::Example(hold) if hold.lists),
         )
     }
 
-    pub(crate) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.bind_keys([
             KeyBinding::new("down", NextItem, Some(CONTEXT)),
             KeyBinding::new("up", PreviousItem, Some(CONTEXT)),
@@ -425,12 +425,7 @@ impl ResourcesScreen {
         }
     }
 
-    pub(crate) fn set_node(
-        &mut self,
-        name: Option<&str>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_node(&mut self, name: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
         self.embedded = true;
         let selector = name.map(|name| format!("spec.nodeName={name}"));
         if self.field_selector == selector {
@@ -445,16 +440,16 @@ impl ResourcesScreen {
 
     /// The list's read: a refresh, or any read from scratch, starts the next.
     #[cfg(test)]
-    pub(crate) fn read_epoch(&self) -> u64 {
+    pub fn read_epoch(&self) -> u64 {
         self.store.epoch()
     }
     #[cfg(test)]
-    pub(crate) fn filter_value(&self, cx: &App) -> String {
+    pub fn filter_value(&self, cx: &App) -> String {
         self.query.read(cx).value().to_string()
     }
     /// The rows the list holds, in the store's order.
     #[cfg(test)]
-    pub(crate) fn store_identities(&self) -> Vec<ResourceIdentity> {
+    pub fn store_identities(&self) -> Vec<ResourceIdentity> {
         self.store
             .entries()
             .iter()
@@ -462,21 +457,21 @@ impl ResourcesScreen {
             .collect()
     }
     #[cfg(test)]
-    pub(crate) fn selected_row(&self) -> Option<&ResourceIdentity> {
+    pub fn selected_row(&self) -> Option<&ResourceIdentity> {
         self.projection.selected()
     }
     #[cfg(test)]
-    pub(crate) fn field_selector_value(&self) -> Option<&str> {
+    pub fn field_selector_value(&self) -> Option<&str> {
         self.field_selector.as_deref()
     }
     #[cfg(test)]
-    pub(crate) fn detail_tab(&self, cx: &App) -> crate::resources::Tab {
+    pub fn detail_tab(&self, cx: &App) -> crate::resources::Tab {
         self.detail.read(cx).tab()
     }
 
     /// Applies events as one watch batch of the current read.
     #[cfg(test)]
-    pub(crate) fn deliver(&mut self, events: Vec<ResourceEvent>, cx: &mut Context<Self>) {
+    pub fn deliver(&mut self, events: Vec<ResourceEvent>, cx: &mut Context<Self>) {
         let epoch = self.store.epoch();
         self.apply(epoch, vec![events], cx);
     }
@@ -484,7 +479,7 @@ impl ResourcesScreen {
     /// The `ix`th row the list shows as a watch would send it once its
     /// pod restarted again.
     #[cfg(test)]
-    pub(crate) fn restarted(&self, ix: usize) -> super::model::ResourceRow {
+    pub fn restarted(&self, ix: usize) -> super::model::ResourceRow {
         let mut row = self
             .projection
             .row(&self.store, ix)
@@ -504,13 +499,13 @@ impl ResourcesScreen {
 
     /// Applies a read state as if the current read delivered it.
     #[cfg(test)]
-    pub(crate) fn deliver_read(&mut self, state: ReadState, cx: &mut Context<Self>) {
+    pub fn deliver_read(&mut self, state: ReadState, cx: &mut Context<Self>) {
         let epoch = self.store.epoch();
         self.apply(epoch, vec![vec![ResourceEvent::Read(state)]], cx);
     }
 
     /// Called only after the shell's navigation question has been accepted.
-    pub(crate) fn set_node_facts(
+    pub fn set_node_facts(
         &mut self,
         nodes: std::sync::Arc<Vec<super::NodeFacts>>,
         cx: &mut Context<Self>,
@@ -519,11 +514,11 @@ impl ResourcesScreen {
         self.detail
             .update(cx, |pane, cx| pane.set_node_facts(nodes, cx));
     }
-    pub(crate) fn close_for_link(&mut self, cx: &mut Context<Self>) {
+    pub fn close_for_link(&mut self, cx: &mut Context<Self>) {
         self.close_detail(cx);
     }
 
-    pub(crate) fn identity_named(&self, namespace: &str, name: &str) -> Option<ResourceIdentity> {
+    pub fn identity_named(&self, namespace: &str, name: &str) -> Option<ResourceIdentity> {
         self.store
             .entries()
             .iter()
@@ -532,13 +527,13 @@ impl ResourcesScreen {
             })
             .map(|entry| entry.row().identity.clone())
     }
-    pub(crate) fn detail_identity<'a>(&'a self, cx: &'a App) -> Option<&'a ResourceIdentity> {
+    pub fn detail_identity<'a>(&'a self, cx: &'a App) -> Option<&'a ResourceIdentity> {
         self.detail.read(cx).target_identity()
     }
-    pub(crate) fn showing(&self, identity: &ResourceIdentity, cx: &App) -> bool {
+    pub fn showing(&self, identity: &ResourceIdentity, cx: &App) -> bool {
         self.detail.read(cx).target_identity() == Some(identity)
     }
-    pub(crate) fn set_filter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_filter(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.query
             .update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
         self.projection.filter(&self.store, text);
@@ -546,7 +541,7 @@ impl ResourcesScreen {
         window.focus(&self.focus, cx);
         cx.notify();
     }
-    pub(crate) fn open_identity_on(
+    pub fn open_identity_on(
         &mut self,
         identity: ResourceIdentity,
         tab: crate::resources::Tab,
@@ -592,7 +587,7 @@ impl ResourcesScreen {
 
     /// A source with the same `id` only refreshes the handles; another one
     /// starts over, keeping nothing from the old connection.
-    pub(crate) fn set_source(
+    pub fn set_source(
         &mut self,
         source: Option<ClusterSource>,
         window: &mut Window,
@@ -622,7 +617,7 @@ impl ResourcesScreen {
     }
 
     /// Where a pod's CPU and memory history reads, from the Monitoring page.
-    pub(crate) fn set_history(
+    pub fn set_history(
         &mut self,
         history: Option<crate::monitoring::history::HistorySource>,
         cx: &mut Context<Self>,
@@ -633,18 +628,13 @@ impl ResourcesScreen {
 
     /// Debug fixture checks: answers the open pod's history now.
     #[cfg(any(debug_assertions, feature = "stress"))]
-    pub(crate) fn answer_history_now(&mut self, cx: &mut Context<Self>) {
+    pub fn answer_history_now(&mut self, cx: &mut Context<Self>) {
         self.detail
             .update(cx, |detail, cx| detail.answer_history_now(cx));
     }
 
     /// Shows another kind; the same kind at another version reads again.
-    pub(crate) fn set_kind(
-        &mut self,
-        kind: ResourceKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_kind(&mut self, kind: ResourceKind, window: &mut Window, cx: &mut Context<Self>) {
         if kind == self.kind {
             return;
         }
@@ -659,18 +649,13 @@ impl ResourcesScreen {
     }
 
     /// The detail pane, which draws as a cached view of its own.
-    pub(crate) fn detail_view(&self) -> EntityId {
+    pub fn detail_view(&self) -> EntityId {
         self.detail.entity_id()
     }
 
     /// Only a visible page reads: showing it lists again and watches,
     /// hiding it drops the watch.
-    pub(crate) fn set_visible(
-        &mut self,
-        visible: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.visible == visible {
             return;
         }
@@ -701,7 +686,7 @@ impl ResourcesScreen {
     }
 
     /// Lists again from scratch, namespaces included.
-    pub(crate) fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.visible {
             return;
         }
@@ -710,7 +695,7 @@ impl ResourcesScreen {
         self.detail.update(cx, |detail, cx| detail.refresh(cx));
     }
 
-    pub(crate) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
     }
 
@@ -750,7 +735,7 @@ impl ResourcesScreen {
     /// neither the page nor its table. Only while the table draws those
     /// rows: a refusal or a failure replaces the table, and the motion
     /// goes with it. An embedded list keeps its own.
-    pub(crate) fn loading_motion(&self) -> Option<Entity<table::LoadingMotion>> {
+    pub fn loading_motion(&self) -> Option<Entity<table::LoadingMotion>> {
         (!self.embedded && table::TableSource::loading(self).is_some())
             .then(|| self.loading_motion.clone())
     }
@@ -758,7 +743,7 @@ impl ResourcesScreen {
     /// The flash over the page's rows, which the shell mounts beside the
     /// cached page, as it does the loading motion, so its frames redraw
     /// neither the page nor its table. Only while the table draws rows.
-    pub(crate) fn flash_layer(&self) -> Option<Entity<table::FlashLayer<ResourceIdentity>>> {
+    pub fn flash_layer(&self) -> Option<Entity<table::FlashLayer<ResourceIdentity>>> {
         (!self.embedded && table::TableSource::loading(self).is_none()).then(|| self.flash.clone())
     }
 
@@ -1109,11 +1094,11 @@ impl ResourcesScreen {
         }
     }
 
-    pub(crate) fn namespace(&self) -> Option<&str> {
+    pub fn namespace(&self) -> Option<&str> {
         self.namespace.as_deref()
     }
 
-    pub(crate) fn set_namespace(
+    pub fn set_namespace(
         &mut self,
         namespace: Option<String>,
         window: &mut Window,
@@ -1426,7 +1411,7 @@ async fn watch(
 impl EventEmitter<NotServed> for ResourcesScreen {}
 
 #[derive(Clone, Debug)]
-pub(crate) enum NodePodsEvent {
+pub enum NodePodsEvent {
     Open(ResourceIdentity),
     Back,
 }
