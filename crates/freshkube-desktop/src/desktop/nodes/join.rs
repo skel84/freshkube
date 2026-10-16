@@ -2,6 +2,7 @@ use gpui_kit::SharedString;
 // A joined row is derived when either cluster summary changes.
 use crate::{
     presentation::{NodeSummary as TalosNode, Role, whole_percent},
+    resources::{NodeFacts, NodeMemory},
     ui::Tone,
 };
 use freshkube_core::{
@@ -46,6 +47,62 @@ pub(crate) struct NodeRow {
     pub(crate) chips: Vec<SharedString>,
     pub(crate) facts: Vec<(SharedString, SharedString)>,
     pub(crate) problems: Vec<SharedString>,
+}
+
+impl NodeRow {
+    /// What Resources shows of this node, for a node Kubernetes names.
+    pub(crate) fn resource_facts(&self) -> Option<NodeFacts> {
+        let name = self.key.kubernetes.clone()?;
+        let kubelet = self.talos.as_ref().map(|talos| {
+            match talos
+                .services
+                .iter()
+                .find(|service| service.id == "kubelet")
+            {
+                Some(service) => {
+                    let health = crate::presentation::service_health(service);
+                    (
+                        crate::ui::health_tone(health.health()).0,
+                        format!(
+                            "kubelet {} · {}",
+                            service.state.to_lowercase(),
+                            crate::presentation::health_text(&health).to_lowercase()
+                        )
+                        .into(),
+                    )
+                }
+                None => (Tone::Unknown, "kubelet not reported".into()),
+            }
+        });
+        Some(NodeFacts {
+            name,
+            not_ready: self
+                .kubernetes
+                .as_ref()
+                .is_some_and(|node| !node.is_ready()),
+            not_ready_since: self
+                .kubernetes
+                .as_ref()
+                .and_then(|node| node.ready())
+                .and_then(|ready| ready.since)
+                .map(|since| since.timestamp()),
+            ready_label: self.ready.into(),
+            tone: self.tone,
+            memory: self
+                .talos
+                .as_ref()
+                .and_then(|talos| talos.memory)
+                .map(|memory| NodeMemory {
+                    used: memory.used,
+                    total: memory.total,
+                }),
+            memory_label: self.memory.clone(),
+            memory_stale: self.talos.as_ref().is_none_or(|talos| !talos.responding),
+            problems: self.problems.clone(),
+            services: self.service_problem || self.talos.is_some(),
+            kubelet,
+        })
+    }
 }
 
 /// Compact table presentation, derived from the same service health facts as the assessment.

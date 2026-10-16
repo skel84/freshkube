@@ -6,6 +6,7 @@ Code:
 
 - `crates/freshkube-desktop/src/desktop/nodes/` is the workspace: `join.rs` (both summaries), `projection.rs`, `table.rs`, `cards.rs`, `header.rs`, `metrics.rs`, `resource.rs` and `view.rs`.
 - Nodes is `Entity<Nodes>`, a cached view that draws itself (`Render for Nodes` in `view.rs`). The shell keeps the node's selection across pages, the Talos reads and navigation, and writes what Nodes draws through `update`. Every click or key in Nodes emits a `NodesEvent` (`mod.rs`), which the shell hears through `cx.subscribe_in` in `Pilot::new` and runs in `Pilot::nodes_event`; a test that clicks or presses parks before it looks. `tests/events.rs` drives each kind of control, and `tests/redraws.rs` counts Nodes' draws.
+- `NodeRow::resource_facts` (`join.rs`) builds what Resources shows of each Kubernetes node, `resources::NodeFacts`; `set_rows` keeps them beside the rows, and the shell pushes them to Resources (`push_node_facts`, `desktop/object_links/mod.rs`).
 - The pane embeds the node screens in `crates/freshkube-desktop/src/screens/` and the log view of `crates/freshkube-logs/src/`.
 - Its System services tab is `NodeServices` in `crates/freshkube-desktop/src/desktop/services/`: `mod.rs` (the entity, its reading and state, and the shell's side), `view.rs` (drawing) and `restart.rs` (the restart confirmation). Its tests are in `crates/freshkube-desktop/src/desktop/tests/services.rs` and `operations.rs`, and its redraws in `tests/chrome.rs`.
 

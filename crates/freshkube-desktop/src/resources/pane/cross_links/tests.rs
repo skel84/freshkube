@@ -36,70 +36,48 @@ fn refused_services_keep_other_links_and_late_answers_are_ignored(cx: &mut TestA
             assert!(!pane.cross_links.owners.is_empty());
             assert!(!pane.cross_links.containers.is_empty());
             let reads = pane.links_seq;
-            pane.set_node_rows(Arc::default(), cx);
+            pane.set_node_facts(Arc::default(), cx);
             assert_eq!(pane.links_seq, reads);
             assert!(pane.links_job.is_none());
         });
     });
 }
 
-fn node_row(responding: Option<bool>) -> crate::desktop::nodes::NodeRow {
-    use crate::desktop::nodes::{NodeKey, NodeRow};
-    let mut talos =
-        crate::presentation::node_summaries(&crate::fixture::cluster("prod-fra", 0))[0].clone();
-    let name = "node-a".to_string();
-    let talos = responding.map(|responding| {
-        talos.responding = responding;
-        talos
-    });
-    NodeRow {
-        kubernetes_current: true,
-        key: NodeKey {
-            kubernetes: Some(name.clone()),
-            talos: talos.as_ref().map(|talos| talos.name.clone()),
-        },
-        id: "node-a".into(),
-        open_id: "node-a-open".into(),
-        pod_label: "Pods".into(),
-        kubelet_pods: "Pods".into(),
-        service_problem: false,
-        name: name.into(),
-        role: crate::presentation::node_summaries(&crate::fixture::cluster("prod-fra", 0))[0].role,
+fn node_facts(memory_stale: bool) -> crate::resources::NodeFacts {
+    crate::resources::NodeFacts {
+        name: "node-a".into(),
+        not_ready: false,
+        not_ready_since: None,
+        ready_label: "Ready".into(),
         tone: crate::ui::Tone::Good,
-        kubernetes: None,
-        talos,
-        ready: "Ready",
-        talos_state: "".into(),
-        address: "".into(),
-        load: "".into(),
-        table_load: "".into(),
-        memory: "61% of 16 GiB".into(),
-        pods: "".into(),
-        services: "".into(),
-        service_status: Default::default(),
-        note: "".into(),
-        chips: Vec::new(),
-        facts: Vec::new(),
+        memory: Some(crate::resources::NodeMemory {
+            used: 10,
+            total: 16,
+        }),
+        memory_label: "61% of 16 GiB".into(),
+        memory_stale,
         problems: Vec::new(),
+        services: true,
+        kubelet: Some((crate::ui::Tone::Good, "kubelet running · healthy".into())),
     }
 }
 
-/// The pod's node shows its memory as last known unless Talos answers for
-/// that node right now.
+/// The pod's node shows its memory as last known when the shell says so,
+/// and as unavailable when the shell knows nothing of the node.
 #[test]
-fn a_node_link_marks_memory_stale_unless_talos_responds() {
-    let stale = |row: Option<&crate::desktop::nodes::NodeRow>| {
-        let link = super::node_link("node-a", row);
+fn a_node_link_keeps_the_stale_flag_and_falls_back_without_facts() {
+    let stale = |node: Option<&crate::resources::NodeFacts>| {
+        let link = super::node_link("node-a", node);
         (link.memory_stale, link.memory_label.to_string())
     };
-    let responding = node_row(Some(true));
-    let silent = node_row(Some(false));
-    let kubernetes_only = node_row(None);
+    let responding = node_facts(false);
+    let silent = node_facts(true);
     assert_eq!(stale(Some(&responding)), (false, "61% of 16 GiB".into()));
     assert_eq!(stale(Some(&silent)), (true, "61% of 16 GiB".into()));
-    assert_eq!(
-        stale(Some(&kubernetes_only)),
-        (true, "61% of 16 GiB".into())
-    );
     assert_eq!(stale(None), (true, "Unavailable".into()));
+    let unknown = super::node_link("node-a", None);
+    assert_eq!(unknown.ready, "Node unavailable");
+    assert!(unknown.memory.is_none());
+    assert!(!unknown.services);
+    assert!(unknown.kubelet.is_none());
 }
