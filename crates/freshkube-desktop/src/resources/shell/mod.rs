@@ -33,9 +33,11 @@ use freshkube_terminal::{TerminalEvent, TerminalSize, TerminalView};
 
 mod example;
 #[cfg(test)]
+mod testing;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
-pub(crate) use tests::ClosingTransport;
+pub(crate) use testing::ClosingTransport;
 mod view;
 
 use example::ExampleShell;
