@@ -87,6 +87,7 @@ impl Nodes {
             .iter()
             .map(|row| format!("{} {} {}", row.name, row.address, row.role.label()).to_lowercase())
             .collect();
+        self.resource_facts = Arc::new(rows.iter().filter_map(NodeRow::resource_facts).collect());
         self.rows = Arc::new(rows);
         self.talos_current = talos_current;
         self.refresh_example_metrics();

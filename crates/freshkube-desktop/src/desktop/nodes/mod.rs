@@ -63,6 +63,8 @@ impl NodeTabs for NodeTab {
 
 pub(super) struct Nodes {
     pub(super) rows: Arc<Vec<NodeRow>>,
+    /// What Resources shows of the same nodes, built with `rows`.
+    pub(super) resource_facts: Arc<Vec<crate::resources::NodeFacts>>,
     empty: Option<Empty>,
     lines: Vec<usize>,
     items: Vec<projection::Item>,
@@ -295,6 +297,7 @@ impl Nodes {
         ];
         Self {
             rows: Arc::new(Vec::new()),
+            resource_facts: Arc::new(Vec::new()),
             empty: Some(Empty::Loading),
             lines: Vec::new(),
             items: Vec::new(),

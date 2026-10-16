@@ -510,14 +510,14 @@ impl ResourcesScreen {
     }
 
     /// Called only after the shell's navigation question has been accepted.
-    pub(crate) fn set_node_rows(
+    pub(crate) fn set_node_facts(
         &mut self,
-        rows: std::sync::Arc<Vec<crate::desktop::nodes::NodeRow>>,
+        nodes: std::sync::Arc<Vec<super::NodeFacts>>,
         cx: &mut Context<Self>,
     ) {
-        self.set_not_ready(&rows, cx);
+        self.set_not_ready(&nodes, cx);
         self.detail
-            .update(cx, |pane, cx| pane.set_node_rows(rows, cx));
+            .update(cx, |pane, cx| pane.set_node_facts(nodes, cx));
     }
     pub(crate) fn close_for_link(&mut self, cx: &mut Context<Self>) {
         self.close_detail(cx);
