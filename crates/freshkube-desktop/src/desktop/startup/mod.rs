@@ -275,7 +275,7 @@ impl Pilot {
         self.selected_node = None;
         self.sync_unread_health(cx);
         self.rebuild_joined_nodes(cx);
-        self.push_node_rows(cx);
+        self.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         self.navigate(Page::Overview, window, cx);
     }

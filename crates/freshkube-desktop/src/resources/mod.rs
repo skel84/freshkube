@@ -10,6 +10,7 @@ pub(super) mod forwards;
 pub(crate) mod live;
 pub(crate) mod model;
 pub(crate) mod navigation;
+mod node_facts;
 mod pane;
 pub(crate) mod projection;
 pub(crate) mod rows;
@@ -19,6 +20,7 @@ pub(crate) mod store;
 pub(crate) mod talos;
 
 pub(crate) use freshkube_nav::{LogsAt, LogsRequest, ResourceLink, ShellRequest};
+pub(crate) use node_facts::{NodeFacts, NodeMemory};
 pub(crate) use pane::{DetailEvent, DetailPane, Tab};
 #[cfg(test)]
 pub(crate) use screen::row_id;

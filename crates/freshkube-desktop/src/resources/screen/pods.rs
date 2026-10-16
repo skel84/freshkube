@@ -11,10 +11,9 @@ use gpui_kit::{ClipboardItem, Context, ScrollStrategy, Window};
 use super::super::model::ResourceIdentity;
 use super::super::projection::{Cause, Group, Grouping};
 use super::super::store::Usage;
-use super::super::{LogsRequest, ResourceLink, detail::DetailTarget, example};
+use super::super::{LogsRequest, NodeFacts, ResourceLink, detail::DetailTarget, example};
 use super::{ClusterAccess, ResourcesScreen};
 use crate::backend;
-use crate::desktop::nodes::NodeRow;
 use crate::screens::SCREEN_DEADLINE;
 use freshkube_nav::NodeTab;
 
@@ -66,15 +65,11 @@ impl ResourcesScreen {
 
     /// Nodes whose Ready condition isn't True put their pods in a group of
     /// their own, since nothing can confirm those pods' state.
-    pub(super) fn set_not_ready(&mut self, rows: &[NodeRow], cx: &mut Context<Self>) {
-        let not_ready: NotReady = rows
+    pub(super) fn set_not_ready(&mut self, nodes: &[NodeFacts], cx: &mut Context<Self>) {
+        let not_ready: NotReady = nodes
             .iter()
-            .filter_map(|row| row.kubernetes.as_ref())
-            .filter(|node| !node.is_ready())
-            .map(|node| {
-                let since = node.ready().and_then(|ready| ready.since);
-                (node.name.clone(), since.map(|since| since.timestamp()))
-            })
+            .filter(|node| node.not_ready)
+            .map(|node| (node.name.clone(), node.not_ready_since))
             .collect();
         if not_ready != self.not_ready {
             self.not_ready = not_ready;

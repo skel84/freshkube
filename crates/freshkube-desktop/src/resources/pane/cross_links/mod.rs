@@ -1,8 +1,6 @@
 //! Cached pod relationships and their requests. Rendering reads only these rows.
 use super::*;
-use crate::desktop::nodes::NodeRow;
-use crate::resources::{ResourceLink, model::ObjectRef};
-use freshkube_core::HasHealth;
+use crate::resources::{NodeFacts, NodeMemory, ResourceLink, model::ObjectRef};
 use freshkube_core::resources::{ContainerState, ObjectDocument, Owner, PodLinks};
 use freshkube_nav::NodeTab;
 use std::sync::Arc;
@@ -49,7 +47,7 @@ impl OwnerLink {
     }
 }
 struct NodeLink {
-    memory: Option<crate::presentation::Memory>,
+    memory: Option<NodeMemory>,
     memory_label: SharedString,
     memory_stale: bool,
     name: String,
@@ -99,47 +97,22 @@ pub(super) struct CrossLinks {
     recent: Vec<RecentEvent>,
     pod: bool,
 }
-/// The pod's node, from the shell's joined node row when it has one.
-fn node_link(name: &str, row: Option<&NodeRow>) -> NodeLink {
+/// The pod's node, from the shell's facts about it when it has them.
+fn node_link(name: &str, node: Option<&NodeFacts>) -> NodeLink {
     NodeLink {
-        memory: row
-            .and_then(|row| row.talos.as_ref())
-            .and_then(|talos| talos.memory),
-        memory_label: row
-            .map(|row| row.memory.clone())
+        memory: node.and_then(|node| node.memory),
+        memory_label: node
+            .map(|node| node.memory_label.clone())
             .unwrap_or_else(|| "Unavailable".into()),
-        memory_stale: row
-            .and_then(|row| row.talos.as_ref())
-            .is_none_or(|talos| !talos.responding),
+        memory_stale: node.is_none_or(|node| node.memory_stale),
         name: name.to_owned(),
-        ready: row
-            .map(|row| row.ready)
-            .unwrap_or("Node unavailable")
-            .into(),
-        tone: row.map(|row| row.tone).unwrap_or_default(),
-        problems: row.map(|row| row.problems.clone()).unwrap_or_default(),
-        services: row.is_some_and(|row| row.service_problem || row.talos.is_some()),
-        kubelet: row.and_then(|row| row.talos.as_ref()).map(|talos| {
-            match talos
-                .services
-                .iter()
-                .find(|service| service.id == "kubelet")
-            {
-                Some(service) => {
-                    let health = crate::presentation::service_health(service);
-                    (
-                        crate::ui::health_tone(health.health()).0,
-                        format!(
-                            "kubelet {} · {}",
-                            service.state.to_lowercase(),
-                            crate::presentation::health_text(&health).to_lowercase()
-                        )
-                        .into(),
-                    )
-                }
-                None => (crate::ui::Tone::Unknown, "kubelet not reported".into()),
-            }
-        }),
+        ready: node
+            .map(|node| node.ready_label.clone())
+            .unwrap_or_else(|| "Node unavailable".into()),
+        tone: node.map(|node| node.tone).unwrap_or_default(),
+        problems: node.map(|node| node.problems.clone()).unwrap_or_default(),
+        services: node.is_some_and(|node| node.services),
+        kubelet: node.and_then(|node| node.kubelet.clone()),
     }
 }
 
@@ -226,8 +199,8 @@ fn service_links(
 }
 
 impl DetailPane {
-    pub(crate) fn set_node_rows(&mut self, rows: Arc<Vec<NodeRow>>, cx: &mut Context<Self>) {
-        self.node_rows = rows;
+    pub(crate) fn set_node_facts(&mut self, nodes: Arc<Vec<NodeFacts>>, cx: &mut Context<Self>) {
+        self.node_facts = nodes;
         self.rebuild_links();
         if self.active && self.cross_links.pod {
             cx.notify();
@@ -245,11 +218,8 @@ impl DetailPane {
         };
         let namespace = document.namespace.as_deref().unwrap_or_default();
         let node = pod.node.as_ref().map(|name| {
-            let row = self
-                .node_rows
-                .iter()
-                .find(|row| row.key.kubernetes.as_ref() == Some(name));
-            node_link(name, row)
+            let facts = self.node_facts.iter().find(|node| &node.name == name);
+            node_link(name, facts)
         });
         let mut errors = Vec::new();
         let connection = self
