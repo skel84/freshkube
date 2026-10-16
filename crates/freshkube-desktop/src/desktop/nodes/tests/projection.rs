@@ -326,3 +326,75 @@ fn service_status_uses_health_facts_and_keeps_unknown_and_stale_honest() {
         assert_eq!(absent.label, "System services unavailable");
     }
 }
+
+/// Resources gets the same node, worded as Nodes words it: readiness and
+/// when it changed, memory and whether it is last known, and the kubelet.
+#[test]
+fn resource_facts_carry_what_resources_shows() {
+    use crate::resources::NodeMemory;
+    let (mut talos, mut kube) = projection_sources();
+    let since = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    kube.conditions[0].since = Some(since);
+    let row = join::join(&[talos.clone()], &[kube.clone()], true, true).remove(0);
+    let facts = row.resource_facts().unwrap();
+    assert_eq!(facts.name, "joined");
+    assert!(facts.not_ready);
+    assert_eq!(facts.not_ready_since, Some(1_700_000_000));
+    assert_eq!(facts.ready_label, "NotReady");
+    assert_eq!(facts.tone, row.tone);
+    assert_eq!(
+        facts.memory,
+        Some(NodeMemory {
+            used: 9216,
+            total: 10240
+        })
+    );
+    assert_eq!(facts.memory_label, row.memory);
+    assert!(!facts.memory_stale);
+    assert_eq!(facts.problems, row.problems);
+    assert!(facts.services);
+    assert_eq!(
+        facts.kubelet,
+        Some((Tone::Crit, "kubelet running · unhealthy".into()))
+    );
+
+    talos.responding = false;
+    talos.services.clear();
+    let silent = join::join(&[talos.clone()], &[kube.clone()], true, true).remove(0);
+    let facts = silent.resource_facts().unwrap();
+    assert!(facts.memory_stale);
+    assert_eq!(facts.memory_label, silent.memory);
+    assert_eq!(
+        facts.kubelet,
+        Some((Tone::Unknown, "kubelet not reported".into()))
+    );
+
+    kube.conditions[0].status = "True".into();
+    let kubernetes_only = join::join(&[], &[kube], false, true).remove(0);
+    let facts = kubernetes_only.resource_facts().unwrap();
+    assert!(!facts.not_ready);
+    assert_eq!(facts.memory, None);
+    assert!(facts.memory_stale);
+    assert!(!facts.services);
+    assert_eq!(facts.kubelet, None);
+
+    let talos_only = join::join(&[talos], &[], true, true).remove(0);
+    assert_eq!(talos_only.resource_facts(), None);
+}
+
+/// Pods name their node by the Kubernetes node's name, which the joined
+/// row's key carries, so one name serves the not-ready group and the card.
+#[test]
+fn resource_facts_name_each_kubernetes_node_once() {
+    let talos = presentation::node_summaries(&examples::cluster("prod-fra", 0));
+    let summary = example::summary("prod-fra", 0);
+    let kubernetes = summary.nodes.loaded().unwrap();
+    let rows = join::join(&talos, kubernetes, true, true);
+    let facts: Vec<_> = rows.iter().filter_map(|row| row.resource_facts()).collect();
+    assert_eq!(facts.len(), kubernetes.len());
+    for node in kubernetes {
+        let facts = facts.iter().find(|facts| facts.name == node.name).unwrap();
+        assert_eq!(facts.not_ready, !node.is_ready());
+    }
+    assert!(facts.iter().any(|facts| facts.not_ready));
+}
