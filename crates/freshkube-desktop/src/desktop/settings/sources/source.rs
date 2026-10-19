@@ -49,19 +49,19 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
         column(
             Field::Entry,
             "Entry",
-            fit("Entry", rows.iter().map(|row| &row.entry), 240.),
+            fit("Entry", rows.iter().map(|row| &row.entry), 160.),
         ),
         column(
             Field::Why,
             "Chosen by",
-            fit("Chosen by", rows.iter().map(|row| &row.why), 200.),
+            fit("Chosen by", rows.iter().map(|row| &row.why), 160.),
         ),
-        column(Field::State, "State", 160.),
-        column(
-            Field::Reads,
-            "Reads",
-            fit("Reads", rows.iter().map(|row| &row.reads), 400.),
-        ),
+        // Leave room for the glyph column and Reads in the narrow page.
+        column(Field::State, "State", 128.),
+        // Prose gives way before the table needs to scroll sideways.
+        // Entry and Chosen by are capped above to leave this minimum in
+        // the narrow page; the shared flexible cell takes any spare room.
+        column(Field::Reads, "Reads", 64.),
     ];
     let width = columns.iter().map(|column| column.width).sum();
     (columns, width)
@@ -127,6 +127,8 @@ impl TableSource for SourcesList {
         let cell = table::cell(column);
         match column.field {
             Field::Glyph => table::glyph_cell(column)
+                .id(SharedString::from(format!("{}-glyph", row.id)))
+                .test_support()
                 .when_some(row.tone, |this, tone| {
                     this.child(ui::status_mark(
                         row.mark_id.clone(),
@@ -136,7 +138,18 @@ impl TableSource for SourcesList {
                     ))
                 })
                 .into_any_element(),
-            Field::Part => cell.child(row.label.clone()).into_any_element(),
+            Field::Part => cell
+                .id(SharedString::from(format!("{}-part", row.id)))
+                .test_support()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{}-label", row.id)))
+                        .test_support()
+                        .min_w_0()
+                        .truncate()
+                        .child(row.label.clone()),
+                )
+                .into_any_element(),
             // Workloads name several entries, cut at a word with all of
             // them in the tooltip.
             Field::Entry => {
@@ -151,6 +164,9 @@ impl TableSource for SourcesList {
                 .into_any_element(),
             Field::Reads => {
                 table::word_cell(column, format!("{}-reads", row.id), row.reads.clone())
+                    .test_support()
+                    .flex()
+                    .items_center()
                     .text_color(style.p.muted)
                     .into_any_element()
             }
