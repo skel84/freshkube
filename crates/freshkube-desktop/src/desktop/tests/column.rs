@@ -500,6 +500,36 @@ fn every_expanded_column_puts_its_caption_and_rows_in_one_place(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
+fn the_rail_fits_without_scrolling_at_the_default_window_and_text_size(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(13., cx);
+        for active in [Area::Overview, Area::Settings, Area::Overview] {
+            window.render_frame(cx);
+            window.click(active.id(), cx);
+            window.render_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(pilot.read(cx).navigation.area, active);
+            let scroll = &pilot.read(cx).navigation.rail_scroll;
+            assert_eq!(scroll.max_offset().y, px(0.));
+            assert_eq!(scroll.offset().y, px(0.));
+            let rail = window.find("nav-rail").bounds();
+            for area in Area::RAIL.iter().flat_map(|section| section.iter()) {
+                let button = window.find(area.id());
+                let bounds = button.bounds();
+                assert!(button.visible(), "{area:?} is hidden");
+                assert_eq!(bounds.size, gpui_kit::size(px(44.), px(44.)));
+                assert!(
+                    bounds.top() >= rail.top() && bounds.bottom() <= rail.bottom(),
+                    "{area:?}: {bounds:?} outside {rail:?}"
+                );
+            }
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
     use super::super::shell::cut_edges;
     // At 20 px text a 560 high window shows neither the rail's areas nor
@@ -548,9 +578,8 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
     })
     .unwrap();
 
-    // With room for everything, nothing is cut. The rail's four groups
-    // need about 840 dp, so the default 880 window cuts it by 31.
-    let (_runtime, handle, pilot) = fixture(cx, 1280., 960.);
+    // With room for everything, nothing is cut.
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.navigate(Page::Observability, window, cx)
