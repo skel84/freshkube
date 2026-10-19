@@ -242,18 +242,26 @@ impl SetupFile {
         expected: Seen,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), SaveError>> {
+        self.save_with(expected, move |setup| setup.workspace = workspace, cx)
+    }
+
+    /// Saves one Settings edit to the setup, keeping its other parts.
+    pub(crate) fn save_with(
+        &mut self,
+        expected: Seen,
+        edit: impl FnOnce(&mut Setup) + Send + 'static,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), SaveError>> {
         let Some(file) = self.file.clone() else {
             return Task::ready(Err(SaveError::Failed("There is nowhere to save".into())));
         };
         self.writing = true;
         self.write_generation = self.write_generation.wrapping_add(1);
-        let setup = match self.setup.clone() {
-            Some(mut setup) => {
-                setup.workspace = workspace;
-                setup
-            }
-            None => Setup::new(workspace),
+        let mut setup = match self.setup.clone() {
+            Some(setup) => setup,
+            None => Setup::default(),
         };
+        edit(&mut setup);
         let own = self.last_written.clone();
         cx.spawn(async move |this, cx| {
             let result = cx

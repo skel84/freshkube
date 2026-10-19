@@ -101,7 +101,13 @@ impl ObservabilityPage {
             .into_any_element(),
         )
     }
+    /// The header's Coroot connection button: the connected page's link
+    /// panel, or Settings' Coroot section while nothing is connected.
     pub fn show_connection(&mut self, cx: &mut Context<Self>) {
+        if self.live.provider.is_none() {
+            cx.emit(ObservabilityEvent::OpenSettings);
+            return;
+        }
         self.settings_open = true;
         cx.notify();
     }
@@ -109,9 +115,11 @@ impl ObservabilityPage {
         if self.fixture {
             return div().into_any_element();
         }
+        if self.live.provider.is_none() {
+            return self.render_not_connected(cx);
+        }
         let mut content = v_flex().gap(dp(12.));
-        let connected = self.live.provider.is_some();
-        if connected && !self.settings_open {
+        if !self.settings_open {
             if self.live.projects.is_empty() {
                 content = content.child(text("No accessible projects were returned."));
             }
@@ -142,102 +150,49 @@ impl ObservabilityPage {
                     .children(self.associate_menu(cx)),
             );
         }
-        if self.settings_open || self.live.provider.is_none() {
-            let p = palette(cx);
-            let auth = line()
-                .gap(dp(2.))
-                .p(dp(3.))
-                .rounded(px(8.))
-                .bg(p.surface_2)
-                .children(
-                    ["API key", "Session cookie", "Anonymous"]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(ix, label)| {
-                            ui::segment(
-                                Button::new(SharedString::from(format!("obs-auth-{ix}"))),
-                                self.auth == ix,
-                                cx,
-                            )
-                            .small()
-                            .label(label)
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    this.auth = ix;
-                                    this.invalidate_connection();
-                                    cx.notify();
-                                },
-                            ))
-                        }),
-                );
-            let field = |label: &'static str| ui::caption(label, cx);
-            content = content.child(
-                card("Coroot connection", cx).max_w(dp(560.)).child(
-                    body()
-                        .child(field("Server URL"))
-                        .child(
-                            Input::new(&self.url)
-                                .id("obs-url")
-                                .aria_label("Coroot server URL"),
-                        )
-                        .child(field("Sign in with"))
-                        .child(line().child(auth))
-                        .when(self.auth != 2, |body| {
-                            body.child(field(if self.auth == 0 {
-                                "API key"
-                            } else {
-                                "coroot_session value"
-                            }))
-                            .child(
-                                Input::new(&self.secret)
-                                    .id("obs-credential")
-                                    .aria_label("Coroot credential"),
-                            )
-                        })
-                        .children(self.render_memory(cx))
-                        .when_some(self.live.error.clone(), |body, error| {
-                            body.child(text(error).text_color(p.crit_ink))
-                        })
-                        .child(
-                            line()
-                                .pt(dp(4.))
-                                .child(
-                                    Button::new("obs-connect")
-                                        .primary()
-                                        .small()
-                                        .label(if self.live.connecting {
-                                            "Connecting…"
-                                        } else {
-                                            "Connect"
-                                        })
-                                        .disabled(self.live.connecting)
-                                        .on_click(cx.listener(|this, _, _, cx| this.connect(cx))),
-                                )
-                                .child(
-                                    Button::new("obs-disconnect")
-                                        .ghost()
-                                        .small()
-                                        .label(if connected { "Disconnect" } else { "Clear" })
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.disconnect(window, cx)
-                                        })),
-                                )
-                                .child(muted(self.credential_note(), cx)),
-                        ),
-                ),
-            );
-        }
-        if self.live.provider.is_some() && self.live.projects.is_empty() {
+        if self.live.projects.is_empty() {
             content = content.child(text("No accessible projects were returned."));
         }
         content
-            .when(self.settings_open, |content| {
-                content.child(action("obs-connect-settings", "Done").on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.settings_open = false;
-                        cx.notify();
-                    },
-                )))
+            .child(
+                line()
+                    .child(
+                        action("obs-connect-open-settings", "Open Settings").on_click(
+                            cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::OpenSettings)),
+                        ),
+                    )
+                    .child(action("obs-connect-settings", "Done").on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.settings_open = false;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any_element()
+    }
+    /// The connection card when nothing is connected: one line that opens
+    /// Settings' Coroot section, where the connection is edited.
+    fn render_not_connected(&self, cx: &Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let lead = if self.live.connecting {
+            "Connecting to Coroot…"
+        } else {
+            "Coroot isn't connected"
+        };
+        v_flex()
+            .id("obs-not-connected")
+            .test_support()
+            .role(Role::Status)
+            .gap(dp(6.))
+            .child(
+                line().child(muted(lead, cx)).child(muted("·", cx)).child(
+                    action("obs-open-settings", "Open Settings").on_click(
+                        cx.listener(|_, _, _, cx| cx.emit(ObservabilityEvent::OpenSettings)),
+                    ),
+                ),
+            )
+            .when_some(self.live.error.clone(), |this, error| {
+                this.child(text(error).text_color(p.crit_ink))
             })
             .into_any_element()
     }

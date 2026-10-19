@@ -8,6 +8,9 @@
 //! (`sources/`). Example data and a window without a preferences folder
 //! show the lists and change nothing.
 mod connection;
+mod coroot;
+#[cfg(test)]
+mod coroot_tests;
 pub(super) mod destinations;
 mod edit;
 #[cfg(test)]
@@ -102,6 +105,9 @@ pub(super) enum Origin {
 
 pub(crate) struct SettingsPage {
     connection: Option<connection::ConnectionForm>,
+    coroot: Option<coroot::CorootForm>,
+    /// Where Observability's connection stands, pushed by the shell.
+    coroot_state: crate::observability::ConnectionState,
     rows: Vec<ClusterRow>,
     columns: Vec<Column>,
     width: f32,
@@ -264,6 +270,8 @@ impl SettingsPage {
         let (columns, width) = source::columns(&[]);
         Self {
             connection: None,
+            coroot: None,
+            coroot_state: crate::observability::ConnectionState::Disconnected,
             rows: Vec::new(),
             columns,
             width,
@@ -470,6 +478,9 @@ impl SettingsPage {
             cx.defer_in(window, |page, window, cx| {
                 page.prepare_connection(window, cx)
             });
+        }
+        if self.section == SettingsSection::Coroot && self.coroot.is_none() {
+            cx.defer_in(window, |page, window, cx| page.prepare_coroot(window, cx));
         }
         let focus = match self.section {
             SettingsSection::Destinations => self.destinations.read(cx).focus_handle(),
@@ -726,6 +737,7 @@ impl Render for SettingsPage {
         match self.section {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
+            SettingsSection::Coroot => self.render_coroot(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self
                 .list_frame(window)

@@ -630,12 +630,12 @@ fn open_settings_and_all_settings_open_the_section_shown_last(cx: &mut TestAppCo
 }
 
 /// A section whose controls aren't here yet says where they are, on a
-/// padded page, and its button goes there: the gear's menu, or Coroot's
-/// connection on Observability. It has no line in the status bar.
+/// padded page, and its button goes there: the gear's menu. It has no line
+/// in the status bar.
 #[gpui_kit::test]
 fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    for (slug, section, title) in SECTIONS.into_iter().take(4).skip(2) {
+    for (slug, section, title) in SECTIONS.into_iter().take(3).skip(2) {
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
             window.render_frame(cx);
@@ -657,12 +657,8 @@ fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let pilot = view.read(cx);
-            if section == SettingsSection::Coroot {
-                assert_eq!(pilot.navigation.page, Page::Observability);
-            } else {
-                assert_eq!(pilot.navigation.page, Page::Settings, "{slug}");
-                assert!(pilot.navigation.settings_open, "{slug}");
-            }
+            assert_eq!(pilot.navigation.page, Page::Settings, "{slug}");
+            assert!(pilot.navigation.settings_open, "{slug}");
             view.update(cx, |pilot, _| pilot.navigation.settings_open = false);
         })
         .unwrap();
@@ -836,8 +832,10 @@ fn a_false_coroot_reconnect_preference_keeps_the_next_launch_disconnected(cx: &m
         window.render_frame(cx);
         let page = view.read(cx).pages.observability.read(cx);
         assert_eq!(page.coroot_url(cx), "https://observations.example.test");
-        assert_eq!(window.find("obs-connect").label(), Some("Connect"));
-        assert_eq!(window.find("obs-disconnect").label(), Some("Clear"));
+        assert_eq!(
+            window.find("obs-open-settings").label(),
+            Some("Open Settings")
+        );
         assert!(!view.read(cx).setup_file.read(cx).coroot_reconnect);
     })
     .unwrap();
@@ -845,8 +843,10 @@ fn a_false_coroot_reconnect_preference_keeps_the_next_launch_disconnected(cx: &m
     poll_setup(cx);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(window.find("obs-connect").label(), Some("Connect"));
-        assert_eq!(window.find("obs-disconnect").label(), Some("Clear"));
+        assert_eq!(
+            window.find("obs-open-settings").label(),
+            Some("Open Settings")
+        );
     })
     .unwrap();
 }

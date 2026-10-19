@@ -32,8 +32,12 @@ pub(crate) enum SettingsSection {
 pub(crate) enum SettingsEvent {
     /// Open the header's Settings menu, where the section's controls are.
     OpenMenu,
-    /// Open Observability's Coroot connection.
-    Coroot,
+    /// Connect to Coroot: the block is saved, and Observability reads.
+    CorootConnect(super::coroot::CorootRequest),
+    /// Drop the Coroot connection and stop reconnecting; the block stays.
+    CorootDisconnect,
+    /// The credential store drops the key kept for this server.
+    CorootForget(String),
 }
 
 impl EventEmitter<SettingsEvent> for SettingsPage {}
@@ -116,12 +120,7 @@ impl SettingsSection {
                 OPEN_MENU,
                 SettingsEvent::OpenMenu,
             )),
-            Self::Coroot => Some((
-                "On Observability for now",
-                "The Coroot connection is on Observability until this section holds it.",
-                "Open the Coroot connection",
-                SettingsEvent::Coroot,
-            )),
+            Self::Coroot => None,
             Self::Clusters | Self::Destinations | Self::Sources => None,
         }
     }
