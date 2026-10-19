@@ -21,6 +21,7 @@ use crate::inspector::{self, InspectorSplit, Pane, Stacked};
 use crate::split_size::SplitSize;
 use crate::ui::Tone;
 
+mod canvas;
 mod view;
 
 pub use view::GraphView;
