@@ -179,14 +179,24 @@ impl ObservabilityPage {
         if memory.setup.as_ref() == Some(connection) {
             return;
         }
+        // The launch flag seeds this choice once. Later setup changes keep
+        // the choice that Connect or Disconnect made in this session.
+        let reconnect = if memory.setup.is_some() {
+            memory.saved.reconnect
+        } else {
+            reconnect
+        };
         memory.setup = Some(connection.clone());
         memory.setup_generation = memory.setup_generation.wrapping_add(1);
         memory.key = None;
         memory.reading = false;
         memory.error = None;
-        memory.saved = connection
-            .as_ref()
-            .map_or_else(Saved::default, |connection| Saved {
+        memory.saved = connection.as_ref().map_or_else(
+            || Saved {
+                reconnect,
+                ..Saved::default()
+            },
+            |connection| Saved {
                 url: connection.server.clone(),
                 auth: match connection.sign_in {
                     freshkube_core::setup::SignIn::ApiKey => 0,
@@ -197,7 +207,8 @@ impl ObservabilityPage {
                 reconnect,
                 remember: connection.key.is_some(),
                 extra: Map::new(),
-            });
+            },
+        );
         memory.restore = reconnect && connection.is_some();
         self.invalidate_connection();
         self.fill_from_memory(window, cx);
