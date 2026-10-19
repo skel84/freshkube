@@ -39,8 +39,7 @@ pub use catalog::{Catalog, Entry, EntryId, FolderState};
 use connection::{Connection, ConnectionReads};
 use markers::MarkerState;
 pub use markers::TalosNodes;
-pub use settings::settings_section;
-pub use source::source_section;
+pub use settings::{settings_section, source_section};
 
 /// How long one request through the proxy may take, past the transport's
 /// own timeout, before the page gives up on it.
