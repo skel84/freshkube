@@ -211,7 +211,7 @@ fn shown_path(path: &Path) -> String {
 
 /// Writes `bytes` to a temporary file beside `path` and renames it into
 /// place, so `path` holds either the whole text or what it held before.
-pub(super) fn write_whole(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub fn write_whole(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_whole_with(path, |file| file.write_all(bytes))
 }
 
