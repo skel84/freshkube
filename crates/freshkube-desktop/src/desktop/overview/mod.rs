@@ -257,7 +257,7 @@ impl super::Pilot {
             stale: self.overview.is_stale() || summary.is_stale(),
             attention_stale: self.attention_stale(),
             connection: self.context_display.state,
-            last_known: self.last_known_since().is_some(),
+            last_known: self.switch.last_known_since().is_some(),
         }
     }
 

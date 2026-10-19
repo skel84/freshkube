@@ -555,16 +555,19 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
     open_entry(cx, handle, &view, "one");
     settled(cx, &view).await;
     assert!(
-        within(cx, Duration::from_secs(10), |cx| view
-            .read_with(cx, |pilot, _| pilot.last_known_since().is_some()))
+        within(cx, Duration::from_secs(10), |cx| view.read_with(
+            cx,
+            |pilot, _| pilot.switch.last_known_since().is_some()
+        ))
         .await,
         "an unchanged kubeconfig gets its last summary back"
     );
     one.hold_lists(false);
     assert!(
-        within(cx, Duration::from_secs(10), |cx| view
-            .read_with(cx, |pilot, _| pilot.last_known_since().is_none())
-            && has_data(cx))
+        within(cx, Duration::from_secs(10), |cx| view.read_with(
+            cx,
+            |pilot, _| pilot.switch.last_known_since().is_none()
+        ) && has_data(cx))
         .await,
         "the reads that follow replace it"
     );
@@ -588,7 +591,7 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
         throughout(cx, Duration::from_secs(1), |cx| view.read_with(
             cx,
             |pilot, _| {
-                pilot.last_known_since().is_none() && pilot.switch.restored_taken.is_none()
+                pilot.switch.last_known_since().is_none() && pilot.switch.restored_taken.is_none()
             }
         ))
         .await,

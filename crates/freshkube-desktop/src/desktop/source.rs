@@ -188,7 +188,7 @@ impl Pilot {
             kube,
             // The entry the window is on is the one the source's connection
             // is: both change together here.
-            entry: self.active_cluster().map(str::to_owned),
+            entry: self.switch.active_cluster().map(str::to_owned),
             kube_identity,
         }
     }

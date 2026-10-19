@@ -49,7 +49,8 @@ impl Pilot {
             return context.clone();
         }
         let workspace = self.settings_page.read(cx).workspace();
-        self.active_cluster()
+        self.switch
+            .active_cluster()
             .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id))
             .map(|entry| entry.context.clone())
             .unwrap_or_else(|| "No context".into())

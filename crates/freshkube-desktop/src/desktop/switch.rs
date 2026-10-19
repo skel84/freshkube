@@ -60,6 +60,22 @@ impl Switcher {
             switcher: Vec::new(),
         }
     }
+
+    /// The entry the window is on, if the workspace file lists it.
+    pub(super) fn active_cluster(&self) -> Option<&str> {
+        match self.registry.active_key() {
+            SessionKey::Entry(id) => Some(id),
+            SessionKey::Implicit => None,
+        }
+    }
+
+    /// When the summary on show is the restored one, still waiting for a new
+    /// read to replace it.
+    pub(super) fn last_known_since(&self) -> Option<SystemTime> {
+        let summary = &self.registry.active().kubernetes_summary;
+        self.restored_taken
+            .filter(|taken| summary.last_successful() == Some(*taken) && summary.is_stale())
+    }
 }
 
 /// The location read and its request, retained after completion because
@@ -314,10 +330,10 @@ impl Pilot {
                 .iter()
                 .map(|entry| entry.id.clone())
                 .collect(),
-            active: self.active_cluster().map(str::to_owned),
+            active: self.switch.active_cluster().map(str::to_owned),
             mapping: freshkube_delivery::change::live::Mapping::of(
                 workspace,
-                self.active_cluster(),
+                self.switch.active_cluster(),
             ),
             sources: freshkube_core::workspace::Sources::of(workspace),
             kubeconfig: workspace.kubeconfig.clone(),
@@ -334,19 +350,11 @@ impl Pilot {
         gpui_kit::component::WindowExt::push_notification(window, message, cx);
     }
 
-    /// The entry the window is on, if the workspace file lists it.
-    pub(super) fn active_cluster(&self) -> Option<&str> {
-        match self.switch.registry.active_key() {
-            SessionKey::Entry(id) => Some(id),
-            SessionKey::Implicit => None,
-        }
-    }
-
     /// The window no longer shows an entry as defined: a context or
     /// kubeconfig was chosen by hand. It is no entry's now, and the next
     /// launch does not start on the one left.
     pub(super) fn leave_entry(&mut self, cx: &mut Context<Self>) {
-        if self.active_cluster().is_none() {
+        if self.switch.active_cluster().is_none() {
             return;
         }
         // Links made in the session being left name an id that ends here,
@@ -359,7 +367,7 @@ impl Pilot {
         self.switch.entry_open = None;
         self.switch
             .entry_locate
-            .invalidate(self.active_cluster().map(str::to_owned), cx);
+            .invalidate(self.switch.active_cluster().map(str::to_owned), cx);
         self.switch.restored_taken = None;
         self.switch
             .age_label
@@ -389,7 +397,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_cluster() == Some(id.as_str()) {
+        if self.switch.active_cluster() == Some(id.as_str()) {
             return;
         }
         if self.config_loading {
@@ -425,7 +433,7 @@ impl Pilot {
         // anything that changes the entry afterwards drops it, and only
         // when the switch took: an entry that is gone holds nothing.
         self.switch.pending_link = link
-            .filter(|_| self.active_cluster() == Some(id.as_str()))
+            .filter(|_| self.switch.active_cluster() == Some(id.as_str()))
             .map(|(object, work, by_name)| PendingLink {
                 entry: id.clone(),
                 request: self.switch.entry_locate.ticket(),
@@ -454,7 +462,7 @@ impl Pilot {
         // Already there, as after a switch the page hasn't heard of yet:
         // held like any switch's link, so it waits for the entry's own
         // connection rather than opening on an interim one.
-        if self.active_cluster() == Some(entry.as_str()) {
+        if self.switch.active_cluster() == Some(entry.as_str()) {
             let work = LinkWork::Open { kind, tab };
             return self.switch_now(entry, Some((object, work, true)), window, cx);
         }
@@ -570,7 +578,7 @@ impl Pilot {
             return;
         };
         if pending.request != self.switch.entry_locate.ticket()
-            || self.active_cluster() != Some(pending.entry.as_str())
+            || self.switch.active_cluster() != Some(pending.entry.as_str())
         {
             self.switch.pending_link = None;
             return;
@@ -625,7 +633,7 @@ impl Pilot {
 
     /// Parks the active session and opens the entry as the active one.
     pub(super) fn activate_entry(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_cluster() == Some(id) {
+        if self.switch.active_cluster() == Some(id) {
             return;
         }
         let workspace = self.settings_page.read(cx).workspace().clone();
@@ -683,7 +691,7 @@ impl Pilot {
         self.switch.entry_open = None;
         self.switch
             .entry_locate
-            .invalidate(self.active_cluster().map(str::to_owned), cx);
+            .invalidate(self.switch.active_cluster().map(str::to_owned), cx);
         if self.mode().is_example() {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
@@ -766,7 +774,7 @@ impl Pilot {
         );
         self.switch
             .entry_locate
-            .invalidate(self.active_cluster().map(str::to_owned), cx);
+            .invalidate(self.switch.active_cluster().map(str::to_owned), cx);
         self.kubeconfig_draft = Default::default();
         self.kubeconfig = KubeconfigSelection::Automatic;
         self.open_without_talos(open.context, open.kubeconfig, cx);
@@ -797,7 +805,7 @@ impl Pilot {
             self.switch
                 .entry_locate
                 .read
-                .start(self.active_cluster().map(str::to_owned)),
+                .start(self.switch.active_cluster().map(str::to_owned)),
         );
         self.switch.entry_locate.request = EntryRequest(Some(request.clone()));
         let sources = default_kubeconfigs();
@@ -823,7 +831,7 @@ impl Pilot {
                 match source {
                     Some(file) => view.inspect_entry_kubeconfig(file, context, window, cx),
                     None => {
-                        let Some(id) = view.active_cluster().map(str::to_owned) else {
+                        let Some(id) = view.switch.active_cluster().map(str::to_owned) else {
                             return;
                         };
                         let note = format!(
@@ -864,15 +872,6 @@ impl Pilot {
         self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         cx.notify();
-    }
-
-    /// When the summary on show is the restored one, still waiting for a new
-    /// read to replace it.
-    pub(super) fn last_known_since(&self) -> Option<SystemTime> {
-        let summary = &self.switch.registry.active().kubernetes_summary;
-        self.switch
-            .restored_taken
-            .filter(|taken| summary.last_successful() == Some(*taken) && summary.is_stale())
     }
 }
 
