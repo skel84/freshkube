@@ -99,7 +99,7 @@ fn set_once(cell: &OnceLock<Ambient>, ambient: Ambient) -> Result<(), ()> {
 }
 
 /// The Talos configuration file used when none is named: `TALOSCONFIG`, else
-/// `~/.talos/config` (`TalosConfig::default_path`, from the installed values).
+/// `~/.talos/config` (`TalosConfig::default_path_in`, from the installed values).
 #[allow(clippy::result_large_err)] // talos-rs's error, as its own API
 pub fn default_talosconfig_path() -> Result<PathBuf, talos_rs::TalosError> {
     default_talosconfig_path_in(get())
@@ -108,6 +108,17 @@ pub fn default_talosconfig_path() -> Result<PathBuf, talos_rs::TalosError> {
 #[allow(clippy::result_large_err)] // talos-rs's error, as its own API
 fn default_talosconfig_path_in(ambient: &Ambient) -> Result<PathBuf, talos_rs::TalosError> {
     talos_rs::TalosConfig::default_path_in(ambient.talosconfig.as_deref(), ambient.home.as_deref())
+}
+
+/// The applied talosconfig path, else the default one.
+#[allow(clippy::result_large_err)] // talos-rs's error, as its own API
+pub fn applied_or_default_talosconfig(
+    applied: Option<&std::path::Path>,
+) -> Result<PathBuf, talos_rs::TalosError> {
+    match applied {
+        Some(path) => Ok(path.to_path_buf()),
+        None => default_talosconfig_path(),
+    }
 }
 
 /// Loads the Talos configuration at the default path.
@@ -171,9 +182,18 @@ mod tests {
             Some("/t/config".into())
         );
         assert_eq!(path(None, Some("/h")), Some("/h/.talos/config".into()));
-        // Set but empty wins, as `TalosConfig::default_path` always did.
+        // Set but empty wins, as `TalosConfig::default_path` (since removed) did.
         assert_eq!(path(Some(""), Some("/h")), Some(PathBuf::new()));
         assert_eq!(path(None, None), None);
+    }
+
+    #[test]
+    fn an_applied_talosconfig_beats_the_default() {
+        let applied = std::path::Path::new("/selected/talosconfig");
+        assert_eq!(
+            applied_or_default_talosconfig(Some(applied)).ok(),
+            Some(applied.to_path_buf())
+        );
     }
 
     #[test]

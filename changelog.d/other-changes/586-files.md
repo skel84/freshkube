@@ -1,0 +1,1 @@
+- **Saving a packet capture:** the file is written to a temporary file and renamed into place, so a failed save never leaves a partial capture under the chosen name.

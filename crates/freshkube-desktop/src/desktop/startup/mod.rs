@@ -1,5 +1,9 @@
 //! Debug and stress entry points for fixture visual checks.
 use super::*;
+mod migrate;
+
+pub(super) use migrate::migrate_setup;
+
 use crate::{
     DebugOptions,
     debug_options::{Sidebar, Theme},

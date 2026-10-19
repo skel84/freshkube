@@ -286,6 +286,12 @@ impl Workspace {
         keys
     }
 
+    /// Moves the top-level keys this version doesn't know out of the
+    /// workspace, for a file that keeps them beside the workspace's own.
+    pub(crate) fn take_unknown(&mut self) -> serde_json::Map<String, serde_json::Value> {
+        std::mem::take(&mut self.extra)
+    }
+
     /// An id for a new entry that no entry uses, from the context's name.
     pub fn fresh_id(&self, context: &str) -> String {
         let mut base: String = context

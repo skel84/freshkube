@@ -11,7 +11,9 @@
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Connect using the current context of the default talosconfig
-//!     let config = TalosConfig::load_default()?;
+//!     let home = std::env::home_dir();
+//!     let path = TalosConfig::default_path_in(None, home.as_deref())?;
+//!     let config = TalosConfig::load_from(&path)?;
 //!     let ctx = config.current_context().ok_or("no current context")?;
 //!     let client = TalosClient::from_context(ctx).await?;
 //!

@@ -30,7 +30,7 @@ mod view;
 #[cfg(test)]
 mod tests;
 
-pub use download::DownloadLines;
+pub use download::{DownloadLines, write_whole};
 
 use std::{
     cell::Cell,

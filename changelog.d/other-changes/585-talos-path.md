@@ -1,0 +1,1 @@
+- `talos-rs` no longer reads `TALOSCONFIG` itself: `load_default` and `default_path` are gone, and Talos discovery takes the config path from its caller.
