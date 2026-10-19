@@ -235,6 +235,18 @@ fn reads_truncates_inside_the_table_at_both_window_sizes(cx: &mut TestAppContext
         let (_runtime, handle, view) = fixture(cx, width, height);
         cx.update_window(handle, |_, window, cx| {
             open(window, cx, &view);
+            if width == 1280. {
+                let entry = freshkube_ui::table::word_cut_style("settings-source-workloads-entry").unwrap();
+                assert_eq!(entry.text.as_ref(), MAPPED);
+                use freshkube_ui::table::TableColumn;
+                let sources = list(&view, cx).read(cx);
+                for column in &sources.columns {
+                    let values: Vec<_> = sources.rows.iter().map(|row| if column.label().as_ref() == "Entry" { &row.entry } else { &row.why }).collect();
+                    if matches!(column.label().as_ref(), "Entry" | "Chosen by") {
+                        assert_eq!(column.width(), freshkube_ui::table::fit(column.label(), values.into_iter(), freshkube_ui::table::WIDEST));
+                    }
+                }
+            }
             // Exercise a value too long even for the wide table.
             list(&view, cx).update(cx, |list, cx| {
                 let row = list.rows.iter_mut().find(|row| row.read == BUILDS).unwrap();
@@ -445,7 +457,7 @@ fn c_checks_from_the_list(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open(window, cx, &view);
-        window.click("settings-source-kargo", cx);
+        list(&view, cx).read(cx).focus_handle().focus(window, cx);
         window.press("c", cx);
         window.render_frame(cx);
         assert_eq!(state(&view, KARGO, cx), "Readable");
@@ -503,12 +515,12 @@ async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAp
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-sources-check", cx);
         window.render_frame(cx);
-        assert_eq!(state(&view, KARGO, cx), "Checking…");
+        assert_eq!(state(&view, KARGO, cx), "Reading");
         let sources = list(&view, cx);
         let first = sources.read(cx).read.revision();
         let first_request = request(&sources, cx);
         // C while it runs starts nothing.
-        window.click("settings-source-kargo", cx);
+        list(&view, cx).read(cx).focus_handle().focus(window, cx);
         window.press("c", cx);
         assert_eq!(sources.read(cx).read.revision(), first);
 
@@ -530,7 +542,7 @@ async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAp
         sources.update(cx, |list, cx| {
             list.answer(&first_request, Ok(Checked::default()), cx)
         });
-        assert_eq!(state(&view, KARGO, cx), "Checking…");
+        assert_eq!(state(&view, KARGO, cx), "Reading");
 
         // (c) Another section of Settings drops it, and coming back starts
         // nothing.
@@ -624,7 +636,7 @@ async fn a_live_entry_missing_from_the_kubeconfig_is_unreachable(cx: &mut TestAp
         assert!(
             states(&view, cx)
                 .iter()
-                .all(|(_, _, state)| state == "Checking…")
+                .all(|(_, _, state)| state == "Reading")
         );
     })
     .unwrap();
@@ -651,4 +663,347 @@ async fn a_live_entry_missing_from_the_kubeconfig_is_unreachable(cx: &mut TestAp
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn selection_explains_roles_and_pins_in_the_shared_inspector(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        open(window, cx, &view);
+        window.click("settings-source-kargo", cx);
+        window.render_frame(cx);
+        assert_eq!(list(&view, cx).read(cx).selected, Some(KARGO));
+        assert!(window.find("settings-source-choice").visible());
+        assert!(
+            list(&view, cx).read(cx).rows[0]
+                .explanation
+                .contains("first entry with the CI/CD role")
+        );
+        assert!(window.find("settings-source-reads").visible());
+        let mut workspace = view.read(cx).settings_page.read(cx).workspace().clone();
+        workspace.sources.set(Part::Kargo, Some("core-fra".into()));
+        set_workspace(&view, workspace, true, cx);
+        window.render_frame(cx);
+        assert!(
+            list(&view, cx).read(cx).rows[0]
+                .explanation
+                .contains("core-fra, pinned in freshkube.yaml")
+        );
+        assert_eq!(
+            window.find("settings-source-inspector-title").label(),
+            Some("Kargo")
+        );
+        // Example mode refuses both visible controls and dispatched actions.
+        window.click("settings-source-follow-roles", cx);
+        list(&view, cx).update(cx, |list, cx| list.pin(Some("cicd-fra".into()), cx));
+        window.press("escape", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("settings-source-inspector").is_none());
+        window.press("down", cx);
+        window.render_frame(cx);
+        assert!(window.find("settings-source-inspector").visible());
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            view.read(cx)
+                .settings_page
+                .read(cx)
+                .workspace()
+                .sources
+                .pin(Part::Kargo),
+            Some("core-fra")
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn sources_table_and_inspector_follow_the_shared_geometry_at_every_size(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        for text in [13., 20.] {
+            let (_runtime, handle, view) = fixture(cx, width, height);
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(text, cx);
+                open(window, cx, &view);
+                layout_check::assert_table_page(window, cx, &PAGE);
+                window.click("settings-source-kargo", cx);
+                layout_check::assert_inspector(
+                    window,
+                    cx,
+                    "settings-sources-split",
+                    "settings-sources-table",
+                    "settings-source-inspector",
+                    "settings-source-inspector-title",
+                );
+                let table = window.find("settings-sources-table").bounds();
+                let inspector = window.find("settings-source-inspector").bounds();
+                let beside =
+                    crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
+                assert_eq!(beside, width == 1280. && text == 13.);
+                if beside {
+                    assert!(inspector.left() >= table.right());
+                } else {
+                    assert!(inspector.top() >= table.bottom());
+                }
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn checking_uses_loading_rows_and_completion_publishes_the_status_time(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        open(window, cx, &view);
+        let sources = list(&view, cx);
+        let request = sources.update(cx, |list, cx| {
+            let request = list.read.start(list.identity());
+            list.check = super::Check::Running;
+            list.derive_rows();
+            list.publish_status(cx);
+            cx.notify();
+            request
+        });
+        window.render_frame(cx);
+        assert!(window.find("settings-sources-loading").visible());
+        assert!(window.try_find("settings-source-kargo").is_none());
+        assert!(
+            !gpui_kit::base::test_support::snapshots(window)
+                .iter()
+                .any(|s| s.label() == Some("Checking…"))
+        );
+        sources.update(cx, |list, cx| {
+            list.answer(&request, Ok(list.example_check()), cx)
+        });
+        window.render_frame(cx);
+        assert!(window.try_find("settings-sources-loading").is_none());
+        assert!(window.find("settings-source-kargo").visible());
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let checked = list(&view, cx).read(cx).checked_at.clone().unwrap();
+        let page = view.read(cx).settings_page.read(cx);
+        let status = page.status().unwrap();
+        assert!(
+            status
+                .text(None)
+                .contains(&format!("Last checked {checked}"))
+        );
+    })
+    .unwrap();
+}
+
+const PIN_SETUP: &str = r#"version: 1
+clusters:
+- {id: cluster-a, role: core, context: acme-a, future_entry: {keep: true}}
+- {id: cluster-b, role: cicd, context: acme-b}
+sources: {builds: cluster-b, argocd: cluster-a, future_pin: {keep: true}}
+destinations: [{name: acme, entry: cluster-a}]
+metrics: {mode: automatic, future_metrics: keep}
+coroot: {server: 'https://observations.example.test', sign_in: anonymous}
+future_setup: {keep: [1, 2]}
+"#;
+
+fn dispatch_pin_from_menu(
+    sources: &List,
+    window: &mut gpui_kit::Window,
+    cx: &mut gpui_kit::App,
+    entry: Option<&str>,
+) {
+    use freshkube_ui::{menu::MenuAction, table::TableSource};
+    let actions = sources.update(cx, |list, cx| list.row_menu(&KARGO, window, cx));
+    let action = if let Some(entry) = entry {
+        let items = actions
+            .into_iter()
+            .find_map(|action| match action {
+                MenuAction::Submenu { items, .. } => Some(items),
+                _ => None,
+            })
+            .unwrap();
+        items
+            .into_iter()
+            .find_map(|item| match item {
+                MenuAction::Item {
+                    label,
+                    action,
+                    enabled: true,
+                    ..
+                } if label.as_ref() == entry => Some(action),
+                _ => None,
+            })
+            .unwrap()
+    } else {
+        actions
+            .into_iter()
+            .find_map(|item| match item {
+                MenuAction::Item {
+                    label,
+                    action,
+                    enabled: true,
+                    ..
+                } if label.as_ref() == "Follow roles" => Some(action),
+                _ => None,
+            })
+            .unwrap()
+    };
+    sources
+        .read(cx)
+        .focus_handle()
+        .dispatch_action(action.as_ref(), window, cx);
+}
+
+#[gpui_kit::test]
+async fn pin_and_follow_roles_keep_other_parts_and_unknown_keys(cx: &mut TestAppContext) {
+    use super::super::edit_tests::{read_workspace, saved};
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), PIN_SETUP);
+    let before = freshkube_core::setup::parse(PIN_SETUP.as_bytes()).unwrap();
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_section(cx, handle, &view, SettingsSection::Sources).await;
+    for (entry, inspector) in [
+        (Some("cluster-a"), false),
+        (None, true),
+        (Some("cluster-a"), true),
+        (None, false),
+    ] {
+        cx.update_window(handle, |_, window, cx| {
+            let sources = list(&view, cx);
+            if inspector {
+                window.click("settings-source-kargo", cx);
+                window.render_frame(cx);
+                if entry.is_some() {
+                    window.click("settings-source-pin", cx);
+                    window.render_frame(cx);
+                } else {
+                    window.click("settings-source-follow-roles", cx);
+                }
+            } else if entry.is_none() {
+                window.right_click("settings-source-kargo", cx);
+            } else {
+                dispatch_pin_from_menu(&sources, window, cx, entry);
+            }
+        })
+        .unwrap();
+        cx.run_until_parked();
+        if inspector && entry.is_some() || !inspector && entry.is_none() {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window
+                    .within("popup-menu")
+                    .click(if inspector { 0usize } else { 3usize }, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        }
+        saved(cx, handle, &view).await;
+        assert_eq!(read_workspace(guard.path()).sources.pin(Part::Kargo), entry);
+        let mut expected = before.clone();
+        expected
+            .workspace
+            .sources
+            .set(Part::Kargo, entry.map(str::to_owned));
+        let after = freshkube_core::setup::parse(
+            &std::fs::read(guard.path().join("freshkube.yaml")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after, expected);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("settings-saved").is_none());
+            let status = view.read(cx).settings_page.read(cx).status().unwrap();
+            assert!(status.text(None).contains("Saved"), "{}", status.text(None));
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+async fn a_broken_setup_refuses_pin_edits_without_replacing_the_file(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), PIN_SETUP);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_section(cx, handle, &view, SettingsSection::Sources).await;
+    write(guard.path(), "version: [broken");
+    cx.update_window(handle, |_, window, cx| {
+        dispatch_pin_from_menu(&list(&view, cx), window, cx, Some("cluster-a"));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    super::super::edit_tests::saved(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-save-failed").visible());
+        assert_eq!(
+            view.read(cx)
+                .settings_page
+                .read(cx)
+                .workspace()
+                .sources
+                .pin(Part::Kargo),
+            None
+        );
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
+        "version: [broken"
+    );
+}
+
+#[gpui_kit::test]
+async fn an_example_pin_edit_leaves_the_setup_file_untouched(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), PIN_SETUP);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_section(cx, handle, &view, SettingsSection::Sources).await;
+    cx.update_window(handle, |_, window, cx| {
+        let workspace = view.read(cx).settings_page.read(cx).workspace().clone();
+        set_workspace(&view, workspace, true, cx);
+        window.click("settings-source-kargo", cx);
+        window.render_frame(cx);
+        window.click("settings-source-pin", cx);
+        assert!(window.try_find("popup-menu").is_none());
+        list(&view, cx).update(cx, |list, cx| list.pin(Some("cluster-a".into()), cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
+        PIN_SETUP
+    );
+    assert!(!guard.path().join("freshkube.yaml.bak").exists());
+}
+
+#[gpui_kit::test]
+async fn a_hand_edit_refuses_a_pin_without_replacing_the_file(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), PIN_SETUP);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_section(cx, handle, &view, SettingsSection::Sources).await;
+    let edited = PIN_SETUP.replace("acme-a", "acme-changed");
+    write(guard.path(), &edited);
+    cx.update_window(handle, |_, window, cx| {
+        dispatch_pin_from_menu(&list(&view, cx), window, cx, Some("cluster-a"));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    super::super::edit_tests::saved(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-save-failed").visible());
+        assert!(view.read(cx).settings_page.read(cx).setup_is_pending());
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
+        edited
+    );
 }

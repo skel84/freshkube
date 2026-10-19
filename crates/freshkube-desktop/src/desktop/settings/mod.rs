@@ -148,6 +148,7 @@ pub(crate) struct SettingsPage {
     pub(in crate::desktop) sources: Entity<sources::SourcesList>,
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
+    sources_status: Segment,
 }
 
 impl SettingsPage {
@@ -297,6 +298,7 @@ impl SettingsPage {
                 cx.new(|cx| sources::SourcesList::new(runtime, page, cx))
             },
             status: Segment::default(),
+            sources_status: Segment::default(),
         }
     }
 
@@ -510,7 +512,13 @@ impl SettingsPage {
 
     /// The status bar's line: the workspace's, on its lists.
     pub(in crate::desktop) fn status(&self) -> Option<Segment> {
-        self.section.is_list().then(|| self.status.clone())
+        self.section.is_list().then(|| {
+            if self.section == SettingsSection::Sources {
+                self.sources_status.clone()
+            } else {
+                self.status.clone()
+            }
+        })
     }
 
     fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
@@ -590,13 +598,10 @@ impl SettingsPage {
                 body.clone(),
                 ui::Tone::Crit,
             )),
-            Some(Notice::Saved(body)) => banners.push(banner(
-                "settings-saved",
-                "Saved",
-                body.clone(),
-                ui::Tone::Good,
-            )),
-            None => {}
+            Some(Notice::Saved(body)) if self.section != SettingsSection::Sources => banners.push(
+                banner("settings-saved", "Saved", body.clone(), ui::Tone::Good),
+            ),
+            _ => {}
         }
         banners
     }

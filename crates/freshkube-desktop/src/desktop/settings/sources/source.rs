@@ -17,6 +17,7 @@ pub(crate) struct Column {
     field: Field,
     label: SharedString,
     width: f32,
+    fitted: f32,
 }
 
 impl TableColumn for Column {
@@ -42,29 +43,49 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
         field,
         label: label.to_owned().into(),
         width,
+        fitted: width,
     };
-    let columns = vec![
+    let mut columns = vec![
         column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(Field::Part, "Part", 96.),
         column(
             Field::Entry,
             "Entry",
-            fit("Entry", rows.iter().map(|row| &row.entry), 160.),
+            fit("Entry", rows.iter().map(|row| &row.entry), table::WIDEST),
         ),
         column(
             Field::Why,
             "Chosen by",
-            fit("Chosen by", rows.iter().map(|row| &row.why), 160.),
+            fit("Chosen by", rows.iter().map(|row| &row.why), table::WIDEST),
         ),
         // Leave room for the glyph column and Reads in the narrow page.
         column(Field::State, "State", 128.),
-        // Prose gives way before the table needs to scroll sideways.
-        // Entry and Chosen by are capped above to leave this minimum in
-        // the narrow page; the shared flexible cell takes any spare room.
+        // Fit identity columns before Reads takes the remaining room.
         column(Field::Reads, "Reads", 64.),
     ];
-    let width = columns.iter().map(|column| column.width).sum();
+    let width = fit_columns(&mut columns, 0.);
     (columns, width)
+}
+
+/// Keep the narrow table's widths, then give spare room to the fitted
+/// Entry and Chosen by values before Reads takes the remainder.
+pub(super) fn fit_columns(columns: &mut [Column], room: f32) -> f32 {
+    for column in columns.iter_mut() {
+        column.width = match column.field {
+            Field::Entry | Field::Why => column.fitted.min(160.),
+            _ => column.fitted,
+        };
+    }
+    let base: f32 = columns.iter().map(|column| column.width).sum();
+    let mut spare = (room - base).max(0.);
+    for column in columns.iter_mut() {
+        if matches!(column.field, Field::Entry | Field::Why) {
+            let give = (column.fitted - column.width).min(spare);
+            column.width += give;
+            spare -= give;
+        }
+    }
+    columns.iter().map(|column| column.width).sum()
 }
 
 impl TableSource for SourcesList {
@@ -177,35 +198,49 @@ impl TableSource for SourcesList {
         None
     }
 
-    /// The rows are read, not selected.
     fn selected_key(&self) -> Option<&Read> {
-        None
+        self.selected.as_ref()
     }
 
     fn line_of(&self, key: &Read) -> Option<usize> {
         self.rows.iter().position(|row| &row.read == key)
     }
 
-    fn click(&mut self, _: &Read, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn click(&mut self, key: &Read, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus(window, cx);
+        self.select(*key, window, cx);
     }
 
     fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
         Some(self.focus.clone())
     }
 
-    /// A right-click offers the toolbar's one action.
+    /// Select the row before offering actions for its part.
     fn row_menu(
         &mut self,
-        _: &Read,
+        key: &Read,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<menu::MenuAction> {
         self.focus(window, cx);
-        vec![
+        self.select(*key, window, cx);
+        let mut actions = vec![
             menu::MenuAction::new("Check sources", CheckSources)
                 .enabled(self.check != Check::Running),
-        ]
+        ];
+        if matches!(key, Read::Part(_)) {
+            actions.push(menu::MenuAction::Separator);
+            actions.push(menu::MenuAction::submenu(
+                "Pin to entry",
+                self.pin_entries(cx),
+            ));
+            actions.push(self.follow_roles(cx));
+        }
+        actions
+    }
+
+    fn loading(&self) -> Option<&table::LoadingRows> {
+        (self.check == Check::Running).then_some(&self.loading)
     }
 
     fn empty(&self, _: &mut Context<Self>) -> Option<AnyElement> {
