@@ -13,6 +13,25 @@ pub(super) struct Selected {
     pub(super) selected_node: Option<String>,
 }
 
+impl Selected {
+    /// The selected node's row, if the overview lists it.
+    pub(super) fn summary(&self) -> Option<&NodeSummary> {
+        self.nodes
+            .iter()
+            .find(|node| Some(&node.name) == self.selected_node.as_ref())
+    }
+
+    /// Whether the overview lists a node of that name.
+    pub(super) fn has_node(&self, name: &str) -> bool {
+        self.nodes.iter().any(|node| node.name == name)
+    }
+
+    /// Drops a pending object open, so its answer is ignored when it comes.
+    pub(super) fn cancel_object_open(&mut self) {
+        self.object_open.resolve(None, Ok(()));
+    }
+}
+
 impl Pilot {
     pub(super) fn sync_nodes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let old_target = self.target().map(|(target, _)| target);
@@ -96,7 +115,8 @@ impl Pilot {
             let catalog = fixture::services(&context, &node);
             let events = fixture::logs(&node, &catalog);
             let address = self
-                .selected_summary()
+                .target
+                .summary()
                 .map(|summary| summary.address.clone())
                 .unwrap_or_default();
             self.pages.logs.update(cx, |logs, cx| {
@@ -119,9 +139,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.target.selected_node.as_ref() != Some(&name)
-            && self.target.nodes.iter().any(|node| node.name == name)
-        {
+        if self.target.selected_node.as_ref() != Some(&name) && self.target.has_node(&name) {
             self.select_node(Some(name), window, cx);
         }
     }

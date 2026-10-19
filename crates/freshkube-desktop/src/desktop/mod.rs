@@ -802,7 +802,7 @@ impl Pilot {
         self.pages
             .overview_page
             .update(cx, |overview, cx| overview.collapse(cx));
-        self.cancel_object_open();
+        self.target.cancel_object_open();
         self.target.services = Snapshot::default();
         self.push_services(cx);
         self.pages
@@ -944,16 +944,9 @@ impl Pilot {
         .detach();
     }
 
-    fn selected_summary(&self) -> Option<&NodeSummary> {
-        self.target
-            .nodes
-            .iter()
-            .find(|node| Some(&node.name) == self.target.selected_node.as_ref())
-    }
-
     fn target(&self) -> Option<(Target, TalosClient)> {
         let cluster = self.overview.data()?;
-        let node = self.selected_summary()?;
+        let node = self.target.summary()?;
         Some((
             Target {
                 epoch: self.epoch,
@@ -987,7 +980,7 @@ impl Pilot {
                 self.open_node_by_name(node, nodes::NodeTab::Overview, window, cx)
             }
             ScreenEvent::OpenLogsOn { node, service } => {
-                if !self.target.nodes.iter().any(|known| &known.name == node) {
+                if !self.target.has_node(node) {
                     return;
                 }
                 self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);

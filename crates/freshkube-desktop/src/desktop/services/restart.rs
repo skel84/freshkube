@@ -34,7 +34,7 @@ impl Pilot {
     /// service is in now. `None` once any of them is gone.
     fn restart_fingerprint(&self, service_id: &str) -> Option<u64> {
         let cluster = self.overview.data()?;
-        let node = self.selected_summary()?;
+        let node = self.target.summary()?;
         let service = self
             .target
             .services
@@ -61,7 +61,7 @@ impl Pilot {
     ) {
         let (Some(fingerprint), Some(node), Some(cluster)) = (
             self.restart_fingerprint(&service_id),
-            self.selected_summary().cloned(),
+            self.target.summary().cloned(),
             self.overview.data().map(|cluster| cluster.name.clone()),
         ) else {
             return;
@@ -142,7 +142,7 @@ impl Pilot {
     /// Example data only simulates it.
     fn start_restart(&mut self, service_id: String, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(node), Some(cluster)) = (
-            self.selected_summary().cloned(),
+            self.target.summary().cloned(),
             self.overview.data().map(|cluster| cluster.name.clone()),
         ) else {
             return;

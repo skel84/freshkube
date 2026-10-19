@@ -105,7 +105,7 @@ impl Pilot {
         if self.divert_link(&object, work, window, cx) {
             return;
         }
-        self.cancel_object_open();
+        self.target.cancel_object_open();
         let origin = self.pages.resources.read(cx).detail_identity(cx).cloned();
         self.start_object_open(
             "Resolving the owner's kind timed out",
@@ -130,7 +130,7 @@ impl Pilot {
     }
 
     /// Starts the one read an object link waits on, replacing none: callers
-    /// `cancel_object_open` first. Its answer is applied only if the shell's
+    /// `Selected::cancel_object_open` first. Its answer is applied only if the shell's
     /// epoch and this loader request still hold and `superseded` (the
     /// caller's own check, for example that another object opened) says no.
     pub(super) fn start_object_open<T: Send + 'static>(

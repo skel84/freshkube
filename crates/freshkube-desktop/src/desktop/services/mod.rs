@@ -293,7 +293,7 @@ impl Pilot {
             context: self.applied.context.clone().unwrap_or_default(),
             talos,
             stale_talos: StaleTalos::of(&self.overview),
-            node: self.selected_summary().map(|node| ServiceNode {
+            node: self.target.summary().map(|node| ServiceNode {
                 name: node.name.clone(),
                 address: node.address.clone(),
                 responding: node.responding,

@@ -545,15 +545,10 @@ impl Pilot {
         self.navigate(page, window, cx);
     }
 
-    /// Drops a pending object open, so its answer is ignored when it comes.
-    pub(super) fn cancel_object_open(&mut self) {
-        self.target.object_open.resolve(None, Ok(()));
-    }
-
     /// Log collection keeps running in the background across screens; other
     /// screens load when shown and stay idle while hidden.
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
-        self.cancel_object_open();
+        self.target.cancel_object_open();
         self.navigation.page = page;
         self.navigation.column_changed();
         self.deliver_summary_nodes(cx);
@@ -757,7 +752,7 @@ impl Pilot {
                 .update(cx, |resources, cx| resources.close_for_link(cx));
         }
         self.open_kind(kind.clone(), window, cx);
-        self.cancel_object_open();
+        self.target.cancel_object_open();
         let identity = self.resolve_local_identity(&source, &kind, &object, identity, cx);
         if !identity.uid.is_empty() {
             self.pages.resources.update(cx, |resources, cx| {

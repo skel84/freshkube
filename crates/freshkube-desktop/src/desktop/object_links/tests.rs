@@ -606,7 +606,7 @@ fn gated_open(
     let applied = applied.clone();
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.cancel_object_open();
+            pilot.target.cancel_object_open();
             pilot.start_object_open(
                 "late",
                 async move { gate.await.map(|_| 1u32).map_err(|error| error.to_string()) },
@@ -690,7 +690,7 @@ async fn cancelling_an_object_open_drops_its_answer(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let applied = std::rc::Rc::new(std::cell::Cell::new(0));
     let open = gated_open(cx, handle, &view, &applied, false);
-    view.update(cx, |pilot, _| pilot.cancel_object_open());
+    view.update(cx, |pilot, _| pilot.target.cancel_object_open());
     // The read is gone with its receiver, so the gate has nobody to answer.
     _ = open.send(());
     settle(cx);
