@@ -138,6 +138,7 @@ pub(crate) fn redact_identity(message: &str) -> String {
 /// read and a server that could not be reached are named by kind alone, since
 /// their messages carry file paths, context names and addresses; any other
 /// message loses identities, URLs, addresses and absolute paths.
+/// Surface: redacted failure details embedded in delivery sentences.
 pub fn printable(failure: &Failure) -> String {
     match failure.kind {
         FailureKind::Config => {
