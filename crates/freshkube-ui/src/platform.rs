@@ -63,6 +63,23 @@ impl Platform {
         }
     }
 
+    /// The default button's side in a trailing-aligned action pair.
+    pub const fn default_button(self) -> Side {
+        match self {
+            Platform::MacOs | Platform::Linux => Side::Trailing,
+            Platform::Windows => Side::Leading,
+        }
+    }
+
+    /// The name of the system store that keeps credentials.
+    pub const fn credential_store(self) -> &'static str {
+        match self {
+            Platform::MacOs => "the Keychain",
+            Platform::Windows => "Credential Manager",
+            Platform::Linux => "the Secret Service",
+        }
+    }
+
     /// The room the header leaves at its edges: on macOS, the traffic
     /// lights' at its leading edge. Kit's `TitleBar` draws Windows' caption
     /// buttons, and Linux's when the compositor asks the app to, after the
@@ -222,6 +239,23 @@ impl TerminalKeys {
     }
 }
 
+/// A control's side within an ordered pair.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Leading,
+    Trailing,
+}
+
+/// The default button's side on this platform ([`Platform::default_button`]).
+pub const fn default_button() -> Side {
+    Platform::current().default_button()
+}
+
+/// The system credential store on this platform ([`Platform::credential_store`]).
+pub const fn credential_store() -> &'static str {
+    Platform::current().credential_store()
+}
+
 /// The header's insets on this platform ([`Platform::header_insets`]).
 pub fn header_insets() -> HeaderInsets {
     Platform::current().header_insets()
@@ -326,6 +360,22 @@ fn traffic_light_position(rem: f32) -> Point<Pixels> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_button_follows_each_platforms_order() {
+        assert_eq!(Platform::MacOs.default_button(), Side::Trailing);
+        assert_eq!(Platform::Linux.default_button(), Side::Trailing);
+        assert_eq!(Platform::Windows.default_button(), Side::Leading);
+        assert_eq!(default_button(), Platform::current().default_button());
+    }
+
+    #[test]
+    fn credentials_name_each_platforms_store() {
+        assert_eq!(Platform::MacOs.credential_store(), "the Keychain");
+        assert_eq!(Platform::Windows.credential_store(), "Credential Manager");
+        assert_eq!(Platform::Linux.credential_store(), "the Secret Service");
+        assert_eq!(credential_store(), Platform::current().credential_store());
+    }
 
     /// The traffic lights' circles sit centred on the header less its
     /// hairline at every text size, and their left edge as far from the

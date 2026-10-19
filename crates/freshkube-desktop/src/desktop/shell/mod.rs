@@ -1,6 +1,7 @@
 //! Window chrome: the header, the icon rail, the navigation column, the
 //! status bar and their popovers (docs/DESIGN.md, App frame).
 use super::kubernetes_only::{self, KubeConnection};
+use super::settings::SettingsSection;
 use super::{
     AUTO_REFRESH, Appearance, Area, COLUMN_WIDTH, ColumnReveal, Page, Pilot, RAIL_WIDTH, clock,
 };

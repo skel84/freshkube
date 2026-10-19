@@ -1,12 +1,15 @@
 //! The delivery sources list in the real app: where each part is read,
 //! and what Check sources finds, in each state.
-use super::super::edit_tests::{open_settings, write};
+use super::super::SettingsSection;
+use super::super::edit_tests::{open_section, write};
 use super::super::tests::launch;
 #[cfg(unix)]
 use super::Check;
 use super::Read;
-use crate::desktop::{Page, layout_check, tests::fixture};
-use freshkube_core::workspace::{self, Destination, Entry, Key, Loaded, Part, Role, Workspace};
+#[cfg(unix)]
+use crate::desktop::Page;
+use crate::desktop::{layout_check, tests::fixture};
+use freshkube_core::workspace::{self, Entry, Loaded, Part, Role, Workspace};
 #[cfg(unix)]
 use freshkube_delivery::entry::Checked;
 use freshkube_delivery::entry::Reach;
@@ -15,15 +18,11 @@ use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 #[cfg(unix)]
 use std::time::Duration;
 
-const FRAME: layout_check::PageFrame = layout_check::PageFrame {
+const PAGE: layout_check::TablePage = layout_check::TablePage {
     page: "settings-page",
     title: "settings-sources-title",
     title_text: "Delivery sources",
-    content: "settings-sources-table-scroll",
-};
-
-const TABLE: layout_check::Table = layout_check::Table {
-    table: Some("settings-sources-table-scroll"),
+    table: "settings-sources-table-scroll",
     list: "settings-sources-list",
 };
 
@@ -79,18 +78,8 @@ fn row(read: Read, entry: &str, state: &str) -> (Read, String, String) {
 
 fn open(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, view: &View) {
     view.update(cx, |pilot, cx| {
-        pilot.navigate_from_keyboard(Page::Settings, window, cx)
+        pilot.show_settings(SettingsSection::Sources, window, cx)
     });
-    window.render_frame(cx);
-}
-
-/// Scrolls the page to its last list.
-fn to_the_bottom(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
-    window.scroll(
-        "settings-page",
-        gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-5000.))),
-        cx,
-    );
     window.render_frame(cx);
 }
 
@@ -103,7 +92,7 @@ fn set_workspace(view: &View, workspace: Workspace, example: bool, cx: &mut gpui
 }
 
 #[gpui_kit::test]
-fn the_example_lists_each_part_under_the_destinations_and_reads_nothing(cx: &mut TestAppContext) {
+fn the_example_lists_each_part_on_a_table_page_and_reads_nothing(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     for size in [None, Some(20.)] {
         cx.update_window(handle, |_, window, cx| {
@@ -111,16 +100,11 @@ fn the_example_lists_each_part_under_the_destinations_and_reads_nothing(cx: &mut
                 crate::text_size::set(size, cx);
             }
             open(window, cx, &view);
-            to_the_bottom(window, cx);
-            layout_check::assert_edge_frame(window, cx, &FRAME);
-            let rows = layout_check::assert_table(window, cx, &TABLE);
-            assert!(rows.header.is_some(), "{rows:#?}");
+            layout_check::assert_table_page(window, cx, &PAGE);
             for read in ["kargo", "builds", "argocd", "workloads"] {
                 assert!(window.find(format!("settings-source-{read}")).visible());
             }
-            let below = window.find("settings-sources-title").bounds().top();
-            let above = window.find("settings-destinations-list").bounds();
-            assert!(above.bottom() <= below, "{above:?} {below:?}");
+            assert!(window.try_find("settings-destinations-list").is_none());
             assert_eq!(
                 states(&view, cx),
                 vec![
@@ -150,7 +134,6 @@ fn check_sources_finds_each_state(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open(window, cx, &view);
-        to_the_bottom(window, cx);
         list(&view, cx).update(cx, |list, _| {
             list.set_example_answer("cicd-fra", KARGO, Reach::refused("forbidden"));
             list.set_example_answer(
@@ -222,7 +205,6 @@ fn a_part_with_no_entry_says_so_before_any_check(cx: &mut TestAppContext) {
         lone.sources.set(Part::Builds, Some("cluster-x".into()));
         set_workspace(&view, lone, true, cx);
         open(window, cx, &view);
-        to_the_bottom(window, cx);
         assert_eq!(
             states(&view, cx),
             vec![
@@ -320,47 +302,12 @@ fn c_checks_from_the_list(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open(window, cx, &view);
-        to_the_bottom(window, cx);
         window.click("settings-source-kargo", cx);
         window.press("c", cx);
         window.render_frame(cx);
         assert_eq!(state(&view, KARGO, cx), "Readable");
     })
     .unwrap();
-}
-
-/// Many destinations make the page long: the clusters keep their room and
-/// the frame scrolls down to the sources, in a tall window and a short one.
-#[gpui_kit::test]
-fn twenty_destinations_leave_the_clusters_their_rows(cx: &mut TestAppContext) {
-    for (width, height) in [(1280., 880.), (760., 560.)] {
-        let (_runtime, handle, view) = fixture(cx, width, height);
-        cx.update_window(handle, |_, window, cx| {
-            let mut example = workspace::example();
-            example.destinations = (0..20)
-                .map(|n| Destination::new(Key::Name(format!("shop-api-{n}")), "dev-fra"))
-                .collect();
-            set_workspace(&view, example, true, cx);
-            open(window, cx, &view);
-            let clusters = window.find("settings-table-scroll").bounds();
-            let least = crate::ui::dp_px(freshkube_ui::page::SHORT_LIST_HEIGHT, window);
-            // The floor holds the table's frame; its hairlines are outside.
-            assert!(
-                clusters.size.height + gpui_kit::px(2.) >= least,
-                "{width}x{height}: {clusters:?}"
-            );
-            assert!(window.find("settings-cluster-core-fra").visible());
-            to_the_bottom(window, cx);
-            assert!(
-                window.find("settings-source-workloads").visible(),
-                "{width}x{height}"
-            );
-            let page = window.find("settings-page").bounds();
-            let sources = window.find("settings-sources-list").bounds();
-            assert!(sources.bottom() <= page.bottom(), "{sources:?} {page:?}");
-        })
-        .unwrap();
-    }
 }
 
 /// A live workspace whose entries' credential plugin sleeps, so a check
@@ -399,8 +346,9 @@ fn waiting_workspace(directory: &std::path::Path) {
     );
 }
 
-/// A check in flight is dropped by a new workspace and by the page hiding,
-/// a press while it runs starts nothing, and a late answer never lands.
+/// A check in flight is dropped by a new workspace, by another section and
+/// by the page hiding, a press while it runs starts nothing, and a late
+/// answer never lands.
 #[cfg(unix)]
 #[gpui_kit::test]
 async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAppContext) {
@@ -408,9 +356,8 @@ async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAp
     let guard = tempfile::tempdir().unwrap();
     waiting_workspace(guard.path());
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Sources).await;
     cx.update_window(handle, |_, window, cx| {
-        to_the_bottom(window, cx);
         window.click("settings-sources-check", cx);
         window.render_frame(cx);
         assert_eq!(state(&view, KARGO, cx), "Checking…");
@@ -442,14 +389,30 @@ async fn a_check_in_flight_is_dropped_and_its_answer_never_lands(cx: &mut TestAp
         });
         assert_eq!(state(&view, KARGO, cx), "Checking…");
 
-        // (c) Leaving Settings drops it.
+        // (c) Another section of Settings drops it, and coming back starts
+        // nothing.
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Clusters, window, cx)
+        });
+        assert!(!sources.read(cx).is_checking());
+        assert_eq!(sources.read(cx).check, Check::Never);
+        sources.update(cx, |list, cx| {
+            list.answer(&second_request, Ok(Checked::default()), cx)
+        });
+        open(window, cx, &view);
+        assert!(!sources.read(cx).is_checking());
+        assert_eq!(state(&view, KARGO, cx), "Not checked");
+
+        // (d) Leaving Settings drops it.
+        window.click("settings-sources-check", cx);
+        let third_request = request(&sources, cx);
         view.update(cx, |pilot, cx| {
             pilot.navigate_from_keyboard(Page::Overview, window, cx)
         });
         assert!(!sources.read(cx).is_checking());
         assert_eq!(sources.read(cx).check, Check::Never);
         sources.update(cx, |list, cx| {
-            list.answer(&second_request, Ok(Checked::default()), cx)
+            list.answer(&third_request, Ok(Checked::default()), cx)
         });
         assert_eq!(state(&view, KARGO, cx), "Not checked");
     })
@@ -466,10 +429,9 @@ async fn a_check_past_its_deadline_fails(cx: &mut TestAppContext) {
     let guard = tempfile::tempdir().unwrap();
     waiting_workspace(guard.path());
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Sources).await;
     cx.update_window(handle, |_, window, cx| {
         list(&view, cx).update(cx, |list, _| list.deadline = Duration::from_secs(1));
-        to_the_bottom(window, cx);
         window.click("settings-sources-check", cx);
     })
     .unwrap();
@@ -512,9 +474,8 @@ async fn a_live_entry_missing_from_the_kubeconfig_is_unreachable(cx: &mut TestAp
         .to_string(),
     );
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Sources).await;
     cx.update_window(handle, |_, window, cx| {
-        to_the_bottom(window, cx);
         window.click("settings-sources-check", cx);
         window.render_frame(cx);
         assert!(

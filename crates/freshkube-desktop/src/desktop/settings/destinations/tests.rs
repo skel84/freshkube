@@ -1,21 +1,18 @@
 //! The destinations list in the real app: mapping, changing and removing a
 //! destination, saved to the file, and the list beside the clusters.
-use super::super::edit_tests::{open_settings, saved, write};
+use super::super::SettingsSection;
+use super::super::edit_tests::{open_section, saved, write};
 use super::super::tests::launch;
-use crate::desktop::{Page, layout_check, tests::fixture};
+use crate::desktop::{layout_check, tests::fixture};
 use freshkube_core::workspace::{self, Destination, Key, Loaded};
 use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 use std::path::Path;
 
-const FRAME: layout_check::PageFrame = layout_check::PageFrame {
+const PAGE: layout_check::TablePage = layout_check::TablePage {
     page: "settings-page",
     title: "settings-destinations-title",
     title_text: "Argo CD destinations",
-    content: "settings-destinations-table-scroll",
-};
-
-const TABLE: layout_check::Table = layout_check::Table {
-    table: Some("settings-destinations-table-scroll"),
+    table: "settings-destinations-table-scroll",
     list: "settings-destinations-list",
 };
 
@@ -36,7 +33,7 @@ fn server(server: &str, entry: &str) -> Destination {
 }
 
 #[gpui_kit::test]
-fn the_example_lists_its_destinations_under_the_clusters(cx: &mut TestAppContext) {
+fn the_example_lists_its_destinations_on_a_table_page(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     for size in [None, Some(20.)] {
         cx.update_window(handle, |_, window, cx| {
@@ -44,17 +41,16 @@ fn the_example_lists_its_destinations_under_the_clusters(cx: &mut TestAppContext
                 crate::text_size::set(size, cx);
             }
             view.update(cx, |pilot, cx| {
-                pilot.navigate_from_keyboard(Page::Settings, window, cx)
+                pilot.show_settings(SettingsSection::Destinations, window, cx)
             });
             window.render_frame(cx);
-            layout_check::assert_edge_frame(window, cx, &FRAME);
-            let rows = layout_check::assert_table(window, cx, &TABLE);
-            assert!(rows.header.is_some(), "{rows:#?}");
+            layout_check::assert_table_page(window, cx, &PAGE);
             for row in 0..3 {
                 assert!(window.find(format!("settings-destination-{row}")).visible());
             }
-            let below = window.find("settings-destinations-title").bounds().top();
-            assert!(window.find("settings-list").bounds().bottom() <= below);
+            // The section holds one table: neither other list is drawn.
+            assert!(window.try_find("settings-list").is_none());
+            assert!(window.try_find("settings-sources-list").is_none());
             assert!(
                 window
                     .find("settings-scope")
@@ -76,7 +72,7 @@ async fn example_destinations_are_never_changed(cx: &mut TestAppContext) {
     let options =
         GpuiOptions::fixture().with_preferences(Some(guard.path().join("preferences.json")));
     let (_runtime, handle, view) = mount(cx, options, 1280., 820.);
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-destination-0", cx);
         for key in ["a", "e", "enter", "backspace"] {
@@ -102,7 +98,7 @@ async fn mapping_a_destination_saves_it_and_selects_it(cx: &mut TestAppContext) 
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), ONE);
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-destination-0", cx);
         window.press("a", cx);
@@ -137,7 +133,7 @@ async fn changing_a_mapping_keeps_its_place_and_unknown_keys(cx: &mut TestAppCon
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), ONE);
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-destination-0", cx);
         window.press("enter", cx);
@@ -166,7 +162,7 @@ async fn removing_a_mapping_asks_first(cx: &mut TestAppContext) {
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), ONE);
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-destination-0", cx);
         window.press("backspace", cx);
@@ -200,7 +196,7 @@ async fn the_form_refuses_what_wouldnt_map_and_saves_nothing(cx: &mut TestAppCon
     write(guard.path(), ONE);
     let before = std::fs::read(guard.path().join("workspace.json")).unwrap();
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     for (by, value, why) in [
         (
             1usize,
@@ -253,7 +249,7 @@ async fn with_two_clusters_the_form_asks_which(cx: &mut TestAppContext) {
             {"id":"prod","role":"environment","context":"acme-prod"}]}"#,
     );
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         assert!(window.find("settings-destinations-empty").visible());
         window.click("settings-destinations-map", cx);
@@ -285,7 +281,7 @@ async fn a_mapping_to_a_cluster_no_longer_listed_is_marked(cx: &mut TestAppConte
             {"server":"https://old.example.test","entry":"old"}]}"#,
     );
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         assert!(window.try_find("settings-destination-0-mark").is_none());
         let mark = window.find("settings-destination-1-mark");
@@ -313,48 +309,36 @@ fn name(name: &str) -> Key {
     Key::Name(name.into())
 }
 
-/// Down past the last cluster moves the keyboard to the destinations and Up
-/// from the first comes back; each list's keys leave the other's selection
-/// alone, and Escape clears this list's selection before it lets go.
+/// Each list's arrows stay in it, now that each is a section of its own:
+/// Down at the last cluster and Up at the first mapping keep the row, and
+/// neither list takes the other's selection. Escape clears this list's
+/// selection before it lets go.
 #[gpui_kit::test]
-fn the_arrows_cross_between_the_lists(cx: &mut TestAppContext) {
+fn the_arrows_stay_in_their_list(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    let clusters = |cx: &gpui_kit::App| view.read(cx).settings_page.read(cx).selected.clone();
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.navigate_from_keyboard(Page::Settings, window, cx)
+            pilot.show_settings(SettingsSection::Clusters, window, cx)
         });
         window.render_frame(cx);
         window.click("settings-cluster-prod-ams", cx);
         window.press("down", cx);
-        let clusters = |cx: &gpui_kit::App| view.read(cx).settings_page.read(cx).selected.clone();
+        assert_eq!(clusters(cx).as_deref(), Some("prod-fra"));
+        window.press("down", cx);
         assert_eq!(clusters(cx).as_deref(), Some("prod-fra"));
         assert!(list(&view, cx).selected().is_none());
-        // Past the last cluster: the first mapping, and the cluster stays.
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Destinations, window, cx)
+        });
+        window.render_frame(cx);
+        assert!(list(&view, cx).is_focused(window));
         window.press("down", cx);
         let first = list(&view, cx).rows[0].key.clone();
         assert_eq!(list(&view, cx).selected(), Some(&first));
-        assert!(list(&view, cx).is_focused(window));
-        assert_eq!(clusters(cx).as_deref(), Some("prod-fra"));
-        window.press("down", cx);
-        let second = list(&view, cx).rows[1].key.clone();
-        assert_eq!(list(&view, cx).selected(), Some(&second));
         window.press("up", cx);
-        window.press("up", cx);
-        // Up from the first mapping: the last cluster, and the mapping stays.
-        assert!(!list(&view, cx).is_focused(window));
-        assert_eq!(clusters(cx).as_deref(), Some("prod-fra"));
         assert_eq!(list(&view, cx).selected(), Some(&first));
-        window.press("escape", cx);
-        assert!(clusters(cx).is_none());
-        assert_eq!(list(&view, cx).selected(), Some(&first));
-        // Back down: Escape clears the mapping, then lets go, and the
-        // clusters keep theirs.
-        window.press("up", cx);
-        window.press("down", cx);
-        window.press("down", cx);
         assert!(list(&view, cx).is_focused(window));
-        window.press("escape", cx);
-        assert!(list(&view, cx).selected().is_none());
         assert_eq!(clusters(cx).as_deref(), Some("prod-fra"));
         window.press("escape", cx);
         assert!(list(&view, cx).selected().is_none());
@@ -364,16 +348,15 @@ fn the_arrows_cross_between_the_lists(cx: &mut TestAppContext) {
 }
 
 /// Map, Edit and Remove give the keyboard back to this list when their
-/// dialog closes, even when the toolbar opened them from the clusters.
+/// dialog closes, even when the toolbar opened them.
 #[gpui_kit::test]
 async fn the_dialogs_hand_the_keyboard_back_to_this_list(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), ONE);
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
-        window.click("settings-cluster-prod", cx);
         window.click("settings-destinations-map", cx);
         window.render_frame(cx);
         window.click("settings-destination-cancel", cx);
@@ -400,7 +383,7 @@ async fn a_file_changed_on_disk_refuses_a_mapping(cx: &mut TestAppContext) {
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), ONE);
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     let edited = ONE.replace("acme-prod", "acme-prod-2");
     write(guard.path(), &edited);
     cx.update_window(handle, |_, window, cx| {
@@ -446,7 +429,7 @@ async fn an_edit_can_change_only_the_cluster(cx: &mut TestAppContext) {
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), TWO);
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-destination-0", cx);
         window.press("e", cx);
@@ -488,7 +471,7 @@ async fn a_duplicate_is_found_as_argo_cd_matches(cx: &mut TestAppContext) {
             {"server":"https://b.example.test","entry":"old"}]}"#,
     );
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     for (value, why) in [
         (
             "https://A.example.test:443/",
@@ -523,7 +506,7 @@ async fn the_selection_follows_the_mapping_not_its_place(cx: &mut TestAppContext
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), TWO);
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     // Reordered by hand: Reload keeps prod-lon selected, now first.
     cx.update_window(handle, |_, window, cx| {
         window.click("settings-destination-1", cx);
@@ -574,7 +557,7 @@ async fn a_gone_cluster_is_named_and_not_counted(cx: &mut TestAppContext) {
             {"server":"https://old.example.test","entry":"old"}]}"#,
     );
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         let scope = window
             .find("settings-scope")
@@ -606,7 +589,7 @@ async fn without_a_cluster_there_is_nothing_to_map(cx: &mut TestAppContext) {
           "destinations":[{"name":"prod-lon","entry":"old"}]}"#,
     );
     let (_runtime, handle, view) = launch(cx, guard.path());
-    open_settings(cx, handle, &view).await;
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
     cx.update_window(handle, |_, window, cx| {
         let scope = window
             .find("settings-scope")
@@ -626,28 +609,42 @@ async fn without_a_cluster_there_is_nothing_to_map(cx: &mut TestAppContext) {
     .unwrap();
 }
 
-/// In a short window the page scrolls its frame, and each list keeps
-/// `SHORT_LIST_HEIGHT`.
+/// In a short window a list section scrolls its frame, and its list keeps
+/// `SHORT_LIST_HEIGHT`, with twenty mappings as with three.
 #[gpui_kit::test]
-fn a_short_window_keeps_both_lists_usable(cx: &mut TestAppContext) {
+fn a_short_window_keeps_each_list_usable(cx: &mut TestAppContext) {
     use freshkube_ui::page::SHORT_LIST_HEIGHT;
     use gpui_kit::px;
     let (_runtime, handle, view) = fixture(cx, 760., 480.);
-    cx.update_window(handle, |_, window, cx| {
-        crate::text_size::set(20., cx);
-        view.update(cx, |pilot, cx| {
-            pilot.navigate_from_keyboard(Page::Settings, window, cx)
-        });
-        crate::desktop::tests::settle_header(window, cx);
-        assert!(freshkube_ui::page::is_short(window));
-        let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window) - px(2.);
-        for table in [
-            "settings-table-scroll",
+    for (section, table) in [
+        (SettingsSection::Clusters, "settings-table-scroll"),
+        (
+            SettingsSection::Destinations,
             "settings-destinations-table-scroll",
-        ] {
-            let bounds = window.find(table).bounds();
-            assert!(bounds.size.height >= least, "{table} is {bounds:?}");
+        ),
+    ] {
+        for many in [false, true] {
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(20., cx);
+                let mut example = workspace::example();
+                if many {
+                    example.destinations = (0..20)
+                        .map(|n| Destination::new(name(&format!("shop-api-{n}")), "dev-fra"))
+                        .collect();
+                }
+                view.update(cx, |pilot, cx| {
+                    pilot.settings_page.update(cx, |page, cx| {
+                        page.set_workspace(&Loaded::Workspace(example), true, cx)
+                    });
+                    pilot.show_settings(section, window, cx)
+                });
+                crate::desktop::tests::settle_header(window, cx);
+                assert!(freshkube_ui::page::is_short(window));
+                let least = crate::ui::dp_px(SHORT_LIST_HEIGHT, window) - px(2.);
+                let bounds = window.find(table).bounds();
+                assert!(bounds.size.height >= least, "{table} is {bounds:?}");
+            })
+            .unwrap();
         }
-    })
-    .unwrap();
+    }
 }
