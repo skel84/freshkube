@@ -61,16 +61,14 @@ impl Pilot {
         self.epoch = self.epoch.wrapping_add(1);
         // Cancel rather than let an old foreground node refresh keep loading.
         if self.overview.is_loading() {
-            self.overview_job = None;
-            self.overview_task = None;
+            self.overview_read.resolve(self.applied.clone(), Ok(()));
             let request = self.overview.begin(self.applied.clone());
             self.overview
                 .apply(&request, Err("Node changed; refresh cancelled".into()));
             self.publish_reading(cx);
         }
         self.selected_node = selected;
-        self.service_task = None;
-        self.service_job = None;
+        self.service_read.resolve(None, Ok(()));
         self.services = Snapshot::default();
         self.push_services(cx);
         if self.mode().is_example() {
@@ -137,8 +135,8 @@ impl Pilot {
         let request = self.services.begin(target.clone());
         self.push_services(cx);
         let (job, receiver) = backend::services(self.runtime.clone(), client, target.clone());
-        self.service_job = Some(job);
-        self.service_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let completion = self.service_read.start(Some(target.clone()));
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("Services worker stopped".into()));
@@ -146,7 +144,9 @@ impl Pilot {
                 if view.target().as_ref().map(|(identity, _)| identity) != Some(&target) {
                     return;
                 }
-                view.service_job = None;
+                if !view.service_read.land(&completion, Ok(()), cx) {
+                    return;
+                }
                 if view.services.apply(&request, result) {
                     view.push_services(cx);
                     let catalog = view.services.data().cloned().unwrap_or_default();
@@ -156,7 +156,8 @@ impl Pilot {
                 }
                 cx.notify();
             });
-        }));
+        });
+        self.service_read.run(Some(job), task);
         cx.notify();
     }
 }
