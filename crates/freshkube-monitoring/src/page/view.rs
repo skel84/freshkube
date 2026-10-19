@@ -445,8 +445,10 @@ impl MonitoringPage {
                 .child(ui::empty_state(
                     IconName::Unplug,
                     "No metrics source",
-                    "Nothing was asked. Name a store for this entry under `metrics` in freshkube.yaml.",
-                    Some(why.to_string()),
+                    format!(
+                        "{why}. Nothing was asked. Name a store for this entry under metrics in freshkube.yaml."
+                    ),
+                    None,
                     Vec::new(),
                     cx,
                 ))
