@@ -380,6 +380,7 @@ async fn the_same_scope_again_keeps_what_was_read(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 async fn discovery_is_untouched_by_a_scope_that_says_discovery(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
     let (_runtime, handle, page) = mount(cx, Some(live_source()));
     cx.update(|cx| page.update(cx, |page, cx| page.set_scope(Scope::default(), cx)));
     show(cx, handle, &page);
