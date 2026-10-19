@@ -5,6 +5,7 @@ use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, Table
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
+    Glyph,
     Part,
     Entry,
     Why,
@@ -32,7 +33,7 @@ impl TableColumn for Column {
     }
 
     fn pinned(&self) -> bool {
-        self.field == Field::Part
+        matches!(self.field, Field::Glyph | Field::Part)
     }
 }
 
@@ -43,6 +44,7 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
         width,
     };
     let columns = vec![
+        column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(Field::Part, "Part", 96.),
         column(
             Field::Entry,
@@ -54,7 +56,8 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
             "Chosen by",
             fit("Chosen by", rows.iter().map(|row| &row.why), 160.),
         ),
-        column(Field::State, "State", 160.),
+        // Leave room for the glyph column and Reads in the narrow page.
+        column(Field::State, "State", 128.),
         // Prose gives way before the table needs to scroll sideways.
         // Entry and Chosen by are capped above to leave this minimum in
         // the narrow page; the shared flexible cell takes any spare room.
@@ -123,13 +126,9 @@ impl TableSource for SourcesList {
         let row = line.data;
         let cell = table::cell(column);
         match column.field {
-            Field::Part => cell
-                .id(SharedString::from(format!("{}-part", row.id)))
+            Field::Glyph => table::glyph_cell(column)
+                .id(SharedString::from(format!("{}-glyph", row.id)))
                 .test_support()
-                .flex()
-                .items_center()
-                .gap(dp(6.))
-                .child(div().min_w_0().truncate().child(row.label.clone()))
                 .when_some(row.tone, |this, tone| {
                     this.child(ui::status_mark(
                         row.mark_id.clone(),
@@ -138,6 +137,18 @@ impl TableSource for SourcesList {
                         cx,
                     ))
                 })
+                .into_any_element(),
+            Field::Part => cell
+                .id(SharedString::from(format!("{}-part", row.id)))
+                .test_support()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("{}-label", row.id)))
+                        .test_support()
+                        .min_w_0()
+                        .truncate()
+                        .child(row.label.clone()),
+                )
                 .into_any_element(),
             // Workloads name several entries, cut at a word with all of
             // them in the tooltip.

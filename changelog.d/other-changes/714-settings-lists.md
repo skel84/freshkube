@@ -1,1 +1,1 @@
-- **Settings lists:** align Argo CD destinations and Delivery sources with Clusters, keep their status marks in the first column, and truncate Reads within narrow tables.
+- **Settings lists:** keep the leading status gutter in Argo CD destinations and Delivery sources on purpose, so marks align and Part labels stay whole after a check; truncate Reads within narrow tables.

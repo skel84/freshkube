@@ -4,6 +4,7 @@ use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, Table
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
+    Glyph,
     Destination,
     By,
     Entry,
@@ -29,7 +30,7 @@ impl TableColumn for Column {
     }
 
     fn pinned(&self) -> bool {
-        self.field == Field::Destination
+        matches!(self.field, Field::Glyph | Field::Destination)
     }
 }
 
@@ -51,6 +52,7 @@ pub(super) fn columns(rows: &[DestinationRow]) -> (Vec<Column>, f32) {
         width,
     };
     let columns = vec![
+        column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(
             Field::Destination,
             "Destination",
@@ -122,13 +124,9 @@ impl TableSource for Destinations {
         let row = line.data;
         let cell = table::cell(column);
         match column.field {
-            Field::Destination => cell
-                .id(SharedString::from(format!("{}-destination", row.id)))
+            Field::Glyph => table::glyph_cell(column)
+                .id(SharedString::from(format!("{}-glyph", row.id)))
                 .test_support()
-                .flex()
-                .items_center()
-                .gap(dp(6.))
-                .child(div().min_w_0().truncate().child(row.destination.clone()))
                 .when(!row.listed, |this| {
                     this.child(ui::status_mark(
                         row.mark_id.clone(),
@@ -137,6 +135,11 @@ impl TableSource for Destinations {
                         cx,
                     ))
                 })
+                .into_any_element(),
+            Field::Destination => cell
+                .id(SharedString::from(format!("{}-destination", row.id)))
+                .test_support()
+                .child(row.destination.clone())
                 .into_any_element(),
             Field::By => cell.child(row.by.clone()).into_any_element(),
             Field::Entry => cell
