@@ -108,13 +108,7 @@ impl SettingsSection {
         const OPEN_MENU: &str = "Open the Settings menu";
         match self {
             Self::General => None,
-            Self::Connection => Some((
-                MENU,
-                "The talosconfig and how the Kubernetes API is reached are in the header’s \
-                 Settings menu until this section holds them.",
-                OPEN_MENU,
-                SettingsEvent::OpenMenu,
-            )),
+            Self::Connection => None,
             Self::Monitoring => Some((
                 MENU,
                 "The metrics source and the dashboards folder are in the header’s Settings menu \
@@ -248,11 +242,11 @@ impl SettingsPage {
                                         .items_center()
                                         .child(refresh_control),
                                 )
-                                .hint(if has_talos {
-                                    "Every 15 s; Kubernetes updates are watched."
-                                } else {
-                                    "Requires a Talos connection; Kubernetes updates are watched."
-                                }),
+                                .hint(
+                                    crate::desktop::kubernetes_only::refresh_hint(
+                                        has_talos, automatic,
+                                    ),
+                                ),
                             )
                             .saved_in(saved_in())
                             .render(cx),

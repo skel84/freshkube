@@ -486,7 +486,7 @@ fn the_gear_panels_dividers_keep_their_pixel_in_a_short_window(cx: &mut TestAppC
                 divider.bounds()
             );
         }
-        assert!(found >= 5, "found {found} dividers");
+        assert_eq!(found, 3, "Connection’s two dividers left the gear");
     })
     .unwrap();
 }
@@ -656,7 +656,7 @@ fn open_settings_and_all_settings_open_the_section_shown_last(cx: &mut TestAppCo
 #[gpui_kit::test]
 fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    for (slug, section, title) in SECTIONS.into_iter().take(4).skip(1) {
+    for (slug, section, title) in SECTIONS.into_iter().take(4).skip(2) {
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
             window.render_frame(cx);
@@ -688,4 +688,102 @@ fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn connection_is_a_settings_form_at_each_window_and_text_size(cx: &mut TestAppContext) {
+    use crate::{text_size, ui};
+    use freshkube_ui::{form, page};
+    use gpui_kit::px;
+
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, pilot) = fixture(cx, width, height);
+        for size in [13., 20.] {
+            cx.update_window(handle, |_, window, cx| {
+                text_size::set(size, cx);
+                pilot.update(cx, |pilot, cx| {
+                    pilot.show_settings(SettingsSection::Connection, window, cx)
+                });
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                layout_check::assert_page_frame(
+                    window,
+                    cx,
+                    &layout_check::PageFrame {
+                        page: "settings-page",
+                        title: "settings-connection-title",
+                        title_text: "Connection",
+                        content: "settings-connection-form",
+                    },
+                );
+                let dp = |n| ui::dp_px(n, window);
+                let talos = window.find("connection-talos").bounds();
+                let kubernetes = window.find("kubeconfig-settings").bounds();
+                assert!(talos.size.width <= dp(form::MAX_WIDTH) + px(1.));
+                assert!((kubernetes.top() - talos.bottom() - dp(20.)).abs() < px(1.));
+                let control = window.find("talosconfig-path").bounds();
+                let label = window.find("connection-talos-path-label").bounds();
+                assert!((control.size.height - dp(ui::CONTROL_HEIGHT)).abs() < px(1.));
+                if page::content_width(window) < form::NARROW {
+                    assert!((control.left() - label.left()).abs() < px(1.));
+                    assert!(control.top() >= label.bottom() + dp(4.) - px(1.));
+                } else {
+                    assert!((control.left() - label.right() - dp(12.)).abs() < px(1.));
+                    assert!((label.size.width - dp(form::LABEL_WIDTH)).abs() < px(1.));
+                }
+                for id in [
+                    "browse-config",
+                    "save-connection",
+                    "revert-connection",
+                    "kubeconfig-file",
+                ] {
+                    let bounds = window.find(id).bounds();
+                    assert!(bounds.left() >= talos.left() - px(1.), "{id}");
+                    assert!(bounds.right() <= talos.right() + px(1.), "{id}");
+                }
+                assert!(window.try_find("settings-connection-open").is_none());
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[gpui_kit::test]
+fn general_and_quick_controls_describe_auto_refresh_when_off(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::General, window, cx)
+        });
+        window.render_frame(cx);
+        window.click("general-auto-refresh", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let hint = "Talos auto-refresh is off; Kubernetes updates are watched.";
+        assert!(window.find("general-auto-refresh-row-hint").visible());
+        assert_eq!(
+            crate::desktop::kubernetes_only::refresh_hint(true, pilot.read(cx).chrome.automatic),
+            hint
+        );
+        window.click("settings", cx);
+        window.render_frame(cx);
+        assert!(window.find("settings-quick-refresh-hint").visible());
+        assert!(window.try_find("browse-config").is_none());
+        assert!(window.try_find("kubeconfig-mode").is_none());
+        assert!(window.find("monitoring-source-settings").visible());
+        window.click("auto-refresh", cx);
+        window.render_frame(cx);
+        assert!(window.find("settings-quick-refresh-hint").visible());
+        assert_eq!(
+            crate::desktop::kubernetes_only::refresh_hint(true, pilot.read(cx).chrome.automatic),
+            "Every 15 s; Kubernetes updates are watched."
+        );
+    })
+    .unwrap();
 }

@@ -247,6 +247,15 @@ fn kubernetes_only_control_plane_offers_a_talosconfig(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(window.try_find("talosconfig-path").is_none());
+        window.click("settings-all", cx);
+        window.render_frame(cx);
+        window.click("nav-settings-connection", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         assert!(window.find("talosconfig-path").visible());
     })
     .unwrap();

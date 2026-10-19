@@ -309,7 +309,7 @@ pub(in crate::desktop) fn status_text(
 
 pub(super) fn settings_content(
     pilot: WeakEntity<Pilot>,
-    path: Entity<gpui_kit::component::input::InputState>,
+    _path: Entity<gpui_kit::component::input::InputState>,
     window: &mut Window,
     cx: &mut Context<gpui_kit::component::popover::PopoverState>,
 ) -> AnyElement {
@@ -319,22 +319,16 @@ pub(super) fn settings_content(
     };
     let monitoring = view.read(cx).monitoring.clone();
     monitoring.update(cx, |page, cx| page.source_form(window, cx));
-    let (fixture, kubernetes_only, loading, automatic, appearance) = {
+    let (kubernetes_only, automatic, appearance) = {
         let view = view.read(cx);
         (
-            view.mode().is_example(),
             !view.mode().has_talos(),
-            view.config_loading,
             view.chrome.automatic,
             view.chrome.appearance,
         )
     };
     let text_size = text_size::current(cx);
     let popover = cx.entity();
-    let apply_pilot = pilot.clone();
-    let apply_popover = popover.clone();
-    let browse_pilot = pilot.clone();
-    let browse_popover = popover.clone();
     let switch_pilot = pilot.clone();
     let appearance_pilot = pilot.clone();
     let all_pilot = pilot.clone();
@@ -359,65 +353,6 @@ pub(super) fn settings_content(
         .p_1()
         .gap_3p5()
         .child(h_flex().justify_between().child(ui::caption("Settings", cx)).child(hint(concat!("Freshkube v", env!("CARGO_PKG_VERSION")))))
-        .child(freshkube_ui::form::group("settings-talos", "Connection")
-            .narrow(true)
-            .row(freshkube_ui::form::row("settings-talos-path", "Talosconfig",
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            div().flex_1().min_w_0().child(
-                                Input::new(&path)
-                                    .id("talosconfig-path")
-                                    .aria_label("Talosconfig path; Apply to reload contexts")
-                                    .small()
-                                    .disabled(fixture),
-                            ),
-                        )
-                        .child(
-                            Button::new("browse-config")
-                                .outline()
-                                .small()
-                                .icon(IconName::FolderOpen)
-                                .label("Browse…")
-                                .tooltip("Choose a talosconfig file and load its contexts")
-                                .disabled(fixture || loading)
-                                .on_click(move |_, window, cx| {
-                                    // Close first so the native picker isn't
-                                    // stacked over an open popover.
-                                    browse_popover.update(cx, |state, cx| state.dismiss(window, cx));
-                                    let _ = browse_pilot.update(cx, |view, cx| {
-                                        view.browse_config(window, cx)
-                                    });
-                                }),
-                        )
-                        .child(
-                            Button::new("apply-config")
-                                .primary()
-                                .small()
-                                .label("Apply")
-                                .disabled(fixture || loading)
-                                .on_click(move |_, window, cx| {
-                                    let _ = apply_pilot.update(cx, |view, cx| {
-                                        view.apply_config_path(window, cx)
-                                    });
-                                    apply_popover.update(cx, |state, cx| state.dismiss(window, cx));
-                                }),
-                        )
-            ).hint(if fixture {
-                    "Example data doesn't read a talosconfig."
-                } else if kubernetes_only {
-                    "This window opened without one. Choosing a talosconfig switches it to Talos: its contexts replace the kubeconfig's."
-                } else {
-                    "Browse loads the chosen file right away; a typed path loads when you press Apply. Leave it empty to use TALOSCONFIG or ~/.talos/config."
-                }))
-            .render(cx))
-        .child(divider(1))
-        .child(if kubernetes_only {
-            kubernetes_only::settings_section(&view, popover.clone(), cx)
-        } else {
-            super::super::settings::connection::kubeconfig_section(&view, popover.clone(), cx).into_any_element()
-        })
-        .child(divider(2))
         .child(freshkube_ui::form::group("settings-quick", "Quick controls")
             .narrow(true)
             .row(freshkube_ui::form::row("settings-quick-refresh", "Talos auto-refresh",
@@ -431,7 +366,7 @@ pub(super) fn settings_content(
                                 view.set_auto_refresh(checked, cx);
                             });
                         }),
-            ).hint("Every 15 s; Kubernetes updates are watched"))
+            ).hint(kubernetes_only::refresh_hint(!kubernetes_only, automatic)))
             .row(freshkube_ui::form::row("settings-quick-appearance", "Appearance",
                     ButtonGroup::new("appearance")
                         .outline()

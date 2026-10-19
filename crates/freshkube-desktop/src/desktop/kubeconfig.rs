@@ -30,6 +30,12 @@ pub(super) struct KubeconfigDraft {
     read: Loader<(), (PathBuf, Option<String>)>,
 }
 
+impl KubeconfigDraft {
+    pub(super) fn revision(&self) -> u64 {
+        self.read.revision()
+    }
+}
+
 /// What a held link is told when its entry's own kubeconfig can't be used.
 pub(super) fn unusable_kubeconfig_notice(object: &str, entry: &str, why: &str) -> String {
     format!("Can’t open {object}: {entry}’s kubeconfig can’t be used ({why})")
