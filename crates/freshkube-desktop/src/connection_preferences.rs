@@ -10,6 +10,7 @@ use std::{
 
 use freshkube_prefs::{Document, Layout};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _, ser::SerializeMap};
+use serde_json::{Map, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Selection {
@@ -38,8 +39,38 @@ fn file(preferences: &Path) -> PathBuf {
 
 /// `connection.json`: at most 64 KiB, and only the owner's to read and write
 /// for a new file. It holds paths and a context name, never a credential.
-fn document(path: &Path) -> Document<Option<Remembered>> {
+fn document(path: &Path) -> Document<Option<Saved>> {
     Document::at(path, Layout::Pretty, 0o600).limited_to(64 * 1024)
+}
+
+/// The selected mode's fields and the keys this build does not know.
+#[derive(Clone, Serialize)]
+struct Saved {
+    #[serde(flatten)]
+    remembered: Remembered,
+    #[serde(flatten)]
+    extra: Map<String, Value>,
+}
+
+impl<'de> Deserialize<'de> for Saved {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let remembered = Remembered::from_json(&value).ok_or_else(|| {
+            D::Error::custom("not a remembered connection: an absolute path and a context")
+        })?;
+        let known: &[&str] = match &remembered {
+            Remembered::Talos(_) => &["talosconfig", "context"],
+            Remembered::Kubernetes(_) => &["mode", "kubeconfig", "context"],
+        };
+        let extra = value
+            .as_object()
+            .expect("a remembered connection is an object")
+            .iter()
+            .filter(|(key, _)| !known.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        Ok(Self { remembered, extra })
+    }
 }
 
 impl Remembered {
@@ -96,6 +127,10 @@ impl<'de> Deserialize<'de> for Remembered {
 /// What the file holds. A missing, unreadable or unusable file is nothing
 /// remembered; a file that exists but isn't usable is logged.
 pub(crate) fn load_remembered(preferences: &Path) -> Option<Remembered> {
+    load_saved(preferences).map(|saved| saved.remembered)
+}
+
+fn load_saved(preferences: &Path) -> Option<Saved> {
     let loaded = document(&file(preferences)).load();
     if let Some(problem) = &loaded.problem {
         tracing::warn!("connection preference not used: {problem}");
@@ -120,14 +155,26 @@ pub(crate) struct ConnectionStore {
     // A delayed older task cannot restore an obsolete file or context.
     latest: Arc<Mutex<Option<Remembered>>>,
     writer: Arc<Mutex<()>>,
+    // Unknown keys belong to the mode read from disk, not the next selection.
+    talos_extra: Map<String, Value>,
+    kubernetes_extra: Map<String, Value>,
 }
 
 impl ConnectionStore {
     pub(crate) fn new(preferences: &Path) -> Self {
+        let (mut talos_extra, mut kubernetes_extra) = (Map::new(), Map::new());
+        if let Some(saved) = load_saved(preferences) {
+            match saved.remembered {
+                Remembered::Talos(_) => talos_extra = saved.extra,
+                Remembered::Kubernetes(_) => kubernetes_extra = saved.extra,
+            }
+        }
         Self {
             file: file(preferences),
             latest: Default::default(),
             writer: Default::default(),
+            talos_extra,
+            kubernetes_extra,
         }
     }
 
@@ -157,13 +204,72 @@ impl ConnectionStore {
         let Some(selection) = latest else {
             return Ok(());
         };
-        document(path).save(&Some(selection))
+        let extra = match &selection {
+            Remembered::Talos(_) => &self.talos_extra,
+            Remembered::Kubernetes(_) => &self.kubernetes_extra,
+        };
+        document(path).save(&Some(Saved {
+            remembered: selection,
+            extra: extra.clone(),
+        }))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_keys_round_trip_unchanged_per_mode() {
+        for kubernetes in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let preferences = directory.path().join("preferences.json");
+            let talos = Selection {
+                path: directory.path().join("talosconfig"),
+                context: "example".into(),
+            };
+            let kube = KubeSelection {
+                path: directory.path().join("kubeconfig"),
+                context: "example".into(),
+            };
+            let remembered = if kubernetes {
+                Remembered::Kubernetes(kube.clone())
+            } else {
+                Remembered::Talos(talos.clone())
+            };
+            let mut value = serde_json::to_value(&remembered).unwrap();
+            value["future"] = serde_json::json!({"options": [null, false, 7, "example"]});
+            std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
+            assert_eq!(load_remembered(&preferences), Some(remembered));
+            let store = ConnectionStore::new(&preferences);
+            let remember = || {
+                if kubernetes {
+                    store.remember_kubernetes(kube.clone());
+                } else {
+                    store.remember(talos.clone());
+                }
+            };
+            let read = || {
+                serde_json::from_slice::<Value>(&std::fs::read(file(&preferences)).unwrap())
+                    .unwrap()
+            };
+            remember();
+            store.save_latest().unwrap();
+            assert_eq!(read(), value);
+
+            // Switching mode must not carry the previous mode's unknown keys.
+            if kubernetes {
+                store.remember(talos.clone());
+            } else {
+                store.remember_kubernetes(kube.clone());
+            }
+            store.save_latest().unwrap();
+            assert!(read().get("future").is_none());
+            remember();
+            store.save_latest().unwrap();
+            assert_eq!(read(), value);
+        }
+    }
 
     #[test]
     fn saves_only_selection_and_late_tasks_write_the_latest_choice() {

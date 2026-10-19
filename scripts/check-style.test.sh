@@ -14,6 +14,7 @@ tree() {
     "$work/tree/crates/freshkube-terminal/src"
   cp "$here/check-style.sh" "$work/tree/scripts/"
   : >"$work/tree/scripts/style-allowlist.txt"
+  : >"$work/pending.txt"
 }
 
 page() {
@@ -23,7 +24,7 @@ page() {
 # expect <0|1> <description> [pattern the output must contain]
 expect() {
   local want="$1" what="$2" pattern="${3:-}" got=0 out
-  out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" 2>&1)" || got=$?
+  out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --pending "$work/pending.txt" 2>&1)" || got=$?
   if [ "$got" != "$want" ] || { [ -n "$pattern" ] && ! grep -qF -- "$pattern" <<<"$out"; }; then
     echo "FAIL: $what (exit $got, wanted $want${pattern:+, output containing \"$pattern\"})"
     sed 's/^/    /' <<<"$out"
@@ -126,7 +127,7 @@ fn controls() -> Div {
 }
 EOF
 expect 1 "an icon-only button without a tooltip fails" "tip crates/freshkube-desktop/src/buttons.rs:9:"
-out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --list)"
+out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --pending "$work/pending.txt" --list)"
 if [ "$(grep -c '^tip ' <<<"$out")" = 1 ]; then
   echo "ok: an icon button with a tooltip, label or child passes"
 else
@@ -147,7 +148,7 @@ fn page() -> Div {
 }
 EOF
 expect 1 "a vertical scroll that takes sideways movement fails" "scroll crates/freshkube-desktop/src/scroll.rs:7:"
-out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --list)"
+out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --pending "$work/pending.txt" --list)"
 if [ "$(grep -c '^scroll ' <<<"$out")" = 1 ]; then
   echo "ok: a vertical scroll restricted to its axis passes"
 else
@@ -301,6 +302,118 @@ cat >"$work/tree/crates/freshkube-desktop/build.rs" <<'EOF'
 fn main() { let _mac = cfg!(target_os = "macos"); }
 EOF
 expect 1 "a crate's build script is scanned" "platform crates/freshkube-desktop/build.rs:1:"
+
+tree
+page labels.rs <<'EOF'
+fn form() -> Div {
+    let label = |text: &'static str| {
+        div()
+            .text_size(dp(12.5))
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(text)
+    };
+    let heading = div().font_weight(FontWeight::SEMIBOLD).text_size(dp(12.5)).child("Metrics source");
+    let reason = div().text_size(dp(12.5)).font_weight(FontWeight::SEMIBOLD).child(line.reason.clone());
+    let plain = div().text_size(dp(12.5)).child("Not bold");
+    div().child(label("Context")).child(heading).child(reason).child(plain)
+}
+EOF
+expect 1 "a hand-made field label fails" "label crates/freshkube-desktop/src/labels.rs:4:"
+expect 1 "a label set bold first fails too" "label crates/freshkube-desktop/src/labels.rs:8:"
+out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --pending "$work/pending.txt" --list)"
+if [ "$(grep -c '^label ' <<<"$out")" = 2 ]; then
+  echo "ok: bold text built from data and plain 12.5 text pass"
+else
+  echo "FAIL: bold text built from data and plain 12.5 text pass"
+  sed 's/^/    /' <<<"$out"
+  failures=$((failures + 1))
+fi
+
+tree
+cat >"$work/tree/crates/freshkube-ui/src/inspector.rs" <<'EOF'
+fn field(text: &'static str) -> Div { div().text_size(dp(12.5)).font_weight(FontWeight::SEMIBOLD).child(text) }
+EOF
+expect 1 "a shared component drawing its own label fails" "label crates/freshkube-ui/src/inspector.rs:1:"
+
+tree
+mkdir -p "$work/tree/crates/freshkube-ui/src/form"
+cat >"$work/tree/crates/freshkube-ui/src/form.rs" <<'EOF'
+fn label(text: &'static str) -> Div { div().text_size(dp(12.5)).font_weight(FontWeight::SEMIBOLD).child(text) }
+EOF
+cat >"$work/tree/crates/freshkube-ui/src/form/actions.rs" <<'EOF'
+fn revert() -> Button { Button::new("revert").outline().label("Revert") }
+fn cancel() -> Button { Button::new("cancel").label("Cancel").on_click(|_, window, cx| window.close_dialog(cx)) }
+EOF
+page tests.rs <<'EOF'
+fn sample() -> Button { Button::new("revert").label("Revert") }
+EOF
+expect 0 "the form module and tests may draw labels and button pairs"
+
+tree
+page dialog.rs <<'EOF'
+fn footer() -> Div {
+    let cancel = Button::new("confirm-cancel")
+        .outline()
+        .label("Cancel")
+        .on_click(|_, window, cx| window.close_dialog(cx));
+    h_flex()
+        .justify_end()
+        .child(cancel)
+        .child(Button::new("confirm-ok").primary().label("Save"))
+        .child(Button::new("group-revert").outline().label("Revert"))
+        .child(
+            Button::new("operation-cancel")
+                .xsmall()
+                .label("Cancel")
+                .tooltip("Stop before the next step")
+                .on_click(|_, _, cx| stop(cx)),
+        )
+}
+EOF
+expect 1 "a dialog's own Cancel fails" "buttons crates/freshkube-desktop/src/dialog.rs:2:"
+expect 1 "a group's own Revert fails" "buttons crates/freshkube-desktop/src/dialog.rs:10:"
+out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" --pending "$work/pending.txt" --list)"
+if [ "$(grep -c '^buttons ' <<<"$out")" = 2 ]; then
+  echo "ok: a Cancel that stops an operation passes"
+else
+  echo "FAIL: a Cancel that stops an operation passes"
+  sed 's/^/    /' <<<"$out"
+  failures=$((failures + 1))
+fi
+
+echo "buttons crates/freshkube-desktop/src/dialog.rs 4" >"$work/pending.txt"
+expect 0 "a pending file passes its rule"
+page labels.rs <<'EOF'
+fn label() -> Div { div().text_size(dp(12.5)).font_weight(FontWeight::SEMIBOLD).child("Role") }
+EOF
+expect 1 "a pending entry covers one rule, not another file" "label crates/freshkube-desktop/src/labels.rs:1:"
+
+tree
+page dialog.rs <<'EOF'
+fn footer() -> Div { form::actions(save, form::Action::cancel("confirm-cancel")) }
+EOF
+echo "buttons crates/freshkube-desktop/src/dialog.rs 4" >"$work/pending.txt"
+expect 1 "a pending file that passes fails until its line goes" "buttons crates/freshkube-desktop/src/dialog.rs (#697 slice 4)"
+
+tree
+echo "label crates/freshkube-desktop/src/gone.rs 9" >"$work/pending.txt"
+expect 1 "a pending file that is gone fails until its line goes" "label crates/freshkube-desktop/src/gone.rs (#697 slice 9)"
+
+tree
+rm "$work/pending.txt"
+mkdir -p "$work/tree/crates/freshkube-desktop/src/desktop/settings"
+page desktop/settings/edit.rs <<'EOF'
+fn cancel() -> Button { Button::new("x").label("Cancel").on_click(|_, w, cx| w.close_dialog(cx)) }
+EOF
+out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" 2>&1)" || true
+if grep -qF "label crates/freshkube-monitoring/src/page/source.rs (#697 slice 9)" <<<"$out" &&
+  ! grep -qF "buttons crates/freshkube-desktop/src/desktop/settings/edit.rs:" <<<"$out"; then
+  echo "ok: the script's own pending list names #697's files and their slices"
+else
+  echo "FAIL: the script's own pending list names #697's files and their slices"
+  sed 's/^/    /' <<<"$out"
+  failures=$((failures + 1))
+fi
 
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"
