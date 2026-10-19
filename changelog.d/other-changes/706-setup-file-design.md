@@ -1,0 +1,1 @@
+- **Setup file design:** [docs/SETUP_FILE.md](docs/SETUP_FILE.md) designs `freshkube.yaml`, one file for the workspace, metrics (automatic, central or per entry), Coroot, Tekton Results and the supply chain, with its migration from the JSON files, reload on change and its slices.
