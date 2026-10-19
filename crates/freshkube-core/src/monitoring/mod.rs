@@ -16,6 +16,8 @@ mod discovery;
 mod example;
 pub mod history;
 pub mod markers;
+mod matcher;
+pub mod scope;
 mod transport;
 
 #[cfg(test)]
@@ -33,6 +35,7 @@ pub use discovery::{
 pub use example::ExampleSource;
 pub use grafaui_model as model;
 pub use grafaui_prometheus as prometheus;
+pub use matcher::Matcher;
 pub use transport::{
     DEFAULT_SCRAPE_INTERVAL, MAX_ANSWER, MAX_CONCURRENT, PanelResult, Prometheus, REQUEST_TIMEOUT,
     Source,

@@ -7,6 +7,7 @@ mod keys;
 mod kubernetes_only;
 mod layout;
 mod map;
+mod metrics;
 mod motion;
 mod observability;
 mod operations;
