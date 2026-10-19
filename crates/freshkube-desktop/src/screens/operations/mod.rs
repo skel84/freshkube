@@ -81,7 +81,7 @@ use super::{
     Loader, Reading, SCREEN_DEADLINE, ScreenEvent, ScreenPanel, ScreenSource, TableLoading,
     page_width, panel, reading, refresh_control, retry_button, segment, split_at,
 };
-use crate::backend::{self, OwnedJob};
+use crate::backend;
 use crate::mutation::{self, Confirmation, Operations};
 use crate::palette::palette;
 use crate::presentation::Role as NodeRole;
@@ -826,9 +826,8 @@ pub(crate) struct OperationsScreen {
     /// The roster's loading rows while the overview is read.
     loading: TableLoading,
     preview: PreviewState,
-    preview_generation: u64,
-    preview_job: Option<OwnedJob>,
-    preview_task: Option<Task<()>>,
+    /// Owns preview completion and work; `preview` keeps its display state.
+    preview_read: freshkube_reads::Loader<(), Option<PreviewKey>>,
     /// The user asked to run: open the confirmation as soon as the fresh
     /// preview is in and the plan may run.
     confirm_when_ready: bool,
@@ -879,9 +878,7 @@ impl OperationsScreen {
             table: freshkube_ui::table::TableState::new(PREFIX),
             loading: TableLoading::new(PREFIX, cx),
             preview: PreviewState::Idle,
-            preview_generation: 0,
-            preview_job: None,
-            preview_task: None,
+            preview_read: freshkube_reads::Loader::default(),
             confirm_when_ready: false,
             audit: Loader::default(),
             example_audit: Vec::new(),
@@ -1024,9 +1021,8 @@ impl OperationsScreen {
 
     fn drop_preview(&mut self) {
         self.preview = PreviewState::Idle;
-        self.preview_job = None;
-        self.preview_task = None;
-        self.preview_generation += 1;
+        // Keep the request sequence, even if the same selection returns.
+        self.preview_read.resolve(None, Ok(()));
         self.confirm_when_ready = false;
     }
 
@@ -1041,15 +1037,13 @@ impl OperationsScreen {
         if !force && self.preview.key() == Some(&key) {
             return;
         }
-        self.preview_generation += 1;
-        let generation = self.preview_generation;
-        self.preview_job = None;
-        self.preview_task = None;
+        let request = self.preview_read.start(Some(key.clone()));
         let Some(source) = self.source.clone() else {
             return;
         };
         let Some(live) = source.live.clone() else {
             // Example data answers at once, from the example cluster.
+            self.preview_read.land(&request, Ok(()), cx);
             self.preview = PreviewState::Ready(example_preview(&source, key));
             self.preview_ready(window, cx);
             cx.notify();
@@ -1057,10 +1051,9 @@ impl OperationsScreen {
         };
         let Some(access) = live.applied.clone() else {
             // The overview hasn't said which access it used yet.
-            self.preview = PreviewState::Failed {
-                key,
-                error: "The access configuration isn't known yet; refresh".into(),
-            };
+            let error = "The access configuration isn't known yet; refresh".to_owned();
+            self.preview_read.land(&request, Err(error.clone()), cx);
+            self.preview = PreviewState::Failed { key, error };
             self.confirm_when_ready = false;
             cx.notify();
             return;
@@ -1074,16 +1067,18 @@ impl OperationsScreen {
             "Checking the nodes timed out".into(),
             async move { preview_live(live, access, endpoint, work_key).await },
         );
-        self.preview_job = Some(job);
-        self.preview_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("Checking the nodes stopped unexpectedly".into()));
             _ = this.update_in(cx, |screen, window, cx| {
-                if screen.preview_generation != generation {
+                if !screen.preview_read.land(
+                    &request,
+                    result.as_ref().map(|_| ()).map_err(Clone::clone),
+                    cx,
+                ) {
                     return;
                 }
-                screen.preview_job = None;
                 screen.preview = match result {
                     Ok(preview) => PreviewState::Ready(preview),
                     Err(error) => PreviewState::Failed { key, error },
@@ -1091,7 +1086,8 @@ impl OperationsScreen {
                 screen.preview_ready(window, cx);
                 cx.notify();
             });
-        }));
+        });
+        self.preview_read.run(Some(job), task);
         cx.notify();
     }
 
