@@ -71,7 +71,7 @@ fn command_f_searches_the_logs_in_the_dock_and_the_yaml_in_the_pane(cx: &mut Tes
         window.render_frame(cx);
         assert!(window.find("logs-search").focused().unwrap_or(false));
         assert_eq!(
-            pilot.read(cx).resources.read(cx).detail_tab(cx),
+            pilot.read(cx).pages.resources.read(cx).detail_tab(cx),
             Tab::Overview
         );
         // From the pane, it finds in the YAML. Logs closed the drawer; the
@@ -86,7 +86,10 @@ fn command_f_searches_the_logs_in_the_dock_and_the_yaml_in_the_pane(cx: &mut Tes
         window.render_frame(cx);
         window.press("secondary-f", cx);
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), Tab::Yaml);
+        assert_eq!(
+            pilot.read(cx).pages.resources.read(cx).detail_tab(cx),
+            Tab::Yaml
+        );
     })
     .unwrap();
 }
@@ -127,7 +130,7 @@ fn escape_in_the_dock_clears_the_search_leaves_it_then_returns_to_the_list(
     // With nothing selected, the keyboard goes back to the list.
     step(cx, "escape", None);
     assert!(focused(cx, "resource-body"));
-    assert!(cx.update(|cx| pilot.read(cx).dock.read(cx).has_tabs()));
+    assert!(cx.update(|cx| pilot.read(cx).pages.dock.read(cx).has_tabs()));
 }
 
 #[gpui_kit::test]

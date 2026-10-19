@@ -276,7 +276,7 @@ fn the_node_pane_draws_the_screens_in_the_shells_map(cx: &mut TestAppContext) {
     use super::super::pages::PageId;
     let (_runtime, _handle, view) = fixture(cx, 1280., 820.);
     view.read_with(cx, |pilot, cx| {
-        let screens = &pilot.node_workspace.read(cx).screens;
+        let screens = &pilot.pages.node_workspace.read(cx).screens;
         assert_eq!(
             screens.keys().copied().collect::<Vec<_>>(),
             [
@@ -287,7 +287,7 @@ fn the_node_pane_draws_the_screens_in_the_shells_map(cx: &mut TestAppContext) {
             ]
         );
         for (id, screen) in screens {
-            assert!(pilot.pages.get(id) == Some(screen), "{id:?}");
+            assert!(pilot.pages.map.get(id) == Some(screen), "{id:?}");
         }
     });
 }

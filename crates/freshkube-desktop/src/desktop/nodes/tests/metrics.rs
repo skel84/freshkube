@@ -110,7 +110,7 @@ fn node_metrics_are_hidden_owned_cancelled_and_retain_failed_answers(cx: &mut Te
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            let nodes = pilot.node_workspace.clone();
+            let nodes = pilot.pages.node_workspace.clone();
             nodes.read_with(cx, |nodes, _| {
                 assert!(!nodes.metrics.visible);
                 assert!(!nodes.metrics.snapshot.is_visible());
@@ -227,7 +227,7 @@ fn example_nodes_show_use_as_soon_as_the_page_shows(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     pilot.read_with(cx, |pilot, cx| {
-        let nodes = &pilot.node_workspace.read(cx);
+        let nodes = &pilot.pages.node_workspace.read(cx);
         let joined: Vec<_> = nodes
             .rows
             .iter()
@@ -278,7 +278,7 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
         cx.update_window(handle, |_, window, cx| {
             pilot.update(cx, |pilot, cx| {
                 pilot.navigate(Page::Nodes, window, cx);
-                pilot.node_workspace.update(cx, |nodes, cx| {
+                pilot.pages.node_workspace.update(cx, |nodes, cx| {
                     let source = nodes.metrics.source.clone().unwrap();
                     nodes.metrics.snapshot.start(source);
                     let task = cx.spawn(async move |_, _| {
@@ -293,9 +293,25 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
                 } else {
                     pilot.navigate(Page::Overview, window, cx);
                 }
-                assert!(!pilot.node_workspace.read(cx).metrics.snapshot.is_loading());
+                assert!(
+                    !pilot
+                        .pages
+                        .node_workspace
+                        .read(cx)
+                        .metrics
+                        .snapshot
+                        .is_loading()
+                );
                 if !replace_context {
-                    assert!(!pilot.node_workspace.read(cx).metrics.snapshot.is_visible());
+                    assert!(
+                        !pilot
+                            .pages
+                            .node_workspace
+                            .read(cx)
+                            .metrics
+                            .snapshot
+                            .is_visible()
+                    );
                 }
             });
         })
@@ -318,13 +334,19 @@ fn hiding_or_replacing_nodes_source_drops_its_pending_job(cx: &mut TestAppContex
     })
     .unwrap();
     let before = pilot.read_with(cx, |pilot, cx| {
-        pilot.node_workspace.read(cx).metrics.snapshot.revision()
+        pilot
+            .pages
+            .node_workspace
+            .read(cx)
+            .metrics
+            .snapshot
+            .revision()
     });
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(45));
     cx.run_until_parked();
     pilot.read_with(cx, |pilot, cx| {
-        let metrics = &pilot.node_workspace.read(cx).metrics;
+        let metrics = &pilot.pages.node_workspace.read(cx).metrics;
         assert_eq!(metrics.snapshot.revision(), before);
         assert!(!metrics.snapshot.is_loading());
         assert!(!metrics.snapshot.is_visible());
@@ -379,6 +401,7 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
         pilot.update(cx, |pilot, cx| {
             let widths = |pilot: &super::super::Pilot, cx: &gpui_kit::App| {
                 pilot
+                    .pages
                     .node_workspace
                     .read(cx)
                     .all_columns
@@ -388,10 +411,10 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
                     .collect::<Vec<_>>()
             };
             let before = widths(pilot, cx);
-            pilot.node_workspace.update(cx, |nodes, _| {
+            pilot.pages.node_workspace.update(cx, |nodes, _| {
                 nodes.hidden_columns.insert(Field::Services);
             });
-            pilot.node_workspace.update(cx, |nodes, _| {
+            pilot.pages.node_workspace.update(cx, |nodes, _| {
                 nodes.show_columns();
             });
             for node in &mut pilot.nodes {
@@ -404,17 +427,19 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
             assert_eq!(widths(pilot, cx), before);
             assert!(
                 pilot
+                    .pages
                     .node_workspace
                     .read(cx)
                     .hidden_columns
                     .contains(&Field::Services)
             );
             assert_eq!(
-                pilot.node_workspace.read(cx).columns.len(),
-                pilot.node_workspace.read(cx).all_columns.len() - 2
+                pilot.pages.node_workspace.read(cx).columns.len(),
+                pilot.pages.node_workspace.read(cx).all_columns.len() - 2
             );
             assert!(
                 !pilot
+                    .pages
                     .node_workspace
                     .read(cx)
                     .columns
@@ -435,7 +460,7 @@ fn node_metrics_keep_reading_while_the_pane_shows_a_screen(cx: &mut TestAppConte
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     let read = |cx: &mut TestAppContext| {
         pilot.read_with(cx, |pilot, cx| {
-            let metrics = &pilot.node_workspace.read(cx).metrics;
+            let metrics = &pilot.pages.node_workspace.read(cx).metrics;
             (
                 metrics.visible,
                 (metrics.snapshot.revision(), metrics.snapshot.is_visible()),
@@ -475,14 +500,14 @@ fn node_usage_follows_the_nodes_page_through_its_pane(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             let reading = |pilot: &super::super::Pilot, cx: &gpui_kit::App| {
-                let metrics = &pilot.node_workspace.read(cx).metrics;
+                let metrics = &pilot.pages.node_workspace.read(cx).metrics;
                 // Hidden, it holds no read and no delivery.
                 if !metrics.visible {
                     assert!(!metrics.snapshot.is_visible() && !metrics.snapshot.is_loading());
                 }
                 metrics.visible
             };
-            let rows = pilot.node_workspace.read(cx).rows.clone();
+            let rows = pilot.pages.node_workspace.read(cx).rows.clone();
             let (first, second) = (rows[0].key.clone(), rows[1].key.clone());
             let mut steps = Vec::new();
             pilot.navigate(Page::Nodes, window, cx);
@@ -490,7 +515,7 @@ fn node_usage_follows_the_nodes_page_through_its_pane(cx: &mut TestAppContext) {
             pilot.show_node_tab(NodeTab::Processes, window, cx);
             steps.push(("processes", reading(pilot, cx)));
             pilot.open_node(second, window, cx);
-            assert_eq!(pilot.node_workspace.read(cx).tab, NodeTab::Processes);
+            assert_eq!(pilot.pages.node_workspace.read(cx).tab, NodeTab::Processes);
             steps.push(("another node on processes", reading(pilot, cx)));
             pilot.show_node_tab(NodeTab::Logs, window, cx);
             steps.push(("logs", reading(pilot, cx)));
@@ -536,7 +561,13 @@ fn node_metrics_keep_the_poll_interval_when_example_rows_arrive(cx: &mut TestApp
     cx.run_until_parked();
     let revision = |cx: &mut TestAppContext| {
         pilot.read_with(cx, |pilot, cx| {
-            pilot.node_workspace.read(cx).metrics.snapshot.revision()
+            pilot
+                .pages
+                .node_workspace
+                .read(cx)
+                .metrics
+                .snapshot
+                .revision()
         })
     };
     let first = revision(cx);
@@ -547,6 +578,7 @@ fn node_metrics_keep_the_poll_interval_when_example_rows_arrive(cx: &mut TestApp
     cx.update_window(handle, |_, _, cx| {
         pilot
             .read(cx)
+            .pages
             .node_workspace
             .clone()
             .update(cx, |nodes, _| {
@@ -598,7 +630,7 @@ fn a_late_node_metrics_answer_is_rejected_after_returning_to_the_same_source(
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.navigate(Page::Nodes, window, cx);
-            let nodes = pilot.node_workspace.clone();
+            let nodes = pilot.pages.node_workspace.clone();
             let (revision, request, source) = nodes.update(cx, |nodes, _| {
                 let metrics = &mut nodes.metrics;
                 let request = metrics.snapshot.begin(metrics.source.clone().unwrap());

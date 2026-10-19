@@ -49,6 +49,7 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         );
         assert!(
             view.read(cx)
+                .pages
                 .node_workspace
                 .read(cx)
                 .focus
@@ -58,6 +59,7 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         assert!(
             !view
                 .read(cx)
+                .pages
                 .node_workspace
                 .read(cx)
                 .focus
@@ -91,6 +93,7 @@ fn fixture_stale_failure_retains_cards_until_refresh(cx: &mut TestAppContext) {
         assert!(window.find("tile-services").visible());
         assert!(
             view.read(cx)
+                .pages
                 .node_workspace
                 .read(cx)
                 .attention

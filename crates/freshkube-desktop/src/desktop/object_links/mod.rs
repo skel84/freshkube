@@ -13,7 +13,8 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.observability
+        self.pages
+            .observability
             .update(cx, |page, cx| page.open_revision(link, cx));
         self.navigate_from_keyboard(Page::Observability, window, cx);
     }
@@ -29,13 +30,16 @@ impl Pilot {
                 self.open_object(kind, object, tab, window, cx)
             }
             ResourceLink::Logs(request) => self
+                .pages
                 .dock
                 .update(cx, |dock, cx| dock.open_logs(request, window, cx)),
             ResourceLink::Shell(request) => self
+                .pages
                 .dock
                 .update(cx, |dock, cx| dock.open_shell(request, window, cx)),
             ResourceLink::Node(name, tab) => {
-                self.resources
+                self.pages
+                    .resources
                     .update(cx, |resources, cx| resources.close_for_link(cx));
                 self.open_node_by_name(&name, tab, window, cx);
             }
@@ -102,7 +106,7 @@ impl Pilot {
             return;
         }
         self.cancel_object_open();
-        let origin = self.resources.read(cx).detail_identity(cx).cloned();
+        let origin = self.pages.resources.read(cx).detail_identity(cx).cloned();
         self.start_object_open(
             "Resolving the owner's kind timed out",
             async move {
@@ -115,7 +119,7 @@ impl Pilot {
                     .await
                     .map_err(|error| error.to_string())
             },
-            move |this, cx| this.resources.read(cx).detail_identity(cx) != origin.as_ref(),
+            move |this, cx| this.pages.resources.read(cx).detail_identity(cx) != origin.as_ref(),
             move |this, result, window, cx| match result {
                 Ok(kind) => this.open_object(kind, object, resources::Tab::Overview, window, cx),
                 Err(error) => window.push_notification(format!("Can't open owner: {error}"), cx),
@@ -165,12 +169,6 @@ impl Pilot {
             probe::hit("object-open-delivered");
         });
         self.object_open.run(Some(job), task);
-    }
-
-    pub(super) fn push_node_facts(&self, cx: &mut Context<Self>) {
-        let nodes = self.node_workspace.read(cx).resource_facts.clone();
-        self.resources
-            .update(cx, |resources, cx| resources.set_node_facts(nodes, cx));
     }
 }
 

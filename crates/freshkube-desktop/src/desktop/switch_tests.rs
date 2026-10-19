@@ -116,7 +116,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
         assert!(!summary.is_stale());
         (
             summary.last_successful(),
-            pilot.node_workspace.read(cx).rows.len(),
+            pilot.pages.node_workspace.read(cx).rows.len(),
         )
     });
     assert!(before.is_some() && rows > 0);

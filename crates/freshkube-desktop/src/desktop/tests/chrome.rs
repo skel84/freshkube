@@ -78,7 +78,7 @@ fn hidden_log_batches_do_not_redraw_the_window(cx: &mut TestAppContext) {
     let log_notices = Rc::new(Cell::new(0usize));
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let logs = view.read(cx).logs.clone();
+        let logs = view.read(cx).pages.logs.clone();
         let events = (0..20)
             .map(|ix| {
                 freshkube_core::logs::LogEvent::new("apid", format!("level=info seed line {ix}"))
@@ -120,7 +120,7 @@ fn hidden_log_batches_do_not_redraw_the_window(cx: &mut TestAppContext) {
     .unwrap();
     // Showing Logs applies anything still held and draws it.
     cx.update_window(handle, |_, window, cx| {
-        let logs = view.read(cx).logs.clone();
+        let logs = view.read(cx).pages.logs.clone();
         assert!(logs.update(cx, |logs, cx| {
             logs.push_fixture_batch(vec!["level=info held".into()], cx)
         }));
@@ -283,8 +283,9 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let stale = redrawn(&|view, cx| view.simulate_failure(cx));
     let after_stale = redrawn(&|_, cx| cx.notify());
     let attention = redrawn(&|view, cx| {
-        let attention = view.node_workspace.read(cx).attention.clone();
-        view.overview_page
+        let attention = view.pages.node_workspace.read(cx).attention.clone();
+        view.pages
+            .overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     });
     let state = redrawn(&|view, cx| {
@@ -293,7 +294,7 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     });
     let unchanged = redrawn(&|_, cx| cx.notify());
     let show_all = redrawn(&|view, cx| view.expand_attention(cx));
-    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let cached = redrawn(&|view, cx| view.pages.notify_cached(cx));
     let text_size = redrawn(&|_, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
     assert_eq!(
         [
@@ -395,15 +396,17 @@ fn cached_system_services_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let shell = redrawn(&|_, cx| cx.notify());
     let nodes = redrawn(&|view, cx| {
         let nodes = view.nodes.clone();
-        view.system_services
+        view.pages
+            .system_services
             .update(cx, |page, cx| page.set_nodes(&nodes, cx));
     });
     let reading = redrawn(&|view, cx| {
         let reading = Reading::Failed("no answer".into());
-        view.system_services
+        view.pages
+            .system_services
             .update(cx, |page, cx| page.set_reading(reading, cx));
     });
-    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let cached = redrawn(&|view, cx| view.pages.notify_cached(cx));
     assert_eq!([shell, nodes, reading, cached], [0, 1, 1, 1]);
 }
 
@@ -453,10 +456,10 @@ fn node_services_redraws_inside_nodes(cx: &mut TestAppContext) {
         count("node-services") - before
     };
     let shell = redrawn(&|_, cx| cx.notify());
-    let selection = redrawn(&|view, cx| view.select_service(Some("kubelet".into()), cx));
+    let selection = redrawn(&|view, cx| view.pages.select_service(Some("kubelet".into()), cx));
     let services = redrawn(&|view, cx| view.push_services(cx));
     let notice = redrawn(&|view, cx| view.note_restart("kubelet", cx));
-    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let cached = redrawn(&|view, cx| view.pages.notify_cached(cx));
     assert_eq!(
         [shell, selection, services, notice, cached],
         [0, 1, 1, 1, 1]

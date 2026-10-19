@@ -20,11 +20,12 @@ impl Pilot {
                     .or_else(|| self.nodes.first())
                     .map(|node| node.name.clone())
             });
-        self.system_services
+        self.pages
+            .system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
         self.push_talos_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
             self.select_node(selected, window, cx);
@@ -48,7 +49,8 @@ impl Pilot {
                     .map(|node| (node.name.clone(), node.address.clone()))
                     .collect(),
             });
-        self.monitoring
+        self.pages
+            .monitoring
             .update(cx, |monitoring, cx| monitoring.set_talos(talos, cx));
     }
 
@@ -80,12 +82,12 @@ impl Pilot {
                 .selected_summary()
                 .map(|summary| summary.address.clone())
                 .unwrap_or_default();
-            self.logs.update(cx, |logs, cx| {
+            self.pages.logs.update(cx, |logs, cx| {
                 logs.set_fixture_catalog(events, &catalog, &node, &address, window, cx)
             });
         } else {
             let target = self.target();
-            self.logs.update(cx, |logs, cx| {
+            self.pages.logs.update(cx, |logs, cx| {
                 logs.set_target(target, Vec::new(), window, cx)
             });
         }
@@ -151,7 +153,8 @@ impl Pilot {
                     view.push_services(cx);
                     let catalog = view.services.data().cloned().unwrap_or_default();
                     let current = view.target();
-                    view.logs
+                    view.pages
+                        .logs
                         .update(cx, |logs, cx| logs.set_target(current, catalog, window, cx));
                 }
                 cx.notify();

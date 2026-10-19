@@ -413,10 +413,13 @@ impl ChromeParts {
     /// notifies with every watch event, so only a new namespace draws.
     /// Custom Resources needs no watch: the shell observes it.
     pub(in crate::desktop) fn watch(&self, pilot: &Pilot, cx: &mut App) {
-        let resources = pilot.resources.clone();
-        let services = pilot.system_services.clone();
-        let (monitoring, observability) = (pilot.monitoring.clone(), pilot.observability.clone());
-        let applications = pilot.applications.clone();
+        let resources = pilot.pages.resources.clone();
+        let services = pilot.pages.system_services.clone();
+        let (monitoring, observability) = (
+            pilot.pages.monitoring.clone(),
+            pilot.pages.observability.clone(),
+        );
+        let applications = pilot.pages.applications.clone();
         self.column.update(cx, |column, cx| {
             column.watch(&services, |area| area == Area::ControlPlane, cx);
             column.watch(&monitoring, |area| area == Area::Monitoring, cx);

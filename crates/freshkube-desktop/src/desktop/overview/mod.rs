@@ -279,14 +279,16 @@ impl super::Pilot {
     /// redraws only for a change.
     pub(super) fn push_attention_stale(&mut self, cx: &mut Context<Self>) {
         let stale = self.attention_stale();
-        self.node_workspace
+        self.pages
+            .node_workspace
             .update(cx, |nodes, cx| nodes.set_attention_stale(stale, cx));
     }
 
     /// Hands Overview where things stand; it redraws only for a change.
     pub(super) fn push_overview_state(&self, cx: &mut App) {
         let state = self.overview_state();
-        self.overview_page
+        self.pages
+            .overview_page
             .update(cx, |page, cx| page.set_state(state, cx));
     }
 
@@ -311,15 +313,15 @@ impl super::Pilot {
 #[cfg(test)]
 impl super::Pilot {
     pub(super) fn overview_display(&self, cx: &App) -> Arc<Overview> {
-        self.overview_page.read(cx).display.clone()
+        self.pages.overview_page.read(cx).display.clone()
     }
 
     pub(super) fn attention_expanded(&self, cx: &App) -> bool {
-        self.overview_page.read(cx).expanded
+        self.pages.overview_page.read(cx).expanded
     }
 
     pub(super) fn expand_attention(&self, cx: &mut App) {
-        self.overview_page.update(cx, |page, cx| {
+        self.pages.overview_page.update(cx, |page, cx| {
             page.expanded = true;
             cx.notify();
         });
@@ -328,11 +330,12 @@ impl super::Pilot {
     /// Hands the node pane and Overview this attention list.
     pub(super) fn set_attention(&mut self, attention: Attention, cx: &mut App) {
         let attention = Arc::new(attention);
-        self.node_workspace.update(cx, |nodes, cx| {
+        self.pages.node_workspace.update(cx, |nodes, cx| {
             nodes.attention = attention.clone();
             cx.notify();
         });
-        self.overview_page
+        self.pages
+            .overview_page
             .update(cx, |page, cx| page.set_attention(attention, cx));
     }
 }

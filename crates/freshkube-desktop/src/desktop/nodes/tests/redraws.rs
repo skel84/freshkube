@@ -85,10 +85,10 @@ fn nodes_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     let tab = redrawn(&|pilot, window, cx| pilot.show_node_tab(NodeTab::Pods, window, cx));
     let unchanged = redrawn(&|_, _, cx| cx.notify());
     let pods = redrawn(&|pilot, _, cx| {
-        let pods = pilot.node_workspace.read(cx).pods.clone();
+        let pods = pilot.pages.node_workspace.read(cx).pods.clone();
         pods.update(cx, |_, cx| cx.notify());
     });
-    let cached = redrawn(&|pilot, _, cx| pilot.notify_cached(cx));
+    let cached = redrawn(&|pilot, _, cx| pilot.pages.notify_cached(cx));
     let text_size = redrawn(&|_, _, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
     let theme = redrawn(&|_, window, cx| Theme::change(ThemeMode::Dark, Some(window), cx));
     let counts = [
@@ -146,6 +146,7 @@ fn the_logs_dot_follows_collection_from_another_tab(cx: &mut TestAppContext) {
     let collecting = |cx: &mut TestAppContext| {
         pilot.read_with(cx, |pilot, cx| {
             pilot
+                .pages
                 .node_workspace
                 .read(cx)
                 .logs
@@ -162,7 +163,7 @@ fn the_logs_dot_follows_collection_from_another_tab(cx: &mut TestAppContext) {
     });
     assert!(dot_shown(cx), "the Logs tab keeps the dot from another tab");
     let stopped = redrawn(handle, &pilot, cx, |pilot, window, cx| {
-        let logs = pilot.node_workspace.read(cx).logs.clone();
+        let logs = pilot.pages.node_workspace.read(cx).logs.clone();
         logs.update(cx, |logs, cx| logs.set_target(None, Vec::new(), window, cx));
     });
     assert_eq!(collecting(cx), 0);
@@ -187,9 +188,9 @@ fn a_source_mode_switch_redraws_the_columns(cx: &mut TestAppContext) {
 fn the_first_history_source_draws_the_chart(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = settled(NodeTab::Overview, cx);
     let history = pilot.read_with(cx, |pilot, cx| {
-        pilot.node_workspace.read(cx).history.clone()
+        pilot.pages.node_workspace.read(cx).history.clone()
     });
-    let source = pilot.read_with(cx, |pilot, cx| pilot.monitoring.read(cx).history());
+    let source = pilot.read_with(cx, |pilot, cx| pilot.pages.monitoring.read(cx).history());
     assert!(source.is_some(), "the example has a history source");
     let gone = redrawn(handle, &pilot, cx, |_, _, cx| {
         history.update(cx, |history, cx| history.set_source(None, cx))
@@ -208,6 +209,7 @@ fn a_metrics_source_change_redraws_the_usage_cells(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = settled(NodeTab::Overview, cx);
     let redraws = redrawn(handle, &pilot, cx, |pilot, window, cx| {
         pilot
+            .pages
             .node_workspace
             .update(cx, |nodes, _| nodes.metrics.source = Some("another".into()));
         pilot.push_source(window, cx);

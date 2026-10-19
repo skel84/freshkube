@@ -465,30 +465,37 @@ impl Pilot {
     pub(super) fn focus_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
         if self.navigation.page == Page::Resources {
-            self.resources
+            self.pages
+                .resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
         } else if self.navigation.page == Page::Observability {
-            self.observability
+            self.pages
+                .observability
                 .update(cx, |page, cx| page.focus(window, cx));
         } else if self.navigation.page == Page::SystemServices {
-            self.system_services
+            self.pages
+                .system_services
                 .update(cx, |services, cx| services.focus(window, cx));
         } else if self.navigation.page == Page::Applications {
-            self.applications
+            self.pages
+                .applications
                 .update(cx, |page, cx| page.focus_shown(window, cx));
         } else if self.navigation.page == Page::Settings {
             self.settings_page
                 .update(cx, |settings, cx| settings.focus(window, cx));
         } else if self.navigation.page == Page::Monitoring {
-            let focus = self.monitoring.read(cx).focus_handle().clone();
+            let focus = self.pages.monitoring.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
-        } else if self.navigation.page == Page::Nodes && self.node_workspace.read(cx).shows_logs() {
-            self.logs
+        } else if self.navigation.page == Page::Nodes
+            && self.pages.node_workspace.read(cx).shows_logs()
+        {
+            self.pages
+                .logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
         } else if let Some(screen) = self.active_screen(cx) {
             screen.focus(window, cx);
         } else if self.navigation.page == Page::Nodes {
-            let focus = self.node_workspace.read(cx).focus.clone();
+            let focus = self.pages.node_workspace.read(cx).focus.clone();
             window.focus(&focus, cx);
         }
     }
@@ -504,11 +511,14 @@ impl Pilot {
         // only: every screen the pane embeds is the shell's, while the
         // shell keeps pages the pane never shows.
         debug_assert!(
-            (self.node_workspace.read(cx).screens.iter())
-                .all(|(id, screen)| self.pages.get(id) == Some(screen)),
+            (self.pages.node_workspace.read(cx).screens.iter()).all(|(id, screen)| self
+                .pages
+                .map
+                .get(id)
+                == Some(screen)),
             "Nodes' screens and the shell's pages are out of step"
         );
-        for handle in self.pages.values() {
+        for handle in self.pages.map.values() {
             handle.set_visible(shown.contains(handle), window, cx);
         }
     }
@@ -563,7 +573,8 @@ impl Pilot {
         }
         // `sync_node_visibility` has told every page whether it shows.
         if page == Page::Resources {
-            self.resources
+            self.pages
+                .resources
                 .update(cx, |resources, cx| resources.focus(window, cx));
         }
         if let Some(screen) = self.active_screen(cx) {
@@ -588,11 +599,13 @@ impl Pilot {
             return;
         }
         if self.navigation.remember_kind(&kind) {
-            self.custom
+            self.pages
+                .custom
                 .update(cx, |custom, cx| custom.reveal(&kind, cx));
         }
         self.navigation.resource_kind = kind.clone();
-        self.resources
+        self.pages
+            .resources
             .update(cx, |resources, cx| resources.set_kind(kind, window, cx));
         self.navigate_from_keyboard(Page::Resources, window, cx);
     }
@@ -606,7 +619,7 @@ impl Pilot {
 
     /// Shows a custom kind the sidebar listed, by its kubectl key.
     pub(super) fn open_custom(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(kind) = self.custom.read(cx).kind(key) {
+        if let Some(kind) = self.pages.custom.read(cx).kind(key) {
             self.open_kind(kind, window, cx);
         }
     }
@@ -624,7 +637,8 @@ impl Pilot {
         }
         self.navigation.area = area;
         self.navigation.column_changed();
-        self.custom
+        self.pages
+            .custom
             .update(cx, |custom, cx| custom.set_open(area == Area::Custom, cx));
         cx.notify();
     }
@@ -653,7 +667,7 @@ impl Pilot {
                     .navigation
                     .last_custom
                     .as_ref()
-                    .and_then(|kind| self.custom.read(cx).kind(&kind.key()));
+                    .and_then(|kind| self.pages.custom.read(cx).kind(&kind.key()));
                 match last {
                     Some(kind) => self.open_kind(kind, window, cx),
                     None => self.show_custom(cx),
@@ -677,9 +691,10 @@ impl Pilot {
     }
 
     pub(super) fn toggle_api_group(&mut self, name: &str, cx: &mut Context<Self>) {
-        self.custom
+        self.pages
+            .custom
             .update(cx, |custom, cx| custom.toggle_group(name, cx));
-        if self.custom.read(cx).is_group_open(name) {
+        if self.pages.custom.read(cx).is_group_open(name) {
             self.navigation.column_reveal = Some(ColumnReveal::ApiGroup(name.to_owned()));
         }
         self.navigation.column_changed();
@@ -687,11 +702,12 @@ impl Pilot {
     }
 
     pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(service) = self.selected_service(cx) {
+        if let Some(service) = self.pages.selected_service(cx) {
             if let Some(name) = self.selected_node.clone() {
                 self.open_node_by_name(&name, super::nodes::NodeTab::Logs, window, cx);
             }
-            self.logs
+            self.pages
+                .logs
                 .update(cx, |logs, cx| logs.open_service(service, window, cx));
         }
     }
@@ -734,16 +750,17 @@ impl Pilot {
             name: object.name.clone(),
             uid: object.uid.clone(),
         };
-        let same = self.resources.read(cx).showing(&identity, cx);
+        let same = self.pages.resources.read(cx).showing(&identity, cx);
         if !same {
-            self.resources
+            self.pages
+                .resources
                 .update(cx, |resources, cx| resources.close_for_link(cx));
         }
         self.open_kind(kind.clone(), window, cx);
         self.cancel_object_open();
         let identity = self.resolve_local_identity(&source, &kind, &object, identity, cx);
         if !identity.uid.is_empty() {
-            self.resources.update(cx, |resources, cx| {
+            self.pages.resources.update(cx, |resources, cx| {
                 resources.open_identity_on(identity, tab, window, cx)
             });
             return;
@@ -764,6 +781,7 @@ impl Pilot {
     ) -> resources::model::ResourceIdentity {
         if identity.uid.is_empty() {
             if let Some(found) = self
+                .pages
                 .resources
                 .read(cx)
                 .identity_named(&object.namespace, &object.name)
@@ -821,14 +839,14 @@ impl Pilot {
                 this.source()
                     .kube
                     .is_none_or(|source| source.id != connection)
-                    || this.resources.read(cx).detail_identity(cx).is_some()
+                    || this.pages.resources.read(cx).detail_identity(cx).is_some()
             },
             move |this, result, window, cx| {
                 if let Ok(metadata) = &result
                     && let Some(uid) = metadata.uid.clone()
                 {
                     identity.uid = uid;
-                    this.resources.update(cx, |resources, cx| {
+                    this.pages.resources.update(cx, |resources, cx| {
                         resources.open_identity_on(identity, tab, window, cx)
                     });
                 } else {

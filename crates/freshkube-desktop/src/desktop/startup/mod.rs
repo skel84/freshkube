@@ -40,11 +40,11 @@ impl Pilot {
             let collapsed = debug.sidebar.map(|sidebar| sidebar == Sidebar::Collapsed);
             if let Some(collapsed) = collapsed {
                 this.navigation.column_state.preview(collapsed);
-                this.notify_cached(cx);
+                this.pages.notify_cached(cx);
                 cx.notify();
             }
             if let Some(path) = debug.dashboard.clone() {
-                this.monitoring.update(cx, |monitoring, cx| {
+                this.pages.monitoring.update(cx, |monitoring, cx| {
                     monitoring.open(crate::monitoring::page::EntryId::File(path), cx)
                 });
             }
@@ -72,9 +72,10 @@ impl Pilot {
                 Application(Entity<crate::logs::CorootLogView>),
             }
             let log = match page {
-                Some("node-logs") => Log::Node(self.logs.clone()),
+                Some("node-logs") => Log::Node(self.pages.logs.clone()),
                 Some("observability-application") => Log::Application(
-                    self.observability
+                    self.pages
+                        .observability
                         .update(cx, |observability, cx| observability.show_logs(cx)),
                 ),
                 _ => return,
@@ -101,7 +102,8 @@ impl Pilot {
                 _ = cx.update(|window, cx| search(true, window, cx));
                 // Bring the log into sight, below the application's charts.
                 _ = this.update(cx, |this, cx| {
-                    this.observability
+                    this.pages
+                        .observability
                         .update(cx, |observability, cx| observability.scroll_to_end(cx))
                 });
             })
@@ -134,7 +136,8 @@ impl Pilot {
                 .chain([Destination::Application])
                 .find(|destination| format!("observability-{}", destination.slug()) == slug)
         }) {
-            self.observability
+            self.pages
+                .observability
                 .update(cx, |page, cx| page.open(destination, cx));
             self.navigate(Page::Observability, window, cx);
         }
@@ -145,11 +148,13 @@ impl Pilot {
         }
         match page {
             Some("monitoring") if self.mode().is_example() => self
+                .pages
                 .monitoring
                 .update(cx, |monitoring, cx| monitoring.answer_example_now(cx)),
             Some("node-logs" | "node-overview") => {
                 let name = if page == Some("node-overview") {
-                    self.node_workspace
+                    self.pages
+                        .node_workspace
                         .read(cx)
                         .rows
                         .iter()
@@ -172,7 +177,7 @@ impl Pilot {
                     );
                 }
                 if self.mode().is_example() {
-                    let history = self.node_workspace.read(cx).history.clone();
+                    let history = self.pages.node_workspace.read(cx).history.clone();
                     history.update(cx, |history, cx| history.answer_example_now(cx));
                 }
             }
@@ -193,7 +198,8 @@ impl Pilot {
                         window,
                         cx,
                     );
-                    self.resources
+                    self.pages
+                        .resources
                         .update(cx, |resources, cx| resources.answer_history_now(cx));
                 }
             }
@@ -221,20 +227,21 @@ impl Pilot {
             Some("search") => {
                 self.open_search(window, cx);
                 if self.mode().is_example() {
-                    let search = self.search.clone();
+                    let search = self.pages.search.clone();
                     search.update(cx, |search, cx| search.startup_query("grafana", window, cx));
                 }
             }
             Some("application") if self.mode().is_example() => {
                 self.navigate(Page::Applications, window, cx);
-                self.applications
+                self.pages
+                    .applications
                     .update(cx, |page, cx| page.open_named("checkout", window, cx));
             }
             // checkout's change, on prod-ams's promotion gate: waiting for
             // someone who may promote.
             Some("change") if self.mode().is_example() => {
                 self.navigate(Page::Applications, window, cx);
-                self.applications.update(cx, |page, cx| {
+                self.pages.applications.update(cx, |page, cx| {
                     page.open_named("checkout", window, cx);
                     page.follow_named("prod-ams", window, cx);
                     if let Some(change) = page.change_page() {
@@ -247,7 +254,8 @@ impl Pilot {
             // The Changes list, with every state in example data.
             Some("changes") => {
                 self.navigate(Page::Applications, window, cx);
-                self.applications
+                self.pages
+                    .applications
                     .update(cx, |page, cx| page.show_changes(window, cx));
             }
             Some("kubernetes-only") if self.mode().is_example() => {
@@ -284,7 +292,7 @@ impl Pilot {
         self.selected_node = None;
         self.sync_unread_health(cx);
         self.rebuild_joined_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         self.navigate(Page::Overview, window, cx);
     }

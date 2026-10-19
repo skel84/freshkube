@@ -635,6 +635,7 @@ fn holding(
     cx.read(|cx| {
         let pilot = view.read(cx);
         pilot
+            .pages
             .resources
             .read(cx)
             .detail_identity(cx)
@@ -729,7 +730,7 @@ fn each_clusters_rows_carry_their_own_connection_after_a_switch(cx: &mut TestApp
         .unwrap();
         cx.run_until_parked();
         // The Resources list's own rows, not the example data they came from.
-        let rows = cx.read(|cx| view.read(cx).resources.read(cx).store_identities());
+        let rows = cx.read(|cx| view.read(cx).pages.resources.read(cx).store_identities());
         assert!(!rows.is_empty(), "{id}: the list shows no rows");
         assert!(
             rows.iter()

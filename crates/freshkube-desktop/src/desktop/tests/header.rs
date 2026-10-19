@@ -29,10 +29,13 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             window.render_frame(cx);
             let pilot = view.read(cx);
             assert_eq!(pilot.selected_node.as_deref(), Some(DEGRADED_NODE));
-            assert_eq!(pilot.selected_service(cx).as_deref(), Some("containerd"));
+            assert_eq!(
+                pilot.pages.selected_service(cx).as_deref(),
+                Some("containerd")
+            );
             let context = pilot.applied.context.clone();
             let node = pilot.selected_node.clone();
-            let service = pilot.selected_service(cx).clone();
+            let service = pilot.pages.selected_service(cx).clone();
             let epoch = pilot.epoch;
             let config_revision = pilot.configuration_read.revision();
             let overview_success = pilot.overview.last_successful();
@@ -40,7 +43,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             let overview_name = pilot.overview.data().unwrap().name.clone();
             let node_count = pilot.nodes.len();
             let service_count = pilot.services.data().unwrap().len();
-            let logs = pilot.logs.clone();
+            let logs = pilot.pages.logs.clone();
             let light_background = cx.theme().background;
             assert_eq!(window.find("theme-toggle").label(), Some("Dark mode"));
             if nav == "node-tab-logs" {
@@ -77,7 +80,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             assert_eq!(pilot.navigation.page, page);
             assert_eq!(pilot.applied.context, context);
             assert_eq!(pilot.selected_node, node);
-            assert_eq!(pilot.selected_service(cx), service);
+            assert_eq!(pilot.pages.selected_service(cx), service);
             assert_eq!(pilot.epoch, epoch);
             assert_eq!(pilot.configuration_read.revision(), config_revision);
             assert_eq!(pilot.overview.last_successful(), overview_success);
@@ -85,7 +88,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             assert_eq!(pilot.overview.data().unwrap().name, overview_name);
             assert_eq!(pilot.nodes.len(), node_count);
             assert_eq!(pilot.services.data().unwrap().len(), service_count);
-            assert_eq!(pilot.logs, logs);
+            assert_eq!(pilot.pages.logs, logs);
             if nav == "node-tab-logs" {
                 assert!(window.find("logs-viewport").visible());
                 assert_eq!(

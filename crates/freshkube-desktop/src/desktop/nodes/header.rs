@@ -140,7 +140,8 @@ impl Pilot {
             _ => source_status("Kubernetes", &self.registry.active().kubernetes_summary),
         });
         let status = Segment::new(context, parts);
-        self.node_workspace
+        self.pages
+            .node_workspace
             .update(cx, |nodes, _| nodes.status = status);
     }
 }

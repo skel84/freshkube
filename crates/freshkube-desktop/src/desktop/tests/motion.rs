@@ -44,7 +44,7 @@ fn the_change_flash_redraws_neither_the_chrome_nor_the_page(cx: &mut TestAppCont
     cx.run_until_parked();
     // Whatever the first rows asked for draws first.
     while motion_frame(cx, handle) > 0 {}
-    let resources = cx.update(|cx| view.read(cx).resources.clone());
+    let resources = cx.update(|cx| view.read(cx).pages.resources.clone());
     resources.update(cx, |resources, cx| {
         let changed = resources.restarted(0);
         resources.deliver(
@@ -92,7 +92,7 @@ fn the_loading_motion_stops_on_the_first_answer(cx: &mut TestAppContext) {
             pilot.mode.hold_mut().lists = false;
             pilot.push_source(window, cx);
         });
-        let resources = view.read(cx).resources.clone();
+        let resources = view.read(cx).pages.resources.clone();
         resources.update(cx, |resources, cx| resources.refresh(window, cx));
     })
     .unwrap();
@@ -128,7 +128,7 @@ fn assert_motion_stopped(cx: &mut TestAppContext, handle: AnyWindowHandle, why: 
 fn the_loading_motion_stops_when_the_list_is_refused_or_fails(cx: &mut TestAppContext) {
     use crate::resources::model::ReadState;
     let (_runtime, handle, view) = loading_pods(cx);
-    let resources = cx.update(|cx| view.read(cx).resources.clone());
+    let resources = cx.update(|cx| view.read(cx).pages.resources.clone());
     for (state, shown) in [
         (
             ReadState::Refused("pods is forbidden".into()),
@@ -209,7 +209,7 @@ fn the_lifecycle_loading_motion_stops_on_its_answer_or_a_failure(cx: &mut TestAp
     cx.update_window(handle, |_, window, cx| window.press("secondary-9", cx))
         .unwrap();
     cx.run_until_parked();
-    let lifecycle = cx.update(|cx| view.read(cx).lifecycle.clone());
+    let lifecycle = cx.update(|cx| view.read(cx).pages.lifecycle.clone());
     for (ok, shown) in [(true, "lifecycle-list"), (false, "lifecycle-state")] {
         cx.update(|cx| lifecycle.update(cx, |lifecycle, cx| lifecycle.wait_again(cx)));
         cx.run_until_parked();
@@ -430,11 +430,16 @@ fn a_node_expand_redraws_the_shell(cx: &mut TestAppContext) {
         let before = probe::count("shell");
         // Straight on Nodes, as no click's frame would draw the shell anyway.
         cx.update(|cx| {
-            let nodes = view.read(cx).node_workspace.clone();
+            let nodes = view.read(cx).pages.node_workspace.clone();
             nodes.update(cx, |nodes, cx| nodes.toggle_expanded(cx));
         });
         next_frame(cx, handle);
-        cx.update(|cx| assert_eq!(view.read(cx).node_workspace.read(cx).expanded, expanded));
+        cx.update(|cx| {
+            assert_eq!(
+                view.read(cx).pages.node_workspace.read(cx).expanded,
+                expanded
+            )
+        });
         assert!(probe::count("shell") > before, "expanded {expanded}");
     }
 }

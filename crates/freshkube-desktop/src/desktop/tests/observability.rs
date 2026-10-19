@@ -24,7 +24,7 @@ fn coroot_links_resolve_real_subjects_and_reject_old_providers(cx: &mut TestAppC
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
             view.navigate(Page::Observability, window, cx);
-            old = Some(view.observability.update(cx, |page, cx| {
+            old = Some(view.pages.observability.update(cx, |page, cx| {
                 page.fixture_link(access.clone(), &pod.namespace, &pod.name, cx)
             }));
         });
@@ -36,12 +36,12 @@ fn coroot_links_resolve_real_subjects_and_reject_old_providers(cx: &mut TestAppC
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(
-            view.read(cx).resources.read(cx).detail_identity(cx),
+            view.read(cx).pages.resources.read(cx).detail_identity(cx),
             Some(&pod)
         );
         view.update(cx, |view, cx| {
             view.navigate(Page::Observability, window, cx);
-            view.observability.update(cx, |page, cx| {
+            view.pages.observability.update(cx, |page, cx| {
                 page.fixture_link(access.clone(), &pod.namespace, &pod.name, cx);
                 cx.emit(old.take().unwrap());
             });
@@ -83,7 +83,7 @@ fn coroot_links_open_without_asking_while_a_shell_runs(cx: &mut TestAppContext) 
     step(cx, &|window, cx| {
         view.update(cx, |view, cx| {
             view.navigate(Page::Observability, window, cx);
-            view.observability.update(cx, |page, cx| {
+            view.pages.observability.update(cx, |page, cx| {
                 page.fixture_link(access.clone(), &pods[1].namespace, &pods[1].name, cx);
             });
         })
@@ -95,7 +95,7 @@ fn coroot_links_open_without_asking_while_a_shell_runs(cx: &mut TestAppContext) 
         assert_eq!(shell::running_anywhere(cx), running);
         assert_eq!(view.read(cx).navigation.page, Page::Resources);
         assert_eq!(
-            view.read(cx).resources.read(cx).detail_identity(cx),
+            view.read(cx).pages.resources.read(cx).detail_identity(cx),
             Some(&pods[1])
         );
     });

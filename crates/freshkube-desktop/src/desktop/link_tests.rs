@@ -57,6 +57,7 @@ fn opened(cx: &mut TestAppContext, view: &Entity<Pilot>) -> Option<(String, Stri
     cx.read(|cx| {
         let pilot = view.read(cx);
         pilot
+            .pages
             .resources
             .read(cx)
             .detail_identity(cx)

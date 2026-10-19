@@ -412,7 +412,7 @@ mod tests {
                     text_size::set(text, cx);
                     pilot.update(cx, |pilot, cx| {
                         pilot.navigate(Page::Observability, window, cx);
-                        pilot.observability.update(cx, |page, cx| {
+                        pilot.pages.observability.update(cx, |page, cx| {
                             page.open(Destination::Incidents, cx);
                         });
                     });
@@ -433,7 +433,7 @@ mod tests {
                     let lane = window.find("obs-navigation-scrollbar-lane").bounds();
                     assert!((lane.size.width - ui::dp_px(8., window)).abs() <= px(0.5));
                     assert!(scroll.bounds().right() <= lane.left() + px(0.5));
-                    let page = pilot.read(cx).observability.clone();
+                    let page = pilot.read(cx).pages.observability.clone();
                     page.update(cx, |page, cx| page.open(Destination::Deployments, cx));
                 })
                 .unwrap();
@@ -451,7 +451,7 @@ mod tests {
                     for id in ["nav-obs-deployments", "nav-obs-dashboards"] {
                         assert_inside(window, id, visible);
                     }
-                    let page = pilot.read(cx).observability.clone();
+                    let page = pilot.read(cx).pages.observability.clone();
                     page.update(cx, |page, cx| page.open(Destination::Incidents, cx));
                 })
                 .unwrap();

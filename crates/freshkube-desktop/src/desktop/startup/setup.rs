@@ -51,7 +51,7 @@ impl Pilot {
             return;
         };
         let connection = setup.coroot.clone();
-        self.observability.update(cx, |page, cx| {
+        self.pages.observability.update(cx, |page, cx| {
             page.set_setup_connection(&connection, window, cx)
         });
     }

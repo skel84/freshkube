@@ -234,7 +234,8 @@ impl Pilot {
             _ if self.registry.active().summary_session.is_some() => HealthSummary::Reading,
             _ => HealthSummary::Unread,
         };
-        self.health
+        self.pages
+            .health
             .update(cx, |health, cx| health.set_summary(summary, cx));
         let Some(kube) = self.mode().kubernetes_only() else {
             return;
@@ -355,7 +356,8 @@ impl Pilot {
                 kube.connection = KubeConnection::Connected { version };
                 self.ensure_summary(window, cx);
                 if recovering {
-                    self.resources
+                    self.pages
+                        .resources
                         .update(cx, |resources, cx| resources.refresh(window, cx));
                 }
             }

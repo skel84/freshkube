@@ -13,7 +13,7 @@ fn a_right_click_selects_its_node_and_its_menu_folds_the_healthy_ones(cx: &mut T
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace.read(cx);
+        let nodes = &pilot.read(cx).pages.node_workspace.read(cx);
         assert_eq!(nodes.row().unwrap().name, "talos-wk-fra1-03");
         // Selected as an arrow selects: the closed pane stays closed.
         assert!(!nodes.open);
@@ -34,7 +34,16 @@ fn a_right_click_selects_its_node_and_its_menu_folds_the_healthy_ones(cx: &mut T
     })
     .unwrap();
     cx.run_until_parked();
-    cx.read(|cx| assert!(!pilot.read(cx).node_workspace.read(cx).healthy_collapsed()));
+    cx.read(|cx| {
+        assert!(
+            !pilot
+                .read(cx)
+                .pages
+                .node_workspace
+                .read(cx)
+                .healthy_collapsed()
+        )
+    });
 }
 
 /// While the pane shows one node, a right-click on another opens it on the
@@ -46,7 +55,7 @@ fn a_right_click_beside_an_open_pane_opens_its_node_on_the_same_tab(cx: &mut Tes
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
     let selected = |cx: &mut TestAppContext| {
         pilot.read_with(cx, |pilot, cx| {
-            let nodes = pilot.node_workspace.read(cx);
+            let nodes = pilot.pages.node_workspace.read(cx);
             (
                 pilot.selected_node.clone(),
                 nodes.open,
@@ -57,7 +66,7 @@ fn a_right_click_beside_an_open_pane_opens_its_node_on_the_same_tab(cx: &mut Tes
     };
     let focused = |cx: &mut TestAppContext| {
         cx.update_window(handle, |_, window, cx| {
-            let nodes = pilot.read(cx).node_workspace.read(cx);
+            let nodes = pilot.read(cx).pages.node_workspace.read(cx);
             (
                 nodes.focus.is_focused(window),
                 nodes.pane_focus.contains_focused(window, cx),
