@@ -1,0 +1,1 @@
+- **Navigation rail:** selected buttons keep their full rounded highlight clear of the scrollbar in short windows and at larger text sizes.
