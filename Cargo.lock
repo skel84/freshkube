@@ -2602,6 +2602,7 @@ dependencies = [
  "freshkube-monitoring",
  "freshkube-prefs",
  "freshkube-probe",
+ "freshkube-reads",
  "freshkube-ui",
  "futures",
  "gpui-kit",

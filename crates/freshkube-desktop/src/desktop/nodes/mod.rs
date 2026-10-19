@@ -187,14 +187,18 @@ impl crate::screens::ScreenPanel for Nodes {
     ) {
     }
 
-    /// The Kubernetes connection it reads nodes' use from.
+    /// The Kubernetes connection its pods list from and it reads nodes' use
+    /// from, the pods first.
     fn set_page_source(
         &mut self,
         source: crate::screens::PageSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_metrics_source(source.kube, window, cx)
+        let kube = source.kube;
+        self.pods
+            .update(cx, |pods, cx| pods.set_source(kube.clone(), window, cx));
+        self.set_metrics_source(kube, window, cx)
     }
 
     /// Shown on its page and around a pane screen alike, so the use read

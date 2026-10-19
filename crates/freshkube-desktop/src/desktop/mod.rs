@@ -299,8 +299,7 @@ pub(crate) struct Pilot {
     #[cfg(test)]
     pub(crate) told: Vec<String>,
     /// The read that finds the default kubeconfig file an entry's context is in.
-    entry_locate: Option<(OwnedJob, Task<()>)>,
-    entry_generation: u64,
+    entry_locate: switch::EntryLocate,
     /// The workspace revision the header's list was built from.
     switcher_revision: u64,
     /// When the restored summary on show was read; none once a read replaces it.
@@ -885,8 +884,7 @@ impl Pilot {
             pending_link: None,
             #[cfg(test)]
             told: Vec::new(),
-            entry_locate: None,
-            entry_generation: 0,
+            entry_locate: switch::EntryLocate::default(),
             switcher_revision: 0,
             restored_taken: None,
             age_label,
@@ -1151,10 +1149,6 @@ impl Pilot {
         self.sync_search_source(kube.clone(), window, cx);
         self.custom
             .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
-        let pods = self.node_workspace.read(cx).pods.clone();
-        pods.update(cx, |resources, cx| {
-            resources.set_source(kube.clone(), window, cx)
-        });
         self.dock.update(cx, |dock, cx| {
             dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
         });
