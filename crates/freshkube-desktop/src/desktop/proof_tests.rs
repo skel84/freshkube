@@ -697,7 +697,7 @@ async fn an_object_answer_from_the_cluster_just_left_is_dropped(cx: &mut TestApp
     _ = open.send(());
     settle(cx);
     assert_eq!(applied.get(), 0, "core's answer landed in dev's window");
-    cx.read(|cx| assert!(view.read(cx).object_open_job.is_none()));
+    cx.read(|cx| assert!(!view.read(cx).object_open.is_loading()));
 }
 
 // Forwards -------------------------------------------------------------------
