@@ -74,13 +74,6 @@ impl Pilot {
             .update(cx, |screen, cx| screen.observe_nodes(subscription, cx));
     }
 
-    pub(super) fn stop_summary(&mut self) {
-        self.switch.registry.summary_watch.stop();
-        let session = self.switch.registry.active_mut();
-        session.summary_fixture = None;
-        session.summary_session = None;
-    }
-
     /// Manual Refresh relists every source. The automatic Talos cycle calls
     /// ensure_summary instead, which leaves an existing session alone.
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -114,7 +107,7 @@ impl Pilot {
         {
             return;
         }
-        self.stop_summary();
+        self.switch.stop_summary();
         // The reducer keeps its applied connection identity. Capture the
         // shell's existing target revision once; later node selections do
         // not change this session. Watch owns the driver's request sequence.

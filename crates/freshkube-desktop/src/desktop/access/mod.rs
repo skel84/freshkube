@@ -1,30 +1,8 @@
 //! Access replacement is separate from a node selection and a summary generation.
 use super::*;
-use crate::{
-    backend::{CollectedOverview, ObservedNodes},
-    state::Request,
-};
+use crate::{backend::CollectedOverview, state::Request};
 
 impl Pilot {
-    pub(super) fn observed_nodes(&self) -> Option<ObservedNodes> {
-        self.switch.registry.active().summary_session.as_ref()?;
-        Some(ObservedNodes {
-            access: self.switch.registry.active().access?,
-            nodes: self
-                .switch
-                .registry
-                .active()
-                .kubernetes_summary
-                .data()
-                .map(|summary| summary.nodes.clone())
-                .unwrap_or_else(|| {
-                    freshkube_core::kubernetes_summary::Part::Failed(
-                        "Waiting for shared Nodes".into(),
-                    )
-                }),
-        })
-    }
-
     pub(super) fn overview_received(
         &mut self,
         epoch: u64,

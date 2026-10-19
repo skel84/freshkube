@@ -41,7 +41,7 @@ fn initial_sync_does_not_show_partial_pages_as_a_complete_count(cx: &mut TestApp
                     .unwrap();
                 let connection = old.core.identity().connection().to_owned();
                 let mut target = old.target.clone();
-                view.stop_summary();
+                view.switch.stop_summary();
                 target.epoch = view.epoch;
                 let core = Session::new(SessionIdentity::new(connection, target.epoch));
                 view.switch.registry.active_mut().summary_session = Some(SummarySession {

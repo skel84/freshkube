@@ -974,7 +974,7 @@ mod tests {
                     .unwrap()
                     .connection_read
                     .resolve(None, Ok(()));
-                view.stop_summary();
+                view.switch.stop_summary();
             });
         })
         .unwrap();
@@ -1071,7 +1071,7 @@ mod tests {
                     .unwrap()
                     .connection_read
                     .resolve(None, Ok(()));
-                view.stop_summary();
+                view.switch.stop_summary();
             });
         })
         .unwrap();

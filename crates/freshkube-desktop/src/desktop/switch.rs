@@ -76,6 +76,31 @@ impl Switcher {
         self.restored_taken
             .filter(|taken| summary.last_successful() == Some(*taken) && summary.is_stale())
     }
+
+    pub(super) fn observed_nodes(&self) -> Option<crate::backend::ObservedNodes> {
+        self.registry.active().summary_session.as_ref()?;
+        Some(crate::backend::ObservedNodes {
+            access: self.registry.active().access?,
+            nodes: self
+                .registry
+                .active()
+                .kubernetes_summary
+                .data()
+                .map(|summary| summary.nodes.clone())
+                .unwrap_or_else(|| {
+                    freshkube_core::kubernetes_summary::Part::Failed(
+                        "Waiting for shared Nodes".into(),
+                    )
+                }),
+        })
+    }
+
+    pub(super) fn stop_summary(&mut self) {
+        self.registry.summary_watch.stop();
+        let session = self.registry.active_mut();
+        session.summary_fixture = None;
+        session.summary_session = None;
+    }
 }
 
 /// The location read and its request, retained after completion because

@@ -1116,7 +1116,7 @@ impl Pilot {
             self.runtime.clone(),
             self.applied.clone(),
             self.kubeconfig.clone(),
-            self.observed_nodes(),
+            self.switch.observed_nodes(),
         );
         let completion = self.overview_read.start(self.applied.clone());
         let task = cx.spawn_in(window, async move |this, cx| {
