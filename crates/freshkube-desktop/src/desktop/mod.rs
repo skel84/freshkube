@@ -27,6 +27,8 @@ mod search;
 mod services;
 mod session;
 mod settings;
+#[path = "startup/migrate.rs"]
+mod migrate_startup;
 #[path = "startup/setup.rs"]
 mod setup_startup;
 mod shell;
@@ -159,7 +161,7 @@ pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
 
 pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
     // Before anything reads the workspace.
-    options.setup_notice = startup::migrate_setup(&options);
+    options.setup_notice = migrate_startup::migrate_setup(&options);
     let error = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_error = error.clone();
     gpui_kit::application()
