@@ -885,6 +885,11 @@ impl Pilot {
             selected_node: None,
             logs,
             chrome,
+            source_owners: vec![
+                SourceHandle::new(search.clone()),
+                SourceHandle::new(custom.clone()),
+                SourceHandle::new(dock.clone()),
+            ],
             dock,
             overview_page,
             node_workspace,
@@ -906,10 +911,6 @@ impl Pilot {
                     cx,
                 )
             }),
-            source_owners: vec![
-                SourceHandle::new(search.clone()),
-                SourceHandle::new(custom.clone()),
-            ],
             custom,
             search,
             monitoring,
@@ -1159,8 +1160,9 @@ impl Pilot {
     }
 
     /// Hands every page the current source; the visible screen loads if
-    /// empty. The screens hear first, then the entities beside the pages,
-    /// then the other pages, in key order.
+    /// empty. The screens hear first, then the owners beside the pages
+    /// (search, the custom kinds, the dock), then the other pages, in key
+    /// order.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.deliver_summary_nodes(cx);
         let source = self.source();
@@ -1174,13 +1176,9 @@ impl Pilot {
         if let Some(screen) = self.active_screen(cx) {
             screen.activate(window, cx);
         }
-        let kube = source.kube.clone();
         for owner in &self.source_owners {
             owner.set_page_source(&source, window, cx);
         }
-        self.dock.update(cx, |dock, cx| {
-            dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
-        });
         for (_, page) in self.pages.iter().filter(|(id, _)| !id.is_screen()) {
             page.set_page_source(source.clone(), window, cx);
         }
