@@ -257,10 +257,7 @@ impl SetupFile {
         };
         self.writing = true;
         self.write_generation = self.write_generation.wrapping_add(1);
-        let mut setup = match self.setup.clone() {
-            Some(setup) => setup,
-            None => Setup::default(),
-        };
+        let mut setup = self.setup.clone().unwrap_or_default();
         edit(&mut setup);
         let own = self.last_written.clone();
         cx.spawn(async move |this, cx| {
