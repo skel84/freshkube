@@ -38,6 +38,8 @@ const MOST_KEYS_NAMED: usize = 5;
 
 /// The page's id prefix: `settings-title`, `-list`, `-banner`.
 const PREFIX: &str = "settings";
+const HAND_EDITED: &str =
+    "freshkube.yaml is edited by hand for now; Settings saves to it in a later version";
 /// The list's key context, around the table.
 pub(super) const CONTEXT: &str = "SettingsWorkspace";
 
@@ -108,6 +110,10 @@ pub(crate) struct SettingsPage {
     /// The workspace as the file holds it, with the keys this version
     /// doesn't know; every save writes a changed copy of it.
     workspace: Workspace,
+    setup_file: Option<Entity<crate::setup_file::SetupFile>>,
+    setup_refusal: bool,
+    pending_setup: bool,
+    uses_setup: bool,
     /// `workspace.json`; none without a preferences folder.
     file: Option<PathBuf>,
     /// What the file held when it was last read or written, to refuse a
@@ -145,6 +151,52 @@ pub(crate) struct SettingsPage {
 }
 
 impl SettingsPage {
+    /// Keeps the existing JSON path until a parsed setup is available.
+    /// A form already open when YAML arrives keeps its draft behind Reload.
+    pub(super) fn sync_setup(
+        &mut self,
+        file: Entity<crate::setup_file::SetupFile>,
+        defer: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let model = file.read(cx);
+        let setup = model.setup.clone();
+        let problem = model.problem.clone();
+        if setup.is_none() && problem.is_none() && !self.setup_refusal {
+            self.setup_file = Some(file);
+            return;
+        }
+        self.setup_refusal = setup.is_some() || problem.is_some();
+        self.setup_file = Some(file);
+        if let Some(setup) = setup {
+            if defer && (!self.uses_setup || self.workspace != setup.workspace) {
+                self.pending_setup = true;
+            } else if !defer {
+                self.pending_setup = false;
+                if !self.uses_setup || self.workspace != setup.workspace {
+                    self.uses_setup = true;
+                    self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);
+                }
+            }
+        }
+        self.banner = if self.pending_setup {
+            Some("freshkube.yaml changed on disk. Reload to drop the unsaved changes.".into())
+        } else {
+            problem
+                .map(Into::into)
+                .or_else(|| self.uses_setup.then(|| HAND_EDITED.into()))
+        };
+        cx.notify();
+    }
+
+    pub(in crate::desktop) fn setup_is_pending(&self) -> bool {
+        self.pending_setup
+    }
+
+    pub(in crate::desktop) fn save_in_progress(&self) -> bool {
+        self.saving.is_some()
+    }
+
     /// Records, or clears, how the entry `id` opened when it did not open as
     /// defined; the row's tooltip carries it. Nothing redraws unless it changed.
     pub(in crate::desktop) fn set_note(
@@ -199,6 +251,10 @@ impl SettingsPage {
             table: table::TableState::new(PREFIX),
             origin: Origin::Alone,
             workspace: Workspace::default(),
+            setup_file: None,
+            setup_refusal: false,
+            pending_setup: false,
+            uses_setup: false,
             file: None,
             seen: workspace::Seen::Missing,
             banner: None,
@@ -355,7 +411,12 @@ impl SettingsPage {
                             Part::new(if self.origin == Origin::Example {
                                 "Example workspace".to_owned()
                             } else {
-                                "workspace.json".to_owned()
+                                if self.uses_setup {
+                                    "freshkube.yaml"
+                                } else {
+                                    "workspace.json"
+                                }
+                                .to_owned()
                             })
                             .minor(),
                         ),
@@ -464,7 +525,11 @@ impl SettingsPage {
         if let Some(body) = &self.banner {
             banners.push(banner(
                 "settings-banner",
-                "Workspace file not used",
+                if self.setup_refusal {
+                    "Setup file"
+                } else {
+                    "Workspace file not used"
+                },
                 body.clone(),
                 ui::Tone::Warn,
             ));
@@ -562,7 +627,11 @@ impl SettingsPage {
             "reload",
             "Reload",
             reloadable,
-            "Read workspace.json again",
+            if self.setup_refusal {
+                "Read freshkube.yaml again"
+            } else {
+                "Read workspace.json again"
+            },
             ReloadWorkspace,
             |this, _, cx| this.reload(cx),
             cx,
@@ -618,6 +687,7 @@ impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
         match self.section {
+            SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self
                 .list_frame(window)
@@ -695,20 +765,30 @@ impl super::Pilot {
     /// Example data shows the acme workspace and touches no file. A file
     /// the app can't use is left where it is; the page says why.
     pub(super) fn load_workspace(&mut self, cx: &mut Context<Self>) {
-        let (loaded, seen) = match (&self.workspace_file, self.mode().is_example()) {
-            (_, true) => (
+        let setup = self.setup_file.read(cx).setup.clone();
+        let (loaded, seen) = match (&self.workspace_file, self.mode().is_example(), &setup) {
+            (_, true, _) => (
                 Loaded::Workspace(workspace::example()),
                 workspace::Seen::Missing,
             ),
-            (Some(file), false) => workspace::load_seen(file),
-            (None, false) => (Loaded::Missing, workspace::Seen::Missing),
+            (_, false, Some(setup)) => (
+                Loaded::Workspace(setup.workspace.clone()),
+                self.setup_file.read(cx).seen.clone(),
+            ),
+            (Some(file), false, None) => workspace::load_seen(file),
+            (None, false, None) => (Loaded::Missing, workspace::Seen::Missing),
         };
         let example = self.mode().is_example();
         let file = self.workspace_file.clone();
+        let setup_file = self.setup_file.clone();
         self.settings_page.update(cx, |page, cx| {
             page.file = file;
             page.seen = seen;
-            page.set_workspace(&loaded, example, cx)
+            page.uses_setup = setup.is_some();
+            page.set_workspace(&loaded, example, cx);
+            if !example {
+                page.sync_setup(setup_file, false, cx);
+            }
         });
     }
 }
