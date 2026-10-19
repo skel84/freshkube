@@ -6,7 +6,7 @@ use super::*;
 use crate::secrets::{STORE_NAME, SecretStore, Secrets};
 use freshkube_prefs::{Document, Layout};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -19,6 +19,8 @@ pub(super) struct Saved {
     pub(super) reconnect: bool,
     /// Keep the key in the credential store.
     pub(super) remember: bool,
+    /// Keys this build does not know, written back as read.
+    extra: Map<String, Value>,
 }
 
 const AUTH: [&str; 3] = ["api-key", "session", "anonymous"];
@@ -48,22 +50,28 @@ fn write(file: &Path, saved: &Saved) -> std::io::Result<()> {
 }
 
 /// `{url, auth, project, reconnect, remember}`; `project` is `null` when
-/// none. Nothing else, and no key.
+/// none, plus unknown keys written back as read. No credential is added.
 impl Serialize for Saved {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        json!({
-            "url": self.url,
-            "auth": AUTH[self.auth.min(2)],
-            "project": self.project,
-            "reconnect": self.reconnect,
-            "remember": self.remember,
-        })
-        .serialize(serializer)
+        let mut value = self.extra.clone();
+        value.extend(
+            json!({
+                "url": self.url,
+                "auth": AUTH[self.auth.min(2)],
+                "project": self.project,
+                "reconnect": self.reconnect,
+                "remember": self.remember,
+            })
+            .as_object()
+            .expect("saved connection is an object")
+            .clone(),
+        );
+        value.serialize(serializer)
     }
 }
 
 /// The server and a known sign-in choice are required; the rest is lenient.
-/// Keys this build does not know are not kept.
+/// Keys this build does not know are kept when saved again.
 impl<'de> Deserialize<'de> for Saved {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = Value::deserialize(deserializer)?;
@@ -87,6 +95,14 @@ impl Saved {
                 .map(str::to_owned),
             reconnect: flag("reconnect"),
             remember: flag("remember"),
+            extra: value
+                .as_object()?
+                .iter()
+                .filter(|(key, _)| {
+                    !["url", "auth", "project", "reconnect", "remember"].contains(&key.as_str())
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
         })
     }
 }
@@ -293,6 +309,7 @@ impl ObservabilityPage {
             auth,
             reconnect: true,
             remember: memory.saved.remember,
+            extra: std::mem::take(&mut memory.saved.extra),
         };
         memory.error = None;
         let keep = memory.saved.remember && auth != 2 && memory.can_remember();
@@ -488,6 +505,28 @@ mod tests {
     const EXAMPLE: &str = include_str!("../../freshkube-prefs/src/examples/coroot.json");
 
     #[test]
+    fn unknown_keys_round_trip_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = directory.path().join("preferences.json");
+        let mut value: serde_json::Value = serde_json::from_str(EXAMPLE).unwrap();
+        value["future"] = serde_json::json!({"enabled": true, "options": [null, 7, "example"]});
+        std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let mut saved = load(&preferences).expect("the connection loads");
+        write(&file(&preferences), &saved).unwrap();
+        let read = || {
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(file(&preferences)).unwrap())
+                .unwrap()
+        };
+        assert_eq!(read(), value);
+
+        saved.reconnect = !saved.reconnect;
+        value["reconnect"] = saved.reconnect.into();
+        write(&file(&preferences), &saved).unwrap();
+        assert_eq!(read(), value);
+    }
+
+    #[test]
     fn saves_the_connection_without_its_key_and_reads_it_back() {
         let directory = tempfile::tempdir().unwrap();
         let preferences = directory.path().join("preferences.json");
@@ -498,6 +537,7 @@ mod tests {
             project: Some("p2".into()),
             reconnect: true,
             remember: true,
+            ..Saved::default()
         };
         write(&file(&preferences), &saved).unwrap();
         assert_eq!(load(&preferences), Some(saved));

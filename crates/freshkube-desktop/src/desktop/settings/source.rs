@@ -34,16 +34,7 @@ impl TableColumn for Column {
     }
 }
 
-/// DESIGN.md's widths: 7.5 a character plus 24, between 64 and 240.
-fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>) -> f32 {
-    let chars = texts
-        .map(|text| text.chars().count())
-        .chain([label.len()])
-        .max()
-        .unwrap_or_default();
-    (chars as f32 * 7.5 + 24.).clamp(64., 240.)
-}
-
+/// Derives widths using the shared table's DESIGN.md sizing rules.
 pub(super) fn columns(rows: &[ClusterRow]) -> (Vec<Column>, f32) {
     let column = |field, label: &str, width| Column {
         field,
@@ -54,13 +45,17 @@ pub(super) fn columns(rows: &[ClusterRow]) -> (Vec<Column>, f32) {
         column(
             Field::Name,
             "Cluster",
-            fit("Cluster", rows.iter().map(|row| &row.id)),
+            table::fit("Cluster", rows.iter().map(|row| &row.id), table::WIDEST),
         ),
         column(Field::Role, "Role", 120.),
         column(
             Field::Context,
             "Context",
-            fit("Context", rows.iter().map(|row| &row.context)),
+            table::fit(
+                "Context",
+                rows.iter().map(|row| &row.context),
+                table::WIDEST,
+            ),
         ),
         column(Field::Talosconfig, "Talosconfig", 240.),
     ];

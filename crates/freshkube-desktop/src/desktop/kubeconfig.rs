@@ -1,12 +1,13 @@
 //! Where Kubernetes credentials come from. The applied choice lives in
 //! `Pilot::kubeconfig`; this holds the file being chosen until it's usable.
 use super::Pilot;
-use crate::backend::{self, OwnedJob};
+use crate::backend;
 use crate::palette::palette;
 use crate::ui::{self, MONO_FONT, dp};
 use freshkube_core::cluster_overview::{
     KubeconfigFileInfo, KubeconfigSelection, inspect_kubeconfig,
 };
+use freshkube_reads::Loader;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Icon, Sizable,
@@ -36,9 +37,8 @@ pub(super) struct KubeconfigDraft {
     pub(super) path: Option<PathBuf>,
     pub(super) inspection: Option<Result<KubeconfigFileInfo, String>>,
     pub(super) inspecting: bool,
-    job: Option<OwnedJob>,
-    /// Held only to keep the inspection alive; replacing it cancels it.
-    _task: Option<Task<()>>,
+    /// Owns inspection completion and work; `inspection` keeps its result.
+    read: Loader<(), (PathBuf, Option<String>)>,
 }
 
 /// What a held link is told when its entry's own kubeconfig can't be used.
@@ -225,6 +225,10 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let generation = self.entry_generation;
+        let request = self
+            .kubeconfig_draft
+            .read
+            .start((path.clone(), context.clone()));
         let file = path.clone();
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
@@ -246,7 +250,13 @@ impl Pilot {
                 // Finished either way, so a draft the entry left behind
                 // doesn't read as still inspecting.
                 let draft = &mut view.kubeconfig_draft;
-                draft.job = None;
+                if !draft.read.land(
+                    &request,
+                    result.as_ref().map(|_| ()).map_err(Clone::clone),
+                    cx,
+                ) {
+                    return;
+                }
                 draft.inspecting = false;
                 if for_entry && generation != view.entry_generation {
                     return;
@@ -272,15 +282,12 @@ impl Pilot {
                 cx.notify();
             });
         });
-        // Replacing the task and job cancels reading a previously chosen file.
-        self.kubeconfig_draft = KubeconfigDraft {
-            mode: KubeconfigMode::File,
-            path: Some(path),
-            inspection: None,
-            inspecting: true,
-            job: Some(job),
-            _task: Some(task),
-        };
+        let draft = &mut self.kubeconfig_draft;
+        draft.mode = KubeconfigMode::File;
+        draft.path = Some(path);
+        draft.inspection = None;
+        draft.inspecting = true;
+        draft.read.run(Some(job), task);
         cx.notify();
     }
 }

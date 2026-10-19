@@ -51,6 +51,7 @@ pub mod pcap;
 pub mod resources;
 pub mod secrets;
 pub mod security_lifecycle;
+pub mod setup;
 pub mod snapshot;
 pub mod talos_nodes;
 pub mod types;
