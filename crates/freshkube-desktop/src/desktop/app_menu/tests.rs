@@ -1,5 +1,5 @@
 use super::*;
-use crate::desktop::tests::fixture;
+use crate::desktop::{Page, tests::fixture};
 use crate::resources::{Tab, example, live};
 use freshkube_core::resources::builtin;
 use gpui_kit::test::TestWindowExt;
@@ -403,7 +403,7 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
     .unwrap();
 
     // An entry the shell answers is live: a snapshot can't say so, so pick
-    // it and see Settings open.
+    // it and see the Settings page open.
     cx.update_window(handle, |_, window, cx| window.click("app-menu", cx))
         .unwrap();
     cx.run_until_parked();
@@ -419,7 +419,7 @@ fn the_menu_button_opens_the_menus_where_there_is_no_bar(cx: &mut TestAppContext
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(cx.update(|cx| pilot.read(cx).navigation.settings_open));
+    assert!(cx.update(|cx| pilot.read(cx).navigation.page == Page::Settings));
     draw(handle, cx);
     assert!(cx.update(|cx| pilot.read(cx).chrome.app_menu_popup.is_none()));
 
@@ -433,8 +433,9 @@ fn settings_and_about_open_from_their_actions(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     draw(handle, cx);
     dispatch(handle, OpenSettings, cx);
-    assert!(cx.update(|cx| pilot.read(cx).navigation.settings_open));
-    cx.update(|cx| pilot.update(cx, |pilot, _| pilot.navigation.settings_open = false));
+    // Settings opens as a page, on the section shown last.
+    assert!(cx.update(|cx| pilot.read(cx).navigation.page == Page::Settings));
+    assert!(!cx.update(|cx| pilot.read(cx).navigation.settings_open));
     dispatch(handle, About, cx);
     cx.update_window(handle, |_, window, cx| {
         assert!(window.has_active_dialog(cx));

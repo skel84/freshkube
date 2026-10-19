@@ -51,7 +51,7 @@ There are three ways to draw a page on main, and one trait every page has a hand
 | Monitoring | `MonitoringPage` | `crates/freshkube-monitoring/src/page/` |
 | Observability | `ObservabilityPage` | `crates/freshkube-observability/src/lib.rs` |
 | Applications | `ApplicationsPage` | `crates/freshkube-desktop/src/applications/` |
-| Settings | `SettingsPage`; only its Delivery sources list has `set_source` and `set_visible`, and it drops its check on hide | `crates/freshkube-desktop/src/desktop/settings/` (`sources/mod.rs`) |
+| Settings | `SettingsPage`, one page of sections (`settings/sections.rs`); only its Delivery sources list has `set_source` and `set_visible`, and it drops its check on hide or when another section shows | `crates/freshkube-desktop/src/desktop/settings/` (`sources/mod.rs`) |
 | System services | `SystemServices`; its hooks do nothing but give its status line and hear `ServiceEvent`: the shell pushes the node roster's services with `set_nodes` (`desktop/target.rs`, `desktop/mod.rs`) and the read state with `set_reading`; the page makes no requests | `crates/freshkube-desktop/src/desktop/system_services/` |
 | Overview | `OverviewPage`; its hooks do nothing but hear `OverviewEvent` (a card, an attention row's Open, Logs or Open node, a state's button), which the shell runs: `rebuild_joined_nodes` pushes the cards and attention rows with `set_display` and `set_attention`, and the shell's observer pushes `OverviewState` (where the Talos overview, the summary and the connection stand) after every notify, which redraws the page only when it changed. Show all is the page's own. The states and the stale banner are shared with the node pane's System services tab (`desktop/states.rs`) | `crates/freshkube-desktop/src/desktop/overview/` |
 
