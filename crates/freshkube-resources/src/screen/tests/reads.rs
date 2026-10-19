@@ -1,0 +1,512 @@
+use super::*;
+
+fn api_list_failure_is_shown(
+    cx: &mut TestAppContext,
+    code: u16,
+    kind: freshkube_core::failure::FailureKind,
+    message: &str,
+    placeholder: &'static str,
+) {
+    use freshkube_core::failure::Failure;
+    use freshkube_core::resources::WatchEvent;
+    let (_runtime, screen, handle) = mount(cx, None);
+    let failure = Failure::from_kube(kube::Error::Api(kube::core::ErrorResponse {
+        status: "Failure".into(),
+        reason: "Synthetic".into(),
+        message: message.into(),
+        code,
+    }));
+    assert_eq!(failure.kind, kind);
+    assert_eq!(failure.message, message);
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_visible(false, window, cx);
+            screen.set_source(Some(source("cluster-a")), window, cx);
+        });
+        let events = crate::live::convert(
+            "cluster-a", "pods", &mut Vec::new(),
+            vec![WatchEvent::Failed { failure, retrying: false }],
+        );
+        deliver(&screen, events, cx);
+        window.render_frame(cx);
+        assert!(window.find(placeholder).visible());
+        assert!(window.try_find("resource-list").is_none());
+        let state = screen.read(cx).store.read_state();
+        match state {
+            ReadState::Refused(words) | ReadState::Missing(words) => assert_eq!(words, message),
+            other => panic!("a refusal or unserved API must not look empty: {other:?}"),
+        }
+        if code == 404 {
+            assert_eq!(screen.read(cx).not_served("cluster-a"),
+                "The API server of cluster-a doesn't serve pods at v1. The server may predate that version, or no longer serve it.");
+        }
+    }).unwrap();
+}
+
+#[gpui_kit::test]
+fn a_list_403_shows_the_refusal_words(cx: &mut TestAppContext) {
+    api_list_failure_is_shown(
+        cx,
+        403,
+        freshkube_core::failure::FailureKind::Forbidden,
+        "pods is forbidden",
+        "resource-refused",
+    );
+}
+
+#[gpui_kit::test]
+fn a_list_404_shows_the_not_served_words(cx: &mut TestAppContext) {
+    api_list_failure_is_shown(
+        cx,
+        404,
+        freshkube_core::failure::FailureKind::NotFound,
+        "the server could not find the requested resource",
+        "resource-not-served",
+    );
+}
+
+#[gpui_kit::test]
+fn reads_show_refusals_failures_and_stale_rows(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // A broken watch keeps the rows it had and says so.
+        deliver(
+            &screen,
+            vec![ResourceEvent::Read(ReadState::Failed(
+                "Unreachable · connection reset".into(),
+            ))],
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(window.find("resource-stale").visible());
+        assert!(window.find("resource-list").visible());
+        window.click("resource-stale-retry", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("resource-stale").is_none());
+        assert_eq!(screen.read(cx).store.len(), 22);
+
+        // Kinds the example lacks say so rather than listing nothing.
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("configmaps"), window, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-not-in-example").visible());
+
+        // Without rows, a refusal and a failure each replace the table.
+        deliver(
+            &screen,
+            vec![ResourceEvent::Read(ReadState::Refused(
+                "configmaps is forbidden".into(),
+            ))],
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(window.find("resource-refused").visible());
+        assert!(window.try_find("resource-list").is_none());
+        deliver(
+            &screen,
+            vec![ResourceEvent::Read(ReadState::Failed("Timeout".into()))],
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(window.find("resource-failed").visible());
+        // A batch from an earlier read changes nothing.
+        screen.update(cx, |screen, cx| {
+            let epoch = screen.store.epoch() - 1;
+            screen.apply(
+                epoch,
+                vec![vec![ResourceEvent::Read(ReadState::Loaded)]],
+                cx,
+            );
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-failed").visible());
+        window.click("resource-retry", cx);
+        window.render_frame(cx);
+        assert!(window.find("resource-not-in-example").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_kind_no_longer_served_says_so_and_closes_its_details(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let missing = Rc::new(RefCell::new(Vec::new()));
+    let sink = missing.clone();
+    cx.update(|cx| {
+        cx.subscribe(&screen, move |_, NotServed(kind), _| {
+            sink.borrow_mut().push(kind.key())
+        })
+        .detach()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        // A custom kind lists through the same table.
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("certificates.cert-manager.io"), window, cx)
+        });
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).title(), "Certificate");
+        assert_eq!(screen.read(cx).noun(), "certificates");
+        assert_eq!(screen.read(cx).store.len(), 5);
+        let first = identity_at(&screen, 0, cx);
+        window.within(row_id(&first)).click("name", cx);
+        window.render_frame(cx);
+        assert_eq!(shown(&screen, cx), Some(first));
+        assert!(window.find("resource-drawer").visible());
+    })
+    .unwrap();
+
+    // The definition was removed while the page watched it.
+    let gone = || {
+        vec![ResourceEvent::Read(ReadState::Missing(
+            "the server could not find the requested resource".into(),
+        ))]
+    };
+    cx.update_window(handle, |_, window, cx| {
+        deliver(&screen, gone(), cx);
+        window.render_frame(cx);
+        assert!(window.find("resource-not-served").visible());
+        assert!(window.try_find("resource-list").is_none());
+        assert!(window.try_find("resource-detail").is_none());
+        assert_eq!(shown(&screen, cx), None);
+    })
+    .unwrap();
+    // Events reach subscribers once the update is done.
+    assert_eq!(*missing.borrow(), ["certificates.cert-manager.io"]);
+    // Saying it again isn't news.
+    cx.update(|cx| deliver(&screen, gone(), cx));
+    assert_eq!(missing.borrow().len(), 1);
+
+    cx.update_window(handle, |_, window, cx| {
+        // Retry reads again; here the example still serves it.
+        window.click("resource-missing-retry", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("resource-not-served").is_none());
+        assert_eq!(screen.read(cx).store.len(), 5);
+        assert_eq!(
+            screen.read(cx).not_served("homelab"),
+            "The API server of homelab doesn't serve certificates at cert-manager.io/v1. \
+             Its definition may have been removed, or that version is no longer served."
+        );
+
+        // A built-in kind has no definition to remove.
+        let bindings = "validatingadmissionpolicybindings.admissionregistration.k8s.io";
+        screen.update(cx, |screen, cx| screen.set_kind(kind(bindings), window, cx));
+        deliver(&screen, gone(), cx);
+        window.render_frame(cx);
+        assert!(window.find("resource-not-served").visible());
+        assert_eq!(
+            screen.read(cx).not_served("homelab"),
+            "The API server of homelab doesn't serve validating admission policy bindings \
+             at admissionregistration.k8s.io/v1. The server may predate that version, or \
+             no longer serve it."
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_watch_burst_applies_at_most_once_per_coalesce_window(cx: &mut TestAppContext) {
+    let (_runtime, screen, _handle) = mount(cx, Some("homelab"));
+    let sender = feed(&screen, cx);
+    let rows = |cx: &mut TestAppContext| screen.read_with(cx, |screen, _| screen.store.len());
+    let upsert = |n| vec![ResourceEvent::Upsert(example::inserted_pod(n))];
+    let listed = rows(cx);
+
+    // After a quiet spell a change shows at once.
+    sender.try_send(upsert(1)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+
+    // More within the window wait for it, then apply together.
+    sender.try_send(upsert(2)).unwrap();
+    cx.run_until_parked();
+    cx.executor().advance_clock(WATCH_COALESCE / 2);
+    sender.try_send(upsert(3)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+    cx.executor().advance_clock(WATCH_COALESCE / 2);
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 3);
+
+    cx.executor().advance_clock(WATCH_COALESCE * 2);
+    sender.try_send(upsert(4)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 4);
+}
+
+/// Starts the list's watch for the current session on a stream that only
+/// holds its sender open, and returns that sender: what the test sends
+/// lands as the watch's batches, with no Tokio work between.
+fn feed(
+    screen: &Entity<ResourcesScreen>,
+    cx: &mut TestAppContext,
+) -> tokio::sync::mpsc::Sender<Vec<ResourceEvent>> {
+    let mut feed = None;
+    screen.update(cx, |screen, cx| {
+        let epoch = screen.store.epoch();
+        screen.start_watch(
+            epoch,
+            |sender| {
+                feed = Some(sender);
+                async {}
+            },
+            cx,
+        );
+    });
+    feed.unwrap()
+}
+
+#[gpui_kit::test]
+fn a_running_watch_stops_on_hide_and_on_restart(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let rows = |cx: &mut TestAppContext| screen.read_with(cx, |screen, _| screen.store.len());
+    let upsert = |n| vec![ResourceEvent::Upsert(example::inserted_pod(n))];
+    let listed = rows(cx);
+
+    // Hiding stops the stream: what it sends next never lands.
+    let sender = feed(&screen, cx);
+    sender.try_send(upsert(1)).unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.set_visible(false, window, cx));
+    })
+    .unwrap();
+    assert!(!screen.read_with(cx, |screen, _| screen.watch.is_running()));
+    // The dropped delivery lets its receiver go once GPUI runs again.
+    cx.run_until_parked();
+    assert!(sender.try_send(upsert(2)).is_err());
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed + 1);
+
+    // Showing lists again, as the example answers.
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.set_visible(true, window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed);
+
+    // A restarted read drops the old stream's batches.
+    let sender = feed(&screen, cx);
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| screen.refresh(window, cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(sender.try_send(upsert(3)).is_err());
+    cx.run_until_parked();
+    assert_eq!(rows(cx), listed);
+}
+
+#[gpui_kit::test]
+fn only_a_visible_connected_page_reads(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("resource-disconnected").visible());
+
+        screen.update(cx, |screen, cx| {
+            screen.set_visible(false, window, cx);
+            screen.set_source(Some(source("homelab")), window, cx);
+        });
+        window.render_frame(cx);
+        assert!(screen.read(cx).store.is_empty());
+        // The table's loading rows, under the header the kind will keep.
+        assert!(
+            window
+                .within("resource-list")
+                .find("resource-loading")
+                .visible()
+        );
+        window.find(("resource-sort", 1usize));
+
+        screen.update(cx, |screen, cx| screen.set_visible(true, window, cx));
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).store.len(), 22);
+        assert!(window.try_find("resource-loading").is_none());
+        let first = identity_at(&screen, 0, cx);
+        window.within(row_id(&first)).click("name", cx);
+
+        // Another connection keeps nothing from the last one.
+        screen.update(cx, |screen, cx| {
+            screen.set_source(Some(source("staging-eu")), window, cx)
+        });
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).store.len(), 48);
+        assert_eq!(selected(&screen, cx), None);
+        assert!(window.try_find(row_id(&first)).is_none());
+    })
+    .unwrap();
+}
+
+/// How many sortable header cells the list draws.
+fn header_cells(window: &gpui_kit::Window) -> usize {
+    (0usize..40)
+        .filter(|ix| window.try_find(("resource-sort", *ix)).is_some())
+        .count()
+}
+
+#[gpui_kit::test]
+fn the_loading_rows_give_way_to_a_refusal_or_a_failure(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, None);
+    cx.update_window(handle, |_, window, cx| {
+        for (connection, state, shown) in [
+            (
+                "homelab",
+                ReadState::Refused("pods is forbidden".into()),
+                "resource-refused",
+            ),
+            (
+                "staging-eu",
+                ReadState::Failed("Timeout".into()),
+                "resource-failed",
+            ),
+        ] {
+            // Hidden, the page waits for its first list.
+            screen.update(cx, |screen, cx| {
+                screen.set_visible(false, window, cx);
+                screen.set_source(Some(source(connection)), window, cx);
+            });
+            window.render_frame(cx);
+            assert!(window.find("resource-loading").visible());
+
+            deliver(&screen, vec![ResourceEvent::Read(state)], cx);
+            window.render_frame(cx);
+            assert!(window.find(shown).visible(), "{shown}");
+            assert!(window.try_find("resource-loading").is_none(), "{shown}");
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_relist_of_the_same_kind_keeps_its_header_over_the_loading_rows(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("deployments.apps"), window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(screen.read(cx).kind, kind("deployments.apps"));
+        assert!(!screen.read(cx).store.is_empty());
+        let listed = header_cells(window);
+        assert!(listed > 2, "{listed}");
+
+        // Refresh and a namespace change start again from no rows; the
+        // header stays the kind's while they wait.
+        screen.update(cx, |screen, cx| {
+            screen.set_visible(false, window, cx);
+            screen.restart(window, cx);
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-loading").visible());
+        assert_eq!(header_cells(window), listed);
+
+        // Another kind waits under Name and Age.
+        screen.update(cx, |screen, cx| {
+            screen.set_kind(kind("statefulsets.apps"), window, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find("resource-loading").visible());
+        assert!(header_cells(window) < listed);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn access_replacement_rejects_old_batches_with_the_same_object_name_and_uid(
+    cx: &mut TestAppContext,
+) {
+    use crate::direct::DirectAccess;
+    let (_runtime, screen, handle) = mount(cx, None);
+    let source = || {
+        let access = DirectAccess::new(
+            Vec::new(),
+            "homelab".into(),
+            freshkube_core::ConfigurationRevision::default(),
+        );
+        ClusterSource {
+            id: access.id(),
+            context: "homelab".into(),
+            access: ClusterAccess::Direct(access),
+        }
+    };
+    let previous = source();
+    let current = source();
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            // Feed controlled completions without making network requests.
+            screen.set_visible(false, window, cx);
+            screen.set_source(Some(previous.clone()), window, cx);
+            let (columns, mut rows) =
+                example::read("homelab", "pods", None, super::super::live::now()).unwrap();
+            rows.truncate(1);
+            rows[0].identity.connection = previous.id.clone();
+            let old_identity = rows[0].identity.clone();
+            let old_epoch = screen.store.epoch();
+            screen.apply(
+                old_epoch,
+                vec![vec![ResourceEvent::reset(columns.clone(), rows.clone())]],
+                cx,
+            );
+            screen
+                .projection
+                .select_identity(&screen.store, &old_identity);
+            screen.set_source(Some(previous.clone()), window, cx);
+            assert_eq!(screen.store.epoch(), old_epoch);
+            assert_eq!(screen.projection.selected(), Some(&old_identity));
+            screen.set_source(Some(current.clone()), window, cx);
+            let epoch = screen.store.epoch();
+            assert_ne!(epoch, old_epoch);
+            assert!(screen.store.is_empty());
+            screen.apply(
+                old_epoch,
+                vec![vec![ResourceEvent::reset(columns.clone(), rows.clone())]],
+                cx,
+            );
+            assert!(
+                screen.store.is_empty(),
+                "a late reset must not repopulate the next session"
+            );
+            assert!(screen.projection.selected().is_none());
+            rows[0].identity.connection = current.id.clone();
+            let new_identity = rows[0].identity.clone();
+            assert_eq!(old_identity.name, new_identity.name);
+            assert_eq!(old_identity.uid, new_identity.uid);
+            assert_ne!(old_identity, new_identity);
+            screen.apply(epoch, vec![vec![ResourceEvent::reset(columns, rows)]], cx);
+            assert_eq!(screen.store.len(), 1);
+            assert!(screen.store.get(&old_identity).is_none());
+            assert!(screen.store.get(&new_identity).is_some());
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn old_metrics_cannot_change_the_new_access_or_a_disconnected_page(cx: &mut TestAppContext) {
+    let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            let generation = screen.usage_generation;
+            screen.set_source(Some(source("prod-fra")), window, cx);
+            assert!(!screen.apply_usage(generation, Err("late failure".into()), cx));
+            assert_eq!(screen.usage_state, super::super::UsageState::Known);
+            let generation = screen.usage_generation;
+            assert!(screen.apply_usage(generation, Err("current failure".into()), cx));
+            assert_eq!(screen.usage_state, super::super::UsageState::Stale);
+            screen.set_source(None, window, cx);
+            assert!(screen.usage.is_none());
+            assert!(!screen.apply_usage(generation, Ok(Vec::new()), cx));
+            assert_eq!(screen.usage_state, super::super::UsageState::Unknown);
+        });
+    })
+    .unwrap();
+}

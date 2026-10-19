@@ -103,11 +103,11 @@ fn rows() { uniform_list("services", 1, f); }
 EOF
 expect 1 "desktop's log sources are pages like any other" "list crates/freshkube-desktop/src/logs/talos.rs:1:"
 
-mkdir -p "$work/tree/crates/freshkube-desktop/src/resources/screen"
-page resources/screen/view.rs <<'EOF'
+mkdir -p "$work/tree/crates/freshkube-resources/src/screen"
+cat >"$work/tree/crates/freshkube-resources/src/screen/view.rs" <<'EOF'
 fn table() { uniform_list("rows", 1, f); }
 EOF
-expect 1 "the Resources screen is a page like any other" "list crates/freshkube-desktop/src/resources/screen/view.rs:1:"
+expect 1 "the Resources screen is a page like any other" "list crates/freshkube-resources/src/screen/view.rs:1:"
 
 tree
 page buttons.rs <<'EOF'
