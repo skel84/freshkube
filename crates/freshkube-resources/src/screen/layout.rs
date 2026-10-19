@@ -1,0 +1,301 @@
+//! The table's columns for a read: which printed columns show, in what
+//! order and how wide, derived when a read resets.
+
+use gpui_kit::SharedString;
+
+use super::super::model::{ColumnKind, SortKey};
+use super::super::store::ResourceStore;
+
+/// Advance of one character in the 12.5 px table font.
+const CHAR_WIDTH: f32 = 7.5;
+const CELL_PADDING: f32 = 24.;
+const AGE_WIDTH: f32 = 64.;
+const MIN_COLUMN: f32 = 64.;
+const MAX_COLUMN: f32 = 280.;
+const MAX_FLEXIBLE: f32 = 440.;
+/// The status glyph's column: 16 for the glyph and its padding.
+pub(super) use freshkube_ui::table::GLYPH_WIDTH;
+/// A pod's container squares, at most eight and a `+N`, inside the cell's
+/// padding: 130.
+const CONTAINERS_WIDTH: f32 = freshkube_ui::squares::width(freshkube_ui::squares::SHOWN + 1)
+    + 2. * freshkube_ui::table::CELL_PAD;
+/// A pod's `0/1`, under its label and sort arrow.
+const READY_WIDTH: f32 = 72.;
+/// A pod's restart count, under its label and sort arrow.
+const RESTARTS_WIDTH: f32 = 88.;
+/// A pod's Logs button, after its name.
+const LOGS_WIDTH: f32 = 36.;
+/// A use figure and its 44-wide bullet.
+const USAGE_WIDTH: f32 = 116.;
+const MAX_OWNER: f32 = 132.;
+/// A pod's name and namespace take what is left, but no less than this.
+const MIN_POD_NAME: f32 = 224.;
+const MAX_NODE: f32 = 140.;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum ColumnSource {
+    /// A printed column, by index into the store's columns.
+    Cell(usize),
+    /// The printed name, after its namespace when listing every namespace,
+    /// and for a pod, the reason it isn't healthy.
+    Name(usize),
+    /// The namespace, for kinds that print no name, such as events.
+    Namespace,
+    /// The status glyph, or a check where the row is marked.
+    Glyph,
+    Owner,
+    /// A pod's container squares, init containers first.
+    Containers,
+    /// A pod's ready containers of all.
+    Ready,
+    /// A pod's restarts, all its containers' together.
+    Restarts,
+    Cpu,
+    Memory,
+    Node,
+    /// A pod's Logs button, after its name.
+    Logs,
+}
+
+#[derive(Clone, Debug)]
+pub struct DisplayColumn {
+    pub(super) label: SharedString,
+    pub(super) source: ColumnSource,
+    pub(super) kind: ColumnKind,
+    pub(super) width: f32,
+    /// Takes the room left over; at most one column does.
+    pub(super) flexible: bool,
+    /// Printed statuses are coloured by what they mean.
+    pub(super) status: bool,
+}
+
+impl DisplayColumn {
+    /// The order a header click sorts by; the glyph's column has none. A
+    /// name shown after its namespace sorts by both.
+    pub(super) fn sort_key(&self, namespaced: bool) -> Option<SortKey> {
+        Some(match self.source {
+            ColumnSource::Name(_) if namespaced => SortKey::Namespace,
+            ColumnSource::Cell(ix) | ColumnSource::Name(ix) => SortKey::Column(ix),
+            ColumnSource::Namespace => SortKey::Namespace,
+            ColumnSource::Glyph | ColumnSource::Logs => return None,
+            ColumnSource::Owner => SortKey::Owner,
+            ColumnSource::Containers => SortKey::Containers,
+            ColumnSource::Ready => SortKey::Ready,
+            ColumnSource::Restarts => SortKey::Restarts,
+            ColumnSource::Cpu => SortKey::Cpu,
+            ColumnSource::Memory => SortKey::Memory,
+            ColumnSource::Node => SortKey::Node,
+        })
+    }
+
+    fn new(label: &str, source: ColumnSource, width: f32) -> Self {
+        Self {
+            label: label.to_owned().into(),
+            source,
+            kind: ColumnKind::Text,
+            width,
+            flexible: false,
+            status: false,
+        }
+    }
+}
+
+impl freshkube_ui::table::TableColumn for DisplayColumn {
+    fn label(&self) -> &SharedString {
+        &self.label
+    }
+
+    fn width(&self) -> f32 {
+        self.width
+    }
+
+    fn flexible(&self) -> bool {
+        self.flexible
+    }
+
+    /// The glyph, the name and a pod's Logs button stay in view when the
+    /// table scrolls sideways.
+    fn pinned(&self) -> bool {
+        matches!(
+            self.source,
+            ColumnSource::Glyph | ColumnSource::Name(_) | ColumnSource::Logs
+        )
+    }
+}
+
+/// Where a row's glyph comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ToneSource {
+    /// A printed status or phase.
+    Status(usize),
+    /// A workload's ready replicas of all, `2/3`.
+    Ready(usize),
+}
+
+/// The columns drawn for the current read and their widths. Derived when a
+/// read resets, never while drawing; wide (`-o wide`) columns are left out.
+#[derive(Clone, Debug, Default)]
+pub(super) struct TableLayout {
+    pub(super) columns: Vec<DisplayColumn>,
+    pub(super) all_columns: Vec<DisplayColumn>,
+    pub(super) width: f32,
+    /// The printed column that gives a row its glyph, for kinds other than
+    /// pods, which have their own state.
+    pub(super) tone_from: Option<ToneSource>,
+    /// The name shows its namespace before it.
+    pub(super) namespaced: bool,
+}
+
+impl TableLayout {
+    /// Pods show a glyph, their name with its namespace, owner, readiness
+    /// and restarts together, use, node and age. Other kinds show a glyph
+    /// where they print a status, their name, an owner where any row has
+    /// one, and their printed columns. `row_logs` gives each pod a Logs
+    /// button, which a node's Pods list, where L does nothing, goes
+    /// without.
+    pub(super) fn new(
+        store: &ResourceStore,
+        namespace_column: bool,
+        pods: bool,
+        row_logs: bool,
+    ) -> Self {
+        let widest = store.widest();
+        let fit = |chars: usize, max: f32| {
+            (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max)
+        };
+        let printed: Vec<_> = store
+            .columns()
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| !column.wide)
+            .collect();
+        let named = |name: &str| {
+            printed
+                .iter()
+                .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+                .map(|(ix, _)| *ix)
+        };
+        let name = named("name");
+        let status = named("status").or_else(|| named("phase"));
+        let tone_from = status
+            .map(ToneSource::Status)
+            .or_else(|| named("ready").map(ToneSource::Ready));
+        let flexible = named("message")
+            .or(name)
+            .or_else(|| printed.first().map(|(ix, _)| *ix));
+        let namespaced = namespace_column && name.is_some();
+        let mut columns = Vec::with_capacity(printed.len() + 4);
+        if pods || tone_from.is_some() {
+            columns.push(DisplayColumn::new("", ColumnSource::Glyph, GLYPH_WIDTH));
+        }
+        let name_chars = |ix: usize| {
+            widest.cells.get(ix).copied().unwrap_or(0)
+                + if namespaced { widest.namespace + 1 } else { 0 }
+        };
+        for (position, (ix, column)) in printed.iter().enumerate() {
+            let (ix, first) = (*ix, position == 0);
+            let is_flexible = flexible == Some(ix);
+            let is_name = name == Some(ix);
+            // A pod's status follows its name; its readiness and restarts
+            // come from its facts.
+            if pods && !is_name && column.kind != ColumnKind::Age {
+                continue;
+            }
+            let width = match column.kind {
+                ColumnKind::Age => AGE_WIDTH,
+                // Long names truncate, their tooltip holding them whole.
+                _ if pods && is_name => MIN_POD_NAME,
+                _ => fit(
+                    if is_name {
+                        name_chars(ix)
+                    } else {
+                        widest.cells.get(ix).copied().unwrap_or(0)
+                    }
+                    // Room for the sort arrow beside the label.
+                    .max(column.name.chars().count() + 2),
+                    if is_flexible {
+                        MAX_FLEXIBLE
+                    } else {
+                        MAX_COLUMN
+                    },
+                ),
+            };
+            if column.kind == ColumnKind::Age && pods {
+                columns.extend(pod_columns(store));
+            }
+            columns.push(DisplayColumn {
+                label: column.name.clone().into(),
+                source: if is_name {
+                    ColumnSource::Name(ix)
+                } else {
+                    ColumnSource::Cell(ix)
+                },
+                kind: column.kind,
+                width,
+                flexible: is_flexible,
+                status: status == Some(ix),
+            });
+            // A pod's Logs button follows its name, pinned with it, so it
+            // stays in reach when the table scrolls sideways.
+            if is_name && pods && row_logs {
+                columns.push(DisplayColumn::new("", ColumnSource::Logs, LOGS_WIDTH));
+            }
+            if is_name && !pods && widest.owner > 0 {
+                columns.push(DisplayColumn::new(
+                    "Owner",
+                    ColumnSource::Owner,
+                    fit(widest.owner.max(7), MAX_OWNER),
+                ));
+            }
+            // A kind that prints no name shows the namespace second.
+            if namespace_column && !namespaced && first {
+                columns.push(DisplayColumn::new(
+                    "Namespace",
+                    ColumnSource::Namespace,
+                    fit(widest.namespace.max(11), MAX_COLUMN),
+                ));
+            }
+        }
+        let width = columns.iter().map(|column| column.width).sum();
+        Self {
+            all_columns: columns.clone(),
+            columns,
+            width,
+            tone_from: tone_from.filter(|_| !pods),
+            namespaced,
+        }
+    }
+
+    pub(super) fn hide(&mut self, hidden: &std::collections::BTreeSet<ColumnSource>) {
+        self.columns = self
+            .all_columns
+            .iter()
+            .filter(|column| !hidden.contains(&column.source))
+            .cloned()
+            .collect();
+        self.width = self.columns.iter().map(|column| column.width).sum();
+    }
+}
+
+/// A pod's columns between its name and its age, in Freelens's order
+/// (#291).
+fn pod_columns(store: &ResourceStore) -> [DisplayColumn; 7] {
+    let widest = store.widest();
+    let fit =
+        |chars: usize, max: f32| (chars as f32 * CHAR_WIDTH + CELL_PADDING).clamp(MIN_COLUMN, max);
+    let node = widest.node.saturating_sub(store.node_prefix());
+    [
+        DisplayColumn::new("Containers", ColumnSource::Containers, CONTAINERS_WIDTH),
+        DisplayColumn::new("Ready", ColumnSource::Ready, READY_WIDTH),
+        DisplayColumn::new("CPU", ColumnSource::Cpu, USAGE_WIDTH),
+        DisplayColumn::new("Memory", ColumnSource::Memory, USAGE_WIDTH),
+        DisplayColumn::new("Restarts", ColumnSource::Restarts, RESTARTS_WIDTH),
+        DisplayColumn::new(
+            "Owner",
+            ColumnSource::Owner,
+            fit(widest.owner.max(7), MAX_OWNER),
+        ),
+        // Room for the NotReady mark before a name.
+        DisplayColumn::new("Node", ColumnSource::Node, fit(node.max(6) + 2, MAX_NODE)),
+    ]
+}
