@@ -99,7 +99,7 @@ impl Pilot {
                 Destination::Kind(kind),
             ));
         }
-        entries.extend(self.node_workspace.read(cx).rows.iter().map(|row| {
+        entries.extend(self.pages.node_workspace.read(cx).rows.iter().map(|row| {
             Entry::new(
                 "Nodes",
                 format!("search-node-{}", row.name),
@@ -121,7 +121,7 @@ impl Pilot {
                 }
             }
         }
-        if let Some(Discovery::Loaded(groups)) = self.custom.read(cx).groups() {
+        if let Some(Discovery::Loaded(groups)) = self.pages.custom.read(cx).groups() {
             for group in groups {
                 if let Some(Discovery::Loaded(rows)) = &group.kinds {
                     entries.extend(rows.kinds.iter().map(|row| {

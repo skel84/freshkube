@@ -8,7 +8,10 @@ fn the_column_redraws_for_the_pages_it_reads(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     let (services, resources) = cx.update(|cx| {
         let pilot = view.read(cx);
-        (pilot.system_services.clone(), pilot.resources.clone())
+        (
+            pilot.pages.system_services.clone(),
+            pilot.pages.resources.clone(),
+        )
     });
     let services_notify =
         |_: &mut gpui_kit::Window, cx: &mut gpui_kit::App| services.update(cx, |_, cx| cx.notify());
@@ -274,7 +277,7 @@ fn the_column_draws_for_itself_alone(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let (resources, health) = cx.update(|cx| {
         let pilot = view.read(cx);
-        (pilot.resources.clone(), pilot.workloads())
+        (pilot.pages.resources.clone(), pilot.workloads())
     });
     assert!(
         chrome_redrawn(cx, handle, |_, cx| resources
@@ -311,8 +314,8 @@ fn the_column_redraws_for_its_areas_page(cx: &mut TestAppContext) {
     type Notify = Box<dyn Fn(&mut gpui_kit::App)>;
     let (custom, pages): (Notify, Vec<(&str, Notify)>) = cx.update(|cx| {
         let pilot = view.read(cx);
-        let (custom, monitoring) = (pilot.custom.clone(), pilot.monitoring.clone());
-        let observability = pilot.observability.clone();
+        let (custom, monitoring) = (pilot.pages.custom.clone(), pilot.pages.monitoring.clone());
+        let observability = pilot.pages.observability.clone();
         (
             Box::new(move |cx: &mut gpui_kit::App| custom.update(cx, |_, cx| cx.notify()))
                 as Notify,
@@ -366,7 +369,7 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
         assert!(pilot.read(cx).navigation.column_collapsed(window));
         window.click("nav-obs-traces", cx);
         assert_eq!(
-            pilot.read(cx).observability.read(cx).destination(),
+            pilot.read(cx).pages.observability.read(cx).destination(),
             crate::observability::Destination::Traces
         );
         window.click("obs-time", cx);
@@ -374,7 +377,7 @@ fn fog_observability_navigation_range_and_sidebar_shortcut(cx: &mut TestAppConte
         window.press("down", cx);
         window.press("down", cx);
         window.press("enter", cx);
-        assert_eq!(pilot.read(cx).observability.read(cx).hours(), 24);
+        assert_eq!(pilot.read(cx).pages.observability.read(cx).hours(), 24);
         window.press("secondary-b", cx);
         assert!(!pilot.read(cx).navigation.column_collapsed(window));
     })
@@ -438,7 +441,7 @@ fn collapsed_observability_column_scrolls_its_active_item_into_view(cx: &mut Tes
         Destination::Profiling,
     ] {
         cx.update_window(handle, |_, window, cx| {
-            let page = pilot.read(cx).observability.clone();
+            let page = pilot.read(cx).pages.observability.clone();
             page.update(cx, |page, cx| page.open(destination, cx));
             // The reveal is asked for while drawing and applied by the next layout.
             window.render_frame(cx);
@@ -698,7 +701,7 @@ fn a_reveal_follows_a_change_of_room_or_column(cx: &mut TestAppContext) {
         pilot.update(cx, |pilot, cx| {
             pilot.navigate(Page::Observability, window, cx)
         });
-        let page = pilot.read(cx).observability.clone();
+        let page = pilot.read(cx).pages.observability.clone();
         page.update(cx, |page, cx| page.open(Destination::Deployments, cx));
         settle(window, cx);
         let scroll = pilot.read(cx).navigation.obs_column_scroll.clone();

@@ -264,7 +264,8 @@ impl Pilot {
     /// change to the read: a new node, a request, an answer, a reset.
     pub(super) fn push_services(&self, cx: &mut App) {
         let reading = ServicesReading::of(&self.services);
-        self.node_workspace
+        self.pages
+            .node_workspace
             .read(cx)
             .services
             .clone()
@@ -298,6 +299,7 @@ impl Pilot {
                 responding: node.responding,
             }),
             kubelet_pods: self
+                .pages
                 .node_workspace
                 .read(cx)
                 .row()
@@ -309,7 +311,8 @@ impl Pilot {
     /// Hands the tab where things stand; it redraws only for a change.
     pub(super) fn push_node_services_state(&self, cx: &mut App) {
         let state = self.node_services_state(cx);
-        self.node_workspace
+        self.pages
+            .node_workspace
             .read(cx)
             .services
             .clone()
@@ -318,7 +321,8 @@ impl Pilot {
 
     /// The service selected on the node pane's tab.
     pub(super) fn selected_service(&self, cx: &App) -> Option<String> {
-        self.node_workspace
+        self.pages
+            .node_workspace
             .read(cx)
             .services
             .clone()
@@ -328,7 +332,8 @@ impl Pilot {
     }
 
     pub(super) fn select_service(&self, service: Option<String>, cx: &mut App) {
-        self.node_workspace
+        self.pages
+            .node_workspace
             .read(cx)
             .services
             .clone()
@@ -359,7 +364,8 @@ impl Pilot {
 #[cfg(test)]
 impl Pilot {
     pub(super) fn service_scroll(&self, cx: &App) -> ScrollHandle {
-        self.node_workspace
+        self.pages
+            .node_workspace
             .read(cx)
             .services
             .clone()
@@ -369,7 +375,8 @@ impl Pilot {
     }
 
     pub(super) fn service_focused(&self, window: &Window, cx: &App) -> bool {
-        self.node_workspace
+        self.pages
+            .node_workspace
             .read(cx)
             .services
             .clone()

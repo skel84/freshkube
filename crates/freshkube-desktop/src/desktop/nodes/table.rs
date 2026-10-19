@@ -153,7 +153,7 @@ impl Nodes {
 impl Pilot {
     pub(in crate::desktop) fn sync_nodes_source_mode(&mut self, cx: &mut App) {
         let talos = self.mode().has_talos();
-        self.node_workspace.update(cx, |nodes, cx| {
+        self.pages.node_workspace.update(cx, |nodes, cx| {
             nodes.rebuild_columns(talos);
             cx.notify();
         });

@@ -50,7 +50,7 @@ impl Pilot {
         data: Result<Arc<WorkloadData>, String>,
         cx: &mut Context<Self>,
     ) {
-        self.health.update(cx, |screen, cx| {
+        self.pages.health.update(cx, |screen, cx| {
             screen.apply_summary(
                 self.applied.context.as_deref().unwrap_or_default(),
                 data,
@@ -69,7 +69,8 @@ impl Pilot {
                     Source::Nodes,
                 ))
             });
-        self.lifecycle
+        self.pages
+            .lifecycle
             .update(cx, |screen, cx| screen.observe_nodes(subscription, cx));
     }
 

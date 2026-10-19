@@ -78,7 +78,7 @@ fn the_table_waits_for_the_talos_overview_until_it_answers_or_fails(cx: &mut Tes
             pilot.overview = crate::state::Snapshot::default();
             pilot.nodes.clear();
             pilot
-                .system_services
+                .pages.system_services
                 .update(cx, |services, cx| services.set_nodes(&[], cx));
             pilot.rebuild_joined_nodes(cx);
         });
@@ -98,7 +98,7 @@ fn the_table_waits_for_the_talos_overview_until_it_answers_or_fails(cx: &mut Tes
         window.render_frame(cx);
         assert!(window.try_find("system-services-loading").is_none());
         assert!(window.find("system-services-empty").visible());
-        let reading = view.read(cx).system_services.read(cx).reading().clone();
+        let reading = view.read(cx).pages.system_services.read(cx).reading().clone();
         assert!(
             matches!(&reading, Reading::Failed(reason) if reason.contains("didn't answer within 10 s")),
             "{reading:?}"
@@ -117,6 +117,7 @@ fn the_loading_rows_give_way_to_the_services_when_the_overview_answers(cx: &mut 
             let answer = pilot.overview.data().cloned();
             pilot.overview = crate::state::Snapshot::default();
             pilot
+                .pages
                 .system_services
                 .update(cx, |services, cx| services.set_nodes(&[], cx));
             pilot.rebuild_joined_nodes(cx);
@@ -135,6 +136,7 @@ fn the_loading_rows_give_way_to_the_services_when_the_overview_answers(cx: &mut 
             pilot.rebuild_joined_nodes(cx);
             let summaries = pilot.nodes.clone();
             pilot
+                .pages
                 .system_services
                 .update(cx, |services, cx| services.set_nodes(&summaries, cx));
         });
@@ -236,7 +238,7 @@ fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-7", cx);
         window.render_frame(cx);
-        let services = view.read(cx).system_services.clone();
+        let services = view.read(cx).pages.system_services.clone();
         services.update(cx, |services, cx| {
             services.node = Some("talos-wk-fra1-02".into());
             services.rebuild(cx);
@@ -269,6 +271,7 @@ fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
 /// The selected row's id, read from the page.
 fn selected(view: &gpui_kit::Entity<crate::desktop::Pilot>, cx: &gpui_kit::App) -> Option<String> {
     view.read(cx)
+        .pages
         .system_services
         .read(cx)
         .selected
@@ -405,7 +408,7 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
         assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
         assert_eq!(pilot.selected_service(cx).as_deref(), Some("apid"));
         assert_eq!(
-            pilot.node_workspace.read(cx).tab,
+            pilot.pages.node_workspace.read(cx).tab,
             crate::desktop::nodes::NodeTab::Services
         );
     })
@@ -448,7 +451,7 @@ fn the_folded_node_picker_picks_a_node_as_the_picker_does(cx: &mut TestAppContex
             window.try_find("system-service-node").is_none(),
             "not folded"
         );
-        let services = view.read(cx).system_services.clone();
+        let services = view.read(cx).pages.system_services.clone();
         let first = services.read(cx).nodes[0].clone();
         assert!(window.try_find("system-services-more-dot").is_none());
         window.click("system-services-more", cx);
@@ -483,7 +486,13 @@ fn a_short_window_scrolls_the_frame_and_keeps_the_list_usable(cx: &mut TestAppCo
             crate::text_size::set(text, cx);
             window.press("secondary-7", cx);
             crate::desktop::tests::settle_header(window, cx);
-            let scroll = view.read(cx).system_services.read(cx).page_scroll.clone();
+            let scroll = view
+                .read(cx)
+                .pages
+                .system_services
+                .read(cx)
+                .page_scroll
+                .clone();
             let page = window.find(SYSTEM_SERVICES.page).bounds();
             let table = window.find(SYSTEM_SERVICES.table).bounds();
             // The table runs to the end of the scrolled page, less the

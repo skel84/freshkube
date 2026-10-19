@@ -59,16 +59,20 @@ impl Pilot {
             .on_action(cx.listener(|view, _: &GoToKind, window, cx| view.open_search(window, cx)))
             // Each handler is there only while it can act, so the menus grey
             // it otherwise and its key goes on to whatever else binds it.
-            .when(self.dock.read(cx).has_tabs(), |this| {
+            .when(self.pages.dock.read(cx).has_tabs(), |this| {
                 this.on_action(cx.listener(|view, _: &dock::NextDockTab, window, cx| {
-                    view.dock.update(cx, |dock, cx| dock.step(1, window, cx))
+                    view.pages
+                        .dock
+                        .update(cx, |dock, cx| dock.step(1, window, cx))
                 }))
                 .on_action(cx.listener(|view, _: &dock::PreviousDockTab, window, cx| {
-                    view.dock.update(cx, |dock, cx| dock.step(-1, window, cx))
+                    view.pages
+                        .dock
+                        .update(cx, |dock, cx| dock.step(-1, window, cx))
                 }))
                 .on_action(cx.listener(
                     |view, _: &dock::MinimizeDock, window, cx| {
-                        view.dock.update(cx, |dock, cx| {
+                        view.pages.dock.update(cx, |dock, cx| {
                             let open = dock.is_open();
                             dock.set_open(!open, window, cx)
                         })
@@ -85,13 +89,14 @@ impl Pilot {
             // would redraw all the panels. Drawn with the shell, the page
             // only places its cached panels, and only the one under the
             // pointer draws again.
-            Page::Monitoring => self.monitoring.clone().into_any_element(),
+            Page::Monitoring => self.pages.monitoring.clone().into_any_element(),
             page if !self.mode().has_talos() && page.needs_talos() => {
                 self.render_needs_talosconfig(cx)
             }
             // Pages redraw when their own state changes, not with the shell.
             page => self
                 .pages
+                .map
                 .get(&page.id())
                 .map(|page| page.view().cached(cached_page_style()).into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
@@ -107,7 +112,7 @@ impl Pilot {
     ) -> Option<Entity<freshkube_ui::table::FlashLayer<crate::resources::model::ResourceIdentity>>>
     {
         match self.navigation.page {
-            Page::Resources => self.resources.read(cx).flash_layer(),
+            Page::Resources => self.pages.resources.read(cx).flash_layer(),
             _ => None,
         }
     }
@@ -123,14 +128,14 @@ impl Pilot {
         cx: &App,
     ) -> Option<Entity<freshkube_ui::table::LoadingMotion>> {
         match self.navigation.page {
-            Page::Resources => self.resources.read(cx).loading_motion(),
-            Page::Observability => self.observability.read(cx).loading_motion(cx),
-            Page::Applications => self.applications.read(cx).loading_motion(cx),
+            Page::Resources => self.pages.resources.read(cx).loading_motion(),
+            Page::Observability => self.pages.observability.read(cx).loading_motion(cx),
+            Page::Applications => self.pages.applications.read(cx).loading_motion(cx),
             page if !self.mode().has_talos() && page.needs_talos() => None,
             // Its table's, or the open node's tab's: a node screen's.
-            Page::Nodes => self.pages.get(&PageId::Nodes)?.loading_motion(cx),
+            Page::Nodes => self.pages.map.get(&PageId::Nodes)?.loading_motion(cx),
             Page::SystemServices => {
-                let services = self.system_services.read(cx);
+                let services = self.pages.system_services.read(cx);
                 freshkube_ui::table::TableSource::loading(services)
                     .is_some()
                     .then(|| services.loading_motion().clone())
@@ -150,7 +155,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let dock = self.dock.read(cx).shown_height(window, cx);
+        let dock = self.pages.dock.read(cx).shown_height(window, cx);
         freshkube_ui::page::set_below(
             dock.map(|height| height / crate::ui::dp_px(1., window))
                 .unwrap_or(0.),
@@ -163,7 +168,8 @@ impl Pilot {
             .min_h_0()
             .child(div().flex_1().min_w_0().min_h_0().child(page))
             .children(dock.map(|height| {
-                self.dock
+                self.pages
+                    .dock
                     .clone()
                     .cached(StyleRefinement::default().w_full().flex_none().h(height))
             }))

@@ -10,7 +10,7 @@ fn access_replacement_invalidates_an_open_search_and_its_late_answers(cx: &mut T
     let (_runtime, handle, pilot) = fixture(cx, 1500., 1050.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| pilot.open_search(window, cx));
-        let search = pilot.read(cx).search.clone();
+        let search = pilot.read(cx).pages.search.clone();
         let sequence = search.read(cx).sequence;
         pilot.update(cx, |pilot, cx| pilot.invalidate_target(window, cx));
         search.update(cx, |search, cx| {
@@ -71,7 +71,8 @@ fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
             } else if query == "talos-wk-fra1-02" {
                 assert_eq!(view.navigation.page, Page::Nodes);
                 assert_eq!(
-                    view.node_workspace
+                    view.pages
+                        .node_workspace
                         .read(cx)
                         .selected
                         .as_ref()
@@ -87,8 +88,11 @@ fn search_opens_a_page_node_pod_and_secret_by_name(cx: &mut TestAppContext) {
                     &secret
                 };
                 assert_eq!(view.navigation.page, Page::Resources);
-                assert_eq!(view.resources.read(cx).detail_identity(cx), Some(expected));
-                assert_eq!(view.resources.read(cx).detail_tab(cx), Tab::Overview);
+                assert_eq!(
+                    view.pages.resources.read(cx).detail_identity(cx),
+                    Some(expected)
+                );
+                assert_eq!(view.pages.resources.read(cx).detail_tab(cx), Tab::Overview);
                 assert!(
                     window.find("resource-detail").focused().unwrap_or(false)
                         || window.find("detail-tab-details").focused().unwrap_or(false)
@@ -107,7 +111,7 @@ fn refusal_is_visible_and_other_groups_still_open(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.update(|cx| {
-        let search = pilot.read(cx).search.clone();
+        let search = pilot.read(cx).pages.search.clone();
         search.update(cx, |search, cx| {
             let sequence = search.sequence;
             search.answer(sequence, "secrets", Err("forbidden".into()), cx);
@@ -140,7 +144,7 @@ fn cache_uses_executor_time_expires_and_rejects_closed_answers(cx: &mut TestAppC
     })
     .unwrap();
     cx.update(|cx| {
-        let search = pilot.read(cx).search.clone();
+        let search = pilot.read(cx).pages.search.clone();
         search.update(cx, |search, cx| {
             let sequence = search.sequence;
             search.answer(sequence, "secrets", Err("cached refusal".into()), cx);
@@ -165,7 +169,7 @@ fn cache_uses_executor_time_expires_and_rejects_closed_answers(cx: &mut TestAppC
         pilot.update(cx, |pilot, cx| pilot.open_search(window, cx))
     })
     .unwrap();
-    cx.update(|cx| assert!(pilot.read(cx).search.read(cx).parts["secrets"].is_err()));
+    cx.update(|cx| assert!(pilot.read(cx).pages.search.read(cx).parts["secrets"].is_err()));
     cx.update_window(handle, |_, window, cx| window.close_dialog(cx))
         .unwrap();
     cx.run_until_parked();
@@ -175,7 +179,7 @@ fn cache_uses_executor_time_expires_and_rejects_closed_answers(cx: &mut TestAppC
         pilot.update(cx, |pilot, cx| pilot.open_search(window, cx))
     })
     .unwrap();
-    cx.update(|cx| assert!(pilot.read(cx).search.read(cx).parts["secrets"].is_ok()));
+    cx.update(|cx| assert!(pilot.read(cx).pages.search.read(cx).parts["secrets"].is_ok()));
 }
 
 #[gpui_kit::test]
@@ -186,7 +190,7 @@ fn results_are_capped_per_group_and_match_namespace_name(cx: &mut TestAppContext
     })
     .unwrap();
     cx.update(|cx| {
-        let search = pilot.read(cx).search.clone();
+        let search = pilot.read(cx).pages.search.clone();
         search.update(cx, |search, _| {
             search.query = "payments/".into();
             search.rebuild();
@@ -235,7 +239,7 @@ fn each_answer_appears_without_waiting_for_other_kinds(cx: &mut TestAppContext) 
     })
     .unwrap();
     cx.update(|cx| {
-        let search = pilot.read(cx).search.clone();
+        let search = pilot.read(cx).pages.search.clone();
         search.update(cx, |search, cx| {
             let mut pods = search.parts["pods"].as_ref().unwrap().clone();
             pods.capped = true;
@@ -262,7 +266,7 @@ fn each_answer_appears_without_waiting_for_other_kinds(cx: &mut TestAppContext) 
     })
     .unwrap();
     cx.update(|cx|{
-        let search=pilot.read(cx).search.read(cx);assert!(search.destinations.iter().flatten().any(|destination|matches!(destination,Some(super::model::Destination::Object(kind,_)) if kind.is_pod())));
+        let search=pilot.read(cx).pages.search.read(cx);assert!(search.destinations.iter().flatten().any(|destination|matches!(destination,Some(super::model::Destination::Object(kind,_)) if kind.is_pod())));
     });
 }
 

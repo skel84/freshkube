@@ -15,12 +15,12 @@ fn a_cards_open_opens_its_node(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("nodes-view-cards", cx);
         window.render_frame(cx);
-        let row = pilot.read(cx).node_workspace.read(cx).rows[1].clone();
+        let row = pilot.read(cx).pages.node_workspace.read(cx).rows[1].clone();
         window.click(row.open_id.clone(), cx);
         row
     });
     pilot.read_with(cx, |pilot, cx| {
-        let nodes = pilot.node_workspace.read(cx);
+        let nodes = pilot.pages.node_workspace.read(cx);
         assert!(nodes.open);
         assert_eq!(nodes.selected.as_ref(), Some(&row.key));
     });
@@ -42,7 +42,7 @@ fn mores_items_show_their_tabs(cx: &mut TestAppContext) {
             window.within("popup-menu").click(item, cx);
         });
         pilot.read_with(cx, |pilot, cx| {
-            assert_eq!(pilot.node_workspace.read(cx).tab, tab);
+            assert_eq!(pilot.pages.node_workspace.read(cx).tab, tab);
         });
     }
 }
@@ -52,7 +52,7 @@ fn mores_items_show_their_tabs(cx: &mut TestAppContext) {
 fn retry_asks_the_shell_to_refresh(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1500., 880.);
     let heard = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    let nodes = pilot.read_with(cx, |pilot, _| pilot.node_workspace.clone());
+    let nodes = pilot.read_with(cx, |pilot, _| pilot.pages.node_workspace.clone());
     let _subscription = cx.update({
         let heard = heard.clone();
         |cx| {
@@ -89,7 +89,7 @@ fn a_pane_attention_row_opens_its_destination(cx: &mut TestAppContext) {
         window.render_frame(cx);
         crate::desktop::tests::click_node(window, cx, "node-talos-wk-fra1-02");
         window.render_frame(cx);
-        let row = (pilot.read(cx).node_workspace.read(cx).attention)
+        let row = (pilot.read(cx).pages.node_workspace.read(cx).attention)
             .by_node
             .get("talos-wk-fra1-02")
             .and_then(|rows| rows.first().cloned())
@@ -99,7 +99,7 @@ fn a_pane_attention_row_opens_its_destination(cx: &mut TestAppContext) {
     });
     pilot.read_with(cx, |pilot, cx| match &row.open {
         Destination::Node(key, tab) => {
-            let nodes = pilot.node_workspace.read(cx);
+            let nodes = pilot.pages.node_workspace.read(cx);
             assert_eq!((nodes.selected.as_ref(), nodes.tab), (Some(key), *tab));
         }
         other => assert_ne!(pilot.navigation.page, Page::Nodes, "{other:?}"),
@@ -113,14 +113,14 @@ fn command_shift_brackets_step_the_pane_tabs(cx: &mut TestAppContext) {
     step(cx, handle, |window, cx| {
         open_first_node(window, cx);
         pilot.update(cx, |pilot, cx| {
-            window.focus(&pilot.node_workspace.read(cx).focus.clone(), cx)
+            window.focus(&pilot.pages.node_workspace.read(cx).focus.clone(), cx)
         });
         window.press("secondary-}", cx);
     });
-    let next = pilot.read_with(cx, |pilot, cx| pilot.node_workspace.read(cx).tab);
+    let next = pilot.read_with(cx, |pilot, cx| pilot.pages.node_workspace.read(cx).tab);
     assert_ne!(next, NodeTab::Overview);
     step(cx, handle, |window, cx| window.press("secondary-{", cx));
     pilot.read_with(cx, |pilot, cx| {
-        assert_eq!(pilot.node_workspace.read(cx).tab, NodeTab::Overview);
+        assert_eq!(pilot.pages.node_workspace.read(cx).tab, NodeTab::Overview);
     });
 }

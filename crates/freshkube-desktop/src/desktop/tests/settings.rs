@@ -55,7 +55,7 @@ async fn example_data_leaves_the_saved_coroot_connection_alone(cx: &mut TestAppC
     cx.wait_for_io(handle, |_, cx| !pilot.read(cx).config_loading)
         .await;
     cx.update(|cx| {
-        let url = pilot.read(cx).observability.read(cx).coroot_url(cx);
+        let url = pilot.read(cx).pages.observability.read(cx).coroot_url(cx);
         assert_eq!(url, "https://coroot.example.com");
     });
 
@@ -70,7 +70,10 @@ async fn example_data_leaves_the_saved_coroot_connection_alone(cx: &mut TestAppC
     .unwrap();
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(pilot.read(cx).observability.read(cx).coroot_url(cx), "");
+        assert_eq!(
+            pilot.read(cx).pages.observability.read(cx).coroot_url(cx),
+            ""
+        );
     });
     assert_eq!(std::fs::read_to_string(&saved).unwrap(), contents);
 }

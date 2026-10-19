@@ -53,7 +53,8 @@ impl Pilot {
                 );
                 self.select_service(Some(service.clone()), cx);
                 if logs {
-                    self.logs
+                    self.pages
+                        .logs
                         .update(cx, |view, cx| view.open_service(service, window, cx));
                 }
             }

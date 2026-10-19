@@ -246,7 +246,8 @@ impl Pilot {
             sources: freshkube_core::workspace::Sources::of(workspace),
             kubeconfig: workspace.kubeconfig.clone(),
         };
-        self.applications
+        self.pages
+            .applications
             .update(cx, |page, cx| page.set_clusters(clusters, cx));
     }
 

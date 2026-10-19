@@ -8,7 +8,13 @@ fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
         !view.read(cx).contexts.is_empty()
     });
     cx.update(|cx| {
-        let reading = view.read(cx).system_services.read(cx).reading().clone();
+        let reading = view
+            .read(cx)
+            .pages
+            .system_services
+            .read(cx)
+            .reading()
+            .clone();
         assert_eq!(reading, super::super::system_services::Reading::Answered);
     });
 }
@@ -556,6 +562,7 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
     cx.read(|cx| {
         assert!(
             view.read(cx)
+                .pages
                 .resources
                 .read(cx)
                 .detail_identity(cx)

@@ -103,12 +103,12 @@ pub(super) fn put_page(
     page: crate::screens::ScreenHandle,
     cx: &mut gpui_kit::App,
 ) {
-    view.node_workspace.update(cx, |nodes, _| {
+    view.pages.node_workspace.update(cx, |nodes, _| {
         if let Some(screen) = nodes.screens.get_mut(&id) {
             *screen = page.clone();
         }
     });
-    view.pages.insert(id, page);
+    view.pages.map.insert(id, page);
 }
 
 /// Opens the Nodes row `id` as its click does. The click reaches the
@@ -121,6 +121,7 @@ pub(super) fn click_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, 
     let pilot = root_pilot(window, cx);
     let key = pilot
         .read(cx)
+        .pages
         .node_workspace
         .read(cx)
         .rows
@@ -141,7 +142,7 @@ pub(super) fn click_node(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, 
 /// Folding itself is exercised separately by Nodes' projection/entry-point tests.
 pub(super) fn expand_healthy_nodes(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     let pilot = root_pilot(window, cx);
-    let nodes = &pilot.read(cx).node_workspace.read(cx);
+    let nodes = &pilot.read(cx).pages.node_workspace.read(cx);
     if nodes.healthy_collapsed() && nodes.view == NodeView::Table {
         window.click("nodes-healthy-toggle", cx);
         window.render_frame(cx);
@@ -153,6 +154,7 @@ pub(crate) fn screen<T: 'static>(pilot: &Entity<Pilot>, cx: &gpui_kit::App) -> E
     pilot
         .read(cx)
         .pages
+        .map
         .iter()
         .filter(|(id, _)| id.is_screen())
         .find_map(|(_, screen)| screen.view().downcast::<T>().ok())
@@ -163,17 +165,19 @@ pub(crate) fn screen<T: 'static>(pilot: &Entity<Pilot>, cx: &gpui_kit::App) -> E
 pub(crate) fn pick_target(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, ix: usize) {
     let view = root_pilot(window, cx);
     let page = view.read(cx).navigation.page;
-    let tab = view.read(cx).node_workspace.read(cx).tab;
+    let tab = view.read(cx).pages.node_workspace.read(cx).tab;
     window.click("nav-nodes", cx);
     window.render_frame(cx);
-    if view.read(cx).node_workspace.read(cx).open {
+    if view.read(cx).pages.node_workspace.read(cx).open {
         window.click("node-close", cx);
         window.render_frame(cx);
     }
     expand_healthy_nodes(window, cx);
     // A row's click reaches the shell as an event, after this update; open
     // the node as that event would.
-    let key = view.read(cx).node_workspace.read(cx).rows[ix].key.clone();
+    let key = view.read(cx).pages.node_workspace.read(cx).rows[ix]
+        .key
+        .clone();
     view.update(cx, |view, cx| view.open_node(key, window, cx));
     window.render_frame(cx);
     if page == Page::Nodes {
@@ -200,10 +204,11 @@ pub(crate) fn open_node_tab(
     let view = root_pilot(window, cx);
     let name = view.read(cx).selected_node.clone().unwrap();
     area(window, cx, "nav-nodes");
-    if !view.read(cx).node_workspace.read(cx).open {
+    if !view.read(cx).pages.node_workspace.read(cx).open {
         expand_healthy_nodes(window, cx);
         let key = view
             .read(cx)
+            .pages
             .node_workspace
             .read(cx)
             .rows

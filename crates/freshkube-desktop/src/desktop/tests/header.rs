@@ -40,7 +40,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             let overview_name = pilot.overview.data().unwrap().name.clone();
             let node_count = pilot.nodes.len();
             let service_count = pilot.services.data().unwrap().len();
-            let logs = pilot.logs.clone();
+            let logs = pilot.pages.logs.clone();
             let light_background = cx.theme().background;
             assert_eq!(window.find("theme-toggle").label(), Some("Dark mode"));
             if nav == "node-tab-logs" {
@@ -85,7 +85,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             assert_eq!(pilot.overview.data().unwrap().name, overview_name);
             assert_eq!(pilot.nodes.len(), node_count);
             assert_eq!(pilot.services.data().unwrap().len(), service_count);
-            assert_eq!(pilot.logs, logs);
+            assert_eq!(pilot.pages.logs, logs);
             if nav == "node-tab-logs" {
                 assert!(window.find("logs-viewport").visible());
                 assert_eq!(

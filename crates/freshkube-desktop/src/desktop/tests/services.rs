@@ -385,12 +385,12 @@ fn log_collection_keeps_running_on_other_screens(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("logs-collection", cx);
         window.render_frame(cx);
-        assert!(view.read(cx).logs.read(cx).is_collecting());
+        assert!(view.read(cx).pages.logs.read(cx).is_collecting());
         window.click("nav-overview", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).navigation.page, Page::Overview);
-        assert!(view.read(cx).logs.read(cx).is_collecting());
-        assert!(view.read(cx).logs.read(cx).collecting_count() > 0);
+        assert!(view.read(cx).pages.logs.read(cx).is_collecting());
+        assert!(view.read(cx).pages.logs.read(cx).collecting_count() > 0);
         open_node_tab(window, cx, super::super::nodes::NodeTab::Logs);
         window.render_frame(cx);
         assert_eq!(
@@ -436,7 +436,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
             Some("kubelet")
         );
         assert_eq!(
-            view.read(cx).node_workspace.read(cx).tab,
+            view.read(cx).pages.node_workspace.read(cx).tab,
             super::super::nodes::NodeTab::Services
         );
         // Back on the page, the row is still selected and the list has
@@ -450,7 +450,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).node_workspace.read(cx).tab,
+            view.read(cx).pages.node_workspace.read(cx).tab,
             super::super::nodes::NodeTab::Logs
         );
         assert_eq!(
@@ -473,7 +473,7 @@ async fn a_talosconfig_that_fails_to_load_ends_the_services_wait(cx: &mut TestAp
     cx.update(|cx| {
         let pilot = view.read(cx);
         // Neither page waits on an overview that will never be asked.
-        let reading = pilot.system_services.read(cx).reading().clone();
+        let reading = pilot.pages.system_services.read(cx).reading().clone();
         assert!(
             matches!(reading, super::super::system_services::Reading::Failed(_)),
             "{reading:?}"

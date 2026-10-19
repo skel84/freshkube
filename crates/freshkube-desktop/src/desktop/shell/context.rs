@@ -77,7 +77,7 @@ impl Pilot {
             .and_then(|summary| summary.version.loaded())
             .map(|version| version.as_str())
             .unwrap_or("unknown");
-        let count = self.node_workspace.read(cx).rows.len();
+        let count = self.pages.node_workspace.read(cx).rows.len();
         let connected = if let Some(kube) = self.mode().kubernetes_only() {
             matches!(kube.connection, KubeConnection::Connected { .. })
         } else {

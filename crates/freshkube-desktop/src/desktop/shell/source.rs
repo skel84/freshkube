@@ -163,7 +163,7 @@ impl Pilot {
 
     /// Workloads' namespaces, with their pods counted.
     fn namespace_lines(&self, lines: &mut Vec<Line<ColumnKey>>, cx: &App) {
-        let chosen = self.resources.read(cx).namespace();
+        let chosen = self.pages.resources.read(cx).namespace();
         let pods =
             self.navigation.page == Page::Resources && self.navigation.resource_kind.is_pod();
         let namespaces = &self.navigation.column_state.namespaces;
@@ -245,7 +245,7 @@ impl Pilot {
             out.reveal = Some(0);
         }
         let status = |text: &'static str| Note::new("nav-k8s-custom-status", text);
-        match self.custom.read(cx).groups() {
+        match self.pages.custom.read(cx).groups() {
             None => out.lines.push(status("Not connected").into()),
             Some(Discovery::Reading) => {
                 out.settled = !revealing;
@@ -296,7 +296,7 @@ impl Pilot {
         }: Wanted,
         cx: &App,
     ) {
-        let custom = self.custom.read(cx);
+        let custom = self.pages.custom.read(cx);
         for entry in groups.iter().take(MAX_SIDEBAR_GROUPS) {
             let name = entry.name.as_ref();
             let open = custom.is_group_open(name);
@@ -349,7 +349,7 @@ impl Pilot {
 
     /// The built-in dashboards, then the user's folder or how to add one.
     fn monitoring_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
-        let monitoring = self.monitoring.read(cx);
+        let monitoring = self.pages.monitoring.read(cx);
         let open = (self.navigation.page == Page::Monitoring).then(|| monitoring.chosen());
         let entry = |entry: &Entry| -> Line<ColumnKey> {
             let mut row = Row::new(
@@ -419,7 +419,7 @@ impl Pilot {
 
     /// Observability's destinations, then Dashboards.
     fn observability_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
-        let observability = self.observability.read(cx);
+        let observability = self.pages.observability.read(cx);
         let destination = observability.destination();
         let incidents = observability.incident_count();
         let mut lines: Vec<Line<ColumnKey>> = self
@@ -480,7 +480,7 @@ impl Pilot {
     /// it, or why there are none; past [`COLUMN_APPLICATIONS`], a menu
     /// names every one.
     fn applications_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
-        let page = self.applications.read(cx);
+        let page = self.pages.applications.read(cx);
         let column = page.column();
         let shown = page.shown_application(cx);
         let here = self.navigation.page == Page::Applications;
@@ -570,7 +570,7 @@ impl Pilot {
                     .into(),
             ];
         }
-        let services = self.system_services.read(cx);
+        let services = self.pages.system_services.read(cx);
         let mut services_row = self.page_line(Page::SystemServices, Some("7"));
         if services.unhealthy > 0 {
             services_row = services_row.count(services.badge.clone(), Some(Tone::Crit));
@@ -698,16 +698,21 @@ impl SourceListHost for Pilot {
             ColumnKey::Kind(key) => self.open_builtin(key, window, cx),
             ColumnKey::ApiGroup(name) => self.toggle_api_group(&name, cx),
             ColumnKey::CustomKind(key) => self.open_custom(&key, window, cx),
-            ColumnKey::RetryDiscovery => self.custom.update(cx, |custom, cx| custom.retry(cx)),
+            ColumnKey::RetryDiscovery => {
+                self.pages.custom.update(cx, |custom, cx| custom.retry(cx))
+            }
             ColumnKey::RetryGroup(name) => self
+                .pages
                 .custom
                 .update(cx, |custom, cx| custom.retry_group(&name, cx)),
             ColumnKey::Dashboard(id) => {
-                self.monitoring
+                self.pages
+                    .monitoring
                     .update(cx, |monitoring, cx| monitoring.open(id, cx));
                 self.navigate_from_keyboard(Page::Monitoring, window, cx);
             }
             ColumnKey::ReadFolder => self
+                .pages
                 .monitoring
                 .update(cx, |monitoring, cx| monitoring.read_folder(cx)),
             ColumnKey::Settings => {
@@ -716,7 +721,8 @@ impl SourceListHost for Pilot {
             }
             ColumnKey::SettingsSection(section) => self.show_settings(section, window, cx),
             ColumnKey::Destination(item) => {
-                self.observability
+                self.pages
+                    .observability
                     .update(cx, |page, cx| page.open(item, cx));
                 self.navigate_from_keyboard(Page::Observability, window, cx);
             }
@@ -725,23 +731,27 @@ impl SourceListHost for Pilot {
                 self.choose_sidebar_namespace(namespace.map(String::from), window, cx)
             }
             ColumnKey::Changes => {
-                self.applications
+                self.pages
+                    .applications
                     .update(cx, |page, cx| page.show_changes(window, cx));
                 self.navigate_from_keyboard(Page::Applications, window, cx);
             }
             ColumnKey::AllApplications => {
-                self.applications
+                self.pages
+                    .applications
                     .update(cx, |page, cx| page.show_list(window, cx));
                 self.navigate_from_keyboard(Page::Applications, window, cx);
             }
             ColumnKey::Application(key) => {
-                self.applications
+                self.pages
+                    .applications
                     .update(cx, |page, cx| page.open_key(&key, window, cx));
                 self.navigate_from_keyboard(Page::Applications, window, cx);
             }
-            ColumnKey::RetryApplications => {
-                self.applications.update(cx, |page, cx| page.refresh(cx))
-            }
+            ColumnKey::RetryApplications => self
+                .pages
+                .applications
+                .update(cx, |page, cx| page.refresh(cx)),
         }
     }
 

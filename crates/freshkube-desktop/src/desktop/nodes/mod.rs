@@ -431,6 +431,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         if let Some(key) = self
+            .pages
             .node_workspace
             .read(cx)
             .rows
@@ -449,7 +450,10 @@ impl Pilot {
     /// Whether the Nodes table shows its loading rows.
     #[cfg(test)]
     pub(super) fn nodes_wait(&self, cx: &App) -> bool {
-        matches!(self.node_workspace.read(cx).empty, Some(Empty::Loading))
+        matches!(
+            self.pages.node_workspace.read(cx).empty,
+            Some(Empty::Loading)
+        )
     }
     /// Derives where the Talos overview stands, for System services and for
     /// every page that needs a node, whenever the overview changes.
@@ -468,11 +472,12 @@ impl Pilot {
             Reading::Waiting
         };
         if crate::screens::set_reading(reading.clone(), cx) {
-            for (_, screen) in self.pages.iter().filter(|(id, _)| id.is_screen()) {
+            for (_, screen) in self.pages.map.iter().filter(|(id, _)| id.is_screen()) {
                 App::notify(cx, screen.view().entity_id());
             }
         }
-        self.system_services
+        self.pages
+            .system_services
             .update(cx, |services, cx| services.set_reading(reading, cx));
     }
 
@@ -522,7 +527,7 @@ impl Pilot {
             .or_else(|| self.overview.error().map(String::as_str))
             .map(|error| error.to_owned().into());
         let talos = self.mode().has_talos();
-        self.node_workspace.update(cx, |nodes, cx| {
+        self.pages.node_workspace.update(cx, |nodes, cx| {
             nodes.set_rows(rows, talos_current);
             if nodes
                 .selected
@@ -548,7 +553,7 @@ impl Pilot {
         if self.shown_page(cx) != shown {
             self.sync_visible_soon(cx);
         }
-        let rows = self.node_workspace.read(cx).rows.clone();
+        let rows = self.pages.node_workspace.read(cx).rows.clone();
         let mut display = crate::presentation::overview::Overview::build(
             &rows,
             &self.nodes,
@@ -583,9 +588,10 @@ impl Pilot {
             self.source().kube_identity.as_deref(),
             chrono::Utc::now(),
         ));
-        self.node_workspace
+        self.pages
+            .node_workspace
             .update(cx, |nodes, _| nodes.attention = attention.clone());
-        self.overview_page.update(cx, |overview, cx| {
+        self.pages.overview_page.update(cx, |overview, cx| {
             overview.set_display(Arc::new(display), cx);
             overview.set_attention(attention, cx);
         });
@@ -593,6 +599,7 @@ impl Pilot {
 
     pub(super) fn open_node(&mut self, key: NodeKey, window: &mut Window, cx: &mut Context<Self>) {
         if !self
+            .pages
             .node_workspace
             .read(cx)
             .rows
@@ -604,22 +611,26 @@ impl Pilot {
         if let Some(name) = &key.talos {
             self.select_node_by_name(name.clone(), window, cx);
         }
-        self.node_workspace
+        self.pages
+            .node_workspace
             .update(cx, |nodes, cx| nodes.open(key, window, cx));
         self.navigate(Page::Nodes, window, cx);
         self.activate_node_tab(window, cx);
     }
 
     pub(super) fn close_node(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.node_workspace.update(cx, |nodes, cx| nodes.close(cx));
+        self.pages
+            .node_workspace
+            .update(cx, |nodes, cx| nodes.close(cx));
         self.sync_node_visibility(window, cx);
-        let focus = self.node_workspace.read(cx).focus.clone();
+        let focus = self.pages.node_workspace.read(cx).focus.clone();
         window.focus(&focus, cx);
         cx.notify();
     }
 
     pub(super) fn toggle_node_expanded(&mut self, cx: &mut Context<Self>) {
-        self.node_workspace
+        self.pages
+            .node_workspace
             .update(cx, |nodes, cx| nodes.toggle_expanded(cx));
         cx.notify();
     }
@@ -630,7 +641,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let shown = self.node_workspace.update(cx, |nodes, cx| {
+        let shown = self.pages.node_workspace.update(cx, |nodes, cx| {
             if !nodes.tabs.contains(&tab) {
                 return false;
             }
@@ -647,7 +658,7 @@ impl Pilot {
     }
 
     pub(super) fn sync_node_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let nodes = self.node_workspace.read(cx);
+        let nodes = self.pages.node_workspace.read(cx);
         let shown = self.navigation.page == Page::Nodes && nodes.open;
         let tab = nodes.tab;
         let (pods, document, history) = (
@@ -665,7 +676,7 @@ impl Pilot {
         document.update(cx, |pane, cx| {
             pane.set_active(shown && matches!(tab, NodeTab::Events | NodeTab::Yaml), cx)
         });
-        self.logs.update(cx, |logs, cx| {
+        self.pages.logs.update(cx, |logs, cx| {
             logs.set_visible(shown && tab == NodeTab::Logs, cx)
         });
         let overview = shown && tab == NodeTab::Overview;
@@ -678,7 +689,7 @@ impl Pilot {
     }
 
     fn activate_node_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let nodes = self.node_workspace.read(cx);
+        let nodes = self.pages.node_workspace.read(cx);
         let (row, tab, pods, document, focus) = (
             nodes.row().cloned(),
             nodes.tab,
@@ -721,7 +732,8 @@ impl Pilot {
             screen.activate(window, cx);
         }
         if tab == NodeTab::Logs {
-            self.logs
+            self.pages
+                .logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx));
         } else if let Some(screen) = self.active_screen(cx) {
             screen.focus(window, cx);
@@ -734,7 +746,7 @@ impl Pilot {
     /// Resources' drawer (#340): to the shown tab's list, document, log or
     /// screen, or to the tab strip when the tab has none of its own.
     pub(super) fn focus_node_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let nodes = self.node_workspace.read(cx);
+        let nodes = self.pages.node_workspace.read(cx);
         let (tab, pods, document, tab_focus) = (
             nodes.tab,
             nodes.pods.clone(),
@@ -743,6 +755,7 @@ impl Pilot {
         );
         match tab {
             NodeTab::Logs => self
+                .pages
                 .logs
                 .update(cx, |logs, cx| logs.focus_lines(window, cx)),
             NodeTab::Pods => pods.update(cx, |pods, cx| pods.focus(window, cx)),
@@ -768,7 +781,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (key, open) = self.node_workspace.update(cx, |nodes, cx| {
+        let (key, open) = self.pages.node_workspace.update(cx, |nodes, cx| {
             use freshkube_ui::table;
             let key = if nodes.selected.is_none() {
                 // Preserve the existing first-row choice for either arrow, skipping groups.
@@ -782,13 +795,14 @@ impl Pilot {
         if open {
             self.open_node(key, window, cx);
         } else {
-            self.node_workspace.update(cx, |nodes, cx| {
+            self.pages.node_workspace.update(cx, |nodes, cx| {
                 nodes.selected = Some(key);
                 cx.notify();
             });
             cx.notify();
         }
-        self.node_workspace
+        self.pages
+            .node_workspace
             .update(cx, |nodes, _| nodes.reveal_selected(window));
     }
 
@@ -798,7 +812,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let nodes = self.node_workspace.read(cx);
+        let nodes = self.pages.node_workspace.read(cx);
         let tabs = &nodes.tabs;
         let index = tabs.iter().position(|tab| *tab == nodes.tab).unwrap_or(0);
         let next = (index as isize + delta).rem_euclid(tabs.len() as isize) as usize;
@@ -811,7 +825,7 @@ impl Pilot {
     /// expanded pane first gives the table its room back); on the table it
     /// clears the filter, then closes the pane.
     pub(super) fn node_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let nodes = self.node_workspace.read(cx);
+        let nodes = self.pages.node_workspace.read(cx);
         let (open, expanded, filtered) = (nodes.open, nodes.expanded, !nodes.query_text.is_empty());
         let focus = nodes.focus.clone();
         if open && (expanded || !focus.is_focused(window)) {
@@ -821,7 +835,8 @@ impl Pilot {
             window.focus(&focus, cx);
             cx.notify();
         } else if filtered {
-            self.node_workspace
+            self.pages
+                .node_workspace
                 .update(cx, |nodes, cx| nodes.clear_filter(window, cx));
         } else if open {
             self.close_node(window, cx);

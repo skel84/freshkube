@@ -72,7 +72,7 @@ fn draw(handle: AnyWindowHandle, cx: &mut TestAppContext) {
 }
 
 fn dock(pilot: &Entity<Pilot>, cx: &mut TestAppContext) -> Entity<Dock> {
-    cx.update(|cx| pilot.read(cx).dock.clone())
+    cx.update(|cx| pilot.read(cx).pages.dock.clone())
 }
 
 fn titles(dock: &Entity<Dock>, cx: &mut TestAppContext) -> Vec<String> {
@@ -440,7 +440,13 @@ fn drawer(
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let open = window.try_find("resource-drawer").is_some();
-        let selected = pilot.read(cx).resources.read(cx).selected_row().cloned();
+        let selected = pilot
+            .read(cx)
+            .pages
+            .resources
+            .read(cx)
+            .selected_row()
+            .cloned();
         (open, selected)
     })
     .unwrap()

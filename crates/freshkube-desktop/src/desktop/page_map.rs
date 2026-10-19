@@ -11,7 +11,7 @@ use super::overview::OverviewPage;
 use super::pages::PageId;
 use super::settings::SettingsPage;
 use super::system_services::SystemServices;
-use super::{Pilot, dock, nodes, overview, settings, switch, system_services};
+use super::{Pilot, dock, nodes, overview, search, settings, switch, system_services};
 use crate::applications::ApplicationsPage;
 use crate::observability::ObservabilityPage;
 use crate::{
@@ -26,12 +26,12 @@ use crate::{
 };
 
 /// The pages `Pilot::new` makes, with the map and the entities the shell
-/// keeps beside it. The age label is the session's, made here because
-/// Overview draws it.
+/// keeps beside it. The age label is the session's, made by the caller
+/// because Overview draws it.
 pub(super) struct Pages {
     pub(super) map: BTreeMap<PageId, ScreenHandle>,
     pub(super) logs: Entity<LogPanel>,
-    pub(super) age_label: Entity<switch::AgeLabel>,
+    pub(super) search: Entity<search::Search>,
     pub(super) overview_page: Entity<overview::OverviewPage>,
     pub(super) node_workspace: Entity<nodes::Nodes>,
     pub(super) health: Entity<WorkloadsScreen>,
@@ -51,6 +51,7 @@ impl Pages {
     pub(super) fn new(
         options: &GpuiOptions,
         runtime: &Handle,
+        age_label: &Entity<switch::AgeLabel>,
         window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
@@ -58,7 +59,6 @@ impl Pages {
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
         logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let age_label = cx.new(|_| switch::AgeLabel::new());
         let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
         let node_workspace = cx.new(|cx| {
             let mut nodes = nodes::Nodes::new(runtime.clone(), logs.clone(), window, cx);
@@ -154,6 +154,7 @@ impl Pages {
         });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
+        let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(
             &overview_page,
             &node_workspace,
@@ -167,7 +168,7 @@ impl Pages {
         Self {
             map: pages,
             logs,
-            age_label,
+            search,
             overview_page,
             node_workspace,
             health,

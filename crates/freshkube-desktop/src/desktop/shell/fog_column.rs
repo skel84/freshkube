@@ -136,7 +136,7 @@ impl Pilot {
             }
             Area::Applications => {
                 let listing = self.navigation.page == Page::Applications
-                    && self.applications.read(cx).open_page().is_none();
+                    && self.pages.applications.read(cx).open_page().is_none();
                 column = column.child(
                     Button::new("nav-all-applications")
                         .ghost()
@@ -147,7 +147,8 @@ impl Pilot {
                         .tooltip("All applications")
                         .tooltip_placement(Placement::Right)
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.applications
+                            this.pages
+                                .applications
                                 .update(cx, |page, cx| page.show_list(window, cx));
                             this.navigate_from_keyboard(Page::Applications, window, cx)
                         })),
@@ -216,7 +217,7 @@ impl Pilot {
         window: &mut Window,
         cx: &Context<Self>,
     ) {
-        let destination = self.observability.read(cx).destination();
+        let destination = self.pages.observability.read(cx).destination();
         let key = (destination, collapsed, column::room(window));
         let revealed = Some(key);
         let active = self.obs_destinations().into_iter().position(|item| {
@@ -244,14 +245,14 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
-        let destination = self.observability.read(cx).destination();
+        let destination = self.pages.observability.read(cx).destination();
         let active = |item: Destination| {
             item == destination
                 || (item == Destination::Applications && destination == Destination::Application)
         };
         let scroll = self.navigation.obs_column_scroll.clone();
         self.reveal_destination(true, &scroll, window, cx);
-        let incidents = self.observability.read(cx).incident_count();
+        let incidents = self.pages.observability.read(cx).incident_count();
         let mut rows = v_flex()
             .id("obs-navigation-scroll")
             .test_support()
@@ -299,7 +300,8 @@ impl Pilot {
         cx: &Context<Self>,
     ) -> AnyElement {
         let open = cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.observability
+            this.pages
+                .observability
                 .update(cx, |page, cx| page.open(item, cx));
             this.navigate_from_keyboard(Page::Observability, window, cx);
         });
@@ -370,7 +372,7 @@ impl Pilot {
                     window.open_dialog(cx, |dialog, _, _| dialog.title("Example data")
                         .child("Sanitized Coroot observations use the same presentation as live data. Later destinations and mutation controls are local previews."));
                 } else {
-                    this.observability.update(cx, |page, cx| page.show_connection(cx));
+                    this.pages.observability.update(cx, |page, cx| page.show_connection(cx));
                     this.navigate_from_keyboard(Page::Observability, window, cx);
                 }
             }))
@@ -419,13 +421,13 @@ impl Pilot {
     ) {
         if self.navigation.page == Page::Resources
             && self.navigation.resource_kind.is_pod()
-            && self.resources.read(cx).namespace() == namespace.as_deref()
+            && self.pages.resources.read(cx).namespace() == namespace.as_deref()
         {
             return;
         }
         self.unless_shell(window, cx, move |this, window, cx| {
             this.open_builtin("pods", window, cx);
-            this.resources.update(cx, |resources, cx| {
+            this.pages.resources.update(cx, |resources, cx| {
                 resources.set_namespace(namespace, window, cx)
             });
             this.focus_page(window, cx);

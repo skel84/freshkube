@@ -116,14 +116,15 @@ impl Pilot {
             }
             CardTarget::Kind(key, filter) => {
                 self.open_builtin(key, window, cx);
-                self.resources.update(cx, |resources, cx| {
+                self.pages.resources.update(cx, |resources, cx| {
                     resources.set_filter(&filter, window, cx)
                 });
             }
             CardTarget::Destination(target) => self.open_destination(target, window, cx),
             CardTarget::Services => {
                 self.navigate_from_keyboard(crate::desktop::Page::SystemServices, window, cx);
-                self.system_services
+                self.pages
+                    .system_services
                     .update(cx, |services, cx| services.show_unhealthy(window, cx));
             }
         }

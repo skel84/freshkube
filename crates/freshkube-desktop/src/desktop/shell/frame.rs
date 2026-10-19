@@ -24,7 +24,8 @@ impl Pilot {
             let (status, names) = self.render_kubernetes_status(glyph_only, cx);
             named = names.then(|| context.clone());
             status
-        } else if (self.navigation.page == Page::Nodes && self.node_workspace.read(cx).shows_logs())
+        } else if (self.navigation.page == Page::Nodes
+            && self.pages.node_workspace.read(cx).shows_logs())
             && self.config_error.is_none()
         {
             self.render_logs_status(cx)
@@ -122,7 +123,7 @@ impl Pilot {
     /// The node's log, while the Nodes pane shows its Logs tab.
     fn render_logs_status(&self, cx: &mut Context<Self>) -> AnyElement {
         let glyph = |tone: Tone| ui::status_glyph(tone, cx);
-        let logs = self.logs.read(cx);
+        let logs = self.pages.logs.read(cx);
         let line = logs.status_line();
         h_flex()
                 .id("logs-status")
@@ -274,7 +275,7 @@ impl Pilot {
             Page::SystemServices if !self.mode().has_talos() => return None,
             page => format!("{}-scope", page.slug()).into(),
         };
-        let page = self.pages.get(&self.navigation.page.id())?.clone();
+        let page = self.pages.map.get(&self.navigation.page.id())?.clone();
         Some((id, page.status(cx)?))
     }
 }
@@ -316,7 +317,7 @@ pub(super) fn settings_content(
     let Some(view) = pilot.upgrade() else {
         return div().into_any_element();
     };
-    let monitoring = view.read(cx).monitoring.clone();
+    let monitoring = view.read(cx).pages.monitoring.clone();
     monitoring.update(cx, |page, cx| page.source_form(window, cx));
     let (kubernetes_only, automatic, appearance) = {
         let view = view.read(cx);
@@ -445,7 +446,7 @@ impl Pilot {
     /// "3 logs · 1 shell" while the dock has tabs: opens a minimized dock,
     /// or minimizes an open one.
     fn render_dock_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let dock = self.dock.read(cx);
+        let dock = self.pages.dock.read(cx);
         if !dock.has_tabs() {
             return None;
         }
@@ -462,7 +463,10 @@ impl Pilot {
                     "Show the dock"
                 })
                 .on_click(cx.listener(|pilot, _, window, cx| {
-                    pilot.dock.update(cx, |dock, cx| dock.toggle(window, cx))
+                    pilot
+                        .pages
+                        .dock
+                        .update(cx, |dock, cx| dock.toggle(window, cx))
                 }))
                 .into_any_element(),
         )
