@@ -395,7 +395,7 @@ fn cached_system_services_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     };
     let shell = redrawn(&|_, cx| cx.notify());
     let nodes = redrawn(&|view, cx| {
-        let nodes = view.nodes.clone();
+        let nodes = view.target.nodes.clone();
         view.pages
             .system_services
             .update(cx, |page, cx| page.set_nodes(&nodes, cx));

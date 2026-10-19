@@ -16,6 +16,8 @@ mod kubernetes_summary;
 mod link_tests;
 #[cfg(test)]
 mod menu_tests;
+#[path = "startup/migrate.rs"]
+mod migrate_startup;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -159,7 +161,7 @@ pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
 
 pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
     // Before anything reads the workspace.
-    options.setup_notice = startup::migrate_setup(&options);
+    options.setup_notice = migrate_startup::migrate_setup(&options);
     let error = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_error = error.clone();
     gpui_kit::application()
@@ -294,12 +296,8 @@ pub(crate) struct Pilot {
     /// window offers no way to read a notice back.
     #[cfg(test)]
     pub(crate) told: Vec<String>,
-    /// One object-link lookup for the shell's target epoch. The caller also
-    /// checks its origin (for example, the object whose owner it resolves).
-    object_open: Loader<(), Option<u64>>,
-    services: Snapshot<Vec<ServiceInfo>, Target, String>,
-    nodes: Vec<NodeSummary>,
-    selected_node: Option<String>,
+    /// The Talos nodes, the one selected and what is read of it.
+    target: target::Selected,
     chrome: shell::Chrome,
     /// The pages: the map of every page's handle, and the typed handles
     /// the shell observes and pushes into.
@@ -326,7 +324,6 @@ pub(crate) struct Pilot {
     // The snapshots keep the display/freshness state and its existing request
     // tokens; these completion owners retain the jobs and their deliveries.
     overview_read: Loader<(), AppliedConfig>,
-    service_read: Loader<(), Option<Target>>,
     _tick: Task<()>,
 }
 
@@ -745,10 +742,7 @@ impl Pilot {
             epoch: 0,
             overview: Snapshot::default(),
             switch,
-            object_open: Loader::default(),
-            services: Snapshot::default(),
-            nodes: Vec::new(),
-            selected_node: None,
+            target: target::Selected::default(),
             chrome,
             settings_page: pages.settings_page.clone(),
             pages,
@@ -775,7 +769,6 @@ impl Pilot {
             window: window.window_handle(),
             _subscriptions: subscriptions,
             overview_read: Loader::default(),
-            service_read: Loader::default(),
             _tick: tick,
         }
     }
@@ -789,9 +782,7 @@ impl Pilot {
             .search
             .update(cx, |search, cx| search.invalidate(cx));
         self.overview_read.resolve(self.applied.clone(), Ok(()));
-        self.service_read.resolve(None, Ok(()));
-        self.selected_node = None;
-        self.nodes.clear();
+        self.target.clear_nodes();
         self.pages
             .system_services
             .update(cx, |services, cx| services.set_nodes(&[], cx));
@@ -799,9 +790,9 @@ impl Pilot {
             .node_workspace
             .update(cx, |nodes, _| nodes.load_history.clear());
         self.overview = Snapshot::default();
-        self.pages
-            .system_services
-            .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
+        self.pages.system_services.update(cx, |services, cx| {
+            services.set_nodes(&self.target.nodes, cx)
+        });
         self.rebuild_joined_nodes(cx);
         self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
@@ -811,8 +802,8 @@ impl Pilot {
         self.pages
             .overview_page
             .update(cx, |overview, cx| overview.collapse(cx));
-        self.cancel_object_open();
-        self.services = Snapshot::default();
+        self.target.cancel_object_open();
+        self.target.services = Snapshot::default();
         self.push_services(cx);
         self.pages
             .logs
@@ -953,15 +944,9 @@ impl Pilot {
         .detach();
     }
 
-    fn selected_summary(&self) -> Option<&NodeSummary> {
-        self.nodes
-            .iter()
-            .find(|node| Some(&node.name) == self.selected_node.as_ref())
-    }
-
     fn target(&self) -> Option<(Target, TalosClient)> {
         let cluster = self.overview.data()?;
-        let node = self.selected_summary()?;
+        let node = self.target.summary()?;
         Some((
             Target {
                 epoch: self.epoch,
@@ -995,7 +980,7 @@ impl Pilot {
                 self.open_node_by_name(node, nodes::NodeTab::Overview, window, cx)
             }
             ScreenEvent::OpenLogsOn { node, service } => {
-                if !self.nodes.iter().any(|known| &known.name == node) {
+                if !self.target.has_node(node) {
                     return;
                 }
                 self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);

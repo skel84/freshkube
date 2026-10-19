@@ -1,0 +1,1 @@
+- **Release builds:** they compile again. The move into `freshkube.yaml` sat in a module that only debug builds include.

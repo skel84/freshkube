@@ -112,7 +112,7 @@ fn open_processes(
 ) -> impl Fn(&mut gpui_kit::Window, &mut gpui_kit::App) + use<> {
     let view = view.clone();
     move |window, cx| {
-        let name = view.read(cx).selected_node.clone().unwrap();
+        let name = view.read(cx).target.selected_node.clone().unwrap();
         view.update(cx, |view, cx| {
             view.open_node_by_name(&name, super::super::nodes::NodeTab::Processes, window, cx)
         })
@@ -197,7 +197,7 @@ fn a_node_pane_screen_hides_when_its_node_leaves(cx: &mut TestAppContext) {
     assert_eq!(fakes.take().0, "nodes shown, processes shown");
     cx.update(|cx| {
         view.update(cx, |pilot, cx| {
-            pilot.nodes.clear();
+            pilot.target.nodes.clear();
             pilot.overview = crate::state::Snapshot::default();
             pilot.rebuild_joined_nodes(cx);
         })

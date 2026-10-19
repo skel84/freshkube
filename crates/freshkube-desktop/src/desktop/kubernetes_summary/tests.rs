@@ -438,9 +438,10 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
             let next = view
+                .target
                 .nodes
                 .iter()
-                .find(|node| Some(&node.name) != view.selected_node.as_ref())
+                .find(|node| Some(&node.name) != view.target.selected_node.as_ref())
                 .unwrap()
                 .name
                 .clone();
