@@ -337,8 +337,8 @@ pub(super) fn settings_content(
     let browse_popover = popover.clone();
     let switch_pilot = pilot.clone();
     let appearance_pilot = pilot.clone();
-    let workspace_pilot = pilot.clone();
-    let workspace_popover = popover.clone();
+    let all_pilot = pilot.clone();
+    let all_popover = popover.clone();
     let field_label = |text: &'static str| {
         div()
             .text_size(dp(12.5))
@@ -513,36 +513,28 @@ pub(super) fn settings_content(
                 ),
         )
         .child(divider(4))
-        .child(
-            h_flex()
-                .justify_between()
-                .gap_3()
-                .child(
-                    v_flex()
-                        .child(field_label("Workspace"))
-                        .child(hint("The clusters you work with")),
-                )
-                .child(
-                    Button::new("settings-open-workspace")
-                        .outline()
-                        .small()
-                        .label("Open")
-                        .on_click(move |_, window, cx| {
-                            let _ = workspace_pilot.update(cx, |view, cx| {
-                                view.navigate_from_keyboard(Page::Settings, window, cx)
-                            });
-                            workspace_popover.update(cx, |state, cx| state.dismiss(window, cx));
-                        }),
-                ),
-        )
-        .child(divider(5))
         .child(crate::monitoring::page::source_section(&monitoring, cx))
-        .child(divider(6))
+        .child(divider(5))
         .child(crate::monitoring::page::settings_section(
             &monitoring,
             popover.clone(),
             cx,
         ))
+        .child(divider(6))
+        .child(
+            // The Settings area, on the section shown last.
+            Button::new("settings-all")
+                .ghost()
+                .small()
+                .w_full()
+                .label("All settings…")
+                .on_click(move |_, window, cx| {
+                    all_popover.update(cx, |state, cx| state.dismiss(window, cx));
+                    let _ = all_pilot.update(cx, |view, cx| {
+                        view.navigate_from_keyboard(Page::Settings, window, cx)
+                    });
+                }),
+        )
         .into_any_element()
 }
 

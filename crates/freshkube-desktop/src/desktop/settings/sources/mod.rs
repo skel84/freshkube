@@ -1,5 +1,5 @@
-//! Settings › Workspace's third list: where each part of the delivery chain
-//! is read (core's `workspace::Sources`), and whether that entry answers.
+//! Settings › Delivery sources: where each part of the delivery chain is
+//! read (core's `workspace::Sources`), and whether that entry answers.
 //! One row per part: the part, the entry it is read from and why (its role,
 //! or pinned in `workspace.json`), its state, and what it reads. A last row,
 //! Workloads, names every entry an Argo CD destination maps to and counts
@@ -119,13 +119,19 @@ pub(crate) struct SourcesList {
     /// How long a check may take; shorter in tests.
     deadline: Duration,
     focus: FocusHandle,
+    /// The page, whose banners show under the toolbar.
+    page: WeakEntity<super::SettingsPage>,
     /// What example entries answer, by entry and read; any other answers.
     #[cfg(test)]
     example_answers: HashMap<(String, Read), Reach>,
 }
 
 impl SourcesList {
-    pub(super) fn new(runtime: tokio::runtime::Handle, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        runtime: tokio::runtime::Handle,
+        page: WeakEntity<super::SettingsPage>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let sources = Sources::of(&Default::default());
         let mut list = Self {
             rows: Vec::new(),
@@ -141,6 +147,7 @@ impl SourcesList {
             read: Loader::default(),
             deadline: DEADLINE,
             focus: cx.focus_handle(),
+            page,
             #[cfg(test)]
             example_answers: HashMap::new(),
         };
@@ -360,6 +367,11 @@ impl SourcesList {
         window.focus(&self.focus, cx);
     }
 
+    /// Where the page puts the keyboard while this list shows.
+    pub(super) fn focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
+    }
+
     /// The list's toolbar: its name and Check sources.
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let handler = page::handler(cx, |this: &mut Self, _, cx| this.check(cx));
@@ -408,17 +420,17 @@ impl SourcesList {
 impl Render for SourcesList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(window, cx);
-        // Four rows, never more: as tall as they are, under the lists that
-        // take the room.
+        let banners = self
+            .page
+            .upgrade()
+            .map(|page| page.read(cx).render_banners(cx))
+            .unwrap_or_default();
+        // Four rows, never more: as tall as they are.
         v_flex()
             .id("settings-sources")
             .flex_none()
-            .child(
-                page::toolbar(cx)
-                    .border_t_1()
-                    .border_color(crate::palette::palette(cx).line)
-                    .child(header),
-            )
+            .child(page::toolbar(cx).child(header))
+            .children(banners)
             .child(
                 div()
                     .key_context(CONTEXT)

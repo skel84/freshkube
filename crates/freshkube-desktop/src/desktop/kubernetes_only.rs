@@ -8,6 +8,8 @@ use crate::resources::direct::DirectAccess;
 use crate::screens::HealthSummary;
 use crate::ui::{self, MONO_FONT, Tone, dp};
 use freshkube_core::resources::{KubeconfigReport, discover_contexts, kubeconfig_sources};
+use freshkube_core::snapshot::Request;
+use freshkube_reads::Loader;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Icon, Sizable,
@@ -18,7 +20,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, rc::Rc, time::Duration};
 
 /// Reading kubeconfig files is local I/O; anything slower is a stuck disk.
 const READ_DEADLINE: Duration = Duration::from_secs(10);
@@ -37,10 +39,11 @@ pub(super) struct KubernetesOnly {
     /// The chosen context; its client is shared with every read.
     access: Option<DirectAccess>,
     pub(super) connection: KubeConnection,
-    job: Option<OwnedJob>,
-    task: Option<Task<()>>,
+    connection_read: Loader<(), Option<String>>,
+    /// The loader's request token, retained after completion so a local
+    /// revision check can tell whether another connection attempt began.
+    connection_request: Option<Rc<Request<Option<String>>>>,
     revision_check: Option<(OwnedJob, Task<()>)>,
-    connection_generation: u64,
     /// Remember the file and context chosen here for the next launch: set
     /// when the window was switched to this mode in the app, or opened from
     /// the remembered choice, never for a terminal's options.
@@ -59,10 +62,9 @@ impl KubernetesOnly {
             requested,
             access: None,
             connection: KubeConnection::Idle,
-            job: None,
-            task: None,
+            connection_read: Loader::default(),
+            connection_request: None,
             revision_check: None,
-            connection_generation: 0,
             remember: false,
             choosing: false,
         }
@@ -127,8 +129,9 @@ impl Pilot {
             return;
         };
         let explicit = kube.explicit.clone();
-        self.config_generation = self.config_generation.wrapping_add(1);
-        let generation = self.config_generation;
+        let request = self
+            .configuration_read
+            .start(Some(super::ConfigurationRead::Kubernetes(explicit.clone())));
         self.contexts.clear();
         self.config_error = None;
         self.config_loading = true;
@@ -145,17 +148,15 @@ impl Pilot {
                 .map_err(|_| "Reading the kubeconfig stopped unexpectedly".to_owned())
             },
         );
-        self.config_job = Some(job);
-        self.config_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("Reading the kubeconfig stopped unexpectedly".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                if generation != view.config_generation {
+                if !view.configuration_read.land(&request, Ok(()), cx) {
                     return;
                 }
                 view.config_loading = false;
-                view.config_job = None;
                 match result {
                     Ok(report) => view.kubeconfig_read(report, window, cx),
                     Err(error) => {
@@ -168,7 +169,8 @@ impl Pilot {
                 view.prepare_context_display(window, cx);
                 cx.notify();
             });
-        }));
+        });
+        self.configuration_read.run(Some(job), task);
         cx.notify();
     }
 
@@ -271,8 +273,7 @@ impl Pilot {
             return;
         };
         kube.choosing &= context.is_none();
-        kube.job = None;
-        kube.task = None;
+        kube.connection_read.resolve(None, Ok(()));
         kube.revision_check = None;
         kube.connection = KubeConnection::Idle;
         kube.access = context
@@ -313,17 +314,21 @@ impl Pilot {
                     .map_err(|failure| failure.message)
             },
         );
-        kube.job = Some(job);
-        kube.connection_generation = kube.connection_generation.wrapping_add(1);
-        let generation = kube.connection_generation;
-        kube.task = Some(cx.spawn_in(window, async move |this, cx| {
+        let request = Rc::new(kube.connection_read.start(Some(access.id())));
+        kube.connection_request = Some(request.clone());
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("The connection worker stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                view.kube_connection_received(access, generation, recovering, result, window, cx);
+                view.kube_connection_received(access, &request, recovering, result, window, cx);
             });
-        }));
+        });
+        self.mode
+            .kubernetes_only_mut()
+            .unwrap()
+            .connection_read
+            .run(Some(job), task);
         self.sync_unread_health(cx);
         self.prepare_context_display(window, cx);
         cx.notify();
@@ -332,7 +337,7 @@ impl Pilot {
     fn kube_connection_received(
         &mut self,
         access: DirectAccess,
-        generation: u64,
+        request: &Request<Option<String>>,
         recovering: bool,
         result: Result<String, String>,
         window: &mut Window,
@@ -342,12 +347,11 @@ impl Pilot {
             return;
         };
         // Node selection doesn't replace compatible Kubernetes access.
-        if kube.connection_generation != generation
-            || kube.access.as_ref().map(DirectAccess::id) != Some(access.id())
+        if kube.access.as_ref().map(DirectAccess::id) != Some(access.id())
+            || !kube.connection_read.land(request, Ok(()), cx)
         {
             return;
         }
-        kube.job = None;
         match result {
             Ok(version) => {
                 kube.connection = KubeConnection::Connected { version };
@@ -389,7 +393,7 @@ impl Pilot {
         }
         let retrying = matches!(kube.connection, KubeConnection::Failed(_));
         let previous = retrying.then(|| kube.connection.clone());
-        let connection_generation = kube.connection_generation;
+        let connection_request = kube.connection_request.clone();
         let sources = kube.sources.clone();
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
@@ -416,8 +420,11 @@ impl Pilot {
                 // Local inspection is part of the retry. Restore its previous
                 // failure before deciding whether to reconnect or ask about a
                 // replacement; a newer connection attempt owns its own state.
-                if kube.connection_generation == connection_generation
-                    && let Some(previous) = previous
+                if match (&kube.connection_request, &connection_request) {
+                    (Some(current), Some(asked)) => Rc::ptr_eq(current, asked),
+                    (None, None) => true,
+                    _ => false,
+                } && let Some(previous) = previous
                 {
                     kube.connection = previous;
                 }
@@ -567,9 +574,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         self.leave_entry(cx);
-        self.config_task = None;
-        self.config_job = None;
-        self.config_generation = self.config_generation.wrapping_add(1);
+        self.configuration_read.resolve(None, Ok(()));
         self.config_loading = false;
         self.config_error = None;
         self.loaded_config_path = None;
@@ -858,10 +863,16 @@ mod tests {
                 );
 
                 // A node epoch is not an access epoch: the connection can finish.
+                let request = view
+                    .mode
+                    .kubernetes_only_mut()
+                    .unwrap()
+                    .connection_read
+                    .start(Some(access.id()));
                 view.select_node(None, window, cx);
                 view.kube_connection_received(
                     access.clone(),
-                    0,
+                    &request,
                     false,
                     Ok("after node".into()),
                     window,
@@ -887,10 +898,11 @@ mod tests {
                 view.mode
                     .kubernetes_only_mut()
                     .unwrap()
-                    .connection_generation = 1;
+                    .connection_read
+                    .start(Some(access.id()));
                 view.kube_connection_received(
                     access.clone(),
-                    0,
+                    &request,
                     false,
                     Err("older attempt".into()),
                     window,
@@ -934,13 +946,23 @@ mod tests {
                     &observation
                 );
 
-                view.kube_connection_received(access, 0, false, Ok("obsolete".into()), window, cx);
+                view.kube_connection_received(
+                    access,
+                    &request,
+                    false,
+                    Ok("obsolete".into()),
+                    window,
+                    cx,
+                );
                 assert_eq!(
                     view.mode().kubernetes_only().unwrap().connection,
                     KubeConnection::Connecting
                 );
-                view.mode.kubernetes_only_mut().unwrap().job = None;
-                view.mode.kubernetes_only_mut().unwrap().task = None;
+                view.mode
+                    .kubernetes_only_mut()
+                    .unwrap()
+                    .connection_read
+                    .resolve(None, Ok(()));
                 view.stop_summary();
             });
         })
@@ -1005,8 +1027,11 @@ mod tests {
                 view.apply_summary(late, health, window, cx);
                 assert!(view.registry.active().kubernetes_summary.data().is_none());
 
-                view.mode.kubernetes_only_mut().unwrap().job = None;
-                view.mode.kubernetes_only_mut().unwrap().task = None;
+                view.mode
+                    .kubernetes_only_mut()
+                    .unwrap()
+                    .connection_read
+                    .resolve(None, Ok(()));
                 view.stop_summary();
             });
         })

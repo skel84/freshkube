@@ -265,7 +265,6 @@ pending_list() {
     return
   fi
   cat <<'EOF'
-buttons crates/freshkube-desktop/src/mutation.rs 2
 buttons crates/freshkube-desktop/src/desktop/settings/edit.rs 4
 buttons crates/freshkube-desktop/src/desktop/settings/form.rs 4
 label crates/freshkube-desktop/src/desktop/settings/form.rs 4

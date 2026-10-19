@@ -548,8 +548,9 @@ fn a_cut_rail_or_column_fades_at_the_edges_it_cuts(cx: &mut TestAppContext) {
     })
     .unwrap();
 
-    // With room for everything, nothing is cut.
-    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    // With room for everything, nothing is cut. The rail's four groups
+    // need about 840 dp, so the default 880 window cuts it by 31.
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 960.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.navigate(Page::Observability, window, cx)

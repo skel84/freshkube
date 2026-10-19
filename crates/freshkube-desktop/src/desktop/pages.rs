@@ -128,7 +128,7 @@ pub(crate) enum Area {
     Observability,
     /// What Kargo, Argo CD and the part-of label say the cluster runs.
     Applications,
-    /// Settings: opened from the header, so it has no rail button.
+    /// Settings' sections, listed in its column; the last rail button.
     Settings,
     /// A built-in group of Kubernetes kinds, by its navigation slug.
     Group(&'static str),
@@ -138,7 +138,7 @@ pub(crate) enum Area {
 
 impl Area {
     /// The rail's buttons in order, as sections split by a divider.
-    pub(crate) const RAIL: [&'static [Self]; 3] = [
+    pub(crate) const RAIL: [&'static [Self]; 4] = [
         &[
             Self::Overview,
             Self::Nodes,
@@ -158,6 +158,7 @@ impl Area {
             Self::Custom,
         ],
         &[Self::ControlPlane],
+        &[Self::Settings],
     ];
 
     /// The area that holds a page, and for Resources the kind it shows.
@@ -248,6 +249,7 @@ impl Area {
                 | Self::Group(_)
                 | Self::Custom
                 | Self::ControlPlane
+                | Self::Settings
         )
     }
 }
@@ -535,9 +537,7 @@ impl Pilot {
 
     /// Drops a pending object open, so its answer is ignored when it comes.
     pub(super) fn cancel_object_open(&mut self) {
-        self.object_open_job = None;
-        self.object_open_task = None;
-        self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
+        self.object_open.resolve(None, Ok(()));
     }
 
     /// Log collection keeps running in the background across screens; other

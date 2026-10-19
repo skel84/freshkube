@@ -1,16 +1,16 @@
-use super::Origin;
-use crate::GpuiOptions;
+use super::{Origin, SettingsSection};
 use crate::desktop::{
-    Page, layout_check,
+    Area, Page, layout_check,
     tests::{fixture, mount},
 };
+use crate::{DebugOptions, GpuiOptions};
 use freshkube_core::workspace::{self, Invalid, Loaded};
 use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
 
 const SETTINGS: layout_check::TablePage = layout_check::TablePage {
     page: "settings-page",
     title: "settings-title",
-    title_text: "Settings",
+    title_text: "Clusters",
     table: "settings-table-scroll",
     list: "settings-list",
 };
@@ -18,12 +18,12 @@ const SETTINGS: layout_check::TablePage = layout_check::TablePage {
 fn open_settings(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
     window.click("settings", cx);
     window.render_frame(cx);
-    window.click("settings-open-workspace", cx);
+    window.click("settings-all", cx);
     window.render_frame(cx);
 }
 
 #[gpui_kit::test]
-fn the_gear_opens_settings_with_the_example_workspace(cx: &mut TestAppContext) {
+fn all_settings_opens_the_example_workspace(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open_settings(window, cx);
@@ -52,21 +52,48 @@ fn the_gear_opens_settings_with_the_example_workspace(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+/// Each list section is a table page, at both window sizes and the
+/// smallest and largest text.
 #[gpui_kit::test]
-fn settings_is_a_table_page_at_every_text_size(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    for size in [None, Some(20.)] {
-        cx.update_window(handle, |_, window, cx| {
-            if let Some(size) = size {
-                crate::text_size::set(size, cx);
+fn each_list_section_is_a_table_page_at_every_size(cx: &mut TestAppContext) {
+    let pages = [
+        (SettingsSection::Clusters, SETTINGS),
+        (
+            SettingsSection::Destinations,
+            layout_check::TablePage {
+                page: "settings-page",
+                title: "settings-destinations-title",
+                title_text: "Argo CD destinations",
+                table: "settings-destinations-table-scroll",
+                list: "settings-destinations-list",
+            },
+        ),
+        (
+            SettingsSection::Sources,
+            layout_check::TablePage {
+                page: "settings-page",
+                title: "settings-sources-title",
+                title_text: "Delivery sources",
+                table: "settings-sources-table-scroll",
+                list: "settings-sources-list",
+            },
+        ),
+    ];
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        for size in [None, Some(20.)] {
+            for (section, page) in &pages {
+                cx.update_window(handle, |_, window, cx| {
+                    if let Some(size) = size {
+                        crate::text_size::set(size, cx);
+                    }
+                    view.update(cx, |pilot, cx| pilot.show_settings(*section, window, cx));
+                    window.render_frame(cx);
+                    layout_check::assert_table_page(window, cx, page);
+                })
+                .unwrap();
             }
-            view.update(cx, |pilot, cx| {
-                pilot.navigate_from_keyboard(Page::Settings, window, cx)
-            });
-            window.render_frame(cx);
-            layout_check::assert_table_page(window, cx, &SETTINGS);
-        })
-        .unwrap();
+        }
     }
 }
 
@@ -499,4 +526,166 @@ fn a_destination_for_argo_cds_own_cluster_says_why_the_file_isnt_used(cx: &mut T
         );
     })
     .unwrap();
+}
+
+/// The sections in the column, App's then Workspace's, by their ids.
+const SECTIONS: [(&str, SettingsSection, &str); 7] = [
+    ("general", SettingsSection::General, "General"),
+    ("connection", SettingsSection::Connection, "Connection"),
+    ("monitoring", SettingsSection::Monitoring, "Monitoring"),
+    ("coroot", SettingsSection::Coroot, "Coroot"),
+    ("clusters", SettingsSection::Clusters, "Clusters"),
+    (
+        "destinations",
+        SettingsSection::Destinations,
+        "Argo CD destinations",
+    ),
+    ("sources", SettingsSection::Sources, "Delivery sources"),
+];
+
+/// The rail's Settings shows its column, App's sections then Workspace's,
+/// and each row opens its section, the row current and its title shown.
+#[gpui_kit::test]
+fn the_rail_opens_settings_and_its_column_opens_each_section(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("nav-settings", cx);
+        window.render_frame(cx);
+        assert_eq!(view.read(cx).navigation.area, Area::Settings);
+        assert_eq!(view.read(cx).navigation.page, Page::Settings);
+        let mut tops = Vec::new();
+        for id in [
+            "app",
+            "general",
+            "coroot",
+            "workspace",
+            "clusters",
+            "sources",
+        ] {
+            tops.push(window.find(format!("nav-settings-{id}")).bounds().top());
+        }
+        assert!(tops.is_sorted(), "{tops:?}");
+        for (slug, section, title) in SECTIONS {
+            window.click(format!("nav-settings-{slug}"), cx);
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).settings_page.read(cx).section(), section);
+            assert_eq!(view.read(cx).navigation.page, Page::Settings);
+            // Clusters keeps the page's own prefix.
+            let title_id = match section {
+                SettingsSection::Clusters => "settings-title".to_owned(),
+                _ => format!("settings-{slug}-title"),
+            };
+            // The title's text is the layout checks' to measure.
+            assert!(window.find(title_id).visible(), "{slug}: {title}");
+            assert!(window.find(format!("nav-settings-{slug}")).visible());
+            assert_eq!(window.find("page-title").label(), Some("Settings"));
+        }
+    })
+    .unwrap();
+}
+
+/// `FRESHKUBE_PAGE=settings-<section>` opens that section, and `settings`
+/// Clusters.
+#[gpui_kit::test]
+fn each_section_opens_from_its_page_slug(cx: &mut TestAppContext) {
+    let cases = SECTIONS
+        .into_iter()
+        .map(|(slug, section, _)| (format!("settings-{slug}"), section))
+        .chain([("settings".to_owned(), SettingsSection::Clusters)]);
+    for (page, section) in cases {
+        let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.startup_selection(&DebugOptions::default().with_page(&page), window, cx)
+            });
+            window.render_frame(cx);
+            assert_eq!(view.read(cx).navigation.page, Page::Settings, "{page}");
+            assert_eq!(view.read(cx).navigation.area, Area::Settings, "{page}");
+            assert_eq!(
+                view.read(cx).settings_page.read(cx).section(),
+                section,
+                "{page}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+/// Command-comma and All settings… open the section shown last, not the
+/// gear's menu.
+#[gpui_kit::test]
+fn open_settings_and_all_settings_open_the_section_shown_last(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Destinations, window, cx);
+            pilot.navigate_from_keyboard(Page::Overview, window, cx);
+        });
+        window.render_frame(cx);
+        window.dispatch_action(Box::new(freshkube_ui::platform::OpenSettings), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let pilot = view.read(cx);
+        assert_eq!(pilot.navigation.page, Page::Settings);
+        assert!(!pilot.navigation.settings_open);
+        assert_eq!(
+            pilot.settings_page.read(cx).section(),
+            SettingsSection::Destinations
+        );
+        assert!(window.find("settings-destinations-list").visible());
+        view.update(cx, |pilot, cx| {
+            pilot.navigate_from_keyboard(Page::Overview, window, cx)
+        });
+        open_settings(window, cx);
+        assert_eq!(view.read(cx).navigation.page, Page::Settings);
+        assert!(!view.read(cx).navigation.settings_open);
+        assert_eq!(
+            view.read(cx).settings_page.read(cx).section(),
+            SettingsSection::Destinations
+        );
+    })
+    .unwrap();
+}
+
+/// A section whose controls aren't here yet says where they are, on a
+/// padded page, and its button goes there: the gear's menu, or Coroot's
+/// connection on Observability. It has no line in the status bar.
+#[gpui_kit::test]
+fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
+    for (slug, section, title) in SECTIONS.into_iter().take(4) {
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
+            window.render_frame(cx);
+            layout_check::assert_page_frame(
+                window,
+                cx,
+                &layout_check::PageFrame {
+                    page: "settings-page",
+                    title: Box::leak(format!("settings-{slug}-title").into_boxed_str()),
+                    title_text: title,
+                    content: Box::leak(format!("settings-{slug}-pointer").into_boxed_str()),
+                },
+            );
+            assert!(window.try_find("settings-scope").is_none(), "{slug}");
+            window.click(format!("settings-{slug}-open"), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let pilot = view.read(cx);
+            if section == SettingsSection::Coroot {
+                assert_eq!(pilot.navigation.page, Page::Observability);
+            } else {
+                assert_eq!(pilot.navigation.page, Page::Settings, "{slug}");
+                assert!(pilot.navigation.settings_open, "{slug}");
+            }
+            view.update(cx, |pilot, _| pilot.navigation.settings_open = false);
+        })
+        .unwrap();
+    }
 }

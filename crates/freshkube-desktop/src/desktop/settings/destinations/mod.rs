@@ -1,8 +1,8 @@
-//! Settings › Workspace's second list: the workspace's Argo CD destinations,
+//! Settings › Argo CD destinations: the workspace's Argo CD destinations,
 //! each mapped to one of its clusters (`workspace.json`'s `destinations`).
-//! It keeps its own selection, keys and toolbar under the clusters, and
-//! saves through the page, as the clusters do. It derives its rows when the
-//! page's workspace changes, so `render` only reads them.
+//! It keeps its own selection, keys and toolbar, draws the page's banners
+//! under it, and saves through the page, as the clusters do. It derives its
+//! rows when the page's workspace changes, so `render` only reads them.
 //!
 //! A row is selected by what it matches (its `Key`), found again whenever
 //! the rows are derived, so a save or a Reload never moves the selection to
@@ -174,32 +174,10 @@ impl Destinations {
         cx.notify();
     }
 
-    /// Up from the first mapping hands the keyboard back to the clusters,
-    /// on their last row; the clusters' Down past their last comes here.
-    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let first = self.rows.first().map(|row| &row.key);
-        if delta < 0
-            && self.selected.is_some()
-            && self.selected.as_ref() == first
-            && let Some(page) = self.page.upgrade()
-        {
-            page.update(cx, |page, cx| page.enter_from_below(window, cx));
-            return;
-        }
+    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         if let Some(key) = table::step(self, delta, cx) {
             self.select(key, cx);
         }
-    }
-
-    /// Takes the keyboard from the clusters' last row, onto the first
-    /// mapping. Returns false when there is none to go to.
-    pub(super) fn enter_from_above(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(key) = self.rows.first().map(|row| row.key.clone()) else {
-            return false;
-        };
-        self.select(key, cx);
-        self.focus(window, cx);
-        true
     }
 
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
@@ -212,6 +190,11 @@ impl Destinations {
 
     fn focus(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.focus, cx);
+    }
+
+    /// Where the page puts the keyboard while this list shows.
+    pub(super) fn focus_handle(&self) -> FocusHandle {
+        self.focus.clone()
     }
 
     fn selected_row(&self) -> Option<(usize, &DestinationRow)> {
@@ -420,27 +403,25 @@ impl Render for Destinations {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let short = page::is_short(window);
         let header = self.render_header(window, cx);
+        let banners = self
+            .page
+            .upgrade()
+            .map(|page| page.read(cx).render_banners(cx))
+            .unwrap_or_default();
         v_flex()
             .id("settings-destinations")
-            .flex_1()
-            .child(
-                page::toolbar(cx)
-                    .border_t_1()
-                    .border_color(crate::palette::palette(cx).line)
-                    .child(header),
-            )
+            .size_full()
+            .min_h_0()
+            .child(page::toolbar(cx).child(header))
+            .children(banners)
             .child(
                 div()
                     .key_context(CONTEXT)
                     .track_focus(&self.focus)
+                    .on_action(cx.listener(|this, _: &NextDestination, _, cx| this.step(1, cx)))
                     .on_action(
-                        cx.listener(|this, _: &NextDestination, window, cx| {
-                            this.step(1, window, cx)
-                        }),
+                        cx.listener(|this, _: &PreviousDestination, _, cx| this.step(-1, cx)),
                     )
-                    .on_action(cx.listener(|this, _: &PreviousDestination, window, cx| {
-                        this.step(-1, window, cx)
-                    }))
                     .on_action(
                         cx.listener(|this, _: &ClearDestination, _, cx| this.clear_selection(cx)),
                     )

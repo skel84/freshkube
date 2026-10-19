@@ -63,6 +63,7 @@ use crate::{
 };
 use freshkube_core::cluster_overview::{ClusterOverview, KubeconfigSelection};
 use freshkube_core::resources::{ResourceKind, builtin};
+use freshkube_reads::Loader;
 use gpui_kit::component::{ActiveTheme, Theme, TitleBar, input::InputState, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -75,6 +76,7 @@ pub(crate) use freshkube_probe::probe;
 pub(crate) use overview::OverviewEvent;
 pub(crate) use pages::Page;
 use pages::{Area, ColumnReveal, PageId};
+pub(crate) use settings::SettingsEvent;
 pub(crate) use system_services::ServiceEvent;
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
@@ -260,6 +262,13 @@ struct Owners {
     tick: Task<()>,
 }
 
+/// Configuration discovery serves either the Talos file or the Kubernetes files.
+#[derive(Clone, PartialEq, Eq)]
+enum ConfigurationRead {
+    Talos(AppliedConfig),
+    Kubernetes(Option<PathBuf>),
+}
+
 pub(crate) struct Pilot {
     runtime: Handle,
     connection_store: Option<ConnectionStore>,
@@ -273,7 +282,7 @@ pub(crate) struct Pilot {
     context_display: shell::ContextDisplay,
     config_error: Option<String>,
     config_loading: bool,
-    config_generation: u64,
+    configuration_read: Loader<(), Option<ConfigurationRead>>,
     epoch: u64,
     overview: Snapshot<ClusterOverview, AppliedConfig, String>,
     /// The cluster sessions: a workspace of one.
@@ -299,9 +308,9 @@ pub(crate) struct Pilot {
     age_label: Entity<switch::AgeLabel>,
     /// The header's list of the workspace file's clusters.
     switcher: Vec<switch::ClusterItem>,
-    object_open_job: Option<OwnedJob>,
-    object_open_task: Option<Task<()>>,
-    object_open_sequence: u64,
+    /// One object-link lookup for the shell's target epoch. The caller also
+    /// checks its origin (for example, the object whose owner it resolves).
+    object_open: Loader<(), Option<u64>>,
     services: Snapshot<Vec<ServiceInfo>, Target, String>,
     nodes: Vec<NodeSummary>,
     selected_node: Option<String>,
@@ -345,12 +354,10 @@ pub(crate) struct Pilot {
     /// without one at hand (`Pilot::sync_visible_soon`).
     window: AnyWindowHandle,
     _subscriptions: Vec<Subscription>,
-    config_job: Option<OwnedJob>,
-    overview_job: Option<OwnedJob>,
-    service_job: Option<OwnedJob>,
-    config_task: Option<Task<()>>,
-    overview_task: Option<Task<()>>,
-    service_task: Option<Task<()>>,
+    // The snapshots keep the display/freshness state and its existing request
+    // tokens; these completion owners retain the jobs and their deliveries.
+    overview_read: Loader<(), AppliedConfig>,
+    service_read: Loader<(), Option<Target>>,
     _tick: Task<()>,
 }
 
@@ -864,13 +871,11 @@ impl Pilot {
             context_display: shell::ContextDisplay::default(),
             config_error: None,
             config_loading: false,
-            config_generation: 0,
+            configuration_read: Loader::default(),
             epoch: 0,
             overview: Snapshot::default(),
             registry: session::Registry::new(),
-            object_open_job: None,
-            object_open_task: None,
-            object_open_sequence: 0,
+            object_open: Loader::default(),
             services: Snapshot::default(),
             nodes: Vec::new(),
             selected_node: None,
@@ -921,12 +926,8 @@ impl Pilot {
             focus: cx.focus_handle(),
             window: window.window_handle(),
             _subscriptions: subscriptions,
-            config_job: None,
-            overview_job: None,
-            service_job: None,
-            config_task: None,
-            overview_task: None,
-            service_task: None,
+            overview_read: Loader::default(),
+            service_read: Loader::default(),
             _tick: tick,
         }
     }
@@ -937,10 +938,8 @@ impl Pilot {
         // below rebuilds from it.
         self.registry.reset_active();
         self.search.update(cx, |search, cx| search.invalidate(cx));
-        self.overview_task = None;
-        self.overview_job = None;
-        self.service_task = None;
-        self.service_job = None;
+        self.overview_read.resolve(self.applied.clone(), Ok(()));
+        self.service_read.resolve(None, Ok(()));
         self.selected_node = None;
         self.nodes.clear();
         self.system_services
@@ -958,9 +957,7 @@ impl Pilot {
         self.sync_node_visibility(window, cx);
         self.overview_page
             .update(cx, |overview, cx| overview.collapse(cx));
-        self.object_open_job = None;
-        self.object_open_task = None;
-        self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
+        self.cancel_object_open();
         self.services = Snapshot::default();
         self.push_services(cx);
         self.logs
@@ -970,10 +967,9 @@ impl Pilot {
     }
 
     fn load_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.config_task = None;
-        self.config_job = None;
-        self.config_generation = self.config_generation.wrapping_add(1);
-        let generation = self.config_generation;
+        let request = self
+            .configuration_read
+            .start(Some(ConfigurationRead::Talos(self.applied.clone())));
         // Before the reset publishes the overview's state, so the old
         // error isn't shown for the new path.
         self.config_error = None;
@@ -983,17 +979,15 @@ impl Pilot {
         self.loaded_config_path = None;
         self.config_loading = true;
         let (job, receiver) = backend::load_contexts(self.runtime.clone(), self.applied.clone());
-        self.config_job = Some(job);
-        self.config_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("Configuration worker stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                if generation != view.config_generation {
+                if !view.configuration_read.land(&request, Ok(()), cx) {
                     return;
                 }
                 view.config_loading = false;
-                view.config_job = None;
                 match result {
                     Ok(catalog) => {
                         view.loaded_config_path = Some(catalog.path);
@@ -1034,7 +1028,8 @@ impl Pilot {
                 }
                 cx.notify();
             });
-        }));
+        });
+        self.configuration_read.run(Some(job), task);
         cx.notify();
     }
 
@@ -1261,15 +1256,22 @@ impl Pilot {
             self.kubeconfig.clone(),
             self.observed_nodes(),
         );
-        self.overview_job = Some(job);
-        self.overview_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let completion = self.overview_read.start(self.applied.clone());
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("Overview worker stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                view.overview_received(epoch, request, result, window, cx);
+                if epoch == view.epoch
+                    && view.overview.is_loading()
+                    && view.overview.is_current(&request)
+                    && view.overview_read.land(&completion, Ok(()), cx)
+                {
+                    view.overview_received(epoch, request, result, window, cx);
+                }
             });
-        }));
+        });
+        self.overview_read.run(Some(job), task);
         cx.notify();
     }
 

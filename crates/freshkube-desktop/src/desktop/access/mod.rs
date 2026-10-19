@@ -36,7 +36,6 @@ impl Pilot {
         {
             return;
         }
-        self.overview_job = None;
         match result {
             Ok(collected) => {
                 let changed = self

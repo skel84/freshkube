@@ -1,17 +1,18 @@
-//! The Settings page: sections of what the person chooses, Workspace first.
-//! Workspace lists the clusters of the workspace file (`workspace.json`,
-//! `freshkube_core::workspace`) and edits them: the shell hands it what the
-//! file held at launch, and every change is saved at once, off the UI thread
-//! (`edit.rs`). Under the clusters, its Argo CD destinations map what an
-//! Application names to one of them (`destinations/`). Under those, its
-//! delivery sources say which entry each part of the delivery chain is read
-//! from, and check them (`sources/`). Example data and a
-//! window without a preferences folder show the lists and change nothing.
+//! The Settings page: one section at a time, the one its column chose
+//! (`sections.rs`). Clusters lists the clusters of the workspace file
+//! (`workspace.json`, `freshkube_core::workspace`) and edits them: the shell
+//! hands it what the file held at launch, and every change is saved at
+//! once, off the UI thread (`edit.rs`). Argo CD destinations map what an
+//! Application names to one of them (`destinations/`). Delivery sources say
+//! which entry each part of the delivery chain is read from, and check them
+//! (`sources/`). Example data and a window without a preferences folder
+//! show the lists and change nothing.
 pub(super) mod destinations;
 mod edit;
 #[cfg(test)]
 mod edit_tests;
 mod form;
+mod sections;
 mod source;
 pub(super) mod sources;
 #[cfg(test)]
@@ -28,6 +29,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+pub(crate) use sections::{SettingsEvent, SettingsSection};
 use source::Column;
 use std::path::{Path, PathBuf};
 
@@ -133,11 +135,16 @@ pub(crate) struct SettingsPage {
     /// The cluster to select once the save in flight has landed.
     select_on_save: Option<SharedString>,
     selected: Option<SharedString>,
+    /// A list section's frame, which scrolls in a short window.
     page_scroll: ScrollHandle,
     focus: FocusHandle,
-    /// The second list: the Argo CD destinations.
+    /// The section shown, and shown again when Settings next opens.
+    section: SettingsSection,
+    /// Whether the shell shows the page.
+    visible: bool,
+    /// The Argo CD destinations' list.
     destinations: Entity<destinations::Destinations>,
-    /// The third list: where each delivery part is read.
+    /// Where each delivery part is read.
     pub(in crate::desktop) sources: Entity<sources::SourcesList>,
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
@@ -260,11 +267,16 @@ impl SettingsPage {
             selected: None,
             page_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
+            section: SettingsSection::default(),
+            visible: false,
             destinations: {
                 let page = cx.entity();
                 cx.new(|cx| destinations::Destinations::new(&page, cx))
             },
-            sources: cx.new(|cx| sources::SourcesList::new(runtime, cx)),
+            sources: {
+                let page = cx.weak_entity();
+                cx.new(|cx| sources::SourcesList::new(runtime, page, cx))
+            },
             status: Segment::default(),
         }
     }
@@ -425,9 +437,45 @@ impl SettingsPage {
         cx.notify();
     }
 
-    /// Puts the keyboard on the list, where its keys are bound.
+    /// Puts the keyboard on the section's list, where its keys are bound,
+    /// or on the page for a section without one.
     pub(super) fn focus(&self, window: &mut Window, cx: &mut App) {
-        window.focus(&self.focus, cx);
+        let focus = match self.section {
+            SettingsSection::Destinations => self.destinations.read(cx).focus_handle(),
+            SettingsSection::Sources => self.sources.read(cx).focus_handle(),
+            _ => self.focus.clone(),
+        };
+        window.focus(&focus, cx);
+    }
+
+    pub(in crate::desktop) fn section(&self) -> SettingsSection {
+        self.section
+    }
+
+    /// Shows `section`; Delivery sources checks only while it shows.
+    pub(super) fn show(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        if self.section != section {
+            self.section = section;
+            self.sync_sources(cx);
+            cx.notify();
+        }
+    }
+
+    /// The shell shows the page or hides it.
+    pub(in crate::desktop) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.visible = visible;
+        self.sync_sources(cx);
+    }
+
+    fn sync_sources(&mut self, cx: &mut Context<Self>) {
+        let shown = self.visible && self.section == SettingsSection::Sources;
+        self.sources
+            .update(cx, |sources, cx| sources.set_visible(shown, cx));
+    }
+
+    /// The status bar's line: the workspace's, on its lists.
+    pub(in crate::desktop) fn status(&self) -> Option<Segment> {
+        self.section.is_list().then(|| self.status.clone())
     }
 
     fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
@@ -436,30 +484,10 @@ impl SettingsPage {
         cx.notify();
     }
 
-    /// Down past the last cluster hands the keyboard to the destinations,
-    /// on their first row; their Up from the first comes back here.
-    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        let last = self.rows.last().map(|row| &row.id);
-        if delta > 0
-            && self.selected.is_some()
-            && self.selected.as_ref() == last
-            && self
-                .destinations
-                .update(cx, |list, cx| list.enter_from_above(window, cx))
-        {
-            return;
-        }
+    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         if let Some(key) = table::step(self, delta, cx) {
             self.select(key, cx);
         }
-    }
-
-    /// Takes the keyboard back from the destinations, onto the last cluster.
-    fn enter_from_below(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(id) = self.rows.last().map(|row| row.id.clone()) {
-            self.select(id, cx);
-        }
-        self.focus(window, cx);
     }
 
     fn clear_selection(&mut self, cx: &mut Context<Self>) {
@@ -475,8 +503,8 @@ impl SettingsPage {
         &self.origin
     }
 
-    /// The banners under the toolbar: a file not used, unknown keys, and what
-    /// the last save did. Each reads text derived when it changed.
+    /// The banners under a list's toolbar: a file not used, unknown keys,
+    /// and what the last save did. Each reads text derived when it changed.
     fn render_banners(&self, cx: &App) -> Vec<AnyElement> {
         let banner = |id: &'static str, lead: &str, body: SharedString, tone: ui::Tone| {
             page::inset()
@@ -538,7 +566,7 @@ impl SettingsPage {
     /// on the selection, and each is off, with its reason in the tooltip,
     /// while nothing can be saved or nothing is selected.
     fn render_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let header = page::PageHeader::new(PREFIX, "Settings");
+        let header = page::PageHeader::new(PREFIX, SettingsSection::Clusters.label());
         let editable = self.editable();
         let selected = self.selected.is_some();
         let at = self.selected.as_ref().and_then(|key| {
@@ -658,25 +686,46 @@ impl SettingsPage {
 impl Render for SettingsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
-        let header = self.render_header(window, cx);
-        // Three lists stack here, so the frame scrolls whenever they don't
-        // fit, not only in a short window.
+        match self.section {
+            SettingsSection::Clusters => self.render_clusters(window, cx),
+            SettingsSection::Destinations => self
+                .list_frame(window)
+                .child(self.destinations.clone())
+                .into_any_element(),
+            SettingsSection::Sources => self
+                .list_frame(window)
+                .child(self.sources.clone())
+                .into_any_element(),
+            section => self.render_pointer(section, window, cx),
+        }
+    }
+}
+
+impl SettingsPage {
+    /// A list section's frame: a table page's, which scrolls in a short
+    /// window while its list keeps `SHORT_LIST_HEIGHT`.
+    fn list_frame(&self, window: &Window) -> gpui_kit::base::ObservedElement<Stateful<Div>> {
+        let short = page::is_short(window);
         page::page("settings-page")
             .track_scroll(&self.page_scroll)
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
+            .when(short, |this| {
+                this.overflow_y_scroll().restrict_scroll_to_axis()
+            })
+    }
+
+    /// Clusters: the toolbar, the banners and the workspace's clusters.
+    fn render_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let header = self.render_header(window, cx);
+        let short = page::is_short(window);
+        self.list_frame(window)
             .child(page::toolbar(cx).child(header))
             .children(self.render_banners(cx))
             .child(
                 div()
                     .key_context(CONTEXT)
                     .track_focus(&self.focus)
-                    .on_action(
-                        cx.listener(|this, _: &NextCluster, window, cx| this.step(1, window, cx)),
-                    )
-                    .on_action(cx.listener(|this, _: &PreviousCluster, window, cx| {
-                        this.step(-1, window, cx)
-                    }))
+                    .on_action(cx.listener(|this, _: &NextCluster, _, cx| this.step(1, cx)))
+                    .on_action(cx.listener(|this, _: &PreviousCluster, _, cx| this.step(-1, cx)))
                     .on_action(
                         cx.listener(|this, _: &ClearCluster, _, cx| this.clear_selection(cx)),
                     )
@@ -699,13 +748,11 @@ impl Render for SettingsPage {
                     .flex()
                     .flex_col()
                     .flex_1()
-                    // Whatever the lists under it take, the clusters keep
-                    // room for a few rows; the frame scrolls instead.
-                    .min_h(dp(page::SHORT_LIST_HEIGHT))
+                    .min_h_0()
+                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
                     .child(table::data_table(self, window, cx).flex_1().min_h_0()),
             )
-            .child(self.destinations.clone())
-            .child(self.sources.clone())
+            .into_any_element()
     }
 }
 
