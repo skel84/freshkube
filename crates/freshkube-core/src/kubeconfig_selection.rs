@@ -122,6 +122,11 @@ fn read_capped(reader: impl Read, limit: u64) -> Result<Vec<u8>, BoundedReadErro
 /// Reads a regular file of at most `limit` bytes: opened nonblocking, so a
 /// FIFO swapped into the path can't block, and capped on the descriptor.
 pub fn read_bounded_regular_file(path: &Path, limit: u64) -> Result<Vec<u8>, BoundedReadError> {
+    // Windows refuses to open a directory at all, so ask first; the opened
+    // file's own metadata is what decides.
+    if fs::metadata(path).is_ok_and(|metadata| !metadata.is_file()) {
+        return Err(BoundedReadError::NotRegularFile);
+    }
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]

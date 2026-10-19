@@ -16,9 +16,23 @@ use super::{ClusterAccess, ResourcesScreen};
 use crate::backend;
 use freshkube_core::constants::SCREEN_DEADLINE;
 use freshkube_nav::NodeTab;
+use freshkube_reads::Pace;
+use tokio::sync::oneshot;
 
 /// How often pods' use is read while the pods list shows.
 pub(super) const USAGE_INTERVAL: Duration = Duration::from_secs(15);
+
+/// One poll answer and the acknowledgement that starts its next interval.
+pub(super) struct UsageRead {
+    pub(super) result: Result<Vec<PodUsage>, String>,
+    pub(super) applied: oneshot::Sender<()>,
+}
+
+const USAGE_PACE: Pace = Pace {
+    capacity: 1,
+    most: 1,
+    every: Duration::ZERO,
+};
 
 /// The pods list shows problems first, healthy pods collapsed, or every pod
 /// in one sorted list.
@@ -219,8 +233,7 @@ impl ResourcesScreen {
     /// Reads pods' use now and every `USAGE_INTERVAL` while the pods list
     /// shows; anything else stops it.
     pub(super) fn poll_usage(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.usage = None;
-        self.usage_generation = self.usage_generation.wrapping_add(1);
+        self.usage.stop();
         if !self.visible || !self.lists_pods() {
             return;
         }
@@ -229,73 +242,94 @@ impl ResourcesScreen {
         };
         let namespace = self.namespace.clone();
         let runtime = self.runtime.clone();
-        let generation = self.usage_generation;
         // Example use applies at once, as example rows do; later ticks
         // drift it.
         let example = matches!(source.access, ClusterAccess::Example(_));
         if example {
-            self.apply_usage(generation, Ok(example::pod_usage(&source.context, 0)), cx);
+            self.apply_usage(Ok(example::pod_usage(&source.context, 0)), cx);
         }
-        self.usage = Some(cx.spawn_in(window, async move |this, cx| {
-            let mut tick = 0;
-            loop {
-                if example {
-                    tick += 1;
-                    cx.background_executor().timer(USAGE_INTERVAL).await;
-                }
-                let result = match &source.access {
-                    ClusterAccess::Example(_) => Ok(example::pod_usage(&source.context, tick)),
-                    access => {
-                        let access = access.clone();
-                        let namespace = namespace.clone();
-                        let (_job, receiver) = backend::spawn_job(
-                            &runtime,
-                            SCREEN_DEADLINE,
-                            "Reading pods' use timed out".into(),
-                            async move {
-                                let client =
-                                    access.client().await.map_err(|failure| failure.message)?;
-                                list_pod_usage(&client, namespace.as_deref()).await.map_err(
-                                    |failure| match failure.kind {
-                                        FailureKind::NotFound => {
-                                            "metrics-server isn't installed".to_owned()
-                                        }
-                                        FailureKind::Forbidden => {
-                                            "Not permitted to read pods' use".to_owned()
-                                        }
-                                        FailureKind::Config
-                                        | FailureKind::Unreachable
-                                        | FailureKind::Timeout
-                                        | FailureKind::Unauthorized
-                                        | FailureKind::Other => failure.to_string(),
-                                    },
-                                )
-                            },
-                        );
-                        receiver
-                            .await
-                            .unwrap_or_else(|_| Err("Reading pods' use stopped".into()))
+        let sender = self.usage.open(
+            (source.id.clone(), namespace.clone()),
+            USAGE_PACE,
+            |view| &mut view.usage,
+            |view, batch, cx| {
+                for read in batch {
+                    if view.apply_usage(read.result, cx) {
+                        _ = read.applied.send(());
                     }
-                };
-                let applied = this.update(cx, |view, cx| view.apply_usage(generation, result, cx));
-                if !matches!(applied, Ok(true)) {
-                    break;
                 }
-                if !example {
-                    cx.background_executor().timer(USAGE_INTERVAL).await;
+            },
+            cx,
+        );
+        // The poll stays on GPUI's clock. Closing the Watch delivery cancels
+        // this writer, including any in-flight bounded Tokio read.
+        cx.spawn_in(window, async move |_, cx| {
+            let poll = async {
+                let mut tick = 0;
+                loop {
+                    if example {
+                        tick += 1;
+                        cx.background_executor().timer(USAGE_INTERVAL).await;
+                    }
+                    let result = match &source.access {
+                        ClusterAccess::Example(_) => Ok(example::pod_usage(&source.context, tick)),
+                        access => {
+                            let access = access.clone();
+                            let namespace = namespace.clone();
+                            let (_job, receiver) = backend::spawn_job(
+                                &runtime,
+                                SCREEN_DEADLINE,
+                                "Reading pods' use timed out".into(),
+                                async move {
+                                    let client =
+                                        access.client().await.map_err(|failure| failure.message)?;
+                                    list_pod_usage(&client, namespace.as_deref()).await.map_err(
+                                        |failure| match failure.kind {
+                                            FailureKind::NotFound => {
+                                                "metrics-server isn't installed".to_owned()
+                                            }
+                                            FailureKind::Forbidden => {
+                                                "Not permitted to read pods' use".to_owned()
+                                            }
+                                            FailureKind::Config
+                                            | FailureKind::Unreachable
+                                            | FailureKind::Timeout
+                                            | FailureKind::Unauthorized
+                                            | FailureKind::Other => failure.to_string(),
+                                        },
+                                    )
+                                },
+                            );
+                            receiver
+                                .await
+                                .unwrap_or_else(|_| Err("Reading pods' use stopped".into()))
+                        }
+                    };
+                    let (applied, received) = oneshot::channel();
+                    if sender.send(UsageRead { result, applied }).await.is_err() {
+                        break;
+                    }
+                    if received.await.is_err() {
+                        break;
+                    }
+                    // The next interval starts after applying, as before.
+                    if !example {
+                        cx.background_executor().timer(USAGE_INTERVAL).await;
+                    }
                 }
-            }
-        }));
+            };
+            _ = futures::future::select(Box::pin(sender.closed()), Box::pin(poll)).await;
+        })
+        .detach();
     }
 
-    /// Cancellation and the request generation protect another source or scope.
+    /// The watch checks the source, scope and request before a result lands.
     pub(super) fn apply_usage(
         &mut self,
-        generation: u64,
         result: Result<Vec<PodUsage>, String>,
         cx: &mut Context<Self>,
     ) -> bool {
-        if self.usage_generation != generation || !self.visible {
+        if !self.visible {
             return false;
         }
         match result {

@@ -247,6 +247,15 @@ fn kubernetes_only_control_plane_offers_a_talosconfig(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
+        assert!(window.try_find("talosconfig-path").is_none());
+        window.click("settings-all", cx);
+        window.render_frame(cx);
+        window.click("nav-settings-connection", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         assert!(window.find("talosconfig-path").visible());
     })
     .unwrap();
@@ -390,14 +399,27 @@ fn kubernetes_only_reports_a_missing_kubeconfig_and_switches_to_talos(cx: &mut T
 
         // Applying no talosconfig keeps the window as it is: the default
         // one is what's missing.
-        view.update(cx, |view, cx| view.apply_config_path(window, cx));
+        view.update(cx, |view, cx| {
+            view.apply_talos_config(
+                crate::backend::AppliedConfig {
+                    path: None,
+                    context: None,
+                },
+                window,
+                cx,
+            )
+        });
         assert!(view.read(cx).mode().kubernetes_only().is_some());
         // A talosconfig switches the window to Talos.
         view.update(cx, |view, cx| {
-            let path = scratch("no-such-talosconfig").display().to_string();
-            view.path
-                .update(cx, |input, cx| input.set_value(path, window, cx));
-            view.apply_config_path(window, cx);
+            view.apply_talos_config(
+                crate::backend::AppliedConfig {
+                    path: Some(scratch("no-such-talosconfig")),
+                    context: None,
+                },
+                window,
+                cx,
+            );
         });
         window.render_frame(cx);
         assert!(view.read(cx).mode().has_talos());

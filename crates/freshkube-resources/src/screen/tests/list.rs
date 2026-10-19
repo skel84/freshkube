@@ -366,21 +366,17 @@ fn namespaces_survive_a_kind_change_but_reject_a_source_round_trip(cx: &mut Test
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
     cx.update_window(handle, |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            let generation = screen.namespace_generation;
+            let request = screen.namespace_read.start(Some(source("homelab").id));
             screen.set_kind(kind("deployments.apps"), window, cx);
-            assert!(screen.finish_namespaces(generation, Ok(vec!["current".into()]), window, cx));
+            assert!(screen.finish_namespaces(&request, Ok(vec!["current".into()]), window, cx));
             assert_eq!(screen.namespaces, ["current"]);
             screen.set_source(Some(source("prod-fra")), window, cx);
             screen.set_source(Some(source("homelab")), window, cx);
             let current = screen.namespaces.clone();
-            assert!(!screen.finish_namespaces(generation, Ok(vec!["obsolete".into()]), window, cx));
+            assert!(!screen.finish_namespaces(&request, Ok(vec!["obsolete".into()]), window, cx));
             assert_eq!(screen.namespaces, current);
-            assert!(screen.finish_namespaces(
-                screen.namespace_generation,
-                Ok(vec!["fresh".into()]),
-                window,
-                cx
-            ));
+            let request = screen.namespace_read.start(Some(source("homelab").id));
+            assert!(screen.finish_namespaces(&request, Ok(vec!["fresh".into()]), window, cx));
             assert_eq!(screen.namespaces, ["fresh"]);
         });
     })

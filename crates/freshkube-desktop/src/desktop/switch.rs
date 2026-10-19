@@ -12,13 +12,49 @@
 use super::*;
 use crate::navigation_file::NavigationFile;
 use crate::resources::shell;
+use freshkube_core::snapshot::Request;
 use freshkube_core::{
     ConfigurationRevision,
     resources::{discover_contexts, kubeconfig_sources},
     workspace::{self, Entry, Workspace},
 };
+use freshkube_reads::Loader;
 use session::{Definition, SessionKey};
-use std::time::SystemTime;
+use std::{rc::Rc, time::SystemTime};
+
+/// The location read and its request, retained after completion because
+/// entry opening, held links and draft inspection share this boundary.
+#[derive(Default)]
+pub(super) struct EntryLocate {
+    read: Loader<(), Option<String>>,
+    request: EntryRequest,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct EntryRequest(Option<Rc<Request<Option<String>>>>);
+
+impl PartialEq for EntryRequest {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(left), Some(right)) => Rc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+}
+impl Eq for EntryRequest {}
+
+impl EntryLocate {
+    pub(super) fn ticket(&self) -> EntryRequest {
+        self.request.clone()
+    }
+
+    pub(super) fn invalidate(&mut self, entry: Option<String>, cx: &App) {
+        let request = Rc::new(self.read.start(entry));
+        self.read.land(&request, Ok(()), cx);
+        self.request = EntryRequest(Some(request));
+    }
+}
 
 /// One entry of the header's cluster list, prepared when the workspace
 /// changes, not while drawing.
@@ -46,7 +82,7 @@ pub(super) enum LinkWork {
 /// forgotten as soon as anything else changes the entry.
 pub(super) struct PendingLink {
     pub(super) entry: String,
-    generation: u64,
+    request: EntryRequest,
     pub(super) object: resources::model::ObjectRef,
     work: LinkWork,
     /// Made by the cluster's name, not by a connection of the entry's: it
@@ -58,13 +94,13 @@ pub(super) struct PendingLink {
 impl PendingLink {
     pub(super) fn for_test(
         entry: &str,
-        generation: u64,
+        request: EntryRequest,
         object: resources::model::ObjectRef,
         work: LinkWork,
     ) -> Self {
         Self {
             entry: entry.into(),
-            generation,
+            request,
             object,
             work,
             by_name: false,
@@ -279,8 +315,8 @@ impl Pilot {
         self.registry.adopt(SessionKey::Implicit);
         self.active_definition = Definition::default();
         self.entry_open = None;
-        self.entry_locate = None;
-        self.entry_generation = self.entry_generation.wrapping_add(1);
+        self.entry_locate
+            .invalidate(self.active_cluster().map(str::to_owned), cx);
         self.restored_taken = None;
         self.age_label.update(cx, |label, cx| label.set(None, cx));
         NavigationFile::global(cx).clear_active_cluster(cx);
@@ -347,7 +383,7 @@ impl Pilot {
             .filter(|_| self.active_cluster() == Some(id.as_str()))
             .map(|(object, work, by_name)| PendingLink {
                 entry: id.clone(),
-                generation: self.entry_generation,
+                request: self.entry_locate.ticket(),
                 object,
                 work,
                 by_name,
@@ -488,7 +524,7 @@ impl Pilot {
         let Some(pending) = &self.pending_link else {
             return;
         };
-        if pending.generation != self.entry_generation
+        if pending.request != self.entry_locate.ticket()
             || self.active_cluster() != Some(pending.entry.as_str())
         {
             self.pending_link = None;
@@ -497,7 +533,7 @@ impl Pilot {
         // The interim sources of a Talos entry (the control plane's
         // kubeconfig before its own is applied) are not the entry's.
         if self.entry_open.is_some()
-            || self.entry_locate.is_some()
+            || self.entry_locate.read.is_loading()
             || self.kubeconfig_draft.inspecting
         {
             return;
@@ -597,8 +633,8 @@ impl Pilot {
     ) {
         let was_talos = self.mode().has_talos();
         self.entry_open = None;
-        self.entry_locate = None;
-        self.entry_generation = self.entry_generation.wrapping_add(1);
+        self.entry_locate
+            .invalidate(self.active_cluster().map(str::to_owned), cx);
         if self.mode().is_example() {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
@@ -622,9 +658,6 @@ impl Pilot {
                 context: entry.context.clone(),
                 kubeconfig: workspace.kubeconfig.clone(),
             });
-            let shown = talosconfig.display().to_string();
-            self.path
-                .update(cx, |input, cx| input.set_value(shown, window, cx));
             self.load_configuration(window, cx);
             match workspace.kubeconfig.clone() {
                 Some(kubeconfig) => {
@@ -682,8 +715,8 @@ impl Pilot {
             open.context,
             file.display()
         );
-        self.entry_locate = None;
-        self.entry_generation = self.entry_generation.wrapping_add(1);
+        self.entry_locate
+            .invalidate(self.active_cluster().map(str::to_owned), cx);
         self.kubeconfig_draft = Default::default();
         self.kubeconfig = KubeconfigSelection::Automatic;
         self.open_without_talos(open.context, open.kubeconfig, cx);
@@ -710,9 +743,14 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let generation = self.entry_generation;
+        let request = Rc::new(
+            self.entry_locate
+                .read
+                .start(self.active_cluster().map(str::to_owned)),
+        );
+        self.entry_locate.request = EntryRequest(Some(request.clone()));
         let sources = default_kubeconfigs();
-        let (job, receiver) = backend::spawn_job(
+        let (job, receiver): (OwnedJob, _) = backend::spawn_job(
             &self.runtime,
             std::time::Duration::from_secs(10),
             "Reading the kubeconfig timed out".into(),
@@ -725,10 +763,9 @@ impl Pilot {
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver.await.unwrap_or_else(|_| Err("stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                if generation != view.entry_generation {
+                if !view.entry_locate.read.land(&request, Ok(()), cx) {
                     return;
                 }
-                view.entry_locate = None;
                 let source = result
                     .ok()
                     .and_then(|report| report.context(&context).map(|found| found.source.clone()));
@@ -747,7 +784,7 @@ impl Pilot {
                 }
             });
         });
-        self.entry_locate = Some((job, task));
+        self.entry_locate.read.run(Some(job), task);
     }
 
     /// Puts the active entry's parked summary back, as last known, once the

@@ -271,8 +271,6 @@ label crates/freshkube-desktop/src/desktop/settings/form.rs 4
 buttons crates/freshkube-desktop/src/desktop/settings/destinations/form.rs 5
 buttons crates/freshkube-desktop/src/desktop/settings/destinations/mod.rs 5
 label crates/freshkube-desktop/src/desktop/settings/destinations/form.rs 5
-label crates/freshkube-desktop/src/desktop/kubeconfig.rs 8
-label crates/freshkube-desktop/src/desktop/kubernetes_only.rs 8
 label crates/freshkube-monitoring/src/page/settings.rs 9
 label crates/freshkube-monitoring/src/page/source.rs 9
 EOF

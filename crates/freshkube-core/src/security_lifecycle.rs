@@ -596,13 +596,22 @@ impl LifecycleCollector {
             .flatten()
             .map(|version| node_address(&version.node))
             .collect::<Vec<_>>();
-        match get_discovery_members_with_retry(
-            &config.context,
-            self.talosconfig_path.as_deref().and_then(Path::to_str),
-            &fallback_addresses,
-        )
-        .await
-        {
+        let path = match crate::ambient::applied_or_default_talosconfig(
+            self.talosconfig_path.as_deref(),
+        ) {
+            Ok(path) => path,
+            Err(error) => {
+                return SourceSnapshot::Unavailable {
+                    reason: format!("Discovery cannot find the talosconfig: {error}"),
+                };
+            }
+        };
+        let Some(path) = path.to_str() else {
+            return SourceSnapshot::Unavailable {
+                reason: "Discovery cannot use a non-UTF-8 default talosconfig path".into(),
+            };
+        };
+        match get_discovery_members_with_retry(&config.context, path, &fallback_addresses).await {
             Ok(members) if members.is_empty() => SourceSnapshot::Partial {
                 value: Vec::new(),
                 warnings: vec!["Talos discovery returned no members".to_string()],

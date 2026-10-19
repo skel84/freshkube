@@ -1,12 +1,10 @@
 //! Connection lifetime and request guards owned by ObservabilityPage.
 use super::*;
-use crate::{
-    backend::{self, OwnedJob},
-    state::Snapshot,
-};
+use crate::{backend, state::Snapshot};
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 use freshkube_core::coroot as api;
-use std::{future::Future, time::Duration};
+use freshkube_reads::Loader;
+use std::{cell::RefCell, future::Future, time::Duration};
 use tokio::runtime::Handle;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,10 +33,15 @@ pub(super) struct ReadIdentity {
     range: api::TimeRange,
     subject: Subject,
 }
-pub(super) struct ReadJob {
-    _job: OwnedJob,
-    _task: Task<()>,
+// Each answer owns its completion loader. The delivery holds only a weak
+// reference, so replacing a report's slot drops both work and delivery.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct ReadScope {
+    source: Option<api::Source>,
+    access: Option<String>,
+    range: api::TimeRange,
 }
+pub(super) type ReadJob = Rc<RefCell<Loader<(), Option<ReadScope>>>>;
 pub(super) struct Live {
     pub runtime: Handle,
     pub visible: bool,
@@ -48,7 +51,6 @@ pub(super) struct Live {
     pub projects: Vec<api::ProjectInfo>,
     pub project_label: String,
     pub project_labels: Vec<String>,
-    pub generation: u64,
     pub jobs: Vec<ReadJob>,
     pub incident_job: Option<ReadJob>,
     pub traces_job: Option<ReadJob>,
@@ -100,7 +102,6 @@ impl Live {
             projects: vec![],
             project_label: "Choose a project".into(),
             project_labels: vec![],
-            generation: 0,
             jobs: vec![],
             incident_job: None,
             traces_job: None,
@@ -130,7 +131,22 @@ impl Live {
         }
     }
     fn cancel(&mut self) {
-        self.generation += 1;
+        for read in self.jobs.iter().chain(
+            [
+                &self.incident_job,
+                &self.traces_job,
+                &self.trace_job,
+                &self.profile_job,
+                &self.logs_job,
+                &self.revision_job,
+            ]
+            .into_iter()
+            .flatten(),
+        ) {
+            // Keep the request sequence even if a completion still holds its
+            // loader while cancelling the page's other reads.
+            read.borrow_mut().resolve(None, Err(String::new()));
+        }
         self.jobs.clear();
         self.incident_job = None;
         self.traces_job = None;
@@ -442,7 +458,16 @@ impl ObservabilityPage {
         apply: impl FnOnce(&mut Self, Result<T, api::ReadError>, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> ReadJob {
-        let generation = self.live.generation;
+        // The snapshots retain each report's subject and stale evidence. This
+        // completion owner keys the same connection, access and window; the
+        // request token replaces the page-wide cancellation generation.
+        let read = Rc::new(RefCell::new(Loader::default()));
+        let request = read.borrow_mut().start(Some(ReadScope {
+            source: self.live.source.clone(),
+            access: self.live.access.clone(),
+            range: self.live.range,
+        }));
+        let weak = Rc::downgrade(&read);
         let (job, receiver) = backend::spawn_job(
             &self.live.runtime,
             Duration::from_secs(25),
@@ -456,16 +481,17 @@ impl ObservabilityPage {
                 Err(_) => Err(api::ReadError::Failed),
             };
             _ = this.update(cx, |this, cx| {
-                if !this.live.visible || this.live.generation != generation {
+                let Some(read) = weak.upgrade() else {
+                    return;
+                };
+                if !this.live.visible || !read.borrow_mut().land(&request, Ok(()), cx) {
                     return;
                 }
                 apply(this, result, cx);
             });
         });
-        ReadJob {
-            _job: job,
-            _task: task,
-        }
+        read.borrow_mut().run(Some(job), task);
+        read
     }
     fn read_applications(
         &mut self,

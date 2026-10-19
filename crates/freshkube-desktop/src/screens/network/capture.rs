@@ -384,7 +384,7 @@ impl NetworkScreen {
                     let display = path.display().to_string();
                     let written = cx
                         .background_executor()
-                        .spawn(async move { std::fs::write(&path, &bytes) })
+                        .spawn(async move { freshkube_logs::write_whole(&path, &bytes) })
                         .await;
                     match written {
                         Ok(()) => SaveState::Saved(display),
