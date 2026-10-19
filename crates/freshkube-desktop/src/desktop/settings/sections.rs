@@ -3,9 +3,12 @@
 //! sections point to where their controls are until #697's later slices
 //! build them on `freshkube_ui::form`.
 use super::SettingsPage;
+use crate::desktop::{Appearance, app_menu, shell::Chrome};
+use crate::text_size;
 use crate::ui::{self, dp};
-use freshkube_ui::page;
+use freshkube_ui::{form, page};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::{Disableable, button::ButtonGroup, switch::Switch};
 use gpui_kit::component::{Sizable, button::Button};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -104,13 +107,7 @@ impl SettingsSection {
         const MENU: &str = "In the Settings menu for now";
         const OPEN_MENU: &str = "Open the Settings menu";
         match self {
-            Self::General => Some((
-                MENU,
-                "Appearance, text size and Talos auto-refresh are in the header’s Settings menu \
-                 until this section holds them.",
-                OPEN_MENU,
-                SettingsEvent::OpenMenu,
-            )),
+            Self::General => None,
             Self::Connection => Some((
                 MENU,
                 "The talosconfig and how the Kubernetes API is reached are in the header’s \
@@ -137,11 +134,132 @@ impl SettingsSection {
 
     /// Whether the section is one of the workspace's lists.
     pub(crate) fn is_list(self) -> bool {
-        self.pointer().is_none()
+        matches!(self, Self::Clusters | Self::Destinations | Self::Sources)
     }
 }
 
 impl SettingsPage {
+    pub(super) fn render_general(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let (appearance, automatic, has_talos, saved) =
+            Chrome::general_values(window, cx).unwrap_or((Appearance::System, true, true, false));
+        let narrow = page::content_width(window) < form::NARROW;
+        let appearance_control = ButtonGroup::new("general-appearance")
+            .outline()
+            .small()
+            .child(ui::choice(
+                Button::new("general-appearance-system")
+                    .label("System")
+                    .h(dp(ui::CONTROL_HEIGHT)),
+                appearance == Appearance::System,
+            ))
+            .child(ui::choice(
+                Button::new("general-appearance-light")
+                    .label("Light")
+                    .h(dp(ui::CONTROL_HEIGHT)),
+                appearance == Appearance::Light,
+            ))
+            .child(ui::choice(
+                Button::new("general-appearance-dark")
+                    .label("Dark")
+                    .h(dp(ui::CONTROL_HEIGHT)),
+                appearance == Appearance::Dark,
+            ))
+            .on_click(|selected: &Vec<usize>, window, cx| {
+                let action: Box<dyn Action> = match selected.first() {
+                    Some(0) => Box::new(app_menu::UseSystemAppearance),
+                    Some(1) => Box::new(app_menu::UseLightAppearance),
+                    Some(_) => Box::new(app_menu::UseDarkAppearance),
+                    None => return,
+                };
+                window.dispatch_action(action, cx);
+            });
+        let size = text_size::current(cx);
+        let text_control = div()
+            .id("general-text-size")
+            .flex()
+            .flex_wrap()
+            .gap(dp(4.))
+            .children(text_size::STEPS.iter().map(|step| {
+                let step = *step;
+                ui::choice(
+                    Button::new(("general-text-size", step as usize))
+                        .outline()
+                        .small()
+                        .label(format!("{step:.0}"))
+                        .h(dp(ui::CONTROL_HEIGHT)),
+                    step == size,
+                )
+                .toggled(step == size)
+                .on_click(move |_, _, cx| text_size::set(step, cx))
+            }));
+        let refresh_control = Switch::new("general-auto-refresh")
+            .small()
+            .checked(automatic)
+            .disabled(!has_talos)
+            .accessibility_label("Refresh Talos every 15 seconds")
+            .on_click(|_, window, cx| Chrome::toggle_auto_refresh(window, cx));
+        let saved_in = || {
+            if saved {
+                form::SavedIn::file("preferences.json")
+            } else {
+                form::SavedIn::session()
+            }
+        };
+        let header = page::PageHeader::new("settings-general", "General").render(window, cx);
+        page::padded("settings-page")
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(header)
+            .child(
+                div()
+                    .id("settings-general-form")
+                    .test_support()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(dp(20.))
+                    .flex_none()
+                    .child(
+                        form::group("general-display", "Display")
+                            .narrow(narrow)
+                            .row(form::row(
+                                "general-appearance-row",
+                                "Appearance",
+                                appearance_control,
+                            ))
+                            .row(
+                                form::row("general-text-size-row", "Text size", text_control)
+                                    .hint("Size in pixels; keyboard shortcuts also change it."),
+                            )
+                            .saved_in(saved_in())
+                            .render(cx),
+                    )
+                    .child(
+                        form::group("general-refresh", "Refresh")
+                            .narrow(narrow)
+                            .row(
+                                form::row(
+                                    "general-auto-refresh-row",
+                                    "Talos auto-refresh",
+                                    div()
+                                        .h(dp(ui::CONTROL_HEIGHT))
+                                        .flex()
+                                        .items_center()
+                                        .child(refresh_control),
+                                )
+                                .hint(if has_talos {
+                                    "Every 15 s; Kubernetes updates are watched."
+                                } else {
+                                    "Requires a Talos connection; Kubernetes updates are watched."
+                                }),
+                            )
+                            .saved_in(saved_in())
+                            .render(cx),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// A section whose controls are elsewhere: its title, and where they
     /// are with a button that goes there.
     pub(super) fn render_pointer(
@@ -197,5 +315,64 @@ mod tests {
         assert_eq!(SettingsSection::from_page("settings"), None);
         assert_eq!(SettingsSection::from_page("settings-nowhere"), None);
         assert_eq!(SettingsSection::from_page("general"), None);
+    }
+
+    #[gpui_kit::test]
+    fn general_is_a_settings_form_at_each_window_and_text_size(cx: &mut gpui_kit::TestAppContext) {
+        use crate::desktop::{layout_check, testing::fixture};
+        use crate::{text_size, ui};
+        use freshkube_ui::{form, page};
+        use gpui_kit::{AppContext, px, test::TestWindowExt};
+
+        for (width, height) in [(1280., 880.), (760., 560.)] {
+            let (_runtime, handle, pilot) = fixture(cx, width, height);
+            for size in [13., 20.] {
+                cx.update_window(handle, |_, window, cx| {
+                    text_size::set(size, cx);
+                    pilot.update(cx, |pilot, cx| {
+                        pilot.show_settings(SettingsSection::General, window, cx)
+                    });
+                    window.render_frame(cx);
+                    layout_check::assert_page_frame(
+                        window,
+                        cx,
+                        &layout_check::PageFrame {
+                            page: "settings-page",
+                            title: "settings-general-title",
+                            title_text: "General",
+                            content: "settings-general-form",
+                        },
+                    );
+                    let dp = |n| ui::dp_px(n, window);
+                    let display = window.find("general-display").bounds();
+                    let refresh = window.find("general-refresh").bounds();
+                    assert!(display.size.width <= dp(form::MAX_WIDTH) + px(1.));
+                    assert!((refresh.top() - display.bottom() - dp(20.)).abs() < px(1.));
+                    let control = window.find("general-appearance-system").bounds();
+                    let label = window.find("general-appearance-row-label").bounds();
+                    assert!((control.size.height - dp(ui::CONTROL_HEIGHT)).abs() < px(1.));
+                    if page::content_width(window) < form::NARROW {
+                        assert!((control.left() - label.left()).abs() < px(1.));
+                        assert!(control.top() >= label.bottom() + dp(4.) - px(1.));
+                    } else {
+                        assert!((control.left() - label.right() - dp(12.)).abs() < px(1.));
+                        assert!((label.size.width - dp(form::LABEL_WIDTH)).abs() < px(1.));
+                    }
+                    let text_row = window.find("general-text-size-row").bounds();
+                    for size in text_size::STEPS {
+                        let button = window.find(("general-text-size", size as usize)).bounds();
+                        assert!(button.left() >= display.left() - px(1.));
+                        assert!(
+                            button.right() <= display.right() + px(1.),
+                            "{width} x {height}: {button:?} outside {display:?}"
+                        );
+                        assert!(button.bottom() <= text_row.bottom() + px(1.));
+                        assert!((button.size.height - dp(ui::CONTROL_HEIGHT)).abs() < px(1.));
+                    }
+                    assert!(window.try_find("settings-scope").is_none());
+                })
+                .unwrap();
+            }
+        }
     }
 }
