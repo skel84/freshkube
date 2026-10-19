@@ -13,6 +13,7 @@ crates/
 ├── freshkube-probe/     render probes for UI tests and timing spans for the stress binary
 ├── freshkube-reads/     the owners of cluster reads: Loader<T, I> for one read, Watch<T, I> for one stream
 ├── freshkube-resources/ the Resources page: kind lists kept live by watches, the detail pane, pod shells and port forwards
+├── freshkube-applications/ the Applications page, an application's page, the Changes list and the change page
 ├── freshkube-logs/      the log view, LogView<S: LogSource>
 ├── freshkube-terminal/  the terminal behind the pod shell (alacritty_terminal)
 ├── freshkube-ui/        the look: theme, palette, text size, ui helpers, page frame, table and graph view
@@ -240,7 +241,7 @@ Diagnostic checks follow these rules; [docs/DIAGNOSTICS.md](docs/DIAGNOSTICS.md)
 Behaviour that is not a rule lives in one doc per feature, each starting with its module paths and the tests that prove it ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#feature-docs)).
 
 - Resources, the dock, shells and ports (`crates/freshkube-resources/`, `desktop/dock/`): [docs/features/resources.md](docs/features/resources.md). Rules kept here: a dock log tab reads while it is open, on any page, and nothing else reads out of sight; Resources reads only while its page shows; Secret values never reach the detail pane's document, search or a link's resolution (metadata-only reads).
-- Applications, the Changes list and the change page (`applications/`): [docs/features/applications.md](docs/features/applications.md).
+- Applications, the Changes list and the change page (`crates/freshkube-applications/`): [docs/features/applications.md](docs/features/applications.md).
 - The Nodes workspace and its node pane (`desktop/nodes/`): [docs/features/nodes.md](docs/features/nodes.md).
 - The frame, the Overview and the Kubernetes summary session (`desktop/shell/`, `presentation/`, `kubernetes_summary/`): [docs/features/shell.md](docs/features/shell.md).
 - Monitoring and the CPU and memory history (`freshkube-monitoring`): [docs/features/monitoring.md](docs/features/monitoring.md), with its design in [docs/MONITORING.md](docs/MONITORING.md). Rules kept here: a hidden Monitoring page finds nothing, resolves nothing and asks no panel; panels draw only Console colours.
