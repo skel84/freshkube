@@ -73,6 +73,7 @@ pub(crate) use freshkube_probe::probe;
 pub(crate) use overview::OverviewEvent;
 pub(crate) use pages::Page;
 use pages::{Area, ColumnReveal, PageId};
+pub(crate) use settings::SettingsEvent;
 pub(crate) use system_services::ServiceEvent;
 
 pub(crate) const AUTO_REFRESH: Duration = Duration::from_secs(15);
