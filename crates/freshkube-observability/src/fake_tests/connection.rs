@@ -304,14 +304,15 @@ async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut Te
                 cx,
             );
         });
-        let generation = page.read(cx).live.generation;
+        let read = page.read(cx).live.jobs[0].clone();
+        let revision = read.borrow().revision();
         assert_eq!(page.read(cx).live.jobs.len(), 1);
         window.click("obs-disconnect", cx);
         let current = page.read(cx);
         assert!(current.secret.read(cx).value().is_empty());
         assert!(!current.live.connecting);
         assert!(current.live.jobs.is_empty());
-        assert!(current.live.generation > generation);
+        assert!(read.borrow().revision() > revision);
     })
     .unwrap();
 }
