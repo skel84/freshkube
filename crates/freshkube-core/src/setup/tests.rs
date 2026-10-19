@@ -32,7 +32,7 @@ fn the_example_reads_as_the_design_describes() {
         panic!("three clusters");
     };
     assert_eq!(a.talos_context.as_deref(), Some("cluster-a"));
-    assert_eq!(a.coroot, Some(EntryCoroot::new("cluster-a")));
+    assert_eq!(a.coroot.as_deref(), Some(&EntryCoroot::new("cluster-a")));
     assert_eq!(a.results, None);
     assert_eq!(a.metrics, None);
     assert_eq!(

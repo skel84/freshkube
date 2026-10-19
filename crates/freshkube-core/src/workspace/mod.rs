@@ -81,16 +81,16 @@ pub struct Entry {
     /// one by that name; the file's own current context is never used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub talos_context: Option<String>,
-    /// Where Tekton Results is read; `None` is off. Typed and checked by
+    /// Where Tekton Results is read; `None` is off. Boxed, so an `Entry` stays small. Typed and checked by
     /// `freshkube.yaml` ([`crate::setup`]); `workspace.json` only carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub results: Option<crate::setup::Results>,
+    pub results: Option<Box<crate::setup::Results>>,
     /// This entry in Coroot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub coroot: Option<crate::setup::EntryCoroot>,
+    pub coroot: Option<Box<crate::setup::EntryCoroot>>,
     /// This entry's part of the metrics setup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub metrics: Option<crate::setup::EntryMetrics>,
+    pub metrics: Option<Box<crate::setup::EntryMetrics>>,
     /// Keys this version doesn't know, written back as they were read.
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
