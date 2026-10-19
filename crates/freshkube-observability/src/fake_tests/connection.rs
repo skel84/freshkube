@@ -23,7 +23,7 @@ async fn a_setup_connection_reads_its_key_only_when_shown_and_keeps_the_legacy_f
     cx.update_window(handle, |_, window, cx| {
         page.update(cx, |page, cx| {
             page.set_visible(false, cx);
-            page.set_setup_connection(&Some(connection), window, cx);
+            page.set_setup_connection(&Some(connection), true, window, cx);
             assert!(page.live.provider.is_none());
             assert!(!page.memory.as_ref().unwrap().reading);
         });
@@ -42,7 +42,7 @@ async fn a_setup_connection_reads_its_key_only_when_shown_and_keeps_the_legacy_f
     assert_eq!(std::fs::read_to_string(&legacy).unwrap(), saved);
     cx.update_window(handle, |_, window, cx| {
         page.update(cx, |page, cx| {
-            page.set_setup_connection(&None, window, cx);
+            page.set_setup_connection(&None, true, window, cx);
             assert!(page.live.provider.is_none());
             assert!(page.url.read(cx).value().is_empty());
         });
@@ -485,4 +485,49 @@ async fn a_pasted_key_is_trimmed_and_a_refused_one_says_which_key_coroot_wants(
         let page = page.read(cx);
         assert!(page.live.provider.is_some(), "{:?}", page.live.error);
     });
+}
+
+#[gpui_kit::test]
+async fn a_setup_disconnect_and_connect_save_the_reconnect_preference(cx: &mut TestAppContext) {
+    use freshkube_core::setup::{Coroot, SignIn};
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    std::fs::write(&preferences, r#"{"future":true,"coroot_reconnect":true}"#).unwrap();
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let server = Server::new(&runtime);
+    let connection = Coroot::new(server.url.clone(), SignIn::Anonymous);
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_setup_connection(&Some(connection), true, window, cx)
+        });
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
+        .await;
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| page.show_connection(cx));
+        window.render_frame(cx);
+        window.click("obs-disconnect", cx);
+    })
+    .unwrap();
+    let preference = |expected: bool| {
+        std::fs::read(&preferences)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|value| value["coroot_reconnect"] == expected && value["future"] == true)
+    };
+    cx.wait_for_io(handle, |_, _| preference(false)).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.provider.is_none());
+        assert_eq!(page.read(cx).coroot_url(cx), server.url);
+        window.click("obs-connect", cx);
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| {
+        preference(true) && page.read(cx).live.provider.is_some()
+    })
+    .await;
+    assert!(!directory.path().join("coroot.json").exists());
 }

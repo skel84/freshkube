@@ -4,6 +4,7 @@
 //! to `keys.json` ([`crate::secrets`]), named by the server.
 use super::*;
 use crate::secrets::{STORE_NAME, SecretStore, Secrets};
+use freshkube_core::workspace::MAX_BYTES;
 use freshkube_prefs::{Document, Layout};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 use serde_json::{Map, Value, json};
@@ -168,6 +169,7 @@ impl ObservabilityPage {
     pub fn set_setup_connection(
         &mut self,
         connection: &Option<freshkube_core::setup::Coroot>,
+        reconnect: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -192,11 +194,11 @@ impl ObservabilityPage {
                     freshkube_core::setup::SignIn::Anonymous => 2,
                 },
                 project: connection.project.clone(),
-                reconnect: true,
+                reconnect,
                 remember: connection.key.is_some(),
                 extra: Map::new(),
             });
-        memory.restore = connection.is_some();
+        memory.restore = reconnect && connection.is_some();
         self.invalidate_connection();
         self.fill_from_memory(window, cx);
         self.secret
@@ -383,6 +385,7 @@ impl ObservabilityPage {
             return;
         };
         if memory.setup.is_some() {
+            memory.saved.reconnect = true;
             memory.key = (auth != 2).then_some((url, key));
             let project = memory.saved.project.clone();
             if let Some(project) = project
@@ -390,6 +393,7 @@ impl ObservabilityPage {
             {
                 self.select_project(&project, cx);
             }
+            self.save_reconnect(true, cx);
             return;
         }
         let previous = std::mem::take(&mut memory.saved.url);
@@ -530,6 +534,25 @@ impl ObservabilityPage {
         cx.notify();
     }
 
+    /// Setup is shared configuration; the launch choice stays machine-local.
+    fn save_reconnect(&mut self, reconnect: bool, cx: &mut Context<Self>) {
+        self.run_memory(
+            move |file, _| {
+                Document::<Map<String, Value>>::at(
+                    &file.with_file_name("preferences.json"),
+                    Layout::Pretty,
+                    0o666,
+                )
+                .limited_to(MAX_BYTES)
+                .update(|values| {
+                    values.insert("coroot_reconnect".into(), Value::Bool(reconnect));
+                })
+                .map_err(|_| "Couldn't save the Coroot reconnect preference".to_owned())
+            },
+            cx,
+        );
+    }
+
     /// Disconnect forgets the saved key and stops reconnecting on launch; the
     /// server and sign-in choice stay filled in.
     pub(super) fn forget_connection(&mut self, cx: &mut Context<Self>) {
@@ -540,6 +563,7 @@ impl ObservabilityPage {
         memory.key = None;
         memory.saved.reconnect = false;
         if memory.setup.is_some() {
+            self.save_reconnect(false, cx);
             return;
         }
         let url = memory.saved.url.clone();

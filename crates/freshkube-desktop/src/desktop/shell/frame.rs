@@ -2,6 +2,7 @@ use super::*;
 use crate::logs::TalosPanel;
 use crate::mutation::Running;
 use freshkube_ui::status::Segment;
+use gpui_kit::component::tooltip::Tooltip;
 
 impl Pilot {
     pub(in crate::desktop) fn render_status_bar(
@@ -74,6 +75,20 @@ impl Pilot {
                             .test_support()
                             .role(Role::Status)
                             .aria_label(receipt.clone())
+                            .tooltip({
+                                let receipt = receipt.clone();
+                                move |window, cx| {
+                                    let receipt = receipt.clone();
+                                    Tooltip::element(move |_, _| {
+                                        div()
+                                            .id("setup-receipt-text")
+                                            .test_support()
+                                            .aria_label(receipt.clone())
+                                            .child(receipt.clone())
+                                    })
+                                    .build(window, cx)
+                                }
+                            })
                             .min_w_0()
                             .truncate()
                             .child(receipt)

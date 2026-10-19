@@ -1,0 +1,1 @@
+- **Settings:** save workspace edits in freshkube.yaml, preserve hand edits in a backup, report disk conflicts and broken files, and keep Coroot disconnected across launches after Disconnect.

@@ -51,8 +51,9 @@ impl Pilot {
             return;
         };
         let connection = setup.coroot.clone();
+        let reconnect = self.setup_file.read(cx).coroot_reconnect;
         self.pages.observability.update(cx, |page, cx| {
-            page.set_setup_connection(&connection, window, cx)
+            page.set_setup_connection(&connection, reconnect, window, cx)
         });
     }
 }

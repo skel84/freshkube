@@ -1,5 +1,5 @@
 //! Settings › Argo CD destinations: the workspace's Argo CD destinations,
-//! each mapped to one of its clusters (`workspace.json`'s `destinations`).
+//! each mapped to one of its clusters (`freshkube.yaml`'s `destinations`).
 //! It keeps its own selection, keys and toolbar, draws the page's banners
 //! under it, and saves through the page, as the clusters do. It derives its
 //! rows when the page's workspace changes, so `render` only reads them.
