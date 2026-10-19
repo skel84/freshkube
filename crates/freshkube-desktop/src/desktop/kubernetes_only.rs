@@ -127,8 +127,9 @@ impl Pilot {
             return;
         };
         let explicit = kube.explicit.clone();
-        self.config_generation = self.config_generation.wrapping_add(1);
-        let generation = self.config_generation;
+        let request = self
+            .configuration_read
+            .start(Some(super::ConfigurationRead::Kubernetes(explicit.clone())));
         self.contexts.clear();
         self.config_error = None;
         self.config_loading = true;
@@ -145,17 +146,15 @@ impl Pilot {
                 .map_err(|_| "Reading the kubeconfig stopped unexpectedly".to_owned())
             },
         );
-        self.config_job = Some(job);
-        self.config_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("Reading the kubeconfig stopped unexpectedly".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                if generation != view.config_generation {
+                if !view.configuration_read.land(&request, Ok(()), cx) {
                     return;
                 }
                 view.config_loading = false;
-                view.config_job = None;
                 match result {
                     Ok(report) => view.kubeconfig_read(report, window, cx),
                     Err(error) => {
@@ -168,7 +167,8 @@ impl Pilot {
                 view.prepare_context_display(window, cx);
                 cx.notify();
             });
-        }));
+        });
+        self.configuration_read.run(Some(job), task);
         cx.notify();
     }
 
@@ -567,9 +567,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         self.leave_entry(cx);
-        self.config_task = None;
-        self.config_job = None;
-        self.config_generation = self.config_generation.wrapping_add(1);
+        self.configuration_read.resolve(None, Ok(()));
         self.config_loading = false;
         self.config_error = None;
         self.loaded_config_path = None;

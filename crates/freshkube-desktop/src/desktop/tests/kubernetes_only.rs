@@ -517,17 +517,20 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
     .unwrap();
     cx.wait_for_io(handle, move |_, _| received.load(Ordering::SeqCst))
         .await;
-    let completion = cx.update(|cx| {
+    let deliveries = super::super::probe::count("object-open-delivered");
+    cx.update(|cx| {
         view.update(cx, |view, _| {
             // Simulate a replacement access independently of the existing
             // epoch/sequence guards, leaving the delayed worker alive.
             view.mode.set_example(true);
             view.applied.context = Some("replacement".into());
-            view.object_open_task.take().unwrap()
         })
     });
     release.notify_one();
-    completion.await;
+    cx.wait_for_io(handle, move |_, _| {
+        super::super::probe::count("object-open-delivered") > deliveries
+    })
+    .await;
     cx.read(|cx| {
         assert!(
             view.read(cx)

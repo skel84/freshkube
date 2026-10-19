@@ -535,9 +535,7 @@ impl Pilot {
 
     /// Drops a pending object open, so its answer is ignored when it comes.
     pub(super) fn cancel_object_open(&mut self) {
-        self.object_open_job = None;
-        self.object_open_task = None;
-        self.object_open_sequence = self.object_open_sequence.wrapping_add(1);
+        self.object_open.resolve(None, Ok(()));
     }
 
     /// Log collection keeps running in the background across screens; other

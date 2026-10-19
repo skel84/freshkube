@@ -1,0 +1,1 @@
+- **Shell reads:** configuration discovery, overview, services, object links and Kubernetes connections use the shared read owner while preserving their existing behavior.
