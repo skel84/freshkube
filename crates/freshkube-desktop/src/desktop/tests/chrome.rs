@@ -456,7 +456,7 @@ fn node_services_redraws_inside_nodes(cx: &mut TestAppContext) {
         count("node-services") - before
     };
     let shell = redrawn(&|_, cx| cx.notify());
-    let selection = redrawn(&|view, cx| view.select_service(Some("kubelet".into()), cx));
+    let selection = redrawn(&|view, cx| view.pages.select_service(Some("kubelet".into()), cx));
     let services = redrawn(&|view, cx| view.push_services(cx));
     let notice = redrawn(&|view, cx| view.note_restart("kubelet", cx));
     let cached = redrawn(&|view, cx| view.notify_cached(cx));

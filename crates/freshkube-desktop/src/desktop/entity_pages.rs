@@ -419,7 +419,7 @@ impl Pilot {
             ServiceEvent::Open(node, service) => (node, service, nodes::NodeTab::Services),
         };
         self.open_node_by_name(node, tab, window, cx);
-        self.select_service(Some(service.clone()), cx);
+        self.pages.select_service(Some(service.clone()), cx);
         if tab == nodes::NodeTab::Logs {
             self.open_logs(window, cx);
         }

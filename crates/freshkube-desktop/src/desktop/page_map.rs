@@ -2,7 +2,7 @@
 //! the one map (`Pilot::pages`), and the entities the shell keeps beside
 //! the map to push into or observe.
 
-use gpui_kit::{AppContext, Context, Entity, Subscription, Window};
+use gpui_kit::{App, AppContext, Context, Entity, Subscription, Window};
 use std::collections::BTreeMap;
 use tokio::runtime::Handle;
 
@@ -283,4 +283,25 @@ fn page_handles(
         (PageId::Settings, ScreenHandle::new(settings.clone())),
         (PageId::Resources, ScreenHandle::new(resources.clone())),
     ]
+}
+
+impl Pages {
+    /// The service selected on the node pane's tab.
+    pub(super) fn selected_service(&self, cx: &App) -> Option<String> {
+        self.node_workspace
+            .read(cx)
+            .services
+            .clone()
+            .read(cx)
+            .selected()
+            .map(str::to_owned)
+    }
+
+    pub(super) fn select_service(&self, service: Option<String>, cx: &mut App) {
+        self.node_workspace
+            .read(cx)
+            .services
+            .clone()
+            .update(cx, |services, cx| services.select(service, cx));
+    }
 }

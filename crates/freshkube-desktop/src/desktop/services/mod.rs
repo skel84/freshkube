@@ -319,27 +319,6 @@ impl Pilot {
             .update(cx, |services, cx| services.set_state(state, cx));
     }
 
-    /// The service selected on the node pane's tab.
-    pub(super) fn selected_service(&self, cx: &App) -> Option<String> {
-        self.pages
-            .node_workspace
-            .read(cx)
-            .services
-            .clone()
-            .read(cx)
-            .selected()
-            .map(str::to_owned)
-    }
-
-    pub(super) fn select_service(&self, service: Option<String>, cx: &mut App) {
-        self.pages
-            .node_workspace
-            .read(cx)
-            .services
-            .clone()
-            .update(cx, |services, cx| services.select(service, cx));
-    }
-
     /// What the tab asks of the shell.
     pub(super) fn node_services_event(
         &mut self,

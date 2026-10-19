@@ -51,7 +51,7 @@ impl Pilot {
                     window,
                     cx,
                 );
-                self.select_service(Some(service.clone()), cx);
+                self.pages.select_service(Some(service.clone()), cx);
                 if logs {
                     self.pages
                         .logs

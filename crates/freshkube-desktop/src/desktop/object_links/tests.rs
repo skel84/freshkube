@@ -216,7 +216,7 @@ fn kubelet_links_to_its_scoped_pods(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.open_node_by_name("talos-wk-fra1-02", NodeTab::Services, window, cx);
-            pilot.select_service(Some("kubelet".into()), cx);
+            pilot.pages.select_service(Some("kubelet".into()), cx);
             cx.notify();
         });
         window.render_frame(cx);

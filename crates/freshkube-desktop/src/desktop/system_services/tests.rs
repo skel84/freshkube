@@ -406,7 +406,7 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
         let pilot = view.read(cx);
         assert_eq!(pilot.navigation.page, Page::Nodes);
         assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
-        assert_eq!(pilot.selected_service(cx).as_deref(), Some("apid"));
+        assert_eq!(pilot.pages.selected_service(cx).as_deref(), Some("apid"));
         assert_eq!(
             pilot.pages.node_workspace.read(cx).tab,
             crate::desktop::nodes::NodeTab::Services

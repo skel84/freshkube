@@ -1011,7 +1011,7 @@ impl Pilot {
             ScreenEvent::RefreshSummary => self.refresh_summary(window, cx),
             ScreenEvent::RetryCluster => self.refresh(window, cx),
             ScreenEvent::OpenLogs(service) => {
-                self.select_service(Some(service.clone()), cx);
+                self.pages.select_service(Some(service.clone()), cx);
                 self.open_logs(window, cx);
             }
             ScreenEvent::SelectNode(node) => {
@@ -1022,7 +1022,7 @@ impl Pilot {
                     return;
                 }
                 self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);
-                self.select_service(Some(service.clone()), cx);
+                self.pages.select_service(Some(service.clone()), cx);
                 self.open_logs(window, cx);
             }
         }
