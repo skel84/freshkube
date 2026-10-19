@@ -11,9 +11,7 @@ use gpui_kit::component::Root;
 
 use super::super::entity_pages::{hosted_by, set_metrics_setup};
 
-const CENTRAL: &str = "version: 1
-kubeconfig: /home/acme/.kube/hub
-clusters:
+const CENTRAL_BODY: &str = "clusters:
   - id: cluster-a
     role: core
     context: hub-context
@@ -29,6 +27,20 @@ metrics:
       name: central
       port: 9090
 ";
+
+/// The workspace's kubeconfig: an absolute path on every platform.
+fn hub() -> std::path::PathBuf {
+    std::env::temp_dir().join("acme-hub-kubeconfig")
+}
+
+/// A file naming that kubeconfig, then `body`.
+fn file(body: &str) -> String {
+    format!("version: 1\nkubeconfig: '{}'\n{body}", hub().display())
+}
+
+fn central() -> String {
+    file(CENTRAL_BODY)
+}
 
 fn parse(text: &str) -> setup::Setup {
     setup::parse(text.as_bytes()).unwrap_or_else(|invalid| panic!("{invalid}"))
@@ -91,14 +103,11 @@ fn resolved(cx: &mut TestAppContext, page: &Entity<MonitoringPage>) -> Resolved 
 
 #[test]
 fn a_store_hosted_by_another_entry_is_reached_with_the_workspaces_kubeconfig_and_its_context() {
-    let setup = parse(CENTRAL);
+    let setup = parse(&central());
     let mut kept = Default::default();
     let access = hosted_by(&setup.workspace, "cluster-a", &mut kept).unwrap();
     assert_eq!(access.context(), "hub-context");
-    assert_eq!(
-        access.sources(),
-        [std::path::PathBuf::from("/home/acme/.kube/hub")]
-    );
+    assert_eq!(access.sources(), [hub()]);
     // The same host again keeps its client; another context is another one.
     let again = hosted_by(&setup.workspace, "cluster-a", &mut kept).unwrap();
     assert_eq!(again.id(), access.id());
@@ -117,7 +126,7 @@ fn the_open_entrys_scope_follows_the_setup_and_the_entry(cx: &mut TestAppContext
     open_entry(cx, window, &handle, Some("cluster-b"), "cluster-b");
     assert_eq!(resolved(cx, &page), Resolved::Discovery);
 
-    cx.update(|cx| set_metrics_setup(&page, parse(CENTRAL), cx));
+    cx.update(|cx| set_metrics_setup(&page, parse(&central()), cx));
     let Resolved::Central { host, matcher, .. } = resolved(cx, &page) else {
         panic!("not central");
     };
@@ -149,9 +158,9 @@ fn the_open_entrys_scope_follows_the_setup_and_the_entry(cx: &mut TestAppContext
 fn a_setup_change_to_per_entry_leaves_an_entry_with_no_source_unknown(cx: &mut TestAppContext) {
     let (_runtime, window, page, handle) = mount_monitoring(cx);
     open_entry(cx, window, &handle, Some("cluster-b"), "cluster-b");
-    cx.update(|cx| set_metrics_setup(&page, parse(CENTRAL), cx));
+    cx.update(|cx| set_metrics_setup(&page, parse(&central()), cx));
     let per_entry =
-        CENTRAL.split("metrics:").next().unwrap().to_owned() + "metrics:\n  mode: per-entry\n";
+        file(CENTRAL_BODY.split("metrics:").next().unwrap()) + "metrics:\n  mode: per-entry\n";
     cx.update(|cx| set_metrics_setup(&page, parse(&per_entry), cx));
     assert_eq!(
         resolved(cx, &page),
@@ -170,9 +179,9 @@ fn two_windows_on_different_entries_keep_their_own_scope(cx: &mut TestAppContext
     open_entry(cx, window1, &handle1, Some("cluster-a"), "hub-context");
     open_entry(cx, window2, &handle2, Some("cluster-b"), "cluster-b");
     // A setup change in one window leaves the other on its own entry.
-    cx.update(|cx| set_metrics_setup(&page1, parse(CENTRAL), cx));
-    cx.update(|cx| set_metrics_setup(&page2, parse(CENTRAL), cx));
-    cx.update(|cx| set_metrics_setup(&page1, parse(CENTRAL), cx));
+    cx.update(|cx| set_metrics_setup(&page1, parse(&central()), cx));
+    cx.update(|cx| set_metrics_setup(&page2, parse(&central()), cx));
+    cx.update(|cx| set_metrics_setup(&page1, parse(&central()), cx));
     let value =
         |cx: &mut TestAppContext, page| resolved(cx, page).matcher().map(|m| m.value().to_owned());
     assert_eq!(value(cx, &page1).as_deref(), Some("cluster-a"));
