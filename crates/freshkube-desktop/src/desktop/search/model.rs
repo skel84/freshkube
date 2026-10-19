@@ -63,13 +63,15 @@ pub(super) fn object_group(key: &str) -> &'static str {
         _ => "Config",
     }
 }
-impl Pilot {
-    pub(super) fn local_search_entries(&self, cx: &App) -> Vec<Entry> {
+impl Search {
+    /// The destinations that need no read: pages, nodes and the kinds the
+    /// custom kinds discovered. `talos` is whether the Talos pages exist.
+    pub(super) fn local_entries(&self, talos: bool, cx: &App) -> Vec<Entry> {
         let mut entries = Page::ALL
             .into_iter()
             .filter(|page| {
                 *page != Page::Resources
-                    && (self.mode().has_talos()
+                    && (talos
                         || !matches!(
                             page,
                             Page::Etcd
@@ -99,7 +101,7 @@ impl Pilot {
                 Destination::Kind(kind),
             ));
         }
-        entries.extend(self.node_workspace.read(cx).rows.iter().map(|row| {
+        entries.extend(self.nodes.read(cx).rows.iter().map(|row| {
             Entry::new(
                 "Nodes",
                 format!("search-node-{}", row.name),
