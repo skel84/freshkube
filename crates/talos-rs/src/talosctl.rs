@@ -346,20 +346,15 @@ pub async fn apply_config_insecure(
 /// and uses tokio async process to avoid blocking the runtime.
 /// It extracts a node IP from the context's endpoints to target the query.
 ///
-/// If `config_path` is provided, loads config from that path instead of the default.
+/// Loads the config from `config_path`, which the caller names; no default is
+/// looked up here.
 async fn get_discovery_members_for_context(
     context: &str,
-    config_path: Option<&str>,
+    config_path: &str,
 ) -> Result<Vec<DiscoveryMember>, TalosError> {
     // Load config to get an endpoint IP to use as the node target
     // talosctl requires -n flag if nodes: is not set in the config
-    let config = match config_path {
-        Some(path) => {
-            let path_buf = std::path::PathBuf::from(path);
-            crate::TalosConfig::load_from(&path_buf)?
-        }
-        None => crate::TalosConfig::load_default()?,
-    };
+    let config = crate::TalosConfig::load_from(&std::path::PathBuf::from(config_path))?;
     let ctx = config
         .contexts
         .get(context)
@@ -367,7 +362,7 @@ async fn get_discovery_members_for_context(
 
     let node = first_endpoint_host(&ctx.endpoints)
         .ok_or_else(|| TalosError::NoEndpoints(context.to_string()))?;
-    get_discovery_members_for_node_async(context, node, config_path).await
+    get_discovery_members_for_node_async(context, node, Some(config_path)).await
 }
 
 /// The first endpoint's host, without its port, for talosctl's `-n`.
@@ -405,7 +400,7 @@ async fn get_discovery_members_for_node_async(
 /// the VIP routes to a node that can't forward the request.
 pub async fn get_discovery_members_with_retry(
     context: &str,
-    config_path: Option<&str>,
+    config_path: &str,
     fallback_node_ips: &[String],
 ) -> Result<Vec<DiscoveryMember>, TalosError> {
     // First, try the VIP-based approach with retries
@@ -445,7 +440,7 @@ pub async fn get_discovery_members_with_retry(
         fastrand::shuffle(&mut shuffled_ips);
 
         for node_ip in shuffled_ips {
-            match get_discovery_members_for_node_async(context, node_ip, config_path).await {
+            match get_discovery_members_for_node_async(context, node_ip, Some(config_path)).await {
                 Ok(members) => {
                     tracing::debug!(
                         "Successfully fetched discovery members from fallback node {}",
