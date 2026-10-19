@@ -3,12 +3,12 @@
 //! nothing was found, the state that says why in place of the table.
 use super::display::{AppRow, Body};
 use super::*;
-use crate::screens::{field, mono};
 use crate::ui::{self, dp};
 use freshkube_ui::inspector::{self, Inspector};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::tooltip::FollowTooltip as _;
+use freshkube_ui::ui::{field, mono};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::component::h_flex;
@@ -34,7 +34,7 @@ impl ApplicationsPage {
                 .aria_label("Filter applications by name, what found them or cluster")
                 .prefix(Icon::new(IconName::Search).size(dp(14.))),
         );
-        let wide = crate::screens::page_width(window) >= CHIP_WORDS_WIDTH;
+        let wide = freshkube_ui::page::page_width(window) >= CHIP_WORDS_WIDTH;
         let chips = (!self.display.rows.is_empty()).then(|| {
             kit::status_chips(
                 header.id("tally"),
@@ -281,7 +281,7 @@ impl ApplicationsPage {
             .min_h_0()
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
         let least = self.split.short_height(beside, details.is_some());
         let split = inspector::split(

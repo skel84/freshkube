@@ -44,7 +44,7 @@ use gpui_kit::*;
 use crate::backend::Target;
 use crate::palette::palette;
 use crate::presentation::NodeSummary;
-use crate::ui::{self, MONO_FONT, clock, dp};
+use crate::ui::{self, clock, dp};
 // The page widths live in `freshkube_ui::page`; screens reach them here.
 pub(crate) use freshkube_ui::page::{content_width, inset_width, page_width, set_chrome_width};
 /// What a table screen shows until its first answer: its `TableSource::loading`
@@ -423,12 +423,7 @@ pub(crate) fn set_node_pane_width(width: f32) {
     NODE_PANE_WIDTH.set(width);
 }
 
-pub(crate) fn mono(text: impl Into<SharedString>) -> Div {
-    div()
-        .font_family(MONO_FONT)
-        .text_size(dp(12.))
-        .child(text.into())
-}
+pub(crate) use freshkube_ui::ui::mono;
 
 /// A screen's meta line under its `PageHeader`: where it reads, unless the
 /// node pane around it already names the node, then the screen's own

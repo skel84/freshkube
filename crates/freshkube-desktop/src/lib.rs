@@ -293,7 +293,6 @@ pub fn validate_maintenance_endpoint(endpoint: &str) -> color_eyre::Result<()> {
 
 mod actions;
 mod ambient;
-mod applications;
 mod backend;
 mod connection_preferences;
 // Only a debug or stress build reads the knobs; elsewhere `from_env` is the
@@ -322,6 +321,8 @@ use freshkube_probe::perf;
 use freshkube_monitoring as monitoring;
 // Observability's Coroot pages, by their old path.
 use freshkube_observability as observability;
+// The Applications pages, by their old path.
+use freshkube_applications as applications;
 // Resources' lists, detail pane, shells and forwards, by their old path.
 use freshkube_resources as resources;
 // The look lives in freshkube-ui; the app reaches it by its old paths.

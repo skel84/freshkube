@@ -17,7 +17,7 @@ use freshkube_delivery::entry::{self, pool};
 use freshkube_reads::OnShow;
 
 use super::*;
-use crate::applications::across::{Across, Alone};
+use crate::across::{Across, Alone};
 use crate::backend;
 use crate::resources::ClusterAccess;
 
@@ -34,7 +34,7 @@ pub(super) const ALONE: Alone = Alone::Within(DEADLINE);
 
 /// Where the page's change comes from.
 #[derive(Clone)]
-pub(in crate::applications) enum Fetch {
+pub enum Fetch {
     /// Example data's, its times counted from `now`; it answers after
     /// `delay`, which only tests set, so a read stays in flight.
     Example {
@@ -283,19 +283,19 @@ fn deliver(
     });
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl ChangePage {
-    pub(crate) fn is_reading(&self) -> bool {
+    pub fn is_reading(&self) -> bool {
         self.loader.is_loading()
     }
 
     /// Whether an answer was shown.
-    pub(crate) fn answered(&self) -> bool {
+    pub fn answered(&self) -> bool {
         self.loader.data().is_some()
     }
 
     /// The selection's actions, as the Inspector's footer labels them.
-    pub(crate) fn action_labels(&self) -> Vec<String> {
+    pub fn action_labels(&self) -> Vec<String> {
         self.detail
             .as_ref()
             .map(|detail| detail.action_labels())
@@ -303,23 +303,23 @@ impl ChangePage {
     }
 
     /// Why the selection's action labelled `label` is greyed out, if it is.
-    pub(crate) fn action_why(&self, label: &str) -> Option<String> {
+    pub fn action_why(&self, label: &str) -> Option<String> {
         self.detail.as_ref()?.action_why(label)
     }
 
     /// The change shown.
-    pub(crate) fn shown(&self) -> &Change {
+    pub fn shown(&self) -> &Change {
         &self.change
     }
 
     /// An answer, as a read brings it.
-    pub(crate) fn read_answer(&mut self, change: Change, window: &Window, cx: &mut Context<Self>) {
+    pub fn read_answer(&mut self, change: Change, window: &Window, cx: &mut Context<Self>) {
         let request = self.loader.start(self.fetch.identity());
         self.answer(&request, Ok(change), window, cx);
     }
 
     /// A read that failed, as a refused or unreachable cluster answers.
-    pub(crate) fn fail_read(&mut self, why: &str, window: &Window, cx: &mut Context<Self>) {
+    pub fn fail_read(&mut self, why: &str, window: &Window, cx: &mut Context<Self>) {
         let request = self.loader.start(self.fetch.identity());
         self.answer(&request, Err(why.into()), window, cx);
     }

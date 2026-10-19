@@ -2,6 +2,8 @@ mod access;
 mod app_menu;
 #[cfg(test)]
 mod applications_column_tests;
+#[cfg(test)]
+mod applications_tests;
 mod connection;
 pub(crate) mod dock;
 mod entity_pages;

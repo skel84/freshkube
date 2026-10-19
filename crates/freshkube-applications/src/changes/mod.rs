@@ -11,10 +11,8 @@
 //! while shown, by the change page's rules: on showing once what it has is
 //! older than [`FRESH_FOR`], on Refresh, and never while hidden, which
 //! drops the read in flight. Another connection drops what was read.
-mod display;
+pub(crate) mod display;
 mod table;
-#[cfg(test)]
-mod tests;
 mod view;
 
 use std::collections::BTreeSet;
@@ -98,7 +96,7 @@ enum Entry {
     Row(usize),
 }
 
-pub(crate) struct ChangesPage {
+pub struct ChangesPage {
     runtime: tokio::runtime::Handle,
     source: Option<ClusterSource>,
     visible: bool,
@@ -118,9 +116,18 @@ pub(crate) struct ChangesPage {
     across: Across,
     /// Where Argo CD's Applications are read, as the Applications read
     /// found it.
+    #[cfg(any(test, feature = "testing"))]
+    pub argocd_namespace: String,
+    #[cfg(not(any(test, feature = "testing")))]
     argocd_namespace: String,
     /// The namespace the shown live read used, or the one in flight.
+    #[cfg(any(test, feature = "testing"))]
+    pub read_namespace: Option<String>,
+    #[cfg(not(any(test, feature = "testing")))]
     read_namespace: Option<String>,
+    #[cfg(any(test, feature = "testing"))]
+    pub display: Display,
+    #[cfg(not(any(test, feature = "testing")))]
     display: Display,
     /// A refresh that failed over an earlier read, and its label.
     stale: Option<(SharedString, SharedString)>,
@@ -197,15 +204,15 @@ impl ChangesPage {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_example_delay(&mut self, delay: Duration) {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn set_example_delay(&mut self, delay: Duration) {
         self.example_delay = delay;
     }
 
     /// Holds the example source the page has, or lets it answer again
     /// (`Hold::applications`), as `FRESHKUBE_FIXTURE_HOLD` does at launch.
-    #[cfg(test)]
-    pub(crate) fn set_hold(&mut self, hold: bool) {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn set_hold(&mut self, hold: bool) {
         if let Some(ClusterSource {
             access: ClusterAccess::Example(held),
             ..
@@ -224,7 +231,7 @@ impl ChangesPage {
     /// The connection the page reads. Another connection drops what was
     /// read, what is in flight and the change shown; the page reads it
     /// again if shown.
-    pub(crate) fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
+    pub fn set_source(&mut self, source: Option<ClusterSource>, cx: &mut Context<Self>) {
         let same = self.source.as_ref().map(|s| &s.id) == source.as_ref().map(|s| &s.id);
         self.source = source;
         if same {
@@ -245,7 +252,7 @@ impl ChangesPage {
 
     /// Which connection each cluster is, and where a live read reads each
     /// part; the change shown follows them.
-    pub(crate) fn set_clusters(
+    pub fn set_clusters(
         &mut self,
         connections: Connections,
         across: Across,
@@ -268,7 +275,7 @@ impl ChangesPage {
     /// Where the Applications read found Argo CD's Applications. A live
     /// list read in another namespace reads again, now if shown, else when
     /// next shown.
-    pub(crate) fn set_argocd_namespace(&mut self, namespace: String, cx: &mut Context<Self>) {
+    pub fn set_argocd_namespace(&mut self, namespace: String, cx: &mut Context<Self>) {
         if namespace == self.argocd_namespace {
             return;
         }
@@ -299,7 +306,7 @@ impl ChangesPage {
 
     /// Shown, the page reads unless what it has is fresh; hidden, it drops
     /// the read in flight. The change shown follows.
-    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if visible == self.visible {
             return;
         }
@@ -531,7 +538,7 @@ impl ChangesPage {
     }
 
     /// Puts the keyboard on the list.
-    pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
         window.focus(&self.focus, cx);
     }
 
@@ -550,8 +557,8 @@ impl ChangesPage {
     }
 
     /// The change shown in the list's place, if one is.
-    #[cfg(test)]
-    pub(crate) fn change_page(&self) -> Option<&Entity<ChangePage>> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn change_page(&self) -> Option<&Entity<ChangePage>> {
         self.change.as_ref().map(|(page, _)| page)
     }
 
@@ -561,7 +568,7 @@ impl ChangesPage {
     }
 
     /// Selects a change, unfolding its group so its row shows.
-    pub(crate) fn select(&mut self, key: &str, window: &Window, cx: &mut Context<Self>) {
+    pub fn select(&mut self, key: &str, window: &Window, cx: &mut Context<Self>) {
         let Some(row) = self.display.rows.iter().find(|row| row.key.as_ref() == key) else {
             return;
         };
@@ -572,7 +579,7 @@ impl ChangesPage {
             self.rebuild(cx);
         }
         kit::reveal(self, ScrollStrategy::Nearest);
-        if crate::screens::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
+        if freshkube_ui::page::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
             kit::reveal_when_settled(
                 cx.entity().downgrade(),
                 |page| page.selected.is_some(),
@@ -679,10 +686,10 @@ impl ChangesPage {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl ChangesPage {
     /// The rows' Freight, in the order the lines show them.
-    pub(crate) fn lines_text(&self) -> Vec<String> {
+    pub fn lines_text(&self) -> Vec<String> {
         self.lines
             .iter()
             .map(|entry| match entry {
@@ -692,20 +699,20 @@ impl ChangesPage {
             .collect()
     }
 
-    pub(crate) fn selected(&self) -> Option<&SharedString> {
+    pub fn selected(&self) -> Option<&SharedString> {
         self.selected.as_ref()
     }
 
-    pub(crate) fn is_reading(&self) -> bool {
+    pub fn is_reading(&self) -> bool {
         self.loader.is_loading()
     }
 
-    pub(crate) fn body(&self) -> &Body {
+    pub fn body(&self) -> &Body {
         &self.display.body
     }
 
     /// An answer, as a read brings it.
-    pub(crate) fn read_answer(&mut self, changes: Derived, cx: &mut Context<Self>) {
+    pub fn read_answer(&mut self, changes: Derived, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
         };
@@ -718,7 +725,7 @@ impl ChangesPage {
     }
 
     /// A read that fails, as a cluster that stops answering does.
-    pub(crate) fn fail_read(&mut self, why: &str, cx: &mut Context<Self>) {
+    pub fn fail_read(&mut self, why: &str, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
         };

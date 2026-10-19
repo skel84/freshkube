@@ -207,7 +207,7 @@ impl ChangePage {
             .min_h_0()
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_detail(cx);
         inspector::split("change-split", &self.split, beside, table, details, window)
     }

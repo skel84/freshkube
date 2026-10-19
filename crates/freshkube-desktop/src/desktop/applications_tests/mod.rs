@@ -1,5 +1,10 @@
 //! The Applications page in the real app, on example data.
-use super::{ApplicationsPage, Variant};
+
+mod change;
+mod changes;
+mod page;
+
+use crate::applications::{ApplicationsPage, Variant};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 use crate::fixture::Hold;
 use std::time::Duration;
@@ -256,7 +261,8 @@ fn a_stale_read_is_read_again_when_shown(cx: &mut TestAppContext) {
         hold(&view, true, window, cx);
     })
     .unwrap();
-    cx.executor().advance_clock(super::FRESH_FOR);
+    cx.executor()
+        .advance_clock(crate::applications::testing::FRESH_FOR);
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-applications", cx);
         window.render_frame(cx);
@@ -443,7 +449,7 @@ fn nothing_served_anywhere_is_the_empty_state(cx: &mut TestAppContext) {
         assert!(window.find("applications-none").visible());
         assert!(matches!(
             page(&view, cx).read(cx).body(),
-            super::display::Body::Empty { .. }
+            crate::applications::testing::display::Body::Empty { .. }
         ));
     })
     .unwrap();
@@ -729,7 +735,7 @@ fn the_same_applications_show_whichever_entry_is_open(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             page(&view, cx).update(cx, |page, cx| {
                 page.set_clusters(
-                    super::Clusters {
+                    crate::applications::Clusters {
                         entries: example_entries(),
                         active: Some(active.into()),
                         ..Default::default()
@@ -818,7 +824,10 @@ fn argo_cd_refused_on_its_entry_says_so_and_keeps_the_rest(cx: &mut TestAppConte
             .rows
             .iter()
             .find(|row| row.name == "cart");
-        assert_ne!(cart.expect("cart").mark, super::Mark::Read);
+        assert_ne!(
+            cart.expect("cart").mark,
+            crate::applications::testing::display::Mark::Read
+        );
     })
     .unwrap();
 }
@@ -847,7 +856,11 @@ fn an_unreachable_destination_says_so_by_name(cx: &mut TestAppContext) {
         for name in ["cart", "checkout"] {
             let row = page.read(cx).display.rows.iter().find(|r| r.name == name);
             let row = row.unwrap_or_else(|| panic!("{name}"));
-            assert_eq!(row.mark, super::Mark::Incomplete, "{name}");
+            assert_eq!(
+                row.mark,
+                crate::applications::testing::display::Mark::Incomplete,
+                "{name}"
+            );
             assert!(
                 row.notes.iter().any(|note| note.contains(
                     "deploys to dev-fra, whose labelled workloads weren't read: couldn't be reached"
@@ -866,7 +879,7 @@ fn an_unreachable_destination_says_so_by_name(cx: &mut TestAppContext) {
 /// on whichever entry was asked for it, whichever entry is open.
 #[test]
 fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
-    use super::example;
+    use crate::applications::testing::example;
     use crate::resources::{ClusterAccess, ClusterSource};
     use freshkube_delivery::applications::{ArgoFound, ArgoScope};
 
@@ -890,7 +903,7 @@ fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
         access: ClusterAccess::EXAMPLE,
     };
     for entry in [None, Some("cicd-fra"), Some("core-fra"), Some("dev-fra")] {
-        let read = super::Read::live(&inputs, &source, entry);
+        let read = crate::applications::testing::Read::live(&inputs, &source, entry);
         assert_eq!(
             read.argocd_namespace.as_deref(),
             Some("gitops"),
@@ -900,7 +913,7 @@ fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
     for session in &mut inputs.sessions {
         session.argo_scope = ArgoScope::AllNamespaces;
     }
-    let read = super::Read::live(&inputs, &source, Some("cicd-fra"));
+    let read = crate::applications::testing::Read::live(&inputs, &source, Some("cicd-fra"));
     assert_eq!(
         read.argocd_namespace.as_deref(),
         Some("argocd"),
@@ -910,8 +923,8 @@ fn a_live_read_finds_argo_cd_where_it_was_asked_for() {
 
 #[test]
 fn a_live_read_follows_each_stages_current_freight() {
-    use super::change::{Changes, LiveChanges};
-    use super::example;
+    use crate::applications::testing::change::{Changes, LiveChanges};
+    use crate::applications::testing::example;
     use crate::resources::{ClusterAccess, ClusterSource};
     use freshkube_delivery::applications::{ArgoFound, ArgoScope, KargoProjectRead};
     use freshkube_delivery::source::Source;
@@ -985,7 +998,7 @@ fn a_live_read_follows_the_workspace_and_the_entry_it_is(cx: &mut TestAppContext
     let workspace = |entry: &str| {
         let mut workspace = freshkube_core::workspace::example();
         workspace.clusters.retain(|e| e.id != entry);
-        super::Clusters {
+        crate::applications::Clusters {
             entries: workspace.clusters.iter().map(|e| e.id.clone()).collect(),
             sources: freshkube_core::workspace::Sources::of(&workspace),
             ..Default::default()
@@ -1035,7 +1048,7 @@ fn a_live_read_keys_each_entry_and_opens_the_open_one_here() {
         stage_naming: None,
         destinations: Vec::new(),
     };
-    let read = super::Read::live(&inputs, &source, Some("core-fra"));
+    let read = crate::applications::testing::Read::live(&inputs, &source, Some("core-fra"));
     for id in ["cicd-fra", "core-fra", "dev-fra"] {
         assert_eq!(read.labels.of(&SessionKey::new(id)), id, "named by its id");
     }
@@ -1063,15 +1076,24 @@ fn no_mapped_destination_says_where_labels_were_read() {
     let entries: Vec<String> = workspace.clusters.iter().map(|e| e.id.clone()).collect();
     let sources = Sources::of(&workspace);
     assert_eq!(
-        super::unmapped(&sources, &[], &entries).as_deref(),
+        crate::applications::testing::unmapped(&sources, &[], &entries).as_deref(),
         Some("core-fra")
     );
     let mapped = [Destination::new(Key::Name("dev-fra".into()), "dev-fra")];
-    assert_eq!(super::unmapped(&sources, &mapped, &entries), None);
-    assert_eq!(super::unmapped(&sources, &[], &["core-fra".into()]), None);
-    assert_eq!(super::unmapped(&Sources::default(), &[], &entries), None);
+    assert_eq!(
+        crate::applications::testing::unmapped(&sources, &mapped, &entries),
+        None
+    );
+    assert_eq!(
+        crate::applications::testing::unmapped(&sources, &[], &["core-fra".into()]),
+        None
+    );
+    assert_eq!(
+        crate::applications::testing::unmapped(&Sources::default(), &[], &entries),
+        None
+    );
 
-    let mut display = super::display::Display::default();
+    let mut display = crate::applications::testing::display::Display::default();
     display.add_legend("first".into());
     display.add_legend("second".into());
     assert_eq!(display.legend_text.as_deref(), Some("first · second"));

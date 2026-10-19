@@ -1,7 +1,7 @@
 //! The change page in the real app, on example data: checkout's Freight
 //! `wonky-otter`, followed from its application page's Stage.
-use super::super::{ApplicationsPage, Variant};
-use super::ChangePage;
+use crate::applications::testing::change::ChangePage;
+use crate::applications::{ApplicationsPage, Variant};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 
 use gpui_kit::{
@@ -96,7 +96,7 @@ fn open_on(
     cx.update(|cx| {
         list(&view, cx).update(cx, |page, cx| {
             page.set_clusters(
-                super::super::Clusters {
+                crate::applications::Clusters {
                     entries: ENTRIES.map(str::to_owned).to_vec(),
                     active: Some(active.into()),
                     ..Default::default()
@@ -313,7 +313,7 @@ fn a_workspace_change_reaches_the_change_page_at_once(cx: &mut TestAppContext) {
     cx.update(|cx| {
         list(&view, cx).update(cx, |page, cx| {
             page.set_clusters(
-                super::super::Clusters {
+                crate::applications::Clusters {
                     entries: vec!["dev-fra".into(), "prod-ams".into()],
                     active: Some("dev-fra".into()),
                     mapping: Default::default(),
@@ -382,7 +382,7 @@ fn switch_and_open_lands_on_prod_amss_deployment_in_example_data(cx: &mut TestAp
 /// in the Inspector and the row menu, and asks the shell to switch.
 #[gpui_kit::test]
 fn an_object_on_another_workspace_entry_switches_and_opens(cx: &mut TestAppContext) {
-    use super::ChangeEvent;
+    use crate::applications::testing::change::ChangeEvent;
     use crate::resources::ResourceLink;
     use std::{cell::RefCell, rc::Rc};
 
@@ -843,7 +843,7 @@ fn dock_tabs(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
 /// at once, falling back to the container core named.
 #[gpui_kit::test]
 fn a_steps_logs_open_in_the_dock_on_the_open_cluster(cx: &mut TestAppContext) {
-    use super::ChangeEvent;
+    use crate::applications::testing::change::ChangeEvent;
     use crate::resources::{LogsAt, ResourceLink};
     use freshkube_delivery::testing::{RELEASE_NAMESPACE, VERIFY_TASK};
     use std::{cell::RefCell, rc::Rc};
@@ -1291,7 +1291,7 @@ fn another_source_drops_the_change(cx: &mut TestAppContext) {
 /// context instead.
 #[gpui_kit::test]
 fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) {
-    use super::Fetch;
+    use crate::applications::testing::change::Fetch;
     use crate::resources::ClusterAccess;
     use freshkube_delivery::change::live::Place;
     let (runtime, handle, view) = open(cx, 1280., 880.);
@@ -1375,7 +1375,7 @@ fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
     use gpui_kit::{TextRun, font};
 
     let (_runtime, handle, _view) = open(cx, 1280., 880.);
-    let columns = super::table::columns();
+    let columns = crate::applications::testing::change::columns();
     let link = columns
         .iter()
         .find(|column| column.label().as_ref() == "Link")
@@ -1393,7 +1393,7 @@ fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
                 Confidence::Claimed,
                 Confidence::Unknown,
             ] {
-                let word = super::link_word(confidence);
+                let word = crate::applications::testing::change::link_word(confidence);
                 let run = TextRun {
                     len: word.len(),
                     font: font(".SystemUIFont"),
@@ -1406,7 +1406,7 @@ fn every_link_word_fits_its_column(cx: &mut TestAppContext) {
                     .text_system()
                     .shape_line(word.into(), crate::ui::dp_px(12.5, window), &[run], None)
                     .width;
-                let glyph = match super::link_glyph(confidence) {
+                let glyph = match crate::applications::testing::change::link_glyph(confidence) {
                     Some(_) => crate::ui::dp_px(10. + 5., window),
                     None => gpui_kit::px(0.),
                 };
@@ -1449,7 +1449,7 @@ fn open_with(
     let switch = move |view: &Entity<Pilot>, cx: &mut gpui_kit::App| {
         list(view, cx).update(cx, |page, cx| {
             page.set_clusters(
-                super::super::Clusters {
+                crate::applications::Clusters {
                     entries: entries.clone(),
                     active: Some("dev-fra".into()),
                     mapping: Default::default(),
@@ -1688,7 +1688,11 @@ fn a_stage_group_row_names_a_reach_weaker_than_confirmed() {
         via: "server https://dev-fra.example.test:6443".into(),
     };
     let line = |reach, cluster, rows| {
-        super::stage_line("deploys to dev-fra", &dev_with(reach, cluster), rows)
+        crate::applications::testing::change::stage_line(
+            "deploys to dev-fra",
+            &dev_with(reach, cluster),
+            rows,
+        )
     };
     let words = |extra: Option<&str>| {
         let mut words = vec!["deploys to dev-fra".to_owned(), "verified".to_owned()];

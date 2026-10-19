@@ -1,6 +1,6 @@
 //! An application's page in the real app, on example data.
-use super::super::{ApplicationsPage, Variant};
-use super::ApplicationPage;
+use crate::applications::testing::page::ApplicationPage;
+use crate::applications::{ApplicationsPage, Variant};
 use crate::desktop::{Page, Pilot, layout_check, tests::fixture};
 
 use std::time::Duration;
@@ -229,8 +229,8 @@ fn read_from_fits_what_was_not_checked(cx: &mut TestAppContext) {
         for row in &mut rows {
             row.read_from = "label".into();
         }
-        let words = |rows: &[super::PartRow]| {
-            let (columns, _) = super::table::columns(rows);
+        let words = |rows: &[crate::applications::testing::page::PartRow]| {
+            let (columns, _) = crate::applications::testing::page::columns(rows);
             let read_from = columns.last().unwrap();
             assert_eq!(read_from.label().as_ref(), "Read from");
             read_from.width()
@@ -559,7 +559,9 @@ fn the_page_and_the_inspector_say_what_the_application_is(cx: &mut TestAppContex
 #[test]
 fn what_was_not_checked_names_its_cluster_and_namespaces() {
     use freshkube_delivery::applications::claims::Unchecked;
-    let words = |unchecked| super::unchecked_words(&unchecked, "core-fra", "core-fra");
+    let words = |unchecked| {
+        crate::applications::testing::page::unchecked_words(&unchecked, "core-fra", "core-fra")
+    };
     assert_eq!(
         words(Unchecked::Namespaces(vec!["gitops".into()])),
         "Argo CD read in gitops only on core-fra"
@@ -574,7 +576,9 @@ fn what_was_not_checked_names_its_cluster_and_namespaces() {
         "Argo CD read in part on core-fra: stopped after 500"
     );
     // A part on another entry names the cluster Argo CD was read on.
-    let elsewhere = |unchecked| super::unchecked_words(&unchecked, "dev-fra", "core-fra");
+    let elsewhere = |unchecked| {
+        crate::applications::testing::page::unchecked_words(&unchecked, "dev-fra", "core-fra")
+    };
     assert_eq!(
         elsewhere(Unchecked::NotRead),
         "Argo CD not read on core-fra"

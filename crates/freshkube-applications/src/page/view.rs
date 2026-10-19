@@ -2,12 +2,12 @@
 //! the selection in the Inspector, beside it on a wide page and under it on
 //! a narrow one.
 use super::*;
-use crate::screens::{field, mono};
 use crate::ui::{self, dp};
 use freshkube_ui::inspector::{self, Inspector};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::tooltip::FollowTooltip as _;
+use freshkube_ui::ui::{field, mono};
 use gpui_kit::component::{Disableable, IconName, Sizable, button::Button, h_flex, v_flex};
 
 /// A field's value: names in the monospace face, prose in the UI's.
@@ -126,7 +126,7 @@ impl ApplicationPage {
             .min_h_0()
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_details(cx);
         let least = self.split.short_height(beside, details.is_some());
         let split = inspector::split(

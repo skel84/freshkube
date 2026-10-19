@@ -33,9 +33,50 @@ mod example;
 mod links;
 mod page;
 mod table;
-#[cfg(test)]
-mod tests;
 mod view;
+
+/// What desktop's tests read of the pages it drives through the shell.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    pub use crate::{FRESH_FOR, Read, unmapped};
+
+    pub mod change {
+        pub use crate::change::read::Fetch;
+        pub use crate::change::table::columns;
+        pub use crate::change::{
+            ChangeEvent, ChangePage, Changes, LiveChanges, link_glyph, link_word, stage_line,
+        };
+    }
+    pub mod display {
+        pub use crate::display::{Body, Display, Mark};
+    }
+    pub mod example {
+        pub use crate::example::inputs;
+    }
+    pub mod across {
+        pub use crate::across::Across;
+    }
+    pub mod changes {
+        pub use crate::changes::display::Body;
+    }
+    pub mod links {
+        pub use crate::links::Connections;
+    }
+    pub mod page {
+        pub use crate::page::table::columns;
+        pub use crate::page::{ApplicationPage, PartRow, unchecked_words};
+    }
+}
+
+// Desktop's old paths to the crates this one uses, kept so the moved code
+// reads as before.
+#[cfg(test)]
+use freshkube_core::example::cluster as fixture;
+use freshkube_core::job as backend;
+use freshkube_observability as observability;
+use freshkube_probe::perf;
+use freshkube_resources as resources;
+use freshkube_ui::ui;
 
 use freshkube_delivery::change::live::Mapping;
 use std::time::Duration;
@@ -58,17 +99,16 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use crate::backend;
 use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
 use change::{ChangeEvent, ChangePage, Changes};
 use changes::ChangesEvent;
-pub(crate) use changes::ChangesPage;
-pub(crate) use column::Column;
-#[cfg(test)]
-pub(crate) use column::{ColumnApp, ColumnSection};
+pub use changes::ChangesPage;
+pub use column::Column;
+#[cfg(any(test, feature = "testing"))]
+pub use column::{ColumnApp, ColumnSection};
 use display::{Body, Display, Labels, MARKS, Mark};
-pub(crate) use example::Variant;
+pub use example::Variant;
 use links::Connections;
 use page::{ApplicationEvent, ApplicationPage};
 
@@ -77,7 +117,7 @@ const PREFIX: &str = "applications";
 /// The list's key context, around the table, drawn in every state.
 pub(crate) const CONTEXT: &str = "Applications";
 /// A read this recent is shown again without reading.
-const FRESH_FOR: Duration = Duration::from_secs(30);
+pub const FRESH_FOR: Duration = Duration::from_secs(30);
 /// Showing the page reads again once what it has is [`FRESH_FOR`] old.
 const ON_SHOW: OnShow = OnShow::ReadIfOlder(FRESH_FOR);
 /// How long one cluster's read may take: up to a few hundred lists.
@@ -97,7 +137,7 @@ gpui_kit::actions!(
     ]
 );
 
-pub(crate) fn key_bindings() -> Vec<KeyBinding> {
+pub fn key_bindings() -> Vec<KeyBinding> {
     let mut bindings = vec![
         KeyBinding::new("down", NextApplication, Some(CONTEXT)),
         KeyBinding::new("up", PreviousApplication, Some(CONTEXT)),
@@ -113,17 +153,17 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
 /// One read: what was derived, what its clusters are called, and which
 /// connection each is.
 #[derive(Clone)]
-struct Read {
-    derived: Derived,
-    labels: Labels,
-    connections: Connections,
-    changes: Changes,
+pub struct Read {
+    pub derived: Derived,
+    pub labels: Labels,
+    pub connections: Connections,
+    pub changes: Changes,
     /// Argo CD's entry, when no destination is mapped and the workspace has
     /// other entries: labelled workloads were read there alone.
-    unmapped: Option<String>,
+    pub unmapped: Option<String>,
     /// Where a live read found Argo CD's Applications, which the Changes
     /// list reads in.
-    argocd_namespace: Option<String>,
+    pub argocd_namespace: Option<String>,
 }
 
 /// The namespace Argo CD's Applications were first read in, on whichever
@@ -141,7 +181,7 @@ fn argocd_namespace(inputs: &Inputs) -> String {
 }
 
 impl Read {
-    fn of(inputs: &Inputs, labels: Labels, connections: Connections) -> Self {
+    pub fn of(inputs: &Inputs, labels: Labels, connections: Connections) -> Self {
         Self {
             derived: derive(inputs, &Override::default()),
             labels,
@@ -157,7 +197,7 @@ impl Read {
     /// session is keyed by the entry's id and maps to the open connection.
     /// The workspace of one has a session keyed by the connection's id,
     /// named by its context.
-    fn live(inputs: &Inputs, source: &ClusterSource, entry: Option<&str>) -> Self {
+    pub fn live(inputs: &Inputs, source: &ClusterSource, entry: Option<&str>) -> Self {
         let key = SessionKey::new(source.id.clone());
         let open: Vec<SessionKey> = [Some(key.clone()), entry.map(SessionKey::new)]
             .into_iter()
@@ -193,7 +233,7 @@ impl Read {
 
 /// Argo CD's entry, when no destination is mapped though the workspace has
 /// other entries: the labelled workloads were read there alone.
-fn unmapped(
+pub fn unmapped(
     sources: &Sources,
     destinations: &[freshkube_core::workspace::Destination],
     entries: &[String],
@@ -218,31 +258,31 @@ enum Entry {
 /// The workspace file's entries and the one the window is on, as the shell
 /// says: a part in another entry's cluster opens there after a switch.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Clusters {
-    pub(crate) entries: Vec<String>,
-    pub(crate) active: Option<String>,
+pub struct Clusters {
+    pub entries: Vec<String>,
+    pub active: Option<String>,
     /// What the workspace says about where Argo CD deploys
     /// (`Mapping::of`), which a change's live read resolves Stages through.
-    pub(crate) mapping: Mapping,
+    pub mapping: Mapping,
     /// Where each part is read: a live read reads each from its entry.
-    pub(crate) sources: Sources,
+    pub sources: Sources,
     /// The workspace's kubeconfig, `None` for the automatic one, which
     /// entries other than the open one are connected through.
-    pub(crate) kubeconfig: Option<std::path::PathBuf>,
+    pub kubeconfig: Option<std::path::PathBuf>,
 }
 
 /// A part to open once the window has switched to the workspace entry its
 /// cluster is: the shell asks first.
 #[derive(Clone, Debug)]
-pub(crate) struct SwitchLink {
-    pub(crate) entry: SharedString,
-    pub(crate) link: ResourceLink,
+pub struct SwitchLink {
+    pub entry: SharedString,
+    pub link: ResourceLink,
 }
 
 /// Whose read it is: the connection, and the workspace entry it is.
 type Identity = (String, Option<String>);
 
-pub(crate) struct ApplicationsPage {
+pub struct ApplicationsPage {
     runtime: tokio::runtime::Handle,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
@@ -253,11 +293,17 @@ pub(crate) struct ApplicationsPage {
     variant: Variant,
     /// The read, its answer and the work in flight. It is hidden while
     /// the page is, and its answer's age decides whether showing reads.
+    #[cfg(any(test, feature = "testing"))]
+    pub loader: Loader<Read, Identity>,
+    #[cfg(not(any(test, feature = "testing")))]
     loader: Loader<Read, Identity>,
     /// Example data answers after this, in tests, so a read stays in
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
     clusters: Clusters,
+    #[cfg(any(test, feature = "testing"))]
+    pub display: Display,
+    #[cfg(not(any(test, feature = "testing")))]
     display: Display,
     /// The banner for a refresh that failed over an earlier read, and its
     /// label, derived with the display.
@@ -275,9 +321,15 @@ pub(crate) struct ApplicationsPage {
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     filter: Entity<InputState>,
+    #[cfg(any(test, feature = "testing"))]
+    pub focus: FocusHandle,
+    #[cfg(not(any(test, feature = "testing")))]
     focus: FocusHandle,
     split: InspectorSplit,
     /// The frame's scroll, used while the window is short.
+    #[cfg(any(test, feature = "testing"))]
+    pub page_scroll: ScrollHandle,
+    #[cfg(not(any(test, feature = "testing")))]
     page_scroll: ScrollHandle,
     /// The selected application's id, kept while a read or filter shows it.
     selected: Option<SharedString>,
@@ -295,6 +347,9 @@ pub(crate) struct ApplicationsPage {
     /// kept until the next frame looks whether it had the keyboard.
     refocus: Option<FocusHandle>,
     /// `5 applications in 6 clusters`, in the status bar.
+    #[cfg(any(test, feature = "testing"))]
+    pub status: Segment,
+    #[cfg(not(any(test, feature = "testing")))]
     pub(crate) status: Segment,
     /// What the shell's column lists, derived with the display.
     column: Column,
@@ -310,7 +365,7 @@ impl EventEmitter<SwitchLink> for ApplicationsPage {}
 impl EventEmitter<crate::observability::RevisionLink> for ApplicationsPage {}
 
 impl ApplicationsPage {
-    pub(crate) fn new(
+    pub fn new(
         runtime: tokio::runtime::Handle,
         variant: Variant,
         window: &mut Window,
@@ -377,20 +432,20 @@ impl ApplicationsPage {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_variant(&mut self, variant: Variant) {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn set_variant(&mut self, variant: Variant) {
         self.variant = variant;
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_example_delay(&mut self, delay: Duration) {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn set_example_delay(&mut self, delay: Duration) {
         self.example_delay = delay;
     }
 
     /// The connection the page reads, and the workspace entry it is.
     /// Another connection, or the same one as another entry, drops what was
     /// read and what is in flight; the page reads it again if shown.
-    pub(crate) fn set_source(
+    pub fn set_source(
         &mut self,
         source: Option<ClusterSource>,
         entry: Option<String>,
@@ -419,7 +474,7 @@ impl ApplicationsPage {
 
     /// The workspace's entries and the open one. The open application's
     /// parts say again where each opens.
-    pub(crate) fn set_clusters(&mut self, clusters: Clusters, cx: &mut Context<Self>) {
+    pub fn set_clusters(&mut self, clusters: Clusters, cx: &mut Context<Self>) {
         if clusters == self.clusters {
             return;
         }
@@ -509,7 +564,7 @@ impl ApplicationsPage {
     /// entries are a switch away. In example data the acme cluster the open
     /// entry is stands for the open example cluster, so it follows a switch
     /// whichever arrives first, the switch or the read.
-    fn connections(&self, read: &Read) -> Connections {
+    pub fn connections(&self, read: &Read) -> Connections {
         let connections = match &self.source {
             Some(source) if matches!(source.access, ClusterAccess::Example(_)) => {
                 example::connections(&source.id, self.clusters.active.as_deref())
@@ -528,7 +583,7 @@ impl ApplicationsPage {
 
     /// Shown, the page reads unless what it has is fresh; hidden, it drops
     /// the read in flight.
-    pub(crate) fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if visible == self.visible {
             return;
         }
@@ -553,7 +608,7 @@ impl ApplicationsPage {
     }
 
     /// Refresh: reads again, whatever is in flight, while shown.
-    pub(crate) fn refresh(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if !self.visible {
             return;
         }
@@ -568,8 +623,8 @@ impl ApplicationsPage {
         self.read(cx);
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_reading(&self) -> bool {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn is_reading(&self) -> bool {
         self.loader.is_loading()
     }
 
@@ -855,7 +910,7 @@ impl ApplicationsPage {
     }
 
     /// Back to the application's page, with the selection it had.
-    pub(super) fn close_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.change.take().is_some() {
             self.focus_shown(window, cx);
             cx.notify();
@@ -863,17 +918,12 @@ impl ApplicationsPage {
     }
 
     /// The change shown, if one is.
-    pub(crate) fn change_page(&self) -> Option<&Entity<ChangePage>> {
+    pub fn change_page(&self) -> Option<&Entity<ChangePage>> {
         self.change.as_ref().map(|(page, _)| page)
     }
 
     /// Follows a Stage of the open application, for `FRESHKUBE_PAGE=change`.
-    pub(crate) fn follow_named(
-        &mut self,
-        stage: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn follow_named(&mut self, stage: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.follow(stage, window, cx);
     }
 
@@ -896,7 +946,7 @@ impl ApplicationsPage {
 
     /// Opens an application by its name, selecting it on the list first,
     /// for `FRESHKUBE_PAGE=application`.
-    pub(crate) fn open_named(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_named(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(key) = self
             .display
             .rows
@@ -911,13 +961,13 @@ impl ApplicationsPage {
     }
 
     /// The open application's page, if one shows.
-    pub(crate) fn open_page(&self) -> Option<&Entity<ApplicationPage>> {
+    pub fn open_page(&self) -> Option<&Entity<ApplicationPage>> {
         self.open.as_ref().map(|(page, _)| page)
     }
 
     /// Puts the keyboard on what shows: the open application's page, or
     /// the list.
-    pub(crate) fn focus_shown(&self, window: &mut Window, cx: &mut App) {
+    pub fn focus_shown(&self, window: &mut Window, cx: &mut App) {
         if self.changes_shown {
             let focus = self.changes.read(cx).shown_focus(cx);
             window.focus(&focus, cx);
@@ -938,7 +988,7 @@ impl ApplicationsPage {
     }
 
     /// The status bar's segment: the Changes list's while it shows.
-    pub(crate) fn status(&self, cx: &App) -> Segment {
+    pub fn status(&self, cx: &App) -> Segment {
         if self.changes_shown {
             return self.changes.read(cx).status.clone();
         }
@@ -990,7 +1040,7 @@ impl ApplicationsPage {
 
     /// The motion over the table's loading rows, which the shell mounts
     /// beside the cached page.
-    pub(crate) fn loading_motion(&self, cx: &App) -> Option<Entity<kit::LoadingMotion>> {
+    pub fn loading_motion(&self, cx: &App) -> Option<Entity<kit::LoadingMotion>> {
         if self.changes_shown {
             return self.changes.read(cx).loading_motion(cx);
         }
@@ -1091,9 +1141,9 @@ impl ApplicationsPage {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl ApplicationsPage {
-    pub(crate) fn names(&self) -> Vec<String> {
+    pub fn names(&self) -> Vec<String> {
         self.lines
             .iter()
             .filter_map(|entry| match entry {
@@ -1103,16 +1153,16 @@ impl ApplicationsPage {
             .collect()
     }
 
-    pub(crate) fn body(&self) -> &Body {
+    pub fn body(&self) -> &Body {
         &self.display.body
     }
 
-    pub(crate) fn has_read(&self) -> bool {
+    pub fn has_read(&self) -> bool {
         self.loader.data().is_some()
     }
 
     /// A read again that fails, as a cluster that stops answering does.
-    pub(crate) fn fail_read(&mut self, why: &str, cx: &mut Context<Self>) {
+    pub fn fail_read(&mut self, why: &str, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
         };

@@ -4,12 +4,12 @@
 //! place.
 use super::display::{Cell, TrailGroup};
 use super::*;
-use crate::screens::{field, mono};
 use crate::ui::{self, dp};
 use freshkube_ui::inspector::{self, Inspector};
 use freshkube_ui::page::{self, PageHeader};
 use freshkube_ui::palette::palette;
 use freshkube_ui::tooltip::FollowTooltip as _;
+use freshkube_ui::ui::{field, mono};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     Disableable, Sizable,
@@ -224,7 +224,7 @@ impl ChangesPage {
             .min_h_0()
             .child(kit::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
-        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let beside = freshkube_ui::page::page_width(window) >= inspector::SPLIT_WIDTH;
         let details = self.render_detail(cx);
         let least = self.split.short_height(beside, details.is_some());
         let split = inspector::split("changes-split", &self.split, beside, table, details, window);
