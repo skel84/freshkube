@@ -1,0 +1,1 @@
+- **YAML documents:** right-click a line in Resources or the node pane for Copy, Select all and Find with their keyboard shortcuts; clicks inside the selected range keep it, and clicks outside select one line.

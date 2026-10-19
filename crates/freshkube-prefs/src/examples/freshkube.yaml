@@ -1,0 +1,97 @@
+# freshkube.yaml: what Freshkube reads, and from where.
+# Settings writes this file whole and keeps only this header: comments you add
+# are not kept by a save (the hand-edited file is kept as freshkube.yaml.bak).
+# Keys never go here: they live in keys.json, or in a file api_key_file names.
+version: 1
+
+# The kubeconfig the entries' contexts come from. Optional: without it, the
+# default kubeconfig (KUBECONFIG, then ~/.kube/config).
+kubeconfig: /home/acme/.kube/config
+
+# The workspace: one entry per cluster. At most 64.
+clusters:
+  - id: cluster-a                 # stable; pins, destinations and links name it
+    role: core                    # core, cicd or environment
+    context: cluster-a            # the kubeconfig context
+    talosconfig: /home/acme/.talos/config   # optional: Talos pages for this entry
+    talos_context: cluster-a                # optional, needs talosconfig
+    coroot:                       # optional (#269): this entry in Coroot
+      cluster: cluster-a          # the Coroot cluster that is this entry
+    # No metrics: key, so in the central store its series are cluster="cluster-a".
+    # No results: key, so Tekton Results is off for this entry.
+
+  - id: cluster-b
+    role: cicd
+    context: cluster-b
+    results:                      # optional (#268): where Tekton Results is read
+      address: https://results.example.test:8080
+    metrics:
+      value: ci-b                 # its series are cluster="ci-b", not its id
+
+  - id: cluster-c
+    role: environment
+    context: cluster-c
+    results:
+      forward:                    # a port forward, started only by an explicit Forward
+        namespace: tekton-pipelines
+        service: tekton-results-api-service
+        port: 8080
+    coroot:
+      project: shop-api           # overrides coroot.project for this entry
+      cluster: cluster-c
+    metrics:
+      source:                     # its own store, under any mode
+        service:                  # a Service in this entry, through its API server
+          namespace: monitoring
+          name: prometheus-operated
+          port: 9090
+
+# Argo CD destinations, matched by server or by name, and the entry each is.
+destinations:
+  - server: https://cluster-c.example.test:6443
+    entry: cluster-c
+  - name: acme-prod
+    entry: cluster-a
+
+# Pins: a part read from a named entry. A part not named follows the roles.
+sources:
+  kargo: cluster-b
+  builds: cluster-b
+  argocd: cluster-a
+
+# Where metrics come from: one choice.
+#   automatic  find Prometheus in the open cluster (the default, as today)
+#   central    one store for every entry, its series told apart by a label
+#   per-entry  each entry names its own source
+metrics:
+  mode: central
+  store:                          # central only
+    entry: cluster-a              # the entry that hosts it
+    service:                      # reached through cluster-a's API server proxy
+      namespace: vm
+      name: vmselect
+      port: 8481
+      https: false                # the port speaks TLS
+      path: /select/0/prometheus  # a prefix, as VictoriaMetrics' vmselect needs
+    # Instead of entry: and service:, a URL, with its token in keys.json:
+    # url: https://metrics.example.test/select/0/prometheus
+    # token: keys.json
+  label: cluster                  # the label that tells clusters apart; the default
+
+# The Coroot connection. Optional: without it, Coroot isn't connected.
+coroot:
+  server: https://coroot.example.test
+  sign_in: api-key                # api-key, session or anonymous
+  key: keys.json                  # the key the app keeps for this server (#707)
+  # api_key_file: /home/acme/.config/freshkube/coroot.key   # instead of key:
+  project: shop-api               # for every entry that names none
+
+# The supply chain's trust (#268). Optional: without it, no signature is
+# verified and build → supply chain stays Claimed.
+supply_chain:
+  public_key_file: /home/acme/keys/cosign.pub
+  transparency_log: false         # the default; true reads the log's entries
+  evidence:                       # the pipeline's own evidence record, optional
+    result: build-evidence        # the PipelineRun result that holds it
+    commit: /commit               # JSON pointers into that result
+    digest: /image/digest
