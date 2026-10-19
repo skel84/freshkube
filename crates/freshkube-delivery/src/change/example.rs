@@ -106,6 +106,12 @@ fn link(
         confidence,
         by: by.into(),
         before: before.into(),
+        key: match by {
+            "digest" => Some(DIGEST.into()),
+            "commit" => Some(COMMIT.into()),
+            "provenance" => Some(HEAD.into()),
+            _ => None,
+        },
         before_says: before_says.into(),
         here_says: here_says.into(),
         why: why.into(),
@@ -346,6 +352,7 @@ fn gates(
     group: usize,
     stage: usize,
     name: &str,
+    follows: &str,
     rows: [(HealthIndicator, &str, Option<DateTime<Utc>>); 3],
 ) -> Vec<Hop> {
     ["Eligible", "Promotion", "Verification"]
@@ -360,6 +367,7 @@ fn gates(
             from: CICD.into(),
             at,
             link: None,
+            after: Some(follows.into()),
             shows: Shows::Stage(stage),
         })
         .collect()
@@ -377,7 +385,7 @@ fn deployed(
     pods: &str,
 ) -> Vec<Hop> {
     let app = format!("{PROJECT}-{stage}");
-    vec![
+    let mut hops = vec![
         Hop {
             key: format!("{stage}-argocd"),
             group,
@@ -387,6 +395,7 @@ fn deployed(
             from: CORE.into(),
             at: Some(synced),
             link: Some(Confidence::Confirmed),
+            after: Some(format!("{stage}-eligible")),
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: "Argo CD Application".into(),
                 title: app.clone(),
@@ -423,6 +432,7 @@ fn deployed(
             from: cluster.into(),
             at: Some(synced),
             link: Some(Confidence::Confirmed),
+            after: Some(format!("{stage}-argocd")),
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: "Deployment".into(),
                 title: DEPLOYMENT.into(),
@@ -458,6 +468,7 @@ fn deployed(
             from: cluster.into(),
             at: Some(synced),
             link: Some(Confidence::Confirmed),
+            after: Some(format!("{stage}-deployment")),
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: "Pods".into(),
                 title: "checkout-api".into(),
@@ -483,7 +494,14 @@ fn deployed(
                 actions: vec![resource("the Deployment", deployment(cluster))],
             })),
         },
-    ]
+    ];
+    // The Application joins the Promotion's revision.
+    if let Shows::Hop(detail) = &mut hops[0].shows
+        && let Some(link) = &mut detail.link
+    {
+        link.key = Some(revision.into());
+    }
+    hops
 }
 
 fn build(now: DateTime<Utc>) -> Vec<Hop> {
@@ -496,6 +514,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         from: GIT.into(),
         at: Some(at(now, 12)),
         link: None,
+        after: None,
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Pull request".into(),
             title: "#418".into(),
@@ -531,6 +550,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         from: CICD.into(),
         at: Some(at(now, 5)),
         link: Some(Confidence::Claimed),
+        after: Some("pr".into()),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "PipelineRun".into(),
             title: "checkout-pr-418-m2q8".into(),
@@ -572,6 +592,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         from: CICD.into(),
         at: Some(at(now, 18)),
         link: Some(Confidence::Confirmed),
+        after: Some("pr".into()),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "PipelineRun".into(),
             title: "checkout-push-x7k2".into(),
@@ -624,6 +645,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         // log is read, so nothing here verifies the signature (ROADMAP
         // step 5).
         link: Some(Confidence::Claimed),
+        after: Some("push-run".into()),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Tekton Chains".into(),
             title: "checkout-push-x7k2-build".into(),
@@ -659,6 +681,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         from: CICD.into(),
         at: Some(at(now, 18)),
         link: Some(Confidence::Confirmed),
+        after: Some("signature".into()),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Conforma".into(),
             title: "acme-prod".into(),
@@ -712,6 +735,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         from: REGISTRY.into(),
         at: Some(at(now, 18)),
         link: Some(Confidence::Confirmed),
+        after: Some("push-run".into()),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Registry artifact".into(),
             title: "shop/checkout-api".into(),
@@ -748,6 +772,7 @@ fn build(now: DateTime<Utc>) -> Vec<Hop> {
         from: CICD.into(),
         at: Some(at(now, 19)),
         link: Some(Confidence::Confirmed),
+        after: Some("image".into()),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Kargo Freight".into(),
             title: FREIGHT.into(),
@@ -803,6 +828,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
             from: CORE.into(),
             at: Some(at(now, -48)),
             link: None,
+            after: Some("prod-ams-eligible".into()),
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: "Argo CD Application".into(),
                 title: app.into(),
@@ -835,6 +861,7 @@ fn waiting(group: usize, now: DateTime<Utc>) -> Vec<Hop> {
             from: "prod-ams".into(),
             at: None,
             link: Some(Confidence::Unknown),
+            after: Some("prod-ams-argocd".into()),
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: "Pods".into(),
                 title: "checkout-api".into(),
@@ -899,6 +926,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
         dev,
         0,
         "dev",
+        "freight",
         [
             (Healthy, "From the Warehouse", Some(at(now, 19))),
             (Healthy, "Automatic · 4 of 4 steps", Some(at(now, 20))),
@@ -917,6 +945,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
         stage,
         1,
         "stage",
+        "dev-eligible",
         [
             (Healthy, "Verified in dev", Some(at(now, 31))),
             (Healthy, "Automatic · 4 of 4 steps", Some(at(now, 41))),
@@ -935,6 +964,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
         ams,
         2,
         "prod-ams",
+        "stage-eligible",
         [
             (Healthy, "Verified in stage", Some(at(now, 62))),
             (Pending, "Waiting for promotion: auto-promotion off", None),
@@ -946,6 +976,7 @@ pub(crate) fn change(now: DateTime<Utc>) -> Change {
         lon,
         3,
         "prod-lon",
+        "stage-eligible",
         [
             (Info, "Approved by hand, past stage", Some(at(now, 50))),
             (Healthy, "Automatic · 4 of 4 steps", Some(at(now, 52))),
@@ -1195,6 +1226,7 @@ fn refused_application(stage: &str, group: usize, why: &str) -> Hop {
         from: CORE.into(),
         at: None,
         link: Some(Confidence::Unknown),
+        after: Some(format!("{stage}-eligible")),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Argo CD Application".into(),
             title: format!("{PROJECT}-{stage}"),
@@ -1236,6 +1268,7 @@ fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
         from: CORE.into(),
         at: None,
         link: Some(Confidence::Claimed),
+        after: Some(format!("{stage}-argocd")),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Deployment".into(),
             title: DEPLOYMENT.into(),
@@ -1255,6 +1288,7 @@ fn reported(stage: &str, cluster: &str, group: usize, why: &str) -> Hop {
                 confidence: Confidence::Claimed,
                 by: "name".into(),
                 before: "Application".into(),
+                key: None,
                 before_says: format!("status.resources lists Deployment {PROJECT}/{DEPLOYMENT}"),
                 here_says: "not read".into(),
                 why: format!("Only Argo CD's status says so: {why}, so nothing there confirms it."),
@@ -1292,6 +1326,46 @@ mod tests {
         );
         // Travel order: groups never go back.
         assert!(change.hops.windows(2).all(|w| w[0].group <= w[1].group));
+    }
+
+    #[test]
+    fn every_hop_follows_a_hop_of_the_change_and_two_stages_share_their_stage_before() {
+        let change = change(now());
+        let keys: Vec<&str> = change.hops.iter().map(|hop| hop.key.as_str()).collect();
+        for hop in &change.hops {
+            if let Some(after) = hop.after.as_deref() {
+                assert!(keys.contains(&after), "{} follows {after}", hop.key);
+                assert_ne!(after, hop.key);
+            }
+        }
+        let after = |key: &str| {
+            change
+                .hops
+                .iter()
+                .find(|hop| hop.key == key)
+                .and_then(|hop| hop.after.as_deref())
+        };
+        // prod-ams and prod-lon both run the commit after stage.
+        assert_eq!(after("prod-ams-eligible"), Some("stage-eligible"));
+        assert_eq!(after("prod-lon-eligible"), Some("stage-eligible"));
+        assert_eq!(after("dev-eligible"), Some("freight"));
+    }
+
+    #[test]
+    fn a_link_names_the_value_it_joined_on() {
+        let change = change(now());
+        for hop in &change.hops {
+            if let Shows::Hop(detail) = &hop.shows
+                && let Some(link) = &detail.link
+            {
+                assert!(
+                    link.key.as_deref().is_some_and(|key| !key.is_empty()),
+                    "{} joined by {} says no key",
+                    hop.key,
+                    link.by
+                );
+            }
+        }
     }
 
     #[test]
