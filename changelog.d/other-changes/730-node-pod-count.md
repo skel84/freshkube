@@ -1,0 +1,1 @@
+- **Node pods:** example node badges, Pods columns and Pods lists agree by excluding unscheduled pods from node lists.

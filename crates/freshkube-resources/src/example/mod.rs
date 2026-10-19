@@ -379,6 +379,13 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
         _ => ready.to_owned(),
     };
     let all_ready = ready.split_once('/').is_some_and(|(up, all)| up == all);
+    // Pending examples are unschedulable, as their PodScheduled condition says.
+    // The node cell also supplies the generated object's node assignment.
+    let node = if status == "Pending" {
+        None
+    } else {
+        nodes.get(ix % nodes.len().max(1)).copied()
+    };
     let mut row = ResourceRow {
         identity: identity(connection, "pods", namespace, &name, ix),
         cells: vec![
@@ -388,11 +395,7 @@ fn pod(connection: &str, ix: usize, nodes: &[&str], now: i64) -> ResourceRow {
             restarts,
             String::new(),
             format!("10.244.{}.{}", ix / 200, ix % 200 + 10),
-            nodes
-                .get(ix % nodes.len().max(1))
-                .copied()
-                .unwrap_or("<none>")
-                .into(),
+            node.unwrap_or("<none>").into(),
         ],
         created: Some(now - (ix as i64 * 7_919 % 2_000_000) - 120),
         terminating: false,
