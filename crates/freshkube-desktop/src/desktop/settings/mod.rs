@@ -7,6 +7,7 @@
 //! which entry each part of the delivery chain is read from, and check them
 //! (`sources/`). Example data and a window without a preferences folder
 //! show the lists and change nothing.
+pub(super) mod connection;
 pub(super) mod destinations;
 mod edit;
 #[cfg(test)]

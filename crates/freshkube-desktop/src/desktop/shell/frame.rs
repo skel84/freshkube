@@ -415,7 +415,7 @@ pub(super) fn settings_content(
         .child(if kubernetes_only {
             kubernetes_only::settings_section(&view, popover.clone(), cx)
         } else {
-            super::super::kubeconfig::settings_section(&view, popover.clone(), cx).into_any_element()
+            super::super::settings::connection::kubeconfig_section(&view, popover.clone(), cx).into_any_element()
         })
         .child(divider(2))
         .child(freshkube_ui::form::group("settings-quick", "Quick controls")
