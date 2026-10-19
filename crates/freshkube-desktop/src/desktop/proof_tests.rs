@@ -7,7 +7,7 @@ use freshkube_ui::real_io::RealIo;
 use gpui_kit::{AnyWindowHandle, AppContext, Entity, TestAppContext};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -25,6 +25,7 @@ struct FakeApi {
     watching: Arc<AtomicUsize>,
     table_watching: Arc<AtomicUsize>,
     refuse_lists: Arc<AtomicBool>,
+    nodes_status: Arc<AtomicU16>,
     hold_lists: Arc<(Mutex<bool>, Condvar)>,
 }
 
@@ -73,6 +74,7 @@ impl FakeApi {
             request.watch,
             request.table,
         );
+        let nodes = request.line.starts_with("get /api/v1/nodes?");
         self.requests.lock().unwrap().push(request);
         let json = |body: &str| {
             format!(
@@ -84,6 +86,19 @@ impl FakeApi {
             let body =
                 r#"{"major":"1","minor":"30","gitVersion":"v1.30.0","platform":"linux/amd64"}"#;
             _ = stream.write_all(json(body).as_bytes());
+            return;
+        }
+        let status = self.nodes_status.load(Ordering::SeqCst);
+        if nodes && status != 0 {
+            let body = serde_json::json!({
+                "apiVersion": "v1", "kind": "Status", "status": "Failure",
+                "reason": "Synthetic", "code": status, "message": "synthetic failure",
+            })
+            .to_string();
+            _ = stream.write_all(format!(
+                "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ).as_bytes());
             return;
         }
         if self.refuse_lists.load(Ordering::SeqCst) {
@@ -316,6 +331,88 @@ async fn settled(cx: &mut TestAppContext, view: &Entity<Pilot>) {
         .await,
         "the startup read never finished"
     );
+}
+
+async fn summary_list_failure_is_shown(
+    cx: &mut TestAppContext,
+    code: u16,
+    kind: freshkube_core::failure::FailureKind,
+    words: &str,
+) {
+    use freshkube_core::kubernetes_summary::{ObservationFailure, Part, Source};
+    use gpui_kit::test::TestWindowExt;
+    let api = FakeApi::start();
+    api.nodes_status.store(code, Ordering::SeqCst);
+    let guard = folder(&api, &api);
+    let (_runtime, handle, view) = launched(cx, &guard, &api).await;
+    cx.wait_for_io(handle, |_, cx| {
+        view.read(cx)
+            .registry
+            .active()
+            .kubernetes_summary
+            .data()
+            .is_some_and(|summary| {
+                summary.observations[&Source::Nodes].failure().is_some()
+                    && summary.pods.is_current()
+            })
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        let pilot = view.read(cx);
+        let summary = pilot.registry.active().kubernetes_summary.data().unwrap();
+        let unavailable = match (&summary.nodes, code) {
+            (Part::Refused(unavailable), 403) | (Part::Failed(unavailable), 404) => unavailable,
+            other => panic!("a failed list must not become an empty count: {other:?}"),
+        };
+        assert_eq!(unavailable.failure, Some(ObservationFailure::Read(kind)));
+        assert_eq!(unavailable.message, words);
+        assert!(unavailable.last_good.is_none());
+        assert!(
+            summary.pods.is_current(),
+            "the other collections still answer"
+        );
+        let display = pilot.overview_display(cx);
+        let card = display
+            .cards
+            .iter()
+            .find(|card| card.id == "tile-nodes")
+            .unwrap();
+        assert_eq!(card.figure.as_ref(), "Unavailable");
+        assert_eq!(card.detail.as_ref(), format!("Can't read nodes: {words}"));
+        window.render_frame(cx);
+        assert!(window.find("tile-nodes").visible());
+        assert!(window.find("tile-pods").visible());
+    })
+    .unwrap();
+    assert!(
+        api.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| { request.line.starts_with("get /api/v1/nodes?") && !request.watch })
+    );
+}
+
+#[gpui_kit::test]
+async fn a_summary_list_403_shows_the_refusal_words(cx: &mut TestAppContext) {
+    summary_list_failure_is_shown(
+        cx,
+        403,
+        freshkube_core::failure::FailureKind::Forbidden,
+        "Not allowed to read this collection",
+    )
+    .await;
+}
+
+#[gpui_kit::test]
+async fn a_summary_list_404_shows_the_not_served_words(cx: &mut TestAppContext) {
+    summary_list_failure_is_shown(
+        cx,
+        404,
+        freshkube_core::failure::FailureKind::NotFound,
+        "This API is not served",
+    )
+    .await;
 }
 
 #[gpui_kit::test]

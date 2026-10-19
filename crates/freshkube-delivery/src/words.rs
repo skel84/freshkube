@@ -51,6 +51,7 @@ pub(crate) fn unreadable(what: &str, entry: &str, why: &str) -> String {
 /// What reading `what` on `entry` came to, in a sentence, for a read that
 /// failed with `kind` and the words `why`. A [`FailureKind::Config`] is a
 /// part no entry holds, and says `why` alone.
+/// Surface: delivery entry sentences in Sources, Applications banners and change hops.
 pub fn failed(kind: FailureKind, what: &str, entry: &str, why: &str) -> String {
     match kind {
         FailureKind::Config => why.to_owned(),
