@@ -153,7 +153,9 @@ pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
     });
 }
 
-pub(crate) fn run(options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
+pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
+    // Before anything reads the workspace.
+    options.setup_notice = startup::migrate_setup(&options);
     let error = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_error = error.clone();
     gpui_kit::application()
@@ -743,6 +745,9 @@ impl Pilot {
             talosconfig: options.config_path.clone(),
             talos_context: options.context.clone(),
         };
+        if let Some(notice) = options.setup_notice.take() {
+            self.tell(notice, window, cx);
+        }
         self.load_workspace(cx);
         self.rebuild_switcher(cx);
         let workspace_entry = self.launch_entry(names_source, cx);

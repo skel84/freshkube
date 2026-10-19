@@ -28,9 +28,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::workspace::{self, Destination, Entry, MAX_BYTES, Pins, Seen, VERSION, Workspace};
 
+mod migrate;
 mod types;
 mod validate;
 
+pub use migrate::{Kept, Outcome, migrate};
 pub use types::{
     Coroot, DEFAULT_LABEL, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson, Metrics,
     MetricsService, Mode, Results, SignIn, Source, Store, SupplyChain,

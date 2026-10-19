@@ -25,6 +25,8 @@ pub struct GpuiOptions {
     named_source: bool,
     preferences: Option<PathBuf>,
     keyring: bool,
+    /// What the move into `freshkube.yaml` did at this launch, shown once.
+    setup_notice: Option<String>,
     /// The debug knobs the binary parsed (`DebugOptions::from_env`); startup
     /// reads them here, never from the environment.
     #[cfg_attr(not(any(debug_assertions, feature = "stress")), allow(dead_code))]
@@ -46,6 +48,7 @@ impl GpuiOptions {
             named_source: false,
             preferences: None,
             keyring: false,
+            setup_notice: None,
             debug: DebugOptions::default(),
         }
     }
