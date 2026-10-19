@@ -450,6 +450,21 @@ async fn hidden_page_cancels_tokio_work_and_rejects_a_queued_answer(cx: &mut Tes
     });
 }
 
+// Hold an actual completion owner instead of observing the removed global
+// counter. Cancellation must invalidate this loader even when no report reads.
+fn hold_read(
+    page: &mut ObservabilityPage,
+    cx: &mut Context<ObservabilityPage>,
+) -> crate::connection::ReadJob {
+    let read = page.spawn_owned_read(
+        std::future::pending::<Result<(), freshkube_core::coroot::ReadError>>(),
+        |_, _, _| panic!("cancelled read must not deliver"),
+        cx,
+    );
+    page.live.jobs.push(read.clone());
+    read
+}
+
 #[gpui_kit::test]
 fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestAppContext) {
     use freshkube_core::coroot::{Association, Credentials, ProjectInfo, Provider};
@@ -465,7 +480,8 @@ fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestApp
             page.live.source = Some(provider.source(&project));
             // Without a chosen application, its page starts no I/O.
             page.destination = Destination::Application;
-            let generation = page.live.generation;
+            let read = hold_read(page, cx);
+            let revision = read.borrow().revision();
             page.select_project(
                 &ProjectInfo {
                     id: "two".into(),
@@ -473,7 +489,7 @@ fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestApp
                 },
                 cx,
             );
-            assert!(page.live.generation > generation);
+            assert!(read.borrow().revision() > revision);
             let prior = page.live.source.clone();
             page.live.access = Some("access:a".into());
             page.associate(Some("coroot-cluster".into()), cx);
@@ -485,16 +501,18 @@ fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestApp
                     "coroot-cluster".into()
                 ))
             );
-            let generation = page.live.generation;
+            let read = hold_read(page, cx);
+            let revision = read.borrow().revision();
             page.set_source(None, cx);
-            assert!(page.live.generation > generation);
+            assert!(read.borrow().revision() > revision);
             assert!(page.live.source.as_ref().unwrap().association().is_none());
             let prior = page.live.range;
             page.set_range(24, cx);
             assert_ne!(prior, page.live.range);
-            let generation = page.live.generation;
+            let read = hold_read(page, cx);
+            let revision = read.borrow().revision();
             page.disconnect(window, cx);
-            assert!(page.live.generation > generation);
+            assert!(read.borrow().revision() > revision);
             assert!(page.live.provider.is_none());
             assert!(page.live.source.is_none());
             assert_ne!(
@@ -572,7 +590,8 @@ fn reopen_and_explicit_refresh_advance_the_window_but_navigation_keeps_it(cx: &m
                 page.live.range, original,
                 "inspect the same captured window across destinations"
             );
-            let generation = page.live.generation;
+            let read = hold_read(page, cx);
+            let revision = read.borrow().revision();
             page.refresh_current(cx);
             assert_eq!(
                 page.live.range.to.unwrap() - original.to.unwrap(),
@@ -582,7 +601,7 @@ fn reopen_and_explicit_refresh_advance_the_window_but_navigation_keeps_it(cx: &m
                 page.live.range.to.unwrap() - page.live.range.from.unwrap(),
                 chrono::Duration::hours(3)
             );
-            assert!(page.live.generation > generation);
+            assert!(read.borrow().revision() > revision);
             page.set_visible(false, cx);
         })
     });

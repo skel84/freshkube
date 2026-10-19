@@ -234,7 +234,7 @@ fn a_held_link_opens_nothing_while_its_entry_has_no_source_and_is_dropped_when_i
             pilot.applied.context = None;
             pilot.pending_link = Some(super::switch::PendingLink::for_test(
                 "dev-fra",
-                pilot.entry_generation,
+                pilot.entry_locate.ticket(),
                 pod_link("dev-fra"),
                 LinkWork::Open {
                     kind: builtin("pods").unwrap(),
@@ -252,13 +252,13 @@ fn a_held_link_opens_nothing_while_its_entry_has_no_source_and_is_dropped_when_i
     // The entry moving on (a new open, an error) drops it with the entry kept.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.entry_generation = pilot.entry_generation.wrapping_add(1);
+            pilot.entry_locate.invalidate(None, cx);
             pilot.applied.context = Some("dev-fra".into());
             pilot.open_pending_link(window, cx);
             assert!(pilot.pending_link.is_none());
             pilot.pending_link = Some(super::switch::PendingLink::for_test(
                 "dev-fra",
-                pilot.entry_generation,
+                pilot.entry_locate.ticket(),
                 pod_link("dev-fra"),
                 LinkWork::Open {
                     kind: builtin("pods").unwrap(),
@@ -356,7 +356,7 @@ fn hold(cx: &mut TestAppContext, view: &Entity<Pilot>, entry: &str, link: Object
         view.update(cx, |pilot, _| {
             pilot.pending_link = Some(super::switch::PendingLink::for_test(
                 entry,
-                pilot.entry_generation,
+                pilot.entry_locate.ticket(),
                 link,
                 LinkWork::Open {
                     kind: builtin("pods").unwrap(),
@@ -632,7 +632,7 @@ fn cancelling_the_switch_changes_nothing(cx: &mut TestAppContext) {
     view.update(cx, |pilot, _| {
         pilot.pending_link = Some(super::switch::PendingLink::for_test(
             "stage-fra",
-            pilot.entry_generation,
+            pilot.entry_locate.ticket(),
             pod_link("stage-fra"),
             LinkWork::Open {
                 kind: builtin("pods").unwrap(),
@@ -859,7 +859,7 @@ fn another_link_or_switch_drops_a_link_held_for_an_entry(cx: &mut TestAppContext
             view.update(cx, |pilot, _| {
                 pilot.pending_link = Some(super::switch::PendingLink::for_test(
                     "dev-fra",
-                    pilot.entry_generation,
+                    pilot.entry_locate.ticket(),
                     pod_link("dev-fra"),
                     LinkWork::Open {
                         kind: builtin("pods").unwrap(),

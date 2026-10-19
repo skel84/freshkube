@@ -219,7 +219,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let generation = self.entry_generation;
+        let entry_request = self.entry_locate.ticket();
         let request = self
             .kubeconfig_draft
             .read
@@ -253,7 +253,7 @@ impl Pilot {
                     return;
                 }
                 draft.inspecting = false;
-                if for_entry && generation != view.entry_generation {
+                if for_entry && entry_request != view.entry_locate.ticket() {
                     return;
                 }
                 draft.inspection = Some(result);

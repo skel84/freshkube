@@ -1,0 +1,1 @@
+- **Internal:** move Observability page reads and workspace-entry location onto the shared read owners, and document the remaining allowed counters.
