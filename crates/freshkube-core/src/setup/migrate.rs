@@ -5,14 +5,16 @@
 //! Each step looks at the disk first, so a launch that stops anywhere is
 //! finished by the next, and a launch with nothing to do does nothing.
 //!
-//! **It never deletes and never replaces a file.** The setup is written to a
+//! **It never replaces a setup file or a backup.** The setup is written to a
 //! temporary file and linked into place, which fails if another launch got
 //! there first; that launch's file is then the one read. The old files are
 //! renamed by [`workspace::set_aside`], which keeps every backup. Whatever is
 //! unsure leaves the old files exactly where they were, in use as before: an
 //! unusable `workspace.json`, a setup that would not read back as written, a
 //! `preferences.json` that can't take the reconnect flag, a file that can't
-//! be linked.
+//! be linked. The reconnect preference is checked without writes before
+//! linking and saved only after this launch installs its YAML. If saving
+//! the preference fails, the old JSON files stay in place.
 //!
 //! What moves: the workspace with every key it holds, unknown ones too;
 //! `coroot.json`'s server, sign-in and project, with `key: keys.json` when it
@@ -173,16 +175,29 @@ fn run(preferences: &Path, now: DateTime<Utc>, before_link: impl FnOnce()) -> Ou
         tracing::warn!("workspace not migrated: the setup would not read back as built");
         return Outcome::Kept(Kept::NotSafe);
     }
-    if reconnect && let Err(why) = keep_reconnect(&files.preferences) {
-        tracing::warn!("workspace not migrated, preferences.json can't take a flag: {why}");
-        return Outcome::Kept(Kept::NotSafe);
-    }
-    match link_into_place(&files.setup, &text, before_link) {
-        Ok(_) => {}
+    let reconnect = match reconnect
+        .map(|flag| prepare_reconnect(&files.preferences, flag))
+        .transpose()
+    {
+        Ok(text) => text.flatten(),
+        Err(why) => {
+            tracing::warn!("workspace not migrated, preferences.json can't take a flag: {why}");
+            return Outcome::Kept(Kept::NotSafe);
+        }
+    };
+    let linked = match link_into_place(&files.setup, &text, before_link) {
+        Ok(linked) => linked,
         Err(why) => {
             tracing::warn!("workspace not migrated, freshkube.yaml can't be written: {why}");
             return Outcome::Kept(Kept::NotSafe);
         }
+    };
+    if matches!(linked, Linked::Ours)
+        && let Some(text) = reconnect
+        && let Err(why) = workspace::write_whole(&files.preferences, &text)
+    {
+        tracing::warn!("old JSON files kept, preferences.json couldn't take a flag: {why}");
+        return Outcome::Kept(Kept::NotSafe);
     }
     // Whoever's file is in place is the one read, and the old files go aside.
     adopt(&files, now)
@@ -222,7 +237,7 @@ fn build(
     mut workspace: Workspace,
     coroot: Option<SavedCoroot>,
     sources: BTreeMap<String, Source>,
-) -> Option<(Setup, bool)> {
+) -> Option<(Setup, Option<bool>)> {
     let extra = workspace.take_unknown();
     if RESERVED.iter().any(|key| extra.contains_key(*key)) {
         return None;
@@ -242,11 +257,11 @@ fn build(
     }
     let mut setup = Setup::new(workspace);
     setup.extra = extra;
-    let mut reconnect = false;
+    let mut reconnect = None;
     if let Some(saved) = coroot
         && validate::coroot(&saved.coroot).is_ok()
     {
-        reconnect = saved.reconnect;
+        reconnect = Some(saved.reconnect);
         setup.coroot = Some(saved.coroot);
     }
     setup.validate().ok()?;
@@ -336,10 +351,10 @@ fn read_choice(choice: &Value) -> Option<Source> {
     }
 }
 
-/// Sets `coroot_reconnect` in `preferences.json` unless it is set, keeping
-/// every other key. A file that exists and can't be read as a JSON object is
-/// not written over.
-fn keep_reconnect(file: &Path) -> std::io::Result<()> {
+/// Prepares `coroot_reconnect`, true or false, unless it is already set,
+/// keeping every other key. This writes nothing; an existing file that
+/// can't be read as a JSON object is refused.
+fn prepare_reconnect(file: &Path, reconnect: bool) -> std::io::Result<Option<String>> {
     let invalid = |why: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, why.to_owned());
     let mut object = match read_bounded_regular_file(file, PREFERENCES_MAX) {
         Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
@@ -350,14 +365,10 @@ fn keep_reconnect(file: &Path) -> std::io::Result<()> {
         Err(_) => return Err(invalid("preferences.json can't be read")),
     };
     if object.contains_key(RECONNECT) {
-        return Ok(());
+        return Ok(None);
     }
-    object.insert(RECONNECT.into(), true.into());
-    let text = format!("{:#}\n", Value::Object(object));
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    workspace::write_whole(file, &text)
+    object.insert(RECONNECT.into(), reconnect.into());
+    Ok(Some(format!("{:#}\n", Value::Object(object))))
 }
 
 /// Whose file is in place after [`link_into_place`].
@@ -368,7 +379,7 @@ enum Linked {
 
 /// Writes `text` to a temporary file beside `file`, created `0600`, and links
 /// it to `file` without replacing anything: if `file` appeared meanwhile,
-/// that one stays. The temporary file is removed either way.
+/// that one stays. Only a temporary file this call created is removed.
 fn link_into_place(file: &Path, text: &str, before_link: impl FnOnce()) -> std::io::Result<Linked> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     if let Some(parent) = file.parent() {
@@ -381,6 +392,15 @@ fn link_into_place(file: &Path, text: &str, before_link: impl FnOnce()) -> std::
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let temporary = file.with_file_name(name);
+    link_temporary(file, &temporary, text, before_link)
+}
+
+fn link_temporary(
+    file: &Path,
+    temporary: &Path,
+    text: &str,
+    before_link: impl FnOnce(),
+) -> std::io::Result<Linked> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -388,18 +408,19 @@ fn link_into_place(file: &Path, text: &str, before_link: impl FnOnce()) -> std::
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
+    let mut output = options.open(temporary)?;
     let result = (|| {
-        let mut output = options.open(&temporary)?;
         output.write_all(text.as_bytes())?;
         output.sync_all()?;
         before_link();
-        match std::fs::hard_link(&temporary, file) {
+        match std::fs::hard_link(temporary, file) {
             Ok(()) => Ok(Linked::Ours),
             Err(why) if why.kind() == std::io::ErrorKind::AlreadyExists => Ok(Linked::Theirs),
             Err(why) => Err(why),
         }
     })();
-    let _ = std::fs::remove_file(&temporary);
+    drop(output);
+    let _ = std::fs::remove_file(temporary);
     result
 }
 

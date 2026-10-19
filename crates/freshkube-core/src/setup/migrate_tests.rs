@@ -203,11 +203,17 @@ fn reconnect_goes_to_preferences_and_the_other_keys_stay() {
 }
 
 #[test]
-fn no_preferences_file_is_made_when_nothing_reconnects() {
+fn reconnect_false_is_kept_in_preferences() {
     let coroot = COROOT_JSON.replace("\"reconnect\": true", "\"reconnect\": false");
     let home = Home::with(&[("workspace.json", WORKSPACE_JSON), ("coroot.json", &coroot)]);
-    home.migrate();
-    assert!(!home.has("preferences.json"));
+    assert_eq!(home.migrate(), done(&["workspace.json", "coroot.json"]));
+    let preferences: serde_json::Value =
+        serde_json::from_str(&home.read("preferences.json")).unwrap();
+    assert_eq!(preferences["coroot_reconnect"], false);
+
+    let without_coroot = Home::with(&[("workspace.json", WORKSPACE_JSON)]);
+    assert_eq!(without_coroot.migrate(), done(&["workspace.json"]));
+    assert!(!without_coroot.has("preferences.json"));
 }
 
 #[test]
@@ -360,6 +366,47 @@ fn preferences_that_cannot_take_the_flag_keep_every_file_in_use() {
     let before = home.snapshot();
     assert_eq!(home.migrate(), Outcome::Kept(Kept::NotSafe));
     assert_eq!(home.snapshot(), before);
+}
+
+#[test]
+fn a_failed_link_leaves_preferences_unchanged() {
+    for preferences in [None, Some(r#"{"text_size": 14, "mystery": [1]}"#)] {
+        let home = Home::full();
+        if let Some(preferences) = preferences {
+            home.write("preferences.json", preferences);
+        }
+        let before = home.snapshot();
+        let outcome = run(&home.preferences(), now(), || {
+            // Lose the staged file just before hard_link, forcing it to fail.
+            let temporary = std::fs::read_dir(home.directory.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| path.extension().is_some_and(|extension| extension == "tmp"))
+                .unwrap();
+            std::fs::remove_file(temporary).unwrap();
+        });
+        assert_eq!(outcome, Outcome::Kept(Kept::NotSafe));
+        assert_eq!(home.snapshot(), before, "nothing was written or moved");
+    }
+}
+
+#[test]
+fn a_pre_existing_temporary_file_survives_a_name_collision() {
+    let home = Home::full();
+    let temporary = home.path("freshkube.yaml.stale.tmp");
+    home.write(
+        "freshkube.yaml.stale.tmp",
+        "an earlier launch's staged file",
+    );
+    let before = home.snapshot();
+    let result = link_temporary(
+        &home.path("freshkube.yaml"),
+        &temporary,
+        "version: 1\n",
+        || panic!("a collision must stop before linking"),
+    );
+    assert!(matches!(result, Err(why) if why.kind() == std::io::ErrorKind::AlreadyExists));
+    assert_eq!(home.snapshot(), before, "the earlier staged file survives");
 }
 
 #[test]
