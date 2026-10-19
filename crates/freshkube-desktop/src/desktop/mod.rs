@@ -738,7 +738,7 @@ impl Pilot {
     /// Starts the shell once it is made: reads the workspace, opens the
     /// first source, hears what needs the shell itself, takes focus and
     /// gives Overview its first frame.
-    fn start(&mut self, options: GpuiOptions, window: &mut Window, cx: &mut Context<Self>) {
+    fn start(&mut self, mut options: GpuiOptions, window: &mut Window, cx: &mut Context<Self>) {
         #[cfg(any(debug_assertions, feature = "stress"))]
         let debug = options.debug.clone();
         let names_source = options.starts_with_examples()
