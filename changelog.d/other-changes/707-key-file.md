@@ -1,0 +1,1 @@
+- **Remembered keys:** keep API keys and metrics tokens in the private `keys.json` file beside preferences, migrating each account from the system credential store once. Forgotten keys stay forgotten.
