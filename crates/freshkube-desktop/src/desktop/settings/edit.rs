@@ -11,12 +11,21 @@ impl SettingsPage {
     /// Whether a change can be saved now: not example data, not without a
     /// preferences folder, and not while a save runs.
     pub(super) fn editable(&self) -> bool {
-        self.file.is_some() && self.origin != Origin::Example && self.saving.is_none()
+        self.file.is_some()
+            && self.origin != Origin::Example
+            && self.saving.is_none()
+            && !self.setup_refusal
     }
 
     /// Why the changing actions are off, for their tooltips.
     pub(super) fn why_not_editable(&self) -> &'static str {
-        if self.origin == Origin::Example {
+        if self.setup_refusal {
+            if self.pending_setup {
+                "freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is."
+            } else {
+                HAND_EDITED
+            }
+        } else if self.origin == Origin::Example {
             "Example data isn’t saved"
         } else if self.file.is_none() {
             "This window keeps no preferences, so there is nowhere to save"
@@ -322,6 +331,13 @@ impl SettingsPage {
     /// was last read or written: a hand edit, or a file another window made,
     /// is never replaced.
     pub(super) fn commit(&mut self, next: Workspace, what: String, cx: &mut Context<Self>) {
+        if self.setup_refusal {
+            if self.banner.is_none() {
+                self.banner = Some(self.why_not_editable().into());
+            }
+            cx.notify();
+            return;
+        }
         let Some(file) = self.file.clone() else {
             return;
         };
@@ -405,6 +421,13 @@ impl SettingsPage {
                 self.notice = Some(Notice::Failed(format!("{error}.{rest}").into()));
             }
         }
+        // A YAML edit may have arrived while this already-submitted JSON
+        // save was running. Keep its refusal and Reload banner in place.
+        if self.setup_refusal
+            && let Some(file) = self.setup_file.clone()
+        {
+            self.sync_setup(file, self.pending_setup, cx);
+        }
         cx.notify();
     }
 
@@ -412,6 +435,12 @@ impl SettingsPage {
     /// hand, or by another window. The read is the bounded one the launch
     /// makes, on the UI thread, and happens only on this action.
     pub(super) fn reload(&mut self, cx: &mut Context<Self>) {
+        if self.setup_refusal {
+            if let Some(file) = self.setup_file.clone() {
+                self.sync_setup(file, false, cx);
+            }
+            return;
+        }
         let Some(file) = self.file.clone() else {
             return;
         };

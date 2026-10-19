@@ -133,6 +133,9 @@ fn a_launch_reads_the_workspace_file_beside_the_preferences(cx: &mut TestAppCont
     // Tokio wakes GPUI from its own threads.
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
+    assert!(!guard.path().join("freshkube.yaml").exists());
+    std::fs::write(guard.path().join("coroot.json"),
+        r#"{"url":"https://remembered.example.test","auth":"anonymous","reconnect":false,"remember":false}"#).unwrap();
     std::fs::write(
         guard.path().join("workspace.json"),
         r#"{"version":1,"clusters":[
@@ -149,8 +152,226 @@ fn a_launch_reads_the_workspace_file_beside_the_preferences(cx: &mut TestAppCont
         let page = view.read(cx).settings_page.read(cx);
         assert_eq!(page.origin(), &Origin::File);
         assert!(window.find("settings-cluster-prod-fra").visible());
+        assert_eq!(
+            view.read(cx).observability.read(cx).coroot_url(cx),
+            "https://remembered.example.test"
+        );
     })
     .unwrap();
+}
+
+const SETUP: &str = "version: 1\nclusters:\n- {id: cluster-a, role: core, context: cluster-a}\n- {id: cluster-b, role: cicd, context: cluster-b}\nsources: {kargo: cluster-b}\ncoroot: {server: 'https://observations.example.test', sign_in: anonymous}\n";
+
+fn poll_setup(cx: &mut TestAppContext) {
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(2));
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("freshkube.yaml");
+    std::fs::write(&path, SETUP).unwrap();
+    std::fs::write(
+        directory.path().join("workspace.json"),
+        r#"{"version":1,"clusters":[]}"#,
+    )
+    .unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.navigate_from_keyboard(Page::Settings, window, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find("settings-cluster-cluster-a").visible());
+        assert!(
+            window
+                .find("settings-scope")
+                .label()
+                .unwrap()
+                .contains("freshkube.yaml")
+        );
+        assert!(
+            window
+                .find("settings-banner")
+                .label()
+                .unwrap()
+                .contains(super::HAND_EDITED)
+        );
+        assert_eq!(
+            view.read(cx).observability.read(cx).coroot_url(cx),
+            "https://observations.example.test"
+        );
+        window.click("settings-add", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("settings-form-context").is_none());
+        let page = view.read(cx).settings_page.clone();
+        page.update(cx, |page, cx| {
+            assert!(!page.editable());
+            page.commit(workspace::Workspace::default(), "Changed".into(), cx);
+        });
+    })
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), SETUP);
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("workspace.json")).unwrap(),
+        r#"{"version":1,"clusters":[]}"#
+    );
+
+    let changed = SETUP
+        .replace("cluster-a", "cluster-c")
+        .replace("observations.example.test", "reports.example.test");
+    let replacement = directory.path().join("editor.tmp");
+    std::fs::write(&replacement, &changed).unwrap();
+    std::fs::rename(replacement, &path).unwrap();
+    poll_setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let pilot = view.read(cx);
+        assert_eq!(pilot.switcher[0].id.as_ref(), "cluster-c");
+        assert!(window.find("settings-cluster-cluster-c").visible());
+        assert!(
+            window
+                .find("setup-reload-status")
+                .label()
+                .unwrap()
+                .starts_with("Reloaded freshkube.yaml · ")
+        );
+        assert_eq!(
+            pilot.observability.read(cx).coroot_url(cx),
+            "https://reports.example.test"
+        );
+        let workspace = pilot.settings_page.read(cx).workspace();
+        assert_eq!(
+            workspace.sources.pin(workspace::Part::Kargo),
+            Some("cluster-b")
+        );
+    })
+    .unwrap();
+
+    std::fs::write(&path, "version: [").unwrap();
+    poll_setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let banner = window.find("settings-banner");
+        let words = banner.label().unwrap();
+        assert!(
+            words.contains("freshkube.yaml isn't used: invalid YAML at line"),
+            "{words}"
+        );
+        assert!(words.contains("The last good setup stays in use."));
+        assert!(window.find("settings-cluster-cluster-c").visible());
+    })
+    .unwrap();
+    std::fs::write(&path, SETUP).unwrap();
+    poll_setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-cluster-cluster-a").visible());
+        assert!(
+            !window
+                .find("settings-banner")
+                .label()
+                .unwrap()
+                .contains("invalid YAML")
+        );
+    })
+    .unwrap();
+    std::fs::remove_file(&path).unwrap();
+    poll_setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("settings-banner")
+                .label()
+                .unwrap()
+                .contains("is gone")
+        );
+        assert!(window.find("settings-cluster-cluster-a").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_broken_setup_at_launch_warns_and_keeps_the_no_file_behavior(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("freshkube.yaml"), "version: [").unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.navigate_from_keyboard(Page::Settings, window, cx)
+        });
+        window.render_frame(cx);
+        assert!(window.find("settings-empty").visible());
+        assert!(
+            window
+                .find("settings-banner")
+                .label()
+                .unwrap()
+                .contains("invalid YAML")
+        );
+        assert!(view.read(cx).setup_file.read(cx).setup.is_none());
+        assert!(!view.read(cx).settings_page.read(cx).editable());
+    })
+    .unwrap();
+    assert!(!directory.path().join("workspace.json").exists());
+}
+
+#[gpui_kit::test]
+fn setup_waits_for_reload_while_a_settings_form_has_a_draft(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.navigate_from_keyboard(Page::Settings, window, cx)
+        });
+        window.render_frame(cx);
+        window.click("settings-add", cx);
+        window.render_frame(cx);
+        window.click("settings-form-context", cx);
+        window.input("draft-cluster", cx);
+    })
+    .unwrap();
+    std::fs::write(directory.path().join("freshkube.yaml"), SETUP).unwrap();
+    poll_setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        let page = view.read(cx).settings_page.clone();
+        assert!(page.read(cx).pending_setup);
+        assert!(page.read(cx).workspace().clusters.is_empty());
+        window.click("settings-form-save", cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("settings-form-error")
+                .label()
+                .unwrap()
+                .contains("changed on disk")
+        );
+        window.press("escape", cx);
+        window.render_frame(cx);
+        window.click("settings-reload", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!view.read(cx).settings_page.read(cx).pending_setup);
+        assert!(window.find("settings-cluster-cluster-a").visible());
+        assert_eq!(
+            view.read(cx).observability.read(cx).coroot_url(cx),
+            "https://observations.example.test"
+        );
+    })
+    .unwrap();
+    assert!(!directory.path().join("workspace.json").exists());
 }
 
 #[gpui_kit::test]

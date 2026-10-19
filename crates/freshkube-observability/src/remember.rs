@@ -114,6 +114,9 @@ pub(super) fn account(url: &str) -> String {
 
 /// The page's memory: what was saved, and the key read back for its server.
 pub(super) struct Memory {
+    /// `Some(None)` is a setup that deliberately names no Coroot connection.
+    setup: Option<Option<freshkube_core::setup::Coroot>>,
+    setup_generation: u64,
     file: PathBuf,
     secrets: Option<Secrets>,
     pub(super) saved: Saved,
@@ -133,6 +136,8 @@ impl Memory {
     pub(super) fn new(preferences: &Path, secrets: Option<Secrets>) -> Self {
         let saved = load(preferences).unwrap_or_default();
         Self {
+            setup: None,
+            setup_generation: 0,
             file: file(preferences),
             secrets,
             restore: saved.reconnect && !saved.url.is_empty(),
@@ -158,6 +163,51 @@ impl Memory {
 }
 
 impl ObservabilityPage {
+    /// The shell hands over only a parsed setup. Until then the remembered
+    /// connection follows its existing path. This never writes the setup.
+    pub fn set_setup_connection(
+        &mut self,
+        connection: &Option<freshkube_core::setup::Coroot>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(memory) = &mut self.memory else {
+            return;
+        };
+        if memory.setup.as_ref() == Some(connection) {
+            return;
+        }
+        memory.setup = Some(connection.clone());
+        memory.setup_generation = memory.setup_generation.wrapping_add(1);
+        memory.key = None;
+        memory.reading = false;
+        memory.error = None;
+        memory.saved = connection
+            .as_ref()
+            .map_or_else(Saved::default, |connection| Saved {
+                url: connection.server.clone(),
+                auth: match connection.sign_in {
+                    freshkube_core::setup::SignIn::ApiKey => 0,
+                    freshkube_core::setup::SignIn::Session => 1,
+                    freshkube_core::setup::SignIn::Anonymous => 2,
+                },
+                project: connection.project.clone(),
+                reconnect: true,
+                remember: connection.key.is_some(),
+                extra: Map::new(),
+            });
+        memory.restore = connection.is_some();
+        self.invalidate_connection();
+        self.fill_from_memory(window, cx);
+        self.secret
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.settings_open = true;
+        if self.live.visible {
+            self.restore(cx);
+        }
+        cx.notify();
+    }
+
     /// Runs one step of store or file work after the steps before it.
     fn queue<T: Send + 'static>(
         &mut self,
@@ -180,6 +230,13 @@ impl ObservabilityPage {
 
     /// Saves the memory's file; a failure shows beside the form.
     fn save_memory(&mut self, cx: &mut Context<Self>) {
+        if self
+            .memory
+            .as_ref()
+            .is_some_and(|memory| memory.setup.is_some())
+        {
+            return;
+        }
         let Some(saved) = self.memory.as_ref().map(|memory| memory.saved.clone()) else {
             return;
         };
@@ -234,13 +291,34 @@ impl ObservabilityPage {
             self.connect(cx);
             return;
         }
-        if !saved.remember || !memory.can_remember() {
+        let key_file = memory
+            .setup
+            .as_ref()
+            .and_then(|setup| setup.as_ref())
+            .and_then(|setup| setup.api_key_file.clone());
+        if key_file.is_none() && (!saved.remember || !memory.can_remember()) {
             return;
         }
+        let generation = memory.setup_generation;
         memory.reading = true;
         let account = account(&saved.url);
         let Some(read) = self.queue(
-            move |_, store| store.map_or(Ok(None), |store| store.read(&account)),
+            move |_, store| match key_file {
+                Some(file) => {
+                    let bytes = freshkube_core::read_bounded_regular_file(&file, 64 * 1024)
+                        .map_err(|_| {
+                            "The configured Coroot key file could not be read".to_owned()
+                        })?;
+                    let key = String::from_utf8(bytes)
+                        .map_err(|_| "The configured Coroot key file is not text".to_owned())?;
+                    let key = key.trim();
+                    if key.is_empty() {
+                        return Err("The configured Coroot key file is empty".into());
+                    }
+                    Ok(Some(key.to_owned()))
+                }
+                None => store.map_or(Ok(None), |store| store.read(&account)),
+            },
             cx,
         ) else {
             return;
@@ -253,6 +331,9 @@ impl ObservabilityPage {
                 let Some(memory) = &mut this.memory else {
                     return;
                 };
+                if memory.setup_generation != generation {
+                    return;
+                }
                 memory.reading = false;
                 match result {
                     Ok(Some(key)) => {
@@ -301,6 +382,16 @@ impl ObservabilityPage {
         let Some(memory) = &mut self.memory else {
             return;
         };
+        if memory.setup.is_some() {
+            memory.key = (auth != 2).then_some((url, key));
+            let project = memory.saved.project.clone();
+            if let Some(project) = project
+                && let Some(project) = self.live.projects.iter().find(|p| p.id == project).cloned()
+            {
+                self.select_project(&project, cx);
+            }
+            return;
+        }
         let previous = std::mem::take(&mut memory.saved.url);
         let same_server = previous == url;
         memory.saved = Saved {
@@ -390,6 +481,13 @@ impl ObservabilityPage {
 
     /// Remember on saves the key in use at once; off forgets the saved key.
     pub(super) fn set_remember(&mut self, remember: bool, cx: &mut Context<Self>) {
+        if self
+            .memory
+            .as_ref()
+            .is_some_and(|memory| memory.setup.is_some())
+        {
+            return;
+        }
         let typed = self.secret.read(cx).value().to_string();
         let connected = self.live.provider.is_some();
         let Some(memory) = &mut self.memory else {
@@ -441,6 +539,9 @@ impl ObservabilityPage {
         memory.restore = false;
         memory.key = None;
         memory.saved.reconnect = false;
+        if memory.setup.is_some() {
+            return;
+        }
         let url = memory.saved.url.clone();
         let can_remember = memory.can_remember();
         self.save_memory(cx);
@@ -458,27 +559,43 @@ impl ObservabilityPage {
         let memory = self.memory.as_ref()?;
         let url = self.url.read(cx).value().to_string();
         let typed = !self.secret.read(cx).value().is_empty();
+        let key_file = memory
+            .setup
+            .as_ref()
+            .and_then(|setup| setup.as_ref())
+            .is_some_and(|setup| setup.api_key_file.is_some());
         let note = if memory.reading {
-            Some(format!("Reading the key from {STORE_NAME}…"))
+            Some(if key_file {
+                "Reading the configured Coroot key file…".into()
+            } else {
+                format!("Reading the key from {STORE_NAME}…")
+            })
         } else if !typed && self.auth != 2 && memory.key_for(&url).is_some() {
-            Some(format!("Using the key saved in {STORE_NAME}."))
+            Some(if key_file {
+                "Using the configured Coroot key file.".into()
+            } else {
+                format!("Using the key saved in {STORE_NAME}.")
+            })
         } else {
             None
         };
         Some(
             v_flex()
                 .gap(dp(6.))
-                .when(memory.can_remember() && self.auth != 2, |this| {
-                    this.child(
-                        gpui_kit::component::checkbox::Checkbox::new("obs-remember")
-                            .small()
-                            .label(format!("Remember key in {STORE_NAME}"))
-                            .checked(memory.saved.remember)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                this.set_remember(*checked, cx)
-                            })),
-                    )
-                })
+                .when(
+                    memory.setup.is_none() && memory.can_remember() && self.auth != 2,
+                    |this| {
+                        this.child(
+                            gpui_kit::component::checkbox::Checkbox::new("obs-remember")
+                                .small()
+                                .label(format!("Remember key in {STORE_NAME}"))
+                                .checked(memory.saved.remember)
+                                .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                    this.set_remember(*checked, cx)
+                                })),
+                        )
+                    },
+                )
                 .when_some(note, |this, note| this.child(muted(note, cx)))
                 .when_some(memory.error.clone(), |this, error| {
                     this.child(text(error).text_color(palette(cx).crit_ink))
@@ -490,6 +607,9 @@ impl ObservabilityPage {
     /// Where the credential lives, for the line beside Connect.
     pub(super) fn credential_note(&self) -> String {
         match &self.memory {
+            Some(memory) if memory.setup.is_some() => {
+                "The connection is configured in freshkube.yaml.".into()
+            }
             Some(memory) if memory.saved.remember && memory.can_remember() && self.auth != 2 => {
                 format!("The key is kept in {STORE_NAME} until Disconnect.")
             }
