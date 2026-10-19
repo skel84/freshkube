@@ -291,6 +291,7 @@ impl Linked<'_> {
             from: self.from.into(),
             at: None,
             link: Some(self.confidence),
+            after: None,
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: self.kind.into(),
                 title: self.name,
@@ -301,6 +302,7 @@ impl Linked<'_> {
                     confidence: self.confidence,
                     by: self.by.into(),
                     before: self.before,
+                    key: None,
                     before_says: self.before_says.into(),
                     here_says: self.here_says.into(),
                     why: self.why.into(),
@@ -546,6 +548,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
                 from: CICD.into(),
                 at: None,
                 link: None,
+                after: None,
                 shows: Shows::Stage(ix),
             });
         }
