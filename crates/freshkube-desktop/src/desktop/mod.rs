@@ -906,8 +906,11 @@ impl Pilot {
                     cx,
                 )
             }),
+            source_owners: vec![
+                SourceHandle::new(search.clone()),
+                SourceHandle::new(custom.clone()),
+            ],
             custom,
-            source_owners: vec![SourceHandle::new(search.clone())],
             search,
             monitoring,
             observability,
@@ -1175,8 +1178,6 @@ impl Pilot {
         for owner in &self.source_owners {
             owner.set_page_source(&source, window, cx);
         }
-        self.custom
-            .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
         self.dock.update(cx, |dock, cx| {
             dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
         });
