@@ -2,7 +2,7 @@
 //! the one map (`Pilot::pages`), and the entities the shell keeps beside
 //! the map to push into or observe.
 
-use gpui_kit::{AppContext, Context, Entity, Window};
+use gpui_kit::{AppContext, Context, Entity, Subscription, Window};
 use std::collections::BTreeMap;
 use tokio::runtime::Handle;
 
@@ -183,10 +183,68 @@ impl Pages {
             system_services,
         }
     }
+
+    /// Hears every page: when Logs starts and stops, then each page in the
+    /// map through its handle, as a [`PageEvent`] (`hear_page`), then the
+    /// events of what the map doesn't hold. Nodes' own events and its
+    /// Services tab's aren't `PageEvent`s yet, so they keep their arms; the
+    /// node pane's Pods list and the dock turn theirs into one.
+    pub(super) fn subscribe(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Pilot>,
+    ) -> Vec<Subscription> {
+        let Pages {
+            map,
+            logs,
+            node_workspace: nodes,
+            dock,
+            custom,
+            ..
+        } = self;
+        let mut subscriptions = Vec::new();
+        // Batches arriving while Logs is hidden never notify; the shell
+        // shows only what start, stop and the visible page change.
+        subscriptions.push(cx.observe(logs, |_, _, cx| cx.notify()));
+        for page in map.values() {
+            subscriptions.extend(Pilot::hear_page(page, window, cx));
+        }
+        subscriptions.push(cx.subscribe_in(
+            nodes,
+            window,
+            |pilot, _, event: &nodes::NodesEvent, window, cx| pilot.nodes_event(event, window, cx),
+        ));
+        let (node_pods, node_services) = {
+            let nodes = nodes.read(cx);
+            (nodes.pods.clone(), nodes.services.clone())
+        };
+        subscriptions.push(cx.subscribe_in(
+            &node_services,
+            window,
+            |view, _, event, window, cx| view.node_services_event(event, window, cx),
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &node_pods,
+            window,
+            |this, _, event: &crate::resources::NodePodsEvent, window, cx| {
+                this.page_event(&event.clone().into(), window, cx)
+            },
+        ));
+        subscriptions.push(cx.observe(dock, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe_in(
+            dock,
+            window,
+            |this, _, event: &dock::DockEvent, window, cx| {
+                this.page_event(&event.clone().into(), window, cx)
+            },
+        ));
+        subscriptions.push(cx.observe(custom, |_, _, cx| cx.notify()));
+        subscriptions
+    }
 }
 
 /// A Talos screen's handle; the shell hears it with every other page
-/// (`subscribe_page_events`).
+/// (`Pages::subscribe`).
 fn screen<T: ScreenPanel>(
     new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
     runtime: Handle,

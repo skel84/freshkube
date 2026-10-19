@@ -550,64 +550,6 @@ impl Pilot {
         })
     }
 
-    /// Hears every page: when Logs starts and stops, then each page in the
-    /// map through its handle, as a [`PageEvent`] (`hear_page`), then the
-    /// events of what the map doesn't hold. Nodes' own events and its
-    /// Services tab's aren't `PageEvent`s yet, so they keep their arms; the
-    /// node pane's Pods list and the dock turn theirs into one.
-    fn subscribe_page_events(
-        pages: &page_map::Pages,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<Subscription> {
-        let page_map::Pages {
-            map,
-            logs,
-            node_workspace: nodes,
-            dock,
-            custom,
-            ..
-        } = pages;
-        let mut subscriptions = Vec::new();
-        // Batches arriving while Logs is hidden never notify; the shell
-        // shows only what start, stop and the visible page change.
-        subscriptions.push(cx.observe(logs, |_, _, cx| cx.notify()));
-        for page in map.values() {
-            subscriptions.extend(Self::hear_page(page, window, cx));
-        }
-        subscriptions.push(cx.subscribe_in(
-            nodes,
-            window,
-            |pilot, _, event: &nodes::NodesEvent, window, cx| pilot.nodes_event(event, window, cx),
-        ));
-        let (node_pods, node_services) = {
-            let nodes = nodes.read(cx);
-            (nodes.pods.clone(), nodes.services.clone())
-        };
-        subscriptions.push(cx.subscribe_in(
-            &node_services,
-            window,
-            |view, _, event, window, cx| view.node_services_event(event, window, cx),
-        ));
-        subscriptions.push(cx.subscribe_in(
-            &node_pods,
-            window,
-            |this, _, event: &resources::NodePodsEvent, window, cx| {
-                this.page_event(&event.clone().into(), window, cx)
-            },
-        ));
-        subscriptions.push(cx.observe(dock, |_, _, cx| cx.notify()));
-        subscriptions.push(cx.subscribe_in(
-            dock,
-            window,
-            |this, _, event: &dock::DockEvent, window, cx| {
-                this.page_event(&event.clone().into(), window, cx)
-            },
-        ));
-        subscriptions.push(cx.observe(custom, |_, _, cx| cx.notify()));
-        subscriptions
-    }
-
     /// The one-second tick: the countdown, and the automatic refresh.
     fn start_tick(window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
         cx.spawn_in(window, async move |this, cx| {
@@ -688,7 +630,7 @@ impl Pilot {
         let age_label = cx.new(|_| switch::AgeLabel::new());
         let pages = page_map::Pages::new(&options, &runtime, &age_label, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
-        subscriptions.extend(Self::subscribe_page_events(&pages, window, cx));
+        subscriptions.extend(pages.subscribe(window, cx));
         let tick = Self::start_tick(window, cx);
         let chrome = shell::Chrome::new(
             app_menu::menu_platform(options.debug.app_menu_button),
