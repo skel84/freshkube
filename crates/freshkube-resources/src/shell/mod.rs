@@ -508,6 +508,7 @@ impl ShellView {
         cx.notify();
     }
 
+    /// Surface: the pod shell status tag and its accessible label.
     fn fail(&mut self, failure: ExecFailure, cx: &mut Context<Self>) {
         self.drop_session(cx);
         self.terminal.update(cx, |terminal, cx| terminal.end(cx));

@@ -125,6 +125,8 @@ impl TableSource for Destinations {
         let cell = table::cell(column);
         match column.field {
             Field::Glyph => table::glyph_cell(column)
+                .id(SharedString::from(format!("{}-glyph", row.id)))
+                .test_support()
                 .when(!row.listed, |this| {
                     this.child(ui::status_mark(
                         row.mark_id.clone(),
@@ -134,7 +136,11 @@ impl TableSource for Destinations {
                     ))
                 })
                 .into_any_element(),
-            Field::Destination => cell.child(row.destination.clone()).into_any_element(),
+            Field::Destination => cell
+                .id(SharedString::from(format!("{}-destination", row.id)))
+                .test_support()
+                .child(row.destination.clone())
+                .into_any_element(),
             Field::By => cell.child(row.by.clone()).into_any_element(),
             Field::Entry => cell
                 .when(!row.listed, |this| this.text_color(style.p.muted))

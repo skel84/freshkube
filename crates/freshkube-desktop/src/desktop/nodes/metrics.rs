@@ -121,6 +121,7 @@ impl Nodes {
 
     /// Each read's loader task delivers its answer, waits the same interval,
     /// then hands ownership to the next read. Hiding also drops that wait.
+    /// Surface: the Nodes workspace CPU and memory read failure.
     fn read_metrics(
         &mut self,
         source: crate::resources::ClusterSource,

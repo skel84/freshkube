@@ -201,6 +201,7 @@ pub enum ObservationFailure {
 }
 
 impl ObservationFailure {
+    /// Surface: bounded summary observation failures, shared by its consumers.
     pub fn message(&self) -> &'static str {
         match self {
             Self::Read(FailureKind::Forbidden) => "Not allowed to read this collection",

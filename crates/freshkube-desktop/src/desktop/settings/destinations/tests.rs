@@ -64,6 +64,66 @@ fn the_example_lists_its_destinations_on_a_table_page(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_glyph_column_stays_at_the_table_edge_and_contains_every_mark(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.show_settings(SettingsSection::Destinations, window, cx)
+            });
+            layout_check::assert_table_page(window, cx, &PAGE);
+            let table = window.find(PAGE.table).bounds();
+            let glyph_width = crate::ui::dp_px(freshkube_ui::table::GLYPH_WIDTH, window);
+            let header = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|element| element.label() == Some("Destination"))
+                .expect("Destination header")
+                .bounds();
+            assert!((header.left() - table.left() - glyph_width).abs() <= gpui_kit::px(1.));
+            let destinations = view.read(cx).settings_page.read(cx).destinations.clone();
+            for missing in [false, true] {
+                if missing {
+                    // Long destinations must leave every missing-cluster mark in its column.
+                    destinations.update(cx, |list, cx| {
+                        for row in &mut list.rows {
+                            row.destination = "example-destination-with-a-long-name".into();
+                            row.listed = false;
+                        }
+                        cx.notify();
+                    });
+                    window.render_frame(cx);
+                }
+                for row in 0..3 {
+                    let glyph = window
+                        .find(format!("settings-destination-{row}-glyph"))
+                        .bounds();
+                    assert!(
+                        (glyph.left() - table.left() - gpui_kit::px(1.)).abs() <= gpui_kit::px(1.),
+                        "glyph column moved at {width}×{height}: {glyph:?} in {table:?}"
+                    );
+                    assert!((glyph.size.width - glyph_width).abs() <= gpui_kit::px(1.));
+                    let cell = window
+                        .find(format!("settings-destination-{row}-destination"))
+                        .bounds();
+                    assert!((cell.left() - glyph.right()).abs() <= gpui_kit::px(1.));
+                    let mark = window.try_find(format!("settings-destination-{row}-mark"));
+                    if missing {
+                        let mark = mark.expect("missing cluster has a mark");
+                        assert!(mark.visible());
+                        let mark = mark.bounds();
+                        assert!(mark.left() >= glyph.left() && mark.right() <= glyph.right());
+                        assert!((mark.center().x - glyph.center().x).abs() <= gpui_kit::px(1.));
+                    } else {
+                        assert!(mark.is_none());
+                    }
+                }
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 async fn example_destinations_are_never_changed(cx: &mut TestAppContext) {
     use crate::GpuiOptions;
     use crate::desktop::tests::mount;
