@@ -451,7 +451,6 @@ impl Pilot {
     fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let pilot = cx.entity().downgrade();
         let open_pilot = pilot.clone();
-        let path_input = self.path.clone();
         let path_label = if self.mode().is_example() {
             "Settings · Example data".to_owned()
         } else if let Some(kube) = self.mode().kubernetes_only() {
@@ -488,9 +487,7 @@ impl Pilot {
                     .accessibility_label("Settings")
                     .tooltip(path_label),
             )
-            .content(move |_, window, cx| {
-                settings_content(pilot.clone(), path_input.clone(), window, cx)
-            })
+            .content(move |_, window, cx| settings_content(pilot.clone(), window, cx))
             .into_any_element()
     }
 }

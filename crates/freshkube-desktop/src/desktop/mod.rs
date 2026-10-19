@@ -66,7 +66,7 @@ use crate::{
 use freshkube_core::cluster_overview::{ClusterOverview, KubeconfigSelection};
 use freshkube_core::resources::{ResourceKind, builtin};
 use freshkube_reads::Loader;
-use gpui_kit::component::{ActiveTheme, Theme, TitleBar, input::InputState, v_flex};
+use gpui_kit::component::{ActiveTheme, Theme, TitleBar, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
@@ -277,7 +277,6 @@ pub(crate) struct Pilot {
     /// The absolute path of the last successfully parsed Talos configuration.
     loaded_config_path: Option<PathBuf>,
     applied: AppliedConfig,
-    path: Entity<InputState>,
     contexts: Vec<String>,
     /// Node counts for contexts that loaded at least once this session.
     context_nodes: BTreeMap<String, usize>,
@@ -700,7 +699,6 @@ impl Pilot {
             crate::navigation_file::NavigationFile::open(options.preferences.as_deref());
         navigation_file.clone().install(cx);
         Self::bind_shell_keys(cx);
-        let path = Self::talosconfig_input(&options, window, cx);
         let mut subscriptions = Self::subscribe_shell(window, cx);
         let pages = page_map::Pages::new(&options, &runtime, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
@@ -717,7 +715,6 @@ impl Pilot {
         let mut view = Self::with_session(
             &options,
             runtime,
-            path,
             Owners {
                 pages,
                 chrome,
@@ -800,37 +797,11 @@ impl Pilot {
         self.push_attention_stale(cx);
     }
 
-    /// The session's talosconfig input, holding the path it was launched
-    /// with. Made before the pages, as it always was.
-    fn talosconfig_input(
-        options: &GpuiOptions,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Entity<InputState> {
-        let path = cx.new(|cx| InputState::new(window, cx).placeholder("Default talosconfig"));
-        path.update(cx, |input, cx| {
-            input.set_value(
-                options
-                    .config_path
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default(),
-                window,
-                cx,
-            )
-        });
-        path
-    }
-
     /// The shell around the owners `Pilot::new` made, with the session as
-    /// it starts, before anything is read. Two of the session's entities
-    /// are made earlier, where they always were: the talosconfig input
-    /// (`talosconfig_input`) before the pages, and the age label with
-    /// Overview, which draws it.
+    /// it starts, before anything is read. Overview owns the age label it draws.
     fn with_session(
         options: &GpuiOptions,
         runtime: Handle,
-        path: Entity<InputState>,
         owners: Owners,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -868,7 +839,6 @@ impl Pilot {
                 path: options.config_path.clone(),
                 context: options.context.clone(),
             },
-            path,
             contexts: Vec::new(),
             context_nodes: BTreeMap::new(),
             context_display: shell::ContextDisplay::default(),
@@ -1036,36 +1006,40 @@ impl Pilot {
         cx.notify();
     }
 
-    /// Applies the talosconfig path typed in Settings and reloads contexts.
-    /// Without Talos, a path switches the window to Talos.
-    fn apply_config_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Applies a Talos file and context from Connection or a state's picker.
+    /// A picker passes no context, so choosing a file again reloads it.
+    fn apply_talos_config(
+        &mut self,
+        value: AppliedConfig,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.mode().is_example() || self.config_loading {
             return;
         }
-        self.unless_shell(window, cx, Self::use_config_path);
-    }
-
-    fn use_config_path(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.leave_entry(cx);
-        let draft = self.path.read(cx).value().to_string();
-        if !self.mode().has_talos() {
-            // The default talosconfig is what's missing.
-            if draft.trim().is_empty() {
-                return;
-            }
-            self.leave_kubernetes_only(window, cx);
+        if self.mode().has_talos()
+            && value.path == self.applied.path
+            && let Some(context) = value.context.clone()
+        {
+            self.select_context(context, window, cx);
+            return;
         }
-        self.applied.path = if draft.trim().is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(draft.trim()))
-        };
-        self.applied.context = None;
-        self.load_configuration(window, cx);
+        self.unless_shell(window, cx, move |this, window, cx| {
+            this.leave_entry(cx);
+            if !this.mode().has_talos() {
+                // The default talosconfig is what's missing in this mode.
+                if value.path.is_none() {
+                    return;
+                }
+                this.leave_kubernetes_only(window, cx);
+            }
+            this.applied = value;
+            this.load_configuration(window, cx);
+        });
     }
 
-    /// Opens the native file picker; a chosen file fills the Talosconfig
-    /// field and is applied at once. Cancelling leaves everything unchanged.
+    /// Opens the native file picker and applies its chosen file at once.
+    /// Cancelling leaves everything unchanged.
     fn browse_config(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode().is_example() || self.config_loading {
             return;
@@ -1084,10 +1058,14 @@ impl Pilot {
                 return;
             };
             _ = this.update_in(cx, |view, window, cx| {
-                let text = path.display().to_string();
-                view.path
-                    .update(cx, |input, cx| input.set_value(text, window, cx));
-                view.apply_config_path(window, cx);
+                view.apply_talos_config(
+                    AppliedConfig {
+                        path: Some(path),
+                        context: None,
+                    },
+                    window,
+                    cx,
+                );
             });
         })
         .detach();

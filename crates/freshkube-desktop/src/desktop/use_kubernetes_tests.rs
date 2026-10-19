@@ -186,9 +186,13 @@ async fn a_remembered_launch_keeps_remembering_and_a_talosconfig_returns_to_talo
     .unwrap();
     cx.run_until_parked();
     click(cx, handle, "add-talosconfig");
+    click(cx, handle, "settings-all");
+    click(cx, handle, "nav-settings-connection");
     click(cx, handle, "browse-config");
     let chosen = talosconfig.clone();
     cx.simulate_path_prompt_response(move |_| Some(vec![chosen.clone()]));
+    cx.run_until_parked();
+    click(cx, handle, "save-connection");
     cx.wait_for_io(handle, |_, cx| {
         let view = view.read(cx);
         view.mode().has_talos() && view.contexts == ["gamma"]

@@ -1,133 +1,233 @@
 # State and request lifetimes
 
-This describes the implementation reviewed for [#24](https://github.com/skel84/freshkube/issues/24) on main `1c328f3`. Domain queries and mutation policy belong to core; desktop entities own presentation, requests and GPUI delivery. Use the narrowest existing owner, rather than making every feature a `Loader`. Start I/O from lifecycle methods or actions, mutate entities through GPUI contexts, and notify after a coherent change. Never start requests in `render`.
+Every ordinary read must be owned by a `Loader<T, I>` or a `Watch<T, I>` from
+[`freshkube-reads`](../crates/freshkube-reads/src/lib.rs). The primitive owns the
+work and its GPUI delivery, and checks which request may publish. The feature
+chooses the identity, deadline, visibility scope and refresh policy. Domain
+queries belong in core or the domain crate; presentation belongs in the view.
+Start reads from lifecycle methods or explicit actions, never from `render`.
+
+There are exactly [two exception classes](#exceptions): Operations mutations
+and user-started sessions. This is the rule for ordinary reads, not a claim
+that every existing owner has migrated. The remaining hand-made read owners
+are gaps tracked by [#582](https://github.com/skel84/freshkube/issues/582), not
+additional exceptions; its slice J audit records the exact counts and names.
 
 ## Snapshot and Loader in brief
 
-Moved from [AGENTS.md](../AGENTS.md), which keeps the rules (#587).
+[`freshkube_reads::Loader<T, I>`](../crates/freshkube-reads/src/loader/mod.rs)
+wraps core's [`Snapshot<T, I, String>`](../crates/freshkube-core/src/snapshot.rs)
+and owns an optional Tokio `OwnedJob`, a GPUI delivery `Task<()>`, visibility,
+answer age and a display revision. `Snapshot<T, I, E = Failure>` retains the
+last answer for one identity; it does not own or cancel work. Desktop's
+[`state::Snapshot`](../crates/freshkube-desktop/src/state.rs) supplies the default
+identity `AppliedConfig`.
 
-Desktop's [state::Snapshot](../crates/freshkube-desktop/src/state.rs), core's [`snapshot::Snapshot`](../crates/freshkube-core/src/snapshot.rs) with a default identity, retains the last successful value for one identity and rejects superseded request generations. Its default identity is `AppliedConfig`; node reads use `Target`, and provider reads use their own identity. Its error type defaults to core's `Failure`; a read that still words its own errors names `String` as the third parameter (`Loader` does), until it moves to `Failure`. This small example uses the same identity labels as its unit tests:
+Use `load(identity, &runtime, deadline, what, work, slot, cx)` for a bounded
+Tokio read. `slot` finds the same loader on the weak view entity when its
+answer arrives. Desktop's
+[`screens::Loader<T>`](../crates/freshkube-desktop/src/screens/loader.rs) is a
+wrapper around `Loader<T, Target>` whose `load` supplies `SCREEN_DEADLINE`.
 
-```rust
-use crate::state::Snapshot;
+When landing needs a window, derived display data or a typed result kept
+elsewhere, use `start(identity)` to get a `Request<I>`, `run(job, task)` to give
+the loader ownership of the work, and `land(&request, result, cx)` to publish.
+Only update dependent state when `land` returns `true`. A completion loader
+may store `()` while the feature keeps its data and typed errors; that feature
+must apply the same identity and stale-on-failure rules to its retained data.
 
-let mut state = Snapshot::<u32, &str, String>::default();
-let initial = state.begin("node-a");
-assert!(state.apply(&initial, Ok(7)));
-let refresh = state.begin("node-a");
-assert!(state.apply(&refresh, Err("offline".into())));
-assert_eq!(state.data(), Some(&7));
-assert!(state.is_stale());
+For immediate example answers use `resolve(identity, result)`. It cancels
+pending work and preserves the request sequence, but supplies no freshness
+age. Use `start` and `land` when an example needs the same timed freshness as
+a live answer; a held loading example can `start` without `run`. `reset()`
+cancels work and clears data, errors and timestamps while retaining visibility;
+`expire()` only clears the answer's freshness age.
 
-let replacement = state.begin("node-b");
-assert!(state.data().is_none());
-assert!(!state.apply(&refresh, Ok(99)));
-assert!(state.apply(&replacement, Ok(8)));
-```
-
-For ordinary inspection reads, [screens::Loader](../crates/freshkube-desktop/src/screens/loader.rs) is `freshkube-reads`'s [`Loader<T, Target>`](../crates/freshkube-reads/src/loader/mod.rs), which owns `Snapshot<T, Target>`, `Option<OwnedJob>` and `Option<Task<()>>`, with `SCREEN_DEADLINE` plugged in. Use `load(target, &runtime, what, work, slot, cx)` for Tokio work, `resolve(target, result)` for fixtures, and `reset()` when `set_source` detects a changed target. [The etcd example](#ordinary-screen-reads) shows the real call. Render reads `data()`, `error()` and `is_loading()`; retain data alongside a refresh failure banner and its timestamps. Call `cx.notify()` after changes outside render; derive display collections when data changes.
+Render reads `data()`, `error()`, `is_loading()`, `is_stale()`,
+`last_successful()` and `last_failure()`. Derive display collections when the
+loader's `revision()` changes and call `cx.notify()` after coherent state
+changes outside render.
 
 ## Identity and generation
 
-[ACCESS_IDENTITY.md](ACCESS_IDENTITY.md) is the access contract. These identities have different jobs:
+[ACCESS_IDENTITY.md](ACCESS_IDENTITY.md) defines the access boundary. Identity
+answers whose data this is; generation answers which request may publish.
 
-| Identity | What it distinguishes |
+| Boundary | Meaning |
 | --- | --- |
-| Selected configuration/context | The source the user chose; it is not proof that its files or authenticated client are unchanged. |
-| `AccessIdentity` / `ClusterSource.id` | Access session plus inspected local configuration revision. Ordinary Kubernetes rows, caches, detail, discovery, search and summary use this boundary. |
-| `Target` | Desktop node request identity: epoch, context, node and address. Node selection advances the epoch; access replacement also invalidates targets. Selecting a node alone does not replace compatible Kubernetes access. |
-| `Request<I>` generation | One `Snapshot::begin` invocation, even for the same identity. A → B → A cannot revive A's earlier completion. |
-| Summary `SessionIdentity` | Access key plus observation-session revision; watcher/relist generations and publication revisions remain separate. |
-| Provider/request identity | Monitoring's source/dashboard/variables/range and Coroot's server/project/access association/application/report/interval, as represented by each feature. These are not all encoded in `Target`. |
+| Selected configuration/context | The user's choice; a path alone does not prove unchanged files or authenticated access. |
+| `AccessIdentity` / `ClusterSource.id` | The access session and inspected local configuration revision. Use this boundary for Kubernetes rows, discovery, details, search and summary. |
+| `Target` | A node request's epoch, context, node and address. Node selection invalidates node work without replacing compatible Kubernetes access. |
+| Provider or detail identity | The source and subject, plus the dashboard, variables, range, object version or report that determine whether data can be reused. |
+| `Request<I>` or a watch's internal ticket | The identity and request generation captured when work starts. Even A → B → A must reject A's earlier completion. |
 
-`Snapshot` does not infer access from a path or inspect credentials. The shell's overview uses `Snapshot<ClusterOverview, AppliedConfig, String>`, so [its completion boundary](../crates/freshkube-desktop/src/desktop/access/mod.rs) separately checks the shell epoch, configuration revision and collected access. `invalidate_target` cancels delivery/read jobs, clears ordinary snapshots and dependent views, and stops the summary session. Direct Kubernetes configuration reload has its own access and connection-generation guards. Replacing files at the same path clears incompatible data even when new credentials fail to connect. Files are reinspected at reload/refresh, not watched continuously. A running shell keeps the existing access until replacement is confirmed; declining marks the overview stale and leaves that explicit session intact.
+`Snapshot::begin` advances the request generation. `apply` accepts only the
+current identity and generation while that request is loading; a duplicate
+completion is also rejected. `Loader::land` additionally rejects a read cut
+short by hiding. Cancellation saves work; these checks establish publication
+correctness even if an answer races cancellation.
 
-Compatible watch/transport reconnects, client-cache eviction and direct `forget()`/retry retain access identity and compatible selection. Rebuilding an unusable authenticated Talos client starts a new access session. Remote credential rotation, auth-plugin revisions and several simultaneous sessions (the `Registry` holds one; see [the session registry](ACCESS_IDENTITY.md#the-session-registry)) remain future work; do not claim the local file boundary implements them.
+Keep a primitive on its actual owner across requests. `resolve` invalidates a
+completion without restarting the generation sequence. `reset` replaces the
+snapshot and cancels both handles; do not retain an old token and manually
+land it after resetting to the same identity. Likewise, stop or restart a
+`Watch` rather than replace it inside its own delivery, where a fresh
+primitive's generation could repeat.
+
+The primitives do not inspect credentials or infer access from a file path.
+The caller must replace incompatible identities and apply the access checks
+at the completion boundary. A failed connection after a file replacement
+must not expose the previous identity's data.
 
 ## Snapshot transitions
 
-Core's [snapshot.rs](../crates/freshkube-core/src/snapshot.rs) defines `Snapshot<T, I, E = Failure>` and `Request<I>`, with their unit tests. Desktop's [state.rs](../crates/freshkube-desktop/src/state.rs) names them `state::Snapshot<T, I = AppliedConfig, E = Failure>` and `state::Request<I>`, used by the shell and Observability, and wrapped by screen loaders.
+Core's [`snapshot.rs`](../crates/freshkube-core/src/snapshot.rs) defines the
+state transitions and their tests; the loader delegates publication to it.
 
 | Transition | Data and status |
 | --- | --- |
-| `begin(identity)` with the same identity | Retains data and timestamps, advances generation, sets loading, clears the error and marks any retained data stale while reading. |
-| `begin(identity)` with a different identity | Clears data and both timestamps, advances generation and starts loading. No stale value from the old identity is retained. |
-| `apply(&request, Ok(data))` for the current loading request | Replaces data, stops loading, clears stale/error, records success time and clears failure time. |
-| `apply(&request, Err(error))` for the current loading request | Stops loading, records error/failure time, keeps any same-identity data and success time, and marks that data stale. With no successful data, this is a failure without a stale value. |
-| Obsolete or already-applied completion | Returns `false` without changing state. Both identity and generation must match, and the snapshot must still be loading. |
+| Start for the same identity | Keep data and timestamps, advance generation, set loading, clear the error and mark retained data stale while reading. |
+| Start for a different identity | Clear data and timestamps, advance generation and start loading. |
+| Current success | Replace data, stop loading, clear stale/error, record success time and clear failure time. |
+| Current failure | Stop loading, record error/failure time, retain same-identity data and its success time, and mark retained data stale. Without a prior success there is no stale value. |
+| Obsolete or duplicate completion | Return `false` and change nothing. |
 
-`data()` alone does not mean current evidence. Render retained content with loading/error/freshness information; do not turn a failed read into an empty collection or infer absence from stale data. `last_successful()` and `last_failure()` describe freshness. `data_mut()` updates an independent projection without changing request coverage or timestamps.
-
-Resetting a loader replaces its snapshot **and** drops its read and delivery tasks. A bare `Snapshot::default()` starts its generation over; it is not an independent cancellation mechanism. Owners must cancel old delivery or preserve an additional epoch/sequence boundary when resetting state.
-
-## Ordinary screen reads
-
-[screens::Loader<T>](../crates/freshkube-desktop/src/screens/loader.rs) is `freshkube-reads`'s [`Loader<T, I>`](../crates/freshkube-reads/src/loader/mod.rs) with `Target` as its identity. It owns a `Snapshot<T, Target, String>`, a Tokio `OwnedJob` and a GPUI `Task<()>`. `load` begins a request on the snapshot, runs a `Send + 'static` future through core's `spawn_job` under the deadline it is given (`SCREEN_DEADLINE` for a screen), and keeps a GPUI receiver task. That task uses the weak screen entity, finds its loader through `slot`, and lands the answer through `land`, which releases the read job; tests answer late through `apply`, behind the `testing` feature. Failure to receive a result becomes an error. The caller notifies when starting; delivery notifies on completion.
-
-This is the live-read portion of [EtcdScreen::refresh](../crates/freshkube-desktop/src/screens/etcd/mod.rs), inside its `ScreenPanel` implementation, after obtaining `source` and `live`:
-
-```rust
-let request = EtcdInspectionRequest::new(source.inspection_target());
-self.loader.load(
-    source.target.clone(),
-    &self.runtime,
-    "the etcd status",
-    async move {
-        collect_etcd_health(live.client, request)
-            .await
-            .map_err(|error| error.to_string())
-    },
-    |screen: &mut Self| &mut screen.loader,
-    cx,
-);
-cx.notify();
-```
-
-That screen owns `Loader<EtcdHealthSnapshot>`, compares old/new `source.target` in `set_source`, and calls `reset()` on a change. `activate` loads only with no data and no request in flight; `refresh` guards duplicate work. Fixtures use `resolve(source.target.clone(), example(&source))`. Read `data()`, `error()`, `is_loading()`, `is_stale()` and timestamps during rendering; the shared header/failure banner present refresh state. An owner whose answer needs more than `load` gives runs the read itself: `start(identity)` begins it and drops the one in flight, `run(job, task)` keeps its Tokio job and GPUI task, and `land(request, result, cx)` publishes the answer if it is still the latest and times a successful one, as `load` does. The Applications owners read this way (see the table below). Do not invent a loader method or put cluster I/O on the UI thread.
+Do not turn a failed read into an empty collection or infer absence from stale
+data. Show the retained value alongside refresh/error state and timestamps.
+`data_mut()` changes data in place without advancing the revision or request
+coverage; its caller is responsible for updating any display projection.
 
 ## Streams and visibility
 
-`freshkube-reads` has two primitives that owners move onto one at a time ([#582](https://github.com/skel84/freshkube/issues/582)); Resources' list watch is the first `Watch`. [`Watch<T, I>`](../crates/freshkube-reads/src/watch/mod.rs) is a `Loader` for a stream: `start` runs Tokio work with the sender it sends items into and drops any earlier stream; its GPUI task hands the owner what arrived as one batch, at most `Pace::most` items and no sooner than `Pace::every` after the last, and only while the identity and generation it started with are current. `stop` drops the job and the delivery, a delivery may stop or start its own watch, a stream that ends stops it, and `revision` rises with each batch. The owner keeps what the batches build, as `resources/store.rs` does for Resources' watch; `logs/streams.rs` keeps each container stream's job, generation and retry beside the one `Watch` they all feed; `dock/feed.rs` still does it by hand. `open` gives a watch no work of its own, for senders taken with `sender`, and `start_then` runs an `ended` hook when a stream ends by itself. `Loader::set_visible` takes an `OnShow`: hiding drops the read and keeps the data as last known (a read cut short stops loading), and showing returns whether the owner should read again: `ReadIfOlder(threshold)` when the last successful answer is at least that old by the executor's clock, or there is none (a failed refresh, a `resolve`d answer, a cut read and an `expire`d answer count as old); `Never` never. A read `start`ed with no work, as example data held on its loading rows, is cut by hiding too. `Watch::set_visible` takes no policy: hiding stops a running stream, and showing returns true whenever hiding stopped it, since a stopped stream holds nothing fresh. An owner whose stream reads on while hidden, as a dock's log tab, doesn't call it. Resources calls `Watch::set_visible`; the three Applications owners call `Loader::set_visible`, and the nine Talos screens don't yet, so they behave as before.
+[`freshkube_reads::Watch<T, I>`](../crates/freshkube-reads/src/watch/mod.rs)
+owns a stream's Tokio job and GPUI delivery. `start` replaces the previous
+stream; each batch checks its start's identity and generation before the
+owner's apply callback runs. `revision()` rises per accepted batch. `stop`
+advances the generation and drops work and delivery. A natural end clears the
+running state; `start_then` also calls the owner's end hook after its last
+batch. Explicit stop or replacement does not call that hook.
+
+`Pace` bounds the channel capacity and batch size and sets the minimum interval
+between batches. Delivery yields between batches so a busy channel cannot
+hold the UI thread. `open` creates a shared delivery without a Tokio job;
+`sender` supplies additional writers. A sender from an earlier start cannot
+publish after stop or restart.
+
+A watch keeps no application data or error state itself. Its owner retains
+what the batches build, clears incompatible data on identity replacement, and
+marks retained evidence stale after failure or loss of coverage. A failed
+relist cannot prove an empty collection. Reducer generations and publication
+revisions describe data coverage, not another read lifetime; see
+[coverage and resynchronization](ROADMAP.md#coverage-failure-and-resynchronization).
+
+[`OnShow`](../crates/freshkube-reads/src/visibility.rs) defines a loader's
+show policy. Both primitives start visible; an initially hidden owner must
+forward its initial state too.
+
+| Visibility change | Primitive contract |
+| --- | --- |
+| `Loader::set_visible(false, policy, cx)` | Drop job and delivery, keep last-known data, stop reporting loading and reject a cut read's late answer, including a held read with no work. |
+| `Loader::set_visible(true, ReadIfOlder(threshold), cx)` | Return whether the owner should read: true when the last successful answer is at least the threshold old by the executor's clock, or has no age. Failure, `resolve`, `expire` and a cut read count as old. |
+| `Loader::set_visible(true, Never, cx)` | Never request a read merely because the owner shows; explicit actions or the owner's existing scheduling still decide when to read. |
+| `Watch::set_visible(false)` | Stop a running stream and keep what it delivered on the owner. |
+| `Watch::set_visible(true)` | Return true if hiding stopped the stream, regardless of age. A stream that was not running when hidden is not started by showing. |
+
+These methods return a decision; they do not start work. The caller performs
+the read or restart and keeps its existing timing and deadlines. Repeated
+visibility values do nothing. A stream explicitly stopped while hidden still
+asks to restart on show; the owner can decline that restart.
 
 ## Read-job and delivery ownership
 
-[OwnedJob](../crates/freshkube-core/src/job.rs) (core's `job`, which desktop's `backend` re-exports) wraps a Tokio `JoinHandle<()>`; its `Drop` calls `abort()`. Dropping a Tokio join handle alone would detach it, which is why ordinary reads keep this guard. `spawn_job` also selects on `sender.closed()`, so dropping its receiver cancels pending work. It applies a deadline to reads. Already-running `spawn_blocking` work cannot be aborted by this guard; local file reads are bounded and off GPUI.
+Core's [`job::OwnedJob`](../crates/freshkube-core/src/job.rs) wraps a Tokio join
+handle and aborts it on drop; dropping a bare join handle would detach work.
+`spawn_job` also stops when its result receiver closes and applies the read's
+deadline. Already-running `spawn_blocking` work cannot be aborted this way;
+local file reads must remain bounded and off GPUI. The primitive retains both
+the job and the GPUI delivery task so replacement or drop cancels both.
+Delivery uses weak entities and must tolerate a disappearing entity or window.
 
-Keep the GPUI delivery `Task` as well as the `OwnedJob` on the owner. Replacing the pair drops old work and delivery. Use `cx.spawn`/`spawn_in` with weak entities, check the captured identity/generation in `update`/`update_in`, and handle the entity/window disappearing. Cancellation saves work; completion guards establish publication correctness even if an answer raced cancellation. Ordinary read delivery is not detached.
+The shell's [`Pilot::sync_visible`](../crates/freshkube-desktop/src/desktop/pages.rs)
+notifies every retained `ScreenHandle` through
+[`ScreenPanel::set_visible`](../crates/freshkube-desktop/src/screens/mod.rs),
+including hidden pages. Source updates reach every page; activation and
+periodic page refresh reach only the shown page. Node-tab visibility nests
+inside Nodes. Forward the visibility boundary to the primitive; a page that
+keeps the trait's default no-op still has a migration gap.
 
-The shell sends `set_source` to all retained `ScreenPanel`s and dispatches `activate`/periodic `refresh` only to the visible one. Every page has a `ScreenHandle` in the shell's one map (`Pilot.pages`, keyed by `PageId`) and hears `ScreenPanel::set_visible` through it (`Pilot::sync_visible`), whenever the page or the node pane's tab changes, a roster change that closes the pane or drops its tab included: the pages that show hear `true` and every other `false`, in key order, and a page told what it already knows does nothing. Visibility nests: the page that shows hears `true`, and a node pane's screen hears it too only while Nodes is up with its tab selected, Nodes keeping `true` around it (`Pilot::shown_pages`). Nothing else hears `true` at once. Resources, Monitoring, Observability, Applications, Nodes' read of its nodes' use and Settings' Delivery sources drop their reads there. The Talos screens keep its default, which does nothing, so navigation alone leaves generic loaders intact and an in-flight read can finish while hidden, until each passes it on to its `Loader`'s `set_visible`, which `freshkube-reads` has and the screens don't call yet (#582). Operations' `set_source` only invalidates its preview and audit; `activate` reads them, so a hidden Operations reads nothing for a new target or a same-target update (#44). Adding universal hide cancellation or redesigning that ownership is outside #24. New page-owned work should use an explicit visibility boundary rather than infer cancellation from navigation.
+Use the lifetime of the actual consumer: a page-owned read stops on hide, a
+shared connection remains needed while any visible consumer uses it, and a
+session-owned summary remains needed across page navigation. These are
+ordinary `Loader`/`Watch` owners, not exception classes. For example, the
+summary driver's watch is retained by
+[`Registry`](../crates/freshkube-desktop/src/desktop/session.rs), stopped on
+session replacement or parking, and keyed by context/access. Its reducer's
+coverage rules remain separate. Monitoring's
+[connection owner](../crates/freshkube-monitoring/src/page/connection.rs) must
+still receive a hide and retain recovery requested by visible history while
+the dashboard is hidden. See [Monitoring](features/monitoring.md).
 
-## Feature owners and visibility
+## Exceptions
 
-| Owner | Requests and retained lifetime |
-| --- | --- |
-| Cluster session summary (`Pilot.registry`, `desktop/session.rs`) | The `ClusterSession`'s `summary_job` and `summary_task` keep core's nine compact reflector stores on every page. Health consumes publications; visible Lifecycle subscribes to the same Nodes publication. Manual Refresh relists; the automatic Talos refresh and node selection preserve the compatible session. Access replacement replaces the whole `ClusterSession` (`Registry::reset_active`), which cancels its driver and child watches; the summary epoch lives on the `Registry`, so a replacement never repeats one. Resources Table watches remain separate. |
-| Resources screen/detail pane | Visible list/watch and metrics belong to the Resources entities; hiding cancels ordinary work. The list's watch is a `Watch<Vec<ResourceEvent>, u64>` for the store session's epoch, stopped on hide through `Watch::set_visible`; showing always lists and watches again. The store keeps its epoch for the example data and the tests' deliveries, which apply without a stream. The namespace read (`namespace_job`, `namespace_generation`) and the pods' usage poll (`usage`, `usage_generation`) keep their own generations: the namespace answer updates the picker with the window as it lands, which `Loader` has no hook for, and the poll repeats. Custom Resources' discovery (`resources/custom.rs`) keeps its epoch over a per-group map of reads. Detail reads carry object identity and sequence and respond to list versions, at most once a second. Revealed Secret values are forgotten on hide/new version. A running shell is retained separately. |
-| Applications list, Changes list and change page (`applications/mod.rs`, `changes/mod.rs`, `change/read.rs`) | Each owns one `Loader`, hidden while its page is, through `Loader::set_visible` with `OnShow::ReadIfOlder(FRESH_FOR)` (30 s): hiding drops the read in flight and keeps the last answer, and showing reads again once that answer is 30 s old, failed, was never timed, or was cut short by the hide. The list is keyed by the connection and its workspace entry, the Changes list by the connection, the change page by the change (project and Freight on its cluster). Another connection or entry resets the list and the Changes list; a workspace that reads its parts elsewhere, or another Argo CD namespace for the Changes list, expires what was read, so it reads now if shown, else when next shown. Example data lands at once through `land`, timed as a live answer; tests' example delay runs a GPUI timer task and `FRESHKUBE_FIXTURE_HOLD` starts a read with no work. The per-source states (refused, not served, unreachable) are part of each answer, from delivery's reads; a refresh that fails keeps the last answer, marked stale. |
-| Settings' Delivery sources (`desktop/settings/sources/mod.rs`) | A `Loader<(), CheckIdentity>` owns the check's completion, Tokio job and GPUI delivery; `Check` keeps the existing Never, Running, Done and Failed display states. Its identity is the resolved workspace sources, kubeconfig path, example flag and, only when read, the open connection's access id. Check sources starts the read explicitly. `set_visible(false)` cancels a running check and forgets its display state; a finished one stays. `OnShow::Never` keeps showing from reading automatically. A new workspace or a changed open connection forgets the check through `resolve`, preserving the request generation sequence so a late answer cannot land even after the same identity is checked again. Example data answers at once. |
-| Nodes' use read (`Nodes.metrics`, `desktop/nodes/metrics.rs`) | A `Loader<HashMap<String, NodeUsage>, String>` keyed by `ClusterSource.id` owns the answer, Tokio job and GPUI delivery while Nodes shows, around a pane screen too. Its delivery waits 15 s after each answer before starting the next read. `Loader::set_visible(false)` cancels the read and that wait; `OnShow::ReadIfOlder(Duration::ZERO)` reads immediately on showing. Another source resets the loader and reads again if Nodes shows. The loader's request and revision reject late answers, including after switching away and back to the same source. A failed read keeps the last answer as stale. The owner retains its visibility flag for source changes and arriving example rows, forwarding the same changes to the loader. Example data answers at once, with arriving rows updating its samples without replacing the poll's wait. |
-| `LogView<S>` with `TalosLogs` | The view owns retention, review/search/selection and row measurement; the source owns its stream, a `Watch<StreamEvent, Target>` (the example services write into an `open`ed one on the GPUI clock). `LogView::set_visible(false)` coalesces received lines before applying them to retained review data; it does not stop collection, and the source never calls `Watch::set_visible`. Stop, target/collection replacement or owner drop cancel the source stream. The watch's generation and target identity reject an earlier stream's batches, and `apply_batch` drops one for another node. A stream that ends by itself lands what was held while hidden and stops collecting (`start_then`). |
-| `Dock` log tabs | Each tab owns a `LogView<PodLogs>` or `LogView<WorkloadLogs>` and a feed: a pod's one-pod watch (`follow_pods` by name, checked by UID) or a workload's single object read for its selector, an `OwnedJob` and GPUI delivery per tab. A tab starts when it is first selected while the dock shows, then **reads while it is open, whatever page, object or pane shows**; minimizing the dock keeps it reading and only `set_visible` changes. Closing the tab (its ×, a middle-click, Command-W), the dock's × or Close others/all, another `ClusterSource.id`, or none under another access identity (`Pilot::kube_identity`, none while another context loads), drops view, stream, feed job and delivery (the pod's stream is a `Watch` keyed by pod and container, a workload's pod watch and its containers' shared feed are `Watch`es, and neither calls `Watch::set_visible`), while a source missing under the same identity keeps them; a pod that goes ends its tab's stream and keeps its lines; the same id refreshes access. Saved tabs restore unstarted for their context and read nothing until selected and shown. Resume reads from the retained position; previous-instance reads require an explicit choice. Each `Watch`'s generation and its pod and container identity protect delivery, and in a shared feed each container stream's own generation. |
-| `MonitoringPage` and pod/node history | Each read has a `Loader<(), I>` for its completion, Tokio job and GPUI delivery; panels and page states keep their own data and typed errors. The board owns variable and viewport-panel loaders, with marker loaders alongside; connection discovery, confirmation and bounded client rebuilding have persistent loaders, and Settings Test has one on its form. A new dashboard, variables, range or refresh keeps the page's scheduling generation and each panel's `asked` stamp; loader tokens reject replaced or duplicate completions. Hide cancels discovery/confirmation, variables/panels/markers and the refresh timer, retaining usable same-source state. Page cancellation resolves the completion owner to no identity without resetting its generation. A rebuild needed by a still-visible history survives page hiding and stops when its last consumer leaves. Settings Test stays explicitly started and is cancelled by form replacement or reset. A different `ClusterSource.id` clears connection/board/markers. History has two persistent loaders keyed by its source key, subject and panel, with the existing 30 s deadline and freshness measured from asking, including failed answers; `OnShow::Never` keeps successful-answer age from changing that rule. Both users call the private `dispatch` in monitoring's `lib.rs`: example work runs on GPUI's background executor, live work on Tokio under the owner's deadline, with one typed timeout and no delivery after cancellation. |
-| `ObservabilityPage` | `Live` holds `ReadJob` pairs and generation, with independent `Snapshot`s for apps/map/REST/extended report evidence. Hide increments generation and clears jobs; completions check visibility/generation and snapshot request identity. Server/authentication edits or Disconnect clear the provider and observations immediately, including failed replacement. Project/access association/application/report/interval changes invalidate incompatible evidence. Same-identity refresh failures retain stale evidence. |
-| Dock shell tab `ShellView` | A pick from the pane's Shell menu, or the tab's Start, creates a session on that running container. Starting owns a read/delivery pair; Running owns `ExecSession`, an output-forwarding `OwnedJob` and GPUI delivery. The tab owns the view and a pod watch for its containers, and keeps the session whatever page, object or pane shows. Closing a running shell's tab, another `ClusterSource.id`, window close and quit ask first (`unless_shell`/`may_close`); a closed tab ends its session with `close_session`. Explicit End stops it, and minimizing or hiding does not. A restored tab starts idle. Sequence guards protect terminal delivery. |
-| App `ForwardList` / `ForwardView` | Explicit Forward captures its connection and specification. The app owns views/session guards and status delivery, independent of the pane/page/context. Stop closes the session; an ended entry remains until Remove. Context replacement does not retarget a running forward. Quit/window close asks for shells and forwards together. |
+Only the following two classes follow a lifetime other than ordinary reads.
 
-Sources: [summary](../crates/freshkube-desktop/src/desktop/kubernetes_summary/mod.rs), [Resources](../crates/freshkube-resources/src/screen/mod.rs), [detail](../crates/freshkube-resources/src/pane/mod.rs), [logs](../crates/freshkube-logs/src/lib.rs), [Talos](../crates/freshkube-desktop/src/logs/talos/mod.rs), [pod logs](../crates/freshkube-desktop/src/logs/pod/mod.rs), [dock](../crates/freshkube-desktop/src/desktop/dock/mod.rs), [Monitoring](../crates/freshkube-monitoring/src/page/mod.rs), [Observability](../crates/freshkube-observability/src/connection.rs), [shell](../crates/freshkube-resources/src/shell/mod.rs), [forwards](../crates/freshkube-resources/src/forwards/mod.rs). Provider/session details stay in [MONITORING.md](MONITORING.md), [COROOT.md](COROOT.md), [POD_EXEC.md](POD_EXEC.md) and [PORT_FORWARD.md](PORT_FORWARD.md).
+### Operations mutations
 
-The summary reducer has its own freshness contract: `InitDone` commits a complete replacement, including empty results; an unfinished/failed relist retains prior complete evidence as stale. A 403 remains refused independently of other sources. `Part::loaded()` can return retained evidence, so check `is_current()` before inferring absence. Its generations reject obsolete watcher events and the shell checks session identity/publication revision before applying. See [coverage and resynchronization](ROADMAP.md#coverage-failure-and-resynchronization).
+A submitted mutation must finish its current step even if a page hides or
+access changes. [`mutation.rs`](../crates/freshkube-desktop/src/mutation.rs)
+owns the app-wide operation slot and confirmation ticket;
+[Operations](../crates/freshkube-desktop/src/screens/operations/mod.rs) captures
+the confirmed plan and source. Preview and audit reads remain ordinary reads.
 
-## Operations mutations
+Confirmation rechecks the preview fingerprint and selected access. Core's
+[selection runner](../crates/freshkube-core/src/operations/selection/mod.rs)
+owns fresh safety checks, ordered execution, partial outcomes and recovery.
+A detached GPUI delivery task holds the operation ticket until the worker
+ends, updates global progress and filters screen updates by run id. Losing
+the screen or progress receiver must not abort the submitted worker or free
+the slot early.
 
-Preview and audit reads in [OperationsScreen](../crates/freshkube-desktop/src/screens/operations/mod.rs) are cancellable ordinary work. A confirmed run follows a separate contract:
+Cancel is cooperative, before and between steps and during cancellable waits.
+Await a submitted patch, eviction or Talos mutation; never put the confirmed
+run inside `Loader`, `Watch`, `spawn_job` or a receiver-closed abort branch.
+Maintenance mutations use the same operation slot. This guarantee lasts while
+the application/runtime lives, not across process termination.
 
-1. Desktop prepares a preview from an identity-validated selected Kubernetes client and fresh node/etcd state. The preview records the `AppliedAccess` (configuration revision and access identity) the shell applied with its source, and builds its client through it. Failure evicts the reused client for retry. The confirmation fingerprint covers context, target epoch, operation, ordered node names/addresses, options and safety verdicts. `mutation::confirm` checks the current fingerprint and app-wide slot when Confirm is clicked; stale previews cannot submit.
-2. `start_run` captures the confirmed plan/source and acquires `Operations::begin`'s app-wide `OperationTicket`. Source/selection changes clear preview state but leave the captured run intact. A second operation cannot take the occupied slot.
-3. Desktop's `run_live` passes a selected-access revalidation future (`forget_kubernetes`, then `kubernetes`) to core's `run_selection`, together with explicit `OperationConfirmation`, cancellation predicate and progress callback. Core polls connection setup only after confirmation/cancellation gates. `run_client` builds that client only through the preview's `AppliedAccess`: the confirmed source must carry the same access identity, and the local files must keep the preview's revision before and after the client is built, the rule `TalosAccess::client` follows (#497). A mismatch fails the setup, so nothing is submitted and the user must refresh; it never falls back to ambient or pinned Talos access.
-4. Core owns whole-selection and fresh per-node prechecks, identity/readiness/scheduling and etcd safety policy, ordered execution, drain options, read deadlines, partial outcomes, panic recovery and both step/outcome audits. Unknown etcd safety blocks reboot/shutdown. A frontend preview cannot substitute for current core policy.
-5. Tokio runs the mutation future without an `OwnedJob`. An unbounded channel carries progress, node results and completion to a **detached GPUI delivery task**. That task owns the ticket, updates the global status even if the screen is gone, filters screen updates by run id, and calls `Operations::finish` after completion/channel end. Failed sends stop display only; they do not abort the submitted worker or release its slot early.
-6. Cancel sets the ticket's atomic cooperative flag. Core checks before/between mutations and during delays/readiness waits. A submitted patch, eviction or Talos mutation is awaited without the ordinary read-job timeout/abort, even when Cancel is requested. Then remaining work stops at its cancellation gates; drain compensation can restore scheduling despite cancellation. Cancellation after an accepted reboot may stop readiness verification and leave the node cordoned, with that outcome reported explicitly.
+### User-started sessions
 
-Do not put a confirmed run in `Loader`, `spawn_job` or a receiver-closed abort branch. Submitted mutations must finish their current step; a closed page or replaced access cannot undo a request already sent. This guarantee applies while the application/runtime lives, not to process termination or a crash.
+Logs, shells, forwards and packet capture belong to the explicit session the
+user opened or started. Page visibility is not their stop signal. Their
+streams may use `Watch`, but must preserve collection while hidden instead of
+forwarding the page's hide to `Watch::set_visible`.
 
-Sources: [mutation slot and confirmation](../crates/freshkube-desktop/src/mutation.rs), [core selection runner](../crates/freshkube-core/src/operations/selection/mod.rs), [node policy](../crates/freshkube-core/src/operations/mod.rs). Existing core fake-client tests cover cancellation while a mutation is submitted, safety gates, failures and recovery; desktop tests cover confirmation and slot ownership. #24 changes guidance, not this policy.
+- **Logs:** [`LogView<S>`](../crates/freshkube-logs/src/lib.rs) owns retained
+  lines, review and search; its source owns collection. Hiding coalesces
+  received lines rather than stopping it. The
+  [dock](../crates/freshkube-desktop/src/desktop/dock/mod.rs) starts a restored
+  tab only when first selected and shown, then keeps it reading while open on
+  any page, including when minimized. Closing, explicit Stop, or incompatible
+  source replacement ends collection. Source paths are
+  [`logs/talos`](../crates/freshkube-desktop/src/logs/talos/mod.rs),
+  [`logs/pod`](../crates/freshkube-desktop/src/logs/pod/mod.rs),
+  [`logs/workload`](../crates/freshkube-desktop/src/logs/workload/mod.rs) and
+  [`logs/streams.rs`](../crates/freshkube-desktop/src/logs/streams.rs);
+  [`dock/feed.rs`](../crates/freshkube-desktop/src/desktop/dock/feed.rs) owns
+  each tab's pod/selector feed. Per-container generations reject retried
+  streams' old updates queued in the shared feed. Previous-instance logs
+  require an explicit choice.
+- **Shells:** [`ShellView`](../crates/freshkube-resources/src/shell/mod.rs)
+  starts only from the user's container choice or Start. Running owns the
+  `ExecSession` and output delivery across navigation and minimization.
+  Explicit End or confirmed close/replacement ends it; restored tabs are idle.
+  See [pod exec](POD_EXEC.md).
+- **Forwards:** [`ForwardList` and `ForwardView`](../crates/freshkube-resources/src/forwards/mod.rs)
+  capture the selected connection and specification on Forward. The app owns
+  the session independently of pages or context changes; replacement must
+  not retarget a running forward. Stop ends it; Remove discards its ended
+  entry. Quit/window close asks about shells and forwards together. See
+  [port forwarding](PORT_FORWARD.md).
+- **Packet capture:** [`screens/network/capture.rs`](../crates/freshkube-desktop/src/screens/network/capture.rs)
+  owns the explicit capture and its delivery; core's
+  [`pcap.rs`](../crates/freshkube-core/src/pcap.rs) owns capture/save state.
+  Leaving the Network tab does not cancel it. Stop, capture completion,
+  target replacement or owner drop ends its work.

@@ -15,8 +15,6 @@ use gpui_kit::component::{
     Icon, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
-    popover::PopoverState,
-    v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -723,9 +721,8 @@ impl Pilot {
                             .primary()
                             .icon(IconName::Settings)
                             .label("Open Settings")
-                            .on_click(cx.listener(|view, _, _, cx| {
-                                view.navigation.settings_open = true;
-                                cx.notify();
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.show_settings(super::settings::SettingsSection::Connection, window, cx);
                             }))
                             .into_any_element(),
                         Button::new("browse-kubernetes")
@@ -746,27 +743,22 @@ impl Pilot {
     }
 }
 
-/// The "Kubeconfig" part of the settings popover in Kubernetes-only mode.
-pub(super) fn settings_section(
-    pilot: &Entity<Pilot>,
-    popover: Entity<PopoverState>,
-    cx: &App,
-) -> AnyElement {
+/// The Kubernetes API group when Talos is not connected.
+pub(super) fn settings_section(pilot: &Entity<Pilot>, narrow: bool, cx: &App) -> AnyElement {
     let p = palette(cx);
     let Some(kube) = pilot.read(cx).mode().kubernetes_only() else {
         return div().into_any_element();
     };
     let browse_pilot = pilot.downgrade();
-    v_flex()
-        .id("kubeconfig-settings")
-        .gap_1p5()
-        .child(
-            div()
-                .text_size(dp(12.5))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child("Kubeconfig"),
-        )
-        .child(
+    let saved = if pilot.read(cx).connection_store.is_some() && kube.remembered_file().is_some() {
+        freshkube_ui::form::SavedIn::file("connection.json")
+    } else {
+        freshkube_ui::form::SavedIn::session()
+    };
+    freshkube_ui::form::group("kubeconfig-settings", "Kubernetes API")
+        .narrow(narrow)
+        .saved_in(saved)
+        .row(freshkube_ui::form::row("connection-kube-path", "Kubeconfig",
             h_flex()
                 .gap_2()
                 .child(
@@ -790,21 +782,25 @@ pub(super) fn settings_section(
                         .label("Browse…")
                         .tooltip("Choose a kubeconfig file and list its contexts")
                         .on_click(move |_, window, cx| {
-                            // Close first so the native picker isn't stacked
-                            // over an open popover.
-                            popover.update(cx, |state, cx| state.dismiss(window, cx));
                             _ = browse_pilot
                                 .update(cx, |view, cx| view.browse_kubeconfig(window, cx));
                         }),
                 ),
         )
-        .child(
-            div()
-                .text_size(dp(12.))
-                .text_color(p.muted)
-                .child("Contexts come from these files and connect as they are: without Talos, nothing checks them against a cluster."),
-        )
+        .hint("Contexts come from these files and connect as they are: without Talos, nothing checks them against a cluster."))
+        .render(cx)
         .into_any_element()
+}
+
+/// Shared by General and the gear’s quick control.
+pub(super) fn refresh_hint(has_talos: bool, automatic: bool) -> &'static str {
+    if !has_talos {
+        "Requires a Talos connection; Kubernetes updates are watched."
+    } else if automatic {
+        "Every 15 s; Kubernetes updates are watched."
+    } else {
+        "Talos auto-refresh is off; Kubernetes updates are watched."
+    }
 }
 
 #[cfg(test)]
