@@ -16,6 +16,8 @@ mod kubernetes_summary;
 mod link_tests;
 #[cfg(test)]
 mod menu_tests;
+#[path = "startup/migrate.rs"]
+mod migrate_startup;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -27,8 +29,6 @@ mod search;
 mod services;
 mod session;
 mod settings;
-#[path = "startup/migrate.rs"]
-mod migrate_startup;
 #[path = "startup/setup.rs"]
 mod setup_startup;
 mod shell;
