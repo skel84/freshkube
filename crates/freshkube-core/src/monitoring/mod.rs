@@ -17,6 +17,7 @@ mod example;
 pub mod history;
 pub mod markers;
 mod matcher;
+pub mod scope;
 mod transport;
 
 #[cfg(test)]

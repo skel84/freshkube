@@ -20,7 +20,7 @@ type Seen = Arc<Mutex<Vec<String>>>;
 
 /// A fake API server. `route` gets the method, path and query and returns
 /// a status and body; status 0 never answers.
-fn fake(
+pub(super) fn fake(
     route: impl Fn(&http::Method, &str, &str) -> (u16, String) + Send + Sync + 'static,
 ) -> (kube::Client, Seen) {
     let seen: Seen = Default::default();
@@ -59,24 +59,24 @@ fn list(items: Vec<Value>) -> String {
     json!({"kind": "ServiceList", "apiVersion": "v1", "metadata": {}, "items": items}).to_string()
 }
 
-fn success(data: Value) -> String {
+pub(super) fn success(data: Value) -> String {
     json!({"status": "success", "data": data}).to_string()
 }
 
-fn status(code: u16, message: &str) -> String {
+pub(super) fn status(code: u16, message: &str) -> String {
     json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "message": message, "code": code})
         .to_string()
 }
 
-fn query_one() -> String {
+pub(super) fn query_one() -> String {
     success(json!({"resultType": "scalar", "result": [1700000000, "1"]}))
 }
 
-fn build_info() -> String {
+pub(super) fn build_info() -> String {
     success(json!({"version": "2.53.0", "revision": "abc"}))
 }
 
-fn targets() -> String {
+pub(super) fn targets() -> String {
     success(json!({"activeTargets": [
         {"scrapeInterval": "15s"},
         {"scrapeInterval": "15s"},
