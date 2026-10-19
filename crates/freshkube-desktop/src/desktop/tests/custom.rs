@@ -7,7 +7,7 @@ fn custom_resources_are_discovered_on_expand_and_open_their_kinds(cx: &mut TestA
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(window.find("nav-k8s-group-custom").selected(), Some(false));
-        assert!(view.read(cx).custom.read(cx).groups().is_none());
+        assert!(view.read(cx).pages.custom.read(cx).groups().is_none());
 
         // With no custom kind shown yet, the page stays while the column
         // discovers the groups.
@@ -173,7 +173,8 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
             view.show_custom(cx);
         };
         view.update(cx, |view, cx| {
-            view.custom
+            view.pages
+                .custom
                 .update(cx, |custom, _| custom.hold_reading(None));
             reopen(view, cx);
         });
@@ -201,7 +202,7 @@ fn custom_resources_follow_the_connection_and_wait_for_discovery(cx: &mut TestAp
             Some(ColumnReveal::Custom)
         );
         view.update(cx, |view, cx| {
-            view.custom.update(cx, |custom, cx| custom.retry(cx))
+            view.pages.custom.update(cx, |custom, cx| custom.retry(cx))
         });
     })
     .unwrap();

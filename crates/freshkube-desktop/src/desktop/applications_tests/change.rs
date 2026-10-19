@@ -829,6 +829,7 @@ fn without_kargos_address_the_header_neither_opens_nor_copies(cx: &mut TestAppCo
 fn dock_tabs(view: &Entity<Pilot>, cx: &mut TestAppContext) -> Vec<String> {
     cx.update(|cx| {
         view.read(cx)
+            .pages
             .dock
             .read(cx)
             .tabs

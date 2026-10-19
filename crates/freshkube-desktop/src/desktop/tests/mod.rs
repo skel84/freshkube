@@ -45,6 +45,7 @@ fn open_services_with_room(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App
     window.render_frame(cx);
     if !root_pilot(window, cx)
         .read(cx)
+        .pages
         .node_workspace
         .read(cx)
         .expanded

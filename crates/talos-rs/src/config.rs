@@ -34,13 +34,6 @@ pub struct Context {
 }
 
 impl TalosConfig {
-    /// Load configuration from the default location (~/.talos/config)
-    pub fn load_default() -> Result<Self, TalosError> {
-        let path = Self::default_path()?;
-        tracing::debug!("Loading talosconfig from: {:?}", path);
-        Self::load_from(&path)
-    }
-
     /// Load configuration from a specific path
     pub fn load_from(path: &PathBuf) -> Result<Self, TalosError> {
         tracing::debug!("load_from called with path: {:?}", path);
@@ -65,16 +58,7 @@ impl TalosConfig {
         Ok(serde_yaml::from_str(content)?)
     }
 
-    /// Get the default config path (from $TALOSCONFIG env var or ~/.talos/config)
-    ///
-    /// Reads the process environment; a caller that holds the values already
-    /// uses [`Self::default_path_in`].
-    pub fn default_path() -> Result<PathBuf, TalosError> {
-        let talosconfig = std::env::var_os("TALOSCONFIG");
-        Self::default_path_in(talosconfig.as_deref(), std::env::home_dir().as_deref())
-    }
-
-    /// The default config path from the values `default_path` reads: the
+    /// The default config path from the values the caller read: the
     /// `TALOSCONFIG` variable, and the home directory for `~/.talos/config`.
     ///
     /// A `TALOSCONFIG` that is set wins even when empty, which yields an empty
@@ -486,16 +470,5 @@ contexts:
         )
         .unwrap();
         assert_eq!(path, PathBuf::from("/home/ana/.talos/config"));
-    }
-
-    /// The wrapper reads the real environment; it never sets any.
-    #[test]
-    fn default_path_reads_the_process_environment() {
-        let expected = TalosConfig::default_path_in(
-            std::env::var_os("TALOSCONFIG").as_deref(),
-            std::env::home_dir().as_deref(),
-        )
-        .ok();
-        assert_eq!(TalosConfig::default_path().ok(), expected);
     }
 }

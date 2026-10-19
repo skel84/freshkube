@@ -22,6 +22,136 @@ use freshkube_reads::Loader;
 use session::{Definition, SessionKey};
 use std::{rc::Rc, time::SystemTime};
 
+/// What the window knows of the workspace's entries: the sessions, how the
+/// active entry was opened, the links and opens waiting on one, and what
+/// the header's switcher and the Overview's age show of them.
+pub(super) struct Switcher {
+    /// The cluster sessions: a workspace of one.
+    pub(super) registry: session::Registry,
+    /// How the active workspace entry was defined when it was opened.
+    pub(super) active_definition: session::Definition,
+    /// The Talos entry waiting for its talosconfig's contexts.
+    pub(super) entry_open: Option<EntryOpen>,
+    /// A link into another entry, waiting for it to open.
+    pub(super) pending_link: Option<PendingLink>,
+    /// The read that finds the default kubeconfig file an entry's context is in.
+    pub(super) entry_locate: EntryLocate,
+    /// The workspace revision the header's list was built from.
+    pub(super) switcher_revision: u64,
+    /// When the restored summary on show was read; none once a read replaces it.
+    pub(super) restored_taken: Option<SystemTime>,
+    /// "Last known · 3 min ago", beside the Overview's connection state.
+    pub(super) age_label: Entity<AgeLabel>,
+    /// The header's list of the workspace file's clusters.
+    pub(super) switcher: Vec<ClusterItem>,
+}
+
+impl Switcher {
+    pub(super) fn new(age_label: Entity<AgeLabel>) -> Self {
+        Self {
+            registry: session::Registry::new(),
+            active_definition: Definition::default(),
+            entry_open: None,
+            pending_link: None,
+            entry_locate: EntryLocate::default(),
+            switcher_revision: 0,
+            restored_taken: None,
+            age_label,
+            switcher: Vec::new(),
+        }
+    }
+
+    /// The entry the window is on, if the workspace file lists it.
+    pub(super) fn active_cluster(&self) -> Option<&str> {
+        match self.registry.active_key() {
+            SessionKey::Entry(id) => Some(id),
+            SessionKey::Implicit => None,
+        }
+    }
+
+    /// Makes `entry` the active one, as a launch that named its source did.
+    fn adopt_launched(&mut self, entry: &Entry, workspace: &Workspace) {
+        self.registry.adopt(SessionKey::Entry(entry.id.clone()));
+        self.active_definition = definition(entry, workspace);
+    }
+
+    /// Rebuilds the header's list from the workspace at `revision` and forgets
+    /// what was parked for entries that are gone. None when the list was built
+    /// from this revision already; otherwise whether the list changed.
+    fn rebuild(&mut self, revision: u64, workspace: &Workspace) -> Option<bool> {
+        if revision == self.switcher_revision && !self.switcher.is_empty() {
+            return None;
+        }
+        self.switcher_revision = revision;
+        let items: Vec<ClusterItem> = workspace
+            .clusters
+            .iter()
+            .map(|entry| ClusterItem {
+                id: entry.id.clone().into(),
+                role: entry.role.label().into(),
+                tooltip: format!("{} · {}", entry.role.label(), entry.context).into(),
+            })
+            .collect();
+        self.registry.retain_parked(|key| match key {
+            SessionKey::Implicit => false,
+            SessionKey::Entry(id) => workspace.clusters.iter().any(|entry| &entry.id == id),
+        });
+        let changed = items != self.switcher;
+        if changed {
+            self.switcher = items;
+        }
+        Some(changed)
+    }
+
+    /// Leaves the active entry for the implicit one: links made in the
+    /// session being left name an id that ends here, and belong to the
+    /// entry it was.
+    fn leave(&mut self, kube_identity: Option<String>, cx: &mut App) {
+        self.registry
+            .retire_connection(kube_identity, &self.active_definition);
+        self.registry.adopt(SessionKey::Implicit);
+        self.active_definition = Definition::default();
+        self.entry_open = None;
+        self.entry_locate
+            .invalidate(self.active_cluster().map(str::to_owned), cx);
+        self.restored_taken = None;
+        self.age_label.update(cx, |label, cx| label.set(None, cx));
+    }
+
+    /// When the summary on show is the restored one, still waiting for a new
+    /// read to replace it.
+    pub(super) fn last_known_since(&self) -> Option<SystemTime> {
+        let summary = &self.registry.active().kubernetes_summary;
+        self.restored_taken
+            .filter(|taken| summary.last_successful() == Some(*taken) && summary.is_stale())
+    }
+
+    pub(super) fn observed_nodes(&self) -> Option<crate::backend::ObservedNodes> {
+        self.registry.active().summary_session.as_ref()?;
+        Some(crate::backend::ObservedNodes {
+            access: self.registry.active().access?,
+            nodes: self
+                .registry
+                .active()
+                .kubernetes_summary
+                .data()
+                .map(|summary| summary.nodes.clone())
+                .unwrap_or_else(|| {
+                    freshkube_core::kubernetes_summary::Part::Failed(
+                        "Waiting for shared Nodes".into(),
+                    )
+                }),
+        })
+    }
+
+    pub(super) fn stop_summary(&mut self) {
+        self.registry.summary_watch.stop();
+        let session = self.registry.active_mut();
+        session.summary_fixture = None;
+        session.summary_session = None;
+    }
+}
+
 /// The location read and its request, retained after completion because
 /// entry opening, held links and draft inspection share this boundary.
 #[derive(Default)]
@@ -226,12 +356,7 @@ impl Pilot {
         let Some(entry) = matching_entry(workspace, launched) else {
             return;
         };
-        let (key, definition) = (
-            SessionKey::Entry(entry.id.clone()),
-            definition(entry, workspace),
-        );
-        self.registry.adopt(key);
-        self.active_definition = definition;
+        self.switch.adopt_launched(entry, workspace);
     }
 
     /// Rebuilds the header's list and forgets what was parked for entries
@@ -239,26 +364,10 @@ impl Pilot {
     /// not redraw the shell unless the list did.
     pub(super) fn rebuild_switcher(&mut self, cx: &mut Context<Self>) {
         let page = self.settings_page.read(cx);
-        if page.revision() == self.switcher_revision && !self.switcher.is_empty() {
+        let Some(changed) = self.switch.rebuild(page.revision(), page.workspace()) else {
             return;
-        }
-        self.switcher_revision = page.revision();
-        let workspace = page.workspace().clone();
-        let items: Vec<ClusterItem> = workspace
-            .clusters
-            .iter()
-            .map(|entry| ClusterItem {
-                id: entry.id.clone().into(),
-                role: entry.role.label().into(),
-                tooltip: format!("{} · {}", entry.role.label(), entry.context).into(),
-            })
-            .collect();
-        self.registry.retain_parked(|key| match key {
-            SessionKey::Implicit => false,
-            SessionKey::Entry(id) => workspace.clusters.iter().any(|entry| &entry.id == id),
-        });
-        if items != self.switcher {
-            self.switcher = items;
+        };
+        if changed {
             cx.notify();
         }
         self.sync_application_clusters(cx);
@@ -274,15 +383,16 @@ impl Pilot {
                 .iter()
                 .map(|entry| entry.id.clone())
                 .collect(),
-            active: self.active_cluster().map(str::to_owned),
+            active: self.switch.active_cluster().map(str::to_owned),
             mapping: freshkube_delivery::change::live::Mapping::of(
                 workspace,
-                self.active_cluster(),
+                self.switch.active_cluster(),
             ),
             sources: freshkube_core::workspace::Sources::of(workspace),
             kubeconfig: workspace.kubeconfig.clone(),
         };
-        self.applications
+        self.pages
+            .applications
             .update(cx, |page, cx| page.set_clusters(clusters, cx));
     }
 
@@ -293,32 +403,14 @@ impl Pilot {
         gpui_kit::component::WindowExt::push_notification(window, message, cx);
     }
 
-    /// The entry the window is on, if the workspace file lists it.
-    pub(super) fn active_cluster(&self) -> Option<&str> {
-        match self.registry.active_key() {
-            SessionKey::Entry(id) => Some(id),
-            SessionKey::Implicit => None,
-        }
-    }
-
     /// The window no longer shows an entry as defined: a context or
     /// kubeconfig was chosen by hand. It is no entry's now, and the next
     /// launch does not start on the one left.
     pub(super) fn leave_entry(&mut self, cx: &mut Context<Self>) {
-        if self.active_cluster().is_none() {
+        if self.switch.active_cluster().is_none() {
             return;
         }
-        // Links made in the session being left name an id that ends here,
-        // and belong to the entry it was.
-        self.registry
-            .retire_connection(self.source().kube_identity, &self.active_definition);
-        self.registry.adopt(SessionKey::Implicit);
-        self.active_definition = Definition::default();
-        self.entry_open = None;
-        self.entry_locate
-            .invalidate(self.active_cluster().map(str::to_owned), cx);
-        self.restored_taken = None;
-        self.age_label.update(cx, |label, cx| label.set(None, cx));
+        self.switch.leave(self.source().kube_identity, cx);
         NavigationFile::global(cx).clear_active_cluster(cx);
         self.sync_application_clusters(cx);
         cx.notify();
@@ -344,7 +436,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.active_cluster() == Some(id.as_str()) {
+        if self.switch.active_cluster() == Some(id.as_str()) {
             return;
         }
         if self.config_loading {
@@ -379,11 +471,11 @@ impl Pilot {
         // Held after the switch, under the generation it started, so
         // anything that changes the entry afterwards drops it, and only
         // when the switch took: an entry that is gone holds nothing.
-        self.pending_link = link
-            .filter(|_| self.active_cluster() == Some(id.as_str()))
+        self.switch.pending_link = link
+            .filter(|_| self.switch.active_cluster() == Some(id.as_str()))
             .map(|(object, work, by_name)| PendingLink {
                 entry: id.clone(),
-                request: self.entry_locate.ticket(),
+                request: self.switch.entry_locate.ticket(),
                 object,
                 work,
                 by_name,
@@ -409,7 +501,7 @@ impl Pilot {
         // Already there, as after a switch the page hasn't heard of yet:
         // held like any switch's link, so it waits for the entry's own
         // connection rather than opening on an interim one.
-        if self.active_cluster() == Some(entry.as_str()) {
+        if self.switch.active_cluster() == Some(entry.as_str()) {
             let work = LinkWork::Open { kind, tab };
             return self.switch_now(entry, Some((object, work, true)), window, cx);
         }
@@ -473,7 +565,7 @@ impl Pilot {
                 object.name
             ))
         };
-        let Some(retired) = self.registry.retired(connection) else {
+        let Some(retired) = self.switch.registry.retired(connection) else {
             return refused();
         };
         let SessionKey::Entry(id) = &retired.key else {
@@ -486,7 +578,7 @@ impl Pilot {
         // The entry's session has been replaced since (it was left and came
         // back, or its kubeconfig or definition changed): the object may be
         // gone, or another cluster's.
-        if &retired.key == self.registry.active_key()
+        if &retired.key == self.switch.registry.active_key()
             || retired.definition != definition(entry, workspace)
         {
             return LinkRoute::Refuse(reconnected_notice(id));
@@ -504,7 +596,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> bool {
         // Another link replaces one still waiting for its entry.
-        self.pending_link = None;
+        self.switch.pending_link = None;
         match self.route_link(object, cx) {
             LinkRoute::Here => false,
             LinkRoute::Refuse(message) => {
@@ -521,19 +613,19 @@ impl Pilot {
     /// Opens the held link once its entry has a source. Anything that moved
     /// the entry on since, or a different active one, forgets it instead.
     pub(super) fn open_pending_link(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pending) = &self.pending_link else {
+        let Some(pending) = &self.switch.pending_link else {
             return;
         };
-        if pending.request != self.entry_locate.ticket()
-            || self.active_cluster() != Some(pending.entry.as_str())
+        if pending.request != self.switch.entry_locate.ticket()
+            || self.switch.active_cluster() != Some(pending.entry.as_str())
         {
-            self.pending_link = None;
+            self.switch.pending_link = None;
             return;
         }
         // The interim sources of a Talos entry (the control plane's
         // kubeconfig before its own is applied) are not the entry's.
-        if self.entry_open.is_some()
-            || self.entry_locate.read.is_loading()
+        if self.switch.entry_open.is_some()
+            || self.switch.entry_locate.read.is_loading()
             || self.kubeconfig_draft.inspecting
         {
             return;
@@ -541,7 +633,7 @@ impl Pilot {
         let Some(source) = self.source().kube else {
             return;
         };
-        let Some(pending) = self.pending_link.take() else {
+        let Some(pending) = self.switch.pending_link.take() else {
             return;
         };
         // The same id is the same access; another means the entry's access
@@ -574,13 +666,13 @@ impl Pilot {
         }
         match self.mode().kubernetes_only() {
             Some(kube) => (!kube.sources.is_empty()).then_some(kube.revision),
-            None => self.registry.active().access_configuration,
+            None => self.switch.registry.active().access_configuration,
         }
     }
 
     /// Parks the active session and opens the entry as the active one.
     pub(super) fn activate_entry(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_cluster() == Some(id) {
+        if self.switch.active_cluster() == Some(id) {
             return;
         }
         let workspace = self.settings_page.read(cx).workspace().clone();
@@ -593,20 +685,23 @@ impl Pilot {
             return;
         };
         let applied = self.applied.clone();
-        let left = std::mem::take(&mut self.active_definition);
+        let left = std::mem::take(&mut self.switch.active_definition);
         let revision = self.current_revision();
-        self.registry
+        self.switch
+            .registry
             .retire_connection(self.source().kube_identity, &left);
-        self.pending_link = None;
-        self.registry.activate(
+        self.switch.pending_link = None;
+        self.switch.registry.activate(
             SessionKey::Entry(entry.id.clone()),
             &left,
             &applied,
             revision,
         );
-        self.active_definition = definition(&entry, &workspace);
-        self.restored_taken = None;
-        self.age_label.update(cx, |label, cx| label.set(None, cx));
+        self.switch.active_definition = definition(&entry, &workspace);
+        self.switch.restored_taken = None;
+        self.switch
+            .age_label
+            .update(cx, |label, cx| label.set(None, cx));
         let file = NavigationFile::global(cx);
         if file.active_cluster().as_deref() != Some(entry.id.as_str()) {
             file.set_active_cluster(&entry.id, cx);
@@ -632,9 +727,10 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let was_talos = self.mode().has_talos();
-        self.entry_open = None;
-        self.entry_locate
-            .invalidate(self.active_cluster().map(str::to_owned), cx);
+        self.switch.entry_open = None;
+        self.switch
+            .entry_locate
+            .invalidate(self.switch.active_cluster().map(str::to_owned), cx);
         if self.mode().is_example() {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
@@ -653,7 +749,7 @@ impl Pilot {
             self.applied.path = Some(talosconfig.clone());
             self.applied.context = entry.talos_context.clone();
             // Only an entry that names no Talos context needs the rule for one.
-            self.entry_open = entry.talos_context.is_none().then(|| EntryOpen {
+            self.switch.entry_open = entry.talos_context.is_none().then(|| EntryOpen {
                 id: entry.id.clone(),
                 context: entry.context.clone(),
                 kubeconfig: workspace.kubeconfig.clone(),
@@ -702,7 +798,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(open) = self.entry_open.take() else {
+        let Some(open) = self.switch.entry_open.take() else {
             return true;
         };
         if names.contains(&open.context) {
@@ -715,8 +811,9 @@ impl Pilot {
             open.context,
             file.display()
         );
-        self.entry_locate
-            .invalidate(self.active_cluster().map(str::to_owned), cx);
+        self.switch
+            .entry_locate
+            .invalidate(self.switch.active_cluster().map(str::to_owned), cx);
         self.kubeconfig_draft = Default::default();
         self.kubeconfig = KubeconfigSelection::Automatic;
         self.open_without_talos(open.context, open.kubeconfig, cx);
@@ -744,11 +841,12 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let request = Rc::new(
-            self.entry_locate
+            self.switch
+                .entry_locate
                 .read
-                .start(self.active_cluster().map(str::to_owned)),
+                .start(self.switch.active_cluster().map(str::to_owned)),
         );
-        self.entry_locate.request = EntryRequest(Some(request.clone()));
+        self.switch.entry_locate.request = EntryRequest(Some(request.clone()));
         let sources = default_kubeconfigs();
         let (job, receiver): (OwnedJob, _) = backend::spawn_job(
             &self.runtime,
@@ -763,7 +861,7 @@ impl Pilot {
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver.await.unwrap_or_else(|_| Err("stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                if !view.entry_locate.read.land(&request, Ok(()), cx) {
+                if !view.switch.entry_locate.read.land(&request, Ok(()), cx) {
                     return;
                 }
                 let source = result
@@ -772,7 +870,7 @@ impl Pilot {
                 match source {
                     Some(file) => view.inspect_entry_kubeconfig(file, context, window, cx),
                     None => {
-                        let Some(id) = view.active_cluster().map(str::to_owned) else {
+                        let Some(id) = view.switch.active_cluster().map(str::to_owned) else {
                             return;
                         };
                         let note = format!(
@@ -784,35 +882,35 @@ impl Pilot {
                 }
             });
         });
-        self.entry_locate.read.run(Some(job), task);
+        self.switch.entry_locate.read.run(Some(job), task);
     }
 
     /// Puts the active entry's parked summary back, as last known, once the
     /// configuration it was read under is known to be the same.
     pub(super) fn restore_parked_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let revision = self.current_revision();
-        if !self
-            .registry
-            .restore_parked(&self.active_definition, &self.applied, revision)
-        {
+        if !self.switch.registry.restore_parked(
+            &self.switch.active_definition,
+            &self.applied,
+            revision,
+        ) {
             return;
         }
-        let taken = self.registry.active().kubernetes_summary.last_successful();
-        self.restored_taken = taken;
-        self.age_label.update(cx, |label, cx| label.set(taken, cx));
+        let taken = self
+            .switch
+            .registry
+            .active()
+            .kubernetes_summary
+            .last_successful();
+        self.switch.restored_taken = taken;
+        self.switch
+            .age_label
+            .update(cx, |label, cx| label.set(taken, cx));
         self.deliver_summary_nodes(cx);
         self.rebuild_joined_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         cx.notify();
-    }
-
-    /// When the summary on show is the restored one, still waiting for a new
-    /// read to replace it.
-    pub(super) fn last_known_since(&self) -> Option<SystemTime> {
-        let summary = &self.registry.active().kubernetes_summary;
-        self.restored_taken
-            .filter(|taken| summary.last_successful() == Some(*taken) && summary.is_stale())
     }
 }
 

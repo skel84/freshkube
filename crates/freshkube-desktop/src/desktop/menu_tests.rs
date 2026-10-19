@@ -330,7 +330,10 @@ fn a_folded_refresh_works_on_a_placeholder_and_escape_gives_the_keyboard_back(
     let reads = |cx: &mut TestAppContext| {
         cx.update(|cx| {
             let pilot = pilot.read(cx);
-            (pilot.mode().tick(), pilot.resources.read(cx).read_epoch())
+            (
+                pilot.mode().tick(),
+                pilot.pages.resources.read(cx).read_epoch(),
+            )
         })
     };
     let refresh_from_menu = |cx: &mut TestAppContext| {

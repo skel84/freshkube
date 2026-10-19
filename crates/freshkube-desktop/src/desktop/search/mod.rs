@@ -106,9 +106,10 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.search.read(cx).needs_source(source.as_ref()) {
+        if self.pages.search.read(cx).needs_source(source.as_ref()) {
             let local = self.local_search_entries(cx);
-            self.search
+            self.pages
+                .search
                 .update(cx, |search, cx| search.begin(local, source, window, cx));
         }
     }
@@ -119,7 +120,7 @@ impl Pilot {
         }
         let local = self.local_search_entries(cx);
         let source = self.source().kube;
-        let search = self.search.clone();
+        let search = self.pages.search.clone();
         search.update(cx, |search, cx| search.begin(local, source, window, cx));
         let pilot = cx.entity().downgrade();
         let on_close = search.downgrade();
@@ -140,7 +141,7 @@ impl Pilot {
                     pilot,
                 })
         });
-        let command = self.search.read(cx).command.clone();
+        let command = self.pages.search.read(cx).command.clone();
         command.update(cx, |state, cx| state.focus(window, cx));
     }
     fn search_destination(
@@ -153,7 +154,8 @@ impl Pilot {
             Destination::Page(page) => self.navigate(page, window, cx),
             Destination::Kind(kind) => self.open_kind(kind, window, cx),
             Destination::Node(name) => {
-                self.resources
+                self.pages
+                    .resources
                     .update(cx, |resources, cx| resources.close_for_link(cx));
                 self.open_node_by_name(&name, super::nodes::NodeTab::Overview, window, cx)
             }

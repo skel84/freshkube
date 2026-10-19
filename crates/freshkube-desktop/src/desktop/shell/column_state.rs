@@ -77,7 +77,7 @@ impl Pilot {
         {
             self.focus_page(window, cx);
         }
-        self.notify_cached(cx);
+        self.pages.notify_cached(cx);
         cx.notify();
     }
 

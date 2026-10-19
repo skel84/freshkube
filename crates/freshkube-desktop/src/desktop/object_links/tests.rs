@@ -83,10 +83,11 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
         cx.run_until_parked();
         cx.update(|cx| {
             assert_eq!(pilot.read(cx).navigation.page, Page::Nodes);
-            assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, tab);
+            assert_eq!(pilot.read(cx).pages.node_workspace.read(cx).tab, tab);
             assert_eq!(
                 pilot
                     .read(cx)
+                    .pages
                     .node_workspace
                     .read(cx)
                     .selected
@@ -117,6 +118,7 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
             let rs = example::document(
                 pilot
                     .read(cx)
+                    .pages
                     .resources
                     .read(cx)
                     .detail_identity(cx)
@@ -141,6 +143,7 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
         assert_eq!(
             pilot
                 .read(cx)
+                .pages
                 .resources
                 .read(cx)
                 .detail_identity(cx)
@@ -164,7 +167,7 @@ fn pod_links_reach_node_replica_set_deployment_and_service_ports(cx: &mut TestAp
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(pilot.read(cx).navigation.resource_kind.key(), "services");
-            assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), tab);
+            assert_eq!(pilot.read(cx).pages.resources.read(cx).detail_tab(cx), tab);
             if tab == Tab::Ports {
                 assert_landed(window, cx, "ports");
             }
@@ -213,7 +216,7 @@ fn kubelet_links_to_its_scoped_pods(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.open_node_by_name("talos-wk-fra1-02", NodeTab::Services, window, cx);
-            pilot.select_service(Some("kubelet".into()), cx);
+            pilot.pages.select_service(Some("kubelet".into()), cx);
             cx.notify();
         });
         window.render_frame(cx);
@@ -231,10 +234,14 @@ fn kubelet_links_to_its_scoped_pods(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, NodeTab::Pods);
+        assert_eq!(
+            pilot.read(cx).pages.node_workspace.read(cx).tab,
+            NodeTab::Pods
+        );
         assert_eq!(
             pilot
                 .read(cx)
+                .pages
                 .node_workspace
                 .read(cx)
                 .pods
@@ -299,6 +306,7 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         assert_eq!(
             pilot
                 .read(cx)
+                .pages
                 .dock
                 .read(cx)
                 .selected_container(cx)
@@ -315,7 +323,7 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         // The same tab turns to the current instance.
-        assert_eq!(pilot.read(cx).dock.read(cx).tabs.len(), 1);
+        assert_eq!(pilot.read(cx).pages.dock.read(cx).tabs.len(), 1);
         assert_eq!(window.find("pod-logs-previous").checked(), Some(false));
         reopen(window, cx);
         window.click("detail-tab-details", cx);
@@ -344,7 +352,7 @@ fn container_actions_choose_current_previous_and_events(cx: &mut TestAppContext)
         // The link scrolls Details to its events.
         assert_landed(window, cx, "events");
         assert_eq!(
-            pilot.read(cx).resources.read(cx).detail_tab(cx),
+            pilot.read(cx).pages.resources.read(cx).detail_tab(cx),
             Tab::Events
         );
     })
@@ -387,6 +395,7 @@ fn owner_and_service_links_go_at_once_while_a_shell_runs(cx: &mut TestAppContext
     cx.update_window(handle, |_, _, cx| {
         let shown = pilot
             .read(cx)
+            .pages
             .resources
             .read(cx)
             .detail_identity(cx)
@@ -409,7 +418,10 @@ fn owner_and_service_links_go_at_once_while_a_shell_runs(cx: &mut TestAppContext
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).navigation.resource_kind.key(), "services");
-        assert_eq!(pilot.read(cx).resources.read(cx).detail_tab(cx), Tab::Ports);
+        assert_eq!(
+            pilot.read(cx).pages.resources.read(cx).detail_tab(cx),
+            Tab::Ports
+        );
         assert_landed(window, cx, "ports");
         assert_eq!(crate::resources::shell::running_anywhere(cx), running);
     })
@@ -691,6 +703,7 @@ fn opened(
 ) -> Option<ResourceIdentity> {
     pilot
         .read(cx)
+        .pages
         .resources
         .read(cx)
         .detail_identity(cx)

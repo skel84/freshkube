@@ -83,7 +83,7 @@ fn fixture_pages_remain_reachable_at_minimum_size_in_both_themes(cx: &mut TestAp
                     assert!(bounds.right() <= viewport.width + gpui_kit::px(1.));
                     if page == "pod-overview" {
                         assert_eq!(
-                            pilot.read(cx).resources.read(cx).detail_tab(cx),
+                            pilot.read(cx).pages.resources.read(cx).detail_tab(cx),
                             Tab::Overview
                         );
                         // The pane opens on why the pod fails.
@@ -146,7 +146,7 @@ fn fixture_monitoring_opens_its_dashboard_from_example_data_and_hides_on_navigat
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            pilot.read(cx).monitoring.read(cx).chosen(),
+            pilot.read(cx).pages.monitoring.read(cx).chosen(),
             &crate::monitoring::page::EntryId::Builtin("freshkube-workloads")
         );
         pilot.update(cx, |pilot, cx| pilot.navigate(Page::Overview, window, cx));
@@ -201,7 +201,8 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
         ));
         assert!(view.mode().kubernetes_only().unwrap().access().is_none());
         assert!(
-            view.registry
+            view.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -356,7 +357,15 @@ fn example_pods_and_nodes_show_their_cpu_and_memory_history(cx: &mut TestAppCont
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
             pilot.show_node_tab(crate::desktop::nodes::NodeTab::Pods, window, cx);
-            assert!(!pilot.node_workspace.read(cx).history.read(cx).reading());
+            assert!(
+                !pilot
+                    .pages
+                    .node_workspace
+                    .read(cx)
+                    .history
+                    .read(cx)
+                    .reading()
+            );
         });
         window.render_frame(cx);
         assert!(window.try_find("node-history").is_none());

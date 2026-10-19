@@ -180,7 +180,7 @@ fn a_launch_reads_the_workspace_file_beside_the_preferences(cx: &mut TestAppCont
         assert_eq!(page.origin(), &Origin::File);
         assert!(window.find("settings-cluster-prod-fra").visible());
         assert_eq!(
-            view.read(cx).observability.read(cx).coroot_url(cx),
+            view.read(cx).pages.observability.read(cx).coroot_url(cx),
             "https://remembered.example.test"
         );
     })
@@ -231,7 +231,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
                 .contains(super::HAND_EDITED)
         );
         assert_eq!(
-            view.read(cx).observability.read(cx).coroot_url(cx),
+            view.read(cx).pages.observability.read(cx).coroot_url(cx),
             "https://observations.example.test"
         );
         window.click("settings-add", cx);
@@ -260,7 +260,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let pilot = view.read(cx);
-        assert_eq!(pilot.switcher[0].id.as_ref(), "cluster-c");
+        assert_eq!(pilot.switch.switcher[0].id.as_ref(), "cluster-c");
         assert!(window.find("settings-cluster-cluster-c").visible());
         assert!(
             window
@@ -270,7 +270,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
                 .starts_with("Reloaded freshkube.yaml · ")
         );
         assert_eq!(
-            pilot.observability.read(cx).coroot_url(cx),
+            pilot.pages.observability.read(cx).coroot_url(cx),
             "https://reports.example.test"
         );
         let workspace = pilot.settings_page.read(cx).workspace();
@@ -393,7 +393,7 @@ fn setup_waits_for_reload_while_a_settings_form_has_a_draft(cx: &mut TestAppCont
         assert!(!view.read(cx).settings_page.read(cx).pending_setup);
         assert!(window.find("settings-cluster-cluster-a").visible());
         assert_eq!(
-            view.read(cx).observability.read(cx).coroot_url(cx),
+            view.read(cx).pages.observability.read(cx).coroot_url(cx),
             "https://observations.example.test"
         );
     })

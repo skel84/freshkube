@@ -26,7 +26,7 @@ fn switch(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<Pilot>
 }
 
 fn active(cx: &mut TestAppContext, view: &Entity<Pilot>) -> SessionKey {
-    cx.read(|cx| view.read(cx).registry.active_key().clone())
+    cx.read(|cx| view.read(cx).switch.registry.active_key().clone())
 }
 
 /// A pod of the example cluster `context`, as a link made in it names it.
@@ -57,6 +57,7 @@ fn opened(cx: &mut TestAppContext, view: &Entity<Pilot>) -> Option<(String, Stri
     cx.read(|cx| {
         let pilot = view.read(cx);
         pilot
+            .pages
             .resources
             .read(cx)
             .detail_identity(cx)
@@ -78,7 +79,7 @@ fn a_link_into_another_entry_opens_that_entry_then_the_object(cx: &mut TestAppCo
         opened(cx, &view),
         Some((example::connection("dev-fra"), link.name))
     );
-    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+    cx.read(|cx| assert!(view.read(cx).switch.pending_link.is_none()));
 }
 
 #[gpui_kit::test]
@@ -124,7 +125,7 @@ fn cancelling_the_shell_question_holds_no_link_and_changes_nothing(cx: &mut Test
     cx.simulate_prompt_answer("Cancel");
     cx.run_until_parked();
     assert_eq!(active(cx, &view), key("core-fra"));
-    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+    cx.read(|cx| assert!(view.read(cx).switch.pending_link.is_none()));
     // Agreeing ends the shell, switches, and opens the object.
     open(cx, handle, &view, pod_link("dev-fra"));
     cx.simulate_prompt_answer("End the shell");
@@ -153,8 +154,9 @@ fn a_link_from_an_older_session_of_the_open_entry_is_refused_and_says_so(cx: &mu
     link.connection = Some("an-earlier-session".into());
     cx.update(|cx| {
         view.update(cx, |pilot, _| {
-            let definition = pilot.active_definition.clone();
+            let definition = pilot.switch.active_definition.clone();
             pilot
+                .switch
                 .registry
                 .retire_connection(Some("an-earlier-session".into()), &definition);
         })
@@ -178,11 +180,12 @@ fn a_link_whose_entry_was_edited_or_removed_is_not_activated(cx: &mut TestAppCon
     cx.update(|cx| {
         view.update(cx, |pilot, _| {
             // Retired under the active key, so file it under dev-fra's.
-            pilot.registry.adopt(key("dev-fra"));
+            pilot.switch.registry.adopt(key("dev-fra"));
             pilot
+                .switch
                 .registry
                 .retire_connection(Some("dev-session".into()), &Definition::default());
-            pilot.registry.adopt(key("core-fra"));
+            pilot.switch.registry.adopt(key("core-fra"));
         })
     });
     // Its definition at the time is not the one the file has now.
@@ -195,6 +198,7 @@ fn a_link_whose_entry_was_edited_or_removed_is_not_activated(cx: &mut TestAppCon
     cx.update(|cx| {
         view.update(cx, |pilot, _| {
             pilot
+                .switch
                 .registry
                 .retain_parked(|key| key != &self::key("dev-fra"));
         })
@@ -208,16 +212,17 @@ fn the_ended_connections_are_bounded_and_the_oldest_go_first(cx: &mut TestAppCon
     cx.update(|cx| {
         view.update(cx, |pilot, _| {
             let definition = Definition::default();
-            pilot.registry.adopt(key("dev-fra"));
+            pilot.switch.registry.adopt(key("dev-fra"));
             for n in 0..100 {
                 pilot
+                    .switch
                     .registry
                     .retire_connection(Some(format!("session-{n}")), &definition);
             }
-            assert!(pilot.registry.retired("session-0").is_none());
-            assert!(pilot.registry.retired("session-99").is_some());
-            assert!(pilot.registry.retired("session-36").is_some());
-            assert!(pilot.registry.retired("session-35").is_none());
+            assert!(pilot.switch.registry.retired("session-0").is_none());
+            assert!(pilot.switch.registry.retired("session-99").is_some());
+            assert!(pilot.switch.registry.retired("session-36").is_some());
+            assert!(pilot.switch.registry.retired("session-35").is_none());
         })
     });
 }
@@ -232,9 +237,9 @@ fn a_held_link_opens_nothing_while_its_entry_has_no_source_and_is_dropped_when_i
         view.update(cx, |pilot, cx| {
             // The entry's source never arrives: no context was applied.
             pilot.applied.context = None;
-            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+            pilot.switch.pending_link = Some(super::switch::PendingLink::for_test(
                 "dev-fra",
-                pilot.entry_locate.ticket(),
+                pilot.switch.entry_locate.ticket(),
                 pod_link("dev-fra"),
                 LinkWork::Open {
                     kind: builtin("pods").unwrap(),
@@ -244,7 +249,7 @@ fn a_held_link_opens_nothing_while_its_entry_has_no_source_and_is_dropped_when_i
             pilot.navigate_from_keyboard(Page::Nodes, window, cx);
             pilot.navigate_from_keyboard(Page::Overview, window, cx);
             pilot.open_pending_link(window, cx);
-            assert!(pilot.pending_link.is_some());
+            assert!(pilot.switch.pending_link.is_some());
         })
     })
     .unwrap();
@@ -252,13 +257,13 @@ fn a_held_link_opens_nothing_while_its_entry_has_no_source_and_is_dropped_when_i
     // The entry moving on (a new open, an error) drops it with the entry kept.
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.entry_locate.invalidate(None, cx);
+            pilot.switch.entry_locate.invalidate(None, cx);
             pilot.applied.context = Some("dev-fra".into());
             pilot.open_pending_link(window, cx);
-            assert!(pilot.pending_link.is_none());
-            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+            assert!(pilot.switch.pending_link.is_none());
+            pilot.switch.pending_link = Some(super::switch::PendingLink::for_test(
                 "dev-fra",
-                pilot.entry_locate.ticket(),
+                pilot.switch.entry_locate.ticket(),
                 pod_link("dev-fra"),
                 LinkWork::Open {
                     kind: builtin("pods").unwrap(),
@@ -269,7 +274,7 @@ fn a_held_link_opens_nothing_while_its_entry_has_no_source_and_is_dropped_when_i
             // And leaving the entry by hand drops it too.
             pilot.leave_entry(cx);
             pilot.open_pending_link(window, cx);
-            assert!(pilot.pending_link.is_none());
+            assert!(pilot.switch.pending_link.is_none());
         })
     })
     .unwrap();
@@ -319,7 +324,7 @@ async fn the_header_names_a_picked_entry_whose_kubeconfig_cannot_be_read(cx: &mu
     .await;
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.registry.active_key(), &key("lab"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("lab"));
         assert_eq!(pilot.display_context(cx), "acme-lab");
         assert_eq!(pilot.context_display.name.as_ref(), "acme-lab");
         assert!(!pilot.context_display.status.contains("No context"));
@@ -354,9 +359,9 @@ fn with_no_entry_and_no_context_the_header_still_says_so(cx: &mut TestAppContext
 fn hold(cx: &mut TestAppContext, view: &Entity<Pilot>, entry: &str, link: ObjectRef) {
     cx.update(|cx| {
         view.update(cx, |pilot, _| {
-            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+            pilot.switch.pending_link = Some(super::switch::PendingLink::for_test(
                 entry,
-                pilot.entry_locate.ticket(),
+                pilot.switch.entry_locate.ticket(),
                 link,
                 LinkWork::Open {
                     kind: builtin("pods").unwrap(),
@@ -376,7 +381,7 @@ fn settle(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<Pilot>
 }
 
 fn held(cx: &mut TestAppContext, view: &Entity<Pilot>) -> bool {
-    cx.read(|cx| view.read(cx).pending_link.is_some())
+    cx.read(|cx| view.read(cx).switch.pending_link.is_some())
 }
 
 #[gpui_kit::test]
@@ -417,12 +422,12 @@ fn a_manual_pick_retires_the_entry_it_left_and_a_fresh_entry_retires_nothing(
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     switch(cx, handle, &view, "dev-fra");
     cx.read(|cx| {
-        let registry = &view.read(cx).registry;
+        let registry = &view.read(cx).switch.registry;
         assert!(registry.retired(&example::connection("dev-fra")).is_none());
     });
     switch(cx, handle, &view, "core-fra");
     cx.read(|cx| {
-        let registry = &view.read(cx).registry;
+        let registry = &view.read(cx).switch.registry;
         assert!(registry.retired(&example::connection("dev-fra")).is_some());
         assert!(registry.retired(&example::connection("core-fra")).is_none());
     });
@@ -436,7 +441,10 @@ fn a_manual_pick_retires_the_entry_it_left_and_a_fresh_entry_retires_nothing(
     assert_eq!(active(cx, &view), SessionKey::Implicit);
     cx.read(|cx| {
         let pilot = view.read(cx);
-        let retired = pilot.registry.retired(&example::connection("core-fra"));
+        let retired = pilot
+            .switch
+            .registry
+            .retired(&example::connection("core-fra"));
         assert_eq!(retired.map(|retired| &retired.key), Some(&key("core-fra")));
         assert!(matches!(
             pilot.route_link(&pod_link("core-fra"), cx),
@@ -450,11 +458,12 @@ fn a_window_that_is_no_entrys_retires_nothing(cx: &mut TestAppContext) {
     let (_runtime, _handle, view) = fixture(cx, 1280., 820.);
     cx.update(|cx| {
         view.update(cx, |pilot, _| {
-            assert_eq!(pilot.registry.active_key(), &SessionKey::Implicit);
+            assert_eq!(pilot.switch.registry.active_key(), &SessionKey::Implicit);
             pilot
+                .switch
                 .registry
                 .retire_connection(Some("c".into()), &Definition::default());
-            assert!(pilot.registry.retired("c").is_none());
+            assert!(pilot.switch.registry.retired("c").is_none());
         })
     });
 }
@@ -540,7 +549,7 @@ fn a_part_in_another_workspace_entry_switches_there_and_opens(cx: &mut TestAppCo
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.applications().1, Page::Resources);
-        assert!(pilot.pending_link.is_none(), "spent once opened");
+        assert!(pilot.switch.pending_link.is_none(), "spent once opened");
     });
     // Another context closed the page. Back on it, dev-fra is the open
     // cluster: its part opens at once, and cicd-fra's Stage is the switch away.
@@ -630,9 +639,9 @@ fn cancelling_the_switch_changes_nothing(cx: &mut TestAppContext) {
     let context = cx.read(|cx| view.read(cx).applied.context.clone());
     // A link an earlier switch holds outlives the question Cancel answers.
     view.update(cx, |pilot, _| {
-        pilot.pending_link = Some(super::switch::PendingLink::for_test(
+        pilot.switch.pending_link = Some(super::switch::PendingLink::for_test(
             "stage-fra",
-            pilot.entry_locate.ticket(),
+            pilot.switch.entry_locate.ticket(),
             pod_link("stage-fra"),
             LinkWork::Open {
                 kind: builtin("pods").unwrap(),
@@ -650,7 +659,7 @@ fn cancelling_the_switch_changes_nothing(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.applied.context, context);
-        let held = pilot.pending_link.as_ref().expect("still held");
+        let held = pilot.switch.pending_link.as_ref().expect("still held");
         assert_eq!(held.entry, "stage-fra");
     });
 }
@@ -682,7 +691,11 @@ fn a_part_of_the_active_entry_waits_for_its_connection(cx: &mut TestAppContext) 
                 resources::Tab::Overview,
             );
             pilot.open_on_entry("dev-fra".into(), link, window, cx);
-            let held = pilot.pending_link.as_ref().expect("held for dev-fra");
+            let held = pilot
+                .switch
+                .pending_link
+                .as_ref()
+                .expect("held for dev-fra");
             assert_eq!(held.entry, "dev-fra");
         })
     })
@@ -702,7 +715,7 @@ fn a_part_of_the_active_entry_waits_for_its_connection(cx: &mut TestAppContext) 
         opened(cx, &view),
         Some((example::connection("dev-fra"), "checkout-api".into()))
     );
-    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+    cx.read(|cx| assert!(view.read(cx).switch.pending_link.is_none()));
 }
 
 /// A running shell is folded into the one question, never asked about
@@ -838,7 +851,7 @@ fn a_missing_object_after_the_switch_says_so(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.told.len(), told, "{:?}", &pilot.told[told..]);
-        assert!(pilot.pending_link.is_none());
+        assert!(pilot.switch.pending_link.is_none());
     });
 }
 
@@ -857,9 +870,9 @@ fn another_link_or_switch_drops_a_link_held_for_an_entry(cx: &mut TestAppContext
         let view = view.clone();
         cx.update(move |cx| {
             view.update(cx, |pilot, _| {
-                pilot.pending_link = Some(super::switch::PendingLink::for_test(
+                pilot.switch.pending_link = Some(super::switch::PendingLink::for_test(
                     "dev-fra",
-                    pilot.entry_locate.ticket(),
+                    pilot.switch.entry_locate.ticket(),
                     pod_link("dev-fra"),
                     LinkWork::Open {
                         kind: builtin("pods").unwrap(),
@@ -873,9 +886,9 @@ fn another_link_or_switch_drops_a_link_held_for_an_entry(cx: &mut TestAppContext
     // A link here replaces it.
     let here = cx.read(|cx| view.read(cx).applied.context.clone().unwrap());
     open(cx, handle, &view, pod_link(&here));
-    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+    cx.read(|cx| assert!(view.read(cx).switch.pending_link.is_none()));
     hold(cx, &view);
     switch(cx, handle, &view, "stage-fra");
     assert_eq!(active(cx, &view), key("stage-fra"));
-    cx.read(|cx| assert!(view.read(cx).pending_link.is_none()));
+    cx.read(|cx| assert!(view.read(cx).switch.pending_link.is_none()));
 }

@@ -1,8 +1,8 @@
 //! The pages as the shell makes them: every page's entity, its handle in
-//! the one map (`Pilot::pages`), and the entities the shell keeps beside
+//! the one map (`Pilot::pages.map`), and the entities the shell keeps beside
 //! the map to push into or observe.
 
-use gpui_kit::{AppContext, Context, Entity, Window};
+use gpui_kit::{App, AppContext, Context, Entity, Subscription, Window};
 use std::collections::BTreeMap;
 use tokio::runtime::Handle;
 
@@ -11,7 +11,7 @@ use super::overview::OverviewPage;
 use super::pages::PageId;
 use super::settings::SettingsPage;
 use super::system_services::SystemServices;
-use super::{Pilot, dock, nodes, overview, settings, switch, system_services};
+use super::{Pilot, dock, nodes, overview, search, settings, switch, system_services};
 use crate::applications::ApplicationsPage;
 use crate::observability::ObservabilityPage;
 use crate::{
@@ -26,12 +26,12 @@ use crate::{
 };
 
 /// The pages `Pilot::new` makes, with the map and the entities the shell
-/// keeps beside it. The age label is the session's, made here because
-/// Overview draws it.
+/// keeps beside it. The age label is the session's, made by the caller
+/// because Overview draws it.
 pub(super) struct Pages {
     pub(super) map: BTreeMap<PageId, ScreenHandle>,
     pub(super) logs: Entity<LogPanel>,
-    pub(super) age_label: Entity<switch::AgeLabel>,
+    pub(super) search: Entity<search::Search>,
     pub(super) overview_page: Entity<overview::OverviewPage>,
     pub(super) node_workspace: Entity<nodes::Nodes>,
     pub(super) health: Entity<WorkloadsScreen>,
@@ -51,6 +51,7 @@ impl Pages {
     pub(super) fn new(
         options: &GpuiOptions,
         runtime: &Handle,
+        age_label: &Entity<switch::AgeLabel>,
         window: &mut Window,
         cx: &mut Context<Pilot>,
     ) -> Self {
@@ -58,7 +59,6 @@ impl Pages {
         // Overview is the first page; logs collect in the background until
         // Logs is shown.
         logs.update(cx, |logs, cx| logs.set_visible(false, cx));
-        let age_label = cx.new(|_| switch::AgeLabel::new());
         let overview_page = cx.new(|cx| overview::OverviewPage::new(age_label.clone(), cx));
         let node_workspace = cx.new(|cx| {
             let mut nodes = nodes::Nodes::new(runtime.clone(), logs.clone(), window, cx);
@@ -154,6 +154,7 @@ impl Pages {
         });
         let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
+        let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(
             &overview_page,
             &node_workspace,
@@ -167,7 +168,7 @@ impl Pages {
         Self {
             map: pages,
             logs,
-            age_label,
+            search,
             overview_page,
             node_workspace,
             health,
@@ -182,10 +183,68 @@ impl Pages {
             system_services,
         }
     }
+
+    /// Hears every page: when Logs starts and stops, then each page in the
+    /// map through its handle, as a [`PageEvent`] (`hear_page`), then the
+    /// events of what the map doesn't hold. Nodes' own events and its
+    /// Services tab's aren't `PageEvent`s yet, so they keep their arms; the
+    /// node pane's Pods list and the dock turn theirs into one.
+    pub(super) fn subscribe(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Pilot>,
+    ) -> Vec<Subscription> {
+        let Pages {
+            map,
+            logs,
+            node_workspace: nodes,
+            dock,
+            custom,
+            ..
+        } = self;
+        let mut subscriptions = Vec::new();
+        // Batches arriving while Logs is hidden never notify; the shell
+        // shows only what start, stop and the visible page change.
+        subscriptions.push(cx.observe(logs, |_, _, cx| cx.notify()));
+        for page in map.values() {
+            subscriptions.extend(Pilot::hear_page(page, window, cx));
+        }
+        subscriptions.push(cx.subscribe_in(
+            nodes,
+            window,
+            |pilot, _, event: &nodes::NodesEvent, window, cx| pilot.nodes_event(event, window, cx),
+        ));
+        let (node_pods, node_services) = {
+            let nodes = nodes.read(cx);
+            (nodes.pods.clone(), nodes.services.clone())
+        };
+        subscriptions.push(cx.subscribe_in(
+            &node_services,
+            window,
+            |view, _, event, window, cx| view.node_services_event(event, window, cx),
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &node_pods,
+            window,
+            |this, _, event: &crate::resources::NodePodsEvent, window, cx| {
+                this.page_event(&event.clone().into(), window, cx)
+            },
+        ));
+        subscriptions.push(cx.observe(dock, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.subscribe_in(
+            dock,
+            window,
+            |this, _, event: &dock::DockEvent, window, cx| {
+                this.page_event(&event.clone().into(), window, cx)
+            },
+        ));
+        subscriptions.push(cx.observe(custom, |_, _, cx| cx.notify()));
+        subscriptions
+    }
 }
 
 /// A Talos screen's handle; the shell hears it with every other page
-/// (`subscribe_page_events`).
+/// (`Pages::subscribe`).
 fn screen<T: ScreenPanel>(
     new: impl FnOnce(Handle, &mut Window, &mut Context<T>) -> T,
     runtime: Handle,
@@ -224,4 +283,59 @@ fn page_handles(
         (PageId::Settings, ScreenHandle::new(settings.clone())),
         (PageId::Resources, ScreenHandle::new(resources.clone())),
     ]
+}
+
+impl Pages {
+    /// The service selected on the node pane's tab.
+    pub(super) fn selected_service(&self, cx: &App) -> Option<String> {
+        self.node_workspace
+            .read(cx)
+            .services
+            .clone()
+            .read(cx)
+            .selected()
+            .map(str::to_owned)
+    }
+
+    pub(super) fn select_service(&self, service: Option<String>, cx: &mut App) {
+        self.node_workspace
+            .read(cx)
+            .services
+            .clone()
+            .update(cx, |services, cx| services.select(service, cx));
+    }
+}
+
+impl Pages {
+    /// Marks every cached view dirty, for state they read from outside their
+    /// own entity.
+    pub(super) fn notify_cached(&self, cx: &mut App) {
+        for (_, screen) in self.map.iter().filter(|(id, _)| id.is_screen()) {
+            App::notify(cx, screen.view().entity_id());
+        }
+        App::notify(cx, self.observability.entity_id());
+        App::notify(cx, self.monitoring.entity_id());
+        App::notify(cx, self.logs.entity_id());
+        App::notify(cx, self.resources.entity_id());
+        let detail = self.resources.read(cx).detail_view();
+        App::notify(cx, detail);
+        App::notify(cx, self.overview_page.entity_id());
+        App::notify(cx, self.system_services.entity_id());
+        App::notify(cx, self.node_workspace.entity_id());
+        let nodes = self.node_workspace.read(cx);
+        let ids = [
+            nodes.services.entity_id(),
+            nodes.pods.entity_id(),
+            nodes.document.entity_id(),
+        ];
+        for id in ids {
+            App::notify(cx, id);
+        }
+    }
+
+    pub(super) fn push_node_facts(&self, cx: &mut Context<Pilot>) {
+        let nodes = self.node_workspace.read(cx).resource_facts.clone();
+        self.resources
+            .update(cx, |resources, cx| resources.set_node_facts(nodes, cx));
+    }
 }

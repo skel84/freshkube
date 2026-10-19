@@ -14,7 +14,7 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let old_epoch = cx.update(|cx| {
         assert_eq!(
-            view.read(cx).selected_service(cx).as_deref(),
+            view.read(cx).pages.selected_service(cx).as_deref(),
             Some("kubelet")
         );
         view.read(cx).epoch
@@ -32,7 +32,7 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
         assert!(pilot.epoch > old_epoch);
         assert_eq!(pilot.applied.context.as_deref(), Some("staging-eu"));
         assert_eq!(pilot.selected_node.as_deref(), Some("stg-cp-01"));
-        assert!(pilot.selected_service(cx).is_none());
+        assert!(pilot.pages.selected_service(cx).is_none());
         assert!(
             window
                 .find("applied-config")
@@ -64,7 +64,7 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).selected_service(cx).as_deref(),
+            view.read(cx).pages.selected_service(cx).as_deref(),
             Some("auditd")
         );
         assert!(
@@ -87,7 +87,7 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).selected_service(cx).as_deref(),
+            view.read(cx).pages.selected_service(cx).as_deref(),
             Some("auditd")
         );
         assert!(
@@ -115,7 +115,7 @@ fn service_keyboard_selection_filter_retains_domain_id(cx: &mut TestAppContext) 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).selected_service(cx).as_deref(),
+            view.read(cx).pages.selected_service(cx).as_deref(),
             Some("auditd")
         );
         assert_eq!(
@@ -148,11 +148,11 @@ fn service_arrows_step_through_the_filtered_rows(cx: &mut TestAppContext) {
             // a service the filter hides.
             window.within("services-region").click("apid", cx);
             view.update(cx, |pilot, cx| {
-                pilot.select_service(Some("auditd".into()), cx)
+                pilot.pages.select_service(Some("auditd".into()), cx)
             });
             window.press(key, cx);
             assert_eq!(
-                view.read(cx).selected_service(cx).as_deref(),
+                view.read(cx).pages.selected_service(cx).as_deref(),
                 Some("apid"),
                 "{key}"
             );
@@ -252,7 +252,7 @@ fn a_selected_service_brings_its_stacked_details_into_view(cx: &mut TestAppConte
                 window.press("down", cx);
                 check(window, cx, "keyboard", before);
                 assert_eq!(
-                    view.read(cx).selected_service(cx).as_deref(),
+                    view.read(cx).pages.selected_service(cx).as_deref(),
                     Some("auditd")
                 );
                 assert!(view.read(cx).service_focused(window, cx));
@@ -270,7 +270,7 @@ fn a_selected_service_brings_its_stacked_details_into_view(cx: &mut TestAppConte
             window.simulate_next_frame(cx);
             window.render_frame(cx);
             assert_eq!(
-                view.read(cx).selected_service(cx).as_deref(),
+                view.read(cx).pages.selected_service(cx).as_deref(),
                 Some("auditd")
             );
             assert_eq!(scroll.offset().y, px(0.), "{case}: the refresh revealed");
@@ -306,7 +306,7 @@ fn health_filter_narrows_the_list_and_shows_the_unhealthy_message(cx: &mut TestA
         window.render_frame(cx);
         assert!(window.within("services-region").find("apid").visible());
         assert_eq!(
-            view.read(cx).selected_service(cx).as_deref(),
+            view.read(cx).pages.selected_service(cx).as_deref(),
             Some("kubelet")
         );
     })
@@ -385,12 +385,12 @@ fn log_collection_keeps_running_on_other_screens(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("logs-collection", cx);
         window.render_frame(cx);
-        assert!(view.read(cx).logs.read(cx).is_collecting());
+        assert!(view.read(cx).pages.logs.read(cx).is_collecting());
         window.click("nav-overview", cx);
         window.render_frame(cx);
         assert_eq!(view.read(cx).navigation.page, Page::Overview);
-        assert!(view.read(cx).logs.read(cx).is_collecting());
-        assert!(view.read(cx).logs.read(cx).collecting_count() > 0);
+        assert!(view.read(cx).pages.logs.read(cx).is_collecting());
+        assert!(view.read(cx).pages.logs.read(cx).collecting_count() > 0);
         open_node_tab(window, cx, super::super::nodes::NodeTab::Logs);
         window.render_frame(cx);
         assert_eq!(
@@ -432,11 +432,11 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
         assert_eq!(view.read(cx).navigation.page, Page::Nodes);
         assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
         assert_eq!(
-            view.read(cx).selected_service(cx).as_deref(),
+            view.read(cx).pages.selected_service(cx).as_deref(),
             Some("kubelet")
         );
         assert_eq!(
-            view.read(cx).node_workspace.read(cx).tab,
+            view.read(cx).pages.node_workspace.read(cx).tab,
             super::super::nodes::NodeTab::Services
         );
         // Back on the page, the row is still selected and the list has
@@ -450,7 +450,7 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).node_workspace.read(cx).tab,
+            view.read(cx).pages.node_workspace.read(cx).tab,
             super::super::nodes::NodeTab::Logs
         );
         assert_eq!(
@@ -473,7 +473,7 @@ async fn a_talosconfig_that_fails_to_load_ends_the_services_wait(cx: &mut TestAp
     cx.update(|cx| {
         let pilot = view.read(cx);
         // Neither page waits on an overview that will never be asked.
-        let reading = pilot.system_services.read(cx).reading().clone();
+        let reading = pilot.pages.system_services.read(cx).reading().clone();
         assert!(
             matches!(reading, super::super::system_services::Reading::Failed(_)),
             "{reading:?}"
@@ -505,7 +505,8 @@ fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
         (target, pilot.services.data().cloned().unwrap())
     });
     assert!(services.iter().any(|service| service.id == "kubelet"));
-    let selected = |cx: &mut TestAppContext| cx.update(|cx| view.read(cx).selected_service(cx));
+    let selected =
+        |cx: &mut TestAppContext| cx.update(|cx| view.read(cx).pages.selected_service(cx));
     // The read fails with nothing kept, and a link selects kubelet.
     cx.update(|cx| {
         view.update(cx, |pilot, cx| {
@@ -513,7 +514,7 @@ fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
             let request = pilot.services.begin(target.clone());
             pilot.services.apply(&request, Err("offline".into()));
             pilot.push_services(cx);
-            pilot.select_service(Some("kubelet".into()), cx);
+            pilot.pages.select_service(Some("kubelet".into()), cx);
         })
     });
     assert_eq!(selected(cx).as_deref(), Some("kubelet"));

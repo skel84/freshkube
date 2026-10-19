@@ -8,7 +8,13 @@ fn kubernetes_only_never_waits_for_talos_services(cx: &mut TestAppContext) {
         !view.read(cx).contexts.is_empty()
     });
     cx.update(|cx| {
-        let reading = view.read(cx).system_services.read(cx).reading().clone();
+        let reading = view
+            .read(cx)
+            .pages
+            .system_services
+            .read(cx)
+            .reading()
+            .clone();
         assert_eq!(reading, super::super::system_services::Reading::Answered);
     });
 }
@@ -296,7 +302,7 @@ fn kubernetes_only_health_failure(
         window.render_frame(cx);
         assert!(window.try_find("screen-no-node").is_none());
         assert!(window.try_find("workloads-loading").is_none());
-        match &view.read(cx).registry.active().summary_health {
+        match &view.read(cx).switch.registry.active().summary_health {
             Some(Err(reason)) => reason.clone(),
             _ => panic!("{what}: Health has no failure"),
         }
@@ -556,6 +562,7 @@ async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change
     cx.read(|cx| {
         assert!(
             view.read(cx)
+                .pages
                 .resources
                 .read(cx)
                 .detail_identity(cx)

@@ -24,7 +24,7 @@ fn applications(
 ) -> (tokio::runtime::Runtime, AnyWindowHandle, Entity<Pilot>) {
     let (runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
-        let page = view.read(cx).applications.clone();
+        let page = view.read(cx).pages.applications.clone();
         page.update(cx, |page, _| page.set_variant(variant));
         view.update(cx, |pilot, cx| {
             pilot.show_area(Area::Applications, window, cx)
@@ -100,7 +100,7 @@ fn the_column_lists_each_application_under_its_rule(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_row_opens_its_application_and_all_applications_the_list(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
     cx.update_window(handle, |_, window, cx| {
         window.click(CART, cx);
         window.render_frame(cx);
@@ -181,7 +181,7 @@ fn the_column_opens_an_application_from_the_keyboard(cx: &mut TestAppContext) {
         );
         window.press("enter", cx);
         window.render_frame(cx);
-        let page = view.read(cx).applications.clone();
+        let page = view.read(cx).pages.applications.clone();
         let open = page.read(cx).open_page().cloned().expect("catalog's page");
         assert_eq!(
             open.read(cx).id().as_str(),
@@ -228,7 +228,7 @@ fn the_column_says_why_it_lists_no_applications(cx: &mut TestAppContext) {
                 .cloned();
             assert_eq!(all, None, "{variant:?}: no count of nothing");
             if retry {
-                let page = view.read(cx).applications.clone();
+                let page = view.read(cx).pages.applications.clone();
                 view.update(cx, |pilot, cx| {
                     pilot.set_hold(
                         crate::fixture::Hold {
@@ -307,7 +307,7 @@ fn the_column_names_the_rest_in_a_menu(cx: &mut TestAppContext) {
         total: 35,
     };
     cx.update(|cx| {
-        let page = view.read(cx).applications.clone();
+        let page = view.read(cx).pages.applications.clone();
         page.update(cx, |page, cx| page.set_column(column, cx));
     });
     cx.run_until_parked();
@@ -349,7 +349,7 @@ fn the_column_names_the_rest_in_a_menu(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn the_column_redraws_only_for_what_it_shows(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
     let notify = page.clone();
     let redrawn = chrome_redrawn(cx, handle, |_, cx| notify.update(cx, |_, cx| cx.notify()));
     assert!(redrawn.is_empty(), "the page's redraw: {redrawn:?}");
@@ -370,7 +370,7 @@ fn the_column_redraws_only_for_what_it_shows(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn opening_from_the_column_never_leaves_the_list_filtered_against_it(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
     cx.update_window(handle, |_, window, cx| {
         window.click("applications-tally-read", cx);
         window.render_frame(cx);
@@ -394,7 +394,7 @@ fn opening_from_the_column_never_leaves_the_list_filtered_against_it(cx: &mut Te
 #[gpui_kit::test]
 fn a_read_without_the_open_application_moves_the_fill_back(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
     cx.update_window(handle, |_, window, cx| {
         window.click(CART, cx);
         window.render_frame(cx);
@@ -451,7 +451,7 @@ fn the_shown_applications_row_closes_a_change_followed_from_it(cx: &mut TestAppC
     const CHECKOUT: &str = "nav-application-kargo:checkout";
     const PROD_AMS: &str = "application-part-cicd-fra/0/checkout/prod-ams";
     let (_runtime, handle, view) = applications(cx, Variant::Acme);
-    let page = cx.update(|cx| view.read(cx).applications.clone());
+    let page = cx.update(|cx| view.read(cx).pages.applications.clone());
     cx.update_window(handle, |_, window, cx| {
         window.click(CHECKOUT, cx);
         window.render_frame(cx);

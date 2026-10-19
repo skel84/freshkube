@@ -126,6 +126,7 @@ impl Pilot {
             parts.push(source_status("Talos", &self.overview));
         }
         let nodes = self
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -137,10 +138,14 @@ impl Pilot {
                 nodes.error().unwrap_or("awaiting current nodes")
             ))
             .tone(Tone::Warn),
-            _ => source_status("Kubernetes", &self.registry.active().kubernetes_summary),
+            _ => source_status(
+                "Kubernetes",
+                &self.switch.registry.active().kubernetes_summary,
+            ),
         });
         let status = Segment::new(context, parts);
-        self.node_workspace
+        self.pages
+            .node_workspace
             .update(cx, |nodes, _| nodes.status = status);
     }
 }

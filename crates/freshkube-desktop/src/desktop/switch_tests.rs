@@ -16,7 +16,7 @@ fn key(id: &str) -> SessionKey {
 }
 
 fn active(cx: &mut TestAppContext, view: &Entity<Pilot>) -> SessionKey {
-    cx.read(|cx| view.read(cx).registry.active_key().clone())
+    cx.read(|cx| view.read(cx).switch.registry.active_key().clone())
 }
 
 fn pick(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Entity<Pilot>, ix: usize) {
@@ -55,7 +55,7 @@ fn the_header_lists_the_clusters_and_picking_one_makes_it_active(cx: &mut TestAp
         let pilot = view.read(cx);
         assert_eq!(pilot.applied.context.as_deref(), Some("dev-fra"));
         assert_eq!(
-            pilot.active_definition,
+            pilot.switch.active_definition,
             super::switch::definition(
                 &pilot.settings_page.read(cx).workspace().clusters[2],
                 pilot.settings_page.read(cx).workspace(),
@@ -80,7 +80,7 @@ fn the_header_lists_the_clusters_and_picking_one_makes_it_active(cx: &mut TestAp
 fn picking_the_active_cluster_or_one_that_is_gone_changes_nothing(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     pick(cx, handle, &view, 1);
-    let epoch = cx.read(|cx| view.read(cx).registry.summary_watch.generation());
+    let epoch = cx.read(|cx| view.read(cx).switch.registry.summary_watch.generation());
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.switch_cluster("cicd-fra".into(), window, cx);
@@ -92,7 +92,7 @@ fn picking_the_active_cluster_or_one_that_is_gone_changes_nothing(cx: &mut TestA
     cx.run_until_parked();
     assert_eq!(active(cx, &view), key("cicd-fra"));
     assert_eq!(
-        cx.read(|cx| view.read(cx).registry.summary_watch.generation()),
+        cx.read(|cx| view.read(cx).switch.registry.summary_watch.generation()),
         epoch
     );
 }
@@ -103,6 +103,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
     pick(cx, handle, &view, 0);
     cx.wait_for_io(handle, |_, cx| {
         view.read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -112,11 +113,11 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
     .await;
     let (before, rows) = cx.read(|cx| {
         let pilot = view.read(cx);
-        let summary = &pilot.registry.active().kubernetes_summary;
+        let summary = &pilot.switch.registry.active().kubernetes_summary;
         assert!(!summary.is_stale());
         (
             summary.last_successful(),
-            pilot.node_workspace.read(cx).rows.len(),
+            pilot.pages.node_workspace.read(cx).rows.len(),
         )
     });
     assert!(before.is_some() && rows > 0);
@@ -125,6 +126,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
     assert_eq!(active(cx, &view), key("cicd-fra"));
     cx.wait_for_io(handle, |_, cx| {
         view.read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -135,6 +137,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
     // Another cluster's summary is its own, never core-fra's.
     let other = cx.read(|cx| {
         view.read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -150,7 +153,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
             pilot.activate_entry("core-fra", window, cx)
         });
         let pilot = view.read(cx);
-        let summary = &pilot.registry.active().kubernetes_summary;
+        let summary = &pilot.switch.registry.active().kubernetes_summary;
         assert!(summary.data().is_some());
         assert!(summary.is_stale());
         assert_eq!(summary.last_successful(), before);
@@ -200,6 +203,7 @@ async fn coming_back_shows_the_last_summary_as_last_known_at_its_own_time(cx: &m
         window.try_find("overview-last-known").is_none()
             && !view
                 .read(cx)
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -213,13 +217,19 @@ async fn a_late_summary_from_the_cluster_just_left_is_dropped(cx: &mut TestAppCo
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     pick(cx, handle, &view, 0);
     cx.wait_for_io(handle, |_, cx| {
-        view.read(cx).registry.active().summary_session.is_some()
+        view.read(cx)
+            .switch
+            .registry
+            .active()
+            .summary_session
+            .is_some()
     })
     .await;
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             // The old session had derived this when the window moved on.
             let old = pilot
+                .switch
                 .registry
                 .active()
                 .summary_session
@@ -232,8 +242,16 @@ async fn a_late_summary_from_the_cluster_just_left_is_dropped(cx: &mut TestAppCo
             pilot.mode.hold_mut().talos = true;
             pilot.activate_entry("cicd-fra", window, cx);
             pilot.apply_summary(late, health, window, cx);
-            assert!(pilot.registry.active().kubernetes_summary.data().is_none());
-            assert!(pilot.registry.active().summary_health.is_none());
+            assert!(
+                pilot
+                    .switch
+                    .registry
+                    .active()
+                    .kubernetes_summary
+                    .data()
+                    .is_none()
+            );
+            assert!(pilot.switch.registry.active().summary_health.is_none());
         });
     })
     .unwrap();
@@ -242,15 +260,22 @@ async fn a_late_summary_from_the_cluster_just_left_is_dropped(cx: &mut TestAppCo
 #[gpui_kit::test]
 fn typing_in_the_form_does_not_rebuild_the_switcher(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
-    let revision = cx.read(|cx| view.read(cx).switcher_revision);
+    let revision = cx.read(|cx| view.read(cx).switch.switcher_revision);
     assert!(revision > 0);
     // A redraw of the Settings page is not a new workspace.
     let page = cx.read(|cx| view.read(cx).settings_page.clone());
-    cx.update(|cx| view.update(cx, |pilot, _| pilot.switcher.truncate(1)));
+    cx.update(|cx| view.update(cx, |pilot, _| pilot.switch.switcher.truncate(1)));
     cx.update(|cx| page.update(cx, |_, cx| cx.notify()));
     cx.run_until_parked();
-    assert_eq!(cx.read(|cx| view.read(cx).switcher.len()), 1, "not rebuilt");
-    assert_eq!(cx.read(|cx| view.read(cx).switcher_revision), revision);
+    assert_eq!(
+        cx.read(|cx| view.read(cx).switch.switcher.len()),
+        1,
+        "not rebuilt"
+    );
+    assert_eq!(
+        cx.read(|cx| view.read(cx).switch.switcher_revision),
+        revision
+    );
     // A new workspace is.
     cx.update(|cx| {
         page.update(cx, |page, cx| {
@@ -262,7 +287,7 @@ fn typing_in_the_form_does_not_rebuild_the_switcher(cx: &mut TestAppContext) {
         })
     });
     cx.run_until_parked();
-    assert_eq!(cx.read(|cx| view.read(cx).switcher.len()), 6);
+    assert_eq!(cx.read(|cx| view.read(cx).switch.switcher.len()), 6);
     _ = handle;
 }
 
@@ -369,23 +394,25 @@ fn leaving_an_entry_stops_the_last_known_label(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 800.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.restored_taken = Some(std::time::SystemTime::now());
+            pilot.switch.restored_taken = Some(std::time::SystemTime::now());
             pilot
+                .switch
                 .age_label
-                .update(cx, |label, cx| label.set(pilot.restored_taken, cx));
+                .update(cx, |label, cx| label.set(pilot.switch.restored_taken, cx));
             pilot.switch_cluster("dev-fra".into(), window, cx);
-            pilot.restored_taken = Some(std::time::SystemTime::now());
+            pilot.switch.restored_taken = Some(std::time::SystemTime::now());
             pilot
+                .switch
                 .age_label
-                .update(cx, |label, cx| label.set(pilot.restored_taken, cx));
+                .update(cx, |label, cx| label.set(pilot.switch.restored_taken, cx));
             pilot.leave_entry(cx);
         });
     })
     .unwrap();
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.restored_taken, None);
-        assert!(pilot.age_label.read(cx).is_idle());
+        assert_eq!(pilot.switch.restored_taken, None);
+        assert!(pilot.switch.age_label.read(cx).is_idle());
     });
 }
 
@@ -446,7 +473,7 @@ fn a_launch_with_no_named_source_opens_the_first_core_entry_through_its_taloscon
     let (_runtime, _handle, view) = live_launch(cx, guard.path(), false);
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.registry.active_key(), &key("mgmt"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("mgmt"));
         assert!(pilot.mode().has_talos());
         assert_eq!(
             pilot.applied.path.as_deref(),
@@ -486,7 +513,7 @@ fn the_remembered_entry_wins_and_a_kubeconfig_entry_opens_without_talos(cx: &mut
     let (_runtime, _handle, view) = live_launch(cx, guard.path(), false);
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.registry.active_key(), &key("dev"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("dev"));
         let kube = pilot.mode().kubernetes_only().unwrap();
         assert_eq!(
             kube.explicit_file(),
@@ -503,10 +530,10 @@ fn a_launch_that_names_a_source_ignores_the_workspace_start(cx: &mut TestAppCont
     let (_runtime, _handle, view) = live_launch(cx, guard.path(), true);
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.registry.active_key(), &SessionKey::Implicit);
+        assert_eq!(pilot.switch.registry.active_key(), &SessionKey::Implicit);
         assert_eq!(NavigationFile::global(cx).active_cluster(), None);
         // The switcher still lists the file's clusters.
-        assert_eq!(pilot.switcher.len(), 2);
+        assert_eq!(pilot.switch.switcher.len(), 2);
     });
 }
 
@@ -525,7 +552,7 @@ async fn switching_moves_between_a_talos_entry_and_a_kubeconfig_entry_and_rememb
     cx.run_until_parked();
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.registry.active_key(), &key("dev"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("dev"));
         assert!(pilot.mode().kubernetes_only().is_some());
         assert_eq!(pilot.applied.path, None);
         assert_eq!(
@@ -605,7 +632,7 @@ async fn a_talos_entry_takes_the_context_it_names_never_the_files_current_one(
         // `other` is the file's current context; the entry's `context` is used.
         assert_eq!(pilot.applied.context.as_deref(), Some("acme-mgmt"));
         assert!(pilot.mode().has_talos());
-        assert_eq!(pilot.registry.active_key(), &key("mgmt"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("mgmt"));
     });
 }
 
@@ -624,7 +651,7 @@ async fn a_talos_entry_the_file_has_no_context_for_opens_with_its_kubeconfig_con
         // The file's current context was not applied.
         assert_ne!(pilot.applied.context.as_deref(), Some("other"));
         assert_eq!(pilot.applied.context, None);
-        assert_eq!(pilot.registry.active_key(), &key("mgmt"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("mgmt"));
         let note = pilot.settings_page.read(cx).note("mgmt").unwrap();
         assert!(
             note.starts_with("No Talos context named acme-mgmt in "),
@@ -818,9 +845,9 @@ fn open_and_hold_link(
                 uid: String::new(),
                 connection: Some("c".into()),
             };
-            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+            pilot.switch.pending_link = Some(super::switch::PendingLink::for_test(
                 entry,
-                pilot.entry_locate.ticket(),
+                pilot.switch.entry_locate.ticket(),
                 link,
                 super::switch::LinkWork::Open {
                     kind: freshkube_core::resources::builtin("pods").unwrap(),
@@ -843,7 +870,7 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
     cx.wait_for_io(handle, |_, cx| !view.read(cx).config_loading)
         .await;
     open_and_hold_link(cx, handle, &view, "mgmt");
-    let request = cx.read(|cx| view.read(cx).entry_locate.ticket());
+    let request = cx.read(|cx| view.read(cx).switch.entry_locate.ticket());
     cx.wait_for_io(handle, |_, cx| {
         matches!(
             &view.read(cx).kubeconfig,
@@ -856,14 +883,14 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
         let pilot = view.read(cx);
         // Its own kubeconfig applied; the window never left the entry, and
         // the link held before the apply is the one still held.
-        assert_eq!(pilot.registry.active_key(), &key("mgmt"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("mgmt"));
         assert_eq!(
             NavigationFile::global(cx).active_cluster().as_deref(),
             Some("mgmt")
         );
         assert!(pilot.mode().has_talos());
-        assert_eq!(pilot.entry_locate.ticket(), request);
-        let held = pilot.pending_link.as_ref().unwrap();
+        assert_eq!(pilot.switch.entry_locate.ticket(), request);
+        let held = pilot.switch.pending_link.as_ref().unwrap();
         assert_eq!(
             (held.entry.as_str(), held.object.name.as_str()),
             ("mgmt", "p")
@@ -911,10 +938,10 @@ async fn a_held_link_is_dropped_when_the_entrys_kubeconfig_lacks_its_context(
             )
         );
         assert!(
-            pilot.pending_link.is_none(),
+            pilot.switch.pending_link.is_none(),
             "never left to be refused later"
         );
-        assert_eq!(pilot.registry.active_key(), &key("mgmt"));
+        assert_eq!(pilot.switch.registry.active_key(), &key("mgmt"));
         assert_eq!(
             pilot.kubeconfig,
             freshkube_core::KubeconfigSelection::TalosControlPlane
@@ -935,9 +962,9 @@ async fn an_entry_that_cannot_read_its_kubeconfig_drops_a_held_link(cx: &mut Tes
                 uid: String::new(),
                 connection: Some("c".into()),
             };
-            pilot.pending_link = Some(super::switch::PendingLink::for_test(
+            pilot.switch.pending_link = Some(super::switch::PendingLink::for_test(
                 "dev",
-                pilot.entry_locate.ticket(),
+                pilot.switch.entry_locate.ticket(),
                 link,
                 super::switch::LinkWork::Open {
                     kind: freshkube_core::resources::builtin("pods").unwrap(),
@@ -951,7 +978,7 @@ async fn an_entry_that_cannot_read_its_kubeconfig_drops_a_held_link(cx: &mut Tes
         .await;
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.registry.active_key(), &key("dev"));
-        assert!(pilot.pending_link.is_none());
+        assert_eq!(pilot.switch.registry.active_key(), &key("dev"));
+        assert!(pilot.switch.pending_link.is_none());
     });
 }

@@ -50,7 +50,7 @@ impl Pilot {
         data: Result<Arc<WorkloadData>, String>,
         cx: &mut Context<Self>,
     ) {
-        self.health.update(cx, |screen, cx| {
+        self.pages.health.update(cx, |screen, cx| {
             screen.apply_summary(
                 self.applied.context.as_deref().unwrap_or_default(),
                 data,
@@ -61,7 +61,7 @@ impl Pilot {
 
     pub(super) fn deliver_summary_nodes(&self, cx: &mut Context<Self>) {
         let subscription = (self.navigation.page == super::Page::Lifecycle)
-            .then_some(self.registry.active().summary_session.as_ref())
+            .then_some(self.switch.registry.active().summary_session.as_ref())
             .flatten()
             .and_then(|session| {
                 session.core.subscribe(SubscriptionKey::summary(
@@ -69,21 +69,15 @@ impl Pilot {
                     Source::Nodes,
                 ))
             });
-        self.lifecycle
+        self.pages
+            .lifecycle
             .update(cx, |screen, cx| screen.observe_nodes(subscription, cx));
-    }
-
-    pub(super) fn stop_summary(&mut self) {
-        self.registry.summary_watch.stop();
-        let session = self.registry.active_mut();
-        session.summary_fixture = None;
-        session.summary_session = None;
     }
 
     /// Manual Refresh relists every source. The automatic Talos cycle calls
     /// ensure_summary instead, which leaves an existing session alone.
     pub(super) fn refresh_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(session) = &self.registry.active().summary_session {
+        if let Some(session) = &self.switch.registry.active().summary_session {
             session.core.relist();
             if self.mode().is_example() && !self.mode().holds_talos() {
                 self.publish_fixture(window, cx);
@@ -104,6 +98,7 @@ impl Pilot {
             return;
         };
         if self
+            .switch
             .registry
             .active()
             .summary_session
@@ -112,7 +107,7 @@ impl Pilot {
         {
             return;
         }
-        self.stop_summary();
+        self.switch.stop_summary();
         // The reducer keeps its applied connection identity. Capture the
         // shell's existing target revision once; later node selections do
         // not change this session. Watch owns the driver's request sequence.
@@ -124,7 +119,7 @@ impl Pilot {
             node: String::new(),
             address: source.id,
         };
-        self.registry.active_mut().summary_session = Some(SummarySession {
+        self.switch.registry.active_mut().summary_session = Some(SummarySession {
             core: session.clone(),
             target,
             fixture_at: chrono::Utc::now(),
@@ -144,12 +139,12 @@ impl Pilot {
             session.version(0, version.clone(), chrono::Utc::now());
         }
         let runtime = self.runtime.clone();
-        self.registry.summary_watch.start(
+        self.switch.registry.summary_watch.start(
             (source.context, session.identity().connection().to_owned()),
             &runtime,
             SUMMARY_PACE,
             move |sender| run_summary_driver(session, source.access, sender),
-            |view: &mut Self| &mut view.registry.summary_watch,
+            |view: &mut Self| &mut view.switch.registry.summary_watch,
             Self::deliver_summary,
             cx,
         );
@@ -189,7 +184,13 @@ impl Pilot {
     /// Seeds the example session, publishes what it derives at its own
     /// time and keeps watching it.
     fn publish_fixture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let session = self.registry.active().summary_session.as_ref().unwrap();
+        let session = self
+            .switch
+            .registry
+            .active()
+            .summary_session
+            .as_ref()
+            .unwrap();
         example::seed_summary(
             &session.core,
             &session.target.context,
@@ -209,22 +210,28 @@ impl Pilot {
     }
 
     fn watch_fixture_summary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let session = self.registry.active().summary_session.as_ref().unwrap();
+        let session = self
+            .switch
+            .registry
+            .active()
+            .summary_session
+            .as_ref()
+            .unwrap();
         let core = session.core.clone();
         let (at, clock) = (session.fixture_at, session.fixture_clock);
         let mut changes = core.changes();
         let (latest, feed) = tokio::sync::watch::channel(None);
-        let sender = self.registry.summary_watch.open(
+        let sender = self.switch.registry.summary_watch.open(
             (
                 session.target.context.clone(),
                 core.identity().connection().to_owned(),
             ),
             SUMMARY_PACE,
-            |view: &mut Self| &mut view.registry.summary_watch,
+            |view: &mut Self| &mut view.switch.registry.summary_watch,
             Self::deliver_summary,
             cx,
         );
-        self.registry.active_mut().summary_fixture =
+        self.switch.registry.active_mut().summary_fixture =
             Some(cx.spawn_in(window, async move |_, cx| {
                 loop {
                     let now = fixture_time(at, clock, cx.background_executor().now());
@@ -263,7 +270,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let current = self.registry.active_mut();
+        let current = self.switch.registry.active_mut();
         let Some(session) = &mut current.summary_session else {
             return;
         };
@@ -305,21 +312,25 @@ impl Pilot {
             );
         }
         let request = self
+            .switch
             .registry
             .active_mut()
             .kubernetes_summary
             .begin(self.applied.clone());
-        self.registry
+        self.switch
+            .registry
             .active_mut()
             .kubernetes_summary
             .apply(&request, Ok(publication.summary.clone()));
-        if self.restored_taken.take().is_some() {
-            self.age_label.update(cx, |label, cx| label.set(None, cx));
+        if self.switch.restored_taken.take().is_some() {
+            self.switch
+                .age_label
+                .update(cx, |label, cx| label.set(None, cx));
         }
-        self.registry.active_mut().summary_health = Some(health.clone());
+        self.switch.registry.active_mut().summary_health = Some(health.clone());
         self.deliver_workloads(health, cx);
         self.rebuild_joined_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         self.deliver_summary_nodes(cx);
         cx.notify();

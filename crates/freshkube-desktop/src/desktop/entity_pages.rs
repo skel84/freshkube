@@ -2,7 +2,7 @@
 //! [`ScreenHandle`] as the Talos screens, and what the shell does with
 //! what every page asks of it.
 //!
-//! Every page's handle sits in the shell's one map (`Pilot::pages`).
+//! Every page's handle sits in the shell's one map (`Pilot::pages.map`).
 //! Resources, Monitoring, Observability, Applications and Settings take
 //! their part of the shell's [`PageSource`] through it and hear
 //! [`set_visible`](ScreenPanel::set_visible), which is where they drop
@@ -309,7 +309,7 @@ impl Pilot {
     /// The handle of the page that shows: the node pane's selected tab
     /// when it is a Talos screen and Nodes shows it, or else the page's.
     pub(super) fn shown_page(&self, cx: &App) -> Option<ScreenHandle> {
-        self.pages.get(&self.shown_id(cx)).cloned()
+        self.pages.map.get(&self.shown_id(cx)).cloned()
     }
 
     /// Every page that shows: the one [`shown_page`](Self::shown_page)
@@ -320,13 +320,13 @@ impl Pilot {
         [Some(id), around]
             .into_iter()
             .flatten()
-            .filter_map(|id| self.pages.get(&id).cloned())
+            .filter_map(|id| self.pages.map.get(&id).cloned())
             .collect()
     }
 
     fn shown_id(&self, cx: &App) -> PageId {
         (self.navigation.page == Page::Nodes)
-            .then(|| self.node_workspace.read(cx).pane_screen())
+            .then(|| self.pages.node_workspace.read(cx).pane_screen())
             .flatten()
             .unwrap_or(self.navigation.page.id())
     }
@@ -380,7 +380,8 @@ impl Pilot {
             // other kinds with it; discover the group again.
             PageEvent::NotServed(kind) => {
                 let group = kind.group.clone();
-                self.custom
+                self.pages
+                    .custom
                     .update(cx, |custom, cx| custom.not_served(&group, cx));
             }
             PageEvent::Service(event) => self.service_event(event, window, cx),
@@ -390,7 +391,8 @@ impl Pilot {
                 cx.notify();
             }
             PageEvent::Settings(SettingsEvent::Coroot) => {
-                self.observability
+                self.pages
+                    .observability
                     .update(cx, |page, cx| page.show_connection(cx));
                 self.navigate_from_keyboard(Page::Observability, window, cx);
             }
@@ -417,7 +419,7 @@ impl Pilot {
             ServiceEvent::Open(node, service) => (node, service, nodes::NodeTab::Services),
         };
         self.open_node_by_name(node, tab, window, cx);
-        self.select_service(Some(service.clone()), cx);
+        self.pages.select_service(Some(service.clone()), cx);
         if tab == nodes::NodeTab::Logs {
             self.open_logs(window, cx);
         }
@@ -462,6 +464,7 @@ impl Pilot {
                 subject,
             } => {
                 if self
+                    .pages
                     .observability
                     .read(cx)
                     .link_is_current(source, app, subject)

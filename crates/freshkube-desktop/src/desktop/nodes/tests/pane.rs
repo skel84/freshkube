@@ -8,7 +8,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             window.render_frame(cx);
             window.click("nav-nodes", cx);
             window.render_frame(cx);
-            let rows = pilot.read(cx).node_workspace.read(cx).rows.clone();
+            let rows = pilot.read(cx).pages.node_workspace.read(cx).rows.clone();
             assert_eq!(rows.len(), 6);
             let bad = rows
                 .iter()
@@ -34,7 +34,13 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             );
             // Its unhealthy kubelet marks the Services tab with the warning glyph.
             assert!(window.try_find("node-services-problem").is_some());
-            let selected = pilot.read(cx).node_workspace.read(cx).selected.clone();
+            let selected = pilot
+                .read(cx)
+                .pages
+                .node_workspace
+                .read(cx)
+                .selected
+                .clone();
             window.click("node-tab-processes", cx);
             selected
         })
@@ -44,18 +50,21 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
         window.render_frame(cx);
         window.click("node-expand", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.read(cx).expanded);
+        assert!(pilot.read(cx).pages.node_workspace.read(cx).expanded);
         assert!(window.try_find("nodes-cards").is_none());
         window.click("node-expand", cx);
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.read(cx).selected, selected);
+        assert_eq!(
+            pilot.read(cx).pages.node_workspace.read(cx).selected,
+            selected
+        );
         // Beside the pane, the table folds its healthy rows as it does
         // without one (#339).
         crate::desktop::tests::expand_healthy_nodes(window, cx);
         crate::desktop::tests::click_node(window, cx, "node-talos-cp-fra1-01");
         window.render_frame(cx);
         assert_eq!(
-            pilot.read(cx).node_workspace.read(cx).tab,
+            pilot.read(cx).pages.node_workspace.read(cx).tab,
             NodeTab::Processes
         );
         assert_eq!(
@@ -69,7 +78,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.read(cx).open);
+        assert!(!pilot.read(cx).pages.node_workspace.read(cx).open);
         assert_eq!(
             pilot.read(cx).selected_node.as_deref(),
             Some("talos-cp-fra1-01")
@@ -94,7 +103,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
         window.render_frame(cx);
         crate::desktop::tests::expand_healthy_nodes(window, cx);
         pilot.update(cx, |pilot, cx| {
-            let key = pilot.node_workspace.read(cx).rows[0].key.clone();
+            let key = pilot.pages.node_workspace.read(cx).rows[0].key.clone();
             pilot.open_node(key, window, cx);
         });
         window.render_frame(cx);
@@ -114,11 +123,15 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, NodeTab::Yaml);
+        assert_eq!(
+            pilot.read(cx).pages.node_workspace.read(cx).tab,
+            NodeTab::Yaml
+        );
 
         // Another row above opens its node on the same tab.
         pilot
             .read(cx)
+            .pages
             .node_workspace
             .read(cx)
             .page_scroll
@@ -126,6 +139,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
         window.render_frame(cx);
         let rows: Vec<_> = pilot
             .read(cx)
+            .pages
             .node_workspace
             .read(cx)
             .rows
@@ -142,7 +156,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
             .expect("another row shows above the inspector");
         crate::desktop::tests::click_node(window, cx, &other.id);
         window.render_frame(cx);
-        let nodes = &pilot.read(cx).node_workspace.read(cx);
+        let nodes = &pilot.read(cx).pages.node_workspace.read(cx);
         assert_eq!(nodes.selected.as_ref(), Some(&other.key));
         assert!(nodes.open);
         assert_eq!(nodes.tab, NodeTab::Yaml);
@@ -152,7 +166,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert!(!pilot.read(cx).node_workspace.read(cx).open);
+        assert!(!pilot.read(cx).pages.node_workspace.read(cx).open);
     })
     .unwrap();
 }
@@ -162,7 +176,7 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
     let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            let key = pilot.node_workspace.read(cx).rows[0].key.clone();
+            let key = pilot.pages.node_workspace.read(cx).rows[0].key.clone();
             pilot.open_node(key, window, cx);
             pilot.show_node_tab(NodeTab::Yaml, window, cx);
         });
@@ -170,6 +184,7 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
         assert!(
             pilot
                 .read(cx)
+                .pages
                 .node_workspace
                 .read(cx)
                 .document
@@ -182,17 +197,21 @@ fn a_context_change_closes_the_old_node_document_and_replaces_rows(cx: &mut Test
         });
         window.render_frame(cx);
         let read = pilot.read(cx);
-        assert!(!read.node_workspace.read(cx).open);
+        assert!(!read.pages.node_workspace.read(cx).open);
         assert!(
-            read.node_workspace
+            read.pages
+                .node_workspace
                 .read(cx)
                 .document
                 .read(cx)
                 .target_identity()
                 .is_none()
         );
-        assert_eq!(read.node_workspace.read(cx).rows.len(), 1);
-        assert_eq!(read.node_workspace.read(cx).rows[0].name, "talos-home");
+        assert_eq!(read.pages.node_workspace.read(cx).rows.len(), 1);
+        assert_eq!(
+            read.pages.node_workspace.read(cx).rows[0].name,
+            "talos-home"
+        );
     })
     .unwrap();
 }
@@ -206,7 +225,7 @@ fn a_node_opens_in_the_inspector_beside_the_table_or_under_it(cx: &mut TestAppCo
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         open_first_node(window, cx);
-        assert!(pilot.read(cx).node_workspace.read(cx).open);
+        assert!(pilot.read(cx).pages.node_workspace.read(cx).open);
         for text in [13., 20.] {
             crate::text_size::set(text, cx);
             window.render_frame(cx);
@@ -248,7 +267,7 @@ fn the_opened_row_shows_whole_above_the_stacked_inspector(cx: &mut TestAppContex
         window.render_frame(cx);
         // Each node in turn, from the table as it was before: the rows
         // under the stacked inspector's least table must scroll to show.
-        let rows: Vec<_> = (pilot.read(cx).node_workspace.read(cx).rows.iter())
+        let rows: Vec<_> = (pilot.read(cx).pages.node_workspace.read(cx).rows.iter())
             .map(|row| (row.key.clone(), row.id.clone()))
             .collect();
         for (key, id) in rows {
@@ -323,6 +342,7 @@ fn the_node_inspector_width_survives_reopening(cx: &mut TestAppContext) {
         open_first_node(window, cx);
         let state = pilot
             .read(cx)
+            .pages
             .node_workspace
             .read(cx)
             .split
@@ -369,7 +389,9 @@ fn a_node_opened_from_the_cards_keeps_the_roster_beside_its_inspector(cx: &mut T
             window.render_frame(cx);
             window.click("nodes-view-cards", cx);
             window.render_frame(cx);
-            let key = pilot.read(cx).node_workspace.read(cx).rows[0].key.clone();
+            let key = pilot.read(cx).pages.node_workspace.read(cx).rows[0]
+                .key
+                .clone();
             pilot.update(cx, |pilot, cx| pilot.open_node(key, window, cx));
             window.render_frame(cx);
             assert!(window.try_find("nodes-table-scroll").is_none());
@@ -384,7 +406,7 @@ fn a_node_opened_from_the_cards_keeps_the_roster_beside_its_inspector(cx: &mut T
             );
 
             // The opened node's row is marked, and the mark follows another.
-            let rows = pilot.read(cx).node_workspace.read(cx).rows.clone();
+            let rows = pilot.read(cx).pages.node_workspace.read(cx).rows.clone();
             assert_eq!(marked(&rows, window), vec![rows[0].key.clone()]);
             // The roster's rows open their node through the shell.
             window.click(rows[1].id.clone(), cx);
@@ -433,7 +455,7 @@ fn node_events_and_yaml_draw_without_a_card(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            assert_eq!(pilot.read(cx).node_workspace.read(cx).tab, tab);
+            assert_eq!(pilot.read(cx).pages.node_workspace.read(cx).tab, tab);
             let content = window.find("node-inspector-content").bounds();
             let detail = window.find("resource-detail").bounds();
             assert!(
@@ -466,6 +488,7 @@ fn the_node_screens_follow_the_inspector_after_a_text_size_change(cx: &mut TestA
         open_first_node(window, cx);
         let state = pilot
             .read(cx)
+            .pages
             .node_workspace
             .read(cx)
             .split
@@ -510,20 +533,34 @@ fn stepping_nodes_while_expanded_keeps_the_heading_in_view(cx: &mut TestAppConte
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        let key = pilot.read(cx).node_workspace.read(cx).rows[0].key.clone();
+        let key = pilot.read(cx).pages.node_workspace.read(cx).rows[0]
+            .key
+            .clone();
         pilot.update(cx, |pilot, cx| pilot.open_node(key, window, cx));
         window.render_frame(cx);
         window.click("node-expand", cx);
         window.render_frame(cx);
-        assert!(pilot.read(cx).node_workspace.read(cx).expanded);
-        let frame = pilot.read(cx).node_workspace.read(cx).page_scroll.clone();
-        let first = pilot.read(cx).node_workspace.read(cx).selected.clone();
+        assert!(pilot.read(cx).pages.node_workspace.read(cx).expanded);
+        let frame = pilot
+            .read(cx)
+            .pages
+            .node_workspace
+            .read(cx)
+            .page_scroll
+            .clone();
+        let first = pilot
+            .read(cx)
+            .pages
+            .node_workspace
+            .read(cx)
+            .selected
+            .clone();
         pilot.update(cx, |pilot, cx| pilot.step_joined_node(1, window, cx));
         for _ in 0..3 {
             window.render_frame(cx);
         }
         assert_ne!(
-            pilot.read(cx).node_workspace.read(cx).selected,
+            pilot.read(cx).pages.node_workspace.read(cx).selected,
             first,
             "no step"
         );

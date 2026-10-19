@@ -256,10 +256,10 @@ fn the_labels_follow_the_sidebar_the_dock_and_the_appearance(cx: &mut TestAppCon
     assert_eq!(window(cx).last().unwrap(), "Minimize dock");
     // Shift-Escape minimizes the dock and opens it again.
     dispatch(handle, dock::MinimizeDock, cx);
-    assert!(!cx.update(|cx| pilot.read(cx).dock.read(cx).is_open()));
+    assert!(!cx.update(|cx| pilot.read(cx).pages.dock.read(cx).is_open()));
     assert_eq!(window(cx).last().unwrap(), "Open dock");
     dispatch(handle, dock::MinimizeDock, cx);
-    assert!(cx.update(|cx| pilot.read(cx).dock.read(cx).is_open()));
+    assert!(cx.update(|cx| pilot.read(cx).pages.dock.read(cx).is_open()));
     assert_eq!(window(cx).last().unwrap(), "Minimize dock");
 }
 
@@ -692,7 +692,7 @@ fn edit_copies_the_focused_views_selection(cx: &mut TestAppContext) {
     };
     open(Tab::Logs, cx);
     let log = cx.update(|cx| {
-        let dock = pilot.read(cx).dock.read(cx);
+        let dock = pilot.read(cx).pages.dock.read(cx);
         match &dock.tabs[0].kind {
             dock::TabKind::Pod(view) => view.clone(),
             _ => panic!("not a pod's log tab"),

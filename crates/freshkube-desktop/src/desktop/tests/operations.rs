@@ -175,7 +175,7 @@ fn restart_is_reachable_in_the_unexpanded_inspector(cx: &mut TestAppContext) {
         window.render_frame(cx);
         open_node_tab(window, cx, super::super::nodes::NodeTab::Services);
         window.render_frame(cx);
-        assert!(!view.read(cx).node_workspace.read(cx).expanded);
+        assert!(!view.read(cx).pages.node_workspace.read(cx).expanded);
         assert!(window.try_find("nodes-table").is_some());
         window.within("services-region").click("containerd", cx);
         window.render_frame(cx);
@@ -282,7 +282,7 @@ fn confirming_a_restart_in_example_mode_simulates_it_and_frees_the_slot(cx: &mut
         assert!(result.contains("Example data"), "{result}");
         assert!(result.contains("containerd"), "{result}");
         assert_eq!(
-            view.read(cx).selected_service(cx).as_deref(),
+            view.read(cx).pages.selected_service(cx).as_deref(),
             Some("containerd")
         );
     })

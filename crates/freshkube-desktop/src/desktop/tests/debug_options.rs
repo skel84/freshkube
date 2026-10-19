@@ -59,14 +59,30 @@ fn the_list_hold_reaches_both_resources_screens(cx: &mut TestAppContext) {
     let (_runtime, _handle, pilot) = mount(cx, options(debug), 1280., 880.);
     cx.update(|cx| {
         let pilot = pilot.read(cx);
-        assert!(pilot.resources.read(cx).is_holding());
-        assert!(pilot.node_workspace.read(cx).pods.read(cx).is_holding());
+        assert!(pilot.pages.resources.read(cx).is_holding());
+        assert!(
+            pilot
+                .pages
+                .node_workspace
+                .read(cx)
+                .pods
+                .read(cx)
+                .is_holding()
+        );
     });
     let (_runtime, _handle, pilot) = mount(cx, options(DebugOptions::default()), 1280., 880.);
     cx.update(|cx| {
         let pilot = pilot.read(cx);
-        assert!(!pilot.resources.read(cx).is_holding());
-        assert!(!pilot.node_workspace.read(cx).pods.read(cx).is_holding());
+        assert!(!pilot.pages.resources.read(cx).is_holding());
+        assert!(
+            !pilot
+                .pages
+                .node_workspace
+                .read(cx)
+                .pods
+                .read(cx)
+                .is_holding()
+        );
     });
 }
 
@@ -86,7 +102,7 @@ fn the_talos_hold_leaves_coroot_to_its_own_hold(cx: &mut TestAppContext) {
         };
         let (_runtime, _handle, pilot) = mount(cx, options(debug), 1280., 880.);
         cx.update(|cx| {
-            let observability = pilot.read(cx).observability.read(cx);
+            let observability = pilot.read(cx).pages.observability.read(cx);
             assert_eq!(
                 observability.incident_count().is_none(),
                 coroot,

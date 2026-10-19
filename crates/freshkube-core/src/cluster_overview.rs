@@ -510,9 +510,27 @@ impl ClusterOverviewCollector {
                 .await;
             return;
         }
-        match get_discovery_members_with_retry(&cluster.name, discovery_config_path, &fallback_ips)
-            .await
-        {
+        let discovery_path =
+            match crate::ambient::applied_or_default_talosconfig(self.config_path.as_deref()) {
+                Ok(path) => path,
+                Err(error) => {
+                    cluster.discovery_warning =
+                        Some(format!("Discovery roster unavailable: {error}"));
+                    self.refresh_roster_from_kubernetes(cluster, client, kubeconfig)
+                        .await;
+                    return;
+                }
+            };
+        let Some(discovery_path) = discovery_path.to_str() else {
+            cluster.discovery_warning = Some(
+                "Discovery roster unavailable because talosctl does not support a non-UTF-8 talosconfig path."
+                    .into(),
+            );
+            self.refresh_roster_from_kubernetes(cluster, client, kubeconfig)
+                .await;
+            return;
+        };
+        match get_discovery_members_with_retry(&cluster.name, discovery_path, &fallback_ips).await {
             Ok(members) if !members.is_empty() => {
                 replace_node_ips_from_discovery(cluster, &members);
                 cluster.discovery_members = members;

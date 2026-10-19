@@ -345,8 +345,8 @@ fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
             // endpoint gives: outside example mode nothing can read the
             // summary.
             pilot.mode.set_example(false);
-            pilot.stop_summary();
-            pilot.registry.active_mut().summary_health = None;
+            pilot.switch.stop_summary();
+            pilot.switch.registry.active_mut().summary_health = None;
             pilot.selected_node = None;
             pilot.nodes.clear();
             pilot.push_source(window, cx);

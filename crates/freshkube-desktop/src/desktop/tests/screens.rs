@@ -65,7 +65,7 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
             super::super::nodes::NodeTab::Services,
         ] {
             open_node_tab(window, cx, tab);
-            assert_eq!(view.read(cx).node_workspace.read(cx).tab, tab);
+            assert_eq!(view.read(cx).pages.node_workspace.read(cx).tab, tab);
         }
         for (key, page) in [("secondary-6", Page::Etcd), ("secondary-5", Page::Health)] {
             window.press(key, cx);

@@ -457,3 +457,45 @@ fn an_update_of_a_file_a_limited_document_refuses_returns_the_error_and_saves_no
     assert!(!called);
     assert!(document.path().is_dir());
 }
+
+/// A value that fails to serialize, to fail a save before it writes anything,
+/// as a permission error does when the process is allowed to ignore them.
+struct Unserializable;
+
+impl Serialize for Unserializable {
+    fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("cannot be written"))
+    }
+}
+
+impl<'de> Deserialize<'de> for Unserializable {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Ok(Self)
+    }
+}
+
+impl Default for Unserializable {
+    fn default() -> Self {
+        Self
+    }
+}
+
+#[test]
+fn a_save_that_fails_before_writing_keeps_the_old_file_and_leaves_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let old = Sample {
+        name: "acme".into(),
+        count: 1,
+    };
+    sample(&directory).save(&old).unwrap();
+    let before = std::fs::read(sample(&directory).path()).unwrap();
+    let failing = Dir::beside(&directory.path().join("preferences.json"))
+        .document::<Unserializable>("sample.json", Layout::Compact, 0o644);
+    assert!(failing.save(&Unserializable).is_err());
+    assert_eq!(std::fs::read(failing.path()).unwrap(), before);
+    let names: Vec<_> = std::fs::read_dir(directory.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, ["sample.json"]);
+}

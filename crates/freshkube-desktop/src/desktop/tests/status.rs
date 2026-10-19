@@ -33,7 +33,7 @@ fn the_visible_page_fills_the_status_bar_and_its_reads_reach_it(cx: &mut TestApp
     })
     .unwrap();
     cx.run_until_parked();
-    let resources = cx.update(|cx| view.read(cx).resources.clone());
+    let resources = cx.update(|cx| view.read(cx).pages.resources.clone());
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let line = segment(window, "resource-scope").expect("Pods fill the status bar");
@@ -129,6 +129,7 @@ fn a_screens_segment_shows_only_while_its_page_is_visible(cx: &mut TestAppContex
         view.update(cx, |view, _| {
             let slot = view
                 .pages
+                .map
                 .get_mut(&PageId::Etcd)
                 .expect("etcd has a screen");
             *slot = crate::screens::ScreenHandle::new(screen.clone());

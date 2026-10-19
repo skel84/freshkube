@@ -158,7 +158,7 @@ impl Pilot {
                 match result {
                     Ok(report) => view.kubeconfig_read(report, window, cx),
                     Err(error) => {
-                        view.pending_link = None;
+                        view.switch.pending_link = None;
                         view.config_error = Some(error);
                     }
                 }
@@ -186,7 +186,7 @@ impl Pilot {
         // A file that can't be read matters only when no other one has
         // contexts.
         if report.contexts.is_empty() {
-            self.pending_link = None;
+            self.switch.pending_link = None;
             self.config_error = Some(match report.errors.first() {
                 Some((path, error)) => format!("{}: {error}", path.display()),
                 None if report.sources.is_empty() => {
@@ -231,10 +231,11 @@ impl Pilot {
             {
                 HealthSummary::Reading
             }
-            _ if self.registry.active().summary_session.is_some() => HealthSummary::Reading,
+            _ if self.switch.registry.active().summary_session.is_some() => HealthSummary::Reading,
             _ => HealthSummary::Unread,
         };
-        self.health
+        self.pages
+            .health
             .update(cx, |health, cx| health.set_summary(summary, cx));
         let Some(kube) = self.mode().kubernetes_only() else {
             return;
@@ -243,10 +244,10 @@ impl Pilot {
             (Some(error), _) | (None, KubeConnection::Failed(error)) => error.clone(),
             _ => return,
         };
-        if matches!(self.registry.active().summary_health, Some(Ok(_))) {
+        if matches!(self.switch.registry.active().summary_health, Some(Ok(_))) {
             return;
         }
-        self.registry.active_mut().summary_health = Some(Err(failure.clone()));
+        self.switch.registry.active_mut().summary_health = Some(Err(failure.clone()));
         self.deliver_workloads(Err(failure), cx);
     }
 
@@ -355,7 +356,8 @@ impl Pilot {
                 kube.connection = KubeConnection::Connected { version };
                 self.ensure_summary(window, cx);
                 if recovering {
-                    self.resources
+                    self.pages
+                        .resources
                         .update(cx, |resources, cx| resources.refresh(window, cx));
                 }
             }
@@ -468,13 +470,13 @@ impl Pilot {
         }
         let replacement = (report.revision, None);
         if !crate::resources::shell::running_anywhere(cx).is_empty()
-            && self.registry.active().prompted_access == Some(replacement)
+            && self.switch.registry.active().prompted_access == Some(replacement)
         {
             return;
         }
-        self.registry.active_mut().prompted_access = Some(replacement);
+        self.switch.registry.active_mut().prompted_access = Some(replacement);
         self.unless_shell(window, cx, move |view, window, cx| {
-            if view.registry.active().prompted_access != Some(replacement) {
+            if view.switch.registry.active().prompted_access != Some(replacement) {
                 return;
             }
             let Some(kube) = view.mode.kubernetes_only_mut() else {
@@ -588,6 +590,7 @@ impl Pilot {
         if self.mode().is_example() {
             kube.connection = KubeConnection::Connected {
                 version: self
+                    .switch
                     .registry
                     .active()
                     .kubernetes_summary
@@ -837,6 +840,7 @@ mod tests {
                 view.applied.context = Some("chosen".into());
                 view.ensure_summary(window, cx);
                 let observation = view
+                    .switch
                     .registry
                     .active()
                     .summary_session
@@ -848,7 +852,8 @@ mod tests {
                 view.kubeconfig_checked(access.clone(), report, window, cx);
                 assert_eq!(view.source().kube.unwrap().id, access.id());
                 assert_eq!(
-                    view.registry
+                    view.switch
+                        .registry
                         .active()
                         .summary_session
                         .as_ref()
@@ -881,7 +886,8 @@ mod tests {
                     }
                 );
                 assert_eq!(
-                    view.registry
+                    view.switch
+                        .registry
                         .active()
                         .summary_session
                         .as_ref()
@@ -918,10 +924,18 @@ mod tests {
                 let current = view.source().kube.unwrap().id;
                 assert_ne!(current, access.id());
                 assert_eq!(view.applied.context.as_deref(), Some("chosen"));
-                assert!(view.registry.active().kubernetes_summary.data().is_none());
+                assert!(
+                    view.switch
+                        .registry
+                        .active()
+                        .kubernetes_summary
+                        .data()
+                        .is_none()
+                );
                 view.ensure_summary(window, cx);
                 assert_eq!(
-                    view.registry
+                    view.switch
+                        .registry
                         .active()
                         .summary_session
                         .as_ref()
@@ -932,7 +946,8 @@ mod tests {
                     current
                 );
                 assert_ne!(
-                    view.registry
+                    view.switch
+                        .registry
                         .active()
                         .summary_session
                         .as_ref()
@@ -959,7 +974,7 @@ mod tests {
                     .unwrap()
                     .connection_read
                     .resolve(None, Ok(()));
-                view.stop_summary();
+                view.switch.stop_summary();
             });
         })
         .unwrap();
@@ -992,6 +1007,7 @@ mod tests {
                 view.applied.context = Some("chosen".into());
                 view.ensure_summary(window, cx);
                 let old = view
+                    .switch
                     .registry
                     .active()
                     .summary_session
@@ -999,7 +1015,7 @@ mod tests {
                     .unwrap()
                     .core
                     .clone();
-                let old_epoch = view.registry.summary_watch.generation();
+                let old_epoch = view.switch.registry.summary_watch.generation();
                 // The old session had derived this before the file changed.
                 let late = old.derive(chrono::Utc::now());
                 let health = crate::screens::WorkloadData::from_outcome(&late.summary.workloads);
@@ -1008,27 +1024,54 @@ mod tests {
                 let replacement = discover_contexts(std::slice::from_ref(&path));
                 view.kubeconfig_checked(access.clone(), replacement, window, cx);
                 assert_ne!(view.source().kube.unwrap().id, access.id());
-                assert!(view.registry.active().kubernetes_summary.data().is_none());
+                assert!(
+                    view.switch
+                        .registry
+                        .active()
+                        .kubernetes_summary
+                        .data()
+                        .is_none()
+                );
 
                 // Its answer arrives now, and finds nothing to apply to.
                 view.apply_summary(late.clone(), health.clone(), window, cx);
-                assert!(view.registry.active().kubernetes_summary.data().is_none());
+                assert!(
+                    view.switch
+                        .registry
+                        .active()
+                        .kubernetes_summary
+                        .data()
+                        .is_none()
+                );
 
                 view.ensure_summary(window, cx);
-                let new = view.registry.active().summary_session.as_ref().unwrap();
+                let new = view
+                    .switch
+                    .registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap();
                 assert_ne!(new.core.identity(), old.identity());
-                assert!(view.registry.summary_watch.generation() != old_epoch);
+                assert!(view.switch.registry.summary_watch.generation() != old_epoch);
 
                 // And not by the session that replaced it either.
                 view.apply_summary(late, health, window, cx);
-                assert!(view.registry.active().kubernetes_summary.data().is_none());
+                assert!(
+                    view.switch
+                        .registry
+                        .active()
+                        .kubernetes_summary
+                        .data()
+                        .is_none()
+                );
 
                 view.mode
                     .kubernetes_only_mut()
                     .unwrap()
                     .connection_read
                     .resolve(None, Ok(()));
-                view.stop_summary();
+                view.switch.stop_summary();
             });
         })
         .unwrap();
