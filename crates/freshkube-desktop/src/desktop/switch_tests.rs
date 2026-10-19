@@ -820,7 +820,7 @@ fn open_and_hold_link(
             };
             pilot.pending_link = Some(super::switch::PendingLink::for_test(
                 entry,
-                pilot.entry_generation,
+                pilot.entry_locate.ticket(),
                 link,
                 super::switch::LinkWork::Open {
                     kind: freshkube_core::resources::builtin("pods").unwrap(),
@@ -843,7 +843,7 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
     cx.wait_for_io(handle, |_, cx| !view.read(cx).config_loading)
         .await;
     open_and_hold_link(cx, handle, &view, "mgmt");
-    let generation = cx.read(|cx| view.read(cx).entry_generation);
+    let request = cx.read(|cx| view.read(cx).entry_locate.ticket());
     cx.wait_for_io(handle, |_, cx| {
         matches!(
             &view.read(cx).kubeconfig,
@@ -862,7 +862,7 @@ async fn a_talos_entry_with_a_kubeconfig_file_stays_the_entry_and_keeps_a_held_l
             Some("mgmt")
         );
         assert!(pilot.mode().has_talos());
-        assert_eq!(pilot.entry_generation, generation);
+        assert_eq!(pilot.entry_locate.ticket(), request);
         let held = pilot.pending_link.as_ref().unwrap();
         assert_eq!(
             (held.entry.as_str(), held.object.name.as_str()),
@@ -937,7 +937,7 @@ async fn an_entry_that_cannot_read_its_kubeconfig_drops_a_held_link(cx: &mut Tes
             };
             pilot.pending_link = Some(super::switch::PendingLink::for_test(
                 "dev",
-                pilot.entry_generation,
+                pilot.entry_locate.ticket(),
                 link,
                 super::switch::LinkWork::Open {
                     kind: freshkube_core::resources::builtin("pods").unwrap(),
