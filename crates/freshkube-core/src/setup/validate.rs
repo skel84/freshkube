@@ -1,0 +1,194 @@
+//! The rules a setup must meet beyond its shape, after the workspace's own.
+//! A fault names a field or an entry by id and never repeats a value: a
+//! value could be a server, a path or, by mistake, a key.
+
+use std::path::Path;
+
+use super::{
+    Coroot, EntryCoroot, EntryMetrics, Fault, Metrics, Mode, Results, Source, Store, SupplyChain,
+    types::MetricsService,
+};
+use crate::{base_url::parse_base_url, workspace::Entry};
+
+pub(super) fn entry(entry: &Entry) -> Result<(), Fault> {
+    let at = |field: &str| format!("the cluster “{}” {field}", entry.id);
+    if let Some(results) = &entry.results {
+        results_of(results, &at)?;
+    }
+    if let Some(coroot) = &entry.coroot {
+        coroot_of(coroot, &at)?;
+    }
+    if let Some(metrics) = &entry.metrics {
+        entry_metrics(metrics, &at)?;
+    }
+    Ok(())
+}
+
+fn results_of(results: &Results, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
+    match (&results.address, &results.forward) {
+        (Some(address), None) => url(address, at("results.address")),
+        (None, Some(forward)) => {
+            non_empty(&forward.namespace, at("results.forward.namespace"))?;
+            non_empty(&forward.service, at("results.forward.service"))?;
+            port(forward.port, at("results.forward.port"))
+        }
+        _ => Err(Fault::OneOf {
+            at: at("results"),
+            of: "address or forward",
+        }),
+    }
+}
+
+fn coroot_of(coroot: &EntryCoroot, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
+    non_empty(&coroot.cluster, at("coroot.cluster"))?;
+    if let Some(project) = &coroot.project {
+        non_empty(project, at("coroot.project"))?;
+    }
+    Ok(())
+}
+
+fn entry_metrics(metrics: &EntryMetrics, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
+    if let Some(value) = &metrics.value {
+        non_empty(value, at("metrics.value"))?;
+    }
+    if let Some(source) = &metrics.source {
+        source_of(source, &at("metrics.source"))?;
+    }
+    Ok(())
+}
+
+/// An entry's own store: a Service or a URL.
+fn source_of(source: &Source, at: &str) -> Result<(), Fault> {
+    match (&source.service, &source.url) {
+        (Some(service), None) => service_of(service, at)?,
+        (None, Some(address)) => url(address, format!("{at}.url"))?,
+        _ => {
+            return Err(Fault::OneOf {
+                at: at.into(),
+                of: "service or url",
+            });
+        }
+    }
+    token_of(source.token.is_some(), source.url.is_some(), at)
+}
+
+pub(super) fn metrics(metrics: &Metrics) -> Result<(), Fault> {
+    if metrics.mode != Mode::Central {
+        // Kept, unread: switching modes back and forth loses nothing.
+        return Ok(());
+    }
+    let Some(store) = &metrics.store else {
+        return Err(Fault::CentralWithoutStore);
+    };
+    store_of(store)?;
+    let label = metrics.label_name();
+    if !is_label_name(label) {
+        return Err(Fault::LabelName("metrics.label".into()));
+    }
+    Ok(())
+}
+
+fn store_of(store: &Store) -> Result<(), Fault> {
+    let at = "metrics.store";
+    match (&store.entry, &store.service, &store.url) {
+        (Some(entry), Some(service), None) => {
+            non_empty(entry, format!("{at}.entry"))?;
+            service_of(service, at)?;
+        }
+        (None, None, Some(address)) => url(address, format!("{at}.url"))?,
+        _ => {
+            return Err(Fault::OneOf {
+                at: at.into(),
+                of: "entry with service, or url",
+            });
+        }
+    }
+    token_of(store.token.is_some(), store.url.is_some(), at)
+}
+
+/// A Service needs no token: the hosting entry's credentials reach it.
+fn token_of(token: bool, url: bool, at: &str) -> Result<(), Fault> {
+    if token && !url {
+        return Err(Fault::Only {
+            at: format!("{at}.token"),
+            with: "url",
+        });
+    }
+    Ok(())
+}
+
+fn service_of(service: &MetricsService, at: &str) -> Result<(), Fault> {
+    non_empty(&service.namespace, format!("{at}.service.namespace"))?;
+    non_empty(&service.name, format!("{at}.service.name"))?;
+    port(service.port, format!("{at}.service.port"))
+}
+
+/// A Prometheus label name: `[a-zA-Z_][a-zA-Z0-9_]*`.
+fn is_label_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+pub(super) fn coroot(coroot: &Coroot) -> Result<(), Fault> {
+    url(&coroot.server, "coroot.server".into())?;
+    if coroot.key.is_some() && coroot.api_key_file.is_some() {
+        return Err(Fault::KeyTwice);
+    }
+    if let Some(file) = &coroot.api_key_file {
+        absolute(file, "coroot.api_key_file".into())?;
+    }
+    if let Some(project) = &coroot.project {
+        non_empty(project, "coroot.project".into())?;
+    }
+    Ok(())
+}
+
+pub(super) fn supply_chain(chain: &SupplyChain) -> Result<(), Fault> {
+    if let Some(file) = &chain.public_key_file {
+        absolute(file, "supply_chain.public_key_file".into())?;
+    }
+    if let Some(evidence) = &chain.evidence {
+        let at = "supply_chain.evidence";
+        non_empty(&evidence.result, format!("{at}.result"))?;
+        pointer(&evidence.commit, format!("{at}.commit"))?;
+        pointer(&evidence.digest, format!("{at}.digest"))?;
+    }
+    Ok(())
+}
+
+fn non_empty(text: &str, at: String) -> Result<(), Fault> {
+    if text.trim().is_empty() {
+        return Err(Fault::Empty(at));
+    }
+    Ok(())
+}
+
+fn port(port: u16, at: String) -> Result<(), Fault> {
+    if port == 0 {
+        return Err(Fault::ZeroPort(at));
+    }
+    Ok(())
+}
+
+fn url(text: &str, at: String) -> Result<(), Fault> {
+    parse_base_url(text.trim())
+        .map(drop)
+        .map_err(|_| Fault::NotUrl(at))
+}
+
+fn absolute(path: &Path, at: String) -> Result<(), Fault> {
+    if !path.is_absolute() {
+        return Err(Fault::RelativePath(at));
+    }
+    Ok(())
+}
+
+fn pointer(text: &str, at: String) -> Result<(), Fault> {
+    if !text.starts_with('/') {
+        return Err(Fault::Pointer(at));
+    }
+    Ok(())
+}

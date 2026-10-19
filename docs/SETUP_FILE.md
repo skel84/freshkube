@@ -61,7 +61,7 @@ clusters:
 destinations:
   - server: https://cluster-c.example.test:6443
     entry: cluster-c
-  - name: in-cluster
+  - name: acme-prod
     entry: cluster-a
 
 # Pins: a part read from a named entry. A part not named follows the roles.
