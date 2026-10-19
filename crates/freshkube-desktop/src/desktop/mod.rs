@@ -709,6 +709,7 @@ impl Pilot {
         let tick = Self::start_tick(window, cx);
         let chrome = shell::Chrome::new(
             app_menu::menu_platform(options.debug.app_menu_button),
+            options.preferences.clone(),
             window,
             cx,
         );

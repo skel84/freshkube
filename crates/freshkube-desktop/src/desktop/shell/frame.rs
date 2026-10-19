@@ -339,12 +339,6 @@ pub(super) fn settings_content(
     let appearance_pilot = pilot.clone();
     let all_pilot = pilot.clone();
     let all_popover = popover.clone();
-    let field_label = |text: &'static str| {
-        div()
-            .text_size(dp(12.5))
-            .font_weight(FontWeight::SEMIBOLD)
-            .child(text)
-    };
     // `flex_none` keeps the 1 px line when the panel scrolls in a short window.
     let divider = |ix: usize| {
         div()
@@ -365,11 +359,9 @@ pub(super) fn settings_content(
         .p_1()
         .gap_3p5()
         .child(h_flex().justify_between().child(ui::caption("Settings", cx)).child(hint(concat!("Freshkube v", env!("CARGO_PKG_VERSION")))))
-        .child(
-            v_flex()
-                .gap_1p5()
-                .child(field_label("Talosconfig"))
-                .child(
+        .child(freshkube_ui::form::group("settings-talos", "Connection")
+            .narrow(true)
+            .row(freshkube_ui::form::row("settings-talos-path", "Talosconfig",
                     h_flex()
                         .gap_2()
                         .child(
@@ -410,16 +402,15 @@ pub(super) fn settings_content(
                                     });
                                     apply_popover.update(cx, |state, cx| state.dismiss(window, cx));
                                 }),
-                        ),
-                )
-                .child(hint(if fixture {
+                        )
+            ).hint(if fixture {
                     "Example data doesn't read a talosconfig."
                 } else if kubernetes_only {
                     "This window opened without one. Choosing a talosconfig switches it to Talos: its contexts replace the kubeconfig's."
                 } else {
                     "Browse loads the chosen file right away; a typed path loads when you press Apply. Leave it empty to use TALOSCONFIG or ~/.talos/config."
-                })),
-        )
+                }))
+            .render(cx))
         .child(divider(1))
         .child(if kubernetes_only {
             kubernetes_only::settings_section(&view, popover.clone(), cx)
@@ -427,16 +418,9 @@ pub(super) fn settings_content(
             super::super::kubeconfig::settings_section(&view, popover.clone(), cx).into_any_element()
         })
         .child(divider(2))
-        .child(
-            h_flex()
-                .justify_between()
-                .gap_3()
-                .child(
-                    v_flex()
-                        .child(field_label("Talos auto-refresh"))
-                        .child(hint("Every 15 s; Kubernetes updates are watched")),
-                )
-                .child(
+        .child(freshkube_ui::form::group("settings-quick", "Quick controls")
+            .narrow(true)
+            .row(freshkube_ui::form::row("settings-quick-refresh", "Talos auto-refresh",
                     Switch::new("auto-refresh")
                         .checked(automatic)
                         .disabled(kubernetes_only)
@@ -444,20 +428,11 @@ pub(super) fn settings_content(
                         .on_click(move |checked, _, cx| {
                             let checked = *checked;
                             let _ = switch_pilot.update(cx, |view, cx| {
-                                view.chrome.automatic = checked;
-                                view.chrome.elapsed = std::time::Duration::ZERO;
-                                cx.notify();
+                                view.set_auto_refresh(checked, cx);
                             });
                         }),
-                ),
-        )
-        .child(divider(3))
-        .child(
-            h_flex()
-                .justify_between()
-                .gap_3()
-                .child(field_label("Appearance"))
-                .child(
+            ).hint("Every 15 s; Kubernetes updates are watched"))
+            .row(freshkube_ui::form::row("settings-quick-appearance", "Appearance",
                     ButtonGroup::new("appearance")
                         .outline()
                         .small()
@@ -481,17 +456,11 @@ pub(super) fn settings_content(
                                 None => return,
                             };
                             let _ = appearance_pilot.update(cx, |view, cx| {
-                                view.set_appearance(choice, window, cx)
+                                view.choose_appearance(choice, window, cx)
                             });
                         }),
-                ),
-        )
-        .child(
-            h_flex()
-                .justify_between()
-                .gap_3()
-                .child(field_label("Text size"))
-                .child(
+            ))
+            .row(freshkube_ui::form::row("settings-quick-text-size", "Text size",
                     text_size::STEPS
                         .iter()
                         .fold(
@@ -510,8 +479,8 @@ pub(super) fn settings_content(
                                 text_size::set(*size, cx);
                             }
                         }),
-                ),
-        )
+            ))
+            .render(cx))
         .child(divider(4))
         .child(crate::monitoring::page::source_section(&monitoring, cx))
         .child(divider(5))
