@@ -127,6 +127,11 @@ pub struct Hop {
     pub at: Option<DateTime<Utc>>,
     /// How sure its link to the hop before is. Gates have none.
     pub link: Option<Confidence>,
+    /// The key of the hop it joins, the one before it in the chain: a
+    /// chain drawn from the hops needs it, since the rows' order is not
+    /// the chain's. A Stage's gates share one, the hop their Stage follows.
+    /// `None` for a hop that follows nothing, or that no join placed.
+    pub after: Option<String>,
     pub shows: Shows,
 }
 
@@ -185,6 +190,9 @@ pub struct LinkDetail {
     pub by: String,
     /// The hop before, by name.
     pub before: String,
+    /// The value the two sides were joined on, whole: a commit, a digest
+    /// or a name. `None` when nothing joined them.
+    pub key: Option<String>,
     pub before_says: String,
     pub here_says: String,
     /// Why the link has its confidence.
@@ -412,6 +420,9 @@ impl Destination {
 pub struct Missing {
     pub gap: Gap,
     pub text: String,
+    /// The key of the hop the missing piece would join, when one hop is
+    /// known: a chain hangs it there. `None` when it belongs to no one hop.
+    pub after: Option<String>,
 }
 
 impl Missing {
@@ -419,7 +430,14 @@ impl Missing {
         Self {
             gap,
             text: text.into(),
+            after: None,
         }
+    }
+
+    /// Hung from the hop `key` names.
+    pub fn after(mut self, key: impl Into<String>) -> Self {
+        self.after = Some(key.into());
+        self
     }
 }
 

@@ -197,7 +197,7 @@ impl Pilot {
     /// none for example data. `None` until a target exists.
     fn screen_on(&self, live: Option<LiveSource>) -> Option<ScreenSource> {
         let cluster = self.overview.data()?;
-        let node = self.selected_summary()?;
+        let node = self.target.summary()?;
         Some(ScreenSource {
             target: Target {
                 epoch: self.epoch,
@@ -205,7 +205,7 @@ impl Pilot {
                 node: node.name.clone(),
                 address: node.address.clone(),
             },
-            nodes: Arc::new(self.nodes.clone()),
+            nodes: Arc::new(self.target.nodes.clone()),
             live,
         })
     }

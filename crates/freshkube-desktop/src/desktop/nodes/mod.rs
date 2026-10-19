@@ -505,7 +505,7 @@ impl Pilot {
             .data()
             .and_then(|summary| summary.nodes.loaded());
         let rows = join::join(
-            &self.nodes,
+            &self.target.nodes,
             kubernetes.map(Vec::as_slice).unwrap_or_default(),
             self.overview.data().is_some(),
             self.switch
@@ -565,7 +565,7 @@ impl Pilot {
         let rows = self.pages.node_workspace.read(cx).rows.clone();
         let mut display = crate::presentation::overview::Overview::build(
             &rows,
-            &self.nodes,
+            &self.target.nodes,
             self.switch
                 .registry
                 .active()

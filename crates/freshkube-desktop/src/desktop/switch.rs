@@ -643,7 +643,7 @@ impl Pilot {
             self.tell(reconnected_notice(&pending.entry), window, cx);
             return;
         }
-        self.cancel_object_open();
+        self.target.cancel_object_open();
         let object = resources::model::ObjectRef {
             connection: Some(source.id.clone()),
             ..pending.object

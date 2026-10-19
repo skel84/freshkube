@@ -147,8 +147,8 @@ fn only_an_answered_overview_without_a_node_says_no_node_selected(cx: &mut TestA
     let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture(), 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
-            pilot.selected_node = None;
-            pilot.nodes.clear();
+            pilot.target.selected_node = None;
+            pilot.target.nodes.clear();
             pilot.push_source(window, cx);
         })
     })
@@ -347,8 +347,8 @@ fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
             pilot.mode.set_example(false);
             pilot.switch.stop_summary();
             pilot.switch.registry.active_mut().summary_health = None;
-            pilot.selected_node = None;
-            pilot.nodes.clear();
+            pilot.target.selected_node = None;
+            pilot.target.nodes.clear();
             pilot.push_source(window, cx);
         })
     })
