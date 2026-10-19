@@ -13,6 +13,7 @@ doctest = false
 fastrand = "2"
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+freshkube-applications.workspace = true
 freshkube-delivery.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
@@ -75,6 +76,7 @@ freshkube-probe = { workspace = true, features = ["counting"] }
 freshkube-terminal = { workspace = true, features = ["testing"] }
 # The log tests pin the zone rows show their times in (`logs::pin_zone`).
 freshkube-core = { workspace = true, features = ["testing"] }
+freshkube-applications = { workspace = true, features = ["testing"] }
 freshkube-delivery = { workspace = true, features = ["testing"] }
 # The log tests read the view's state (`applied_and_held`, `retained`, …).
 freshkube-logs = { workspace = true, features = ["testing"] }

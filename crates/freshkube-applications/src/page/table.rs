@@ -17,7 +17,7 @@ enum Field {
     ReadFrom,
 }
 
-pub(crate) struct Column {
+pub struct Column {
     field: Field,
     label: SharedString,
     width: f32,
@@ -54,7 +54,7 @@ fn fit<'a>(label: &str, texts: impl Iterator<Item = &'a SharedString>) -> f32 {
 }
 
 /// The columns for these rows, and their total width.
-pub(super) fn columns(rows: &[PartRow]) -> (Vec<Column>, f32) {
+pub fn columns(rows: &[PartRow]) -> (Vec<Column>, f32) {
     let column = |field, label: &str, width| Column {
         field,
         label: label.to_owned().into(),
@@ -347,7 +347,7 @@ impl TableSource for ApplicationPage {
 impl ApplicationPage {
     /// The table's width: the page's, less the Inspector's beside it.
     fn table_width(&self, window: &Window) -> f32 {
-        let page = crate::screens::page_width(window);
+        let page = freshkube_ui::page::page_width(window);
         if self.inspect && page >= freshkube_ui::inspector::SPLIT_WIDTH {
             page - self.split.width()
         } else {

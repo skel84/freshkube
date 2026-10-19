@@ -8,42 +8,42 @@ use freshkube_delivery::applications::Rule;
 
 /// One application's row.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ColumnApp {
-    pub(crate) key: SharedString,
-    pub(crate) name: SharedString,
+pub struct ColumnApp {
+    pub key: SharedString,
+    pub name: SharedString,
     /// What it is and where, after its name in the row's tooltip.
-    pub(crate) detail: SharedString,
+    pub detail: SharedString,
     /// Its entry in the menu past the cap: its name, with what it is when
     /// another application shares the name.
-    pub(crate) menu: SharedString,
+    pub menu: SharedString,
     /// Why it may be incomplete, for its mark.
-    pub(crate) incomplete: Option<SharedString>,
+    pub incomplete: Option<SharedString>,
 }
 
 /// A rule's applications, under its section label, in the table's order.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ColumnSection {
-    pub(crate) rule: Rule,
-    pub(crate) label: &'static str,
-    pub(crate) apps: Vec<ColumnApp>,
+pub struct ColumnSection {
+    pub rule: Rule,
+    pub label: &'static str,
+    pub apps: Vec<ColumnApp>,
 }
 
 /// Why the column lists no applications, in a few words, with the page's
 /// whole sentence in its tooltip.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ColumnNote {
-    pub(crate) text: SharedString,
-    pub(crate) tooltip: Option<SharedString>,
+pub struct ColumnNote {
+    pub text: SharedString,
+    pub tooltip: Option<SharedString>,
     /// A failed read offers Retry, as the page's state does.
-    pub(crate) retry: bool,
+    pub retry: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Column {
-    pub(crate) sections: Vec<ColumnSection>,
-    pub(crate) note: Option<ColumnNote>,
+pub struct Column {
+    pub sections: Vec<ColumnSection>,
+    pub note: Option<ColumnNote>,
     /// Every application, for All applications' count.
-    pub(crate) total: usize,
+    pub total: usize,
 }
 
 impl Column {
@@ -139,18 +139,18 @@ fn app(row: &AppRow, shared: bool) -> ColumnApp {
 
 impl ApplicationsPage {
     /// What the column lists.
-    pub(crate) fn column(&self) -> &Column {
+    pub fn column(&self) -> &Column {
         &self.column
     }
 
     /// Changes whenever what the column shows does: its lines, or the
     /// application whose page shows.
-    pub(crate) fn column_revision(&self) -> usize {
+    pub fn column_revision(&self) -> usize {
         self.column_revision
     }
 
     /// The application whose page shows in the list's place.
-    pub(crate) fn shown_application(&self, cx: &App) -> Option<SharedString> {
+    pub fn shown_application(&self, cx: &App) -> Option<SharedString> {
         if self.changes_shown {
             return None;
         }
@@ -176,7 +176,7 @@ impl ApplicationsPage {
     /// The column's row: that application's page, selected on the list
     /// for when it comes back. A filter or chip that hides it is cleared,
     /// so the list never comes back filtered against its selection.
-    pub(crate) fn open_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn open_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_changes(cx);
         let Some(key) = self
             .display
@@ -211,7 +211,7 @@ impl ApplicationsPage {
 
     /// All applications: the list, with the application whose page showed
     /// selected.
-    pub(crate) fn show_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn show_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.hide_changes(cx);
         self.close_application(window, cx);
     }
@@ -219,7 +219,7 @@ impl ApplicationsPage {
     /// Changes: the Changes list in the list's place, which reads while it
     /// shows. A change it opened shows again; another press comes back to
     /// the list.
-    pub(crate) fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn show_changes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.changes_shown {
             self.changes
                 .update(cx, |changes, cx| changes.close_change(window, cx));
@@ -236,13 +236,13 @@ impl ApplicationsPage {
     }
 
     /// Whether the Changes list shows in the list's place.
-    pub(crate) fn changes_shown(&self) -> bool {
+    pub fn changes_shown(&self) -> bool {
         self.changes_shown
     }
 
     /// The Changes list, shown or not.
-    #[cfg(test)]
-    pub(crate) fn changes_page(&self) -> &Entity<ChangesPage> {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn changes_page(&self) -> &Entity<ChangesPage> {
         &self.changes
     }
 
@@ -260,11 +260,11 @@ impl ApplicationsPage {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl ApplicationsPage {
     /// Puts `column` in the column's place, as a read with that many
     /// applications would.
-    pub(crate) fn set_column(&mut self, column: Column, cx: &mut Context<Self>) {
+    pub fn set_column(&mut self, column: Column, cx: &mut Context<Self>) {
         self.column = column;
         self.column_revision += 1;
         cx.notify();

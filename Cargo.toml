@@ -85,6 +85,7 @@ freshkube-prefs = { path = "crates/freshkube-prefs" }
 freshkube-probe = { path = "crates/freshkube-probe" }
 freshkube-reads = { path = "crates/freshkube-reads" }
 freshkube-resources = { path = "crates/freshkube-resources" }
+freshkube-applications = { path = "crates/freshkube-applications" }
 freshkube-terminal = { path = "crates/freshkube-terminal" }
 freshkube-desktop = { path = "crates/freshkube-desktop" }
 freshkube-ui = { path = "crates/freshkube-ui" }

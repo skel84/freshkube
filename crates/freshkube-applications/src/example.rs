@@ -16,7 +16,7 @@ use super::links::Connections;
 
 /// A shape of the example, for captures and tests.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Variant {
+pub enum Variant {
     /// All six clusters.
     #[default]
     Acme,
@@ -63,7 +63,7 @@ impl Variant {
     /// `unreachable`, `argo-refused` or `destination` from
     /// `FRESHKUBE_APPLICATIONS`, parsed into `DebugOptions` (debug and
     /// stress builds only); anything else is `Acme`.
-    pub(crate) fn parse(value: Option<&str>) -> Self {
+    pub fn parse(value: Option<&str>) -> Self {
         match value {
             Some("single") => Self::Single,
             Some("partial") => Self::Partial,
@@ -120,7 +120,7 @@ fn cicd(inputs: &mut Inputs) -> &mut SessionInputs {
     session(inputs, acme::CICD)
 }
 
-pub(crate) fn inputs(variant: Variant) -> Inputs {
+pub fn inputs(variant: Variant) -> Inputs {
     let mut inputs = acme::acme();
     for session in &mut inputs.sessions {
         if session.key.0 == acme::CORE {

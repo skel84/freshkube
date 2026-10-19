@@ -13,18 +13,18 @@ use super::super::change::{reach_tone, tone as hop_tone};
 
 /// One Stage of a row.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Cell {
-    pub(crate) stage: SharedString,
+pub struct Cell {
+    pub stage: SharedString,
     /// The glyph, none when the Stage doesn't run the change.
-    pub(crate) tone: Option<Tone>,
-    pub(crate) word: SharedString,
+    pub tone: Option<Tone>,
+    pub word: SharedString,
     /// Why, in the Inspector.
-    pub(crate) why: SharedString,
+    pub why: SharedString,
 }
 
 /// One hop of the trail, as the Inspector lists it.
 #[derive(Clone, Debug)]
-pub(crate) struct TrailHop {
+pub struct TrailHop {
     pub(crate) tone: Tone,
     pub(crate) name: SharedString,
     /// Its link's word, for a hop joined to the one before.
@@ -35,47 +35,47 @@ pub(crate) struct TrailHop {
 
 /// A group of the trail: Build, Freight or a Stage, and its hops.
 #[derive(Clone, Debug)]
-pub(crate) struct TrailGroup {
-    pub(crate) label: SharedString,
-    pub(crate) hops: Vec<TrailHop>,
+pub struct TrailGroup {
+    pub label: SharedString,
+    pub hops: Vec<TrailHop>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ChangeRow {
-    pub(crate) key: SharedString,
-    pub(crate) project: String,
-    pub(crate) freight: String,
-    pub(crate) fold: Fold,
-    pub(crate) tone: Tone,
+pub struct ChangeRow {
+    pub key: SharedString,
+    pub project: String,
+    pub freight: String,
+    pub fold: Fold,
+    pub tone: Tone,
     /// The row's state in words: its glyph's tooltip and the Inspector's tag.
-    pub(crate) state: SharedString,
+    pub state: SharedString,
     /// `#418`, or the commit.
-    pub(crate) named: SharedString,
-    pub(crate) by_commit: bool,
-    pub(crate) title: SharedString,
+    pub named: SharedString,
+    pub by_commit: bool,
+    pub title: SharedString,
     /// The Change cell's line, `title · project`; the project, from the
     /// title's end on, is dimmer and gives way first.
-    pub(crate) change: SharedString,
+    pub change: SharedString,
     /// Its project's Stages in promotion order.
-    pub(crate) stages: Vec<Cell>,
+    pub stages: Vec<Cell>,
     /// Every Stage with its word, `dev Confirmed · prod –`: the Stages
     /// cell's tooltip and label.
-    pub(crate) stages_text: SharedString,
+    pub stages_text: SharedString,
     /// How many of `stages` the Stages cell shows, and the `+N` it ends
     /// with for those it drops; the page sets them by the column's width.
-    pub(crate) stages_shown: usize,
-    pub(crate) stages_more: Option<SharedString>,
-    pub(crate) age: SharedString,
-    pub(crate) made: Option<SharedString>,
-    pub(crate) label: SharedString,
-    pub(crate) tooltip: SharedString,
+    pub stages_shown: usize,
+    pub stages_more: Option<SharedString>,
+    pub age: SharedString,
+    pub made: Option<SharedString>,
+    pub label: SharedString,
+    pub tooltip: SharedString,
     /// The trail, or why there's none.
-    pub(crate) trail: Result<Vec<TrailGroup>, SharedString>,
+    pub trail: Result<Vec<TrailGroup>, SharedString>,
 }
 
 /// What shows in place of the table when there are no rows.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Body {
+pub enum Body {
     Table,
     Empty {
         title: SharedString,
@@ -90,12 +90,12 @@ pub(crate) enum Body {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Display {
-    pub(crate) rows: Vec<ChangeRow>,
+pub struct Display {
+    pub rows: Vec<ChangeRow>,
     /// What may be missing, in one sentence, and the same as a label.
-    pub(crate) missing: Option<(SharedString, SharedString)>,
-    pub(crate) body: Body,
-    pub(crate) needs_a_look: bool,
+    pub missing: Option<(SharedString, SharedString)>,
+    pub body: Body,
+    pub needs_a_look: bool,
 }
 
 impl Default for Display {
