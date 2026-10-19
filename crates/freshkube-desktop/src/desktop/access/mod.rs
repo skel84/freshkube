@@ -7,10 +7,11 @@ use crate::{
 
 impl Pilot {
     pub(super) fn observed_nodes(&self) -> Option<ObservedNodes> {
-        self.registry.active().summary_session.as_ref()?;
+        self.switch.registry.active().summary_session.as_ref()?;
         Some(ObservedNodes {
-            access: self.registry.active().access?,
+            access: self.switch.registry.active().access?,
             nodes: self
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -39,12 +40,17 @@ impl Pilot {
         match result {
             Ok(collected) => {
                 let changed = self
+                    .switch
                     .registry
                     .active()
                     .access_configuration
                     .is_some_and(|old| old != collected.configuration)
                     || collected.access.is_some_and(|new| {
-                        self.registry.active().access.is_some_and(|old| old != new)
+                        self.switch
+                            .registry
+                            .active()
+                            .access
+                            .is_some_and(|old| old != new)
                     });
                 if changed && !resources::shell::running_anywhere(cx).is_empty() {
                     // Cancel leaves the original explicit session in place. Mark
@@ -53,8 +59,8 @@ impl Pilot {
                     self.overview.apply(&request, Err("Access changed; refresh to reconnect after confirming the running shell can end".into()));
                     self.rebuild_joined_nodes(cx);
                     let replacement = (collected.configuration, collected.access);
-                    if self.registry.active().prompted_access != Some(replacement) {
-                        self.registry.active_mut().prompted_access = Some(replacement);
+                    if self.switch.registry.active().prompted_access != Some(replacement) {
+                        self.switch.registry.active_mut().prompted_access = Some(replacement);
                         self.unless_shell(window, cx, move |view, window, cx| {
                             if view.epoch == epoch && view.overview.is_current(&request) {
                                 view.install_overview(request, collected, true, window, cx);
@@ -87,12 +93,12 @@ impl Pilot {
             request = self.overview.begin(self.applied.clone());
             self.publish_reading(cx);
         }
-        self.registry.active_mut().access_configuration = Some(collected.configuration);
+        self.switch.registry.active_mut().access_configuration = Some(collected.configuration);
         // The talosconfig and kubeconfig contents are known now, so a summary
         // parked under the same ones may be shown while this one reads.
         self.restore_parked_summary(window, cx);
         if collected.access.is_some() {
-            self.registry.active_mut().access = collected.access;
+            self.switch.registry.active_mut().access = collected.access;
         }
         if self.overview.apply(&request, collected.cluster) {
             let fresh = !self.overview.is_stale() && self.overview.error().is_none();

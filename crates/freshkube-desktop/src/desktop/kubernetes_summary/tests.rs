@@ -32,20 +32,26 @@ fn initial_sync_does_not_show_partial_pages_as_a_complete_count(cx: &mut TestApp
     let session = cx
         .update_window(handle, |_, window, cx| {
             view.update(cx, |view, cx| {
-                let old = view.registry.active().summary_session.as_ref().unwrap();
+                let old = view
+                    .switch
+                    .registry
+                    .active()
+                    .summary_session
+                    .as_ref()
+                    .unwrap();
                 let connection = old.core.identity().connection().to_owned();
                 let mut target = old.target.clone();
                 view.stop_summary();
                 target.epoch = view.epoch;
                 let core = Session::new(SessionIdentity::new(connection, target.epoch));
-                view.registry.active_mut().summary_session = Some(SummarySession {
+                view.switch.registry.active_mut().summary_session = Some(SummarySession {
                     core: core.clone(),
                     target,
                     fixture_at: chrono::Utc::now(),
                     fixture_clock: cx.background_executor().now(),
                     applied_revision: 0,
                 });
-                view.registry.active_mut().kubernetes_summary = Default::default();
+                view.switch.registry.active_mut().kubernetes_summary = Default::default();
                 view.watch_fixture_summary(window, cx);
                 core
             })
@@ -61,7 +67,8 @@ fn initial_sync_does_not_show_partial_pages_as_a_complete_count(cx: &mut TestApp
     cx.update_window(handle, |_, window, cx| {
         let app = view.read(cx);
         assert!(
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -91,6 +98,7 @@ fn initial_sync_does_not_show_partial_pages_as_a_complete_count(cx: &mut TestApp
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -121,14 +129,16 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
     let (session, count) = cx.update(|cx| {
         let app = view.read(cx);
         (
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .summary_session
                 .as_ref()
                 .unwrap()
                 .core
                 .clone(),
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -158,6 +168,7 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
     cx.update_window(handle, |_, window, cx| {
         let summary = view
             .read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -184,7 +195,8 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
     cx.update_window(handle, |_, window, cx| {
         let app = view.read(cx);
         assert!(matches!(
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -193,7 +205,8 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
             Part::Refused(_)
         ));
         assert_eq!(
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -225,6 +238,7 @@ fn events_timeout_must_not_reject_successful_changed_pods(cx: &mut TestAppContex
     cx.update(|cx| {
         assert!(
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -244,14 +258,16 @@ fn expired_watch_relist_keeps_old_rows_until_the_replacement_commits(cx: &mut Te
     let (session, previous) = cx.update(|cx| {
         let app = view.read(cx);
         (
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .summary_session
                 .as_ref()
                 .unwrap()
                 .core
                 .clone(),
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -272,6 +288,7 @@ fn expired_watch_relist_keeps_old_rows_until_the_replacement_commits(cx: &mut Te
     cx.update_window(handle, |_, window, cx| {
         let summary = view
             .read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -293,6 +310,7 @@ fn expired_watch_relist_keeps_old_rows_until_the_replacement_commits(cx: &mut Te
     cx.update(|cx| {
         let summary = view
             .read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -311,6 +329,7 @@ fn context_replacement_rejects_late_publications_even_when_returning_to_same_con
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let old = cx.update(|cx| {
         view.read(cx)
+            .switch
             .registry
             .active()
             .summary_session
@@ -338,7 +357,8 @@ fn context_replacement_rejects_late_publications_even_when_returning_to_same_con
                 cx,
             );
             assert_ne!(
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .summary_session
                     .as_ref()
@@ -349,7 +369,8 @@ fn context_replacement_rejects_late_publications_even_when_returning_to_same_con
             );
             view.select_context(context, window, cx);
             assert_ne!(
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .summary_session
                     .as_ref()
@@ -359,6 +380,7 @@ fn context_replacement_rejects_late_publications_even_when_returning_to_same_con
                 old.identity()
             );
             let current = view
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -373,7 +395,12 @@ fn context_replacement_rejects_late_publications_even_when_returning_to_same_con
             );
             assert!(Arc::ptr_eq(
                 &current,
-                view.registry.active().kubernetes_summary.data().unwrap()
+                view.switch
+                    .registry
+                    .active()
+                    .kubernetes_summary
+                    .data()
+                    .unwrap()
             ));
         })
     })
@@ -386,7 +413,8 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
     let (identity, previous) = cx.update(|cx| {
         let app = view.read(cx);
         (
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .summary_session
                 .as_ref()
@@ -394,7 +422,8 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
                 .core
                 .identity()
                 .clone(),
-            app.registry
+            app.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -417,7 +446,8 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
                 .clone();
             view.select_node(Some(next), window, cx);
             assert_eq!(
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .summary_session
                     .as_ref()
@@ -428,7 +458,12 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
             );
             assert!(Arc::ptr_eq(
                 &previous,
-                view.registry.active().kubernetes_summary.data().unwrap()
+                view.switch
+                    .registry
+                    .active()
+                    .kubernetes_summary
+                    .data()
+                    .unwrap()
             ));
             view.navigate(Page::Health, window, cx);
         });
@@ -440,6 +475,7 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
     cx.update(|cx| {
         assert_eq!(
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .summary_session
@@ -452,6 +488,7 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
         assert!(!Arc::ptr_eq(
             &previous,
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -469,6 +506,7 @@ fn talos_cycle_and_node_selection_keep_the_session_but_refresh_relists(cx: &mut 
     cx.update(|cx| {
         assert_eq!(
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .summary_session
@@ -491,6 +529,7 @@ fn reapplying_a_kubeconfig_at_the_same_path_discards_the_old_session(cx: &mut Te
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
             let old = view
+                .switch
                 .registry
                 .active()
                 .summary_session
@@ -514,20 +553,35 @@ fn reapplying_a_kubeconfig_at_the_same_path_discards_the_old_session(cx: &mut Te
             view.mode.set_example(false);
             view.config_loading = true;
             view.apply_kubeconfig(selection, window, cx);
-            assert!(view.registry.active().summary_session.is_none());
-            assert!(view.registry.active().kubernetes_summary.data().is_none());
+            assert!(view.switch.registry.active().summary_session.is_none());
+            assert!(
+                view.switch
+                    .registry
+                    .active()
+                    .kubernetes_summary
+                    .data()
+                    .is_none()
+            );
             view.apply_summary(
                 late.clone(),
                 WorkloadData::from_outcome(&late.summary.workloads),
                 window,
                 cx,
             );
-            assert!(view.registry.active().kubernetes_summary.data().is_none());
+            assert!(
+                view.switch
+                    .registry
+                    .active()
+                    .kubernetes_summary
+                    .data()
+                    .is_none()
+            );
             view.mode.set_example(true);
             view.config_loading = false;
             view.ensure_summary(window, cx);
             assert_ne!(
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .summary_session
                     .as_ref()
@@ -552,7 +606,8 @@ fn kubernetes_only_has_no_countdown_or_periodic_summary_apply(cx: &mut TestAppCo
                 );
                 view.navigate(Page::Health, window, cx);
                 assert!(!view.countdown_state().1);
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .kubernetes_summary
                     .data()
@@ -569,6 +624,7 @@ fn kubernetes_only_has_no_countdown_or_periodic_summary_apply(cx: &mut TestAppCo
         assert!(Arc::ptr_eq(
             &previous,
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -584,6 +640,7 @@ fn kubernetes_only_has_no_countdown_or_periodic_summary_apply(cx: &mut TestAppCo
     cx.update(|cx| {
         assert_eq!(
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .summary_session

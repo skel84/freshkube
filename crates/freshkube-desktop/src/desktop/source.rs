@@ -174,7 +174,12 @@ impl Pilot {
                 let live = self.live_source();
                 let screen = live.clone().and_then(|live| self.screen_on(Some(live)));
                 let kube = live.and_then(|live| self.talos_source(live));
-                let id = self.registry.active().access.map(|access| access.key());
+                let id = self
+                    .switch
+                    .registry
+                    .active()
+                    .access
+                    .map(|access| access.key());
                 (screen, kube, id)
             }
         };
@@ -225,7 +230,7 @@ impl Pilot {
     /// context is chosen and the access it was read with is known.
     fn talos_source(&self, live: LiveSource) -> Option<ClusterSource> {
         self.applied.context.as_ref()?;
-        let active = self.registry.active();
+        let active = self.switch.registry.active();
         Some(ClusterSource {
             id: active.access?.key(),
             context: live.cluster.name.clone(),
@@ -243,8 +248,8 @@ impl Pilot {
         Some(AppliedAccess {
             config_path: self.applied.path.clone(),
             selection: self.kubeconfig.clone(),
-            configuration: self.registry.active().access_configuration?,
-            identity: self.registry.active().access?,
+            configuration: self.switch.registry.active().access_configuration?,
+            identity: self.switch.registry.active().access?,
         })
     }
 }

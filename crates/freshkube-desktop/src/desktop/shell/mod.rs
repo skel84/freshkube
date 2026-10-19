@@ -124,6 +124,7 @@ impl Pilot {
         // A parked cluster says how old the summary it would show is. The
         // list draws only while the popover is open, so this is not per frame.
         let parked = self
+            .switch
             .registry
             .parked_since(&super::session::SessionKey::Entry(chosen.clone()))
             .map(|taken| {

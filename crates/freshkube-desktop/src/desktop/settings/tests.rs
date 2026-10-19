@@ -260,7 +260,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let pilot = view.read(cx);
-        assert_eq!(pilot.switcher[0].id.as_ref(), "cluster-c");
+        assert_eq!(pilot.switch.switcher[0].id.as_ref(), "cluster-c");
         assert!(window.find("settings-cluster-cluster-c").visible());
         assert!(
             window

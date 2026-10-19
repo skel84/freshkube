@@ -347,6 +347,7 @@ async fn summary_list_failure_is_shown(
     let (_runtime, handle, view) = launched(cx, &guard, &api).await;
     cx.wait_for_io(handle, |_, cx| {
         view.read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -359,7 +360,13 @@ async fn summary_list_failure_is_shown(
     .await;
     cx.update_window(handle, |_, window, cx| {
         let pilot = view.read(cx);
-        let summary = pilot.registry.active().kubernetes_summary.data().unwrap();
+        let summary = pilot
+            .switch
+            .registry
+            .active()
+            .kubernetes_summary
+            .data()
+            .unwrap();
         let unavailable = match (&summary.nodes, code) {
             (Part::Refused(unavailable), 403) | (Part::Failed(unavailable), 404) => unavailable,
             other => panic!("a failed list must not become an empty count: {other:?}"),
@@ -431,7 +438,7 @@ async fn a_parked_session_stops_retrying_though_the_open_one_retries(cx: &mut Te
     );
     open_entry(cx, handle, &view, "two");
     assert!(within(cx, Duration::from_secs(10), |_| two.hits() > 0).await);
-    cx.read(|cx| assert_eq!(view.read(cx).registry.active_key(), &key("two")));
+    cx.read(|cx| assert_eq!(view.read(cx).switch.registry.active_key(), &key("two")));
     // A switch can land mid-round: wait for what was in flight to arrive.
     let parked = steady(
         cx,
@@ -526,7 +533,13 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
     let (_runtime, handle, view) = launched(cx, &guard, &one).await;
     let has_data = |cx: &mut TestAppContext| {
         view.read_with(cx, |pilot, _| {
-            pilot.registry.active().kubernetes_summary.data().is_some()
+            pilot
+                .switch
+                .registry
+                .active()
+                .kubernetes_summary
+                .data()
+                .is_some()
         })
     };
     assert!(
@@ -572,10 +585,12 @@ async fn a_parked_summary_comes_back_as_last_known_only_if_its_kubeconfig_is_unc
         "the kubeconfig's revision never became known"
     );
     assert!(
-        throughout(cx, Duration::from_secs(1), |cx| view
-            .read_with(cx, |pilot, _| {
-                pilot.last_known_since().is_none() && pilot.restored_taken.is_none()
-            }))
+        throughout(cx, Duration::from_secs(1), |cx| view.read_with(
+            cx,
+            |pilot, _| {
+                pilot.last_known_since().is_none() && pilot.switch.restored_taken.is_none()
+            }
+        ))
         .await,
         "a replaced kubeconfig still got the old summary"
     );
@@ -644,7 +659,7 @@ fn holding(
                     identity.connection.clone(),
                     identity.uid.clone(),
                     pilot.source().kube.map(|source| source.id),
-                    pilot.registry.active_key().clone(),
+                    pilot.switch.registry.active_key().clone(),
                 )
             })
     })
@@ -830,7 +845,7 @@ async fn a_forward_keeps_running_on_its_own_connection_through_a_switch(cx: &mut
     );
     cx.read(|cx| {
         assert_eq!(
-            view.read(cx).registry.active_key(),
+            view.read(cx).switch.registry.active_key(),
             &SessionKey::Entry("dev-fra".into())
         )
     });

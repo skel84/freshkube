@@ -34,6 +34,7 @@ fn every_overview_card_opens_its_target_and_filter(cx: &mut TestAppContext) {
                 if id == "tile-pods" {
                     pilot
                         .read(cx)
+                        .switch
                         .registry
                         .active()
                         .kubernetes_summary
@@ -205,6 +206,7 @@ fn attention_merges_node_problems_and_etcd_alarms_and_caps_display(cx: &mut Test
             bad.talos.as_mut().unwrap().responding = false;
             let kube = pilot
                 .read(cx)
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -347,7 +349,7 @@ fn waiting_cards_show_a_skeleton(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.registry.active_mut().kubernetes_summary = Default::default();
+            pilot.switch.registry.active_mut().kubernetes_summary = Default::default();
             pilot.rebuild_joined_nodes(cx);
             cx.notify();
         });
