@@ -27,8 +27,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
-gpui_kit::actions!(general, [ToggleAutoRefresh]);
-
 /// The two General choices this module owns in preferences.json. Text size
 /// has its existing owner; Document::update keeps its key and unknown keys.
 struct GeneralPreferences {
@@ -232,11 +230,6 @@ impl Chrome {
         root.on_action(cx.listener(|view, _: &OpenSettings, window, cx| {
             view.navigation.settings_open = false;
             view.navigate_from_keyboard(Page::Settings, window, cx)
-        }))
-        .on_action(cx.listener(|view, _: &ToggleAutoRefresh, _, cx| {
-            if view.mode().has_talos() {
-                view.set_auto_refresh(!view.chrome.automatic, cx);
-            }
         }))
         .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
         .on_action(cx.listener(|view, _: &UseSystemAppearance, window, cx| {
@@ -497,8 +490,7 @@ impl Chrome {
         window: &Window,
         cx: &App,
     ) -> Option<(Appearance, bool, bool, bool)> {
-        let root = window.root::<gpui_kit::component::Root>()??;
-        let pilot = root.read(cx).view().clone().downcast::<Pilot>().ok()?;
+        let pilot = Self::pilot(window, cx)?;
         let pilot = pilot.read(cx);
         Some((
             pilot.chrome.appearance,
@@ -508,8 +500,19 @@ impl Chrome {
         ))
     }
 
-    pub(in crate::desktop) fn toggle_auto_refresh(window: &mut Window, cx: &mut App) {
-        window.dispatch_action(Box::new(ToggleAutoRefresh), cx);
+    fn pilot(window: &Window, cx: &App) -> Option<Entity<Pilot>> {
+        let root = window.root::<gpui_kit::component::Root>()??;
+        root.read(cx).view().clone().downcast::<Pilot>().ok()
+    }
+
+    pub(in crate::desktop) fn change_auto_refresh(automatic: bool, window: &Window, cx: &mut App) {
+        if let Some(pilot) = Self::pilot(window, cx) {
+            pilot.update(cx, |pilot, cx| {
+                if pilot.mode().has_talos() {
+                    pilot.set_auto_refresh(automatic, cx);
+                }
+            });
+        }
     }
 }
 

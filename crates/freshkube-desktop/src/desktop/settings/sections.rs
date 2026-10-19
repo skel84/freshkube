@@ -197,7 +197,7 @@ impl SettingsPage {
             .checked(automatic)
             .disabled(!has_talos)
             .accessibility_label("Refresh Talos every 15 seconds")
-            .on_click(|_, window, cx| Chrome::toggle_auto_refresh(window, cx));
+            .on_click(|automatic, window, cx| Chrome::change_auto_refresh(*automatic, window, cx));
         let saved_in = || {
             if saved {
                 form::SavedIn::file("preferences.json")
@@ -207,6 +207,7 @@ impl SettingsPage {
         };
         let header = page::PageHeader::new("settings-general", "General").render(window, cx);
         page::padded("settings-page")
+            .track_focus(&self.focus)
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .child(header)
