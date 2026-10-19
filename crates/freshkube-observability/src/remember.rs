@@ -1,7 +1,7 @@
 //! What the Coroot connection remembers between launches. `coroot.json`
 //! beside the preferences holds the server, how it signs in, the project,
 //! whether to reconnect and whether to keep the key. The key itself goes only
-//! to the system's credential store ([`crate::secrets`]), named by the server.
+//! to `keys.json` ([`crate::secrets`]), named by the server.
 use super::*;
 use crate::secrets::{STORE_NAME, SecretStore, Secrets};
 use freshkube_prefs::{Document, Layout};
@@ -17,7 +17,7 @@ pub(super) struct Saved {
     pub(super) project: Option<String>,
     /// Connect again when the page first shows. Disconnect clears it.
     pub(super) reconnect: bool,
-    /// Keep the key in the credential store.
+    /// Keep the key in `keys.json`.
     pub(super) remember: bool,
     /// Keys this build does not know, written back as read.
     extra: Map<String, Value>,

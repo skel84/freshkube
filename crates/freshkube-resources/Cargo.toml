@@ -1,0 +1,56 @@
+[package]
+name = "freshkube-resources"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Kubernetes resource browsing: the kind lists kept live by watches, the detail pane, pod shells and port forwards"
+
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
+[dependencies]
+gpui-kit = "=0.7.0"
+freshkube-core.workspace = true
+# The example Applications' objects (`example/acme.rs`).
+freshkube-delivery.workspace = true
+# A pod's CPU and memory history on its Overview.
+freshkube-monitoring.workspace = true
+freshkube-nav.workspace = true
+freshkube-probe.workspace = true
+freshkube-reads.workspace = true
+# The pod shell's terminal view.
+freshkube-terminal.workspace = true
+freshkube-ui.workspace = true
+tokio.workspace = true
+futures.workspace = true
+chrono.workspace = true
+kube.workspace = true
+k8s-openapi.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+base64.workspace = true
+
+[features]
+# Read-outs for desktop's tests, which drive the screen through the shell
+# (`detail_tab`, `detail_identity`, …), and the shell's test transport
+# (`shell::ClosingTransport`), which needs GPUI's test context, core's test
+# streams and the real-I/O wait; turned on from dev-dependencies.
+testing = ["gpui-kit/test-support", "freshkube-core/testing", "freshkube-ui/testing"]
+# The stress binary's debug-only paths, as debug builds have them.
+stress = []
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+# Render probes count in tests (`probe::count`).
+freshkube-probe = { workspace = true, features = ["counting"] }
+# The shell tests read the terminal's screen (`screen_text`, `ended`).
+freshkube-terminal = { workspace = true, features = ["testing"] }
+freshkube-core = { workspace = true, features = ["testing"] }
+# The example tests read Argo CD's workloads (`ARGOCD_WORKLOADS`).
+freshkube-delivery = { workspace = true, features = ["testing"] }
+# The page tests settle the header and measure the frame (`layout_check`).
+freshkube-ui = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }

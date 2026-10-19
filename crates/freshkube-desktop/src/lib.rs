@@ -307,7 +307,6 @@ mod maintenance;
 mod mutation;
 mod navigation_file;
 mod presentation;
-mod resources;
 // Framework pieces land before the screens that use them; drop this once
 // every screen is built.
 mod screens;
@@ -323,8 +322,10 @@ use freshkube_probe::perf;
 use freshkube_monitoring as monitoring;
 // Observability's Coroot pages, by their old path.
 use freshkube_observability as observability;
+// Resources' lists, detail pane, shells and forwards, by their old path.
+use freshkube_resources as resources;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
-use freshkube_ui::{meters, palette, stream_status, text_size, theme};
+use freshkube_ui::{palette, stream_status, text_size, theme};
 // The app's port forwards live with Resources; the app reaches them by
 // their old path.
 use resources::forwards;

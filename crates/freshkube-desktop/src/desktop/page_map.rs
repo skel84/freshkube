@@ -113,9 +113,16 @@ impl Pages {
         let dock = cx.new(|cx| dock::Dock::new(runtime.clone(), cx));
         // Its height and whether it shows are laid out by the shell.
         let custom = cx.new(|_| CustomResources::new(runtime.clone()));
-        let secrets = options.keyring.then(|| -> crate::secrets::Secrets {
-            std::sync::Arc::new(crate::secrets::SystemStore)
-        });
+        let secrets = options
+            .preferences
+            .as_deref()
+            .filter(|_| options.keyring)
+            .map(|preferences| -> crate::secrets::Secrets {
+                std::sync::Arc::new(crate::secrets::FileStore::new(
+                    preferences,
+                    Some(std::sync::Arc::new(crate::secrets::SystemStore)),
+                ))
+            });
         let monitoring = cx.new(|cx| {
             MonitoringPage::new(
                 runtime.clone(),
