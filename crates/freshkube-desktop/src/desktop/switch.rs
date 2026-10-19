@@ -69,6 +69,55 @@ impl Switcher {
         }
     }
 
+    /// Makes `entry` the active one, as a launch that named its source did.
+    fn adopt_launched(&mut self, entry: &Entry, workspace: &Workspace) {
+        self.registry.adopt(SessionKey::Entry(entry.id.clone()));
+        self.active_definition = definition(entry, workspace);
+    }
+
+    /// Rebuilds the header's list from the workspace at `revision` and forgets
+    /// what was parked for entries that are gone. None when the list was built
+    /// from this revision already; otherwise whether the list changed.
+    fn rebuild(&mut self, revision: u64, workspace: &Workspace) -> Option<bool> {
+        if revision == self.switcher_revision && !self.switcher.is_empty() {
+            return None;
+        }
+        self.switcher_revision = revision;
+        let items: Vec<ClusterItem> = workspace
+            .clusters
+            .iter()
+            .map(|entry| ClusterItem {
+                id: entry.id.clone().into(),
+                role: entry.role.label().into(),
+                tooltip: format!("{} · {}", entry.role.label(), entry.context).into(),
+            })
+            .collect();
+        self.registry.retain_parked(|key| match key {
+            SessionKey::Implicit => false,
+            SessionKey::Entry(id) => workspace.clusters.iter().any(|entry| &entry.id == id),
+        });
+        let changed = items != self.switcher;
+        if changed {
+            self.switcher = items;
+        }
+        Some(changed)
+    }
+
+    /// Leaves the active entry for the implicit one: links made in the
+    /// session being left name an id that ends here, and belong to the
+    /// entry it was.
+    fn leave(&mut self, kube_identity: Option<String>, cx: &mut App) {
+        self.registry
+            .retire_connection(kube_identity, &self.active_definition);
+        self.registry.adopt(SessionKey::Implicit);
+        self.active_definition = Definition::default();
+        self.entry_open = None;
+        self.entry_locate
+            .invalidate(self.active_cluster().map(str::to_owned), cx);
+        self.restored_taken = None;
+        self.age_label.update(cx, |label, cx| label.set(None, cx));
+    }
+
     /// When the summary on show is the restored one, still waiting for a new
     /// read to replace it.
     pub(super) fn last_known_since(&self) -> Option<SystemTime> {
@@ -307,12 +356,7 @@ impl Pilot {
         let Some(entry) = matching_entry(workspace, launched) else {
             return;
         };
-        let (key, definition) = (
-            SessionKey::Entry(entry.id.clone()),
-            definition(entry, workspace),
-        );
-        self.switch.registry.adopt(key);
-        self.switch.active_definition = definition;
+        self.switch.adopt_launched(entry, workspace);
     }
 
     /// Rebuilds the header's list and forgets what was parked for entries
@@ -320,26 +364,10 @@ impl Pilot {
     /// not redraw the shell unless the list did.
     pub(super) fn rebuild_switcher(&mut self, cx: &mut Context<Self>) {
         let page = self.settings_page.read(cx);
-        if page.revision() == self.switch.switcher_revision && !self.switch.switcher.is_empty() {
+        let Some(changed) = self.switch.rebuild(page.revision(), page.workspace()) else {
             return;
-        }
-        self.switch.switcher_revision = page.revision();
-        let workspace = page.workspace().clone();
-        let items: Vec<ClusterItem> = workspace
-            .clusters
-            .iter()
-            .map(|entry| ClusterItem {
-                id: entry.id.clone().into(),
-                role: entry.role.label().into(),
-                tooltip: format!("{} · {}", entry.role.label(), entry.context).into(),
-            })
-            .collect();
-        self.switch.registry.retain_parked(|key| match key {
-            SessionKey::Implicit => false,
-            SessionKey::Entry(id) => workspace.clusters.iter().any(|entry| &entry.id == id),
-        });
-        if items != self.switch.switcher {
-            self.switch.switcher = items;
+        };
+        if changed {
             cx.notify();
         }
         self.sync_application_clusters(cx);
@@ -382,21 +410,7 @@ impl Pilot {
         if self.switch.active_cluster().is_none() {
             return;
         }
-        // Links made in the session being left name an id that ends here,
-        // and belong to the entry it was.
-        self.switch
-            .registry
-            .retire_connection(self.source().kube_identity, &self.switch.active_definition);
-        self.switch.registry.adopt(SessionKey::Implicit);
-        self.switch.active_definition = Definition::default();
-        self.switch.entry_open = None;
-        self.switch
-            .entry_locate
-            .invalidate(self.switch.active_cluster().map(str::to_owned), cx);
-        self.switch.restored_taken = None;
-        self.switch
-            .age_label
-            .update(cx, |label, cx| label.set(None, cx));
+        self.switch.leave(self.source().kube_identity, cx);
         NavigationFile::global(cx).clear_active_cluster(cx);
         self.sync_application_clusters(cx);
         cx.notify();
