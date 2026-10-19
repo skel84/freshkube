@@ -127,7 +127,7 @@ impl Pilot {
 
     /// Starts the one read an object link waits on, replacing none: callers
     /// `cancel_object_open` first. Its answer is applied only if the shell's
-    /// epoch and this request's sequence still hold and `superseded` (the
+    /// epoch and this loader request still hold and `superseded` (the
     /// caller's own check, for example that another object opened) says no.
     pub(super) fn start_object_open<T: Send + 'static>(
         &mut self,
@@ -138,30 +138,33 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let sequence = self.object_open_sequence;
         let epoch = self.epoch;
+        let request = self.object_open.start(Some(epoch));
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
             Duration::from_secs(15),
             timeout_message.into(),
             work,
         );
-        self.object_open_job = Some(job);
-        self.object_open_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
                 .unwrap_or_else(|_| Err("The read stopped".into()));
             _ = this.update_in(cx, |this, window, cx| {
                 if this.epoch != epoch
-                    || this.object_open_sequence != sequence
                     || superseded(this, cx)
+                    || !this.object_open.land(&request, Ok(()), cx)
                 {
                     return;
                 }
-                this.object_open_job = None;
                 done(this, result, window, cx);
             });
-        }));
+            // A superseded origin intentionally keeps the read pending until
+            // replacement, as before. Tests can still wait for its delivery.
+            #[cfg(test)]
+            probe::hit("object-open-delivered");
+        });
+        self.object_open.run(Some(job), task);
     }
 
     pub(super) fn push_node_facts(&self, cx: &mut Context<Self>) {
