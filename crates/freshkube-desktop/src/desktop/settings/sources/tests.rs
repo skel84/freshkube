@@ -6,7 +6,9 @@ use super::super::tests::launch;
 #[cfg(unix)]
 use super::Check;
 use super::Read;
-use crate::desktop::{Page, layout_check, tests::fixture};
+#[cfg(unix)]
+use crate::desktop::Page;
+use crate::desktop::{layout_check, tests::fixture};
 use freshkube_core::workspace::{self, Entry, Loaded, Part, Role, Workspace};
 #[cfg(unix)]
 use freshkube_delivery::entry::Checked;
