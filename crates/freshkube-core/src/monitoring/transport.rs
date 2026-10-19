@@ -34,7 +34,7 @@ pub struct Prometheus {
     timeout: Duration,
     limit: usize,
     /// Scopes every PromQL request to one entry's series in a shared store.
-    matcher: Option<Matcher>,
+    matcher: Option<Arc<Matcher>>,
 }
 
 /// How requests travel.
@@ -98,12 +98,12 @@ impl Prometheus {
     /// Scopes every request to the series the matcher selects, as a shared
     /// store needs. A query that can't be scoped is never sent.
     pub fn with_matcher(mut self, matcher: Matcher) -> Self {
-        self.matcher = Some(matcher);
+        self.matcher = Some(Arc::new(matcher));
         self
     }
 
     pub fn matcher(&self) -> Option<&Matcher> {
-        self.matcher.as_ref()
+        self.matcher.as_deref()
     }
 
     /// The same Service through a new client, after the last one failed.

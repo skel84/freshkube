@@ -49,7 +49,7 @@ impl Matcher {
     /// The query with this matcher on every selector.
     // String exception: the parser's message is shown as the reason a query isn't sent.
     pub fn scope_query(&self, query: &str) -> Result<String, String> {
-        let mut expr = parser::parse(query).map_err(|error| format!("{error}"))?;
+        let mut expr = parser::parse(query)?;
         self.scope_expr(&mut expr)?;
         Ok(expr.to_string())
     }
