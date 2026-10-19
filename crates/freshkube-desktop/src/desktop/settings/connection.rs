@@ -596,7 +596,7 @@ impl SettingsPage {
         {
             let view = pilot.read(cx);
             let narrow = page::content_width(window) < form::NARROW;
-            content = content.child(self.render_talos(draft, &view, narrow, cx));
+            content = content.child(self.render_talos(draft, view, narrow, cx));
             content = content.child(if view.mode().has_talos() {
                 kubeconfig_section(&pilot, narrow, cx).into_any_element()
             } else {

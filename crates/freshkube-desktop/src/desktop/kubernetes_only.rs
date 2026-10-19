@@ -792,6 +792,17 @@ pub(super) fn settings_section(pilot: &Entity<Pilot>, narrow: bool, cx: &App) ->
         .into_any_element()
 }
 
+/// Shared by General and the gear’s quick control.
+pub(super) fn refresh_hint(has_talos: bool, automatic: bool) -> &'static str {
+    if !has_talos {
+        "Requires a Talos connection; Kubernetes updates are watched."
+    } else if automatic {
+        "Every 15 s; Kubernetes updates are watched."
+    } else {
+        "Talos auto-refresh is off; Kubernetes updates are watched."
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{KubeConnection, KubernetesOnly};
@@ -1021,16 +1032,5 @@ mod tests {
             });
         })
         .unwrap();
-    }
-}
-
-/// Shared by General and the gear’s quick control.
-pub(super) fn refresh_hint(has_talos: bool, automatic: bool) -> &'static str {
-    if !has_talos {
-        "Requires a Talos connection; Kubernetes updates are watched."
-    } else if automatic {
-        "Every 15 s; Kubernetes updates are watched."
-    } else {
-        "Talos auto-refresh is off; Kubernetes updates are watched."
     }
 }
