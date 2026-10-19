@@ -157,6 +157,7 @@ impl MonitoringPage {
                 Connection::Missing(_) => (Some(ui::Tone::Warn), "No Prometheus".into(), None),
                 Connection::Refused(_) => (Some(ui::Tone::Crit), "Not allowed".into(), None),
                 Connection::Failed(_) => (Some(ui::Tone::Crit), "Unreachable".into(), None),
+                Connection::Unknown(_) => (Some(ui::Tone::Warn), "No metrics source".into(), None),
             };
         h_flex()
             .id("monitoring-source")
@@ -435,6 +436,15 @@ impl MonitoringPage {
                 },
                 Some(message.to_string()),
                 vec![retry("monitoring-retry", "Try again")],
+                cx,
+            )
+            .into_any_element(),
+            Connection::Unknown(why) => ui::empty_state(
+                IconName::Unplug,
+                "No metrics source",
+                "The setup file gives this entry no store to read, so nothing was asked.",
+                Some(why.to_string()),
+                Vec::new(),
                 cx,
             )
             .into_any_element(),

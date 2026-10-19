@@ -178,7 +178,8 @@ async fn an_entry_with_no_source_under_per_entry_says_so_and_asks_nothing(cx: &m
     show(cx, handle, &page);
     cx.read(|cx| {
         let page = page.read(cx);
-        let Connection::Failed(why) = &page.connection else {
+        // A setup that names no store is not a failed connection.
+        let Connection::Unknown(why) = &page.connection else {
             panic!("{}", page.connection_name());
         };
         assert_eq!(why.as_ref(), "cluster-b names no metrics source");
@@ -186,6 +187,42 @@ async fn an_entry_with_no_source_under_per_entry_says_so_and_asks_nothing(cx: &m
         assert!(page.history().is_none());
     });
     assert!(open_seen.lock().unwrap().is_empty());
+}
+
+#[gpui_kit::test]
+async fn a_central_store_that_cannot_be_reached_names_the_entry_that_hosts_it(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (open_url, _) = recording_api(&runtime, Default::default());
+    let open = FakeCluster::new(open_url);
+    let (handle, page) = mount_with(cx, &runtime, Some(open_source(&open)), None, None);
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_scope(
+                Scope {
+                    resolved: central("cluster-a"),
+                    // The hosting entry's cluster cannot connect.
+                    host: Some(ClusterAccess::Live(std::sync::Arc::new(NoClient))),
+                },
+                cx,
+            )
+        })
+    });
+    show(cx, handle, &page);
+    settled(cx, handle, &page).await;
+    cx.read(|cx| {
+        let Connection::Failed(why) = &page.read(cx).connection else {
+            panic!("{}", page.read(cx).connection_name());
+        };
+        // Not read as the open entry's own cluster failing.
+        assert!(
+            why.starts_with("The metrics store is hosted by cluster-h"),
+            "{why}"
+        );
+        assert!(why.contains("No kubeconfig"), "{why}");
+    });
 }
 
 #[gpui_kit::test]

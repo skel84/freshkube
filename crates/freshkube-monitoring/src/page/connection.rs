@@ -52,6 +52,9 @@ pub(super) enum Connection {
     Missing(Missing),
     Refused(SharedString),
     Failed(SharedString),
+    /// The setup file leaves this entry without a store, and says why.
+    /// Nothing was asked, so there is nothing to retry.
+    Unknown(SharedString),
 }
 
 pub(super) struct Missing {
@@ -144,6 +147,7 @@ impl MonitoringPage {
             Connection::Missing(_) => "missing",
             Connection::Refused(_) => "refused",
             Connection::Failed(_) => "failed",
+            Connection::Unknown(_) => "unknown",
         }
     }
 
@@ -339,14 +343,14 @@ impl MonitoringPage {
     /// that hosts it. A store shared by every entry is scoped to this entry's
     /// series before anything is asked of it.
     fn connect_scoped(&mut self, open: ClusterAccess, cx: &mut Context<Self>) {
-        let (place, access, matcher) = match self.scope.resolved.clone() {
-            Resolved::Own(place) => (place, open, None),
+        let (place, access, matcher, hosted_by) = match self.scope.resolved.clone() {
+            Resolved::Own(place) => (place, open, None, None),
             Resolved::Central {
                 place,
                 host,
                 matcher,
             } => {
-                let access = match (&place, host) {
+                let access = match (&place, &host) {
                     (Place::Service(_), Some(_)) => self.scope.host.clone(),
                     _ => Some(open),
                 };
@@ -356,10 +360,10 @@ impl MonitoringPage {
                     );
                     return;
                 };
-                (place, access, Some(matcher))
+                (place, access, Some(matcher), host)
             }
             Resolved::Unknown(why) => {
-                self.connection = Connection::Failed(why.into());
+                self.connection = Connection::Unknown(why.into());
                 return;
             }
             Resolved::Discovery => return,
@@ -392,7 +396,7 @@ impl MonitoringPage {
                     };
                     this.use_prometheus(prometheus, version, cx)
                 }
-                Err(error) => this.discovered(Err(error), cx),
+                Err(error) => this.discovered(Err(through_host(error, hosted_by.as_deref())), cx),
             },
         );
         self.connection = Connection::Looking { _request: request };
@@ -662,5 +666,20 @@ pub(super) fn describe(backend: Backend, version: Option<&str>) -> String {
         }
         (Some(version), Backend::Compatible) => format!("Prometheus API {version}"),
         _ => backend.label().to_owned(),
+    }
+}
+
+/// A failure reading a store that another entry's cluster hosts says so, or
+/// it reads as this entry's own cluster failing.
+fn through_host(error: QueryError, host: Option<&str>) -> QueryError {
+    match host {
+        Some(host) => QueryError::new(
+            error.kind,
+            format!(
+                "The metrics store is hosted by {host}, and it was read through {host}: {}",
+                error.message
+            ),
+        ),
+        None => error,
     }
 }
