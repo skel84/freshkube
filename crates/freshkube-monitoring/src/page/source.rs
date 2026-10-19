@@ -576,7 +576,7 @@ pub fn source_section(page: &Entity<MonitoringPage>, cx: &App) -> AnyElement {
                 )
                 .child(hint(
                     if this.secrets.is_some() {
-                        format!("Read from this computer, not through the cluster. A token is sent as a bearer token and kept in the {STORE_NAME}.")
+                        format!("Read from this computer, not through the cluster. A token is sent as a bearer token and kept in {STORE_NAME}.")
                     } else {
                         "Read from this computer, not through the cluster. A token is kept until Freshkube quits.".to_owned()
                     }
