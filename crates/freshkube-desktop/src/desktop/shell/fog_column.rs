@@ -109,6 +109,31 @@ impl Pilot {
                     );
                 }
             }
+            Area::Settings => {
+                let shown = self.settings_page.read(cx).section();
+                let sections = SettingsSection::GROUPS
+                    .into_iter()
+                    .flat_map(|(_, sections)| sections.iter().copied());
+                for section in sections {
+                    let current = self.navigation.page == Page::Settings && shown == section;
+                    column = column.child(
+                        Button::new(SharedString::from(format!(
+                            "nav-settings-{}",
+                            section.slug()
+                        )))
+                        .ghost()
+                        .size(dp(36.))
+                        .icon(section.icon())
+                        .selected(current)
+                        .toggled(current)
+                        .tooltip(section.label())
+                        .tooltip_placement(Placement::Right)
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| this.show_settings(section, window, cx),
+                        )),
+                    );
+                }
+            }
             Area::Applications => {
                 let listing = self.navigation.page == Page::Applications
                     && self.applications.read(cx).open_page().is_none();

@@ -21,8 +21,10 @@ pub(crate) enum ColumnKey {
     RetryGroup(SharedString),
     Dashboard(EntryId),
     ReadFolder,
-    /// Settings, for a talosconfig or a dashboards folder.
+    /// The header's Settings menu, for a talosconfig or a dashboards folder.
     Settings,
+    /// A section of the Settings area.
+    SettingsSection(SettingsSection),
     Destination(Destination),
     /// Observability's Dashboards, which opens Monitoring.
     Dashboards,
@@ -92,6 +94,7 @@ impl Pilot {
             Area::Observability => ColumnLines::new(self.observability_lines(cx)),
             Area::ControlPlane => ColumnLines::new(self.control_plane_lines(cx)),
             Area::Applications => ColumnLines::new(self.applications_lines(cx)),
+            Area::Settings => ColumnLines::new(self.settings_lines(cx)),
             _ => ColumnLines::new(Vec::new()),
         };
         self.navigation.column_list.set_lines(derived.lines);
@@ -451,6 +454,28 @@ impl Pilot {
         lines
     }
 
+    /// Settings' sections, App's then Workspace's.
+    fn settings_lines(&self, cx: &App) -> Vec<Line<ColumnKey>> {
+        let shown =
+            (self.navigation.page == Page::Settings).then(|| self.settings_page.read(cx).section());
+        let mut lines = Vec::new();
+        for (label, sections) in SettingsSection::GROUPS {
+            lines
+                .push(Section::new(format!("nav-settings-{}", label.to_lowercase()), label).into());
+            lines.extend(sections.iter().map(|section| {
+                Row::new(
+                    ColumnKey::SettingsSection(*section),
+                    format!("nav-settings-{}", section.slug()),
+                    section.label(),
+                )
+                .icon(section.icon())
+                .current(shown == Some(*section))
+                .into()
+            }));
+        }
+        lines
+    }
+
     /// All applications, then each application under the rule that found
     /// it, or why there are none; past [`COLUMN_APPLICATIONS`], a menu
     /// names every one.
@@ -689,6 +714,7 @@ impl SourceListHost for Pilot {
                 self.navigation.settings_open = true;
                 cx.notify();
             }
+            ColumnKey::SettingsSection(section) => self.show_settings(section, window, cx),
             ColumnKey::Destination(item) => {
                 self.observability
                     .update(cx, |page, cx| page.open(item, cx));

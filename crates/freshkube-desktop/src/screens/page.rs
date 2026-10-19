@@ -16,7 +16,7 @@ use gpui_kit::{App, FocusHandle, Subscription, Window};
 use super::{ScreenEvent, ScreenHandle, ScreenSource};
 use crate::applications::SwitchLink;
 use crate::desktop::dock::DockEvent;
-use crate::desktop::{OverviewEvent, ServiceEvent};
+use crate::desktop::{OverviewEvent, ServiceEvent, SettingsEvent};
 use crate::monitoring::page::MonitoringEvent;
 use crate::observability::{ObservabilityEvent, RevisionLink};
 use crate::resources::{ClusterSource, NodePodsEvent, NotServed, ResourceLink};
@@ -53,6 +53,8 @@ pub(crate) enum PageEvent {
     Service(ServiceEvent),
     /// Overview's cards, attention rows and state buttons.
     Overview(OverviewEvent),
+    /// A Settings section that points to where its controls are.
+    Settings(SettingsEvent),
 }
 
 impl From<ScreenEvent> for PageEvent {
@@ -111,6 +113,12 @@ impl From<MonitoringEvent> for PageEvent {
 impl From<ServiceEvent> for PageEvent {
     fn from(event: ServiceEvent) -> Self {
         Self::Service(event)
+    }
+}
+
+impl From<SettingsEvent> for PageEvent {
+    fn from(event: SettingsEvent) -> Self {
+        Self::Settings(event)
     }
 }
 

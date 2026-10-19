@@ -34,7 +34,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             let node = pilot.selected_node.clone();
             let service = pilot.selected_service(cx).clone();
             let epoch = pilot.epoch;
-            let config_generation = pilot.config_generation;
+            let config_revision = pilot.configuration_read.revision();
             let overview_success = pilot.overview.last_successful();
             let services_success = pilot.services.last_successful();
             let overview_name = pilot.overview.data().unwrap().name.clone();
@@ -79,7 +79,7 @@ fn theme_toggle_preserves_fixture_state_on_every_screen(cx: &mut TestAppContext)
             assert_eq!(pilot.selected_node, node);
             assert_eq!(pilot.selected_service(cx), service);
             assert_eq!(pilot.epoch, epoch);
-            assert_eq!(pilot.config_generation, config_generation);
+            assert_eq!(pilot.configuration_read.revision(), config_revision);
             assert_eq!(pilot.overview.last_successful(), overview_success);
             assert_eq!(pilot.services.last_successful(), services_success);
             assert_eq!(pilot.overview.data().unwrap().name, overview_name);
