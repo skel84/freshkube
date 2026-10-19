@@ -16,7 +16,7 @@
 //! its nodes' use (`desktop/nodes/metrics.rs`), and System services and
 //! Overview ask the shell through their own events.
 
-use gpui_kit::{App, Context, Entity, EventEmitter, Global, Subscription, Window};
+use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
 use super::overview::{OverviewEvent, OverviewPage};
 use super::pages::PageId;
@@ -153,7 +153,7 @@ impl ScreenPanel for MonitoringPage {
 
     /// The cluster it finds Prometheus in, and, with the setup file, how.
     fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
-        cx.default_global::<MetricsInputs>().entry = source.entry;
+        self.inputs_mut().entry = source.entry;
         MonitoringPage::set_source(self, source.kube, cx);
         apply_scope(self, cx);
     }
@@ -179,30 +179,20 @@ impl ScreenPanel for MonitoringPage {
     }
 }
 
-/// What decides how Monitoring finds its metrics, besides the connection:
-/// the last good setup file, the workspace entry the window is on, and the
-/// clusters it opened to reach a store hosted by another entry.
-#[derive(Default)]
-struct MetricsInputs {
-    setup: Option<Setup>,
-    entry: Option<String>,
-    /// Kept while their entry's context and kubeconfig are unchanged, so a
-    /// setup change that leaves a host as it was keeps its client.
-    hosts: BTreeMap<String, DirectAccess>,
-}
-
-impl Global for MetricsInputs {}
-
 /// Hands Monitoring the setup file's `metrics` choice for the open entry.
 pub(super) fn set_metrics_setup(monitoring: &Entity<MonitoringPage>, setup: Setup, cx: &mut App) {
-    cx.default_global::<MetricsInputs>().setup = Some(setup);
-    monitoring.update(cx, apply_scope);
+    monitoring.update(cx, |page, cx| {
+        page.inputs_mut().setup = Some(setup);
+        apply_scope(page, cx)
+    });
 }
 
 /// Works out how the open entry's metrics are found, and tells the page.
 fn apply_scope(page: &mut MonitoringPage, cx: &mut Context<MonitoringPage>) {
-    let inputs = cx.default_global::<MetricsInputs>();
-    let (setup, entry) = (inputs.setup.clone(), inputs.entry.clone());
+    let (setup, entry) = (
+        page.inputs_mut().setup.clone(),
+        page.inputs_mut().entry.clone(),
+    );
     let Some(setup) = setup else {
         page.set_scope(Scope::default(), cx);
         return;
@@ -210,10 +200,8 @@ fn apply_scope(page: &mut MonitoringPage, cx: &mut Context<MonitoringPage>) {
     let resolved = scope::resolve(&setup, entry.as_deref());
     let host = match resolved.host() {
         Some(host) if entry.as_deref() == Some(host) => page.open_access(),
-        Some(host) => {
-            let hosts = &mut cx.default_global::<MetricsInputs>().hosts;
-            hosted_by(&setup.workspace, host, hosts).map(ClusterAccess::Direct)
-        }
+        Some(host) => hosted_by(&setup.workspace, host, &mut page.inputs_mut().hosts)
+            .map(ClusterAccess::Direct),
         None => None,
     };
     page.set_scope(Scope { resolved, host }, cx);

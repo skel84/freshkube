@@ -168,6 +168,17 @@ impl Default for Scope {
     }
 }
 
+/// What decides the page's scope besides its connection, kept on the page so
+/// each window has its own: the last good setup, the workspace entry the
+/// window is on, and the clusters opened to reach a store another entry
+/// hosts (kept while their context and kubeconfig are unchanged).
+#[derive(Default)]
+pub struct ScopeInputs {
+    pub setup: Option<freshkube_core::setup::Setup>,
+    pub entry: Option<String>,
+    pub hosts: std::collections::BTreeMap<String, freshkube_core::cluster_source::DirectAccess>,
+}
+
 pub struct MonitoringPage {
     runtime: Handle,
     store: Option<MonitoringStore>,
@@ -178,6 +189,7 @@ pub struct MonitoringPage {
     connection_reads: ConnectionReads,
     /// How the setup file says the open entry's metrics are found.
     scope: Scope,
+    inputs: ScopeInputs,
     /// Counts the Ready clients built again, so history takes the new one.
     clients: u64,
     /// History reaches this connection owner without retaining the page.
@@ -234,6 +246,7 @@ impl MonitoringPage {
             connection: Connection::None,
             connection_reads: ConnectionReads::default(),
             scope: Scope::default(),
+            inputs: ScopeInputs::default(),
             clients: 0,
             owner: cx.weak_entity(),
             histories: Vec::new(),
@@ -308,6 +321,10 @@ impl MonitoringPage {
             return;
         }
         self.forget_answers(cx);
+    }
+
+    pub fn inputs_mut(&mut self) -> &mut ScopeInputs {
+        &mut self.inputs
     }
 
     /// How the page finds its metrics now.

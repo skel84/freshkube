@@ -162,3 +162,19 @@ fn a_setup_change_to_per_entry_leaves_an_entry_with_no_source_unknown(cx: &mut T
     cx.update(|cx| set_metrics_setup(&page, parse(&automatic), cx));
     assert_eq!(resolved(cx, &page), Resolved::Discovery);
 }
+
+#[gpui_kit::test]
+fn two_windows_on_different_entries_keep_their_own_scope(cx: &mut TestAppContext) {
+    let (_r1, window1, page1, handle1) = mount_monitoring(cx);
+    let (_r2, window2, page2, handle2) = mount_monitoring(cx);
+    open_entry(cx, window1, &handle1, Some("cluster-a"), "hub-context");
+    open_entry(cx, window2, &handle2, Some("cluster-b"), "cluster-b");
+    // A setup change in one window leaves the other on its own entry.
+    cx.update(|cx| set_metrics_setup(&page1, parse(CENTRAL), cx));
+    cx.update(|cx| set_metrics_setup(&page2, parse(CENTRAL), cx));
+    cx.update(|cx| set_metrics_setup(&page1, parse(CENTRAL), cx));
+    let value =
+        |cx: &mut TestAppContext, page| resolved(cx, page).matcher().map(|m| m.value().to_owned());
+    assert_eq!(value(cx, &page1).as_deref(), Some("cluster-a"));
+    assert_eq!(value(cx, &page2).as_deref(), Some("cluster-b"));
+}
