@@ -1003,7 +1003,7 @@ mod tests {
                     .unwrap()
                     .core
                     .clone();
-                let old_epoch = view.registry.summary_epoch();
+                let old_epoch = view.registry.summary_watch.generation();
                 // The old session had derived this before the file changed.
                 let late = old.derive(chrono::Utc::now());
                 let health = crate::screens::WorkloadData::from_outcome(&late.summary.workloads);
@@ -1021,7 +1021,7 @@ mod tests {
                 view.ensure_summary(window, cx);
                 let new = view.registry.active().summary_session.as_ref().unwrap();
                 assert_ne!(new.core.identity(), old.identity());
-                assert!(view.registry.summary_epoch() != old_epoch);
+                assert!(view.registry.summary_watch.generation() != old_epoch);
 
                 // And not by the session that replaced it either.
                 view.apply_summary(late, health, window, cx);
