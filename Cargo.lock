@@ -2424,6 +2424,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "freshkube-applications"
+version = "0.15.0"
+dependencies = [
+ "chrono",
+ "freshkube-core",
+ "freshkube-delivery",
+ "freshkube-monitoring",
+ "freshkube-nav",
+ "freshkube-observability",
+ "freshkube-probe",
+ "freshkube-reads",
+ "freshkube-resources",
+ "freshkube-ui",
+ "futures",
+ "gpui-kit",
+ "k8s-openapi",
+ "kube",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "freshkube-core"
 version = "0.15.0"
 dependencies = [
@@ -2483,12 +2508,12 @@ dependencies = [
 name = "freshkube-desktop"
 version = "0.15.0"
 dependencies = [
- "base64",
  "bytes",
  "chrono",
  "color-eyre",
  "dirs 6.0.0",
  "fastrand",
+ "freshkube-applications",
  "freshkube-core",
  "freshkube-delivery",
  "freshkube-graph",
@@ -2499,6 +2524,7 @@ dependencies = [
  "freshkube-prefs",
  "freshkube-probe",
  "freshkube-reads",
+ "freshkube-resources",
  "freshkube-terminal",
  "freshkube-ui",
  "futures",
@@ -2513,7 +2539,6 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "serde_yaml",
  "talos-rs",
  "tempfile",
  "tokio",
@@ -2609,6 +2634,30 @@ version = "0.15.0"
 dependencies = [
  "freshkube-core",
  "gpui-kit",
+ "tokio",
+]
+
+[[package]]
+name = "freshkube-resources"
+version = "0.15.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "freshkube-core",
+ "freshkube-delivery",
+ "freshkube-monitoring",
+ "freshkube-nav",
+ "freshkube-probe",
+ "freshkube-reads",
+ "freshkube-terminal",
+ "freshkube-ui",
+ "futures",
+ "gpui-kit",
+ "k8s-openapi",
+ "kube",
+ "serde",
+ "serde_json",
+ "serde_yaml",
  "tokio",
 ]
 

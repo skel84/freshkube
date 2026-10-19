@@ -1,0 +1,45 @@
+[package]
+name = "freshkube-applications"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The Applications page, an application's page, the Changes list and the change page"
+
+[lib]
+# This library has no doctests; re-enable them if an example is added.
+doctest = false
+
+[dependencies]
+gpui-kit = "=0.7.0"
+freshkube-core.workspace = true
+freshkube-delivery.workspace = true
+freshkube-monitoring.workspace = true
+freshkube-nav.workspace = true
+freshkube-observability.workspace = true
+freshkube-probe.workspace = true
+freshkube-reads.workspace = true
+freshkube-resources.workspace = true
+freshkube-ui.workspace = true
+tokio.workspace = true
+futures.workspace = true
+chrono.workspace = true
+kube.workspace = true
+k8s-openapi.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[features]
+# Read-outs for desktop's tests, which drive the pages through the shell;
+# turned on from dev-dependencies.
+testing = ["gpui-kit/test-support", "freshkube-core/testing", "freshkube-ui/testing"]
+
+[dev-dependencies]
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+freshkube-probe = { workspace = true, features = ["counting"] }
+freshkube-core = { workspace = true, features = ["testing"] }
+freshkube-delivery = { workspace = true, features = ["testing"] }
+freshkube-ui = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["test-util"] }
+rustls.workspace = true

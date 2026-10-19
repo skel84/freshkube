@@ -117,7 +117,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
-        let divider = || div().w(dp(28.)).h(px(1.)).my(dp(6.)).flex_none().bg(p.line);
+        let divider = || div().w(dp(28.)).h(px(1.)).my(dp(4.)).flex_none().bg(p.line);
         let mut rail = v_flex()
             .id("nav-rail-list")
             .size_full()
@@ -125,8 +125,14 @@ impl Pilot {
             .restrict_scroll_to_axis()
             .track_scroll(&self.navigation.rail_scroll)
             .items_center()
+            // Keep the whole highlight beside the scrollbar's overlay,
+            // reserving no space when the rail fits without scrolling.
+            .when(
+                self.navigation.rail_scroll.max_offset().y > px(0.),
+                |rail| rail.pr(Scrollbar::width()),
+            )
             .py(dp(12.))
-            .gap(dp(4.));
+            .gap(dp(2.));
         // The rail's children: each section's buttons, a divider between.
         let mut children = 0;
         let mut active = None;

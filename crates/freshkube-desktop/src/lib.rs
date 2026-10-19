@@ -296,7 +296,6 @@ pub fn validate_maintenance_endpoint(endpoint: &str) -> color_eyre::Result<()> {
 
 mod actions;
 mod ambient;
-mod applications;
 mod backend;
 mod connection_preferences;
 // Only a debug or stress build reads the knobs; elsewhere `from_env` is the
@@ -310,11 +309,11 @@ mod maintenance;
 mod mutation;
 mod navigation_file;
 mod presentation;
-mod resources;
 // Framework pieces land before the screens that use them; drop this once
 // every screen is built.
 mod screens;
 mod secrets;
+mod setup_file;
 mod state;
 #[cfg(feature = "stress")]
 mod stress;
@@ -325,8 +324,12 @@ use freshkube_probe::perf;
 use freshkube_monitoring as monitoring;
 // Observability's Coroot pages, by their old path.
 use freshkube_observability as observability;
+// The Applications pages, by their old path.
+use freshkube_applications as applications;
+// Resources' lists, detail pane, shells and forwards, by their old path.
+use freshkube_resources as resources;
 // The look lives in freshkube-ui; the app reaches it by its old paths.
-use freshkube_ui::{meters, palette, stream_status, text_size, theme};
+use freshkube_ui::{palette, stream_status, text_size, theme};
 // The app's port forwards live with Resources; the app reaches them by
 // their old path.
 use resources::forwards;

@@ -2,6 +2,8 @@ mod access;
 mod app_menu;
 #[cfg(test)]
 mod applications_column_tests;
+#[cfg(test)]
+mod applications_tests;
 mod connection;
 pub(crate) mod dock;
 mod entity_pages;
@@ -25,6 +27,8 @@ mod search;
 mod services;
 mod session;
 mod settings;
+#[path = "startup/setup.rs"]
+mod setup_startup;
 mod shell;
 mod source;
 #[cfg(any(debug_assertions, feature = "stress"))]
@@ -333,6 +337,7 @@ pub(crate) struct Pilot {
     applications: Entity<crate::applications::ApplicationsPage>,
     /// `workspace.json` beside the preferences; none without preferences.
     workspace_file: Option<PathBuf>,
+    setup_file: Entity<crate::setup_file::SetupFile>,
     /// The sidebar's Custom Resources, discovered when opened.
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
@@ -705,6 +710,7 @@ impl Pilot {
         let tick = Self::start_tick(window, cx);
         let chrome = shell::Chrome::new(
             app_menu::menu_platform(options.debug.app_menu_button),
+            options.preferences.clone(),
             window,
             cx,
         );
@@ -725,7 +731,7 @@ impl Pilot {
             window,
             cx,
         );
-        view.start(options, window, cx);
+        view.start_with_setup(options, window, cx);
         view
     }
 
@@ -770,8 +776,15 @@ impl Pilot {
         if !started_entry {
             self.adopt_launched_entry(&launched, cx);
         }
-        self._subscriptions
-            .push(cx.observe(&self.settings_page, |this, _, cx| this.rebuild_switcher(cx)));
+        self._subscriptions.push(cx.observe_in(
+            &self.settings_page,
+            window,
+            |this, _, window, cx| {
+                this.rebuild_switcher(cx);
+                this.sync_setup_connection(window, cx);
+                cx.notify();
+            },
+        ));
         self.watch_menus(window, cx);
         self.publish_reading(cx);
         self.chrome.parts.watch(self, cx);
@@ -890,6 +903,13 @@ impl Pilot {
                 .preferences
                 .as_deref()
                 .map(|preferences| preferences.with_file_name("workspace.json")),
+            setup_file: cx.new(|cx| {
+                crate::setup_file::SetupFile::new(
+                    options.preferences.clone(),
+                    options.starts_with_examples(),
+                    cx,
+                )
+            }),
             custom,
             search,
             monitoring,

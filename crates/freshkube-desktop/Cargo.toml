@@ -10,10 +10,10 @@ publish = false
 doctest = false
 
 [dependencies]
-base64.workspace = true
 fastrand = "2"
 gpui-kit = "=0.7.0"
 freshkube-core.workspace = true
+freshkube-applications.workspace = true
 freshkube-delivery.workspace = true
 freshkube-logs.workspace = true
 freshkube-monitoring.workspace = true
@@ -22,6 +22,7 @@ freshkube-observability.workspace = true
 freshkube-prefs.workspace = true
 freshkube-probe.workspace = true
 freshkube-reads.workspace = true
+freshkube-resources.workspace = true
 freshkube-terminal.workspace = true
 freshkube-ui.workspace = true
 talos-rs.workspace = true
@@ -33,7 +34,6 @@ kube.workspace = true
 k8s-openapi.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-serde_yaml.workspace = true
 tracing.workspace = true
 # Where preferences live on each platform.
 dirs.workspace = true
@@ -51,6 +51,7 @@ hyper-util = { version = "0.1", features = ["tokio"], optional = true }
 stress = [
     "freshkube-monitoring/stress",
     "freshkube-probe/stress",
+    "freshkube-resources/stress",
     "freshkube-terminal/stress",
     "dep:bytes",
     "dep:http-body-util",
@@ -75,6 +76,7 @@ freshkube-probe = { workspace = true, features = ["counting"] }
 freshkube-terminal = { workspace = true, features = ["testing"] }
 # The log tests pin the zone rows show their times in (`logs::pin_zone`).
 freshkube-core = { workspace = true, features = ["testing"] }
+freshkube-applications = { workspace = true, features = ["testing"] }
 freshkube-delivery = { workspace = true, features = ["testing"] }
 # The log tests read the view's state (`applied_and_held`, `retained`, …).
 freshkube-logs = { workspace = true, features = ["testing"] }
@@ -86,6 +88,8 @@ freshkube-ui = { workspace = true, features = ["testing"] }
 # Lifecycle's and Health's tests hold a loader on a request and answer it
 # late (`begin`, `apply`).
 freshkube-reads = { workspace = true, features = ["testing"] }
+# Its tests drive Resources through the shell (`detail_tab`, `detail_identity`, …).
+freshkube-resources = { workspace = true, features = ["testing"] }
 # Operations' tests run the example on a paused Tokio clock (`start_paused`).
 tokio = { workspace = true, features = ["test-util"] }
 # The map's tests measure its boxes in the graph's units (`observability/map.rs`).

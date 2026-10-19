@@ -2,6 +2,57 @@ use super::*;
 use freshkube_ui::real_io::RealIo;
 
 #[gpui_kit::test]
+async fn a_setup_connection_reads_its_key_only_when_shown_and_keeps_the_legacy_file(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::setup::{Coroot, SignIn};
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let legacy = directory.path().join("coroot.json");
+    let saved = r#"{"url":"https://remembered.example.test","auth":"anonymous","reconnect":false,"remember":false}"#;
+    std::fs::write(&legacy, saved).unwrap();
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let server = Server::new(&runtime);
+    let key_file = directory.path().join("coroot.key");
+    std::fs::write(&key_file, "sanitized-key\n").unwrap();
+    let mut connection = Coroot::new(server.url.clone(), SignIn::ApiKey);
+    connection.api_key_file = Some(key_file);
+    connection.project = Some("p2".into());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.set_setup_connection(&Some(connection), window, cx);
+            assert!(page.live.provider.is_none());
+            assert!(!page.memory.as_ref().unwrap().reading);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(server.paths.lock().unwrap().is_empty());
+    cx.update(|cx| page.update(cx, |page, cx| page.set_visible(true, cx)));
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.source.is_some())
+        .await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert_eq!(page.live.source.as_ref().unwrap().project(), "p2");
+        assert_eq!(page.url.read(cx).value().as_ref(), server.url);
+    });
+    assert_eq!(std::fs::read_to_string(&legacy).unwrap(), saved);
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_setup_connection(&None, window, cx);
+            assert!(page.live.provider.is_none());
+            assert!(page.url.read(cx).value().is_empty());
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(std::fs::read_to_string(&legacy).unwrap(), saved);
+}
+
+#[gpui_kit::test]
 async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let (runtime, handle, page) = mount(cx, false);
