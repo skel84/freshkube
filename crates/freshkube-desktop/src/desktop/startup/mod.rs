@@ -134,6 +134,11 @@ impl Pilot {
                 .update(cx, |page, cx| page.open(destination, cx));
             self.navigate(Page::Observability, window, cx);
         }
+        if let Some(section) = page.and_then(super::settings::SettingsSection::from_page) {
+            self.settings_page
+                .update(cx, |page, cx| page.show(section, cx));
+            self.navigate(Page::Settings, window, cx);
+        }
         match page {
             Some("monitoring") if self.mode().is_example() => self
                 .monitoring
