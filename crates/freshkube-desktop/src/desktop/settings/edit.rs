@@ -362,8 +362,9 @@ impl SettingsPage {
                 if let Some(id) = self.select_on_save.take() {
                     self.select(id, cx);
                 }
-                let receipt = file.read(cx).receipt.as_deref().unwrap_or_default();
-                self.notice = Some(Notice::Saved(format!("{what} {receipt}").into()));
+                if let Some(receipt) = &file.read(cx).receipt {
+                    self.notice = Some(Notice::Saved(format!("{what} {receipt}").into()));
+                }
             }
             Err(error) => {
                 self.select_on_save = None;
