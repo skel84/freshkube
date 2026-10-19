@@ -15,7 +15,7 @@ use crate::tests::{observed_at, plan};
 use freshkube_core::indicators::HealthIndicator;
 use freshkube_core::workspace::{Destination as MappedRow, Key};
 
-fn place(freight: &str) -> Place {
+pub(super) fn place(freight: &str) -> Place {
     Place {
         cluster: "cluster-key".into(),
         label: "core".into(),
@@ -42,7 +42,7 @@ pub(super) fn stage_of(name: &str, upstream: &[&str], current: &[&str]) -> Value
 
 /// [`healthy`], with its Application deploying to the cluster Argo CD runs
 /// in, the Stage taking Freight from the Warehouse, all in one cluster.
-fn one_cluster(edit: impl FnOnce(&mut World)) -> FixtureReader {
+pub(super) fn one_cluster(edit: impl FnOnce(&mut World)) -> FixtureReader {
     let mut world = healthy();
     world.argocd = world
         .argocd
