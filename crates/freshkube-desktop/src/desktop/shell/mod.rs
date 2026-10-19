@@ -18,7 +18,6 @@ use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, TitleBar,
     button::{Button, ButtonGroup, ButtonVariants},
     h_flex,
-    input::Input,
     popover::Popover,
     scroll::{Scrollbar, ScrollbarMode},
     status_bar::StatusBar,
