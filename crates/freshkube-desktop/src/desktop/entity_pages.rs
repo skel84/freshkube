@@ -2,7 +2,7 @@
 //! [`ScreenHandle`] as the Talos screens, and what the shell does with
 //! what every page asks of it.
 //!
-//! Every page's handle sits in the shell's one map (`Pilot::pages`).
+//! Every page's handle sits in the shell's one map (`Pilot::pages.map`).
 //! Resources, Monitoring, Observability, Applications and Settings take
 //! their part of the shell's [`PageSource`] through it and hear
 //! [`set_visible`](ScreenPanel::set_visible), which is where they drop

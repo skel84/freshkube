@@ -1,5 +1,5 @@
 //! The pages as the shell makes them: every page's entity, its handle in
-//! the one map (`Pilot::pages`), and the entities the shell keeps beside
+//! the one map (`Pilot::pages.map`), and the entities the shell keeps beside
 //! the map to push into or observe.
 
 use gpui_kit::{App, AppContext, Context, Entity, Subscription, Window};
