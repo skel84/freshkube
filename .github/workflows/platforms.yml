@@ -102,6 +102,11 @@ jobs:
             libssl-dev libzstd-dev libvulkan-dev vulkan-validationlayers libvulkan1
       - name: Check every target
         run: cargo check --workspace --all-targets --locked
+      - name: Check the release build
+        # Code behind cfg(debug_assertions) is left out of release builds;
+        # pull request 727 called such a module from every build, and only
+        # the packages on main found it.
+        run: cargo check --workspace --release --locked
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Tests (including headless UI tests)
