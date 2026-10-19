@@ -35,11 +35,12 @@ use super::pane::{DetailEvent, DetailPane, KEYBOARD_PAUSE, NextTab, PreviousTab}
 use super::projection::ResourceProjection;
 use super::store::{Changed, ResourceEvent, ResourceStore};
 use super::{ResourceLink, example, live, navigation};
-use crate::backend::{self, OwnedJob};
+use crate::backend;
 use crate::palette::palette;
 use crate::ui::{self, clock, dp};
 use freshkube_core::constants::SCREEN_DEADLINE;
-use freshkube_reads::{Pace, Watch};
+use freshkube_core::snapshot::Request;
+use freshkube_reads::{Loader, OnShow, Pace, Watch};
 use freshkube_ui::page::page_width;
 use freshkube_ui::{page, table};
 use layout::TableLayout;
@@ -176,7 +177,6 @@ pub struct ResourcesScreen {
     /// Namespaces for the picker, listed once per connection.
     namespaces: Vec<String>,
     namespaces_for: Option<String>,
-    namespace_generation: u64,
     namespace_select: Entity<SelectState<SearchableVec<NamespaceChoice>>>,
     query: Entity<InputState>,
     store: ResourceStore,
@@ -214,7 +214,7 @@ pub struct ResourcesScreen {
     /// The list and watch of the current read session, for the store's
     /// epoch that session started.
     watch: Watch<Vec<ResourceEvent>, u64>,
-    namespace_job: Option<(OwnedJob, Task<()>)>,
+    namespace_read: Loader<(), Option<String>>,
     tick: Option<Task<()>>,
     /// The selected object in full, in the drawer over the list.
     detail: Entity<DetailPane>,
@@ -382,7 +382,6 @@ impl ResourcesScreen {
             namespace: None,
             namespaces: Vec::new(),
             namespaces_for: None,
-            namespace_generation: 0,
             namespace_select,
             query,
             store: ResourceStore::new(),
@@ -404,7 +403,7 @@ impl ResourcesScreen {
             page_scroll: ScrollHandle::new(),
             below: 0.,
             watch: Watch::default(),
-            namespace_job: None,
+            namespace_read: Loader::default(),
             tick: None,
             detail,
             drawer: SplitSize::new(crate::DRAWER_WIDTH, drawer::WIDTH, drawer::MIN_WIDTH, cx),
@@ -605,8 +604,7 @@ impl ResourcesScreen {
         self.namespace = None;
         self.namespaces.clear();
         self.namespaces_for = None;
-        self.namespace_generation = self.namespace_generation.wrapping_add(1);
-        self.namespace_job = None;
+        self.namespace_read.resolve(None, Ok(()));
         self.sync_namespace_choices(window, cx);
         self.restart(window, cx);
     }
@@ -661,6 +659,7 @@ impl ResourcesScreen {
         // watch: a list's rows have no age to keep them.
         self.watch.set_visible(visible);
         if visible {
+            self.namespace_read.set_visible(true, OnShow::Never, cx);
             self.restart(window, cx);
             self.tick = Some(cx.spawn(async move |this, cx| {
                 loop {
@@ -674,9 +673,10 @@ impl ResourcesScreen {
             self.tick = None;
             self.clear_flash(cx);
             self.usage = None;
-            if self.namespace_job.take().is_some() {
+            if self.namespace_read.is_loading() {
                 self.namespaces_for = None;
             }
+            self.namespace_read.set_visible(false, OnShow::Never, cx);
         }
     }
 
@@ -1118,13 +1118,11 @@ impl ResourcesScreen {
         if !self.kind.namespaced || self.namespaces_for.as_ref() == Some(&source.id) {
             return;
         }
-        self.namespaces_for = Some(source.id);
-        self.namespace_generation = self.namespace_generation.wrapping_add(1);
-        let generation = self.namespace_generation;
+        self.namespaces_for = Some(source.id.clone());
+        let request = self.namespace_read.start(Some(source.id));
         let access = match source.access {
             ClusterAccess::Example(_) => {
-                self.namespaces = example::namespaces();
-                self.sync_namespace_choices(window, cx);
+                self.finish_namespaces(&request, Ok(example::namespaces()), window, cx);
                 return;
             }
             access => access,
@@ -1155,23 +1153,22 @@ impl ResourcesScreen {
                 .await
                 .unwrap_or_else(|_| Err("Listing namespaces stopped".into()));
             _ = this.update_in(cx, |view, window, cx| {
-                view.finish_namespaces(generation, result, window, cx);
+                view.finish_namespaces(&request, result, window, cx);
             });
         });
-        self.namespace_job = Some((job, task));
+        self.namespace_read.run(Some(job), task);
     }
 
     fn finish_namespaces(
         &mut self,
-        generation: u64,
+        request: &Request<Option<String>>,
         result: Result<Vec<String>, String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if generation != self.namespace_generation || !self.visible {
+        if !self.visible || !self.namespace_read.land(request, Ok(()), cx) {
             return false;
         }
-        self.namespace_job = None;
         // Refusal leaves the all-namespaces and current-namespace choices.
         if let Ok(names) = result {
             self.namespaces = names;
