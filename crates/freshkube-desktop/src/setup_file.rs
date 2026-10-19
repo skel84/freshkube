@@ -257,8 +257,23 @@ impl SetupFile {
         };
         self.writing = true;
         self.write_generation = self.write_generation.wrapping_add(1);
-        let mut setup = self.setup.clone().unwrap_or_default();
-        edit(&mut setup);
+        let setup = match self.setup.clone() {
+            Some(mut setup) => {
+                edit(&mut setup);
+                setup
+            }
+            // The first save: `Setup::new` moves the workspace's unknown
+            // keys beside it, as the file keeps them.
+            None => {
+                let mut edited = Setup::default();
+                edit(&mut edited);
+                let mut setup = Setup::new(edited.workspace);
+                setup.metrics = edited.metrics;
+                setup.coroot = edited.coroot;
+                setup.supply_chain = edited.supply_chain;
+                setup
+            }
+        };
         let own = self.last_written.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -729,5 +744,66 @@ mod tests {
         assert_eq!(probe::count("setup.stat"), stats);
         assert_eq!(probe::count("setup.read"), reads);
         cx.update(|cx| assert!(reader.read(cx).file.read(cx).setup.is_none()));
+    }
+
+    /// A workspace read from `workspace.json`, with a key this version
+    /// doesn't know.
+    fn legacy_workspace() -> freshkube_core::workspace::Workspace {
+        serde_json::from_str(
+            r#"{"clusters":[{"id":"cluster-a","role":"core","context":"cluster-a"}],"future_key":"kept"}"#,
+        )
+        .unwrap()
+    }
+
+    #[gpui_kit::test]
+    async fn the_first_workspace_save_moves_unknown_keys_beside_the_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        use freshkube_core::setup::{self, Setup};
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().unwrap();
+        let (_, reader) = mount(cx, directory.path(), false);
+        let file = model(&reader, cx);
+        let workspace = legacy_workspace();
+        let save = cx.update(|cx| {
+            file.update(cx, |file, cx| {
+                file.save_workspace(workspace.clone(), Seen::Missing, cx)
+            })
+        });
+        save.await.unwrap();
+        let text = std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap();
+        // As `Setup::new` writes it, once, at the top level.
+        assert_eq!(text.matches("future_key").count(), 1, "{text}");
+        assert_eq!(
+            setup::parse(text.as_bytes()).unwrap(),
+            Setup::new(workspace)
+        );
+    }
+
+    #[gpui_kit::test]
+    async fn a_first_coroot_save_writes_only_that_block_over_the_default_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        use freshkube_core::setup::{self, Coroot, SignIn};
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().unwrap();
+        let (_, reader) = mount(cx, directory.path(), false);
+        let file = model(&reader, cx);
+        let block = Coroot::new("https://coroot.acme.example", SignIn::Anonymous);
+        let expected = block.clone();
+        let save = cx.update(|cx| {
+            file.update(cx, |file, cx| {
+                file.save_with(Seen::Missing, move |setup| setup.coroot = Some(block), cx)
+            })
+        });
+        save.await.unwrap();
+        let written =
+            setup::parse(&std::fs::read(directory.path().join("freshkube.yaml")).unwrap()).unwrap();
+        assert_eq!(written.coroot, Some(expected));
+        assert_eq!(
+            written.workspace,
+            freshkube_core::workspace::Workspace::default()
+        );
+        assert!(written.supply_chain.is_none());
     }
 }
