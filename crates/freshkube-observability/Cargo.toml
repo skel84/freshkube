@@ -15,6 +15,7 @@ gpui-kit = "=0.7.0"
 # Coroot's client and model, the request guards and the remembered key.
 freshkube-core.workspace = true
 freshkube-prefs.workspace = true
+freshkube-reads.workspace = true
 freshkube-delivery.workspace = true
 # The service map's layout.
 freshkube-graph.workspace = true
