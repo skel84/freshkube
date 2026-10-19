@@ -1,0 +1,1 @@
+- **Read ownership:** Operations previews and kubeconfig inspection use the shared Loader while preserving their existing behaviour.
