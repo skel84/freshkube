@@ -10,7 +10,9 @@ use std::time::Duration;
 use freshkube_core::resources::{
     ApiGroup, Failure, FailureKind, GroupKinds, ResourceKind, list_custom_groups, list_group_kinds,
 };
-use gpui_kit::{Context, SharedString, Task};
+use freshkube_core::snapshot::Request;
+use freshkube_reads::Loader;
+use gpui_kit::{Context, SharedString};
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 
@@ -141,7 +143,6 @@ impl GroupRows {
     }
 }
 
-type Job = (OwnedJob, Task<()>);
 type Answer<T> = oneshot::Receiver<Result<Result<T, Failure>, String>>;
 
 pub struct CustomResources {
@@ -150,11 +151,8 @@ pub struct CustomResources {
     open: bool,
     open_groups: BTreeSet<String>,
     groups: Option<Discovery<Vec<CustomGroup>>>,
-    groups_job: Option<Job>,
-    kinds_jobs: HashMap<String, Job>,
-    /// Bumped whenever earlier answers stop applying: another connection,
-    /// or a retry.
-    epoch: u64,
+    groups_read: Loader<(), Option<String>>,
+    kinds_reads: HashMap<String, Loader<(), Option<(String, String)>>>,
 }
 
 impl CustomResources {
@@ -165,9 +163,8 @@ impl CustomResources {
             open: false,
             open_groups: BTreeSet::new(),
             groups: None,
-            groups_job: None,
-            kinds_jobs: HashMap::new(),
-            epoch: 0,
+            groups_read: Loader::default(),
+            kinds_reads: HashMap::new(),
         }
     }
 
@@ -269,7 +266,9 @@ impl CustomResources {
             && let Some(entry) = groups.iter_mut().find(|entry| entry.name == name)
         {
             entry.kinds = None;
-            self.kinds_jobs.remove(name);
+            if let Some(read) = self.kinds_reads.get_mut(name) {
+                read.resolve(None, Ok(()));
+            }
         }
         cx.notify();
     }
@@ -290,10 +289,13 @@ impl CustomResources {
     }
 
     fn forget(&mut self) {
-        self.epoch += 1;
         self.groups = None;
-        self.groups_job = None;
-        self.kinds_jobs.clear();
+        self.groups_read.resolve(None, Ok(()));
+        // Keep each loader so a retry or source round trip never repeats
+        // a request generation for the same group.
+        for read in self.kinds_reads.values_mut() {
+            read.resolve(None, Ok(()));
+        }
     }
 
     /// Discovers the groups unless they are known or being read.
@@ -308,9 +310,11 @@ impl CustomResources {
             return;
         };
         self.groups = Some(Discovery::Reading);
-        let epoch = self.epoch;
+        let request = self
+            .groups_read
+            .start(self.source.as_ref().map(|source| source.id.clone()));
         if let ClusterAccess::Example(_) = access {
-            self.finish_groups(epoch, Ok(example::custom_groups()), cx);
+            self.finish_groups(&request, Ok(example::custom_groups()), cx);
             return;
         }
         let receiver = read(&self.runtime, access, |client| async move {
@@ -321,21 +325,20 @@ impl CustomResources {
             let Some(result) = answer(receiver).await else {
                 return;
             };
-            _ = this.update(cx, |this, cx| this.finish_groups(epoch, result, cx));
+            _ = this.update(cx, |this, cx| this.finish_groups(&request, result, cx));
         });
-        self.groups_job = Some((job, task));
+        self.groups_read.run(Some(job), task);
     }
 
     fn finish_groups(
         &mut self,
-        epoch: u64,
+        request: &Request<Option<String>>,
         result: Result<Vec<ApiGroup>, Failure>,
         cx: &mut Context<Self>,
     ) {
-        if epoch != self.epoch {
+        if !self.groups_read.land(request, Ok(()), cx) {
             return;
         }
-        self.groups_job = None;
         match result {
             Ok(groups) => {
                 let groups = groups.into_iter().map(CustomGroup::new).collect();
@@ -374,10 +377,18 @@ impl CustomResources {
         }
         entry.kinds = Some(Discovery::Reading);
         let group = entry.group.clone();
-        let epoch = self.epoch;
+        let identity = self
+            .source
+            .as_ref()
+            .map(|source| (source.id.clone(), name.to_owned()));
+        let request = self
+            .kinds_reads
+            .entry(name.to_owned())
+            .or_default()
+            .start(identity);
         if let ClusterAccess::Example(_) = access {
             let result = example::group_kinds(&group.name);
-            self.finish_kinds(epoch, name, result, cx);
+            self.finish_kinds(&request, name, result, cx);
             return;
         }
         let (job, receiver) = read(&self.runtime, access, move |client| async move {
@@ -388,22 +399,24 @@ impl CustomResources {
             let Some(result) = answer(receiver).await else {
                 return;
             };
-            _ = this.update(cx, |this, cx| this.finish_kinds(epoch, &key, result, cx));
+            _ = this.update(cx, |this, cx| this.finish_kinds(&request, &key, result, cx));
         });
-        self.kinds_jobs.insert(name.to_owned(), (job, task));
+        self.kinds_reads.get_mut(name).unwrap().run(Some(job), task);
     }
 
     fn finish_kinds(
         &mut self,
-        epoch: u64,
+        request: &Request<Option<(String, String)>>,
         name: &str,
         result: Result<GroupKinds, Failure>,
         cx: &mut Context<Self>,
     ) {
-        if epoch != self.epoch {
+        let Some(read) = self.kinds_reads.get_mut(name) else {
+            return;
+        };
+        if !read.land(request, Ok(()), cx) {
             return;
         }
-        self.kinds_jobs.remove(name);
         if let Some(Discovery::Loaded(groups)) = self.groups.as_mut()
             && let Some(entry) = groups.iter_mut().find(|entry| entry.name == name)
         {
@@ -548,19 +561,24 @@ mod tests {
             custom.toggle(cx);
             custom.toggle_group("cert-manager.io", cx);
         });
-        let epoch = custom.read_with(cx, |custom, _| custom.epoch);
+        let request = custom.update(cx, |custom, _| {
+            custom.groups_read.start(Some(source("homelab").id))
+        });
+        let revision = custom.read_with(cx, |custom, _| custom.groups_read.revision());
 
         // The same connection with new access keeps everything.
         custom.update(cx, |custom, cx| {
             custom.set_source(Some(source("homelab")), cx)
         });
-        custom.read_with(cx, |custom, _| assert_eq!(custom.epoch, epoch));
+        custom.read_with(cx, |custom, _| {
+            assert_eq!(custom.groups_read.revision(), revision)
+        });
 
         custom.update(cx, |custom, cx| {
             custom.set_source(Some(source("staging-eu")), cx);
             // An answer to the last connection's read changes nothing.
             custom.finish_groups(
-                epoch,
+                &request,
                 Ok(vec![ApiGroup {
                     name: "stale.example.com".into(),
                     versions: vec!["v1".into()],
@@ -569,7 +587,7 @@ mod tests {
             );
         });
         custom.read_with(cx, |custom, _| {
-            assert_ne!(custom.epoch, epoch);
+            assert_ne!(custom.groups_read.revision(), revision);
             assert!(!group_names(custom).contains(&"stale.example.com".to_owned()));
             // The group left open shows its kinds on the new connection.
             assert_eq!(kinds(custom, "cert-manager.io"), Some(Discovery::Loaded(4)));
