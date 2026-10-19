@@ -201,7 +201,8 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
         ));
         assert!(view.mode().kubernetes_only().unwrap().access().is_none());
         assert!(
-            view.registry
+            view.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()

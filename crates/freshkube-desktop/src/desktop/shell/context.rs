@@ -49,7 +49,8 @@ impl Pilot {
             return context.clone();
         }
         let workspace = self.settings_page.read(cx).workspace();
-        self.active_cluster()
+        self.switch
+            .active_cluster()
             .and_then(|id| workspace.clusters.iter().find(|entry| entry.id == id))
             .map(|entry| entry.context.clone())
             .unwrap_or_else(|| "No context".into())
@@ -72,7 +73,7 @@ impl Pilot {
         // The header gives the name this much room beside the status glyph.
         let width = f32::from(ui::dp_px(CONTEXT_NAME_WIDTH, window));
         self.context_display.name = middle(full, (width / advance).floor().max(5.) as usize).into();
-        let kube = self.registry.active().kubernetes_summary.data();
+        let kube = self.switch.registry.active().kubernetes_summary.data();
         let kubernetes = kube
             .and_then(|summary| summary.version.loaded())
             .map(|version| version.as_str())

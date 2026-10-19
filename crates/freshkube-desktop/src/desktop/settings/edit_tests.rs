@@ -663,7 +663,7 @@ async fn a_talos_context_is_saved_with_its_talosconfig_and_refused_without_one(
     );
     // The header offers the new cluster at once.
     cx.update_window(handle, |_, _, cx| {
-        assert_eq!(view.read(cx).switcher.len(), 1);
+        assert_eq!(view.read(cx).switch.switcher.len(), 1);
     })
     .unwrap();
 }

@@ -278,6 +278,7 @@ impl Pilot {
         let mut kube = kubernetes_only::KubernetesOnly::new(None, None);
         kube.connection = kubernetes_only::KubeConnection::Connected {
             version: self
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary

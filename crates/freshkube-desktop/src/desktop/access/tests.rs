@@ -26,9 +26,10 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
     let new_access = AccessIdentity::new(AccessSessionId::new(), after);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            view.registry.active_mut().access = Some(old_access);
-            view.registry.active_mut().access_configuration = Some(before);
+            view.switch.registry.active_mut().access = Some(old_access);
+            view.switch.registry.active_mut().access_configuration = Some(before);
             let observation = view
+                .switch
                 .registry
                 .active()
                 .summary_session
@@ -80,9 +81,10 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 window,
                 cx,
             );
-            assert!(view.registry.active().access == Some(new_access));
+            assert!(view.switch.registry.active().access == Some(new_access));
             assert_ne!(
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .summary_session
                     .as_ref()
@@ -91,7 +93,10 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                     .identity(),
                 &observation
             );
-            assert_eq!(view.registry.active().access_configuration, Some(after));
+            assert_eq!(
+                view.switch.registry.active().access_configuration,
+                Some(after)
+            );
             assert!(forward.read(cx).running());
             assert_eq!(forward.read(cx).local_port, port);
             assert_eq!(forward.read(cx).port_of(&pod), Some(8080));
@@ -109,10 +114,11 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 window,
                 cx,
             );
-            assert!(view.registry.active().access == Some(new_access));
+            assert!(view.switch.registry.active().access == Some(new_access));
             assert!(view.overview.error().is_none());
 
             let observation = view
+                .switch
                 .registry
                 .active()
                 .summary_session
@@ -123,7 +129,8 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
                 .clone();
             view.select_node(None, window, cx);
             assert_eq!(
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .summary_session
                     .as_ref()
@@ -149,9 +156,10 @@ fn access_replacement_resets_observations_and_rejects_late_overview_results(
             );
             assert!(view.overview.is_stale());
             assert!(view.overview.data().is_some());
-            assert!(view.registry.active().access == Some(new_access));
+            assert!(view.switch.registry.active().access == Some(new_access));
             assert_eq!(
-                view.registry
+                view.switch
+                    .registry
                     .active()
                     .summary_session
                     .as_ref()
@@ -200,8 +208,8 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     view.update(cx, |view, _| {
         // The replacement fails before connecting: no real cluster is read.
         view.mode.set_example(false);
-        view.registry.active_mut().access = Some(access);
-        view.registry.active_mut().access_configuration = Some(before);
+        view.switch.registry.active_mut().access = Some(access);
+        view.switch.registry.active_mut().access_configuration = Some(before);
     });
     let deliver = |window: &mut Window, cx: &mut App| {
         view.update(cx, |view, cx| {
@@ -225,7 +233,7 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
     cx.run_until_parked();
     assert!(!cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
-        cx.read(|cx| view.read(cx).registry.active().access_configuration),
+        cx.read(|cx| view.read(cx).switch.registry.active().access_configuration),
         Some(before)
     );
     step(cx, &deliver);
@@ -234,14 +242,14 @@ fn detected_configuration_replacement_obeys_shell_confirmation(cx: &mut TestAppC
         "an automatic refresh must not repeat a cancelled prompt"
     );
     view.update(cx, |view, _| {
-        view.registry.active_mut().prompted_access = None
+        view.switch.registry.active_mut().prompted_access = None
     });
     step(cx, &deliver);
     cx.simulate_prompt_answer("End the shell");
     cx.run_until_parked();
     assert!(cx.read(resources::shell::running_anywhere).is_empty());
     assert_eq!(
-        cx.read(|cx| view.read(cx).registry.active().access_configuration),
+        cx.read(|cx| view.read(cx).switch.registry.active().access_configuration),
         Some(after)
     );
     assert!(cx.read(|cx| view.read(cx).overview.data().is_none()));
@@ -260,35 +268,41 @@ fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAp
                 // Nothing is published for the new context, so what is left in
                 // the session after the change is only what was carried over.
                 view.mode.hold_mut().talos = true;
-                let session = view.registry.active_mut();
+                let session = view.switch.registry.active_mut();
                 session.access = Some(access);
                 session.access_configuration = Some(before);
                 session.prompted_access = Some((after, Some(access)));
                 session.summary_health = Some(Err("old".into()));
-                let identity = view.registry.summary_watch.identity().unwrap().clone();
-                let sender = view.registry.summary_watch.open(
+                let identity = view
+                    .switch
+                    .registry
+                    .summary_watch
+                    .identity()
+                    .unwrap()
+                    .clone();
+                let sender = view.switch.registry.summary_watch.open(
                     identity,
                     freshkube_reads::Pace {
                         capacity: 1,
                         most: 1,
                         every: std::time::Duration::ZERO,
                     },
-                    |view: &mut super::Pilot| &mut view.registry.summary_watch,
+                    |view: &mut super::Pilot| &mut view.switch.registry.summary_watch,
                     |_, _, _| {},
                     cx,
                 );
-                assert!(view.registry.summary_watch.is_running());
-                let epoch = view.registry.summary_watch.generation();
+                assert!(view.switch.registry.summary_watch.is_running());
+                let epoch = view.switch.registry.summary_watch.generation();
                 let other = crate::fixture::CONTEXTS[1].to_string();
                 assert_ne!(view.applied.context.as_deref(), Some(other.as_str()));
                 view.select_context(other, window, cx);
-                let session = view.registry.active();
+                let session = view.switch.registry.active();
                 assert!(session.access.is_none());
                 assert!(session.access_configuration.is_none());
                 assert!(session.prompted_access.is_none());
                 assert!(session.summary_health.is_none());
-                assert!(!view.registry.summary_watch.is_running());
-                assert!(view.registry.summary_watch.generation() != epoch);
+                assert!(!view.switch.registry.summary_watch.is_running());
+                assert!(view.switch.registry.summary_watch.generation() != epoch);
                 sender
             })
         })
