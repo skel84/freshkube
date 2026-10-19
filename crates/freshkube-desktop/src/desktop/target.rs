@@ -26,6 +26,38 @@ impl Selected {
         self.nodes.iter().any(|node| node.name == name)
     }
 
+    /// Takes the overview's nodes and says which one to select: the
+    /// selected node while it is still listed, else the first responding
+    /// one, else the first. It does not select it.
+    pub(super) fn adopt_nodes(&mut self, nodes: Vec<NodeSummary>) -> Option<String> {
+        self.nodes = nodes;
+        self.selected_node
+            .clone()
+            .filter(|name| self.has_node(name))
+            .or_else(|| {
+                self.nodes
+                    .iter()
+                    .find(|node| node.responding)
+                    .or_else(|| self.nodes.first())
+                    .map(|node| node.name.clone())
+            })
+    }
+
+    /// Selects a node: the old node's service read is dropped with its
+    /// services.
+    pub(super) fn select(&mut self, selected: Option<String>) {
+        self.selected_node = selected;
+        self.service_read.resolve(None, Ok(()));
+        self.services = Snapshot::default();
+    }
+
+    /// Forgets the nodes and the selection, with the service read.
+    pub(super) fn clear_nodes(&mut self) {
+        self.service_read.resolve(None, Ok(()));
+        self.selected_node = None;
+        self.nodes.clear();
+    }
+
     /// Drops a pending object open, so its answer is ignored when it comes.
     pub(super) fn cancel_object_open(&mut self) {
         self.object_open.resolve(None, Ok(()));
@@ -35,24 +67,12 @@ impl Selected {
 impl Pilot {
     pub(super) fn sync_nodes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let old_target = self.target().map(|(target, _)| target);
-        self.target.nodes = self
+        let nodes = self
             .overview
             .data()
             .map(presentation::node_summaries)
             .unwrap_or_default();
-        let selected = self
-            .target
-            .selected_node
-            .clone()
-            .filter(|name| self.target.nodes.iter().any(|node| &node.name == name))
-            .or_else(|| {
-                self.target
-                    .nodes
-                    .iter()
-                    .find(|node| node.responding)
-                    .or_else(|| self.target.nodes.first())
-                    .map(|node| node.name.clone())
-            });
+        let selected = self.target.adopt_nodes(nodes);
         self.pages.system_services.update(cx, |services, cx| {
             services.set_nodes(&self.target.nodes, cx)
         });
@@ -105,9 +125,7 @@ impl Pilot {
                 .apply(&request, Err("Node changed; refresh cancelled".into()));
             self.publish_reading(cx);
         }
-        self.target.selected_node = selected;
-        self.target.service_read.resolve(None, Ok(()));
-        self.target.services = Snapshot::default();
+        self.target.select(selected);
         self.push_services(cx);
         if self.mode().is_example() {
             let context = self.applied.context.clone().unwrap_or_default();

@@ -780,9 +780,7 @@ impl Pilot {
             .search
             .update(cx, |search, cx| search.invalidate(cx));
         self.overview_read.resolve(self.applied.clone(), Ok(()));
-        self.target.service_read.resolve(None, Ok(()));
-        self.target.selected_node = None;
-        self.target.nodes.clear();
+        self.target.clear_nodes();
         self.pages
             .system_services
             .update(cx, |services, cx| services.set_nodes(&[], cx));
