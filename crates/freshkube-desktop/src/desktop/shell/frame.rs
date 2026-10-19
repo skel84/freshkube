@@ -2,6 +2,7 @@ use super::*;
 use crate::logs::TalosPanel;
 use crate::mutation::Running;
 use freshkube_ui::status::Segment;
+use gpui_kit::component::tooltip::Tooltip;
 
 impl Pilot {
     pub(in crate::desktop) fn render_status_bar(
@@ -38,7 +39,13 @@ impl Pilot {
             freshkube_ui::status::segment(id, &segment, named.as_deref(), cx)
         });
         let receipt = (!self.settings_page.read(cx).setup_is_pending())
-            .then(|| self.setup_file.read(cx).receipt.clone())
+            .then(|| {
+                let setup = self.setup_file.read(cx);
+                setup
+                    .receipt
+                    .as_ref()
+                    .map(|receipt| (receipt.clone(), setup.receipt_label().to_owned()))
+            })
             .flatten();
         let right = self.render_status_right(compact, cx);
         StatusBar::new()
@@ -68,15 +75,28 @@ impl Pilot {
                             .child(div().flex_none().w(px(1.)).h(dp(14.)).bg(p.line))
                             .child(page)
                     }))
-                    .children(receipt.map(|receipt| {
+                    .children(receipt.map(|(receipt, label)| {
                         div()
                             .id("setup-reload-status")
                             .test_support()
                             .role(Role::Status)
                             .aria_label(receipt.clone())
-                            .min_w_0()
-                            .truncate()
-                            .child(receipt)
+                            .tooltip({
+                                let receipt = receipt.clone();
+                                move |window, cx| {
+                                    let receipt = receipt.clone();
+                                    Tooltip::element(move |_, _| {
+                                        div()
+                                            .id("setup-receipt-text")
+                                            .test_support()
+                                            .aria_label(receipt.clone())
+                                            .child(receipt.clone())
+                                    })
+                                    .build(window, cx)
+                                }
+                            })
+                            .flex_none()
+                            .child(label)
                     })),
             )
             .right(right.child(self.chrome.fps.clone()))

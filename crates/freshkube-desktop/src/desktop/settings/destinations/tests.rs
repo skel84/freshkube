@@ -1,7 +1,7 @@
 //! The destinations list in the real app: mapping, changing and removing a
 //! destination, saved to the file, and the list beside the clusters.
 use super::super::SettingsSection;
-use super::super::edit_tests::{open_section, saved, write};
+use super::super::edit_tests::{open_section, read_workspace, saved, write};
 use super::super::tests::launch;
 use crate::desktop::{layout_check, tests::fixture};
 use freshkube_core::workspace::{self, Destination, Key, Loaded};
@@ -22,10 +22,7 @@ const ONE: &str = r#"{"version":1,"clusters":[
   "destinations":[{"name":"prod-lon","entry":"prod","note":"kept"}]}"#;
 
 fn destinations(directory: &Path) -> Vec<Destination> {
-    match workspace::load(&directory.join("workspace.json")) {
-        Loaded::Workspace(workspace) => workspace.destinations,
-        other => panic!("{other:?}"),
-    }
+    read_workspace(directory).destinations
 }
 
 fn server(server: &str, entry: &str) -> Destination {
@@ -208,8 +205,7 @@ async fn changing_a_mapping_keeps_its_place_and_unknown_keys(cx: &mut TestAppCon
     })
     .unwrap();
     saved(cx, handle, &view).await;
-    let text = std::fs::read_to_string(guard.path().join("workspace.json")).unwrap();
-    let file: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let file = serde_json::to_value(read_workspace(guard.path())).unwrap();
     assert_eq!(
         file["destinations"],
         serde_json::json!([{"server": "https://lon.example.test", "entry": "prod", "note": "kept"}])
@@ -254,7 +250,7 @@ async fn the_form_refuses_what_wouldnt_map_and_saves_nothing(cx: &mut TestAppCon
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), ONE);
-    let before = std::fs::read(guard.path().join("workspace.json")).unwrap();
+    let before = std::fs::read(guard.path().join("freshkube.yaml")).unwrap();
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_section(cx, handle, &view, SettingsSection::Destinations).await;
     for (by, value, why) in [
@@ -293,7 +289,7 @@ async fn the_form_refuses_what_wouldnt_map_and_saves_nothing(cx: &mut TestAppCon
     }
     cx.run_until_parked();
     assert_eq!(
-        std::fs::read(guard.path().join("workspace.json")).unwrap(),
+        std::fs::read(guard.path().join("freshkube.yaml")).unwrap(),
         before
     );
 }
@@ -469,7 +465,7 @@ async fn a_file_changed_on_disk_refuses_a_mapping(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert_eq!(
-        std::fs::read_to_string(guard.path().join("workspace.json")).unwrap(),
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
         edited
     );
 }
@@ -584,6 +580,7 @@ async fn the_selection_follows_the_mapping_not_its_place(cx: &mut TestAppContext
         });
     })
     .unwrap();
+    saved(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(list(&view, cx).selected(), Some(&name("prod-lon")));
         assert_eq!(list(&view, cx).selected_row().map(|(at, _)| at), Some(0));

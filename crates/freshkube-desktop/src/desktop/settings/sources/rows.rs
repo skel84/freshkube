@@ -60,6 +60,17 @@ impl SourcesList {
             .map(|(part, chosen)| self.part_row(part, chosen))
             .collect();
         rows.push(self.workloads_row());
+        if let Some(problem) = &self.setup_problem {
+            rows.push(self.row(
+                Read::SetupFile,
+                "freshkube.yaml".into(),
+                "Setup file".into(),
+                false,
+                ("Not used".into(), Some(ui::Tone::Warn)),
+                problem.clone(),
+                problem.clone(),
+            ));
+        }
         self.rows = rows;
         (self.columns, self.width) = source::columns(&self.rows);
     }
@@ -145,7 +156,7 @@ impl SourcesList {
         let chosen_by = match chosen {
             Chosen::Entry {
                 why: Why::Pinned, ..
-            } => format!("{entry}, pinned in workspace.json"),
+            } => format!("{entry}, pinned in freshkube.yaml"),
             Chosen::Entry { why, .. } => {
                 format!("{entry}, the first entry with the {}", why.words())
             }

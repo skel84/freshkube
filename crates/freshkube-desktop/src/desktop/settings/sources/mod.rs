@@ -1,7 +1,7 @@
 //! Settings › Delivery sources: where each part of the delivery chain is
 //! read (core's `workspace::Sources`), and whether that entry answers.
 //! One row per part: the part, the entry it is read from and why (its role,
-//! or pinned in `workspace.json`), its state, and what it reads. A last row,
+//! or pinned in `freshkube.yaml`), its state, and what it reads. A last row,
 //! Workloads, names every entry an Argo CD destination maps to and counts
 //! their states.
 //!
@@ -62,6 +62,7 @@ gpui_kit::actions!(
 pub(crate) enum Read {
     Part(Part),
     Workloads,
+    SetupFile,
 }
 
 impl Read {
@@ -69,6 +70,7 @@ impl Read {
         match self {
             Read::Part(part) => part.key(),
             Read::Workloads => "workloads",
+            Read::SetupFile => "setup-file",
         }
     }
 
@@ -76,6 +78,7 @@ impl Read {
         match self {
             Read::Part(part) => part.label(),
             Read::Workloads => "Workloads",
+            Read::SetupFile => "Setup file",
         }
     }
 }
@@ -103,6 +106,7 @@ struct CheckIdentity {
 
 pub(crate) struct SourcesList {
     rows: Vec<SourceRow>,
+    setup_problem: Option<String>,
     columns: Vec<Column>,
     width: f32,
     table: table::TableState,
@@ -135,6 +139,7 @@ impl SourcesList {
         let sources = Sources::of(&Default::default());
         let mut list = Self {
             rows: Vec::new(),
+            setup_problem: None,
             columns: Vec::new(),
             width: 0.,
             table: table::TableState::new(PREFIX),
@@ -153,6 +158,14 @@ impl SourcesList {
         };
         list.derive_rows();
         list
+    }
+
+    pub(super) fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
+        if self.setup_problem != problem {
+            self.setup_problem = problem;
+            self.derive_rows();
+            cx.notify();
+        }
     }
 
     /// Takes a new workspace from the page: resolves where each part is
@@ -425,7 +438,7 @@ impl Render for SourcesList {
             .upgrade()
             .map(|page| page.read(cx).render_banners(cx))
             .unwrap_or_default();
-        // Four rows, never more: as tall as they are.
+        // Four delivery rows and, when unusable, the setup file.
         v_flex()
             .id("settings-sources")
             .flex_none()

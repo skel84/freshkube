@@ -1,5 +1,5 @@
 //! Settings › Argo CD destinations: the workspace's Argo CD destinations,
-//! each mapped to one of its clusters (`workspace.json`'s `destinations`).
+//! each mapped to one of its clusters (`freshkube.yaml`'s `destinations`).
 //! It keeps its own selection, keys and toolbar, draws the page's banners
 //! under it, and saves through the page, as the clusters do. It derives its
 //! rows when the page's workspace changes, so `render` only reads them.
@@ -259,7 +259,7 @@ impl Destinations {
             let confirm_key = key.clone();
             dialog
                 .w(ui::dp_px(420., window))
-                .title(format!("Remove the mapping for {what}?"))
+                .title("Remove destination mapping?")
                 .child(
                     v_flex()
                         .id("settings-destination-remove-dialog")
@@ -268,10 +268,10 @@ impl Destinations {
                         .aria_label(format!("Remove the mapping for {what}"))
                         .gap_3()
                         .text_size(dp(13.))
-                        .child(
-                            "Argo CD Applications with this destination show it as Unknown \
-                             again. Nothing on a cluster is touched.",
-                        )
+                        .child(format!(
+                            "Argo CD Applications with destination {what} show it as Unknown \
+                             again. Nothing on a cluster is touched."
+                        ))
                         .child(
                             h_flex()
                                 .gap_2()
