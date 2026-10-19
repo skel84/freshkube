@@ -622,9 +622,6 @@ impl Pilot {
                 context: entry.context.clone(),
                 kubeconfig: workspace.kubeconfig.clone(),
             });
-            let shown = talosconfig.display().to_string();
-            self.path
-                .update(cx, |input, cx| input.set_value(shown, window, cx));
             self.load_configuration(window, cx);
             match workspace.kubeconfig.clone() {
                 Some(kubeconfig) => {

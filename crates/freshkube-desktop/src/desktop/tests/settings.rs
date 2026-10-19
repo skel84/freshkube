@@ -380,12 +380,17 @@ async fn browse_picks_a_talosconfig_and_reloads_contexts(cx: &mut TestAppContext
     .unwrap();
     cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["alpha", "beta"])
         .await;
-    cx.update(|cx| {
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         let pilot = view.read(cx);
         assert_eq!(pilot.applied.path.as_deref(), Some(chosen.as_path()));
-        assert_eq!(pilot.path.read(cx).value(), chosen.display().to_string());
+        assert_eq!(
+            window.find("talosconfig-path").value(),
+            Some(chosen.to_str().unwrap())
+        );
         assert!(pilot.config_error.is_none());
-    });
+    })
+    .unwrap();
 }
 
 /// No client can dial with these synthetic certificates.
@@ -612,4 +617,56 @@ async fn kubernetes_only_browse_from_connection_keeps_context_choice_explicit(
         assert_eq!(view.read(cx).applied.context.as_deref(), Some("alpha"));
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+async fn error_state_browse_applies_and_reloads_the_chosen_talosconfig(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let chosen = talos_file(directory.path());
+    let options = GpuiOptions::new(Some(directory.path().join("missing")), None, 100);
+    let (_runtime, handle, view) = mount(cx, options, 1280., 880.);
+    cx.wait_for_io(handle, |window, _| {
+        window.try_find("browse-config-empty").is_some()
+    })
+    .await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("browse-config-empty", cx);
+    })
+    .unwrap();
+    cx.simulate_path_prompt_response(|_| Some(vec![chosen.clone()]));
+    cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["alpha", "beta"])
+        .await;
+    cx.update(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applied.path.as_deref(), Some(chosen.as_path()));
+        assert_eq!(pilot.applied.context.as_deref(), Some("alpha"));
+        assert!(pilot.config_error.is_none());
+    });
+
+    // Invalid synthetic certificates reach the error state without a dial.
+    // Choosing the same file must read its new current context too.
+    cx.wait_for_io(handle, |window, _| {
+        window.try_find("browse-config-unreachable").is_some()
+    })
+    .await;
+    let contents = std::fs::read_to_string(&chosen)
+        .unwrap()
+        .replace("context: alpha\n", "context: beta\n");
+    std::fs::write(&chosen, contents).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("browse-config-unreachable", cx);
+    })
+    .unwrap();
+    cx.simulate_path_prompt_response(|_| Some(vec![chosen.clone()]));
+    cx.wait_for_io(handle, |_, cx| {
+        view.read(cx).applied.context.as_deref() == Some("beta")
+    })
+    .await;
+    cx.update(|cx| {
+        let pilot = view.read(cx);
+        assert_eq!(pilot.applied.path.as_deref(), Some(chosen.as_path()));
+        assert_eq!(pilot.contexts, ["alpha", "beta"]);
+        assert!(pilot.config_error.is_none());
+    });
 }

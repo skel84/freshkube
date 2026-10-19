@@ -309,7 +309,6 @@ pub(in crate::desktop) fn status_text(
 
 pub(super) fn settings_content(
     pilot: WeakEntity<Pilot>,
-    _path: Entity<gpui_kit::component::input::InputState>,
     window: &mut Window,
     cx: &mut Context<gpui_kit::component::popover::PopoverState>,
 ) -> AnyElement {

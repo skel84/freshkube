@@ -484,7 +484,7 @@ impl SettingsPage {
                             let page = cx.weak_entity();
                             window.defer(cx, move |window, cx| {
                                 pilot.update(cx, |pilot, cx| {
-                                    pilot.apply_connection_group(value.clone(), window, cx)
+                                    pilot.apply_talos_config(value.clone(), window, cx)
                                 });
                                 // A shell confirmation may still be pending; the source
                                 // observer resets the draft only after acceptance.
@@ -621,42 +621,5 @@ impl SettingsPage {
             .child(header)
             .child(content)
             .into_any_element()
-    }
-}
-
-impl Pilot {
-    /// Save the linked fields together, through the same source teardown,
-    /// configuration reader and connection store used by the existing controls.
-    fn apply_connection_group(
-        &mut self,
-        value: AppliedConfig,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if value.path == self.applied.path && self.mode().has_talos() {
-            if let Some(context) = value.context {
-                self.select_context(context, window, cx);
-            }
-            return;
-        }
-        self.unless_shell(window, cx, move |this, window, cx| {
-            this.leave_entry(cx);
-            if !this.mode().has_talos() {
-                this.leave_kubernetes_only(window, cx);
-            }
-            this.path.update(cx, |input, cx| {
-                input.set_value(
-                    value
-                        .path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_default(),
-                    window,
-                    cx,
-                )
-            });
-            this.applied = value;
-            this.load_configuration(window, cx);
-        });
     }
 }
