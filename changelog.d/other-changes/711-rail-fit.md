@@ -1,0 +1,1 @@
+- **Navigation rail:** all four groups, including Settings, fit without scrolling at the default window and text size, with the same button hit areas.

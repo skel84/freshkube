@@ -117,7 +117,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
-        let divider = || div().w(dp(28.)).h(px(1.)).my(dp(6.)).flex_none().bg(p.line);
+        let divider = || div().w(dp(28.)).h(px(1.)).my(dp(4.)).flex_none().bg(p.line);
         let mut rail = v_flex()
             .id("nav-rail-list")
             .size_full()
@@ -126,7 +126,7 @@ impl Pilot {
             .track_scroll(&self.navigation.rail_scroll)
             .items_center()
             .py(dp(12.))
-            .gap(dp(4.));
+            .gap(dp(2.));
         // The rail's children: each section's buttons, a divider between.
         let mut children = 0;
         let mut active = None;

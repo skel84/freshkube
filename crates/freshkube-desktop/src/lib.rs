@@ -310,6 +310,7 @@ mod presentation;
 // every screen is built.
 mod screens;
 mod secrets;
+mod setup_file;
 mod state;
 #[cfg(feature = "stress")]
 mod stress;
