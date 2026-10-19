@@ -80,7 +80,7 @@ fn the_header_lists_the_clusters_and_picking_one_makes_it_active(cx: &mut TestAp
 fn picking_the_active_cluster_or_one_that_is_gone_changes_nothing(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     pick(cx, handle, &view, 1);
-    let epoch = cx.read(|cx| view.read(cx).registry.summary_epoch());
+    let epoch = cx.read(|cx| view.read(cx).registry.summary_watch.generation());
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.switch_cluster("cicd-fra".into(), window, cx);
@@ -91,7 +91,10 @@ fn picking_the_active_cluster_or_one_that_is_gone_changes_nothing(cx: &mut TestA
     .unwrap();
     cx.run_until_parked();
     assert_eq!(active(cx, &view), key("cicd-fra"));
-    assert_eq!(cx.read(|cx| view.read(cx).registry.summary_epoch()), epoch);
+    assert_eq!(
+        cx.read(|cx| view.read(cx).registry.summary_watch.generation()),
+        epoch
+    );
 }
 
 #[gpui_kit::test]

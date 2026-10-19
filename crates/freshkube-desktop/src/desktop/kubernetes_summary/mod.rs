@@ -12,11 +12,12 @@ use freshkube_core::{
     },
     resources::FailureKind,
 };
+use freshkube_reads::Pace;
 use gpui_kit::{Context, Window};
 
 use super::Pilot;
 use crate::{
-    backend::{OwnedJob, Target},
+    backend::Target,
     resources::{ClusterAccess, example},
     screens::WorkloadData,
 };
@@ -73,11 +74,10 @@ impl Pilot {
     }
 
     pub(super) fn stop_summary(&mut self) {
+        self.registry.summary_watch.stop();
         let session = self.registry.active_mut();
-        session.summary_job = None;
-        session.summary_task = None;
+        session.summary_fixture = None;
         session.summary_session = None;
-        self.registry.advance_summary_epoch();
     }
 
     /// Manual Refresh relists every source. The automatic Talos cycle calls
@@ -113,10 +113,13 @@ impl Pilot {
             return;
         }
         self.stop_summary();
-        let identity = SessionIdentity::new(source.id.clone(), self.registry.summary_epoch());
+        // The reducer keeps its applied connection identity. Capture the
+        // shell's existing target revision once; later node selections do
+        // not change this session. Watch owns the driver's request sequence.
+        let identity = SessionIdentity::new(source.id.clone(), self.epoch);
         let session = Session::new(identity);
         let target = Target {
-            epoch: self.registry.summary_epoch(),
+            epoch: self.epoch,
             context: source.context.clone(),
             node: String::new(),
             address: source.id,
@@ -140,9 +143,16 @@ impl Pilot {
         {
             session.version(0, version.clone(), chrono::Utc::now());
         }
-        let (job, receiver) = spawn_summary_driver(&self.runtime, session, source.access);
-        self.registry.active_mut().summary_job = Some(job);
-        self.deliver_summary(receiver, window, cx);
+        let runtime = self.runtime.clone();
+        self.registry.summary_watch.start(
+            (source.context, session.identity().connection().to_owned()),
+            &runtime,
+            SUMMARY_PACE,
+            move |sender| run_summary_driver(session, source.access, sender),
+            |view: &mut Self| &mut view.registry.summary_watch,
+            Self::deliver_summary,
+            cx,
+        );
         self.deliver_summary_nodes(cx);
     }
 
@@ -155,28 +165,25 @@ impl Pilot {
         self.publish_fixture(window, cx);
     }
 
-    /// Applies each answer from the driver to the shell, while the task lives.
-    fn deliver_summary(
-        &mut self,
-        mut receiver: tokio::sync::watch::Receiver<SummaryAnswer>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.registry.active_mut().summary_task =
-            Some(cx.spawn_in(window, async move |this, cx| {
-                while receiver.changed().await.is_ok() {
-                    let answer = receiver.borrow_and_update().clone();
-                    if let Some((publication, health)) = answer
-                        && this
-                            .update_in(cx, |view, window, cx| {
-                                view.apply_summary(publication, health, window, cx)
-                            })
-                            .is_err()
-                    {
-                        break;
-                    }
-                }
-            }));
+    /// Hands the latest publication to the shell in its window. The watch
+    /// rejects replaced streams; apply_summary retains the reducer's checks
+    /// when this deferred window update runs.
+    fn deliver_summary(&mut self, batch: Vec<SummaryFeed>, cx: &mut Context<Self>) {
+        let Some(feed) = batch.last() else {
+            return;
+        };
+        let Some((publication, health)) = feed.borrow().clone() else {
+            return;
+        };
+        let this = cx.weak_entity();
+        let handle = self.window;
+        cx.defer(move |cx| {
+            _ = handle.update(cx, |_, window, cx| {
+                _ = this.update(cx, |view, cx| {
+                    view.apply_summary(publication, health, window, cx);
+                });
+            });
+        });
     }
 
     /// Seeds the example session, publishes what it derives at its own
@@ -206,8 +213,19 @@ impl Pilot {
         let core = session.core.clone();
         let (at, clock) = (session.fixture_at, session.fixture_clock);
         let mut changes = core.changes();
-        self.registry.active_mut().summary_task =
-            Some(cx.spawn_in(window, async move |this, cx| {
+        let (latest, feed) = tokio::sync::watch::channel(None);
+        let sender = self.registry.summary_watch.open(
+            (
+                session.target.context.clone(),
+                core.identity().connection().to_owned(),
+            ),
+            SUMMARY_PACE,
+            |view: &mut Self| &mut view.registry.summary_watch,
+            Self::deliver_summary,
+            cx,
+        );
+        self.registry.active_mut().summary_fixture =
+            Some(cx.spawn_in(window, async move |_, cx| {
                 loop {
                     let now = fixture_time(at, clock, cx.background_executor().now());
                     let expiry = core.next_warning_change(now);
@@ -227,14 +245,13 @@ impl Pilot {
                     let publication = core.derive(now);
                     core.publish(publication.clone());
                     let health = WorkloadData::from_outcome(&publication.summary.workloads);
-                    if this
-                        .update_in(cx, |view, window, cx| {
-                            view.apply_summary(publication, health, window, cx)
-                        })
-                        .is_err()
-                    {
+                    latest.send_replace(Some((publication, health)));
+                    if sender.is_closed() {
                         break;
                     }
+                    // A full notification channel already points at this
+                    // latest value, just as the live driver's does.
+                    _ = sender.try_send(feed.clone());
                 }
             }));
     }
@@ -246,14 +263,12 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let epoch = self.registry.summary_epoch();
         let current = self.registry.active_mut();
         let Some(session) = &mut current.summary_session else {
             return;
         };
         if &publication.identity != session.core.identity()
             || publication.generation != session.core.generation()
-            || session.target.epoch != epoch
             || publication.revision <= session.applied_revision
         {
             return;
@@ -315,55 +330,64 @@ impl Pilot {
 /// derived from it.
 type SummaryAnswer = Option<(Arc<Publication>, Result<Arc<WorkloadData>, String>)>;
 
+/// Notifications point at one latest value, preserving the driver's
+/// coalescing watch channel without blocking the reducer on UI delivery.
+pub(super) type SummaryFeed = tokio::sync::watch::Receiver<SummaryAnswer>;
+
+const SUMMARY_PACE: Pace = Pace {
+    capacity: 1,
+    most: 1,
+    every: Duration::ZERO,
+};
+
 /// Runs one cluster's observation session on Tokio: waits for a client,
 /// drives the reflectors and sends each publication down the channel.
-fn spawn_summary_driver(
-    runtime: &tokio::runtime::Handle,
+async fn run_summary_driver(
     session: Session,
     access: ClusterAccess,
-) -> (OwnedJob, tokio::sync::watch::Receiver<SummaryAnswer>) {
+    sender: tokio::sync::mpsc::Sender<SummaryFeed>,
+) {
     let mut publications = session.publications();
-    let (sender, receiver) = tokio::sync::watch::channel(None);
-    let job = OwnedJob::new(runtime.spawn(async move {
-        let mut backoff = Duration::from_secs(1);
-        let client = loop {
-            match tokio::time::timeout(Duration::from_secs(45), access.client()).await {
-                Ok(Ok(client)) => break client,
-                result => {
-                    let failure = ObservationFailure::Read(if result.is_err() {
-                        FailureKind::Timeout
-                    } else {
-                        FailureKind::Config
-                    });
-                    for source in Source::WATCHED.into_iter().chain([Source::Version]) {
-                        session.fail(session.generation(), source, failure.clone());
-                    }
-                    let publication = session.derive(chrono::Utc::now());
-                    let health = WorkloadData::from_outcome(&publication.summary.workloads);
-                    session.publish(publication.clone());
-                    sender.send_replace(Some((publication, health)));
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(Duration::from_secs(30));
+    let (latest, feed) = tokio::sync::watch::channel(None);
+    let mut backoff = Duration::from_secs(1);
+    let client = loop {
+        match tokio::time::timeout(Duration::from_secs(45), access.client()).await {
+            Ok(Ok(client)) => break client,
+            result => {
+                let failure = ObservationFailure::Read(if result.is_err() {
+                    FailureKind::Timeout
+                } else {
+                    FailureKind::Config
+                });
+                for source in Source::WATCHED.into_iter().chain([Source::Version]) {
+                    session.fail(session.generation(), source, failure.clone());
                 }
+                let publication = session.derive(chrono::Utc::now());
+                let health = WorkloadData::from_outcome(&publication.summary.workloads);
+                session.publish(publication.clone());
+                latest.send_replace(Some((publication, health)));
+                _ = sender.try_send(feed.clone());
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(Duration::from_secs(30));
             }
-        };
-        let driver = session.run(client);
-        tokio::pin!(driver);
-        loop {
-            tokio::select! {
-                _ = &mut driver => break,
-                changed = publications.changed() => {
-                    if changed.is_err() { break; }
-                    let publication = publications.borrow_and_update().clone();
-                    if let Some(publication) = publication {
-                        let health = WorkloadData::from_outcome(&publication.summary.workloads);
-                        sender.send_replace(Some((publication, health)));
-                    }
+        }
+    };
+    let driver = session.run(client);
+    tokio::pin!(driver);
+    loop {
+        tokio::select! {
+            _ = &mut driver => break,
+            changed = publications.changed() => {
+                if changed.is_err() { break; }
+                let publication = publications.borrow_and_update().clone();
+                if let Some(publication) = publication {
+                    let health = WorkloadData::from_outcome(&publication.summary.workloads);
+                    latest.send_replace(Some((publication, health)));
+                    _ = sender.try_send(feed.clone());
                 }
             }
         }
-    }));
-    (job, receiver)
+    }
 }
 
 #[cfg(test)]

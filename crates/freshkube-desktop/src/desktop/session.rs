@@ -12,14 +12,11 @@ use std::{sync::Arc, time::SystemTime};
 use freshkube_core::{
     AccessIdentity, ConfigurationRevision, kubernetes_summary::KubernetesSummary,
 };
+use freshkube_reads::Watch;
 use gpui_kit::Task;
 
-use super::kubernetes_summary::SummarySession;
-use crate::{
-    backend::{AppliedConfig, OwnedJob},
-    screens::WorkloadData,
-    state::Snapshot,
-};
+use super::kubernetes_summary::{SummaryFeed, SummarySession};
+use crate::{backend::AppliedConfig, screens::WorkloadData, state::Snapshot};
 
 /// One cluster's Kubernetes observation: the compact summary the shell
 /// derives its pages from, and the session and tasks that keep it current.
@@ -28,8 +25,7 @@ pub(super) struct ClusterSession {
     pub(super) kubernetes_summary: Snapshot<Arc<KubernetesSummary>, AppliedConfig, String>,
     pub(super) summary_health: Option<Result<Arc<WorkloadData>, String>>,
     pub(super) summary_session: Option<SummarySession>,
-    pub(super) summary_job: Option<OwnedJob>,
-    pub(super) summary_task: Option<Task<()>>,
+    pub(super) summary_fixture: Option<Task<()>>,
     /// The access this session reads with, once an overview has collected it.
     pub(super) access: Option<AccessIdentity>,
     /// The inspected local configuration it was collected under.
@@ -44,8 +40,7 @@ impl ClusterSession {
             kubernetes_summary: Snapshot::default(),
             summary_health: None,
             summary_session: None,
-            summary_job: None,
-            summary_task: None,
+            summary_fixture: None,
             access: None,
             access_configuration: None,
             prompted_access: None,
@@ -103,10 +98,9 @@ pub(super) struct Registry {
     active: ClusterSession,
     parked: Vec<Parked>,
     retired: Vec<Retired>,
-    /// Advances each time a summary session stops or the session is
-    /// replaced, so a late answer from an older one is recognised. It lives
-    /// here, not in a session, so a session made again never repeats a value.
-    summary_epoch: u64,
+    /// The active session's driver and delivery. Kept across replacement so
+    /// an earlier start can never match a new session's request sequence.
+    pub(super) summary_watch: Watch<SummaryFeed, (String, String)>,
 }
 
 impl Registry {
@@ -116,24 +110,15 @@ impl Registry {
             active: ClusterSession::new(),
             parked: Vec::new(),
             retired: Vec::new(),
-            summary_epoch: 0,
+            summary_watch: Watch::default(),
         }
-    }
-
-    pub(super) fn summary_epoch(&self) -> u64 {
-        self.summary_epoch
-    }
-
-    /// Ends the current summary generation: nothing from an older one applies.
-    pub(super) fn advance_summary_epoch(&mut self) {
-        self.summary_epoch = self.summary_epoch.wrapping_add(1);
     }
 
     /// Replaces the active session as a whole, so nothing a later field adds
     /// can carry over to the next context. Its tasks are dropped with it.
     pub(super) fn reset_active(&mut self) {
+        self.summary_watch.stop();
         self.active = ClusterSession::new();
-        self.advance_summary_epoch();
     }
 
     pub(super) fn active_key(&self) -> &SessionKey {
@@ -281,16 +266,16 @@ mod tests {
     #[test]
     fn replacing_the_session_drops_all_of_it_and_never_repeats_an_epoch() {
         let mut registry = Registry::new();
-        let first = registry.summary_epoch();
+        let first = registry.summary_watch.generation();
         registry.active_mut().summary_health = Some(Err("down".into()));
         registry.active_mut().prompted_access = None;
         registry.reset_active();
         assert!(registry.active().summary_health.is_none());
         assert!(registry.active().access.is_none());
-        let second = registry.summary_epoch();
-        registry.advance_summary_epoch();
+        let second = registry.summary_watch.generation();
+        registry.summary_watch.stop();
         registry.reset_active();
-        let third = registry.summary_epoch();
+        let third = registry.summary_watch.generation();
         assert!(first != second && second != third && first != third);
     }
 
@@ -427,19 +412,19 @@ mod tests {
         let (a, b) = (definition("a", "acme-a"), definition("b", "acme-b"));
         let mut registry = Registry::new();
         registry.activate(key("a"), &Definition::default(), &applied("none"), None);
-        let epoch = registry.summary_epoch();
+        let epoch = registry.summary_watch.generation();
         registry.active_mut().summary_health = Some(Err("down".into()));
         read(&mut registry, &applied("acme-a"));
         registry.activate(key("b"), &a, &applied("acme-a"), rev);
-        assert!(registry.summary_epoch() != epoch);
+        assert!(registry.summary_watch.generation() != epoch);
         assert!(registry.active().summary_health.is_none());
-        assert!(registry.active().summary_job.is_none());
+        assert!(!registry.summary_watch.is_running());
         assert!(registry.parked_since(&key("a")).is_some());
 
         // Switching to the active entry again does nothing, and parks nothing.
-        let epoch = registry.summary_epoch();
+        let epoch = registry.summary_watch.generation();
         registry.activate(key("b"), &b, &applied("acme-b"), rev);
-        assert_eq!(registry.summary_epoch(), epoch);
+        assert_eq!(registry.summary_watch.generation(), epoch);
 
         // Parking a with a newer answer replaces the older one.
         registry.activate(key("a"), &b, &applied("acme-b"), None);
