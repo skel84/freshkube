@@ -1170,10 +1170,6 @@ impl Pilot {
         self.sync_search_source(kube.clone(), window, cx);
         self.custom
             .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
-        let pods = self.node_workspace.read(cx).pods.clone();
-        pods.update(cx, |resources, cx| {
-            resources.set_source(kube.clone(), window, cx)
-        });
         self.dock.update(cx, |dock, cx| {
             dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
         });
