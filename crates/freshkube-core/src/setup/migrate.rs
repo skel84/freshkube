@@ -33,8 +33,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{Coroot, KeysJson, MetricsService, Setup, SignIn, Source, parse, to_text, validate};
-use crate::workspace::{self, Loaded, MAX_BYTES, Workspace};
 use crate::read_bounded_regular_file;
+use crate::workspace::{self, Loaded, MAX_BYTES, Workspace};
 
 const SETUP: &str = "freshkube.yaml";
 const WORKSPACE: &str = "workspace.json";
@@ -286,7 +286,9 @@ fn read_coroot(file: &Path) -> Option<SavedCoroot> {
         .map(str::to_owned);
     coroot.extra = object
         .iter()
-        .filter(|(key, _)| !["url", "auth", "project", "reconnect", "remember"].contains(&key.as_str()))
+        .filter(|(key, _)| {
+            !["url", "auth", "project", "reconnect", "remember"].contains(&key.as_str())
+        })
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     Some(SavedCoroot {
@@ -367,11 +369,7 @@ enum Linked {
 /// Writes `text` to a temporary file beside `file`, created `0600`, and links
 /// it to `file` without replacing anything: if `file` appeared meanwhile,
 /// that one stays. The temporary file is removed either way.
-fn link_into_place(
-    file: &Path,
-    text: &str,
-    before_link: impl FnOnce(),
-) -> std::io::Result<Linked> {
+fn link_into_place(file: &Path, text: &str, before_link: impl FnOnce()) -> std::io::Result<Linked> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)?;

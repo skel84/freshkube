@@ -22,8 +22,7 @@ pub(in crate::desktop) fn migrate_setup(options: &GpuiOptions) -> Option<String>
 mod tests {
     use super::*;
 
-    const WORKSPACE: &str =
-        r#"{"version": 1, "clusters": [{"id": "cluster-a", "role": "core", "context": "cluster-a"}]}"#;
+    const WORKSPACE: &str = r#"{"version": 1, "clusters": [{"id": "cluster-a", "role": "core", "context": "cluster-a"}]}"#;
 
     fn home() -> (tempfile::TempDir, std::path::PathBuf) {
         let directory = tempfile::tempdir().unwrap();
@@ -42,7 +41,11 @@ mod tests {
         );
         assert!(directory.path().join("freshkube.yaml").is_file());
         assert!(directory.path().join("workspace.json.bak").is_file());
-        assert_eq!(migrate_setup(&options), None, "the next launch has nothing to say");
+        assert_eq!(
+            migrate_setup(&options),
+            None,
+            "the next launch has nothing to say"
+        );
     }
 
     #[test]

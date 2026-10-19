@@ -194,7 +194,8 @@ fn reconnect_goes_to_preferences_and_the_other_keys_stay() {
         ("preferences.json", r#"{"text_size": 14, "mystery": [1]}"#),
     ]);
     home.migrate();
-    let preferences: serde_json::Value = serde_json::from_str(&home.read("preferences.json")).unwrap();
+    let preferences: serde_json::Value =
+        serde_json::from_str(&home.read("preferences.json")).unwrap();
     assert_eq!(preferences["coroot_reconnect"], true);
     assert_eq!(preferences["text_size"], 14);
     assert_eq!(preferences["mystery"], serde_json::json!([1]));
@@ -217,8 +218,9 @@ fn a_key_is_named_only_for_a_key_taking_sign_in_that_remembers() {
         ("anonymous", true, false),
         ("api-key", false, false),
     ] {
-        let coroot =
-            format!(r#"{{"url": "https://coroot.example.test", "auth": "{auth}", "remember": {remember}}}"#);
+        let coroot = format!(
+            r#"{{"url": "https://coroot.example.test", "auth": "{auth}", "remember": {remember}}}"#
+        );
         let home = Home::with(&[("workspace.json", WORKSPACE_JSON), ("coroot.json", &coroot)]);
         home.migrate();
         let saved = home.setup().coroot.unwrap();
@@ -234,7 +236,11 @@ fn the_source_monitoring_chose_for_an_entrys_context_is_copied() {
     let a = setup.workspace.clusters[0].metrics.as_ref().unwrap();
     let service = a.source.as_ref().unwrap().service.as_ref().unwrap();
     assert_eq!(
-        (service.namespace.as_str(), service.name.as_str(), service.port),
+        (
+            service.namespace.as_str(),
+            service.name.as_str(),
+            service.port
+        ),
         ("vm", "vmselect", 8481)
     );
     assert_eq!(service.path, "select/0/prometheus");
@@ -269,7 +275,10 @@ fn a_source_the_entry_already_names_is_not_replaced() {
     let workspace = r#"{"version": 1, "clusters": [{"id": "cluster-a", "role": "core",
         "context": "cluster-a",
         "metrics": {"value": "ci-a", "source": {"url": "https://mine.example.test"}}}]}"#;
-    let home = Home::with(&[("workspace.json", workspace), ("monitoring.json", MONITORING_JSON)]);
+    let home = Home::with(&[
+        ("workspace.json", workspace),
+        ("monitoring.json", MONITORING_JSON),
+    ]);
     home.migrate();
     let setup = home.setup();
     let metrics = setup.workspace.clusters[0].metrics.as_ref().unwrap();
@@ -282,10 +291,19 @@ fn a_source_the_entry_already_names_is_not_replaced() {
 
 #[test]
 fn an_unusable_coroot_file_counts_as_no_coroot() {
-    for coroot in ["not json", r#"{"url": "https://c.example.test", "auth": "magic"}"#, r#"{"auth": "session"}"#, r#"{"url": "not a url", "auth": "session"}"#] {
+    for coroot in [
+        "not json",
+        r#"{"url": "https://c.example.test", "auth": "magic"}"#,
+        r#"{"auth": "session"}"#,
+        r#"{"url": "not a url", "auth": "session"}"#,
+    ] {
         let home = Home::with(&[("workspace.json", WORKSPACE_JSON), ("coroot.json", coroot)]);
         let outcome = home.migrate();
-        assert_eq!(outcome, done(&["workspace.json", "coroot.json"]), "{coroot}");
+        assert_eq!(
+            outcome,
+            done(&["workspace.json", "coroot.json"]),
+            "{coroot}"
+        );
         assert!(home.setup().coroot.is_none(), "{coroot}");
         assert_eq!(home.setup().workspace.clusters.len(), 2);
         assert_eq!(home.read("coroot.json.bak"), coroot, "nothing is lost");
@@ -390,7 +408,10 @@ fn a_launch_that_stopped_after_the_flag_was_kept_is_finished() {
         ("preferences.json", r#"{"coroot_reconnect": false}"#),
     ]);
     assert_eq!(home.migrate(), done(&["workspace.json", "coroot.json"]));
-    assert!(home.read("preferences.json").contains("false"), "kept as it was");
+    assert!(
+        home.read("preferences.json").contains("false"),
+        "kept as it was"
+    );
     assert!(home.has("freshkube.yaml"));
 }
 
@@ -410,16 +431,14 @@ fn a_backup_that_exists_is_never_replaced() {
     home.write("workspace.json.bak", "an older backup");
     home.migrate();
     assert_eq!(home.read("workspace.json.bak"), "an older backup");
-    assert_eq!(
-        home.read("workspace.20261019T120000Z.bak"),
-        WORKSPACE_JSON
-    );
+    assert_eq!(home.read("workspace.20261019T120000Z.bak"), WORKSPACE_JSON);
 }
 
 #[test]
 fn a_launch_that_loses_the_race_reads_the_file_that_won() {
     let home = Home::full();
-    let theirs = "version: 1\nclusters:\n  - id: cluster-z\n    role: core\n    context: cluster-z\n";
+    let theirs =
+        "version: 1\nclusters:\n  - id: cluster-z\n    role: core\n    context: cluster-z\n";
     let outcome = run(&home.preferences(), now(), || {
         // Another launch links its file first.
         std::fs::write(home.path("freshkube.yaml"), theirs).unwrap();
@@ -451,7 +470,9 @@ fn launches_at_once_make_one_setup_and_lose_nothing() {
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
         assert!(
-            outcomes.iter().all(|o| matches!(o, Outcome::Done { .. } | Outcome::Nothing)),
+            outcomes
+                .iter()
+                .all(|o| matches!(o, Outcome::Done { .. } | Outcome::Nothing)),
             "{outcomes:?}"
         );
         let setup = home.setup();
