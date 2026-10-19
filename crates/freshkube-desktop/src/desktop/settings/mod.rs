@@ -7,6 +7,7 @@
 //! which entry each part of the delivery chain is read from, and check them
 //! (`sources/`). Example data and a window without a preferences folder
 //! show the lists and change nothing.
+mod connection;
 pub(super) mod destinations;
 mod edit;
 #[cfg(test)]
@@ -102,6 +103,7 @@ pub(super) enum Origin {
 }
 
 pub(crate) struct SettingsPage {
+    connection: Option<connection::ConnectionForm>,
     rows: Vec<ClusterRow>,
     columns: Vec<Column>,
     width: f32,
@@ -245,6 +247,7 @@ impl SettingsPage {
     pub(super) fn new(runtime: tokio::runtime::Handle, cx: &mut Context<Self>) -> Self {
         let (columns, width) = source::columns(&[]);
         Self {
+            connection: None,
             rows: Vec::new(),
             columns,
             width,
@@ -439,7 +442,12 @@ impl SettingsPage {
 
     /// Puts the keyboard on the section's list, where its keys are bound,
     /// or on the page for a section without one.
-    pub(super) fn focus(&self, window: &mut Window, cx: &mut App) {
+    pub(super) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.section == SettingsSection::Connection && self.connection.is_none() {
+            cx.defer_in(window, |page, window, cx| {
+                page.prepare_connection(window, cx)
+            });
+        }
         let focus = match self.section {
             SettingsSection::Destinations => self.destinations.read(cx).focus_handle(),
             SettingsSection::Sources => self.sources.read(cx).focus_handle(),
@@ -468,6 +476,7 @@ impl SettingsPage {
     }
 
     fn sync_sources(&mut self, cx: &mut Context<Self>) {
+        self.sync_connection_visibility();
         let shown = self.visible && self.section == SettingsSection::Sources;
         self.sources
             .update(cx, |sources, cx| sources.set_visible(shown, cx));
@@ -688,6 +697,7 @@ impl Render for SettingsPage {
         let _span = crate::perf::span("page.render");
         match self.section {
             SettingsSection::General => self.render_general(window, cx),
+            SettingsSection::Connection => self.render_connection(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self
                 .list_frame(window)
