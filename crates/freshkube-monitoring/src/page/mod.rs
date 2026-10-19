@@ -153,7 +153,7 @@ impl Viewport {
 /// setup file: `resolved`, and the cluster that hosts a central store's
 /// Service (the open one, or another entry's). Discovery, the default, is
 /// how the page found Prometheus before the file.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Scope {
     pub resolved: Resolved,
     pub host: Option<ClusterAccess>,
@@ -308,6 +308,17 @@ impl MonitoringPage {
             return;
         }
         self.forget_answers(cx);
+    }
+
+    /// How the page finds its metrics now.
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    /// The cluster the page is opened on, which hosts a store that is in the
+    /// open entry's own cluster.
+    pub fn open_access(&self) -> Option<ClusterAccess> {
+        self.source.as_ref().map(|source| source.access.clone())
     }
 
     /// How the setup file says this entry's metrics are found. The same
