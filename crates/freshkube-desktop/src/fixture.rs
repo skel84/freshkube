@@ -3,9 +3,7 @@
 //! that read it through `presentation`.
 
 pub(crate) use freshkube_core::cluster_source::Hold;
-pub(crate) use freshkube_core::example::cluster::{
-    CONTEXTS, cluster, kubernetes_nodes, logs, services, stream_line,
-};
+pub(crate) use freshkube_core::example::cluster::{CONTEXTS, cluster, logs, services, stream_line};
 
 #[cfg(test)]
 mod tests {
