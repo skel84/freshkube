@@ -64,6 +64,46 @@ fn the_example_lists_its_destinations_on_a_table_page(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_first_column_starts_at_the_shared_table_edge(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.show_settings(SettingsSection::Destinations, window, cx)
+            });
+            layout_check::assert_table_page(window, cx, &PAGE);
+            let table = window.find(PAGE.table).bounds();
+            let header = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|element| element.label() == Some("Destination"))
+                .expect("Destination header")
+                .bounds();
+            assert!(
+                (header.left() - table.left()).abs() <= gpui_kit::px(1.),
+                "a leading gutter at {width}×{height}: {header:?} in {table:?}"
+            );
+            let cell = window.find("settings-destination-0-destination").bounds();
+            assert!(
+                (cell.left() - header.left() - gpui_kit::px(1.)).abs() <= gpui_kit::px(1.),
+                "the first row cell must follow only the shared row border: {cell:?}"
+            );
+            // A long destination must leave its missing-cluster mark visible.
+            let destinations = view.read(cx).settings_page.read(cx).destinations.clone();
+            destinations.update(cx, |list, cx| {
+                list.rows[0].destination = "example-destination-with-a-long-name".into();
+                list.rows[0].listed = false;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            let mark = window.find("settings-destination-0-mark");
+            assert!(mark.visible());
+            assert!(mark.bounds().left() >= cell.left() && mark.bounds().right() <= cell.right());
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 async fn example_destinations_are_never_changed(cx: &mut TestAppContext) {
     use crate::GpuiOptions;
     use crate::desktop::tests::mount;

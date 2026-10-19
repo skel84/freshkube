@@ -1,0 +1,1 @@
+- **Settings lists:** align Argo CD destinations and Delivery sources with Clusters, keep their status marks in the first column, and truncate Reads within narrow tables.

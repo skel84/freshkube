@@ -130,6 +130,87 @@ fn the_example_lists_each_part_on_a_table_page_and_reads_nothing(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn the_first_column_starts_at_the_shared_table_edge(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            open(window, cx, &view);
+            layout_check::assert_table_page(window, cx, &PAGE);
+            let table = window.find(PAGE.table).bounds();
+            let header = gpui_kit::base::test_support::snapshots(window)
+                .into_iter()
+                .find(|element| element.label() == Some("Part"))
+                .expect("Part header")
+                .bounds();
+            assert!(
+                (header.left() - table.left()).abs() <= gpui_kit::px(1.),
+                "a leading gutter at {width}×{height}: {header:?} in {table:?}"
+            );
+            let cell = window.find("settings-source-kargo-part").bounds();
+            assert!(
+                (cell.left() - header.left() - gpui_kit::px(1.)).abs() <= gpui_kit::px(1.),
+                "the first row cell must follow only the shared row border: {cell:?}"
+            );
+            window.click("settings-sources-check", cx);
+            window.render_frame(cx);
+            for read in ["kargo", "builds", "argocd", "workloads"] {
+                let cell = window.find(format!("settings-source-{read}-part")).bounds();
+                let mark = window.find(format!("settings-source-{read}-mark"));
+                assert!(mark.visible());
+                assert!(
+                    mark.bounds().left() >= cell.left() && mark.bounds().right() <= cell.right()
+                );
+            }
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+fn reads_truncates_inside_the_table_at_both_window_sizes(cx: &mut TestAppContext) {
+    const READS: &str = "settings-source-builds-reads";
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            open(window, cx, &view);
+            // Exercise a value too long even for the wide table.
+            list(&view, cx).update(cx, |list, cx| {
+                let row = list.rows.iter_mut().find(|row| row.read == BUILDS).unwrap();
+                row.reads = "PipelineRuns and TaskRuns from Pipelines as Code, including retained runs and their delivery metadata".into();
+                cx.notify();
+            });
+            layout_check::settle_header(window, cx);
+            let table = window.find(PAGE.table).bounds();
+            let cell = window.find(format!("{READS}-cell")).bounds();
+            assert!(
+                cell.left() >= table.left() && cell.right() <= table.right() + gpui_kit::px(1.),
+                "Reads leaves the viewport at {width}×{height}: {cell:?} in {table:?}"
+            );
+            let shown = freshkube_ui::table::word_cut_style(READS).expect("Reads painted");
+            assert!(shown.text.ends_with('…'), "Reads is not cut: {}", shown.text);
+            let run = gpui_kit::TextRun {
+                len: shown.text.len(),
+                font: gpui_kit::font(shown.font),
+                color: shown.color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let painted = window
+                .text_system()
+                .shape_line(shown.text, shown.size, &[run], None)
+                .width();
+            let padding = crate::ui::dp_px(2. * freshkube_ui::table::CELL_PAD, window);
+            assert!(
+                painted <= cell.size.width - padding + gpui_kit::px(1.),
+                "the cut text exceeds the cell: {painted:?} in {cell:?}"
+            );
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 fn check_sources_finds_each_state(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
     cx.update_window(handle, |_, window, cx| {
