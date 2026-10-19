@@ -290,6 +290,8 @@ impl SetupFile {
         let Some(file) = self.file.clone() else {
             return Task::ready(());
         };
+        // An older poll must not publish after this explicit read.
+        self.write_generation = self.write_generation.wrapping_add(1);
         let generation = self.write_generation;
         cx.spawn(async move |this, cx| {
             let (stat, disk) = cx.background_spawn(async move { read_now(&file) }).await;
