@@ -21,7 +21,7 @@ enum Field {
     Age,
 }
 
-pub(crate) struct Column {
+pub struct Column {
     field: Field,
     label: SharedString,
     width: f32,

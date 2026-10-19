@@ -55,7 +55,7 @@ pub(super) fn rule_label(rule: Rule) -> &'static str {
 /// How completely an application is known, which its glyph and the
 /// header's chips show.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Mark {
+pub enum Mark {
     /// A source it depends on wasn't read in full: parts may be missing.
     Incomplete,
     /// Argo CD was read only in the namespaces it runs in, where it keeps
@@ -118,14 +118,14 @@ impl Mark {
 /// What the clusters are called on the page: their context, or in example
 /// data the acme workspace's names.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Labels(BTreeMap<SessionKey, String>);
+pub struct Labels(BTreeMap<SessionKey, String>);
 
 impl Labels {
     pub(crate) fn new(labels: impl IntoIterator<Item = (SessionKey, String)>) -> Self {
         Self(labels.into_iter().collect())
     }
 
-    pub(super) fn of(&self, session: &SessionKey) -> String {
+    pub fn of(&self, session: &SessionKey) -> String {
         self.0
             .get(session)
             .cloned()
@@ -150,33 +150,33 @@ impl Labels {
 
 /// One application as the table and the Inspector show it.
 #[derive(Clone, Debug)]
-pub(crate) struct AppRow {
-    pub(super) key: SharedString,
-    pub(super) name: SharedString,
-    pub(super) rule: Rule,
+pub struct AppRow {
+    pub key: SharedString,
+    pub name: SharedString,
+    pub rule: Rule,
     /// What it is, beside its name: "Kargo Project", "Argo CD Application".
-    pub(super) what: SharedString,
-    pub(super) mark: Mark,
+    pub what: SharedString,
+    pub mark: Mark,
     /// The mark in this row's words: Scoped names its namespaces.
-    pub(super) mark_words: SharedString,
+    pub mark_words: SharedString,
     /// The Inspector tag's words: the mark's short words.
-    pub(super) mark_short: SharedString,
-    pub(super) found_by: SharedString,
-    pub(super) parts: SharedString,
-    pub(super) clusters: SharedString,
+    pub mark_short: SharedString,
+    pub found_by: SharedString,
+    pub parts: SharedString,
+    pub clusters: SharedString,
     /// The first note, and how many more.
-    pub(super) note: SharedString,
-    pub(super) tooltip: SharedString,
+    pub note: SharedString,
+    pub tooltip: SharedString,
     /// Lowercased name, id, evidence and clusters, for the filter.
-    pub(super) query: String,
+    pub query: String,
     /// The Inspector's fields and notes.
-    pub(super) fields: Vec<(&'static str, SharedString)>,
-    pub(super) notes: Vec<SharedString>,
+    pub fields: Vec<(&'static str, SharedString)>,
+    pub notes: Vec<SharedString>,
 }
 
 /// What the page's body is: the table, or a state in its place.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Body {
+pub enum Body {
     Table,
     /// Every source answered or isn't served, and none found anything.
     Empty {
@@ -198,15 +198,15 @@ pub(crate) enum Body {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Display {
-    pub(super) rows: Vec<AppRow>,
+pub struct Display {
+    pub rows: Vec<AppRow>,
     pub(super) body: Body,
     /// Sources that may have left applications out, one line each, as the
     /// banner says them, and its label.
     pub(super) missing_text: Option<(SharedString, SharedString)>,
     /// Sources that aren't served, or read in one namespace, as one line
     /// under the header: facts, not warnings.
-    pub(super) legend_text: Option<SharedString>,
+    pub legend_text: Option<SharedString>,
     /// Applications per mark, before any filter.
     pub(super) marks: [usize; 4],
 }
@@ -960,7 +960,7 @@ fn body_without_applications(coverage: &[Coverage], labels: &Labels) -> (Body, O
 
 impl Display {
     /// Adds a line the coverage doesn't say, after its own.
-    pub(super) fn add_legend(&mut self, line: String) {
+    pub fn add_legend(&mut self, line: String) {
         self.legend_text = Some(match self.legend_text.take() {
             Some(text) => format!("{text} · {line}").into(),
             None => line.into(),

@@ -19,9 +19,7 @@
 //! A Kargo Stage whose change was read leads to it: F, the row menu's
 //! Follow and the Inspector's button ask the list to show the change
 //! page on that Stage.
-mod table;
-#[cfg(test)]
-mod tests;
+pub(crate) mod table;
 mod view;
 
 use freshkube_delivery::applications::claims::{Claim, Claims, Gap, Side, Unchecked, claims};
@@ -85,41 +83,41 @@ pub(crate) enum ApplicationEvent {
 
 /// One part as the table and the Inspector show it.
 #[derive(Clone, Debug)]
-pub(crate) struct PartRow {
-    pub(super) key: SharedString,
-    pub(super) rank: u8,
-    pub(super) name: SharedString,
-    pub(super) cluster: SharedString,
-    pub(super) namespace: SharedString,
-    pub(super) confidence: Confidence,
+pub struct PartRow {
+    pub key: SharedString,
+    pub rank: u8,
+    pub name: SharedString,
+    pub cluster: SharedString,
+    pub namespace: SharedString,
+    pub confidence: Confidence,
     /// The Link column's word: [`link_word`], or "By label" for a part
     /// only its label claims.
-    pub(super) word: &'static str,
-    pub(super) found_by: SharedString,
-    pub(super) read_from: SharedString,
+    pub word: &'static str,
+    pub found_by: SharedString,
+    pub read_from: SharedString,
     /// The row's accessibility label.
-    pub(super) label: SharedString,
-    pub(super) tooltip: SharedString,
+    pub label: SharedString,
+    pub tooltip: SharedString,
     /// The Inspector's fields about the part, then about its link.
-    pub(super) fields: Vec<(&'static str, SharedString)>,
-    pub(super) link: Vec<(&'static str, SharedString)>,
+    pub fields: Vec<(&'static str, SharedString)>,
+    pub link: Vec<(&'static str, SharedString)>,
     /// Why the link is what it is, which the lower rules' claims follow.
-    pub(super) why: Option<SharedString>,
+    pub why: Option<SharedString>,
     /// Lower rules' claims, in words.
-    pub(super) lower: Vec<SharedString>,
+    pub lower: Vec<SharedString>,
     /// The link that opens the part in Resources.
-    pub(super) open: ResourceLink,
+    pub open: ResourceLink,
     /// Why the part doesn't open here: its cluster isn't the open one, and
     /// no workspace entry is.
-    pub(super) closed: Option<SharedString>,
+    pub closed: Option<SharedString>,
     /// The workspace entry its cluster is, when that isn't the open one: the
     /// part opens there after a switch.
-    pub(super) switch: Option<SharedString>,
+    pub switch: Option<SharedString>,
     /// The Open in Resources button's tooltip: where it opens the part, or
     /// why it doesn't.
-    pub(super) open_tip: SharedString,
+    pub open_tip: SharedString,
     /// The Freight a Kargo Stage carries, when its change was read.
-    pub(super) follows: Option<SharedString>,
+    pub follows: Option<SharedString>,
 }
 
 /// A group row: a kind's, or a read's that may have left parts out.
@@ -138,20 +136,32 @@ enum Entry {
     Row(usize),
 }
 
-pub(crate) struct ApplicationPage {
+pub struct ApplicationPage {
     id: ApplicationId,
     name: SharedString,
     /// What the application is, as the header names it beside the name.
     what: SharedString,
+    #[cfg(any(test, feature = "testing"))]
+    pub rows: Vec<PartRow>,
+    #[cfg(not(any(test, feature = "testing")))]
     rows: Vec<PartRow>,
     groups: Vec<GroupLine>,
     lines: Vec<Entry>,
+    #[cfg(any(test, feature = "testing"))]
+    pub columns: Vec<table::Column>,
+    #[cfg(not(any(test, feature = "testing")))]
     columns: Vec<table::Column>,
+    #[cfg(any(test, feature = "testing"))]
+    pub width: f32,
+    #[cfg(not(any(test, feature = "testing")))]
     width: f32,
     table: TableState,
     focus: FocusHandle,
     split: InspectorSplit,
     /// The frame's scroll, used while the window is short.
+    #[cfg(any(test, feature = "testing"))]
+    pub page_scroll: ScrollHandle,
+    #[cfg(not(any(test, feature = "testing")))]
     page_scroll: ScrollHandle,
     selected: Option<SharedString>,
     /// Whether the Inspector shows the selection. A right-click selects
@@ -194,11 +204,11 @@ impl ApplicationPage {
         page
     }
 
-    pub(crate) fn id(&self) -> &ApplicationId {
+    pub fn id(&self) -> &ApplicationId {
         &self.id
     }
 
-    pub(crate) fn name(&self) -> &SharedString {
+    pub fn name(&self) -> &SharedString {
         &self.name
     }
 
@@ -252,11 +262,11 @@ impl ApplicationPage {
         window.focus(&self.focus, cx);
     }
 
-    pub(crate) fn focus_handle(&self) -> FocusHandle {
+    pub fn focus_handle(&self) -> FocusHandle {
         self.focus.clone()
     }
 
-    fn selected_row(&self) -> Option<&PartRow> {
+    pub fn selected_row(&self) -> Option<&PartRow> {
         let key = self.selected.as_ref()?;
         self.rows.iter().find(|row| &row.key == key)
     }
@@ -306,10 +316,10 @@ impl ApplicationPage {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl ApplicationPage {
     /// Each line: a group's label, or a row's name and link word.
-    pub(crate) fn lines_text(&self) -> Vec<String> {
+    pub fn lines_text(&self) -> Vec<String> {
         self.lines
             .iter()
             .map(|entry| match *entry {
@@ -322,15 +332,15 @@ impl ApplicationPage {
             .collect()
     }
 
-    pub(crate) fn what(&self) -> &SharedString {
+    pub fn what(&self) -> &SharedString {
         &self.what
     }
 
-    pub(crate) fn selected(&self) -> Option<&SharedString> {
+    pub fn selected(&self) -> Option<&SharedString> {
         self.selected.as_ref()
     }
 
-    pub(crate) fn inspects(&self) -> bool {
+    pub fn inspects(&self) -> bool {
         self.inspect
     }
 }
@@ -422,7 +432,7 @@ fn side_words(side: &Side, labels: &Labels) -> String {
 /// How Argo CD was read for the part, naming the cluster it was read on
 /// (`argo`, the part's own `cluster` or Argo CD's entry) and the
 /// namespaces.
-fn unchecked_words(unchecked: &Unchecked, part: &str, argo: &str) -> String {
+pub fn unchecked_words(unchecked: &Unchecked, part: &str, argo: &str) -> String {
     let cluster = argo;
     match unchecked {
         Unchecked::NotRead => format!("Argo CD not read on {cluster}"),

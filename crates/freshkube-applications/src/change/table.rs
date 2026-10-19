@@ -21,7 +21,7 @@ enum Field {
     From,
 }
 
-pub(crate) struct Column {
+pub struct Column {
     field: Field,
     label: SharedString,
     width: f32,
@@ -52,7 +52,7 @@ impl TableColumn for Column {
 /// flexible one), Time and Read from. Hop and Link are as narrow as their
 /// usual words, so beside the Inspector most of Detail shows; a longer hop
 /// is cut, with its whole name in the row's tooltip.
-pub(super) fn columns() -> Vec<Column> {
+pub fn columns() -> Vec<Column> {
     let column = |field, label: &str, width| Column {
         field,
         label: label.to_owned().into(),
@@ -349,7 +349,7 @@ impl TableSource for ChangePage {
 impl ChangePage {
     /// The table's width: the page's, less the Inspector's beside it.
     fn table_width(&self, window: &Window) -> f32 {
-        let page = crate::screens::page_width(window);
+        let page = freshkube_ui::page::page_width(window);
         if self.selected.is_some() && page >= inspector::SPLIT_WIDTH {
             page - self.split.width()
         } else {

@@ -27,7 +27,7 @@ const VERSION: &str = "v1alpha1";
 /// The connection each cluster of a read is, and the one open when it was
 /// read.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Connections {
+pub struct Connections {
     open: String,
     ids: BTreeMap<SessionKey, String>,
     /// The workspace's entries other than the open one, by id.
@@ -35,7 +35,7 @@ pub(crate) struct Connections {
 }
 
 impl Connections {
-    pub(crate) fn new(
+    pub fn new(
         open: impl Into<String>,
         ids: impl IntoIterator<Item = (SessionKey, String)>,
     ) -> Self {
@@ -47,14 +47,14 @@ impl Connections {
     }
 
     /// The same, knowing the workspace's entries other than the open one.
-    pub(crate) fn with_entries(mut self, entries: impl IntoIterator<Item = String>) -> Self {
+    pub fn with_entries(mut self, entries: impl IntoIterator<Item = String>) -> Self {
         self.entries = entries.into_iter().collect();
         self
     }
 
     /// The connection a cluster is: its own, else its key, which no
     /// connection is.
-    pub(crate) fn of(&self, session: &SessionKey) -> String {
+    pub fn of(&self, session: &SessionKey) -> String {
         self.ids
             .get(session)
             .cloned()
@@ -62,7 +62,7 @@ impl Connections {
     }
 
     /// Whether the cluster is the one open, so its parts open in Resources.
-    pub(crate) fn opens(&self, session: &SessionKey) -> bool {
+    pub fn opens(&self, session: &SessionKey) -> bool {
         self.of(session) == self.open
     }
 
@@ -71,7 +71,7 @@ impl Connections {
     /// key matches an entry's id only in example data, whose acme clusters
     /// are the fixture workspace's entries; a live read is the open
     /// connection alone until reads span clusters.
-    pub(crate) fn switch_to(&self, session: &SessionKey) -> Option<&str> {
+    pub fn switch_to(&self, session: &SessionKey) -> Option<&str> {
         if self.opens(session) {
             return None;
         }

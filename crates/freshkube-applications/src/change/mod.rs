@@ -17,10 +17,8 @@
 //! object link does; the page never approves, promotes or syncs.
 mod changes;
 mod detail;
-mod read;
-mod table;
-#[cfg(test)]
-mod tests;
+pub(crate) mod read;
+pub(crate) mod table;
 mod view;
 
 use std::collections::BTreeSet;
@@ -42,9 +40,9 @@ use super::links::Connections;
 use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::{LogsAt, LogsRequest, ResourceLink, Tab, model::ObjectRef};
-pub(super) use changes::Changes;
-#[cfg(test)]
-pub(super) use changes::LiveChanges;
+pub use changes::Changes;
+#[cfg(any(test, feature = "testing"))]
+pub use changes::LiveChanges;
 pub(super) use read::Fetch;
 
 /// The page's id prefix: `change-title`, `change-hop-<key>`, `change-detail`.
@@ -76,7 +74,7 @@ pub(crate) fn key_bindings() -> [KeyBinding; 4] {
 }
 
 /// What the page asks of the page that owns it.
-pub(crate) enum ChangeEvent {
+pub enum ChangeEvent {
     /// Back to the application's page.
     Back,
     /// An object to open in Resources.
@@ -140,7 +138,7 @@ fn rank(tone: Tone) -> u8 {
 /// is that its pods run the change, when that is less than Confirmed, as
 /// the Changes list's cell says, and a glyph the weaker of its rows' and
 /// that. A Stage that runs other Freight keeps its rows' words and glyph.
-pub(super) fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone) {
+pub fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone) {
     let mut words = vec![detail.to_owned(), stage.words.to_lowercase()];
     let on = stage
         .cluster
@@ -181,13 +179,13 @@ pub(super) fn clock(at: DateTime<Utc>) -> String {
     at.with_timezone(&Local).format("%H:%M").to_string()
 }
 
-pub(super) fn link_word(confidence: Confidence) -> &'static str {
+pub fn link_word(confidence: Confidence) -> &'static str {
     super::page::link_word(confidence)
 }
 
 /// The glyph a link shows, if any: Confirmed is the usual case and shows
 /// none, so the other two stand out.
-pub(super) fn link_glyph(confidence: Confidence) -> Option<Tone> {
+pub fn link_glyph(confidence: Confidence) -> Option<Tone> {
     match confidence {
         Confidence::Confirmed => None,
         Confidence::Claimed => Some(Tone::Info),
@@ -197,32 +195,32 @@ pub(super) fn link_glyph(confidence: Confidence) -> Option<Tone> {
 
 /// One row's cells, derived with the change.
 #[derive(Clone, Debug)]
-pub(crate) struct HopRow {
-    pub(super) key: SharedString,
-    pub(super) group: usize,
-    pub(super) tone: Tone,
-    pub(super) name: SharedString,
-    pub(super) detail: SharedString,
-    pub(super) from: SharedString,
-    pub(super) time: SharedString,
-    pub(super) link: Option<Confidence>,
+pub struct HopRow {
+    pub key: SharedString,
+    pub group: usize,
+    pub tone: Tone,
+    pub name: SharedString,
+    pub detail: SharedString,
+    pub from: SharedString,
+    pub time: SharedString,
+    pub link: Option<Confidence>,
     /// The row's accessibility label.
-    pub(super) label: SharedString,
+    pub label: SharedString,
 }
 
 /// A group row's words, derived with the change.
 #[derive(Clone, Debug)]
-pub(crate) struct GroupLine {
-    pub(super) label: SharedString,
-    pub(super) detail: Vec<String>,
-    pub(super) tone: Tone,
+pub struct GroupLine {
+    pub label: SharedString,
+    pub detail: Vec<String>,
+    pub tone: Tone,
     /// Only a Stage folds.
-    pub(super) folds: bool,
+    pub folds: bool,
     /// Whether its rows were read: a Stage whose entry wasn't read is
     /// known only from Argo CD's report, so it never folds itself as fine,
     /// though its chevron still folds it.
-    pub(super) read_there: bool,
-    pub(super) rows: usize,
+    pub read_there: bool,
+    pub rows: usize,
 }
 
 /// One line of the table: a group header, or a row by index.
@@ -232,14 +230,14 @@ enum Entry {
     Row(usize),
 }
 
-pub(crate) struct ChangePage {
+pub struct ChangePage {
     /// What reads the change, and the read: its answer, its failure, and
     /// whether one is in flight.
-    fetch: Fetch,
+    pub fetch: Fetch,
     /// The read, keyed by the change, and the work in flight. It is hidden
     /// while the page is, and its answer's age decides whether showing
     /// reads.
-    loader: Loader<Change, String>,
+    pub loader: Loader<Change, String>,
     visible: bool,
     /// The window the page shows in, where an answer selects its Stage.
     window: AnyWindowHandle,
@@ -255,7 +253,7 @@ pub(crate) struct ChangePage {
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
-    change: Change,
+    pub change: Change,
     /// The Freight's Kargo address, which the header opens and copies, or
     /// why there's none; derived with the change.
     page_link: Result<SharedString, SharedString>,
@@ -263,8 +261,8 @@ pub(crate) struct ChangePage {
     /// address changes.
     copied: bool,
     connections: Connections,
-    rows: Vec<HopRow>,
-    groups: Vec<GroupLine>,
+    pub rows: Vec<HopRow>,
+    pub groups: Vec<GroupLine>,
     /// Derived from the rows, the folds and the filter.
     lines: Vec<Entry>,
     /// How many rows each chip's tone has, folded or not.
@@ -341,7 +339,7 @@ impl ChangePage {
     /// Derives the rows, groups and chips from a change. The first answer
     /// folds the Stages that are fine; a later one keeps the folds, the
     /// filter and the selection where their rows still are.
-    fn show(&mut self, change: Change) {
+    pub fn show(&mut self, change: Change) {
         let first = self.rows.is_empty();
         self.missing = (!change.missing.is_empty()).then(|| {
             let text = change
@@ -492,7 +490,7 @@ impl ChangePage {
 
     /// The breadcrumb names `parent`, which it goes back to, in place of
     /// the project's page.
-    pub(in crate::applications) fn set_parent(&mut self, parent: impl Into<SharedString>) {
+    pub(crate) fn set_parent(&mut self, parent: impl Into<SharedString>) {
         self.parent = Some(parent.into());
     }
 
@@ -501,12 +499,12 @@ impl ChangePage {
         window.focus(&self.focus, cx);
     }
 
-    pub(crate) fn focus_handle(&self) -> FocusHandle {
+    pub fn focus_handle(&self) -> FocusHandle {
         self.focus.clone()
     }
 
     /// Selects a hop, unfolding its group so its row shows.
-    pub(crate) fn select(&mut self, key: &str, window: &Window, cx: &mut Context<Self>) {
+    pub fn select(&mut self, key: &str, window: &Window, cx: &mut Context<Self>) {
         let Some(row) = self.rows.iter().find(|row| row.key.as_ref() == key) else {
             return;
         };
@@ -519,7 +517,7 @@ impl ChangePage {
         kit::reveal(self, ScrollStrategy::Nearest);
         // Stacked, the Inspector shrinks the table over a few frames: the
         // selection is revealed again until its height holds.
-        if crate::screens::page_width(window) < inspector::SPLIT_WIDTH {
+        if freshkube_ui::page::page_width(window) < inspector::SPLIT_WIDTH {
             kit::reveal_when_settled(
                 cx.entity().downgrade(),
                 |page| page.selected.is_some(),
@@ -761,10 +759,10 @@ impl ChangePage {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl ChangePage {
     /// Each line: a group's label, or a row's key.
-    pub(crate) fn lines_text(&self) -> Vec<String> {
+    pub fn lines_text(&self) -> Vec<String> {
         self.lines
             .iter()
             .map(|entry| match *entry {
@@ -774,11 +772,11 @@ impl ChangePage {
             .collect()
     }
 
-    pub(crate) fn selected(&self) -> Option<&SharedString> {
+    pub fn selected(&self) -> Option<&SharedString> {
         self.selected.as_ref()
     }
 
-    pub(crate) fn freight(&self) -> &str {
+    pub fn freight(&self) -> &str {
         &self.change.freight
     }
 }

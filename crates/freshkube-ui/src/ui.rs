@@ -590,6 +590,14 @@ pub fn transparent() -> Hsla {
     transparent_black()
 }
 
+/// Text in the mono face at the detail panes' size.
+pub fn mono(text: impl Into<SharedString>) -> Div {
+    div()
+        .font_family(MONO_FONT)
+        .text_size(dp(12.))
+        .child(text.into())
+}
+
 /// A labelled value, as in the Services detail pane.
 pub fn field(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
     let p = palette(cx);

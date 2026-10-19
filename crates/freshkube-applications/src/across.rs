@@ -16,18 +16,18 @@ use crate::resources::ClusterAccess;
 
 /// The workspace as a live change read sees it.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Across {
+pub struct Across {
     /// How Argo CD's destinations map, and which entry is open.
-    pub(crate) mapping: Mapping,
+    pub mapping: Mapping,
     /// Where Kargo, the builds and Argo CD are read.
-    pub(crate) sources: Sources,
+    pub sources: Sources,
     /// The workspace's kubeconfig, `None` for the automatic one.
-    pub(crate) kubeconfig: Option<PathBuf>,
+    pub kubeconfig: Option<PathBuf>,
 }
 
 impl Across {
     /// Whether every part is read on the open connection.
-    pub(crate) fn alone(&self) -> bool {
+    pub fn alone(&self) -> bool {
         self.sources
             .iter()
             .all(|(_, chosen)| matches!(chosen, Chosen::Open))

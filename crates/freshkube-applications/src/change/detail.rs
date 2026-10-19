@@ -714,7 +714,7 @@ fn gate(line: &GateLine, cx: &App) -> Div {
         )
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl Detail {
     pub(super) fn action_labels(&self) -> Vec<String> {
         self.actions

@@ -11,12 +11,12 @@ use freshkube_delivery::change::example::Shape;
 use freshkube_delivery::change::{self as delivery_change, live::Place};
 
 use super::Fetch;
-use crate::applications::across::Across;
+use crate::across::Across;
 use crate::resources::{ClusterAccess, ClusterSource};
 
 /// Where a Stage's change comes from.
 #[derive(Clone, Debug)]
-pub(in crate::applications) enum Changes {
+pub enum Changes {
     /// Nothing reads a change.
     None,
     /// Example data's, its times counted from when it was read, in the
@@ -30,19 +30,19 @@ pub(in crate::applications) enum Changes {
 /// wherever Kargo was read, and the open connection the rest is read
 /// from.
 #[derive(Debug)]
-pub(in crate::applications) struct LiveChanges {
+pub struct LiveChanges {
     /// The connection's id, which objects to open carry.
     pub(super) cluster: String,
     /// The context's name, which the page shows.
     pub(super) label: String,
     /// The namespace Argo CD's Applications were first read in.
-    pub(in crate::applications) argocd_namespace: String,
+    pub argocd_namespace: String,
     /// By project and Stage.
     pub(super) current: BTreeMap<(String, String), String>,
 }
 
 impl LiveChanges {
-    pub(in crate::applications) fn of(inputs: &Inputs, source: &ClusterSource) -> Self {
+    pub fn of(inputs: &Inputs, source: &ClusterSource) -> Self {
         let mut current = BTreeMap::new();
         let mut argocd_namespace = None;
         for session in &inputs.sessions {
@@ -68,12 +68,12 @@ impl LiveChanges {
 
 impl Changes {
     /// A live read's: each Stage's current Freight on `source`.
-    pub(in crate::applications) fn live(inputs: &Inputs, source: &ClusterSource) -> Self {
+    pub(crate) fn live(inputs: &Inputs, source: &ClusterSource) -> Self {
         Self::Live(Arc::new(LiveChanges::of(inputs, source)))
     }
 
     /// The Freight a Kargo project's Stage carries, when a change was read.
-    pub(in crate::applications) fn freight_of(&self, project: &str, stage: &str) -> Option<String> {
+    pub fn freight_of(&self, project: &str, stage: &str) -> Option<String> {
         match self {
             Self::None => None,
             Self::Example(..) => {
@@ -90,7 +90,7 @@ impl Changes {
     /// carries one; a live one reads from `access` across the workspace,
     /// each part where `across` says, its Stages' destinations resolved
     /// through its mapping.
-    pub(in crate::applications) fn fetch(
+    pub(crate) fn fetch(
         &self,
         project: &str,
         stage: &str,
