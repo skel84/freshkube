@@ -322,6 +322,20 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
+    #[test]
+    fn an_error_mid_write_keeps_the_file_it_would_have_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lines.log");
+        write_whole(&path, b"one\ntwo\n").unwrap();
+        let failed = write_whole_with(&path, |file| {
+            file.write_all(b"half of it")?;
+            Err(io::Error::other("disk full"))
+        });
+        assert!(failed.is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "one\ntwo\n");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
     /// How long a full buffer's text takes to build, for each kind of
     /// download. A measurement, not a check: run it in release with
     /// `cargo test --release -p freshkube-logs download_text_timing --
