@@ -443,7 +443,7 @@ impl Pilot {
                 } else {
                     Appearance::Dark
                 };
-                view.set_appearance(next, window, cx);
+                view.choose_appearance(next, window, cx);
             }))
             .into_any_element()
     }
