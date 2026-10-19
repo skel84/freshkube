@@ -840,6 +840,66 @@ async fn a_deleted_file_clears_the_receipt_and_the_next_save_recreates_it(cx: &m
 }
 
 #[gpui_kit::test]
+async fn saved_banners_clear_on_section_changes_reloads_and_conflicts(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    open_settings(cx, handle, &view).await;
+    for (index, event) in ["section", "reload", "conflict"].into_iter().enumerate() {
+        cx.update_window(handle, |_, window, cx| {
+            add(window, cx, &format!("cluster-{index}"), "")
+        })
+        .unwrap();
+        saved(cx, handle, &view).await;
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("settings-saved").visible());
+        })
+        .unwrap();
+        if event == "section" {
+            open_section(cx, handle, &view, super::SettingsSection::Destinations).await;
+            cx.update_window(handle, |_, window, _| {
+                assert!(window.try_find("settings-saved").is_none());
+            })
+            .unwrap();
+            open_section(cx, handle, &view, super::SettingsSection::Clusters).await;
+        } else {
+            if event == "conflict" {
+                cx.update_window(handle, |_, window, cx| {
+                    window.click("settings-add", cx);
+                    window.click("settings-form-context", cx);
+                    window.input("draft-cluster", cx);
+                })
+                .unwrap();
+            }
+            let path = directory.path().join("freshkube.yaml");
+            let text = std::fs::read_to_string(&path).unwrap();
+            let changed = text.replace("role: environment", "role: core");
+            assert_ne!(text, changed);
+            write(directory.path(), &changed);
+            super::tests::poll_setup(cx);
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.try_find("settings-saved").is_none(), "{event}");
+                if event == "conflict" {
+                    assert!(view.read(cx).settings_page.read(cx).setup_is_pending());
+                    window.click("settings-form-cancel", cx);
+                    assert!(
+                        window
+                            .find("settings-banner")
+                            .label()
+                            .unwrap()
+                            .contains("changed on disk")
+                    );
+                }
+            })
+            .unwrap();
+            assert_eq!(std::fs::read_to_string(path).unwrap(), changed);
+        }
+    }
+}
+
+#[gpui_kit::test]
 async fn a_save_over_a_previous_launchs_output_needs_no_backup(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let directory = tempfile::tempdir().unwrap();

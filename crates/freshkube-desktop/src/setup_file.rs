@@ -49,6 +49,7 @@ pub(crate) struct SetupFile {
     pub(crate) seen: Seen,
     pub(crate) problem: Option<String>,
     pub(crate) receipt: Option<String>,
+    receipt_label: String,
     file: Option<PathBuf>,
     last_written: Option<Seen>,
     pub(crate) coroot_reconnect: bool,
@@ -72,6 +73,7 @@ impl SetupFile {
             seen: Seen::Missing,
             problem: None,
             receipt: None,
+            receipt_label: String::new(),
             file: preferences
                 .as_ref()
                 .filter(|_| !example)
@@ -220,6 +222,18 @@ impl SetupFile {
         self.problem.is_some() && !self.is_missing()
     }
 
+    /// The compact status text; the full receipt stays in its tooltip.
+    pub(crate) fn receipt_label(&self) -> &str {
+        &self.receipt_label
+    }
+
+    fn set_receipt(&mut self, action: &str, note: &str) {
+        let now = chrono::Local::now();
+        let time = now.format("%H:%M");
+        self.receipt_label = format!("{action} · {time}");
+        self.receipt = Some(format!("{action} freshkube.yaml{note} · {time}"));
+    }
+
     /// Saves a Settings edit without replacing any of the setup's other parts.
     /// The page retains the delivery task until the write has answered.
     pub(crate) fn save_workspace(
@@ -266,10 +280,7 @@ impl SetupFile {
                 } else {
                     ""
                 };
-                self.receipt = Some(format!(
-                    "Saved freshkube.yaml{backup} · {}",
-                    chrono::Local::now().format("%H:%M")
-                ));
+                self.set_receipt("Saved", backup);
                 cx.emit(Event::Changed {
                     setup_changed: true,
                 });
@@ -330,15 +341,13 @@ impl SetupFile {
         };
         if self.problem.is_some() || matches!(self.stat, FileStat::Missing) {
             self.receipt = None;
+            self.receipt_label.clear();
         }
         if initial {
             cx.emit(Event::Ready);
         } else if setup_changed || old_problem != self.problem {
             if setup_changed {
-                self.receipt = Some(format!(
-                    "Reloaded freshkube.yaml · {}",
-                    chrono::Local::now().format("%H:%M")
-                ));
+                self.set_receipt("Reloaded", "");
             }
             cx.emit(Event::Changed { setup_changed });
         }

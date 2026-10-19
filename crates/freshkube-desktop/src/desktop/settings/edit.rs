@@ -142,7 +142,7 @@ impl SettingsPage {
             ),
         };
         let body = format!(
-            "This takes the cluster out of the workspace file. Nothing on the cluster, and \
+            "This takes the cluster out of freshkube.yaml. Nothing on the cluster, and \
              no kubeconfig or talosconfig, is touched.{body}"
         );
         window.open_dialog(cx, move |dialog, window, _| {

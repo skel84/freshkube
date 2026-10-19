@@ -166,6 +166,7 @@ impl SettingsPage {
         } else {
             model.seen.clone()
         };
+        let changed_on_disk = self.seen != seen;
         self.setup_refusal = model.saves_refused();
         self.setup_file = Some(file);
         if let Some(setup) = setup {
@@ -183,7 +184,10 @@ impl SettingsPage {
         } else if !defer {
             self.seen = seen;
         }
-        if problem.is_some() {
+        if problem.is_some()
+            || ((changed_on_disk || self.pending_setup)
+                && matches!(self.notice, Some(Notice::Saved(_))))
+        {
             self.notice = None;
         }
         let legacy_banner = (!self.uses_setup && matches!(self.origin, Origin::Refused(_)))
@@ -482,6 +486,9 @@ impl SettingsPage {
     /// Shows `section`; Delivery sources checks only while it shows.
     pub(super) fn show(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         if self.section != section {
+            if matches!(self.notice, Some(Notice::Saved(_))) {
+                self.notice = None;
+            }
             self.section = section;
             self.sync_sources(cx);
             cx.notify();
@@ -553,8 +560,14 @@ impl SettingsPage {
         if let Some(body) = &self.banner {
             banners.push(banner(
                 "settings-banner",
-                if self.setup_refusal {
+                if self
+                    .setup_file
+                    .as_ref()
+                    .is_some_and(|file| file.read(cx).problem.is_some())
+                {
                     "Setup file"
+                } else if self.pending_setup {
+                    "Unsaved edit is stale"
                 } else {
                     "Workspace file not used"
                 },
