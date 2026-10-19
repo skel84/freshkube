@@ -519,6 +519,7 @@ fn the_rail_fits_without_scrolling_at_the_default_window_and_text_size(cx: &mut 
                 let bounds = button.bounds();
                 assert!(button.visible(), "{area:?} is hidden");
                 assert_eq!(bounds.size, gpui_kit::size(px(44.), px(44.)));
+                assert!((bounds.center().x - (rail.center().x - px(0.5))).abs() <= px(0.5));
                 assert!(
                     bounds.top() >= rail.top() && bounds.bottom() <= rail.bottom(),
                     "{area:?}: {bounds:?} outside {rail:?}"
@@ -527,6 +528,67 @@ fn the_rail_fits_without_scrolling_at_the_default_window_and_text_size(cx: &mut 
         }
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_scrolling_rail_keeps_the_selected_highlight_clear_of_the_scrollbar(cx: &mut TestAppContext) {
+    use gpui_kit::component::scroll::Scrollbar;
+
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    for (width, height, text) in [(760., 560., 13.), (1280., 880., 20.)] {
+        cx.simulate_window_resize(handle, size(px(width), px(height)));
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(text, cx);
+            for theme in [ThemeMode::Light, ThemeMode::Dark] {
+                Theme::change(theme, Some(window), cx);
+                for active in [Area::Overview, Area::Settings, Area::Overview] {
+                    window.render_frame(cx);
+                    window.scroll(
+                        "nav-rail",
+                        gpui_kit::ScrollDelta::Pixels(point(
+                            px(0.),
+                            px(if active == Area::Settings {
+                                -2000.
+                            } else {
+                                2000.
+                            }),
+                        )),
+                        cx,
+                    );
+                    window.click(active.id(), cx);
+                    window.render_frame(cx);
+                    window.render_frame(cx);
+                    assert_eq!(pilot.read(cx).navigation.area, active);
+                    let scroll = &pilot.read(cx).navigation.rail_scroll;
+                    assert!(scroll.max_offset().y > px(0.));
+                    let visible = scroll.bounds();
+                    let button = window.find(active.id());
+                    let bounds = button.bounds();
+                    assert_eq!(button.selected(), Some(true));
+                    assert!(button.visible());
+                    assert!(bounds.is_contained_within(&visible));
+                    assert!(
+                        bounds.right() <= visible.right() - Scrollbar::width(),
+                        "{active:?}: {bounds:?} overlaps the scrollbar in {visible:?}"
+                    );
+                    let painted = bounds.scale(window.scale_factor());
+                    let highlight =
+                        gpui_kit::solid_background(crate::palette::palette(cx).accent_soft);
+                    let quads = window.painted_quads();
+                    let fill = quads
+                        .iter()
+                        .find(|quad| quad.bounds == painted && quad.background == highlight)
+                        .expect("the selected button paints its highlight");
+                    assert!(painted.is_contained_within(&fill.content_mask.bounds));
+                    assert!(fill.corner_radii.top_left.0 > 0.);
+                    assert!(fill.corner_radii.top_right.0 > 0.);
+                    assert!(fill.corner_radii.bottom_left.0 > 0.);
+                    assert!(fill.corner_radii.bottom_right.0 > 0.);
+                }
+            }
+        })
+        .unwrap();
+    }
 }
 
 #[gpui_kit::test]
