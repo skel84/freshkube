@@ -538,6 +538,9 @@ async fn talos_context_validates_on_blur_and_escape_reverts_the_draft(cx: &mut T
     let (_runtime, handle, view) = mount(cx, GpuiOptions::new(Some(path), None, 100), 1280., 880.);
     cx.wait_for_io(handle, |_, cx| view.read(cx).contexts == ["alpha", "beta"])
         .await;
+    cx.update_window(handle, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
     open_connection(cx, handle, &view);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -546,7 +549,9 @@ async fn talos_context_validates_on_blur_and_escape_reverts_the_draft(cx: &mut T
     .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         window.click("talosconfig-path", cx);
+        window.render_frame(cx);
     })
     .unwrap();
     cx.wait_for_io(handle, |window, _| {
