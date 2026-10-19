@@ -81,6 +81,16 @@ pub struct Entry {
     /// one by that name; the file's own current context is never used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub talos_context: Option<String>,
+    /// Where Tekton Results is read; `None` is off. Typed and checked by
+    /// `freshkube.yaml` ([`crate::setup`]); `workspace.json` only carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub results: Option<crate::setup::Results>,
+    /// This entry in Coroot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coroot: Option<crate::setup::EntryCoroot>,
+    /// This entry's part of the metrics setup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics: Option<crate::setup::EntryMetrics>,
     /// Keys this version doesn't know, written back as they were read.
     #[serde(flatten)]
     extra: serde_json::Map<String, serde_json::Value>,
@@ -94,6 +104,9 @@ impl Entry {
             context: context.into(),
             talosconfig: None,
             talos_context: None,
+            results: None,
+            coroot: None,
+            metrics: None,
             extra: Default::default(),
         }
     }
@@ -347,7 +360,7 @@ pub enum Seen {
     Unreadable,
 }
 
-fn read_seen(file: &Path) -> (Seen, Result<Vec<u8>, BoundedReadError>) {
+pub(crate) fn read_seen(file: &Path) -> (Seen, Result<Vec<u8>, BoundedReadError>) {
     let read = read_bounded_regular_file(file, MAX_BYTES);
     let seen = match &read {
         Ok(bytes) => Seen::Bytes(bytes.clone()),
@@ -399,12 +412,21 @@ pub fn save(file: &Path, workspace: &Workspace) -> std::io::Result<()> {
     if let Some(parent) = file.parent() {
         fs::create_dir_all(parent)?;
     }
+    write_whole(file, &to_text(workspace))
+}
+
+/// Writes `text` to `file` through a temporary file beside it, created `0600`
+/// and renamed into place, so a failed write leaves the old file whole. The
+/// directory must exist.
+pub(crate) fn write_whole(file: &Path, text: &str) -> std::io::Result<()> {
     static NEXT_WRITE: AtomicU64 = AtomicU64::new(0);
-    let temporary = file.with_extension(format!(
-        "json.{}.{}.tmp",
+    let mut name = file.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(
+        ".{}.{}.tmp",
         std::process::id(),
         NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
     ));
+    let temporary = file.with_file_name(name);
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -414,7 +436,7 @@ pub fn save(file: &Path, workspace: &Workspace) -> std::io::Result<()> {
     }
     let result = (|| {
         let mut output = options.open(&temporary)?;
-        output.write_all(to_text(workspace).as_bytes())?;
+        output.write_all(text.as_bytes())?;
         output.sync_all()?;
         fs::rename(&temporary, file)
     })();
