@@ -172,9 +172,11 @@ impl std::fmt::Display for Invalid {
 impl Setup {
     /// A setup of this workspace, with the default metrics and no Coroot or
     /// supply chain.
-    pub fn new(workspace: Workspace) -> Self {
+    pub fn new(mut workspace: Workspace) -> Self {
+        let extra = workspace.take_unknown();
         Self {
             workspace,
+            extra,
             ..Self::default()
         }
     }
@@ -200,8 +202,26 @@ impl Setup {
     /// stays within what the next launch reads.
     pub fn check_saveable(&self) -> Result<(), Invalid> {
         self.validate()?;
-        if to_text(self).len() as u64 > MAX_BYTES {
+        let text = to_text(self);
+        if text.len() as u64 > MAX_BYTES {
             return Err(Invalid::TooLarge);
+        }
+        // A legacy workspace can hold a key now reserved by setup. Refuse
+        // that collision rather than write duplicate YAML keys or drop it.
+        if self.extra.keys().any(|key| {
+            matches!(
+                key.as_str(),
+                "version"
+                    | "kubeconfig"
+                    | "clusters"
+                    | "destinations"
+                    | "sources"
+                    | "metrics"
+                    | "coroot"
+                    | "supply_chain"
+            )
+        }) {
+            return Err(Invalid::WrongShape(None));
         }
         Ok(())
     }
@@ -412,6 +432,33 @@ pub fn commit(file: &Path, expected: &Seen, setup: &Setup) -> Result<Seen, SaveE
     }
     workspace::write_whole(file, &text).map_err(SaveError::Write)?;
     Ok(Seen::Bytes(text.into_bytes()))
+}
+
+/// Preserves a hand-edited file as `freshkube.yaml.bak` before committing.
+/// The backup is replaced atomically and only after the expected bytes and
+/// the new setup have been checked. A backup failure leaves the setup alone.
+pub fn commit_with_backup(
+    file: &Path,
+    expected: &Seen,
+    setup: &Setup,
+    hand_edited: bool,
+) -> Result<Seen, SaveError> {
+    setup.check_saveable().map_err(SaveError::Invalid)?;
+    if &workspace::read_seen(file).0 != expected {
+        return Err(SaveError::Changed);
+    }
+    if hand_edited && let Seen::Bytes(bytes) = expected {
+        let text = std::str::from_utf8(bytes).map_err(|_| {
+            SaveError::Write(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "the setup file is not UTF-8",
+            ))
+        })?;
+        workspace::write_whole(&file.with_file_name("freshkube.yaml.bak"), text)
+            .map_err(SaveError::Write)?;
+    }
+    // Check again: an editor may have saved while the backup was written.
+    commit(file, expected, setup)
 }
 
 #[cfg(test)]

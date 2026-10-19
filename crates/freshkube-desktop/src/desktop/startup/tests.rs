@@ -177,7 +177,7 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
         window.render_frame(cx);
         assert_eq!(pilot.read(cx).overview_display(cx).cards.len(), 4);
         assert!(window.try_find("nav-etcd").is_none());
-        assert!(pilot.read(cx).nodes.is_empty());
+        assert!(pilot.read(cx).target.nodes.is_empty());
         assert!(matches!(
             pilot.read(cx).source().kube.unwrap().access,
             ClusterAccess::Example(_)
@@ -193,7 +193,7 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
         window.render_frame(cx);
         let view = pilot.read(cx);
         assert_eq!(view.overview_display(cx).cards.len(), 4);
-        assert!(view.nodes.is_empty());
+        assert!(view.target.nodes.is_empty());
         assert_eq!(view.applied.context.as_deref(), Some("staging-eu"));
         assert!(matches!(
             view.source().kube.unwrap().access,
@@ -201,7 +201,8 @@ fn fixture_kubernetes_only_stays_offline_across_contexts_and_refresh(cx: &mut Te
         ));
         assert!(view.mode().kubernetes_only().unwrap().access().is_none());
         assert!(
-            view.registry
+            view.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()

@@ -302,7 +302,7 @@ fn kubernetes_only_health_failure(
         window.render_frame(cx);
         assert!(window.try_find("screen-no-node").is_none());
         assert!(window.try_find("workloads-loading").is_none());
-        match &view.read(cx).registry.active().summary_health {
+        match &view.read(cx).switch.registry.active().summary_health {
             Some(Err(reason)) => reason.clone(),
             _ => panic!("{what}: Health has no failure"),
         }

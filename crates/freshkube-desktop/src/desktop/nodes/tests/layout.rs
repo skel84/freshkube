@@ -9,7 +9,7 @@ fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut Test
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        let before = pilot.read(cx).selected_node.clone();
+        let before = pilot.read(cx).target.selected_node.clone();
         for text in [14., 20.] {
             crate::text_size::set(text, cx);
             window.render_frame(cx);
@@ -24,7 +24,7 @@ fn nodes_matches_the_shared_table_layout_at_default_and_large_text(cx: &mut Test
                     list: "nodes-list",
                 },
             );
-            assert_eq!(pilot.read(cx).selected_node, before);
+            assert_eq!(pilot.read(cx).target.selected_node, before);
             assert!(!pilot.read(cx).pages.node_workspace.read(cx).open);
         }
     })
@@ -84,7 +84,7 @@ fn nodes_columns_preserve_row_identity(cx: &mut TestAppContext) {
             .selected
             .clone();
         assert_eq!(
-            pilot.read(cx).selected_node.as_deref(),
+            pilot.read(cx).target.selected_node.as_deref(),
             Some("talos-cp-fra1-01")
         );
         window.click("node-close", cx);
@@ -225,7 +225,7 @@ fn a_sideways_scroll_keeps_each_node_name_in_view_once(cx: &mut TestAppContext) 
     cx.run_until_parked();
     pilot.read_with(cx, |pilot, cx| {
         assert!(pilot.pages.node_workspace.read(cx).open);
-        assert_eq!(pilot.selected_node.as_deref(), Some(name.as_str()));
+        assert_eq!(pilot.target.selected_node.as_deref(), Some(name.as_str()));
     });
 }
 

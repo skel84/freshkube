@@ -16,6 +16,8 @@ mod kubernetes_summary;
 mod link_tests;
 #[cfg(test)]
 mod menu_tests;
+#[path = "startup/migrate.rs"]
+mod migrate_startup;
 pub(crate) mod nodes;
 mod object_links;
 mod overview;
@@ -159,7 +161,7 @@ pub(crate) fn on_quit(cx: &mut App, quit: fn(&mut App)) {
 
 pub(crate) fn run(mut options: GpuiOptions, runtime: Handle) -> color_eyre::Result<()> {
     // Before anything reads the workspace.
-    options.setup_notice = startup::migrate_setup(&options);
+    options.setup_notice = migrate_startup::migrate_setup(&options);
     let error = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_error = error.clone();
     gpui_kit::application()
@@ -261,7 +263,7 @@ struct Owners {
     pages: page_map::Pages,
     chrome: shell::Chrome,
     navigation: shell::Navigation,
-    age_label: Entity<switch::AgeLabel>,
+    switch: switch::Switcher,
     subscriptions: Vec<Subscription>,
     tick: Task<()>,
 }
@@ -288,34 +290,14 @@ pub(crate) struct Pilot {
     configuration_read: Loader<(), Option<ConfigurationRead>>,
     epoch: u64,
     overview: Snapshot<ClusterOverview, AppliedConfig, String>,
-    /// The cluster sessions: a workspace of one.
-    registry: session::Registry,
-    /// How the active workspace entry was defined when it was opened.
-    active_definition: session::Definition,
-    /// The Talos entry waiting for its talosconfig's contexts.
-    entry_open: Option<switch::EntryOpen>,
-    /// A link into another entry, waiting for it to open.
-    pending_link: Option<switch::PendingLink>,
+    /// The workspace's entries and what the header's switcher shows of them.
+    switch: switch::Switcher,
     /// What the notices about links and switches said, for tests: the
     /// window offers no way to read a notice back.
     #[cfg(test)]
     pub(crate) told: Vec<String>,
-    /// The read that finds the default kubeconfig file an entry's context is in.
-    entry_locate: switch::EntryLocate,
-    /// The workspace revision the header's list was built from.
-    switcher_revision: u64,
-    /// When the restored summary on show was read; none once a read replaces it.
-    restored_taken: Option<std::time::SystemTime>,
-    /// "Last known · 3 min ago", beside the Overview's connection state.
-    age_label: Entity<switch::AgeLabel>,
-    /// The header's list of the workspace file's clusters.
-    switcher: Vec<switch::ClusterItem>,
-    /// One object-link lookup for the shell's target epoch. The caller also
-    /// checks its origin (for example, the object whose owner it resolves).
-    object_open: Loader<(), Option<u64>>,
-    services: Snapshot<Vec<ServiceInfo>, Target, String>,
-    nodes: Vec<NodeSummary>,
-    selected_node: Option<String>,
+    /// The Talos nodes, the one selected and what is read of it.
+    target: target::Selected,
     chrome: shell::Chrome,
     /// The pages: the map of every page's handle, and the typed handles
     /// the shell observes and pushes into.
@@ -342,7 +324,6 @@ pub(crate) struct Pilot {
     // The snapshots keep the display/freshness state and its existing request
     // tokens; these completion owners retain the jobs and their deliveries.
     overview_read: Loader<(), AppliedConfig>,
-    service_read: Loader<(), Option<Target>>,
     _tick: Task<()>,
 }
 
@@ -627,7 +608,8 @@ impl Pilot {
         Self::bind_shell_keys(cx);
         let mut subscriptions = Self::subscribe_shell(window, cx);
         let age_label = cx.new(|_| switch::AgeLabel::new());
-        let pages = page_map::Pages::new(&options, &runtime, &age_label, window, cx);
+        let switch = switch::Switcher::new(age_label);
+        let pages = page_map::Pages::new(&options, &runtime, &switch.age_label, window, cx);
         subscriptions.push(Self::observe_theme(window, cx));
         subscriptions.extend(pages.subscribe(window, cx));
         let tick = Self::start_tick(window, cx);
@@ -645,7 +627,7 @@ impl Pilot {
                 pages,
                 chrome,
                 navigation,
-                age_label,
+                switch,
                 subscriptions,
                 tick,
             },
@@ -739,7 +721,7 @@ impl Pilot {
             pages,
             chrome,
             navigation,
-            age_label,
+            switch,
             subscriptions,
             tick,
         } = owners;
@@ -759,11 +741,8 @@ impl Pilot {
             configuration_read: Loader::default(),
             epoch: 0,
             overview: Snapshot::default(),
-            registry: session::Registry::new(),
-            object_open: Loader::default(),
-            services: Snapshot::default(),
-            nodes: Vec::new(),
-            selected_node: None,
+            switch,
+            target: target::Selected::default(),
             chrome,
             settings_page: pages.settings_page.clone(),
             pages,
@@ -779,16 +758,8 @@ impl Pilot {
                 )
             }),
             kubeconfig: KubeconfigSelection::Automatic,
-            active_definition: Default::default(),
-            entry_open: None,
-            pending_link: None,
             #[cfg(test)]
             told: Vec::new(),
-            entry_locate: switch::EntryLocate::default(),
-            switcher_revision: 0,
-            restored_taken: None,
-            age_label,
-            switcher: Vec::new(),
             kubeconfig_draft: Default::default(),
             navigation,
             // The one place a hold is set: example data's, from
@@ -798,7 +769,6 @@ impl Pilot {
             window: window.window_handle(),
             _subscriptions: subscriptions,
             overview_read: Loader::default(),
-            service_read: Loader::default(),
             _tick: tick,
         }
     }
@@ -807,14 +777,12 @@ impl Pilot {
         self.epoch = self.epoch.wrapping_add(1);
         // The whole session goes, with its summary tasks, before anything
         // below rebuilds from it.
-        self.registry.reset_active();
+        self.switch.registry.reset_active();
         self.pages
             .search
             .update(cx, |search, cx| search.invalidate(cx));
         self.overview_read.resolve(self.applied.clone(), Ok(()));
-        self.service_read.resolve(None, Ok(()));
-        self.selected_node = None;
-        self.nodes.clear();
+        self.target.clear_nodes();
         self.pages
             .system_services
             .update(cx, |services, cx| services.set_nodes(&[], cx));
@@ -822,9 +790,9 @@ impl Pilot {
             .node_workspace
             .update(cx, |nodes, _| nodes.load_history.clear());
         self.overview = Snapshot::default();
-        self.pages
-            .system_services
-            .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
+        self.pages.system_services.update(cx, |services, cx| {
+            services.set_nodes(&self.target.nodes, cx)
+        });
         self.rebuild_joined_nodes(cx);
         self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
@@ -834,8 +802,8 @@ impl Pilot {
         self.pages
             .overview_page
             .update(cx, |overview, cx| overview.collapse(cx));
-        self.cancel_object_open();
-        self.services = Snapshot::default();
+        self.target.cancel_object_open();
+        self.target.services = Snapshot::default();
         self.push_services(cx);
         self.pages
             .logs
@@ -871,7 +839,7 @@ impl Pilot {
                         view.loaded_config_path = Some(catalog.path);
                         view.contexts = catalog.names;
                         if view.applied.context.is_none() {
-                            if view.entry_open.is_some() {
+                            if view.switch.entry_open.is_some() {
                                 // An entry names its Talos context or has the
                                 // one its `context` names; the file's current
                                 // context never stands in.
@@ -884,7 +852,7 @@ impl Pilot {
                             } else if view.contexts.contains(&catalog.current) {
                                 view.applied.context = Some(catalog.current);
                             } else {
-                                view.pending_link = None;
+                                view.switch.pending_link = None;
                                 view.config_error = Some(format!(
                                     "Talos context '{}' was not found",
                                     catalog.current
@@ -898,7 +866,7 @@ impl Pilot {
                         view.refresh(window, cx);
                     }
                     Err(error) => {
-                        view.pending_link = None;
+                        view.switch.pending_link = None;
                         view.config_error = Some(error);
                         view.rebuild_joined_nodes(cx);
                         view.prepare_context_display(window, cx);
@@ -976,15 +944,9 @@ impl Pilot {
         .detach();
     }
 
-    fn selected_summary(&self) -> Option<&NodeSummary> {
-        self.nodes
-            .iter()
-            .find(|node| Some(&node.name) == self.selected_node.as_ref())
-    }
-
     fn target(&self) -> Option<(Target, TalosClient)> {
         let cluster = self.overview.data()?;
-        let node = self.selected_summary()?;
+        let node = self.target.summary()?;
         Some((
             Target {
                 epoch: self.epoch,
@@ -1003,7 +965,8 @@ impl Pilot {
             // With nothing reading yet, Health's Retry reads the kubeconfig
             // and connects again too.
             ScreenEvent::RefreshSummary
-                if !self.mode().has_talos() && self.registry.active().summary_session.is_none() =>
+                if !self.mode().has_talos()
+                    && self.switch.registry.active().summary_session.is_none() =>
             {
                 self.refresh(window, cx)
             }
@@ -1017,7 +980,7 @@ impl Pilot {
                 self.open_node_by_name(node, nodes::NodeTab::Overview, window, cx)
             }
             ScreenEvent::OpenLogsOn { node, service } => {
-                if !self.nodes.iter().any(|known| &known.name == node) {
+                if !self.target.has_node(node) {
                     return;
                 }
                 self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);
@@ -1045,7 +1008,7 @@ impl Pilot {
         for (_, screen) in self.pages.map.iter().filter(|(id, _)| id.is_screen()) {
             screen.set_page_source(source.clone(), window, cx);
         }
-        if let Some(data) = self.registry.active().summary_health.clone() {
+        if let Some(data) = self.switch.registry.active().summary_health.clone() {
             self.deliver_workloads(data, cx);
         }
         self.sync_unread_health(cx);
@@ -1079,7 +1042,7 @@ impl Pilot {
     /// A refresh the user asked for. Unlike the automatic one it also lists
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.registry.active_mut().prompted_access = None;
+        self.switch.registry.active_mut().prompted_access = None;
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
         // The screens refresh with the shell, above.
@@ -1138,7 +1101,7 @@ impl Pilot {
             self.runtime.clone(),
             self.applied.clone(),
             self.kubeconfig.clone(),
-            self.observed_nodes(),
+            self.switch.observed_nodes(),
         );
         let completion = self.overview_read.start(self.applied.clone());
         let task = cx.spawn_in(window, async move |this, cx| {

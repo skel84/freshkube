@@ -5,7 +5,7 @@ use std::{io::ErrorKind, path::PathBuf, time::Duration};
 use freshkube_core::{
     BoundedReadError, read_bounded_regular_file,
     setup::{self, Setup},
-    workspace::{MAX_BYTES, Seen},
+    workspace::{MAX_BYTES, Seen, Workspace},
 };
 use gpui_kit::{AppContext, Context, EventEmitter, Task};
 
@@ -14,7 +14,7 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Includes the inode because editors commonly replace a file by rename.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum FileStat {
+enum FileStat {
     Missing,
     Unreadable(ErrorKind),
     Present {
@@ -27,7 +27,7 @@ pub(crate) enum FileStat {
 }
 
 impl FileStat {
-    pub(crate) fn read(file: &std::path::Path) -> Self {
+    fn read(file: &std::path::Path) -> Self {
         freshkube_probe::probe::hit("setup.stat");
         match std::fs::metadata(file) {
             Ok(metadata) => Self::Present {
@@ -49,8 +49,13 @@ pub(crate) struct SetupFile {
     pub(crate) seen: Seen,
     pub(crate) problem: Option<String>,
     pub(crate) receipt: Option<String>,
+    receipt_label: String,
+    file: Option<PathBuf>,
+    last_written: Option<Seen>,
+    pub(crate) coroot_reconnect: bool,
     stat: FileStat,
     write_generation: u64,
+    writing: bool,
     _poll: Option<Task<()>>,
 }
 
@@ -68,8 +73,16 @@ impl SetupFile {
             seen: Seen::Missing,
             problem: None,
             receipt: None,
+            receipt_label: String::new(),
+            file: preferences
+                .as_ref()
+                .filter(|_| !example)
+                .map(|path| path.with_file_name("freshkube.yaml")),
+            last_written: None,
+            coroot_reconnect: true,
             stat: FileStat::Missing,
             write_generation: 0,
+            writing: false,
             _poll: None,
         };
         if let Some(preferences) = preferences.filter(|_| !example) {
@@ -83,6 +96,28 @@ impl SetupFile {
 
     fn watch(file: PathBuf, cx: &Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
+            let preferences = file.with_file_name("preferences.json");
+            let reconnect = cx
+                .background_spawn(async move {
+                    freshkube_prefs::Document::<serde_json::Map<String, serde_json::Value>>::at(
+                        &preferences,
+                        freshkube_prefs::Layout::Pretty,
+                        0o666,
+                    )
+                    .limited_to(MAX_BYTES)
+                    .load()
+                    .value
+                    .get("coroot_reconnect")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(true)
+                })
+                .await;
+            if this
+                .update(cx, |this, _| this.coroot_reconnect = reconnect)
+                .is_err()
+            {
+                return;
+            }
             let mut initial = true;
             loop {
                 if !initial {
@@ -146,7 +181,7 @@ impl SetupFile {
                     if let Some(outcome) = read {
                         if this
                             .update(cx, |this, cx| {
-                                if generation == this.write_generation {
+                                if generation == this.write_generation && !this.writing {
                                     this.apply(stat.clone(), outcome, initial, cx);
                                 }
                             })
@@ -169,15 +204,114 @@ impl SetupFile {
         })
     }
 
-    /// Slice 4 calls this with the bytes and stat returned by its save.
     /// Invalidates an in-flight read as well as suppressing the next poll.
-    #[allow(dead_code)] // The Settings write path is the next slice.
-    pub(crate) fn record_write(&mut self, setup: Setup, seen: Seen, stat: FileStat) {
+    fn record_write(&mut self, setup: Setup, seen: Seen, stat: FileStat) {
         self.setup = Some(setup);
         self.problem = None;
+        self.last_written = Some(seen.clone());
         self.seen = seen;
         self.stat = stat;
         self.write_generation = self.write_generation.wrapping_add(1);
+    }
+
+    pub(crate) fn is_missing(&self) -> bool {
+        self.stat == FileStat::Missing
+    }
+
+    pub(crate) fn saves_refused(&self) -> bool {
+        self.problem.is_some() && !self.is_missing()
+    }
+
+    /// The compact status text; the full receipt stays in its tooltip.
+    pub(crate) fn receipt_label(&self) -> &str {
+        &self.receipt_label
+    }
+
+    fn set_receipt(&mut self, action: &str, note: &str) {
+        let now = chrono::Local::now();
+        let time = now.format("%H:%M");
+        self.receipt_label = format!("{action} · {time}");
+        self.receipt = Some(format!("{action} freshkube.yaml{note} · {time}"));
+    }
+
+    /// Saves a Settings edit without replacing any of the setup's other parts.
+    /// The page retains the delivery task until the write has answered.
+    pub(crate) fn save_workspace(
+        &mut self,
+        workspace: Workspace,
+        expected: Seen,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), SaveError>> {
+        let Some(file) = self.file.clone() else {
+            return Task::ready(Err(SaveError::Failed("There is nowhere to save".into())));
+        };
+        self.writing = true;
+        self.write_generation = self.write_generation.wrapping_add(1);
+        let setup = match self.setup.clone() {
+            Some(mut setup) => {
+                setup.workspace = workspace;
+                setup
+            }
+            None => Setup::new(workspace),
+        };
+        let own = self.last_written.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(
+                    async move { save_on_disk(&file, &expected, own.as_ref(), setup) },
+                )
+                .await;
+            this.update(cx, |this, cx| this.finish_save(result, cx))
+                .unwrap_or_else(|_| Err(SaveError::Failed("The setup owner closed".into())))
+        })
+    }
+
+    fn finish_save(
+        &mut self,
+        result: Result<Write, Refused>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), SaveError> {
+        self.writing = false;
+        match result {
+            Ok(write) => {
+                self.record_write(write.setup, write.seen, write.stat);
+                let backup = if write.backup {
+                    " · the hand-edited file is freshkube.yaml.bak"
+                } else {
+                    ""
+                };
+                self.set_receipt("Saved", backup);
+                cx.emit(Event::Changed {
+                    setup_changed: true,
+                });
+                Ok(())
+            }
+            Err(refused) => {
+                if let Some(disk) = refused.disk {
+                    let (stat, outcome) = *disk;
+                    self.apply(stat, outcome, false, cx);
+                }
+                Err(refused.error)
+            }
+        }
+    }
+
+    /// An explicit Reload bypasses the polling interval, off the UI thread.
+    pub(crate) fn reload(&mut self, cx: &mut Context<Self>) -> Task<()> {
+        let Some(file) = self.file.clone() else {
+            return Task::ready(());
+        };
+        // An older poll must not publish after this explicit read.
+        self.write_generation = self.write_generation.wrapping_add(1);
+        let generation = self.write_generation;
+        cx.spawn(async move |this, cx| {
+            let (stat, disk) = cx.background_spawn(async move { read_now(&file) }).await;
+            _ = this.update(cx, |this, cx| {
+                if this.write_generation == generation {
+                    this.apply(stat, disk, false, cx);
+                }
+            });
+        })
     }
 
     fn apply(&mut self, stat: FileStat, outcome: Outcome, initial: bool, cx: &mut Context<Self>) {
@@ -187,6 +321,10 @@ impl SetupFile {
         self.problem = match outcome {
             Outcome::Parsed(Ok(setup), bytes) => {
                 let setup = *setup;
+                // Recognize canonical output from a prior save or migration.
+                if initial && setup::to_text(&setup).as_bytes() == bytes {
+                    self.last_written = Some(Seen::Bytes(bytes.clone()));
+                }
                 if self.seen != Seen::Bytes(bytes.clone()) {
                     setup_changed = self.setup.as_ref() != Some(&setup);
                     self.setup = Some(setup);
@@ -201,14 +339,15 @@ impl SetupFile {
             }
             Outcome::Missing => None,
         };
+        if self.problem.is_some() || matches!(self.stat, FileStat::Missing) {
+            self.receipt = None;
+            self.receipt_label.clear();
+        }
         if initial {
             cx.emit(Event::Ready);
         } else if setup_changed || old_problem != self.problem {
             if setup_changed {
-                self.receipt = Some(format!(
-                    "Reloaded freshkube.yaml · {}",
-                    chrono::Local::now().format("%H:%M")
-                ));
+                self.set_receipt("Reloaded", "");
             }
             cx.emit(Event::Changed { setup_changed });
         }
@@ -222,6 +361,107 @@ impl SetupFile {
         };
         format!("freshkube.yaml isn't used: {why}. {rest}")
     }
+}
+
+#[derive(Debug)]
+pub(crate) enum SaveError {
+    Changed,
+    Failed(String),
+}
+
+impl std::fmt::Display for SaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Changed => f.write_str("freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is."),
+            Self::Failed(why) => f.write_str(why),
+        }
+    }
+}
+
+struct Write {
+    setup: Setup,
+    seen: Seen,
+    stat: FileStat,
+    backup: bool,
+}
+
+struct Refused {
+    error: SaveError,
+    disk: Option<Box<(FileStat, Outcome)>>,
+}
+
+fn save_on_disk(
+    file: &std::path::Path,
+    expected: &Seen,
+    own: Option<&Seen>,
+    setup: Setup,
+) -> Result<Write, Refused> {
+    let (stat, disk) = read_now(file);
+    let current = match &disk {
+        Outcome::Parsed(Ok(_), bytes) => Seen::Bytes(bytes.clone()),
+        Outcome::Missing => Seen::Missing,
+        _ => {
+            return Err(Refused {
+                error: SaveError::Failed(
+                    "freshkube.yaml isn't usable. Nothing was written.".into(),
+                ),
+                disk: Some(Box::new((stat, disk))),
+            });
+        }
+    };
+    // A deleted file may be recreated by the next Settings save.
+    if current != *expected && current != Seen::Missing {
+        return Err(Refused {
+            error: SaveError::Changed,
+            disk: Some(Box::new((stat, disk))),
+        });
+    }
+    let backup = matches!(current, Seen::Bytes(_)) && own != Some(&current);
+    match setup::commit_with_backup(file, &current, &setup, backup) {
+        Ok(seen) => {
+            let mut stat = FileStat::read(file);
+            // Never acknowledge an editor's later stat as our own write.
+            if let Seen::Bytes(bytes) = &seen
+                && read_bounded_regular_file(file, MAX_BYTES).ok().as_ref() != Some(bytes)
+            {
+                stat = FileStat::Unreadable(ErrorKind::WouldBlock);
+            }
+            Ok(Write {
+                setup,
+                seen,
+                stat,
+                backup,
+            })
+        }
+        Err(error) => Err(match error {
+            setup::SaveError::Changed => Refused {
+                error: SaveError::Changed,
+                disk: Some(Box::new(read_now(file))),
+            },
+            setup::SaveError::Invalid(why) => Refused {
+                error: SaveError::Failed(why.to_string()),
+                disk: None,
+            },
+            setup::SaveError::Write(_) => Refused {
+                error: SaveError::Failed(
+                    "Couldn't save freshkube.yaml or its backup. The setup file is as it was."
+                        .into(),
+                ),
+                disk: None,
+            },
+        }),
+    }
+}
+
+fn read_now(file: &std::path::Path) -> (FileStat, Outcome) {
+    let stat = FileStat::read(file);
+    let outcome = match read_bounded_regular_file(file, MAX_BYTES) {
+        Ok(bytes) => Outcome::Parsed(setup::parse(&bytes).map(Box::new), bytes),
+        Err(BoundedReadError::NotFound) => Outcome::Missing,
+        Err(BoundedReadError::TooLarge) => Outcome::Problem("it is larger than 256 KiB".into()),
+        Err(_) => Outcome::Problem("it could not be read as a regular file".into()),
+    };
+    (stat, outcome)
 }
 
 enum Outcome {

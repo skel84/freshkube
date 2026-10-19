@@ -23,7 +23,7 @@ async fn a_setup_connection_reads_its_key_only_when_shown_and_keeps_the_legacy_f
     cx.update_window(handle, |_, window, cx| {
         page.update(cx, |page, cx| {
             page.set_visible(false, cx);
-            page.set_setup_connection(&Some(connection), window, cx);
+            page.set_setup_connection(&Some(connection), true, window, cx);
             assert!(page.live.provider.is_none());
             assert!(!page.memory.as_ref().unwrap().reading);
         });
@@ -42,7 +42,7 @@ async fn a_setup_connection_reads_its_key_only_when_shown_and_keeps_the_legacy_f
     assert_eq!(std::fs::read_to_string(&legacy).unwrap(), saved);
     cx.update_window(handle, |_, window, cx| {
         page.update(cx, |page, cx| {
-            page.set_setup_connection(&None, window, cx);
+            page.set_setup_connection(&None, true, window, cx);
             assert!(page.live.provider.is_none());
             assert!(page.url.read(cx).value().is_empty());
         });
@@ -485,4 +485,127 @@ async fn a_pasted_key_is_trimmed_and_a_refused_one_says_which_key_coroot_wants(
         let page = page.read(cx);
         assert!(page.live.provider.is_some(), "{:?}", page.live.error);
     });
+}
+
+#[gpui_kit::test]
+async fn a_setup_disconnect_and_connect_save_the_reconnect_preference(cx: &mut TestAppContext) {
+    use freshkube_core::setup::{Coroot, SignIn};
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    std::fs::write(&preferences, r#"{"future":true,"coroot_reconnect":true}"#).unwrap();
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let server = Server::new(&runtime);
+    let connection = Coroot::new(server.url.clone(), SignIn::Anonymous);
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_setup_connection(&Some(connection), true, window, cx)
+        });
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
+        .await;
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| page.show_connection(cx));
+        window.render_frame(cx);
+        window.click("obs-disconnect", cx);
+    })
+    .unwrap();
+    let preference = |expected: bool| {
+        std::fs::read(&preferences)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .is_some_and(|value| value["coroot_reconnect"] == expected && value["future"] == true)
+    };
+    cx.wait_for_io(handle, |_, _| preference(false)).await;
+    cx.update_window(handle, |_, window, cx| {
+        assert!(page.read(cx).live.provider.is_none());
+        assert_eq!(page.read(cx).coroot_url(cx), server.url);
+        window.click("obs-connect", cx);
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| {
+        preference(true) && page.read(cx).live.provider.is_some()
+    })
+    .await;
+    assert!(!directory.path().join("coroot.json").exists());
+}
+
+#[gpui_kit::test]
+async fn a_disconnect_survives_setup_changes_until_an_explicit_connect(cx: &mut TestAppContext) {
+    use freshkube_core::setup::{Coroot, SignIn};
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let first = Server::new(&runtime);
+    let second = Server::new(&runtime);
+    let connection = Coroot::new(first.url.clone(), SignIn::Anonymous);
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_setup_connection(&Some(connection.clone()), true, window, cx);
+        });
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
+        .await;
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| page.show_connection(cx));
+        window.render_frame(cx);
+        window.click("obs-disconnect", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+
+    let mut changed_project = connection;
+    changed_project.project = Some("p2".into());
+    let replacement = Coroot::new(second.url.clone(), SignIn::Anonymous);
+    for changed in [Some(changed_project), None, Some(replacement.clone())] {
+        cx.update_window(handle, |_, window, cx| {
+            page.update(cx, |page, cx| {
+                // Desktop still passes the launch's true flag on each reload.
+                page.set_setup_connection(&changed, true, window, cx);
+                assert!(!page.live.connecting, "a reload must respect Disconnect");
+                assert!(page.live.provider.is_none());
+            });
+        })
+        .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(2));
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let page = page.read(cx);
+            assert!(!page.live.connecting);
+            assert!(page.live.provider.is_none());
+        });
+        assert!(second.paths.lock().unwrap().is_empty());
+    }
+
+    // An explicit Connect can change the choice for the rest of the session.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(page.read(cx).coroot_url(cx), second.url);
+        window.click("obs-connect", cx);
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
+        .await;
+    let mut changed_again = replacement;
+    changed_again.project = Some("p2".into());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_setup_connection(&Some(changed_again), false, window, cx);
+        });
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| {
+        page.read(cx)
+            .live
+            .source
+            .as_ref()
+            .is_some_and(|source| source.project() == "p2")
+    })
+    .await;
 }

@@ -1,6 +1,6 @@
 //! The Settings page: one section at a time, the one its column chose
 //! (`sections.rs`). Clusters lists the clusters of the workspace file
-//! (`workspace.json`, `freshkube_core::workspace`) and edits them: the shell
+//! (`freshkube.yaml`, through `SetupFile`) and edits them: the shell
 //! hands it what the file held at launch, and every change is saved at
 //! once, off the UI thread (`edit.rs`). Argo CD destinations map what an
 //! Application names to one of them (`destinations/`). Delivery sources say
@@ -39,8 +39,6 @@ const MOST_KEYS_NAMED: usize = 5;
 
 /// The page's id prefix: `settings-title`, `-list`, `-banner`.
 const PREFIX: &str = "settings";
-const HAND_EDITED: &str =
-    "freshkube.yaml is edited by hand for now; Settings saves to it in a later version";
 /// The list's key context, around the table.
 pub(super) const CONTEXT: &str = "SettingsWorkspace";
 
@@ -63,7 +61,7 @@ gpui_kit::actions!(
         MoveClusterUp,
         /// Moves the selected cluster down one place.
         MoveClusterDown,
-        /// Reads workspace.json again.
+        /// Reads freshkube.yaml again.
         ReloadWorkspace
     ]
 );
@@ -116,7 +114,7 @@ pub(crate) struct SettingsPage {
     setup_refusal: bool,
     pending_setup: bool,
     uses_setup: bool,
-    /// `workspace.json`; none without a preferences folder.
+    /// `freshkube.yaml`; none without a preferences folder.
     file: Option<PathBuf>,
     /// What the file held when it was last read or written, to refuse a
     /// save over a change made since.
@@ -153,8 +151,7 @@ pub(crate) struct SettingsPage {
 }
 
 impl SettingsPage {
-    /// Keeps the existing JSON path until a parsed setup is available.
-    /// A form already open when YAML arrives keeps its draft behind Reload.
+    /// Takes the last good setup; a draft waits behind Reload when disk changes.
     pub(super) fn sync_setup(
         &mut self,
         file: Entity<crate::setup_file::SetupFile>,
@@ -164,30 +161,49 @@ impl SettingsPage {
         let model = file.read(cx);
         let setup = model.setup.clone();
         let problem = model.problem.clone();
-        if setup.is_none() && problem.is_none() && !self.setup_refusal {
-            self.setup_file = Some(file);
-            return;
-        }
-        self.setup_refusal = setup.is_some() || problem.is_some();
+        let seen = if model.is_missing() {
+            workspace::Seen::Missing
+        } else {
+            model.seen.clone()
+        };
+        let changed_on_disk = self.seen != seen;
+        self.setup_refusal = model.saves_refused();
         self.setup_file = Some(file);
         if let Some(setup) = setup {
-            if defer && (!self.uses_setup || self.workspace != setup.workspace) {
+            if defer && self.seen != seen {
                 self.pending_setup = true;
             } else if !defer {
                 self.pending_setup = false;
+                self.seen = seen;
                 if !self.uses_setup || self.workspace != setup.workspace {
                     self.uses_setup = true;
                     self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);
                 }
+                self.set_unknown_warning(cx);
             }
+        } else if !defer {
+            self.seen = seen;
         }
-        self.banner = if self.pending_setup {
-            Some("freshkube.yaml changed on disk. Reload to drop the unsaved changes.".into())
-        } else {
-            problem
-                .map(Into::into)
-                .or_else(|| self.uses_setup.then(|| HAND_EDITED.into()))
-        };
+        if problem.is_some()
+            || ((changed_on_disk || self.pending_setup)
+                && matches!(self.notice, Some(Notice::Saved(_))))
+        {
+            self.notice = None;
+        }
+        let legacy_banner = (!self.uses_setup && matches!(self.origin, Origin::Refused(_)))
+            .then(|| self.banner.clone())
+            .flatten();
+        self.banner = problem
+            .clone()
+            .map(Into::into)
+            .or_else(|| {
+                self.pending_setup.then(|| {
+                    "freshkube.yaml changed on disk. Reload to drop the unsaved changes.".into()
+                })
+            })
+            .or(legacy_banner);
+        self.sources
+            .update(cx, |sources, cx| sources.set_setup_problem(problem, cx));
         cx.notify();
     }
 
@@ -298,30 +314,7 @@ impl SettingsPage {
         };
         self.workspace = workspace.clone();
         self.revision = self.revision.wrapping_add(1);
-        self.warning = match workspace.unknown_keys().as_slice() {
-            [] => None,
-            keys => {
-                let shown = keys
-                    .iter()
-                    .take(MOST_KEYS_NAMED)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let more = keys.len().saturating_sub(MOST_KEYS_NAMED);
-                Some(
-                    format!(
-                        "workspace.json has keys this version doesn’t use: {}{}. They are kept \
-                         when the file is saved; check them for a misspelling.",
-                        shown.join(", "),
-                        if more > 0 {
-                            format!(" and {more} more")
-                        } else {
-                            String::new()
-                        }
-                    )
-                    .into(),
-                )
-            }
-        };
+        self.set_unknown_warning(cx);
         self.rows = workspace
             .clusters
             .iter()
@@ -357,8 +350,7 @@ impl SettingsPage {
         self.banner = match &origin {
             Origin::Refused(why) => Some(
                 format!(
-                    "workspace.json isn’t used: {why}. Freshkube leaves the file as it is until \
-                     you save a change, which sets it aside first."
+                    "workspace.json isn’t used: {why}. Freshkube leaves it as it is; Settings saves changes in freshkube.yaml."
                 )
                 .into(),
             ),
@@ -414,12 +406,7 @@ impl SettingsPage {
                             Part::new(if self.origin == Origin::Example {
                                 "Example workspace".to_owned()
                             } else {
-                                if self.uses_setup {
-                                    "freshkube.yaml"
-                                } else {
-                                    "workspace.json"
-                                }
-                                .to_owned()
+                                "freshkube.yaml".to_owned()
                             })
                             .minor(),
                         ),
@@ -438,6 +425,42 @@ impl SettingsPage {
             self.selected = None;
         }
         cx.notify();
+    }
+
+    fn set_unknown_warning(&mut self, cx: &App) {
+        self.warning = match self
+            .setup_file
+            .as_ref()
+            .and_then(|file| file.read(cx).setup.as_ref())
+            .map_or_else(
+                || self.workspace.unknown_keys(),
+                |setup| setup.unknown_keys(),
+            )
+            .as_slice()
+        {
+            [] => None,
+            keys => {
+                let shown = keys
+                    .iter()
+                    .take(MOST_KEYS_NAMED)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let more = keys.len().saturating_sub(MOST_KEYS_NAMED);
+                Some(
+                    format!(
+                        "freshkube.yaml has keys this version doesn’t use: {}{}. They are kept \
+                         when the file is saved; check them for a misspelling.",
+                        shown.join(", "),
+                        if more > 0 {
+                            format!(" and {more} more")
+                        } else {
+                            String::new()
+                        }
+                    )
+                    .into(),
+                )
+            }
+        };
     }
 
     /// Puts the keyboard on the section's list, where its keys are bound,
@@ -463,6 +486,9 @@ impl SettingsPage {
     /// Shows `section`; Delivery sources checks only while it shows.
     pub(super) fn show(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         if self.section != section {
+            if matches!(self.notice, Some(Notice::Saved(_))) {
+                self.notice = None;
+            }
             self.section = section;
             self.sync_sources(cx);
             cx.notify();
@@ -534,8 +560,14 @@ impl SettingsPage {
         if let Some(body) = &self.banner {
             banners.push(banner(
                 "settings-banner",
-                if self.setup_refusal {
+                if self
+                    .setup_file
+                    .as_ref()
+                    .is_some_and(|file| file.read(cx).problem.is_some())
+                {
                     "Setup file"
+                } else if self.pending_setup {
+                    "Unsaved edit is stale"
                 } else {
                     "Workspace file not used"
                 },
@@ -636,11 +668,7 @@ impl SettingsPage {
             "reload",
             "Reload",
             reloadable,
-            if self.setup_refusal {
-                "Read freshkube.yaml again"
-            } else {
-                "Read workspace.json again"
-            },
+            "Read freshkube.yaml again",
             ReloadWorkspace,
             |this, _, cx| this.reload(cx),
             cx,
@@ -792,7 +820,7 @@ impl super::Pilot {
         let file = self.workspace_file.clone();
         let setup_file = self.setup_file.clone();
         self.settings_page.update(cx, |page, cx| {
-            page.file = file;
+            page.file = file.map(|file| file.with_file_name("freshkube.yaml"));
             page.seen = seen;
             page.uses_setup = setup.is_some();
             page.set_workspace(&loaded, example, cx);

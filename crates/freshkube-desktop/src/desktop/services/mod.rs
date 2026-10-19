@@ -263,7 +263,7 @@ impl Pilot {
     /// Hands the tab the services as they stand now. Called after every
     /// change to the read: a new node, a request, an answer, a reset.
     pub(super) fn push_services(&self, cx: &mut App) {
-        let reading = ServicesReading::of(&self.services);
+        let reading = ServicesReading::of(&self.target.services);
         self.pages
             .node_workspace
             .read(cx)
@@ -293,7 +293,7 @@ impl Pilot {
             context: self.applied.context.clone().unwrap_or_default(),
             talos,
             stale_talos: StaleTalos::of(&self.overview),
-            node: self.selected_summary().map(|node| ServiceNode {
+            node: self.target.summary().map(|node| ServiceNode {
                 name: node.name.clone(),
                 address: node.address.clone(),
                 responding: node.responding,

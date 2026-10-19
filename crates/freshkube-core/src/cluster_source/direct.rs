@@ -67,6 +67,11 @@ impl DirectAccess {
         self.identity.configuration()
     }
 
+    /// The kubeconfig files the context is read from, in merge order.
+    pub fn sources(&self) -> &[PathBuf] {
+        &self.sources
+    }
+
     pub fn context(&self) -> &str {
         &self.context
     }

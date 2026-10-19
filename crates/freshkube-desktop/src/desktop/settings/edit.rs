@@ -2,9 +2,8 @@
 //! end in. A change is a changed copy of the workspace, checked with
 //! `Workspace::validate`, written whole off the UI thread, and shown once the
 //! write has happened; a failed write leaves the page and the file as they
-//! were. The first save after a refused file sets that file aside.
+//! were. SetupFile protects hand edits and never writes over a broken file.
 use super::*;
-use chrono::Utc;
 use freshkube_core::workspace::{Destination, Entry, Fault, Key};
 
 impl SettingsPage {
@@ -15,16 +14,15 @@ impl SettingsPage {
             && self.origin != Origin::Example
             && self.saving.is_none()
             && !self.setup_refusal
+            && !self.pending_setup
     }
 
     /// Why the changing actions are off, for their tooltips.
     pub(super) fn why_not_editable(&self) -> &'static str {
-        if self.setup_refusal {
-            if self.pending_setup {
-                "freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is."
-            } else {
-                HAND_EDITED
-            }
+        if self.pending_setup {
+            "freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is."
+        } else if self.setup_refusal {
+            "freshkube.yaml isn't usable. Nothing was written; fix the file and reload."
         } else if self.origin == Origin::Example {
             "Example data isn’t saved"
         } else if self.file.is_none() {
@@ -144,7 +142,7 @@ impl SettingsPage {
             ),
         };
         let body = format!(
-            "This takes the cluster out of the workspace file. Nothing on the cluster, and \
+            "This takes the cluster out of freshkube.yaml. Nothing on the cluster, and \
              no kubeconfig or talosconfig, is touched.{body}"
         );
         window.open_dialog(cx, move |dialog, window, _| {
@@ -331,126 +329,71 @@ impl SettingsPage {
     /// was last read or written: a hand edit, or a file another window made,
     /// is never replaced.
     pub(super) fn commit(&mut self, next: Workspace, what: String, cx: &mut Context<Self>) {
-        if self.setup_refusal {
-            if self.banner.is_none() {
-                self.banner = Some(self.why_not_editable().into());
-            }
-            cx.notify();
+        if !self.editable() {
             return;
         }
-        let Some(file) = self.file.clone() else {
+        let Some(file) = self.setup_file.clone() else {
             return;
         };
-        let refused = matches!(self.origin, Origin::Refused(_));
-        let expected = self.seen.clone();
+        let save = file.update(cx, |file, cx| {
+            file.save_workspace(next, self.seen.clone(), cx)
+        });
         self.notice = None;
-        let shown = next.clone();
         self.saving = Some(cx.spawn(async move |this, cx| {
-            let outcome = cx
-                .background_spawn(async move {
-                    workspace::commit(&file, &expected, refused, &next, Utc::now())
-                })
-                .await;
-            _ = this.update(cx, |this, cx| this.saved(shown, what, outcome, cx));
+            let outcome = save.await;
+            _ = this.update(cx, |this, cx| this.saved(what, outcome, cx));
         }));
         cx.notify();
     }
 
     fn saved(
         &mut self,
-        saved: Workspace,
         what: String,
-        outcome: Result<(Option<PathBuf>, workspace::Seen), workspace::SaveError>,
+        outcome: Result<(), crate::setup_file::SaveError>,
         cx: &mut Context<Self>,
     ) {
-        use workspace::SaveError;
         self.saving = None;
-        if outcome.is_err() {
-            self.select_on_save = None;
-        }
+        let Some(file) = self.setup_file.clone() else {
+            return;
+        };
         match outcome {
-            Ok((aside, seen)) => {
-                self.set_workspace(&Loaded::Workspace(saved), false, cx);
-                self.seen = seen;
+            Ok(()) => {
+                self.sync_setup(file.clone(), false, cx);
                 if let Some(id) = self.select_on_save.take() {
                     self.select(id, cx);
                 }
-                self.notice = Some(Notice::Saved(
-                    match aside {
-                        Some(path) => format!(
-                            "{what} The earlier file was set aside as {}, beside it.",
-                            path.file_name().map_or_else(
-                                || path.display().to_string(),
-                                |name| name.to_string_lossy().into_owned()
-                            )
-                        ),
-                        None => what,
-                    }
-                    .into(),
-                ));
-            }
-            Err(SaveError::Changed) => {
-                self.notice = Some(Notice::Failed(
-                    "workspace.json changed on disk since it was read. Nothing was written; \
-                     reload to see the file as it is."
-                        .into(),
-                ));
-            }
-            Err(SaveError::Invalid(why)) => {
-                self.notice = Some(Notice::Failed(capitalized(&why.to_string()).into()));
-            }
-            Err(SaveError::Aside(error)) => {
-                self.notice = Some(Notice::Failed(
-                    format!(
-                        "Couldn’t set the unused workspace.json aside: {error}. Nothing was \
-                         written."
-                    )
-                    .into(),
-                ));
-            }
-            Err(SaveError::Write { aside, error }) => {
-                // An unused file moved before the write failed: the page now
-                // has no file to protect.
-                let moved = aside
-                    .map(|path| format!(" The earlier file was set aside as {}.", path.display()));
-                if moved.is_some() {
-                    self.set_workspace(&Loaded::Missing, false, cx);
-                    self.seen = workspace::Seen::Missing;
+                if let Some(receipt) = &file.read(cx).receipt {
+                    self.notice = Some(Notice::Saved(format!("{what} {receipt}").into()));
                 }
-                let rest = moved.unwrap_or_else(|| " The file is as it was.".into());
-                self.notice = Some(Notice::Failed(format!("{error}.{rest}").into()));
             }
-        }
-        // A YAML edit may have arrived while this already-submitted JSON
-        // save was running. Keep its refusal and Reload banner in place.
-        if self.setup_refusal
-            && let Some(file) = self.setup_file.clone()
-        {
-            self.sync_setup(file, self.pending_setup, cx);
+            Err(error) => {
+                self.select_on_save = None;
+                self.pending_setup |= matches!(error, crate::setup_file::SaveError::Changed);
+                self.sync_setup(file, self.pending_setup, cx);
+                self.notice = Some(Notice::Failed(error.to_string().into()));
+            }
         }
         cx.notify();
     }
 
-    /// Reads the file again, as the person asked: after a change made by
-    /// hand, or by another window. The read is the bounded one the launch
-    /// makes, on the UI thread, and happens only on this action.
+    /// Reads immediately through the owner, dropping a draft only on Reload.
     pub(super) fn reload(&mut self, cx: &mut Context<Self>) {
-        if self.setup_refusal {
-            if let Some(file) = self.setup_file.clone() {
-                self.sync_setup(file, false, cx);
-            }
-            return;
-        }
-        let Some(file) = self.file.clone() else {
-            return;
-        };
         if self.origin == Origin::Example || self.saving.is_some() {
             return;
         }
-        let (loaded, seen) = workspace::load_seen(&file);
-        self.set_workspace(&loaded, false, cx);
-        self.seen = seen;
-        self.notice = None;
+        let Some(file) = self.setup_file.clone() else {
+            return;
+        };
+        let read = file.update(cx, |file, cx| file.reload(cx));
+        self.saving = Some(cx.spawn(async move |this, cx| {
+            read.await;
+            _ = this.update(cx, |this, cx| {
+                this.saving = None;
+                this.notice = None;
+                this.pending_setup = false;
+                this.sync_setup(file, false, cx);
+            });
+        }));
         cx.notify();
     }
 }

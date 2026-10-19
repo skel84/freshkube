@@ -126,6 +126,7 @@ pub fn derive(
             warehouse,
             &[],
         );
+        hop.after = Some("freight".into());
         // The link's subject is the Freight; the row names its Warehouse.
         if let Some(name) = &freight.warehouse {
             hop.name = format!("Warehouse {name}");
@@ -146,7 +147,9 @@ pub fn derive(
         hops.push(hop);
     }
     if let Some(why) = evidence.kargo.stages.why_not_read() {
-        hops.push(unread_stages(&sides, &why));
+        let mut unread = unread_stages(&sides, &why);
+        unread.after = Some("freight".into());
+        hops.push(unread);
     }
 
     let mut model = Vec::new();
@@ -168,8 +171,15 @@ pub fn derive(
             ("Promotion", &gates.promotion_row),
             ("Verification", &gates.verification_row),
         ] {
-            hops.push(gate_hop(&sides, &stage.name, group, ix, gate, row));
+            let mut hop = gate_hop(&sides, &stage.name, group, ix, gate, row);
+            hop.after = Some(stage_follows(stage, &stages));
+            hops.push(hop);
         }
+        // The key of the hop each of the Stage's links ended at, by its place
+        // in `runs`: its gates stand for the Stage, and a link left out of
+        // the rows (an Application's, replaced by what Argo CD reports) has
+        // none.
+        let mut placed: Vec<Option<String>> = vec![Some(format!("{}-eligible", stage.name))];
         for (n, link) in runs.iter().skip(1).enumerate() {
             // An Application mapped to another workspace cluster: in place
             // of its links into that cluster, which nothing read, the
@@ -178,14 +188,28 @@ pub fn derive(
                 .map(|away| reported_hops(&sides, &stage.name, group, away))
                 .unwrap_or_default();
             if link.from == Joined::Application && !reported.is_empty() {
+                placed.push(None);
                 continue;
             }
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
-            hops.push(link_hop(
-                &at, evidence, freight, pages, key, group, link, &runs,
-            ));
+            let mut hop = link_hop(
+                &at,
+                evidence,
+                freight,
+                pages,
+                key.clone(),
+                group,
+                link,
+                &runs,
+            );
+            hop.after = anchor(&runs, n + 1, link).and_then(|m| placed[m].clone());
+            hops.push(hop);
+            placed.push(Some(key.clone()));
             if link.to == Joined::Application {
-                hops.extend(reported);
+                hops.extend(reported.into_iter().map(|mut hop| {
+                    hop.after = Some(key.clone());
+                    hop
+                }));
             }
         }
         model.push(Stage {
@@ -386,6 +410,48 @@ fn refused(evidence: &Evidence, workloads: Option<&Workloads>, run: &[&Link]) ->
         .filter(|(_, refused)| *refused)
         .map(|(kind, _)| kind)
         .collect()
+}
+
+/// The hop a Stage's card follows: the Freight, or the first of the Stage
+/// it takes Freight from that is shown, as the card the link leaves.
+fn stage_follows(stage: &KargoStage, shown: &[&KargoStage]) -> String {
+    let upstream = (!stage.direct)
+        .then(|| {
+            stage
+                .upstream
+                .iter()
+                .find(|name| shown.iter().any(|other| &other.name == *name))
+        })
+        .flatten();
+    upstream.map_or_else(|| "freight".into(), |name| format!("{name}-eligible"))
+}
+
+/// The link of `links` before `at` that `link` leaves: the one that ended
+/// at the hop `link.from` names, about the same object when it says so.
+/// `None` when none did, or several did and none is the one: a chain never
+/// guesses which of two runs a link follows.
+fn anchor<L: std::borrow::Borrow<Link>>(links: &[L], at: usize, link: &Link) -> Option<usize> {
+    let ended: Vec<usize> = (0..at)
+        .filter(|&m| links[m].borrow().to == link.from)
+        .collect();
+    let same = |m: &&usize| {
+        let seen = links[**m].borrow();
+        seen.subject == link.subject
+            || link.evidence.iter().any(|observed| {
+                Some(observed.object.kind.as_str()) == kind_of(link.from)
+                    && format!(
+                        "{}/{}",
+                        observed.object.namespace.as_deref().unwrap_or_default(),
+                        observed.object.name
+                    ) == seen.subject
+            })
+    };
+    let matching: Vec<&usize> = ended.iter().filter(same).collect();
+    match (matching.as_slice(), ended.as_slice()) {
+        ([only], _) => Some(**only),
+        ([], [only]) => Some(*only),
+        _ => None,
+    }
 }
 
 /// A Stage's Freight → Stage link and every link after it, up to the next
@@ -654,6 +720,7 @@ fn reported_hop(
         from: sides.argocd.label.clone(),
         at: None,
         link: Some(Confidence::Claimed),
+        after: None,
         shows: Shows::Hop(Box::new(HopDetail {
             kind: object.kind.clone(),
             title: object.name.clone(),
@@ -675,6 +742,7 @@ fn reported_hop(
                 confidence: Confidence::Claimed,
                 by: "name".into(),
                 before: "Application".into(),
+                key: Some(object.name.clone()),
                 before_says: format!("status.resources lists {} {shown}", object.kind),
                 here_says: "not read".into(),
                 why: match away.why {
@@ -826,6 +894,15 @@ fn key_word(key: &Key) -> &'static str {
     }
 }
 
+/// What a link was joined on, whole; nothing when it wasn't joined.
+fn key_value(key: &Key) -> Option<String> {
+    match key {
+        Key::Sha(value) | Key::Name(value) => Some(value.clone()),
+        Key::Digest(digest) => Some(digest.as_str().to_owned()),
+        Key::None => None,
+    }
+}
+
 fn link_detail(link: &Link) -> LinkDetail {
     let before_kind = kind_of(link.from);
     let (before, here): (Vec<&Observation>, Vec<&Observation>) = link
@@ -840,6 +917,7 @@ fn link_detail(link: &Link) -> LinkDetail {
         confidence: link.confidence,
         by: key_word(&link.key).into(),
         before: sentence(link.from.word()).trim_end_matches('.').into(),
+        key: key_value(&link.key),
         before_says,
         here_says: says(&here),
         why: sentence(&link.reason),
@@ -1161,6 +1239,7 @@ fn link_hop(
         from: at.label.clone(),
         at: time_of(evidence, link),
         link: Some(link.confidence),
+        after: None,
         shows: Shows::Hop(Box::new(HopDetail {
             kind: caption(link.to).into(),
             title: if missing {
@@ -1262,6 +1341,7 @@ fn build_hops(
             from: sides.builds.label.clone(),
             at: None,
             link: Some(Confidence::Unknown),
+            after: None,
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: "Builds".into(),
                 title: "Builds".into(),
@@ -1280,24 +1360,34 @@ fn build_hops(
             })),
         }];
     };
-    trail
+    let built: Vec<&Link> = trail
         .links
         .iter()
         .take_while(|link| link.to != Joined::Freight)
+        .collect();
+    built
+        .iter()
         .enumerate()
         .map(|(n, link)| {
-            link_hop(
+            let mut hop = link_hop(
                 sides,
                 evidence,
                 freight,
                 pages,
-                format!("build-{}-{n}", kind_key(link.to)),
+                build_key(link.to, n),
                 0,
                 link,
                 &[],
-            )
+            );
+            hop.after = anchor(&built, n, link).map(|m| build_key(built[m].to, m));
+            hop
         })
         .collect()
+}
+
+/// The key of the build hop that link `n` of the trail makes.
+fn build_key(to: Joined, n: usize) -> String {
+    format!("build-{}-{n}", kind_key(to))
 }
 
 /// The Freight itself, joined to its build by the link the join made into
@@ -1379,6 +1469,14 @@ fn freight_hop(
         from: sides.kargo.label.clone(),
         at: None,
         link: into.map(|link| link.confidence),
+        after: into.zip(trail).and_then(|(into, trail)| {
+            let built: Vec<&Link> = trail
+                .links
+                .iter()
+                .take_while(|link| link.to != Joined::Freight)
+                .collect();
+            anchor(&built, built.len(), into).map(|m| build_key(built[m].to, m))
+        }),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Kargo Freight".into(),
             title,
@@ -1424,6 +1522,7 @@ fn unread_stages(sides: &Sides, why: &str) -> Hop {
         from: sides.kargo.label.clone(),
         at: None,
         link: Some(Confidence::Unknown),
+        after: None,
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Kargo Stages".into(),
             title: "Stages".into(),
@@ -1476,6 +1575,7 @@ fn gate_hop(sides: &Sides, stage: &str, group: usize, ix: usize, gate: &str, row
         from: sides.kargo.label.clone(),
         at: row.at,
         link: None,
+        after: None,
         shows: Shows::Stage(ix),
     }
 }
@@ -1530,9 +1630,15 @@ fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached)
             )],
         ),
     ] {
+        // The Stages and Promotions a change would follow its Freight with.
+        let after = std::ptr::eq(unread, &reached.kargo).then_some("freight");
+        let hang = |line: Missing| match after {
+            Some(key) => line.after(key),
+            None => line,
+        };
         match unread {
-            Some(unread) => lines.push(Missing::new(Gap::Unreadable, unread.words())),
-            None => lines.extend(kinds.into_iter().flatten()),
+            Some(unread) => lines.push(hang(Missing::new(Gap::Unreadable, unread.words()))),
+            None => lines.extend(kinds.into_iter().flatten().map(hang)),
         }
     }
     for (context, read) in &evidence.environments {

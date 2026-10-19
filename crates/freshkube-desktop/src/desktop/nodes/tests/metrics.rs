@@ -417,7 +417,7 @@ fn hidden_columns_survive_summary_rebuild_and_metric_widths_stay_fixed(cx: &mut 
             pilot.pages.node_workspace.update(cx, |nodes, _| {
                 nodes.show_columns();
             });
-            for node in &mut pilot.nodes {
+            for node in &mut pilot.target.nodes {
                 node.load = Some([12345.67; 3]);
                 if let Some(memory) = node.memory.as_mut() {
                     memory.used = memory.total;

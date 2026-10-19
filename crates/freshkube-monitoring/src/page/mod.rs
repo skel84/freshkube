@@ -26,6 +26,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
+use freshkube_core::monitoring::scope::Resolved;
 use freshkube_core::monitoring::{Endpoint, QueryError};
 use freshkube_reads::Loader;
 use gpui_kit::{AppContext, Context, EventEmitter, FocusHandle, ScrollHandle, Task, WeakEntity};
@@ -148,6 +149,36 @@ impl Viewport {
     }
 }
 
+/// How the open entry's metrics are found, handed in by the shell from the
+/// setup file: `resolved`, and the cluster that hosts a central store's
+/// Service (the open one, or another entry's). Discovery, the default, is
+/// how the page found Prometheus before the file.
+#[derive(Clone, Debug)]
+pub struct Scope {
+    pub resolved: Resolved,
+    pub host: Option<ClusterAccess>,
+}
+
+impl Default for Scope {
+    fn default() -> Self {
+        Self {
+            resolved: Resolved::Discovery,
+            host: None,
+        }
+    }
+}
+
+/// What decides the page's scope besides its connection, kept on the page so
+/// each window has its own: the last good setup, the workspace entry the
+/// window is on, and the clusters opened to reach a store another entry
+/// hosts (kept while their context and kubeconfig are unchanged).
+#[derive(Default)]
+pub struct ScopeInputs {
+    pub setup: Option<freshkube_core::setup::Setup>,
+    pub entry: Option<String>,
+    pub hosts: std::collections::BTreeMap<String, freshkube_core::cluster_source::DirectAccess>,
+}
+
 pub struct MonitoringPage {
     runtime: Handle,
     store: Option<MonitoringStore>,
@@ -156,6 +187,9 @@ pub struct MonitoringPage {
     source: Option<ClusterSource>,
     connection: Connection,
     connection_reads: ConnectionReads,
+    /// How the setup file says the open entry's metrics are found.
+    scope: Scope,
+    inputs: ScopeInputs,
     /// Counts the Ready clients built again, so history takes the new one.
     clients: u64,
     /// History reaches this connection owner without retaining the page.
@@ -211,6 +245,8 @@ impl MonitoringPage {
             source: None,
             connection: Connection::None,
             connection_reads: ConnectionReads::default(),
+            scope: Scope::default(),
+            inputs: ScopeInputs::default(),
             clients: 0,
             owner: cx.weak_entity(),
             histories: Vec::new(),
@@ -284,6 +320,41 @@ impl MonitoringPage {
         if same {
             return;
         }
+        self.forget_answers(cx);
+    }
+
+    pub fn inputs_mut(&mut self) -> &mut ScopeInputs {
+        &mut self.inputs
+    }
+
+    /// How the page finds its metrics now.
+    pub fn scope(&self) -> &Scope {
+        &self.scope
+    }
+
+    /// The cluster the page is opened on, which hosts a store that is in the
+    /// open entry's own cluster.
+    pub fn open_access(&self) -> Option<ClusterAccess> {
+        self.source.as_ref().map(|source| source.access.clone())
+    }
+
+    /// How the setup file says this entry's metrics are found. The same
+    /// resolution keeps everything; another one forgets what was read and
+    /// asks again, so an answer for the previous scope never draws.
+    pub fn set_scope(&mut self, scope: Scope, cx: &mut Context<Self>) {
+        let same = self.scope.resolved == scope.resolved;
+        self.scope = scope;
+        if same {
+            return;
+        }
+        // History keys its source by this count, so it reads again too.
+        self.clients += 1;
+        self.forget_answers(cx);
+    }
+
+    /// Drops the connection and every answer read through it, and reads
+    /// again when shown.
+    fn forget_answers(&mut self, cx: &mut Context<Self>) {
         self.reset_form();
         self.connection_reads.forget();
         self.connection = Connection::None;
