@@ -3,13 +3,15 @@
 
 use freshkube_core::pluralize;
 use std::ops::Range;
+use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    Icon, Sizable,
+    ActiveTheme, Icon, Sizable,
     button::{Button, ButtonVariants},
     h_flex,
-    input::Input,
+    input::{self, Input},
+    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -20,6 +22,7 @@ use crate::palette::{Palette, palette};
 use crate::resources::detail::{DocumentView, MAX_MATCHES, YamlLine};
 use crate::ui::dp;
 use freshkube_ui::document;
+use freshkube_ui::menu::{self, Find, MenuAction};
 use freshkube_ui::platform::primary_modifier;
 
 /// Styles for one drawn line: the key tinted, and search matches marked,
@@ -61,7 +64,7 @@ fn line_highlights(
 }
 
 impl DetailPane {
-    pub(super) fn yaml(&self, view: &DocumentView, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn yaml(&self, view: &Arc<DocumentView>, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let count = self.matches.len();
         let counter = (!self.query.is_empty()).then(|| match (count, self.current) {
@@ -122,6 +125,8 @@ impl DetailPane {
         let lines = view.lines.len();
         // Room for the widest line number.
         let gutter = dp(lines.to_string().len() as f32 * 7.2 + 20.);
+        let pane = cx.entity().downgrade();
+        let document = view.clone();
         v_flex()
             .size_full()
             .child(toolbar)
@@ -135,6 +140,7 @@ impl DetailPane {
                     .min_h_0()
                     .border_t_1()
                     .border_color(p.line)
+                    .font_family(cx.theme().font_family.clone())
                     .child(
                         document::lines(
                             "detail-yaml-lines",
@@ -145,7 +151,12 @@ impl DetailPane {
                             cx,
                         )
                         .size_full(),
-                    ),
+                    )
+                    // Wrap the viewport once, outside the lines measured by
+                    // uniform_list. Measuring a line never lays out a popup.
+                    .context_menu(move |popup, window, cx| {
+                        Self::yaml_menu(pane.clone(), document.clone(), popup, window, cx)
+                    }),
             )
             .into_any_element()
     }
@@ -201,11 +212,93 @@ impl DetailPane {
                         .pr_4()
                         .child(StyledText::new(line.text.clone()).with_highlights(highlights)),
                 )
+                // Select and focus before Kit captures the focus to restore.
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |pane, _, window, cx| {
+                        if !pane
+                            .selection
+                            .is_some_and(|selection| selection.contains(ix))
+                        {
+                            pane.select_line(ix, false, cx);
+                        }
+                        window.focus(&pane.focus, cx);
+                    }),
+                )
                 .on_click(cx.listener(move |pane, event: &ClickEvent, window, cx| {
                     pane.select_line(ix, event.modifiers().shift, cx);
                     window.focus(&pane.focus, cx);
                 }))
                 .into_any_element(),
+        )
+    }
+
+    fn yaml_menu(
+        owner: WeakEntity<Self>,
+        document: Arc<DocumentView>,
+        popup: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<PopupMenu>,
+    ) -> PopupMenu {
+        let Some(entity) = owner.upgrade() else {
+            return popup;
+        };
+        let this = entity.read(cx);
+        let Some(detail) = &this.detail else {
+            return popup;
+        };
+        let (Some(current), Some(selection)) = (&detail.view, this.selection) else {
+            return popup;
+        };
+        if !Arc::ptr_eq(current, &document) {
+            return popup;
+        }
+        let identity = detail.target.identity.clone();
+        let focus = this.focus.clone();
+        let live = move |cx: &App| {
+            owner.upgrade().is_some_and(|entity| {
+                let pane = entity.read(cx);
+                pane.active
+                    && pane.tab == super::Tab::Yaml
+                    && pane.selection == Some(selection)
+                    && pane.detail.as_ref().is_some_and(|detail| {
+                        detail.target.identity == identity
+                            && detail
+                                .view
+                                .as_ref()
+                                .is_some_and(|view| Arc::ptr_eq(view, &document))
+                    })
+            })
+        };
+        menu::actions(
+            popup,
+            vec![
+                MenuAction::new("Copy", input::Copy),
+                MenuAction::new("Select all", input::SelectAll),
+            ],
+            &focus,
+            live.clone(),
+            window,
+            cx,
+        )
+        .separator()
+        .item(
+            PopupMenuItem::new("Find")
+                .action(Box::new(Find))
+                .on_click(move |_, window, cx| {
+                    if !live(cx) {
+                        return;
+                    }
+                    let (focus, live) = (focus.clone(), live.clone());
+                    // Kit may draw the closing popup again and take focus back.
+                    // Dispatch Find after the popup has left the dispatch tree.
+                    window.defer(cx, move |window, cx| {
+                        if live(cx) {
+                            focus.focus(window, cx);
+                            focus.dispatch_action(&Find, window, cx);
+                        }
+                    });
+                }),
         )
     }
 }
