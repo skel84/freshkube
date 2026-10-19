@@ -493,20 +493,47 @@ fn access_replacement_rejects_old_batches_with_the_same_object_name_and_uid(
 #[gpui_kit::test]
 fn old_metrics_cannot_change_the_new_access_or_a_disconnected_page(cx: &mut TestAppContext) {
     let (_runtime, screen, handle) = mount(cx, Some("homelab"));
+    let old_sender = screen.read_with(cx, |screen, _| screen.usage.sender().unwrap());
     cx.update_window(handle, |_, window, cx| {
         screen.update(cx, |screen, cx| {
-            let generation = screen.usage_generation;
             screen.set_source(Some(source("prod-fra")), window, cx);
-            assert!(!screen.apply_usage(generation, Err("late failure".into()), cx));
-            assert_eq!(screen.usage_state, super::super::UsageState::Known);
-            let generation = screen.usage_generation;
-            assert!(screen.apply_usage(generation, Err("current failure".into()), cx));
-            assert_eq!(screen.usage_state, super::super::UsageState::Stale);
-            screen.set_source(None, window, cx);
-            assert!(screen.usage.is_none());
-            assert!(!screen.apply_usage(generation, Ok(Vec::new()), cx));
-            assert_eq!(screen.usage_state, super::super::UsageState::Unknown);
+            assert_eq!(
+                screen.usage.identity(),
+                Some(&(source("prod-fra").id, None))
+            );
         });
     })
     .unwrap();
+    // Dropping the Watch delivery closes its previous sender on the next turn.
+    cx.run_until_parked();
+    let read = |result| super::super::pods::UsageRead {
+        result,
+        applied: tokio::sync::oneshot::channel().0,
+    };
+    assert!(
+        old_sender
+            .try_send(read(Err("late failure".into())))
+            .is_err()
+    );
+    let sender = screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.usage_state, super::super::UsageState::Known);
+        screen.usage.sender().unwrap()
+    });
+    sender
+        .try_send(read(Err("current failure".into())))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        screen.update(cx, |screen, cx| {
+            assert_eq!(screen.usage_state, super::super::UsageState::Stale);
+            screen.set_source(None, window, cx);
+            assert!(!screen.usage.is_running());
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(sender.try_send(read(Ok(Vec::new()))).is_err());
+    screen.read_with(cx, |screen, _| {
+        assert_eq!(screen.usage_state, super::super::UsageState::Unknown);
+    });
 }

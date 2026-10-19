@@ -44,7 +44,7 @@ use freshkube_reads::{Loader, OnShow, Pace, Watch};
 use freshkube_ui::page::page_width;
 use freshkube_ui::{page, table};
 use layout::TableLayout;
-use pods::{ListView, NotReady, UsageState};
+use pods::{ListView, NotReady, UsageRead, UsageState};
 
 const CONTEXT: &str = "KubeResources";
 /// The key context around the filter input, which sits outside the list's.
@@ -231,8 +231,7 @@ pub struct ResourcesScreen {
     /// Rows marked with X or a group's Select all, by identity.
     marked: BTreeSet<ResourceIdentity>,
     /// Reads pods' use while the pods list shows.
-    usage: Option<Task<()>>,
-    usage_generation: u64,
+    usage: Watch<UsageRead, (String, Option<String>)>,
     usage_state: UsageState,
     _subscriptions: Vec<Subscription>,
 }
@@ -412,8 +411,7 @@ impl ResourcesScreen {
             healthy_open: false,
             not_ready: NotReady::new(),
             marked: BTreeSet::new(),
-            usage: None,
-            usage_generation: 0,
+            usage: Watch::default(),
             usage_state: UsageState::default(),
             _subscriptions: subscriptions,
         }
@@ -658,6 +656,7 @@ impl ResourcesScreen {
         // Showing always lists again, whether or not hiding stopped the
         // watch: a list's rows have no age to keep them.
         self.watch.set_visible(visible);
+        self.usage.set_visible(visible);
         if visible {
             self.namespace_read.set_visible(true, OnShow::Never, cx);
             self.restart(window, cx);
@@ -672,7 +671,6 @@ impl ResourcesScreen {
         } else {
             self.tick = None;
             self.clear_flash(cx);
-            self.usage = None;
             if self.namespace_read.is_loading() {
                 self.namespaces_for = None;
             }
@@ -795,8 +793,7 @@ impl ResourcesScreen {
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.watch.stop();
         self.clear_flash(cx);
-        self.usage = None;
-        self.usage_generation = self.usage_generation.wrapping_add(1);
+        self.usage.stop();
         if let Some(selected) = self.projection.selected() {
             self.restore = Some(selected.clone());
         }
