@@ -97,11 +97,9 @@ impl GeneralPreferences {
     }
 
     fn set(&self, mask: u8, bits: u8, cx: &App) {
-        self.latest
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
-                Some((old & !mask) | bits)
-            })
-            .unwrap();
+        // Only the UI thread writes; the background save only reads.
+        let old = self.latest.load(Ordering::Relaxed);
+        self.latest.store((old & !mask) | bits, Ordering::Relaxed);
         let Some(path) = self.path.clone() else {
             return;
         };
