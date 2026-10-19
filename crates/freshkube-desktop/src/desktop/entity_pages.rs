@@ -26,9 +26,12 @@ use super::{Page, Pilot, nodes};
 use crate::applications::{ApplicationsPage, SwitchLink};
 use crate::monitoring::page::{MonitoringEvent, MonitoringPage};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
-use crate::resources::{self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen};
+use crate::resources::{
+    self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen, custom::CustomResources,
+};
 use crate::screens::{
     PageEvent, PageEventFn, PageSource, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
+    SourceOwner,
 };
 use freshkube_core::resources::builtin;
 use freshkube_ui::status::Segment;
@@ -286,6 +289,13 @@ impl ScreenPanel for SettingsPage {
     /// The workspace's line, on its lists.
     fn status(&mut self, _: &App) -> Option<Segment> {
         SettingsPage::status(self)
+    }
+}
+
+/// The sidebar's custom kinds forget what the last connection found.
+impl SourceOwner for CustomResources {
+    fn set_page_source(&mut self, source: &PageSource, _: &mut Window, cx: &mut Context<Self>) {
+        CustomResources::set_source(self, source.kube.clone(), cx)
     }
 }
 

@@ -11,7 +11,7 @@
 use std::rc::Rc;
 
 use freshkube_core::resources::ResourceKind;
-use gpui_kit::{App, FocusHandle, Subscription, Window};
+use gpui_kit::{App, Context, Entity, FocusHandle, Subscription, Window};
 
 use super::{ScreenEvent, ScreenHandle, ScreenSource};
 use crate::applications::SwitchLink;
@@ -149,6 +149,36 @@ pub(crate) struct PageSource {
     /// stays set while the source is missing for a while, so it can't be
     /// derived from [`kube`](Self::kube).
     pub(crate) kube_identity: Option<String>,
+    /// Whether Talos is part of the session, as search lists the pages
+    /// that need it.
+    pub(crate) talos: bool,
+}
+
+/// Something that reads from the cluster and takes the shell's source but
+/// isn't a page: search, the custom kinds and the dock. It hears the source
+/// where a page does, from `push_source`, and nothing else of the page's
+/// contract.
+pub(crate) trait SourceOwner: 'static + Sized {
+    fn set_page_source(&mut self, source: &PageSource, window: &mut Window, cx: &mut Context<Self>);
+}
+
+type SourceOwnerFn = Rc<dyn Fn(&PageSource, &mut Window, &mut App)>;
+
+/// A type-erased [`SourceOwner`], so the shell can keep them in one list.
+#[derive(Clone)]
+pub(crate) struct SourceHandle(SourceOwnerFn);
+
+impl SourceHandle {
+    pub(crate) fn new<T: SourceOwner>(entity: Entity<T>) -> Self {
+        Self(Rc::new(move |source, window, cx| {
+            entity.update(cx, |owner, cx| owner.set_page_source(source, window, cx))
+        }))
+    }
+
+    /// Hands the owner the shell's whole source; it takes what it reads.
+    pub(crate) fn set_page_source(&self, source: &PageSource, window: &mut Window, cx: &mut App) {
+        (self.0)(source, window, cx)
+    }
 }
 
 impl PartialEq for ScreenHandle {

@@ -1,0 +1,1 @@
+- **Internal:** the shell's source now reaches Nodes' pods, search, the custom kinds and the dock through their own hooks, so `push_source` names none of them.

@@ -34,6 +34,7 @@ use crate::resources::detail::DetailTarget;
 use crate::resources::model::ResourceIdentity;
 use crate::resources::shell::{self, ShellEvent, ShellView};
 use crate::resources::{ClusterAccess, ClusterSource, LogsAt, LogsRequest, ShellRequest};
+use crate::screens::{PageSource, SourceOwner};
 use crate::ui::dp_px;
 use feed::Feed;
 
@@ -980,7 +981,7 @@ impl Dock {
     /// Resources page starts over: whoever changed it asked about running
     /// shells first (`Pilot::unless_shell`). The first source restores the
     /// saved tabs when its context is theirs.
-    pub(crate) fn set_source(
+    fn set_source(
         &mut self,
         source: Option<ClusterSource>,
         identity: Option<&str>,
@@ -1080,6 +1081,23 @@ fn open_room(window: &Window) -> f32 {
 /// The kind a saved tab names, if it still has logs.
 fn log_kind(key: &str) -> Option<ResourceKind> {
     builtin(key).filter(|kind| kind.is_pod() || runs_pods(kind))
+}
+
+/// The dock keys its tabs by the access the connection belongs to.
+impl SourceOwner for Dock {
+    fn set_page_source(
+        &mut self,
+        source: &PageSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_source(
+            source.kube.clone(),
+            source.kube_identity.as_deref(),
+            window,
+            cx,
+        )
+    }
 }
 
 #[cfg(test)]

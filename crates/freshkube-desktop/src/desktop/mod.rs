@@ -58,7 +58,7 @@ use crate::{
     mutation::{self, Operations},
     presentation::{self, NodeSummary},
     resources::{self, ResourcesScreen, custom::CustomResources, navigation, shell as pod_shell},
-    screens::{LifecycleScreen, ScreenEvent, ScreenHandle, WorkloadsScreen},
+    screens::{LifecycleScreen, ScreenEvent, ScreenHandle, SourceHandle, WorkloadsScreen},
     state::Snapshot,
     text_size, theme,
     ui::clock,
@@ -340,6 +340,9 @@ pub(crate) struct Pilot {
     custom: Entity<CustomResources>,
     /// Command-K's palette of kinds.
     search: Entity<search::Search>,
+    /// What takes the source and isn't a page, in the order it hears it:
+    /// search, the custom kinds and the dock.
+    source_owners: Vec<SourceHandle>,
     /// The Monitoring page, which reads only while it shows.
     monitoring: Entity<MonitoringPage>,
     observability: Entity<crate::observability::ObservabilityPage>,
@@ -712,7 +715,8 @@ impl Pilot {
             window,
             cx,
         );
-        let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
+        let (nodes, custom) = (pages.node_workspace.clone(), pages.custom.clone());
+        let search = cx.new(|cx| search::Search::new(runtime.clone(), nodes, custom, window, cx));
         let navigation = shell::Navigation::new(navigation_file, cx);
         let mut view = Self::with_session(
             &options,
@@ -884,6 +888,11 @@ impl Pilot {
             selected_node: None,
             logs,
             chrome,
+            source_owners: vec![
+                SourceHandle::new(search.clone()),
+                SourceHandle::new(custom.clone()),
+                SourceHandle::new(dock.clone()),
+            ],
             dock,
             overview_page,
             node_workspace,
@@ -1154,8 +1163,9 @@ impl Pilot {
     }
 
     /// Hands every page the current source; the visible screen loads if
-    /// empty. The screens hear first, then the entities beside the pages,
-    /// then the other pages, in key order.
+    /// empty. The screens hear first, then the owners beside the pages
+    /// (search, the custom kinds, the dock), then the other pages, in key
+    /// order.
     fn push_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.deliver_summary_nodes(cx);
         let source = self.source();
@@ -1169,17 +1179,9 @@ impl Pilot {
         if let Some(screen) = self.active_screen(cx) {
             screen.activate(window, cx);
         }
-        let kube = source.kube.clone();
-        self.sync_search_source(kube.clone(), window, cx);
-        self.custom
-            .update(cx, |custom, cx| custom.set_source(kube.clone(), cx));
-        let pods = self.node_workspace.read(cx).pods.clone();
-        pods.update(cx, |resources, cx| {
-            resources.set_source(kube.clone(), window, cx)
-        });
-        self.dock.update(cx, |dock, cx| {
-            dock.set_source(kube, source.kube_identity.as_deref(), window, cx)
-        });
+        for owner in &self.source_owners {
+            owner.set_page_source(&source, window, cx);
+        }
         for (_, page) in self.pages.iter().filter(|(id, _)| !id.is_screen()) {
             page.set_page_source(source.clone(), window, cx);
         }
