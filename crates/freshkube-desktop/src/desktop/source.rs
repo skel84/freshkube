@@ -185,7 +185,6 @@ impl Pilot {
             // is: both change together here.
             entry: self.active_cluster().map(str::to_owned),
             kube_identity,
-            talos: mode.has_talos(),
         }
     }
 

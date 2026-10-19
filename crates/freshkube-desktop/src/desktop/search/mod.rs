@@ -1,9 +1,8 @@
 //! Command-K searches local destinations and bounded metadata-only object names.
-use super::{Page, Pilot, nodes::Nodes};
+use super::{Page, Pilot};
 use crate::{
     backend::{self, OwnedJob},
-    resources::{self, ClusterAccess, ClusterSource, custom::CustomResources, model::ObjectRef},
-    screens::{PageSource, SourceOwner},
+    resources::{self, ClusterAccess, ClusterSource, model::ObjectRef},
     ui::dp,
 };
 use freshkube_core::resources::{ResourceKind, builtin};
@@ -31,8 +30,6 @@ struct Part {
 }
 pub(super) struct Search {
     runtime: Handle,
-    nodes: Entity<Nodes>,
-    custom: Entity<CustomResources>,
     command: Entity<CommandState>,
     source_id: Option<String>,
     local: Vec<Entry>,
@@ -61,17 +58,9 @@ impl Search {
     pub(super) fn needs_source(&self, source: Option<&ClusterSource>) -> bool {
         self.open && self.source_id.as_deref() != source.map(|source| source.id.as_str())
     }
-    pub(super) fn new(
-        runtime: Handle,
-        nodes: Entity<Nodes>,
-        custom: Entity<CustomResources>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(super) fn new(runtime: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             runtime,
-            nodes,
-            custom,
             command: cx.new(|cx| CommandState::new(window, cx)),
             source_id: None,
             local: Vec::new(),
@@ -110,29 +99,25 @@ impl Search {
         self.closed_at = Some(cx.background_executor().now());
     }
 }
-/// An open search takes a new connection's local entries and reads again.
-impl SourceOwner for Search {
-    fn set_page_source(
-        &mut self,
-        source: &PageSource,
+impl Pilot {
+    pub(super) fn sync_search_source(
+        &self,
+        source: Option<ClusterSource>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.needs_source(source.kube.as_ref()) {
-            let local = self.local_entries(source.talos, cx);
-            self.begin(local, source.kube.clone(), window, cx);
+        if self.search.read(cx).needs_source(source.as_ref()) {
+            let local = self.local_search_entries(cx);
+            self.search
+                .update(cx, |search, cx| search.begin(local, source, window, cx));
         }
     }
-}
-impl Pilot {
+
     pub(super) fn open_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if window.has_active_dialog(cx) {
             return;
         }
-        let local = self
-            .search
-            .read(cx)
-            .local_entries(self.mode().has_talos(), cx);
+        let local = self.local_search_entries(cx);
         let source = self.source().kube;
         let search = self.search.clone();
         search.update(cx, |search, cx| search.begin(local, source, window, cx));
