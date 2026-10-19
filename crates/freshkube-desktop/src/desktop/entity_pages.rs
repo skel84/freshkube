@@ -196,7 +196,7 @@ impl Global for MetricsInputs {}
 /// Hands Monitoring the setup file's `metrics` choice for the open entry.
 pub(super) fn set_metrics_setup(monitoring: &Entity<MonitoringPage>, setup: Setup, cx: &mut App) {
     cx.default_global::<MetricsInputs>().setup = Some(setup);
-    monitoring.update(cx, |page, cx| apply_scope(page, cx));
+    monitoring.update(cx, apply_scope);
 }
 
 /// Works out how the open entry's metrics are found, and tells the page.
