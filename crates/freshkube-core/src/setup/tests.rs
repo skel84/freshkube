@@ -2,12 +2,27 @@ use super::*;
 
 const EXAMPLE: &str = include_str!("../../../freshkube-prefs/src/examples/freshkube.yaml");
 
+/// The example's paths are Unix ones; a Windows path is absolute only with a
+/// drive, so the tests read them under one.
+fn portable(text: &str) -> String {
+    if cfg!(windows) {
+        text.replace("C:/home/acme", "/home/acme")
+            .replace("/home/acme", "C:/home/acme")
+    } else {
+        text.to_owned()
+    }
+}
+
+fn home(path: &str) -> std::path::PathBuf {
+    portable(path).into()
+}
+
 fn ok(text: &str) -> Setup {
-    parse(text.as_bytes()).unwrap_or_else(|invalid| panic!("{invalid}"))
+    parse(portable(text).as_bytes()).unwrap_or_else(|invalid| panic!("{invalid}"))
 }
 
 fn refused(text: &str) -> Invalid {
-    parse(text.as_bytes()).expect_err("the file should be refused")
+    parse(portable(text).as_bytes()).expect_err("the file should be refused")
 }
 
 fn at(line: usize, column: usize) -> Option<Place> {
@@ -25,7 +40,7 @@ fn with_cluster(rest: &str) -> String {
 fn the_example_reads_as_the_design_describes() {
     let setup = ok(EXAMPLE);
     let workspace = &setup.workspace;
-    assert_eq!(workspace.kubeconfig, Some("/home/acme/.kube/config".into()));
+    assert_eq!(workspace.kubeconfig, Some(home("/home/acme/.kube/config")));
     let ids: Vec<_> = workspace.clusters.iter().map(|e| e.id.as_str()).collect();
     assert_eq!(ids, ["cluster-a", "cluster-b", "cluster-c"]);
     let [a, b, c] = &workspace.clusters[..] else {
@@ -79,7 +94,7 @@ fn the_example_reads_as_the_design_describes() {
     let chain = setup.supply_chain.as_ref().unwrap();
     assert_eq!(
         chain.public_key_file,
-        Some("/home/acme/keys/cosign.pub".into())
+        Some(home("/home/acme/keys/cosign.pub"))
     );
     assert!(!chain.transparency_log);
     assert_eq!(
@@ -400,7 +415,7 @@ fn a_key_file_stands_instead_of_the_key_and_is_a_path() {
     let head = "version: 1\ncoroot:\n  server: https://coroot.example.test\n  sign_in: api-key\n";
     let file = ok(&format!("{head}  api_key_file: /home/acme/coroot.key\n"));
     let coroot = file.coroot.as_ref().unwrap();
-    assert_eq!(coroot.api_key_file, Some("/home/acme/coroot.key".into()));
+    assert_eq!(coroot.api_key_file, Some(home("/home/acme/coroot.key")));
     assert_eq!(coroot.key, None);
     assert_eq!(ok(&to_text(&file)), file);
     assert_eq!(
