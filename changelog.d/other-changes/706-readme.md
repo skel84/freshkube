@@ -1,0 +1,1 @@
+- **Setup file:** the README now shows an annotated `freshkube.yaml` with the workspace, Argo CD destinations, pins and Coroot connection that the app reads, where it lives and how the one-time move from `workspace.json` and `coroot.json` works.
