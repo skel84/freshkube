@@ -36,6 +36,9 @@ impl Pilot {
         let page = segment.and_then(|(id, segment)| {
             freshkube_ui::status::segment(id, &segment, named.as_deref(), cx)
         });
+        let receipt = (!self.settings_page.read(cx).setup_is_pending())
+            .then(|| self.setup_file.read(cx).receipt.clone())
+            .flatten();
         let right = self.render_status_right(compact, cx);
         StatusBar::new()
             .h(dp(freshkube_ui::page::STATUS_BAR_HEIGHT))
@@ -63,6 +66,16 @@ impl Pilot {
                             .gap_3()
                             .child(div().flex_none().w(px(1.)).h(dp(14.)).bg(p.line))
                             .child(page)
+                    }))
+                    .children(receipt.map(|receipt| {
+                        div()
+                            .id("setup-reload-status")
+                            .test_support()
+                            .role(Role::Status)
+                            .aria_label(receipt.clone())
+                            .min_w_0()
+                            .truncate()
+                            .child(receipt)
                     })),
             )
             .right(right.child(self.chrome.fps.clone()))
