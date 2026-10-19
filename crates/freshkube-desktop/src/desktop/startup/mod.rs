@@ -36,7 +36,7 @@ impl Pilot {
             let collapsed = debug.sidebar.map(|sidebar| sidebar == Sidebar::Collapsed);
             if let Some(collapsed) = collapsed {
                 this.navigation.column_state.preview(collapsed);
-                this.notify_cached(cx);
+                this.pages.notify_cached(cx);
                 cx.notify();
             }
             if let Some(path) = debug.dashboard.clone() {
@@ -288,7 +288,7 @@ impl Pilot {
         self.selected_node = None;
         self.sync_unread_health(cx);
         self.rebuild_joined_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         self.navigate(Page::Overview, window, cx);
     }

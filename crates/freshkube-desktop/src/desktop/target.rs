@@ -25,7 +25,7 @@ impl Pilot {
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
         self.push_talos_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
             self.select_node(selected, window, cx);

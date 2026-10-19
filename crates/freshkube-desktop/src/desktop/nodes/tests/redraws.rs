@@ -88,7 +88,7 @@ fn nodes_redraws_for_its_own_changes(cx: &mut TestAppContext) {
         let pods = pilot.pages.node_workspace.read(cx).pods.clone();
         pods.update(cx, |_, cx| cx.notify());
     });
-    let cached = redrawn(&|pilot, _, cx| pilot.notify_cached(cx));
+    let cached = redrawn(&|pilot, _, cx| pilot.pages.notify_cached(cx));
     let text_size = redrawn(&|_, _, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
     let theme = redrawn(&|_, window, cx| Theme::change(ThemeMode::Dark, Some(window), cx));
     let counts = [

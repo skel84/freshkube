@@ -320,7 +320,7 @@ impl Pilot {
         self.registry.active_mut().summary_health = Some(health.clone());
         self.deliver_workloads(health, cx);
         self.rebuild_joined_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         self.deliver_summary_nodes(cx);
         cx.notify();

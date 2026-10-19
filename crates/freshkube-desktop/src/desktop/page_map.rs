@@ -305,3 +305,37 @@ impl Pages {
             .update(cx, |services, cx| services.select(service, cx));
     }
 }
+
+impl Pages {
+    /// Marks every cached view dirty, for state they read from outside their
+    /// own entity.
+    pub(super) fn notify_cached(&self, cx: &mut App) {
+        for (_, screen) in self.map.iter().filter(|(id, _)| id.is_screen()) {
+            App::notify(cx, screen.view().entity_id());
+        }
+        App::notify(cx, self.observability.entity_id());
+        App::notify(cx, self.monitoring.entity_id());
+        App::notify(cx, self.logs.entity_id());
+        App::notify(cx, self.resources.entity_id());
+        let detail = self.resources.read(cx).detail_view();
+        App::notify(cx, detail);
+        App::notify(cx, self.overview_page.entity_id());
+        App::notify(cx, self.system_services.entity_id());
+        App::notify(cx, self.node_workspace.entity_id());
+        let nodes = self.node_workspace.read(cx);
+        let ids = [
+            nodes.services.entity_id(),
+            nodes.pods.entity_id(),
+            nodes.document.entity_id(),
+        ];
+        for id in ids {
+            App::notify(cx, id);
+        }
+    }
+
+    pub(super) fn push_node_facts(&self, cx: &mut Context<Pilot>) {
+        let nodes = self.node_workspace.read(cx).resource_facts.clone();
+        self.resources
+            .update(cx, |resources, cx| resources.set_node_facts(nodes, cx));
+    }
+}

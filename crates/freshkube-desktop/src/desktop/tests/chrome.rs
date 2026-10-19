@@ -294,7 +294,7 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     });
     let unchanged = redrawn(&|_, cx| cx.notify());
     let show_all = redrawn(&|view, cx| view.expand_attention(cx));
-    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let cached = redrawn(&|view, cx| view.pages.notify_cached(cx));
     let text_size = redrawn(&|_, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
     assert_eq!(
         [
@@ -406,7 +406,7 @@ fn cached_system_services_redraws_for_its_own_changes(cx: &mut TestAppContext) {
             .system_services
             .update(cx, |page, cx| page.set_reading(reading, cx));
     });
-    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let cached = redrawn(&|view, cx| view.pages.notify_cached(cx));
     assert_eq!([shell, nodes, reading, cached], [0, 1, 1, 1]);
 }
 
@@ -459,7 +459,7 @@ fn node_services_redraws_inside_nodes(cx: &mut TestAppContext) {
     let selection = redrawn(&|view, cx| view.pages.select_service(Some("kubelet".into()), cx));
     let services = redrawn(&|view, cx| view.push_services(cx));
     let notice = redrawn(&|view, cx| view.note_restart("kubelet", cx));
-    let cached = redrawn(&|view, cx| view.notify_cached(cx));
+    let cached = redrawn(&|view, cx| view.pages.notify_cached(cx));
     assert_eq!(
         [shell, selection, services, notice, cached],
         [0, 1, 1, 1, 1]

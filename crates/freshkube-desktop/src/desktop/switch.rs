@@ -763,7 +763,7 @@ impl Pilot {
         self.age_label.update(cx, |label, cx| label.set(taken, cx));
         self.deliver_summary_nodes(cx);
         self.rebuild_joined_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         cx.notify();
     }

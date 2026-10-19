@@ -528,7 +528,7 @@ impl Pilot {
         // close under it. Cached screens may read the slot too.
         let operations = Operations::global(cx);
         subscriptions.push(cx.observe(&operations, |view, _, cx| {
-            view.notify_cached(cx);
+            view.pages.notify_cached(cx);
             cx.notify();
         }));
         window.on_window_should_close(cx, |window, cx| {
@@ -545,7 +545,7 @@ impl Pilot {
         cx.observe_global_in::<Theme>(window, |view, window, cx| {
             place_window_controls(window, cx);
             view.prepare_context_display(window, cx);
-            view.notify_cached(cx);
+            view.pages.notify_cached(cx);
             cx.notify();
         })
     }
@@ -827,7 +827,7 @@ impl Pilot {
             .system_services
             .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
         self.rebuild_joined_nodes(cx);
-        self.push_node_facts(cx);
+        self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
         let document = self.pages.node_workspace.read(cx).document.clone();
         document.update(cx, |pane, cx| pane.close(cx));
@@ -1238,32 +1238,6 @@ impl Pilot {
             "Unavailable"
         };
         format!("{state} · {refreshed}")
-    }
-
-    /// Marks every cached view dirty, for state they read from outside their
-    /// own entity.
-    fn notify_cached(&self, cx: &mut App) {
-        for (_, screen) in self.pages.map.iter().filter(|(id, _)| id.is_screen()) {
-            App::notify(cx, screen.view().entity_id());
-        }
-        App::notify(cx, self.pages.observability.entity_id());
-        App::notify(cx, self.pages.monitoring.entity_id());
-        App::notify(cx, self.pages.logs.entity_id());
-        App::notify(cx, self.pages.resources.entity_id());
-        let detail = self.pages.resources.read(cx).detail_view();
-        App::notify(cx, detail);
-        App::notify(cx, self.pages.overview_page.entity_id());
-        App::notify(cx, self.pages.system_services.entity_id());
-        App::notify(cx, self.pages.node_workspace.entity_id());
-        let nodes = self.pages.node_workspace.read(cx);
-        let ids = [
-            nodes.services.entity_id(),
-            nodes.pods.entity_id(),
-            nodes.document.entity_id(),
-        ];
-        for id in ids {
-            App::notify(cx, id);
-        }
     }
 
     /// Whether contexts or a connection are loading, for the refresh button.

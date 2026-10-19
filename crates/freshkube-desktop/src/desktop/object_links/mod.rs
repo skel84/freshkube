@@ -170,13 +170,6 @@ impl Pilot {
         });
         self.object_open.run(Some(job), task);
     }
-
-    pub(super) fn push_node_facts(&self, cx: &mut Context<Self>) {
-        let nodes = self.pages.node_workspace.read(cx).resource_facts.clone();
-        self.pages
-            .resources
-            .update(cx, |resources, cx| resources.set_node_facts(nodes, cx));
-    }
 }
 
 #[cfg(test)]
