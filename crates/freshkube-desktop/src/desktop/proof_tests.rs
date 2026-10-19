@@ -789,7 +789,7 @@ async fn an_object_answer_from_the_cluster_just_left_is_dropped(cx: &mut TestApp
         view.update(cx, |pilot, cx| {
             // The shell's own epoch check, as every object read uses it.
             let epoch = pilot.epoch;
-            pilot.cancel_object_open();
+            pilot.target.cancel_object_open();
             pilot.start_object_open(
                 "late",
                 async move { gate.await.map(|_| 1u32).map_err(|e| e.to_string()) },
@@ -813,7 +813,7 @@ async fn an_object_answer_from_the_cluster_just_left_is_dropped(cx: &mut TestApp
     _ = open.send(());
     settle(cx);
     assert_eq!(applied.get(), 0, "core's answer landed in dev's window");
-    cx.read(|cx| assert!(!view.read(cx).object_open.is_loading()));
+    cx.read(|cx| assert!(!view.read(cx).target.object_open.is_loading()));
 }
 
 // Forwards -------------------------------------------------------------------

@@ -231,7 +231,7 @@ fn nodes_and_its_pane_screen_hear_they_show_in_key_order(cx: &mut TestAppContext
             .filter(|line| line.ends_with("shown") || line.ends_with("hidden"))
             .collect::<Vec<_>>()
     };
-    let name = cx.update(|cx| view.read(cx).selected_node.clone().unwrap());
+    let name = cx.update(|cx| view.read(cx).target.selected_node.clone().unwrap());
     let step = |go: &dyn Fn(&mut Pilot, &mut Window, &mut Context<Pilot>),
                 cx: &mut TestAppContext| {
         cx.update_window(handle, |_, window, cx| {

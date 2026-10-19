@@ -76,7 +76,7 @@ fn the_table_waits_for_the_talos_overview_until_it_answers_or_fails(cx: &mut Tes
         window.press("secondary-7", cx);
         view.update(cx, |pilot, cx| {
             pilot.overview = crate::state::Snapshot::default();
-            pilot.nodes.clear();
+            pilot.target.nodes.clear();
             pilot
                 .pages.system_services
                 .update(cx, |services, cx| services.set_nodes(&[], cx));
@@ -113,7 +113,7 @@ fn the_loading_rows_give_way_to_the_services_when_the_overview_answers(cx: &mut 
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-7", cx);
         let nodes = view.update(cx, |pilot, cx| {
-            let nodes = std::mem::take(&mut pilot.nodes);
+            let nodes = std::mem::take(&mut pilot.target.nodes);
             let answer = pilot.overview.data().cloned();
             pilot.overview = crate::state::Snapshot::default();
             pilot
@@ -132,9 +132,9 @@ fn the_loading_rows_give_way_to_the_services_when_the_overview_answers(cx: &mut 
             pilot
                 .overview
                 .apply(&request, Ok(answer.expect("the example answered")));
-            pilot.nodes = nodes;
+            pilot.target.nodes = nodes;
             pilot.rebuild_joined_nodes(cx);
-            let summaries = pilot.nodes.clone();
+            let summaries = pilot.target.nodes.clone();
             pilot
                 .pages
                 .system_services
@@ -252,6 +252,7 @@ fn a_node_that_leaves_falls_back_to_all_nodes(cx: &mut TestAppContext) {
 
         let nodes: Vec<_> = view
             .read(cx)
+            .target
             .nodes
             .iter()
             .filter(|node| node.name != "talos-wk-fra1-02")
@@ -405,7 +406,10 @@ fn a_right_click_selects_its_row_and_its_menu_opens_the_node(cx: &mut TestAppCon
     cx.update_window(handle, |_, _, cx| {
         let pilot = view.read(cx);
         assert_eq!(pilot.navigation.page, Page::Nodes);
-        assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
+        assert_eq!(
+            pilot.target.selected_node.as_deref(),
+            Some("talos-cp-fra1-01")
+        );
         assert_eq!(pilot.pages.selected_service(cx).as_deref(), Some("apid"));
         assert_eq!(
             pilot.pages.node_workspace.read(cx).tab,

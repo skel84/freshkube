@@ -29,7 +29,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             crate::desktop::tests::click_node(window, cx, &bad.id);
             window.render_frame(cx);
             assert_eq!(
-                pilot.read(cx).selected_node.as_deref(),
+                pilot.read(cx).target.selected_node.as_deref(),
                 Some("talos-wk-fra1-02")
             );
             // Its unhealthy kubelet marks the Services tab with the warning glyph.
@@ -68,7 +68,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
             NodeTab::Processes
         );
         assert_eq!(
-            pilot.read(cx).selected_node.as_deref(),
+            pilot.read(cx).target.selected_node.as_deref(),
             Some("talos-cp-fra1-01")
         );
         assert!(window.try_find("node-services-problem").is_none());
@@ -80,7 +80,7 @@ fn joined_fixture_pane_preserves_selection_tab_and_target(cx: &mut TestAppContex
         window.render_frame(cx);
         assert!(!pilot.read(cx).pages.node_workspace.read(cx).open);
         assert_eq!(
-            pilot.read(cx).selected_node.as_deref(),
+            pilot.read(cx).target.selected_node.as_deref(),
             Some("talos-cp-fra1-01")
         );
         assert_eq!(pilot.read(cx).navigation.page, Page::Nodes);
@@ -96,7 +96,7 @@ fn kubernetes_node_has_only_its_supported_tabs_and_stacks_under_the_table_when_n
     let (_runtime, handle, pilot) = fixture(cx, 760., 880.);
     cx.update_window(handle, |_, window, cx| {
         pilot.update(cx, |pilot, cx| {
-            pilot.nodes.clear();
+            pilot.target.nodes.clear();
             pilot.rebuild_joined_nodes(cx);
             pilot.navigate(Page::Nodes, window, cx);
         });

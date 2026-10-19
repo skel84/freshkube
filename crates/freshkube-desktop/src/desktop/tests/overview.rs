@@ -9,7 +9,10 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         expand_healthy_nodes(window, cx);
-        assert_eq!(view.read(cx).selected_node.as_deref(), Some(FIRST_NODE));
+        assert_eq!(
+            view.read(cx).target.selected_node.as_deref(),
+            Some(FIRST_NODE)
+        );
         window
             .within("nodes-page")
             .click("node-talos-cp-fra1-01", cx);
@@ -23,7 +26,7 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).selected_node.as_deref(),
+            view.read(cx).target.selected_node.as_deref(),
             Some("talos-cp-fra1-02")
         );
         assert_eq!(
