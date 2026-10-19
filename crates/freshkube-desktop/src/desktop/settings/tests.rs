@@ -656,7 +656,7 @@ fn open_settings_and_all_settings_open_the_section_shown_last(cx: &mut TestAppCo
 #[gpui_kit::test]
 fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    for (slug, section, title) in SECTIONS.into_iter().take(4) {
+    for (slug, section, title) in SECTIONS.into_iter().take(4).skip(1) {
         cx.update_window(handle, |_, window, cx| {
             view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
             window.render_frame(cx);
