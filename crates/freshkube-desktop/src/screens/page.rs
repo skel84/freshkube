@@ -162,9 +162,11 @@ pub(crate) trait SourceOwner: 'static + Sized {
     fn set_page_source(&mut self, source: &PageSource, window: &mut Window, cx: &mut Context<Self>);
 }
 
+type SourceOwnerFn = Rc<dyn Fn(&PageSource, &mut Window, &mut App)>;
+
 /// A type-erased [`SourceOwner`], so the shell can keep them in one list.
 #[derive(Clone)]
-pub(crate) struct SourceHandle(Rc<dyn Fn(&PageSource, &mut Window, &mut App)>);
+pub(crate) struct SourceHandle(SourceOwnerFn);
 
 impl SourceHandle {
     pub(crate) fn new<T: SourceOwner>(entity: Entity<T>) -> Self {
