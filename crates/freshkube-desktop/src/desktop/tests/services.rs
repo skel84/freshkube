@@ -31,7 +31,7 @@ fn context_switch_invalidates_service_target(cx: &mut TestAppContext) {
         let pilot = view.read(cx);
         assert!(pilot.epoch > old_epoch);
         assert_eq!(pilot.applied.context.as_deref(), Some("staging-eu"));
-        assert_eq!(pilot.selected_node.as_deref(), Some("stg-cp-01"));
+        assert_eq!(pilot.target.selected_node.as_deref(), Some("stg-cp-01"));
         assert!(pilot.pages.selected_service(cx).is_none());
         assert!(
             window
@@ -285,7 +285,10 @@ fn health_filter_narrows_the_list_and_shows_the_unhealthy_message(cx: &mut TestA
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         pick_target(window, cx, 4);
-        assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
+        assert_eq!(
+            view.read(cx).target.selected_node.as_deref(),
+            Some(DEGRADED_NODE)
+        );
         open_node_tab(window, cx, super::super::nodes::NodeTab::Services);
         window.render_frame(cx);
         window.click("health-unhealthy", cx);
@@ -430,7 +433,10 @@ fn cluster_services_route_actions_to_the_retained_node_pane(cx: &mut TestAppCont
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(view.read(cx).navigation.page, Page::Nodes);
-        assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
+        assert_eq!(
+            view.read(cx).target.selected_node.as_deref(),
+            Some(DEGRADED_NODE)
+        );
         assert_eq!(
             view.read(cx).pages.selected_service(cx).as_deref(),
             Some("kubelet")
@@ -499,10 +505,10 @@ fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
         let target = crate::backend::Target {
             epoch: pilot.epoch,
             context: pilot.applied.context.clone().unwrap_or_default(),
-            node: pilot.selected_node.clone().unwrap_or_default(),
+            node: pilot.target.selected_node.clone().unwrap_or_default(),
             address: "fixture".into(),
         };
-        (target, pilot.services.data().cloned().unwrap())
+        (target, pilot.target.services.data().cloned().unwrap())
     });
     assert!(services.iter().any(|service| service.id == "kubelet"));
     let selected =
@@ -510,9 +516,9 @@ fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
     // The read fails with nothing kept, and a link selects kubelet.
     cx.update(|cx| {
         view.update(cx, |pilot, cx| {
-            pilot.services = crate::state::Snapshot::default();
-            let request = pilot.services.begin(target.clone());
-            pilot.services.apply(&request, Err("offline".into()));
+            pilot.target.services = crate::state::Snapshot::default();
+            let request = pilot.target.services.begin(target.clone());
+            pilot.target.services.apply(&request, Err("offline".into()));
             pilot.push_services(cx);
             pilot.pages.select_service(Some("kubelet".into()), cx);
         })
@@ -521,7 +527,7 @@ fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
     // The next read starts empty: the selection waits.
     let request = cx.update(|cx| {
         view.update(cx, |pilot, cx| {
-            let request = pilot.services.begin(target.clone());
+            let request = pilot.target.services.begin(target.clone());
             pilot.push_services(cx);
             request
         })
@@ -530,7 +536,7 @@ fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
     // It answers with kubelet: the selection stays.
     cx.update(|cx| {
         view.update(cx, |pilot, cx| {
-            pilot.services.apply(&request, Ok(services.clone()));
+            pilot.target.services.apply(&request, Ok(services.clone()));
             pilot.push_services(cx);
         })
     });
@@ -538,8 +544,8 @@ fn a_selection_waits_for_the_read_after_a_failure(cx: &mut TestAppContext) {
     // An answer without it drops it.
     cx.update(|cx| {
         view.update(cx, |pilot, cx| {
-            let request = pilot.services.begin(target.clone());
-            pilot.services.apply(&request, Ok(Vec::new()));
+            let request = pilot.target.services.begin(target.clone());
+            pilot.target.services.apply(&request, Ok(Vec::new()));
             pilot.push_services(cx);
         })
     });

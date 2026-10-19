@@ -621,7 +621,10 @@ fn escape_steps_back_from_the_pods_yaml_and_logs_tabs(cx: &mut TestAppContext) {
             pilot.pages.node_workspace.read(cx).selected.as_ref(),
             Some(&key)
         );
-        assert_eq!(pilot.selected_node.as_deref(), Some("talos-cp-fra1-01"));
+        assert_eq!(
+            pilot.target.selected_node.as_deref(),
+            Some("talos-cp-fra1-01")
+        );
     });
 }
 
@@ -633,7 +636,7 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        let target = pilot.read(cx).selected_node.clone();
+        let target = pilot.read(cx).target.selected_node.clone();
         window.click("nodes-tally-failing", cx);
         window.render_frame(cx);
         pilot.update(cx, |pilot, cx| {
@@ -645,7 +648,7 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
     step(cx, handle, |window, cx| {
         let row = pilot.read(cx).pages.node_workspace.read(cx).row().unwrap();
         assert_eq!(row.ready, "NotReady");
-        assert_eq!(pilot.read(cx).selected_node, target);
+        assert_eq!(pilot.read(cx).target.selected_node, target);
         window.press("enter", cx);
     });
     step(cx, handle, |window, cx| {
@@ -655,7 +658,7 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
         assert_eq!(pilot.read(cx).pages.node_workspace.read(cx).line_count(), 3);
         assert_eq!(pilot.read(cx).pages.node_workspace.read(cx).lines.len(), 2);
         assert_eq!(
-            pilot.read(cx).selected_node.as_deref(),
+            pilot.read(cx).target.selected_node.as_deref(),
             Some("talos-wk-fra1-02")
         );
         window.click("node-tab-processes", cx);
@@ -668,7 +671,7 @@ fn filtered_table_keys_select_visible_nodes_and_keep_the_pane_tabs(cx: &mut Test
             NodeTab::Processes
         );
         assert_eq!(
-            pilot.read(cx).selected_node.as_deref(),
+            pilot.read(cx).target.selected_node.as_deref(),
             Some("talos-wk-fra1-03")
         );
         window.click("node-close", cx);
@@ -744,7 +747,7 @@ fn enter_opens_a_node_from_the_list_and_presses_a_focused_button(cx: &mut TestAp
     step(cx, handle, |window, cx| window.press("enter", cx));
     cx.update_window(handle, |_, window, cx| {
         assert!(pilot.read(cx).pages.node_workspace.read(cx).open);
-        let node = pilot.read(cx).selected_node.clone();
+        let node = pilot.read(cx).target.selected_node.clone();
         assert!(node.is_some());
         pilot.update(cx, |pilot, cx| {
             pilot.show_node_tab(NodeTab::Logs, window, cx)
@@ -761,7 +764,7 @@ fn enter_opens_a_node_from_the_list_and_presses_a_focused_button(cx: &mut TestAp
         window.render_frame(cx);
         assert_ne!(window.find("logs-wrap").checked(), wrapped);
         assert_eq!(window.find("logs-wrap").focused(), Some(true));
-        assert_eq!(pilot.read(cx).selected_node, node);
+        assert_eq!(pilot.read(cx).target.selected_node, node);
         assert!(pilot.read(cx).pages.node_workspace.read(cx).open);
     })
     .unwrap();
@@ -802,7 +805,12 @@ fn enter_in_the_filter_moves_to_the_list_and_opens_nothing(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(pilot.read(cx).pages.node_workspace.read(cx).open);
-        let node = pilot.read(cx).selected_node.clone().unwrap_or_default();
+        let node = pilot
+            .read(cx)
+            .target
+            .selected_node
+            .clone()
+            .unwrap_or_default();
         assert!(node.contains("-wk-"), "{node} isn't a filtered node");
     })
     .unwrap();

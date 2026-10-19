@@ -205,7 +205,7 @@ impl Pilot {
                 node: node.name.clone(),
                 address: node.address.clone(),
             },
-            nodes: Arc::new(self.nodes.clone()),
+            nodes: Arc::new(self.target.nodes.clone()),
             live,
         })
     }

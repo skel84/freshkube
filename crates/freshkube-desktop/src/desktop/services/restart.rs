@@ -36,6 +36,7 @@ impl Pilot {
         let cluster = self.overview.data()?;
         let node = self.selected_summary()?;
         let service = self
+            .target
             .services
             .data()?
             .iter()
@@ -66,6 +67,7 @@ impl Pilot {
             return;
         };
         let Some(state) = self
+            .target
             .services
             .data()
             .and_then(|services| services.iter().find(|service| service.id == service_id))
@@ -123,7 +125,8 @@ impl Pilot {
 
     /// Leaves the notice under the service; the tab hears it itself.
     pub(super) fn set_restart_notice(&self, service: &str, ok: bool, text: String, cx: &mut App) {
-        let (Some(cluster), Some(node)) = (self.overview.data(), self.selected_node.clone()) else {
+        let (Some(cluster), Some(node)) = (self.overview.data(), self.target.selected_node.clone())
+        else {
             return;
         };
         cx.set_global(RestartNotices(Some(RestartNotice {

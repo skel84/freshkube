@@ -263,7 +263,7 @@ impl Pilot {
     /// Hands the tab the services as they stand now. Called after every
     /// change to the read: a new node, a request, an answer, a reset.
     pub(super) fn push_services(&self, cx: &mut App) {
-        let reading = ServicesReading::of(&self.services);
+        let reading = ServicesReading::of(&self.target.services);
         self.pages
             .node_workspace
             .read(cx)

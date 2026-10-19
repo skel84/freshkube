@@ -57,7 +57,7 @@ fn a_right_click_beside_an_open_pane_opens_its_node_on_the_same_tab(cx: &mut Tes
         pilot.read_with(cx, |pilot, cx| {
             let nodes = pilot.pages.node_workspace.read(cx);
             (
-                pilot.selected_node.clone(),
+                pilot.target.selected_node.clone(),
                 nodes.open,
                 nodes.tab,
                 nodes.metrics.visible,

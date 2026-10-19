@@ -638,10 +638,10 @@ async fn an_object_open_answer_is_applied_once_and_frees_its_job(cx: &mut TestAp
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let applied = std::rc::Rc::new(std::cell::Cell::new(0));
     let open = gated_open(cx, handle, &view, &applied, false);
-    assert!(view.read_with(cx, |pilot, _| pilot.object_open.is_loading()));
+    assert!(view.read_with(cx, |pilot, _| pilot.target.object_open.is_loading()));
     open.send(()).unwrap();
     cx.wait_for_io(handle, |_, _| applied.get() == 1).await;
-    assert!(!view.read_with(cx, |pilot, _| pilot.object_open.is_loading()));
+    assert!(!view.read_with(cx, |pilot, _| pilot.target.object_open.is_loading()));
 }
 
 #[gpui_kit::test]
@@ -651,7 +651,9 @@ async fn an_object_open_answer_for_an_older_sequence_is_dropped(cx: &mut TestApp
     let applied = std::rc::Rc::new(std::cell::Cell::new(0));
     let open = gated_open(cx, handle, &view, &applied, false);
     // A newer request took the sequence without dropping this delivery.
-    view.update(cx, |pilot, _| pilot.object_open.begin(Some(pilot.epoch)));
+    view.update(cx, |pilot, _| {
+        pilot.target.object_open.begin(Some(pilot.epoch))
+    });
     open.send(()).unwrap();
     settle(cx);
     assert_eq!(applied.get(), 0);
@@ -679,7 +681,7 @@ async fn an_object_open_answer_the_caller_calls_superseded_is_dropped(cx: &mut T
     settle(cx);
     assert_eq!(applied.get(), 0);
     // The job stays until something replaces or cancels it.
-    assert!(view.read_with(cx, |pilot, _| pilot.object_open.is_loading()));
+    assert!(view.read_with(cx, |pilot, _| pilot.target.object_open.is_loading()));
 }
 
 #[gpui_kit::test]
@@ -693,7 +695,7 @@ async fn cancelling_an_object_open_drops_its_answer(cx: &mut TestAppContext) {
     _ = open.send(());
     settle(cx);
     assert_eq!(applied.get(), 0);
-    assert!(!view.read_with(cx, |pilot, _| pilot.object_open.is_loading()));
+    assert!(!view.read_with(cx, |pilot, _| pilot.target.object_open.is_loading()));
 }
 
 /// What the link would open in: nothing, or the open object's identity.
@@ -820,7 +822,10 @@ fn an_owner_read_for_a_link_from_another_cluster_starts_nothing(cx: &mut TestApp
                 cx,
             )
         });
-        assert!(!pilot.read(cx).object_open.is_loading(), "no read started");
+        assert!(
+            !pilot.read(cx).target.object_open.is_loading(),
+            "no read started"
+        );
         assert_eq!(notices(window, cx), before + 1);
         pilot.update(cx, |pilot, cx| {
             pilot.resolve_owner_remote(
@@ -833,7 +838,7 @@ fn an_owner_read_for_a_link_from_another_cluster_starts_nothing(cx: &mut TestApp
             )
         });
         assert!(
-            pilot.read(cx).object_open.is_loading(),
+            pilot.read(cx).target.object_open.is_loading(),
             "its own cluster reads"
         );
     })

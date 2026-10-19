@@ -143,7 +143,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let epoch = self.epoch;
-        let request = self.object_open.start(Some(epoch));
+        let request = self.target.object_open.start(Some(epoch));
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
             Duration::from_secs(15),
@@ -157,7 +157,7 @@ impl Pilot {
             _ = this.update_in(cx, |this, window, cx| {
                 if this.epoch != epoch
                     || superseded(this, cx)
-                    || !this.object_open.land(&request, Ok(()), cx)
+                    || !this.target.object_open.land(&request, Ok(()), cx)
                 {
                     return;
                 }
@@ -168,7 +168,7 @@ impl Pilot {
             #[cfg(test)]
             probe::hit("object-open-delivered");
         });
-        self.object_open.run(Some(job), task);
+        self.target.object_open.run(Some(job), task);
     }
 }
 

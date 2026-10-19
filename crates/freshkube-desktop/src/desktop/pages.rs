@@ -547,7 +547,7 @@ impl Pilot {
 
     /// Drops a pending object open, so its answer is ignored when it comes.
     pub(super) fn cancel_object_open(&mut self) {
-        self.object_open.resolve(None, Ok(()));
+        self.target.object_open.resolve(None, Ok(()));
     }
 
     /// Log collection keeps running in the background across screens; other
@@ -703,7 +703,7 @@ impl Pilot {
 
     pub(super) fn open_logs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(service) = self.pages.selected_service(cx) {
-            if let Some(name) = self.selected_node.clone() {
+            if let Some(name) = self.target.selected_node.clone() {
                 self.open_node_by_name(&name, super::nodes::NodeTab::Logs, window, cx);
             }
             self.pages

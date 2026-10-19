@@ -294,12 +294,8 @@ pub(crate) struct Pilot {
     /// window offers no way to read a notice back.
     #[cfg(test)]
     pub(crate) told: Vec<String>,
-    /// One object-link lookup for the shell's target epoch. The caller also
-    /// checks its origin (for example, the object whose owner it resolves).
-    object_open: Loader<(), Option<u64>>,
-    services: Snapshot<Vec<ServiceInfo>, Target, String>,
-    nodes: Vec<NodeSummary>,
-    selected_node: Option<String>,
+    /// The Talos nodes, the one selected and what is read of it.
+    target: target::Selected,
     chrome: shell::Chrome,
     /// The pages: the map of every page's handle, and the typed handles
     /// the shell observes and pushes into.
@@ -326,7 +322,6 @@ pub(crate) struct Pilot {
     // The snapshots keep the display/freshness state and its existing request
     // tokens; these completion owners retain the jobs and their deliveries.
     overview_read: Loader<(), AppliedConfig>,
-    service_read: Loader<(), Option<Target>>,
     _tick: Task<()>,
 }
 
@@ -745,10 +740,7 @@ impl Pilot {
             epoch: 0,
             overview: Snapshot::default(),
             switch,
-            object_open: Loader::default(),
-            services: Snapshot::default(),
-            nodes: Vec::new(),
-            selected_node: None,
+            target: target::Selected::default(),
             chrome,
             settings_page: pages.settings_page.clone(),
             pages,
@@ -775,7 +767,6 @@ impl Pilot {
             window: window.window_handle(),
             _subscriptions: subscriptions,
             overview_read: Loader::default(),
-            service_read: Loader::default(),
             _tick: tick,
         }
     }
@@ -789,9 +780,9 @@ impl Pilot {
             .search
             .update(cx, |search, cx| search.invalidate(cx));
         self.overview_read.resolve(self.applied.clone(), Ok(()));
-        self.service_read.resolve(None, Ok(()));
-        self.selected_node = None;
-        self.nodes.clear();
+        self.target.service_read.resolve(None, Ok(()));
+        self.target.selected_node = None;
+        self.target.nodes.clear();
         self.pages
             .system_services
             .update(cx, |services, cx| services.set_nodes(&[], cx));
@@ -799,9 +790,9 @@ impl Pilot {
             .node_workspace
             .update(cx, |nodes, _| nodes.load_history.clear());
         self.overview = Snapshot::default();
-        self.pages
-            .system_services
-            .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
+        self.pages.system_services.update(cx, |services, cx| {
+            services.set_nodes(&self.target.nodes, cx)
+        });
         self.rebuild_joined_nodes(cx);
         self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
@@ -812,7 +803,7 @@ impl Pilot {
             .overview_page
             .update(cx, |overview, cx| overview.collapse(cx));
         self.cancel_object_open();
-        self.services = Snapshot::default();
+        self.target.services = Snapshot::default();
         self.push_services(cx);
         self.pages
             .logs
@@ -954,9 +945,10 @@ impl Pilot {
     }
 
     fn selected_summary(&self) -> Option<&NodeSummary> {
-        self.nodes
+        self.target
+            .nodes
             .iter()
-            .find(|node| Some(&node.name) == self.selected_node.as_ref())
+            .find(|node| Some(&node.name) == self.target.selected_node.as_ref())
     }
 
     fn target(&self) -> Option<(Target, TalosClient)> {
@@ -995,7 +987,7 @@ impl Pilot {
                 self.open_node_by_name(node, nodes::NodeTab::Overview, window, cx)
             }
             ScreenEvent::OpenLogsOn { node, service } => {
-                if !self.nodes.iter().any(|known| &known.name == node) {
+                if !self.target.nodes.iter().any(|known| &known.name == node) {
                     return;
                 }
                 self.open_node_by_name(node, nodes::NodeTab::Logs, window, cx);

@@ -163,7 +163,7 @@ impl Pilot {
                 } else {
                     None
                 }
-                .or_else(|| self.selected_node.clone());
+                .or_else(|| self.target.selected_node.clone());
                 if let Some(name) = name {
                     self.open_node_by_name(
                         &name,
@@ -289,8 +289,8 @@ impl Pilot {
         };
         self.mode.set_kubernetes_only(kube);
         self.overview = Snapshot::default();
-        self.nodes.clear();
-        self.selected_node = None;
+        self.target.nodes.clear();
+        self.target.selected_node = None;
         self.sync_unread_health(cx);
         self.rebuild_joined_nodes(cx);
         self.pages.push_node_facts(cx);
