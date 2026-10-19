@@ -143,7 +143,7 @@ pub(super) fn pod_yaml(row: &ResourceRow, ix: usize, created: i64, now: i64) -> 
         "  generateName: {app}-{hash}-\n  labels:\n    app: {app}\n    pod-template-hash: '{hash}'\n  ownerReferences:\n  - apiVersion: apps/v1\n    kind: ReplicaSet\n    name: {app}-{hash}\n    uid: replicasets.apps-{}-{app}-{hash}\n    controller: true\n    blockOwnerDeletion: true\n",
         row.identity.namespace
     );
-    let scheduled = status != "Pending";
+    let scheduled = row.cells[6] != "<none>";
     let init = has_init_container(ix);
     let mut yaml = metadata("Pod", "v1", row, &labels);
     yaml.push_str(&format!(

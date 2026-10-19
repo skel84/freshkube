@@ -154,6 +154,44 @@ fn a_namespace_reads_only_its_objects() {
 }
 
 #[test]
+fn every_example_nodes_pod_list_matches_its_summary_count() {
+    for context in fixture::CONTEXTS {
+        let summary = summary(context, TEST_NOW);
+        for node in summary.nodes.loaded().unwrap() {
+            let selector = format!("spec.nodeName={}", node.name);
+            let (_, rows) =
+                read_filtered(context, "pods", None, Some(&selector), TEST_NOW).unwrap();
+            assert_eq!(rows.len(), node.pods, "{context} {}", node.name);
+            if context == "staging-eu" && node.name == "stg-wk-01" {
+                assert_eq!(rows.len(), 15);
+            }
+        }
+    }
+}
+
+#[test]
+fn example_pod_rows_and_objects_agree_on_node_assignment() {
+    use k8s_openapi::api::core::v1::Pod;
+
+    for context in fixture::CONTEXTS {
+        let (_, rows) = read(context, "pods", None, TEST_NOW).unwrap();
+        let objects: Vec<Pod> = super::summary::summary_objects(context, "pods", TEST_NOW);
+        for (row, object) in rows.iter().zip(objects) {
+            let node = object.spec.unwrap().node_name;
+            assert_eq!(
+                row.cells[6],
+                node.as_deref().unwrap_or("<none>"),
+                "{context} {}",
+                row.identity.name
+            );
+            if row.cells[2] == "Pending" {
+                assert!(node.is_none(), "the example Pending pod is unschedulable");
+            }
+        }
+    }
+}
+
+#[test]
 fn summary_matches_the_example_lists_and_owner_chain() {
     for context in fixture::CONTEXTS {
         let summary = summary(context, TEST_NOW);
