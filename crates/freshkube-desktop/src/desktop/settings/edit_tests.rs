@@ -33,6 +33,20 @@ pub(super) async fn open_settings(
     .unwrap();
 }
 
+/// Opens a section of Settings, as its column's row does.
+pub(super) async fn open_section(
+    cx: &mut TestAppContext,
+    handle: gpui_kit::AnyWindowHandle,
+    view: &gpui_kit::Entity<crate::desktop::Pilot>,
+    section: super::SettingsSection,
+) {
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+}
+
 /// Waits for the save in flight to answer.
 pub(super) async fn saved(
     cx: &mut TestAppContext,

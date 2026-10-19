@@ -114,9 +114,10 @@ impl Chrome {
     /// Adds the chrome's actions to the shell's root: Settings, About, the
     /// appearance and the menu button. Their handlers run on `Pilot`.
     pub(in crate::desktop) fn listen(&self, root: Div, cx: &mut Context<Pilot>) -> Div {
-        root.on_action(cx.listener(|view, _: &OpenSettings, _, cx| {
-            view.navigation.settings_open = true;
-            cx.notify();
+        // Settings opens on the section shown last.
+        root.on_action(cx.listener(|view, _: &OpenSettings, window, cx| {
+            view.navigation.settings_open = false;
+            view.navigate_from_keyboard(Page::Settings, window, cx)
         }))
         .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
         .on_action(cx.listener(|view, _: &UseSystemAppearance, window, cx| {

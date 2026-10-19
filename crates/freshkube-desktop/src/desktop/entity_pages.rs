@@ -20,7 +20,7 @@ use gpui_kit::{App, Context, Entity, EventEmitter, Subscription, Window};
 
 use super::overview::{OverviewEvent, OverviewPage};
 use super::pages::PageId;
-use super::settings::SettingsPage;
+use super::settings::{SettingsEvent, SettingsPage, SettingsSection};
 use super::system_services::{ServiceEvent, SystemServices};
 use super::{Page, Pilot, nodes};
 use crate::applications::{ApplicationsPage, SwitchLink};
@@ -265,8 +265,16 @@ impl ScreenPanel for SettingsPage {
     }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
-        self.sources
-            .update(cx, |sources, cx| sources.set_visible(visible, cx));
+        SettingsPage::set_visible(self, visible, cx)
+    }
+
+    fn subscribe_page(
+        this: &Entity<Self>,
+        on_event: PageEventFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Vec<Subscription> {
+        vec![hear::<_, SettingsEvent>(this, &on_event, window, cx)]
     }
 
     /// Settings reads nothing until asked.
@@ -275,8 +283,9 @@ impl ScreenPanel for SettingsPage {
     /// Its checks run only from Check sources.
     fn refresh(&mut self, _: &mut Window, _: &mut Context<Self>) {}
 
+    /// The workspace's line, on its lists.
     fn status(&mut self, _: &App) -> Option<Segment> {
-        Some(self.status.clone())
+        SettingsPage::status(self)
     }
 }
 
@@ -376,7 +385,29 @@ impl Pilot {
             }
             PageEvent::Service(event) => self.service_event(event, window, cx),
             PageEvent::Overview(event) => self.overview_event(event, window, cx),
+            PageEvent::Settings(SettingsEvent::OpenMenu) => {
+                self.navigation.settings_open = true;
+                cx.notify();
+            }
+            PageEvent::Settings(SettingsEvent::Coroot) => {
+                self.observability
+                    .update(cx, |page, cx| page.show_connection(cx));
+                self.navigate_from_keyboard(Page::Observability, window, cx);
+            }
         }
+    }
+
+    /// Shows a section of Settings, as its column's row does.
+    pub(super) fn show_settings(
+        &mut self,
+        section: SettingsSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_page
+            .update(cx, |page, cx| page.show(section, cx));
+        self.navigation.column_changed();
+        self.navigate_from_keyboard(Page::Settings, window, cx);
     }
 
     /// A System services row's Logs or Open node.

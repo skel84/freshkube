@@ -1,0 +1,1 @@
+- **Settings:** Settings is an area of its own, with a rail button and a column of its sections. App holds General, Connection, Monitoring and Coroot; Workspace holds Clusters, Argo CD destinations and Delivery sources. Each section is its own page. ⌘, and the Settings menu's All settings… open the section shown last. App's sections point to where their controls are for now.
