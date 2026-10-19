@@ -321,8 +321,6 @@ pub(crate) struct Pilot {
     /// Settings' handle, also held by the pages: `settings/` and the
     /// start-up code read it here.
     settings_page: Entity<settings::SettingsPage>,
-    #[cfg(test)]
-    observability: Entity<crate::observability::ObservabilityPage>,
     /// `workspace.json` beside the preferences; none without preferences.
     workspace_file: Option<PathBuf>,
     setup_file: Entity<crate::setup_file::SetupFile>,
@@ -763,8 +761,6 @@ impl Pilot {
             selected_node: None,
             chrome,
             settings_page: pages.settings_page.clone(),
-            #[cfg(test)]
-            observability: pages.observability.clone(),
             pages,
             workspace_file: options
                 .preferences
