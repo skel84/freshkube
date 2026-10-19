@@ -411,6 +411,14 @@ The header's **List / Chain** toggle (`ui::segment`, ids `change-view-list`, `ch
 - **Narrow windows and large text.** At 760 × 560 and at text size 20 the Inspector is stacked under the Chain (the rule above: below 900 dp of page it shares the height evenly) and the Chain scrolls sideways; cards and pills scale with the text (`dp`), so a larger size scrolls further and never cuts a key or a word. A short window (under 620 dp) scrolls the page, and the Chain keeps at least 180 dp.
 - **States.** Loading shows the table's loading rows in place of cards in either view. When nothing could be read, the state with why and Retry replaces the body whatever the view. A refused, unreachable or capped source is a banner above the body and a note on the cards that depend on it (`pods on prod-lon refused`), as the table's Stage group rows word them; its Application and Pods cards stay in the chain with the Unknown ring and a dotted link. A Stage whose destination isn't reachable keeps its card and side branches for what could not be read. Two Stages that run one commit are two Stage cards, each with its own link from the card it follows (the Freight, or the Stage before); the commit and the image are drawn once.
 
+The owner settled the open questions on this view on 19 October 2026:
+
+- A Stage is one card, with its gates in the Inspector; a gate is never a card of its own.
+- The view is remembered per window, in `navigation.json` as `change.view`; List is the default for a window that has none.
+- A link selected in Chain shows in List as the row it ends at, with the Inspector at its Link section; the table has no row type for a link.
+- The delivery model gains three additive fields, so the chain is read, never guessed from names: `Hop.after` (the key of the hop it joins), `LinkDetail.key` (the value it joined on) and `Missing.after` (the hop a missing piece would join). Two Stages that run one commit are told apart by `after`, not by name.
+- The Chain's UI tests live in `freshkube-applications`; the desktop gets one thin test of the toggle later.
+
 Why drawing it now meets the reasons it was rejected for:
 
 - *Outside the shared glyph, row, selection and keyboard rules.* The cards use `ui::status_glyph` and the table's tooltips; the selection is the page's one key; the keys are the table's words (↑ ↓ O Escape) plus arrows along the chain; the Inspector is the same pane.
