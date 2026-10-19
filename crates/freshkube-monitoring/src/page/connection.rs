@@ -676,7 +676,7 @@ fn through_host(error: QueryError, host: Option<&str>) -> QueryError {
         Some(host) => QueryError::new(
             error.kind,
             format!(
-                "The metrics store is hosted by {host}, and it was read through {host}: {}",
+                "Couldn't reach the metrics store through {host}: {}",
                 error.message
             ),
         ),

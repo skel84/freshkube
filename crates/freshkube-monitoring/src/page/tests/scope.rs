@@ -187,6 +187,10 @@ async fn an_entry_with_no_source_under_per_entry_says_so_and_asks_nothing(cx: &m
         assert!(page.history().is_none());
     });
     assert!(open_seen.lock().unwrap().is_empty());
+    // It is the not-set-up state: no failure, no grid, nothing to retry.
+    assert!(shown(cx, handle, "monitoring-unknown"));
+    assert!(!shown(cx, handle, "monitoring-retry"));
+    assert!(!shown(cx, handle, "monitoring-grid"));
 }
 
 #[gpui_kit::test]
@@ -218,7 +222,7 @@ async fn a_central_store_that_cannot_be_reached_names_the_entry_that_hosts_it(
         };
         // Not read as the open entry's own cluster failing.
         assert!(
-            why.starts_with("The metrics store is hosted by cluster-h"),
+            why.starts_with("Couldn't reach the metrics store through cluster-h: "),
             "{why}"
         );
         assert!(why.contains("No kubeconfig"), "{why}");

@@ -439,15 +439,19 @@ impl MonitoringPage {
                 cx,
             )
             .into_any_element(),
-            Connection::Unknown(why) => ui::empty_state(
-                IconName::Unplug,
-                "No metrics source",
-                "The setup file gives this entry no store to read, so nothing was asked.",
-                Some(why.to_string()),
-                Vec::new(),
-                cx,
-            )
-            .into_any_element(),
+            Connection::Unknown(why) => div()
+                .id("monitoring-unknown")
+                .size_full()
+                .child(ui::empty_state(
+                    IconName::Unplug,
+                    "No metrics source",
+                    "Nothing was asked. Name a store for this entry under `metrics` in freshkube.yaml.",
+                    Some(why.to_string()),
+                    Vec::new(),
+                    cx,
+                ))
+                .test_support()
+                .into_any_element(),
             _ => self.render_grid(narrow, short, window, cx),
         }
     }
