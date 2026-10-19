@@ -8,10 +8,10 @@ queries belong in core or the domain crate; presentation belongs in the view.
 Start reads from lifecycle methods or explicit actions, never from `render`.
 
 There are exactly [two exception classes](#exceptions): Operations mutations
-and user-started sessions. This is the rule for ordinary reads, not a claim
-that every existing owner has migrated. The remaining hand-made read owners
-are gaps tracked by [#582](https://github.com/skel84/freshkube/issues/582), not
-additional exceptions; its slice J audit records the exact counts and names.
+and user-started sessions. The remaining counters outside the primitives
+are the [allowed list](#allowed-counters) from
+[#582](https://github.com/skel84/freshkube/issues/582), each with its specific
+reason to remain.
 
 ## Snapshot and Loader in brief
 
@@ -78,6 +78,36 @@ The primitives do not inspect credentials or infer access from a file path.
 The caller must replace incompatible identities and apply the access checks
 at the completion boundary. A failed connection after a file replacement
 must not expose the previous identity's data.
+
+## Allowed counters
+
+The lead's [list after slice J](https://github.com/skel84/freshkube/issues/582#issuecomment-6270431283)
+permits only these counters outside `freshkube-reads`. These describe identity,
+coverage, scheduling, local files or the two exception classes; they do not
+permit another ordinary read lifetime. Core's `Snapshot` supplies the request
+generation used inside `Loader`.
+
+| Counter | Why it stays |
+| --- | --- |
+| Summary reducer's `State.generation` (`freshkube-core/src/kubernetes_summary/session.rs`) | Identifies reducer coverage independently of the driver's Watch. |
+| Packet capture's `CaptureState.generation` (`freshkube-core/src/pcap.rs`) | Guards the explicit capture/save session. |
+| Forward routes' `Route.generation` (`freshkube-core/src/resources/forward/mod.rs`) | Rejects obsolete route/session updates. |
+| `LogView.generation` (`freshkube-logs/src/source_api.rs`) | Invalidates the view's retained review and measurements when its source changes. |
+| Table projection's `ResourceProjection.generation` (`freshkube-resources/src/projection.rs`) | Numbers derived table projections, not cluster reads. |
+| `Pilot.epoch` (`freshkube-desktop/src/desktop/mod.rs` and `target.rs`) | Identifies the source/target supplied to read owners and action guards. |
+| `ResourceStore.epoch` (`freshkube-resources/src/store.rs`) | Identifies the observation session used as its Watch's identity. |
+| `MonitoringPage.generation` (`freshkube-monitoring/src/page/board.rs`) | Schedules panels around their Loaders for the selected dashboard window. |
+| `Detail.reveal_epoch` (`freshkube-resources/src/detail.rs`) | Invalidates deferred UI reveal work. |
+| `SetupFile.write_generation` (`freshkube-desktop/src/setup_file.rs`) | Keeps local preference-file inspection from overwriting a newer write. |
+| `Memory.setup_generation` (`freshkube-observability/src/remember.rs`) | Rejects obsolete inspection of the app's local setup file. |
+| Log streams' `StreamSet.next_generation`, copied `Stream.generation` and `Fed.generation`, and example `Stream.sequence` (`freshkube-desktop/src/logs/streams.rs`) | Distinguish retries and number example lines within user-started log sessions. |
+| `Maintenance.generation` (`freshkube-desktop/src/maintenance/mod.rs`) | Guards a mixed read/run workflow under the mutation exception until its own migration. |
+
+Paths in this table are relative to `crates/`. Observability's page reads and
+workspace-entry location use completion Loaders; their former `Live.generation`
+and `Pilot.entry_generation` are gone. The entry owner retains its request
+token after location completes, so held links and draft inspection still
+reject an entry that moved on.
 
 ## Snapshot transitions
 
