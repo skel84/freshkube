@@ -254,42 +254,46 @@ fn changing_context_through_the_shell_replaces_the_whole_session(cx: &mut TestAp
     let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 820.);
     let (before, after) = revisions();
     let access = AccessIdentity::new(AccessSessionId::new(), before);
-    cx.update_window(handle, |_, window, cx| {
-        view.update(cx, |view, cx| {
-            // Nothing is published for the new context, so what is left in
-            // the session after the change is only what was carried over.
-            view.mode.hold_mut().talos = true;
-            let session = view.registry.active_mut();
-            session.access = Some(access);
-            session.access_configuration = Some(before);
-            session.prompted_access = Some((after, Some(access)));
-            session.summary_health = Some(Err("old".into()));
-            let identity = view.registry.summary_watch.identity().unwrap().clone();
-            let sender = view.registry.summary_watch.open(
-                identity,
-                freshkube_reads::Pace {
-                    capacity: 1,
-                    most: 1,
-                    every: std::time::Duration::ZERO,
-                },
-                |view: &mut super::Pilot| &mut view.registry.summary_watch,
-                |_, _, _| {},
-                cx,
-            );
-            assert!(view.registry.summary_watch.is_running());
-            let epoch = view.registry.summary_watch.generation();
-            let other = crate::fixture::CONTEXTS[1].to_string();
-            assert_ne!(view.applied.context.as_deref(), Some(other.as_str()));
-            view.select_context(other, window, cx);
-            let session = view.registry.active();
-            assert!(session.access.is_none());
-            assert!(session.access_configuration.is_none());
-            assert!(session.prompted_access.is_none());
-            assert!(session.summary_health.is_none());
-            assert!(!view.registry.summary_watch.is_running());
-            assert!(sender.is_closed());
-            assert!(view.registry.summary_watch.generation() != epoch);
+    let sender = cx
+        .update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                // Nothing is published for the new context, so what is left in
+                // the session after the change is only what was carried over.
+                view.mode.hold_mut().talos = true;
+                let session = view.registry.active_mut();
+                session.access = Some(access);
+                session.access_configuration = Some(before);
+                session.prompted_access = Some((after, Some(access)));
+                session.summary_health = Some(Err("old".into()));
+                let identity = view.registry.summary_watch.identity().unwrap().clone();
+                let sender = view.registry.summary_watch.open(
+                    identity,
+                    freshkube_reads::Pace {
+                        capacity: 1,
+                        most: 1,
+                        every: std::time::Duration::ZERO,
+                    },
+                    |view: &mut super::Pilot| &mut view.registry.summary_watch,
+                    |_, _, _| {},
+                    cx,
+                );
+                assert!(view.registry.summary_watch.is_running());
+                let epoch = view.registry.summary_watch.generation();
+                let other = crate::fixture::CONTEXTS[1].to_string();
+                assert_ne!(view.applied.context.as_deref(), Some(other.as_str()));
+                view.select_context(other, window, cx);
+                let session = view.registry.active();
+                assert!(session.access.is_none());
+                assert!(session.access_configuration.is_none());
+                assert!(session.prompted_access.is_none());
+                assert!(session.summary_health.is_none());
+                assert!(!view.registry.summary_watch.is_running());
+                assert!(view.registry.summary_watch.generation() != epoch);
+                sender
+            })
         })
-    })
-    .unwrap();
+        .unwrap();
+    // GPUI drops the cancelled delivery future on its next executor turn.
+    cx.run_until_parked();
+    assert!(sender.is_closed());
 }
