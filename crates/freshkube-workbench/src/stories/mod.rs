@@ -9,6 +9,7 @@ pub mod change;
 pub mod data_table;
 pub mod dock;
 pub mod drawer;
+mod form;
 pub mod graph;
 pub mod motion;
 pub mod source_list;
@@ -81,6 +82,12 @@ pub const STORIES: &[Story] = &[
         title: "Change flash",
         icon: || IconName::Zap,
         build: motion::flash::build,
+    },
+    Story {
+        slug: "form",
+        title: "Form",
+        icon: || IconName::Settings,
+        build: form::build,
     },
 ];
 

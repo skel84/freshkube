@@ -5,11 +5,8 @@
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 use freshkube_core::operations::{AuditLog, default_audit_path};
-use gpui_kit::component::{
-    Disableable, Root, WindowExt,
-    button::{Button, ButtonVariants},
-    h_flex, v_flex,
-};
+use freshkube_ui::form::{self, Action};
+use gpui_kit::component::{Root, WindowExt, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use std::cell::Cell;
@@ -213,17 +210,11 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
         let ok = {
             let request = request.clone();
             let blocked = blocked.clone();
-            Button::new("confirm-ok")
-                .label(request.confirm_label.clone())
-                .map(|button| {
-                    if request.destructive {
-                        button.danger()
-                    } else {
-                        button.primary()
-                    }
-                })
-                .disabled(reason == Some(Blocked::Stale))
-                .on_click(move |_, window, cx| {
+            let destructive = request.destructive;
+            let action = Action::new(
+                "confirm-ok",
+                request.confirm_label.clone(),
+                move |_, window, cx| {
                     let refusal = if Operations::current(cx).is_some() {
                         Some(Blocked::Busy)
                     } else if (request.current)(cx) != Some(request.fingerprint) {
@@ -242,12 +233,12 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     }
                     window.close_dialog(cx);
                     (request.on_confirm)(window, cx);
-                })
+                },
+            )
+            .disabled(reason == Some(Blocked::Stale));
+            if destructive { action.danger() } else { action }
         };
-        let cancel = Button::new("confirm-cancel")
-            .outline()
-            .label("Cancel")
-            .on_click(|_, window, cx| window.close_dialog(cx));
+        let cancel = Action::cancel("confirm-cancel");
         let notice = reason.map(|reason| {
             let text = match reason {
                 Blocked::Stale => {
@@ -298,14 +289,7 @@ pub(crate) fn confirm(request: Confirmation, window: &mut Window, cx: &mut App) 
                     }))
                     .children(notice),
             )
-            .footer(
-                h_flex()
-                    .w_full()
-                    .justify_end()
-                    .gap_2()
-                    .child(cancel)
-                    .child(ok),
-            )
+            .footer(form::actions(ok, cancel))
     });
 }
 
