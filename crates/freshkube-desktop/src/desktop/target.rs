@@ -58,6 +58,24 @@ impl Selected {
         self.nodes.clear();
     }
 
+    /// Answers the selected node's services from the example catalog.
+    pub(super) fn read_example_services(&mut self, epoch: u64, context: String) {
+        let identity = Target {
+            epoch,
+            context,
+            node: self.selected_node.clone().unwrap_or_default(),
+            address: "fixture".into(),
+        };
+        let request = self.services.begin(identity.clone());
+        let catalog = fixture::services(&identity.context, &identity.node);
+        let result = if catalog.is_empty() {
+            Err(format!("{} didn't answer the Talos API", identity.node))
+        } else {
+            Ok(catalog)
+        };
+        self.services.apply(&request, result);
+    }
+
     /// Drops a pending object open, so its answer is ignored when it comes.
     pub(super) fn cancel_object_open(&mut self) {
         self.object_open.resolve(None, Ok(()));
@@ -167,20 +185,8 @@ impl Pilot {
             return;
         }
         if self.mode().is_example() {
-            let identity = Target {
-                epoch: self.epoch,
-                context: self.applied.context.clone().unwrap_or_default(),
-                node: self.target.selected_node.clone().unwrap_or_default(),
-                address: "fixture".into(),
-            };
-            let request = self.target.services.begin(identity.clone());
-            let catalog = fixture::services(&identity.context, &identity.node);
-            let result = if catalog.is_empty() {
-                Err(format!("{} didn't answer the Talos API", identity.node))
-            } else {
-                Ok(catalog)
-            };
-            self.target.services.apply(&request, result);
+            let context = self.applied.context.clone().unwrap_or_default();
+            self.target.read_example_services(self.epoch, context);
             self.push_services(cx);
             return;
         }
