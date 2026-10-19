@@ -113,6 +113,7 @@ impl Pilot {
             "Connecting…".into()
         };
         let mut versions: Vec<_> = self
+            .target
             .nodes
             .iter()
             .filter_map(|node| node.version.as_deref())

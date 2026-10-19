@@ -150,7 +150,7 @@ impl Pilot {
                         .unwrap_or_else(|| "Default talosconfig".into())
                 },
                 self.applied.context.as_deref().unwrap_or("Current context"),
-                self.selected_node.as_deref().unwrap_or("None")
+                self.target.selected_node.as_deref().unwrap_or("None")
             )
         };
         let applied = format!("{applied} · Page: {}", self.navigation.page_title());

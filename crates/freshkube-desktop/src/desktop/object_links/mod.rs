@@ -105,7 +105,7 @@ impl Pilot {
         if self.divert_link(&object, work, window, cx) {
             return;
         }
-        self.cancel_object_open();
+        self.target.cancel_object_open();
         let origin = self.pages.resources.read(cx).detail_identity(cx).cloned();
         self.start_object_open(
             "Resolving the owner's kind timed out",
@@ -130,7 +130,7 @@ impl Pilot {
     }
 
     /// Starts the one read an object link waits on, replacing none: callers
-    /// `cancel_object_open` first. Its answer is applied only if the shell's
+    /// `Selected::cancel_object_open` first. Its answer is applied only if the shell's
     /// epoch and this loader request still hold and `superseded` (the
     /// caller's own check, for example that another object opened) says no.
     pub(super) fn start_object_open<T: Send + 'static>(
@@ -143,7 +143,7 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         let epoch = self.epoch;
-        let request = self.object_open.start(Some(epoch));
+        let request = self.target.object_open.start(Some(epoch));
         let (job, receiver) = backend::spawn_job(
             &self.runtime,
             Duration::from_secs(15),
@@ -157,7 +157,7 @@ impl Pilot {
             _ = this.update_in(cx, |this, window, cx| {
                 if this.epoch != epoch
                     || superseded(this, cx)
-                    || !this.object_open.land(&request, Ok(()), cx)
+                    || !this.target.object_open.land(&request, Ok(()), cx)
                 {
                     return;
                 }
@@ -168,7 +168,7 @@ impl Pilot {
             #[cfg(test)]
             probe::hit("object-open-delivered");
         });
-        self.object_open.run(Some(job), task);
+        self.target.object_open.run(Some(job), task);
     }
 }
 

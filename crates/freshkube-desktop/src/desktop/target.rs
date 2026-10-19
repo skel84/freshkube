@@ -1,33 +1,106 @@
 //! The selected Talos target and its service snapshot.
 use super::*;
 
-impl Pilot {
-    pub(super) fn sync_nodes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let old_target = self.target().map(|(target, _)| target);
-        self.nodes = self
-            .overview
-            .data()
-            .map(presentation::node_summaries)
-            .unwrap_or_default();
-        let selected = self
-            .selected_node
+/// The nodes the overview lists, the one selected, and what is read of it.
+#[derive(Default)]
+pub(super) struct Selected {
+    /// One object-link lookup for the shell's target epoch. The caller also
+    /// checks its origin (for example, the object whose owner it resolves).
+    pub(super) object_open: Loader<(), Option<u64>>,
+    pub(super) services: Snapshot<Vec<ServiceInfo>, Target, String>,
+    pub(super) service_read: Loader<(), Option<Target>>,
+    pub(super) nodes: Vec<NodeSummary>,
+    pub(super) selected_node: Option<String>,
+}
+
+impl Selected {
+    /// The selected node's row, if the overview lists it.
+    pub(super) fn summary(&self) -> Option<&NodeSummary> {
+        self.nodes
+            .iter()
+            .find(|node| Some(&node.name) == self.selected_node.as_ref())
+    }
+
+    /// Whether the overview lists a node of that name.
+    pub(super) fn has_node(&self, name: &str) -> bool {
+        self.nodes.iter().any(|node| node.name == name)
+    }
+
+    /// Takes the overview's nodes and says which one to select: the
+    /// selected node while it is still listed, else the first responding
+    /// one, else the first. It does not select it.
+    pub(super) fn adopt_nodes(&mut self, nodes: Vec<NodeSummary>) -> Option<String> {
+        self.nodes = nodes;
+        self.selected_node
             .clone()
-            .filter(|name| self.nodes.iter().any(|node| &node.name == name))
+            .filter(|name| self.has_node(name))
             .or_else(|| {
                 self.nodes
                     .iter()
                     .find(|node| node.responding)
                     .or_else(|| self.nodes.first())
                     .map(|node| node.name.clone())
-            });
-        self.pages
-            .system_services
-            .update(cx, |services, cx| services.set_nodes(&self.nodes, cx));
+            })
+    }
+
+    /// Selects a node: the old node's service read is dropped with its
+    /// services.
+    pub(super) fn select(&mut self, selected: Option<String>) {
+        self.selected_node = selected;
+        self.service_read.resolve(None, Ok(()));
+        self.services = Snapshot::default();
+    }
+
+    /// Forgets the nodes and the selection, with the service read.
+    pub(super) fn clear_nodes(&mut self) {
+        self.service_read.resolve(None, Ok(()));
+        self.selected_node = None;
+        self.nodes.clear();
+    }
+
+    /// Answers the selected node's services from the example catalog.
+    pub(super) fn read_example_services(&mut self, epoch: u64, context: String) {
+        let identity = Target {
+            epoch,
+            context,
+            node: self.selected_node.clone().unwrap_or_default(),
+            address: "fixture".into(),
+        };
+        let request = self.services.begin(identity.clone());
+        let catalog = fixture::services(&identity.context, &identity.node);
+        let result = if catalog.is_empty() {
+            Err(format!("{} didn't answer the Talos API", identity.node))
+        } else {
+            Ok(catalog)
+        };
+        self.services.apply(&request, result);
+    }
+
+    /// Drops a pending object open, so its answer is ignored when it comes.
+    pub(super) fn cancel_object_open(&mut self) {
+        self.object_open.resolve(None, Ok(()));
+    }
+}
+
+impl Pilot {
+    pub(super) fn sync_nodes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let old_target = self.target().map(|(target, _)| target);
+        let nodes = self
+            .overview
+            .data()
+            .map(presentation::node_summaries)
+            .unwrap_or_default();
+        let selected = self.target.adopt_nodes(nodes);
+        self.pages.system_services.update(cx, |services, cx| {
+            services.set_nodes(&self.target.nodes, cx)
+        });
         self.rebuild_joined_nodes(cx);
         self.push_talos_nodes(cx);
         self.pages.push_node_facts(cx);
         self.prepare_context_display(window, cx);
-        if self.selected_node != selected || old_target != self.target().map(|(target, _)| target) {
+        if self.target.selected_node != selected
+            || old_target != self.target().map(|(target, _)| target)
+        {
             self.select_node(selected, window, cx);
         } else {
             self.push_source(window, cx);
@@ -43,6 +116,7 @@ impl Pilot {
             .map(|client| TalosNodes {
                 client,
                 nodes: self
+                    .target
                     .nodes
                     .iter()
                     .filter(|node| node.responding)
@@ -69,17 +143,16 @@ impl Pilot {
                 .apply(&request, Err("Node changed; refresh cancelled".into()));
             self.publish_reading(cx);
         }
-        self.selected_node = selected;
-        self.service_read.resolve(None, Ok(()));
-        self.services = Snapshot::default();
+        self.target.select(selected);
         self.push_services(cx);
         if self.mode().is_example() {
             let context = self.applied.context.clone().unwrap_or_default();
-            let node = self.selected_node.clone().unwrap_or_default();
+            let node = self.target.selected_node.clone().unwrap_or_default();
             let catalog = fixture::services(&context, &node);
             let events = fixture::logs(&node, &catalog);
             let address = self
-                .selected_summary()
+                .target
+                .summary()
                 .map(|summary| summary.address.clone())
                 .unwrap_or_default();
             self.pages.logs.update(cx, |logs, cx| {
@@ -102,42 +175,28 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected_node.as_ref() != Some(&name)
-            && self.nodes.iter().any(|node| node.name == name)
-        {
+        if self.target.selected_node.as_ref() != Some(&name) && self.target.has_node(&name) {
             self.select_node(Some(name), window, cx);
         }
     }
 
     pub(super) fn refresh_services(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.services.is_loading() {
+        if self.target.services.is_loading() {
             return;
         }
         if self.mode().is_example() {
-            let identity = Target {
-                epoch: self.epoch,
-                context: self.applied.context.clone().unwrap_or_default(),
-                node: self.selected_node.clone().unwrap_or_default(),
-                address: "fixture".into(),
-            };
-            let request = self.services.begin(identity.clone());
-            let catalog = fixture::services(&identity.context, &identity.node);
-            let result = if catalog.is_empty() {
-                Err(format!("{} didn't answer the Talos API", identity.node))
-            } else {
-                Ok(catalog)
-            };
-            self.services.apply(&request, result);
+            let context = self.applied.context.clone().unwrap_or_default();
+            self.target.read_example_services(self.epoch, context);
             self.push_services(cx);
             return;
         }
         let Some((target, client)) = self.target() else {
             return;
         };
-        let request = self.services.begin(target.clone());
+        let request = self.target.services.begin(target.clone());
         self.push_services(cx);
         let (job, receiver) = backend::services(self.runtime.clone(), client, target.clone());
-        let completion = self.service_read.start(Some(target.clone()));
+        let completion = self.target.service_read.start(Some(target.clone()));
         let task = cx.spawn_in(window, async move |this, cx| {
             let result = receiver
                 .await
@@ -146,12 +205,12 @@ impl Pilot {
                 if view.target().as_ref().map(|(identity, _)| identity) != Some(&target) {
                     return;
                 }
-                if !view.service_read.land(&completion, Ok(()), cx) {
+                if !view.target.service_read.land(&completion, Ok(()), cx) {
                     return;
                 }
-                if view.services.apply(&request, result) {
+                if view.target.services.apply(&request, result) {
                     view.push_services(cx);
-                    let catalog = view.services.data().cloned().unwrap_or_default();
+                    let catalog = view.target.services.data().cloned().unwrap_or_default();
                     let current = view.target();
                     view.pages
                         .logs
@@ -160,7 +219,7 @@ impl Pilot {
                 cx.notify();
             });
         });
-        self.service_read.run(Some(job), task);
+        self.target.service_read.run(Some(job), task);
         cx.notify();
     }
 }

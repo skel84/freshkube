@@ -41,7 +41,10 @@ fn every_screen_is_reachable_and_loads_only_when_shown(cx: &mut TestAppContext) 
         assert_eq!(window.find(("process", 1usize)).selected(), Some(true));
         // A node switch reaches the visible screen as a new target.
         pick_target(window, cx, 4);
-        assert_eq!(view.read(cx).selected_node.as_deref(), Some(DEGRADED_NODE));
+        assert_eq!(
+            view.read(cx).target.selected_node.as_deref(),
+            Some(DEGRADED_NODE)
+        );
         window.render_frame(cx);
         assert!(window.find("partial-notice").visible());
         // The retained screen scrolls under the node header in a short pane.
