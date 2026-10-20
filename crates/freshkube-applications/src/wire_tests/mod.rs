@@ -322,7 +322,12 @@ async fn the_stage_naming_reaches_the_list_and_the_open_change_on_reload(cx: &mu
         app.update(cx, |page, cx| page.set_setup(&configured, cx))
     })
     .unwrap();
-    cx.run_until_parked();
+    // The list derives its projects from the naming, so it reads again.
+    cx.update_window(window, |_, _, cx| {
+        assert!(app.read(cx).loader.is_loading());
+    })
+    .unwrap();
+    wait_list(cx, window, &app).await;
     cx.update_window(window, |_, _, cx| {
         let expected = Some("{stage}-{project}");
         let page = app.read(cx);
@@ -348,8 +353,10 @@ async fn the_stage_naming_reaches_the_list_and_the_open_change_on_reload(cx: &mu
     cx.update_window(window, |_, _, cx| {
         let page = app.read(cx);
         assert!(page.stage_naming.is_none());
+        assert!(page.loader.is_loading());
     })
     .unwrap();
+    wait_list(cx, window, &app).await;
 }
 
 #[gpui_kit::test]

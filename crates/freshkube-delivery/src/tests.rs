@@ -1366,6 +1366,71 @@ async fn a_name_only_sibling_at_the_same_commit_keeps_the_claim_a_claim() {
     );
 }
 
+#[tokio::test]
+async fn a_name_only_claim_stays_claimed_when_the_push_and_the_sync_match() {
+    let mut world = promoted(NEW, "Succeeded", PUSHED);
+    let mut app = application_without_project();
+    app["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    world.argocd = world.argocd.with("applications", vec![app]);
+    let link = stage_application_link(&world, Some(name_only())).await;
+    assert_eq!(link.confidence, Confidence::Claimed, "{link:#?}");
+    assert!(
+        link.reason.contains("found by the naming template only"),
+        "{}",
+        link.reason
+    );
+    // The same proof under the project key is Confirmed, so the cap is the
+    // claim's, not the proof's.
+    let mut keyed = unannotated_application();
+    keyed["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    world.argocd = world.argocd.with("applications", vec![keyed]);
+    let link = stage_application_link(&world, Some(naming())).await;
+    assert_eq!(link.confidence, Confidence::Confirmed, "{link:#?}");
+}
+
+#[tokio::test]
+async fn two_applications_named_for_one_stage_are_linked_to_neither() {
+    let world = without_rollouts_with(application_without_project());
+    let clusters = Clusters {
+        kargo: &world.kargo,
+        argocd: &world.argocd,
+        tekton: &world.tekton,
+        environment: &world.environment,
+        github: &FixtureGitHub::default(),
+    };
+    let mut plan = plan(&ENV);
+    plan.stage_naming = Some(name_only());
+    let mut evidence = collect(&clusters, &plan, observed_at()).await;
+    // The same name in another namespace Argo CD reads Applications from.
+    let first = evidence.applications.read().unwrap()[0].clone();
+    let mut twin = first.clone();
+    twin.namespace = "argocd-b".into();
+    let mut annotated = application_without_project();
+    annotated["metadata"]["name"] = serde_json::json!("storefront-dev");
+    annotated["metadata"]["annotations"] =
+        serde_json::json!({"kargo.akuity.io/authorized-stage": "storefront:dev"});
+    let annotated = parse_application(&annotated).unwrap();
+    evidence.applications = Source::Read(vec![first, twin, annotated]);
+    let trail = join(&evidence);
+    let links = link(&trail, Hop::Stage, Hop::Application);
+    let of = |subject: &str| links.iter().find(|l| l.subject == subject).expect(subject);
+    for subject in [
+        "argocd/app-storefront-in-dev",
+        "argocd-b/app-storefront-in-dev",
+    ] {
+        let link = of(subject);
+        assert_eq!(link.confidence, Confidence::Unknown, "{link:#?}");
+        assert!(
+            link.reason
+                .contains("2 Applications match the naming template for this Stage"),
+            "{}",
+            link.reason
+        );
+    }
+    // An annotation's claim is not part of the ambiguity.
+    assert_ne!(of("argocd/storefront-dev").confidence, Confidence::Unknown);
+}
+
 fn supply_chain_reason(trail: &Trail) -> String {
     link(trail, Hop::PipelineRun, Hop::SupplyChain)[0]
         .reason

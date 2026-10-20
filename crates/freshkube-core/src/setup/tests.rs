@@ -1013,3 +1013,20 @@ delivery:
     );
     assert_eq!(ok(&to_text(&setup)), setup);
 }
+
+#[test]
+fn a_stage_naming_template_needs_only_a_stage_somewhere_in_it() {
+    let text = |template: &str| {
+        format!("version: 1\ndelivery:\n  stage_naming:\n    name_template: '{template}'\n")
+    };
+    for template in [
+        "{stage}",
+        "{stage}-{stage}",
+        "{stage}-{x}",
+        "app-{project}-{stage}",
+    ] {
+        let setup = ok(&text(template));
+        let naming = setup.delivery.unwrap().stage_naming.unwrap();
+        assert_eq!(naming.name_template, template);
+    }
+}

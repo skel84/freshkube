@@ -31,11 +31,13 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use super::argocd::{Application, DestinationMatch, ManagedObject, MapHint, StageNaming};
+use super::argocd::{
+    Application, DestinationMatch, ManagedObject, MapHint, StageClaim, StageNaming,
+};
 use super::deployments::{Deployment, DeploymentSet};
 use super::digest::Digest;
 use super::github::PullRequest;
-use super::kargo::{Freight, KargoRead};
+use super::kargo::{Freight, KargoRead, Stage};
 use super::observation::{Fact, Observation};
 use super::pods::RunningImage;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
@@ -224,6 +226,26 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// How the Application claims the Stage. A claim by name only that more
+    /// than one Application makes for the Stage is no claim: the name can't
+    /// say which is the Stage's.
+    pub(crate) fn claims_stage(&self, app: &Application, stage: &Stage) -> Option<StageClaim> {
+        let claim = app.claims_stage(&stage.project, &stage.name, self.stage_naming.as_ref())?;
+        (claim != StageClaim::NamedOnly || self.name_only_claimants(stage) <= 1).then_some(claim)
+    }
+
+    /// How many Applications read claim the Stage by name only.
+    pub(crate) fn name_only_claimants(&self, stage: &Stage) -> usize {
+        self.applications.read().map_or(0, |apps| {
+            apps.iter()
+                .filter(|app| {
+                    app.claims_stage(&stage.project, &stage.name, self.stage_naming.as_ref())
+                        == Some(StageClaim::NamedOnly)
+                })
+                .count()
+        })
+    }
+
     /// How a context is named in words: the name given for its key, else
     /// the key itself, which a kubeconfig context or a workspace entry is.
     pub fn name<'a>(&'a self, context: &'a str) -> &'a str {
@@ -606,8 +628,7 @@ fn candidate_workloads(
             .filter(|stage| stage.current_freight.contains(&item.name))
         {
             for app in apps.iter().filter(|app| {
-                app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                    .is_some()
+                evidence.claims_stage(app, stage).is_some()
                     && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
             }) {
                 for managed in app.managed.iter().filter(|m| controller.is(m)) {
@@ -664,8 +685,7 @@ pub(crate) fn candidate_applications(
             .filter(|stage| stage.current_freight.contains(&item.name))
         {
             for app in apps.iter().filter(|app| {
-                app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                    .is_some()
+                evidence.claims_stage(app, stage).is_some()
                     && !manages_rollout(app)
                     && !deployment::speaks_for_in(read, item, app)
                     && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
