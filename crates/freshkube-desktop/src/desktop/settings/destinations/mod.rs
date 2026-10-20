@@ -16,12 +16,8 @@ mod tests;
 use super::SettingsPage;
 use crate::ui::{self, dp};
 use freshkube_core::workspace::Key;
-use freshkube_ui::{menu, page, table, table::TableSource as _};
-use gpui_kit::component::{
-    Disableable, Sizable, WindowExt,
-    button::{Button, ButtonVariants},
-    h_flex, v_flex,
-};
+use freshkube_ui::{form as fields, menu, page, table, table::TableSource as _};
+use gpui_kit::component::{Disableable, Sizable, WindowExt, button::Button, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use source::Column;
@@ -272,28 +268,20 @@ impl Destinations {
                             "Argo CD Applications with destination {what} show it as Unknown \
                              again. Nothing on a cluster is touched."
                         ))
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .justify_end()
-                                .child(
-                                    Button::new("settings-destination-remove-cancel")
-                                        .outline()
-                                        .label("Cancel")
-                                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                                )
-                                .child(
-                                    Button::new("settings-destination-remove-confirm")
-                                        .danger()
-                                        .label("Remove")
-                                        .on_click(move |_, window, cx| {
-                                            window.close_dialog(cx);
-                                            _ = confirm_page.update(cx, |page, cx| {
-                                                page.remove_destination(at, &confirm_key, cx)
-                                            });
-                                        }),
-                                ),
-                        ),
+                        .child(fields::actions(
+                            fields::Action::new(
+                                "settings-destination-remove-confirm",
+                                "Remove",
+                                move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = confirm_page.update(cx, |page, cx| {
+                                        page.remove_destination(at, &confirm_key, cx)
+                                    });
+                                },
+                            )
+                            .danger(),
+                            fields::Action::cancel("settings-destination-remove-cancel"),
+                        )),
                 )
         });
     }
