@@ -71,7 +71,14 @@ pub(super) fn open(
             .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
             .overlay_closable(false)
             .title(if by_server {
-                freshkube_ui::url::url_text("settings-destination-edit-url", &title)
+                // Kit's dialog close trigger is a small icon button, size_6.
+                // Reserve the same rem width beside the flowing title.
+                div()
+                    .pr_6()
+                    .child(freshkube_ui::url::url_text(
+                        "settings-destination-edit-url",
+                        &title,
+                    ))
                     .into_any_element()
             } else {
                 title.clone().into_any_element()

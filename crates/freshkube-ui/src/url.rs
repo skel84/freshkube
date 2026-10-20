@@ -6,8 +6,9 @@ use gpui_kit::{IntoElement, SharedString, TestSupportExt, div};
 ///
 /// GPUI 0.3.7 treats `/` as a wrap opportunity and does not honour U+2060
 /// word joiners. Keep `scheme://` and the first host label in one chunk,
-/// then allow breaks before `.`, `-`, `:` and `/`. Words retain their trailing
-/// spaces, while URL chunks sit flush together. Only a chunk wider than the
+/// then allow breaks before `.`, `:` and `/`. Hyphenated labels stay whole.
+/// Words retain their trailing spaces, while URL chunks sit flush together.
+/// Only a chunk wider than the
 /// entire paragraph may wrap internally. The original text is preserved.
 pub fn url_text(id: &'static str, text: &str) -> impl IntoElement {
     div()
@@ -38,7 +39,7 @@ fn chunks(text: &str) -> Vec<&str> {
             continue;
         };
         let mut start = 0;
-        for (at, _) in word[scheme_end..].match_indices(['.', '-', ':', '/']) {
+        for (at, _) in word[scheme_end..].match_indices(['.', ':', '/']) {
             let at = scheme_end + at;
             if at > start {
                 chunks.push(&word[start..at]);
@@ -56,19 +57,19 @@ mod tests {
 
     #[test]
     fn words_keep_their_spaces_and_the_scheme_keeps_the_first_host_label() {
-        let text = "Remove server https://cluster-one.example.test:6443/path now.";
+        let text = "Remove server https://cluster-one.region-two.example.test:6443/path-part now.";
         let split = chunks(text);
         assert_eq!(
             split,
             [
                 "Remove ",
                 "server ",
-                "https://cluster",
-                "-one",
+                "https://cluster-one",
+                ".region-two",
                 ".example",
                 ".test",
                 ":6443",
-                "/path ",
+                "/path-part ",
                 "now.",
             ]
         );

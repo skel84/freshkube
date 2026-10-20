@@ -30,13 +30,65 @@ fn server(server: &str, entry: &str) -> Destination {
 }
 
 #[gpui_kit::test]
+async fn the_edit_title_stays_left_of_the_close_button_at_text_twenty(cx: &mut TestAppContext) {
+    use crate::GpuiOptions;
+    use crate::desktop::tests::mount;
+    cx.executor().allow_parking();
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let guard = tempfile::tempdir().unwrap();
+        write(
+            guard.path(),
+            &serde_json::json!({
+                "version": 1,
+                "clusters": [{"id": "prod", "role": "environment", "context": "example-prod"}],
+                "destinations": [{
+                    "server": "https://a-very-long-cluster-name.region-one.zone-two.example.test:6443",
+                    "entry": "prod",
+                }],
+            }).to_string(),
+        );
+        let options = GpuiOptions::new(Some(guard.path().join("missing")), None, 100)
+            .with_preferences(Some(guard.path().join("preferences.json")));
+        let (_runtime, handle, view) = mount(cx, options, width, height);
+        open_section(cx, handle, &view, SettingsSection::Destinations).await;
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(20., cx);
+            window.render_frame(cx);
+            window.click("settings-destination-0", cx);
+            window.press("e", cx);
+            window.render_frame(cx);
+            let title = window.find("settings-destination-edit-url").bounds();
+            let close = window.find("close").bounds();
+            assert!(
+                title.right() < close.left(),
+                "{width}×{height}: title {title:?} overlaps close button {close:?}"
+            );
+            // Include the text chunks, so the assertion also catches text
+            // overflowing a correctly constrained title box.
+            for ix in 0.. {
+                let Some(chunk) =
+                    window.try_find(format!("settings-destination-edit-url-chunk-{ix}"))
+                else {
+                    break;
+                };
+                assert!(chunk.bounds().right() <= title.right() + gpui_kit::px(1.));
+            }
+            window.click("close", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("settings-destination-form").is_none());
+        })
+        .unwrap();
+    }
+}
+
+#[gpui_kit::test]
 async fn removing_a_server_flows_inline_and_wraps_only_between_chunks(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     for (url, first_chunk, short) in [
         ("https://b.example.test", "https://b", true),
         (
-            "https://a-very-long-cluster-name-for-the-wrap-check.region-one.zone-two.example.test:6443",
-            "https://a",
+            "https://a-very-long-cluster-name.region-one.zone-two.example.test:6443/a-long-path",
+            "https://a-very-long-cluster-name",
             false,
         ),
     ] {
@@ -122,7 +174,7 @@ async fn removing_a_server_flows_inline_and_wraps_only_between_chunks(cx: &mut T
                 } else {
                     assert!(paragraph.size.height > line_height * 2.);
                     let last_url_chunk = window
-                        .find("settings-destination-remove-url-chunk-21")
+                        .find("settings-destination-remove-url-chunk-12")
                         .bounds();
                     assert!(
                         last_url_chunk.top() > scheme.top(),
