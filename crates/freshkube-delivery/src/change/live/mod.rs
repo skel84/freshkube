@@ -669,6 +669,8 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
             }
         }),
         public_key_file: place.public_key_file.clone(),
+        transparency_log: false,
+        transparency_url: None,
         commit_names: Default::default(),
         stage_naming: None,
         map_hint: match place.mapping.settings {
