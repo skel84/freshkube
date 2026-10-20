@@ -67,6 +67,7 @@ pub(crate) enum Read {
     Part(Part),
     Workloads,
     SetupFile,
+    StageNaming,
 }
 
 impl Read {
@@ -75,6 +76,7 @@ impl Read {
             Read::Part(part) => part.key(),
             Read::Workloads => "workloads",
             Read::SetupFile => "setup-file",
+            Read::StageNaming => "stage-naming",
         }
     }
 
@@ -83,6 +85,7 @@ impl Read {
             Read::Part(part) => part.label(),
             Read::Workloads => "Workloads",
             Read::SetupFile => "Setup file",
+            Read::StageNaming => "Stage naming",
         }
     }
 }
@@ -118,6 +121,8 @@ pub(crate) struct SourcesList {
     loading: table::LoadingRows,
     checked_at: Option<SharedString>,
     setup_problem: Option<String>,
+    /// `delivery.stage_naming` of the setup, shown and never edited here.
+    stage_naming: Option<freshkube_core::setup::StageNaming>,
     columns: Vec<Column>,
     width: f32,
     table: table::TableState,
@@ -157,6 +162,7 @@ impl SourcesList {
             loading: table::LoadingRows::new(PREFIX),
             checked_at: None,
             setup_problem: None,
+            stage_naming: None,
             columns: Vec::new(),
             width: 0.,
             table: table::TableState::new(PREFIX),
@@ -182,6 +188,18 @@ impl SourcesList {
             self.setup_problem = problem;
             self.derive_rows();
             self.publish_status(cx);
+            cx.notify();
+        }
+    }
+
+    pub(super) fn set_stage_naming(
+        &mut self,
+        naming: Option<freshkube_core::setup::StageNaming>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.stage_naming != naming {
+            self.stage_naming = naming;
+            self.derive_rows();
             cx.notify();
         }
     }
