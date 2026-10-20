@@ -176,6 +176,7 @@ clusters:
       address: https://results.example.test
       results_note: 1
     coroot:
+      project: shop-api
       cluster: cluster-a
       coroot_note: [1, 2]
     metrics:
@@ -788,7 +789,8 @@ fn with_links(connection: &str, a: &str, b: &str) -> String {
     )
 }
 
-const SHOP: &str = "coroot:\n  server: https://coroot.example.test\n  sign_in: anonymous\n  project: shop-api\n";
+const SHOP: &str =
+    "coroot:\n  server: https://coroot.example.test\n  sign_in: anonymous\n  project: shop-api\n";
 
 #[test]
 fn two_entries_may_not_link_one_coroot_cluster() {
