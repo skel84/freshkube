@@ -25,6 +25,7 @@ mod canvas;
 mod keys;
 mod view;
 
+pub use canvas::GraphCanvas;
 pub use keys::{Cursor, Step};
 pub use view::GraphView;
 
@@ -151,6 +152,11 @@ pub trait GraphSource: Sized + 'static {
         None
     }
 
+    /// Cut a card's detail at a whole word; ordinary maps keep their truncation.
+    fn word_details(&self) -> bool {
+        false
+    }
+
     /// A box click.
     fn open(&mut self, node: &Self::Key, window: &mut Window, cx: &mut Context<Self>);
 
@@ -187,6 +193,21 @@ pub trait GraphSource: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
+    }
+
+    /// A call click. Keyed sources can publish the same selection as an arrow.
+    fn select_link(
+        &mut self,
+        from: &Self::Key,
+        to: &Self::Key,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.graph().focus_handle().is_some() {
+            self.step_to(Cursor::Link(from.clone(), to.clone()), window, cx);
+        } else {
+            self.graph_mut().select(from, to);
+        }
     }
 
     /// What the graph shows when it has no boxes.
@@ -287,6 +308,7 @@ impl Ids {
 /// What a graph keeps between frames, owned by the page's entity.
 pub struct GraphState<K> {
     nodes: Rc<Vec<GraphNode<K>>>,
+    dimmed: std::collections::BTreeSet<K>,
     edges: Rc<Vec<GraphEdge<K>>>,
     /// Each edge's ends as node indexes; `None` when an end isn't a box.
     ends: Vec<Option<(usize, usize)>>,
@@ -305,6 +327,7 @@ pub struct GraphState<K> {
     pan: ScrollHandle,
     /// Present once the graph has keys.
     focus: Option<FocusHandle>,
+    focus_watch: std::cell::RefCell<Vec<gpui_kit::Subscription>>,
     ids: Ids,
     display: Display,
 }
@@ -314,6 +337,7 @@ impl<K: Clone + Ord> GraphState<K> {
     pub fn new(prefix: &str, text: GraphText) -> Self {
         let mut state = Self {
             nodes: Rc::default(),
+            dimmed: Default::default(),
             edges: Rc::default(),
             ends: vec![],
             visible: vec![],
@@ -326,6 +350,7 @@ impl<K: Clone + Ord> GraphState<K> {
             scroll: UniformListScrollHandle::new(),
             pan: ScrollHandle::new(),
             focus: None,
+            focus_watch: Default::default(),
             ids: Ids::new(prefix),
             display: Display::default(),
         };
@@ -381,7 +406,7 @@ impl<K: Clone + Ord> GraphState<K> {
     /// Scrolls the graph sideways so the box `key` is in view, with a
     /// little room beside it. It does nothing while the graph fits or the
     /// box isn't on this page.
-    pub(super) fn reveal_node(&self, key: &K, window: &Window) {
+    pub fn reveal_node(&self, key: &K, window: &Window) {
         let Some((_, x, _)) = self.placed().find(|(node, ..)| node.key == *key) else {
             return;
         };
@@ -468,6 +493,12 @@ impl<K: Clone + Ord> GraphState<K> {
         self.scroll.scroll_to_item(row, strategy);
     }
 
+    /// Clears the selected call when the page selects a card.
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+        self.display.selected = None;
+    }
+
     pub fn selected(&self) -> Option<&(K, K)> {
         self.selected.as_ref()
     }
@@ -487,6 +518,11 @@ impl<K: Clone + Ord> GraphState<K> {
 
     pub fn problems(&self) -> bool {
         self.problems
+    }
+
+    /// Cards outside a page's status filter stay in place, dimmed.
+    pub fn set_dimmed(&mut self, keys: impl IntoIterator<Item = K>) {
+        self.dimmed = keys.into_iter().collect();
     }
 
     pub fn nodes(&self) -> &[GraphNode<K>] {

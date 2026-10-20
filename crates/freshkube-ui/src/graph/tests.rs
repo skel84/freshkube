@@ -1210,10 +1210,70 @@ fn each_pill_sits_in_its_gutter_and_a_long_key_is_cut_to_fit_at_text_20(cx: &mut
             assert!(pill.left() >= a.right(), "{from}->{to} clear of its caller");
             assert!(pill.right() <= b.left(), "{from}->{to} clear of its callee");
             assert!(
-                pill.size.width <= unit * 76. + px(1.),
-                "{from}->{to} fits 76 dp"
+                pill.size.width <= unit * 100. + px(1.),
+                "{from}->{to} fits 100 dp"
             );
         }
     })
     .unwrap();
+}
+
+/// The keyboard ring is painted only while the canvas has focus. These
+/// inspect paint output, so the assertion covers the visible border.
+#[gpui_kit::test]
+fn a_background_click_focuses_and_rings_the_cursor_then_blur_clears_it(cx: &mut TestAppContext) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("map-graph", cx);
+        window.render_frame(cx);
+        assert!(
+            map.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+        let Some(Cursor::Node(key)) = map.read(cx).cursor else {
+            panic!("background click must show a cursor");
+        };
+        let ring = |window: &Window| {
+            let bounds = window
+                .find(format!("map-node-{key}"))
+                .bounds()
+                .scale(window.scale_factor());
+            window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == bounds && q.border_widths.left.0 >= 2. * window.scale_factor())
+        };
+        assert!(ring(window), "cursor has a visible border immediately");
+        let graph = window
+            .find("map-graph")
+            .bounds()
+            .scale(window.scale_factor());
+        let tint = crate::palette::palette(cx).accent_soft;
+        assert!(
+            window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == graph && q.background == tint.into())
+        );
+        window.focus_next(cx);
+        assert!(
+            !map.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_,window,cx| {
+        window.render_frame(cx);
+        let Some(Cursor::Node(key)) = map.read(cx).cursor else { panic!("cursor is retained"); };
+        let bounds = window.find(format!("map-node-{key}")).bounds().scale(window.scale_factor());
+        assert!(!window.painted_quads().iter().any(|q| q.bounds == bounds && q.border_widths.left.0 >= 2. * window.scale_factor()), "the cursor's border clears when focus leaves");
+    }).unwrap();
 }

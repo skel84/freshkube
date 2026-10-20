@@ -57,11 +57,13 @@ impl ChangePage {
             .on_click(page::dispatch(page::Refresh, &self.focus));
         let (kargo, kargo_fold) = self.render_open_in_kargo(&header, cx);
         let (copy, copy_fold) = self.render_copy_link(&header, cx);
+        let (view, view_fold) = self.view_control(cx);
         header
             .chips(Some(chips))
             .foldable(kargo, kargo_fold)
             .foldable(copy, copy_fold)
             .control(refresh)
+            .foldable(view, view_fold)
             .render(window, cx)
     }
 
@@ -216,10 +218,30 @@ impl ChangePage {
 impl Render for ChangePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
+        // A view switched while loading focused the always-drawn wrapper.
+        // Once its canvas is drawn, give the Chain its single key stop.
+        if self.view == ChangeView::Chain && !self.rows.is_empty() && self.focus.is_focused(window)
+        {
+            let this = cx.entity().downgrade();
+            window.on_next_frame(move |window, cx| {
+                _ = this.update(cx, |page, cx| {
+                    if page.visible && page.view == ChangeView::Chain && !page.rows.is_empty() {
+                        page.focus(window, cx);
+                        cx.notify();
+                    }
+                });
+            });
+        }
         let header = self.render_header(window, cx);
         let notes = self.render_notes(cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,
+            None if self.view == ChangeView::Chain
+                && self.loading_rows().is_none()
+                && !self.rows.is_empty() =>
+            {
+                self.render_chain(window, cx)
+            }
             None => self.render_table(window, cx),
         };
         let short = page::is_short(window);
@@ -229,6 +251,7 @@ impl Render for ChangePage {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &NextHop, window, cx| this.step(1, window, cx)))
             .on_action(cx.listener(|this, _: &PreviousHop, window, cx| this.step(-1, window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleView, window, cx| this.toggle_view(window, cx)))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))
             .on_action(cx.listener(|this, _: &OpenHop, _, cx| this.open_selected(cx)))
             .flex()

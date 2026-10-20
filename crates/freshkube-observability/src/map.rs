@@ -55,7 +55,7 @@ impl ObservabilityPage {
         self.map_display.set(nodes, edges);
     }
 
-    pub(super) fn render_map(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn render_map(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         GraphView::new(freshkube_ui::page::content_width(window))
             .page_width(freshkube_ui::page::page_width(window))
             .render(self, window, cx)

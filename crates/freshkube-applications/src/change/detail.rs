@@ -34,6 +34,7 @@ pub(super) struct Detail {
     body: Body,
     /// What Coroot found after the deploy, for a Deployment's hop.
     after: Option<super::outcome::Section>,
+    leading_link: Option<LinkLines>,
     actions: Vec<ActionLine>,
 }
 
@@ -130,10 +131,37 @@ impl ChangePage {
     /// What the Inspector says of the selection, `None` without one.
     pub(super) fn derive_detail(&self) -> Option<Detail> {
         let hop = self.change.hop(self.selected.as_ref()?)?;
-        Some(match &hop.shows {
+        let mut detail = match &hop.shows {
             Shows::Hop(detail) => self.hop_detail(&hop.key, tone(hop.state), detail),
             Shows::Stage(stage) => self.stage_detail(&self.change.stages[*stage]),
-        })
+        };
+        if self.link_selected {
+            detail.leading_link = match &hop.shows {
+                Shows::Hop(hop) => hop.link.as_ref(),
+                Shows::Stage(stage) => self.change.stages[*stage].link.as_ref(),
+            }
+            .map(link_lines)
+            .or_else(|| {
+                let card = self.trail.cards.get(hop.key.as_str())?;
+                let edge = self.trail.edges.iter().find(|edge| &edge.to == card)?;
+                let before = self.change.hop(&edge.from)?;
+                Some(LinkLines {
+                    confidence: hop.link.unwrap_or(Confidence::Unknown),
+                    by: "by recorded hop".into(),
+                    label: format!(
+                        "{}: no join detail was read",
+                        link_word(hop.link.unwrap_or(Confidence::Unknown))
+                    )
+                    .into(),
+                    before: before.name.clone().into(),
+                    before_says: before.detail.clone().into(),
+                    here_says: hop.detail.clone().into(),
+                    why: "No join detail was read; the Inspector shows the two hops as supplied."
+                        .into(),
+                })
+            });
+        }
+        Some(detail)
     }
 
     fn hop_detail(&self, key: &str, tone: Tone, hop: &HopDetail) -> Detail {
@@ -154,6 +182,7 @@ impl ChangePage {
                 link: hop.link.as_ref().map(link_lines),
                 unlinked: hop.unlinked.clone().map(Into::into),
             },
+            leading_link: None,
             after: self.section(key),
             actions: self.buttons(&hop.actions),
         }
@@ -225,6 +254,7 @@ impl ChangePage {
                 steps: stage.steps.iter().map(check_line).collect(),
                 analyses: stage.verification.iter().map(check_line).collect(),
             },
+            leading_link: None,
             after: None,
             actions: self.buttons(&[open]),
         }
@@ -323,12 +353,32 @@ impl ChangePage {
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
             }));
+        let inspector = inspector.children(
+            detail
+                .leading_link
+                .as_ref()
+                .map(|link| render_link(link, cx)),
+        );
         let inspector = match &detail.body {
             Body::Hop {
                 fields,
                 link,
                 unlinked,
-            } => render_hop(inspector, fields, link.as_ref(), unlinked.as_ref(), cx),
+            } => render_hop(
+                inspector,
+                fields,
+                if detail.leading_link.is_some() {
+                    None
+                } else {
+                    link.as_ref()
+                },
+                if detail.leading_link.is_some() {
+                    None
+                } else {
+                    unlinked.as_ref()
+                },
+                cx,
+            ),
             Body::Stage { .. } => render_stage(inspector, &detail.body, cx),
         };
         // Above the actions, below the hop's fields and link.

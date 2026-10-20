@@ -86,6 +86,7 @@ impl NavigationFile {
     /// read from and saved to.
     pub(crate) fn install(self, cx: &mut App) {
         freshkube_ui::split_size::set_store(std::rc::Rc::new(self.clone()), cx);
+        freshkube_applications::change_view::set_store(std::rc::Rc::new(self.clone()), cx);
         cx.set_global(self);
     }
 
@@ -201,6 +202,22 @@ impl SizeStore for NavigationFile {
     }
 }
 
+impl freshkube_applications::change_view::ViewStore for NavigationFile {
+    fn view(&self) -> freshkube_applications::change_view::ChangeView {
+        self.read(|map| serde_json::from_value(map.get("change")?.get("view")?.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    fn save(&self, view: freshkube_applications::change_view::ChangeView, cx: &App) {
+        self.change(cx, |map| {
+            object(map, "change").insert(
+                "view".into(),
+                serde_json::to_value(view).expect("view is a string"),
+            );
+        });
+    }
+}
+
 /// The object under `key`, made one if it is missing or isn't one.
 fn object<'a>(map: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
     let value = map.entry(key).or_insert_with(|| Value::Object(Map::new()));
@@ -235,6 +252,40 @@ mod tests {
 
     fn read(path: PathBuf) -> serde_json::Value {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    #[gpui_kit::test]
+    fn the_change_view_round_trips_without_dropping_other_navigation(cx: &mut TestAppContext) {
+        use freshkube_applications::change_view::{ChangeView, ViewStore};
+        let directory = directory("698d-view");
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("navigation.json");
+        std::fs::write(
+            &path,
+            r#"{"collapsed":true,"change":{"future":7,"view":"unrecognized"},"future":{"key":3}}"#,
+        )
+        .unwrap();
+        let preferences = directory.join("preferences.json");
+        let file = NavigationFile::open(Some(&preferences));
+        assert_eq!(file.view(), ChangeView::List);
+        cx.update(|cx| ViewStore::save(&file, ChangeView::Chain, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            NavigationFile::open(Some(&preferences)).view(),
+            ChangeView::Chain
+        );
+        let saved = read(path.clone());
+        assert_eq!(saved["change"]["view"], "chain");
+        assert_eq!(saved["change"]["future"], 7);
+        assert_eq!(saved["future"]["key"], 3);
+        assert_eq!(saved["collapsed"], true);
+        cx.update(|cx| ViewStore::save(&file, ChangeView::List, cx));
+        cx.run_until_parked();
+        assert_eq!(
+            NavigationFile::open(Some(&preferences)).view(),
+            ChangeView::List
+        );
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[gpui_kit::test]
