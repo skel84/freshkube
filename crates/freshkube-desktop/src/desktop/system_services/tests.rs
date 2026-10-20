@@ -94,7 +94,7 @@ fn the_table_waits_for_the_talos_overview_until_it_answers_or_fails(cx: &mut Tes
         assert!(window.try_find("system-services-empty").is_none());
 
         // A failed read waits no more, and says why.
-        view.update(cx, |pilot, cx| pilot.simulate_failure(cx));
+        window.click("fixture-fail", cx);
         window.render_frame(cx);
         assert!(window.try_find("system-services-loading").is_none());
         assert!(window.find("system-services-empty").visible());

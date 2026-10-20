@@ -21,6 +21,8 @@ mod kubeconfig_row;
 mod metrics_tokens;
 mod monitoring;
 mod sections;
+#[cfg(test)]
+mod small_window_tests;
 mod source;
 pub(super) mod sources;
 #[cfg(test)]
@@ -334,7 +336,13 @@ impl SettingsPage {
             detail_scroll: ScrollHandle::new(),
             entry_key: None,
             kubeconfig_path: None,
-            split: InspectorSplit::new(PREFIX, cx),
+            // Keep one row under its header, then the Inspector's heading
+            // and scroll viewport, even at 760×560 with text size 20.
+            split: InspectorSplit::new(PREFIX, cx).stacked(inspector::Stacked {
+                lead: inspector::Pane::new(inspector::STACKED_LIST_HEIGHT)
+                    .least(table::HEADER_HEIGHT + table::ROW_HEIGHT + 2.),
+                trail: inspector::Pane::new(inspector::STACKED_HEIGHT).least(80.),
+            }),
             page_scroll: ScrollHandle::new(),
             monitoring_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -903,11 +911,18 @@ impl SettingsPage {
             window,
         );
         page::page("settings-page")
-            .track_scroll(&self.page_scroll)
-            .overflow_y_scroll()
-            .restrict_scroll_to_axis()
+            .overflow_hidden()
             .child(page::toolbar(cx).child(header))
-            .children(self.render_banners(cx))
+            .child(
+                div()
+                    .id("settings-banners")
+                    .test_support()
+                    .min_h_0()
+                    .when(page::is_short(window), |banners| banners.max_h(dp(48.)))
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .children(self.render_banners(cx)),
+            )
             .child(split)
             .into_any_element()
     }
