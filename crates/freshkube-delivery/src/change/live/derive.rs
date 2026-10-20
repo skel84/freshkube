@@ -1552,10 +1552,11 @@ fn unjoined(evidence: &Evidence, freight: &Freight, entry: &str) -> String {
     };
     match &evidence.builds {
         source if source.read().is_some_and(Vec::is_empty) => {
-            format!(
-                "no PipelineRun of {from} was found; {}",
-                history::reason(evidence, entry)
-            )
+            let mut why = format!("no PipelineRun of {from} was found");
+            if let Some(history) = history::reason(evidence, entry) {
+                why.push_str(&format!("; {history}"));
+            }
+            why
         }
         source if source.read().is_some() => {
             format!("builds of {from} were read, but none was joined to it")

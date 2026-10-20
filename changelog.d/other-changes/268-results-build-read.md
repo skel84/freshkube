@@ -1,1 +1,1 @@
-- **Build history:** a configured Tekton Results supplements live builds, keeps the live copy by UID, and names missing history and retained task logs.
+- **Build history:** a Tekton Results set by address supplements the live builds; tokens and the on-screen log wait for later work.

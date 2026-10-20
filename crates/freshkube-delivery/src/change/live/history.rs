@@ -1,7 +1,7 @@
 //! Where a build was read, kept separate from what its manifest reports.
 use crate::change::{Gap, Hop, Missing, Shows, Target, Value};
 use crate::join::{Evidence, Hop as Joined, Link};
-use crate::results::{Cap, Error, History};
+use crate::results::{Cap, Error, History, Skip};
 use crate::tekton::{self, Build};
 
 /// Names may be reused. Prefer the UIDs the link's observations carry, and
@@ -38,45 +38,56 @@ pub(super) fn build<'a>(evidence: &'a Evidence, link: &Link) -> Option<&'a Build
     })
 }
 
+fn runs(count: usize) -> String {
+    format!("{count} {}", if count == 1 { "run" } else { "runs" })
+}
+
 fn capped(history: &History) -> Option<String> {
+    let read = runs(history.runs);
     history.cap.map(|cap| match (cap, history.total) {
-        (Cap::Tasks, _) => format!(
-            "Showing {} runs; more TaskRuns weren't read ({cap})",
-            history.runs
-        ),
-        (Cap::Logs, _) => format!(
-            "Showing {} runs; more logs weren't read ({cap})",
-            history.runs
-        ),
+        (Cap::Tasks, _) => format!("Showing {read}; more TaskRuns weren't read ({cap})"),
         (_, Some(total)) if history.runs < total => {
             format!("Showing {} of {total} runs ({cap})", history.runs)
         }
-        _ => format!("Showing {} runs; more weren't read ({cap})", history.runs),
+        _ => format!("Showing {read}; more weren't read ({cap})"),
     })
 }
 
-pub(super) fn reason(evidence: &Evidence, entry: &str) -> String {
-    match &evidence.build_history {
-        Err(Error::Off) => format!("Tekton Results isn't set up for {entry}"),
-        Err(error) => {
-            let why = error.to_string();
-            format!(
-                "Tekton Results on {entry} {}",
-                why.strip_prefix("Tekton Results ").unwrap_or(&why)
-            )
+pub(super) fn reason(evidence: &Evidence, entry: &str) -> Option<String> {
+    let prefix = format!("Tekton Results on {entry}");
+    Some(match &evidence.build_history {
+        Err(Error::Off | Error::Skipped(Skip::LiveFailed)) => return None,
+        Err(Error::Skipped(why)) => format!("{prefix} wasn't read: {why}"),
+        Err(Error::NotForwarded) => format!("{prefix} isn't forwarded yet"),
+        Err(Error::NotInstalled) => format!("{prefix} isn't installed or served"),
+        Err(Error::LogsNotServed) => format!("{prefix} doesn't serve logs"),
+        Err(Error::LogMissing) => format!("{prefix} kept no log for this task"),
+        Err(Error::Unreachable(cause)) => format!("{prefix} didn't answer: {cause}"),
+        Err(Error::Refused { status, token_set }) => {
+            let mut why = format!("{prefix} refused the request ({status})");
+            if !token_set {
+                why.push_str("; no token is set for this address");
+            }
+            why
         }
+        Err(Error::Http(status)) => format!("{prefix} returned HTTP {status}"),
+        Err(Error::Unreadable(why)) => format!("{prefix} could not be read: {why}"),
         Ok(history) => capped(history).unwrap_or_else(|| {
             if history.runs == 0 {
                 "Tekton Results has no run for this commit".into()
             } else {
-                format!("Tekton Results on {entry} read {} runs", history.runs)
+                format!("{prefix} read {}", runs(history.runs))
             }
         }),
-    }
+    })
 }
 
 pub(super) fn decorate(hop: &mut Hop, evidence: &Evidence, link: &Link, entry: &str) {
-    if !matches!(link.to, Joined::PipelineRun | Joined::SupplyChain) {
+    if matches!(
+        evidence.build_history,
+        Err(Error::Off | Error::Skipped(Skip::LiveFailed))
+    ) || !matches!(link.to, Joined::PipelineRun | Joined::SupplyChain)
+    {
         return;
     }
     let found = build(evidence, link);
@@ -109,8 +120,10 @@ pub(super) fn decorate(hop: &mut Hop, evidence: &Evidence, link: &Link, entry: &
                 action.disabled = Some("the cluster no longer holds this run".into());
             }
         }
-    } else if found.is_none() && link.to == Joined::PipelineRun {
-        let why = reason(evidence, entry);
+    } else if found.is_none()
+        && link.to == Joined::PipelineRun
+        && let Some(why) = reason(evidence, entry)
+    {
         hop.detail.push_str(&format!("; {why}"));
         if let Some(link) = &mut detail.link {
             link.why.push_str(&format!("; {why}"));
@@ -129,11 +142,11 @@ pub(super) fn missing(evidence: &Evidence, entry: &str) -> Vec<Missing> {
         _ => Gap::Unreadable,
     };
     match &evidence.build_history {
-        Err(Error::Off) => {}
-        Err(error) => lines.push(Missing::new(
-            gap(error),
-            format!("{}.", reason(evidence, entry)),
-        )),
+        Err(error) => {
+            if let Some(why) = reason(evidence, entry) {
+                lines.push(Missing::new(gap(error), format!("{why}.")));
+            }
+        }
         Ok(history) => {
             if let Some(cap) = capped(history) {
                 lines.push(Missing::new(

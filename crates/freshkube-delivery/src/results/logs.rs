@@ -19,16 +19,25 @@ pub(crate) struct Log {
     not(test),
     allow(dead_code, reason = "slice 9 consumes the on-demand Results log API")
 )]
-pub(crate) const MOST_LOG_BYTES: usize = 1024 * 1024;
+pub(super) const MOST_LOG_BYTES: usize = 1024 * 1024;
 
 #[cfg_attr(
     not(test),
     allow(dead_code, reason = "slice 9 consumes the on-demand Results log API")
 )]
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Content {
-    pub(crate) text: String,
-    pub(crate) capped: bool,
+#[derive(PartialEq, Eq)]
+pub(super) struct Content {
+    pub(super) text: String,
+    pub(super) capped: bool,
+}
+
+impl std::fmt::Debug for Content {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Content")
+            .field("bytes", &self.text.len())
+            .field("capped", &self.capped)
+            .finish()
+    }
 }
 
 #[cfg_attr(
@@ -36,7 +45,7 @@ pub(crate) struct Content {
     allow(dead_code, reason = "slice 9 consumes the on-demand Results log API")
 )]
 impl Content {
-    pub(crate) fn note(&self) -> Option<&'static str> {
+    pub(super) fn note(&self) -> Option<&'static str> {
         self.capped.then_some("Showing the first 1 MiB")
     }
 }
@@ -51,7 +60,7 @@ impl Client {
             Cap::Logs,
             until,
             |raw| {
-                let (record, actual, value) = manifest(raw, "Log")?;
+                let (record, actual, name, value) = manifest(raw, "Log")?;
                 if actual != result {
                     return Err(Error::Unreadable(
                         "the log does not belong to the requested result",
@@ -71,7 +80,6 @@ impl Client {
                     && (old
                         || value.pointer("/status/isStored").and_then(|v| v.as_bool())
                             == Some(true));
-                let name = record.rsplit_once("/records/").unwrap().1.to_owned();
                 Ok(Record {
                     name: record,
                     result: actual,
@@ -97,7 +105,7 @@ impl Client {
         not(test),
         allow(dead_code, reason = "slice 9 consumes the on-demand Results log API")
     )]
-    pub(crate) async fn log(
+    pub(super) async fn log(
         &self,
         result: &str,
         name: &str,

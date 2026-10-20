@@ -20,7 +20,7 @@ pub(super) fn result_parts(result: &str) -> Result<(&str, &str), Error> {
     }
 }
 
-pub(super) fn manifest(raw: &Value, kind: &str) -> Result<(String, String, Value), Error> {
+pub(super) fn manifest(raw: &Value, kind: &str) -> Result<(String, String, String, Value), Error> {
     let name = raw
         .get("name")
         .and_then(Value::as_str)
@@ -69,16 +69,17 @@ pub(super) fn manifest(raw: &Value, kind: &str) -> Result<(String, String, Value
         || value.get("apiVersion").and_then(Value::as_str)
             != Some(format!("{group}/{version}").as_str())
         || value.pointer("/metadata/namespace").and_then(Value::as_str) != Some(namespace)
-        || value
-            .pointer("/metadata/uid")
-            .and_then(Value::as_str)
-            .is_none_or(str::is_empty)
+        || (kind != "Log"
+            && value
+                .pointer("/metadata/uid")
+                .and_then(Value::as_str)
+                .is_none_or(str::is_empty))
     {
         return Err(Error::Unreadable(
             "the record's type, namespace or UID does not match its manifest",
         ));
     }
-    Ok((name.to_owned(), result.to_owned(), value))
+    Ok((name.to_owned(), result.to_owned(), record.to_owned(), value))
 }
 
 pub(super) fn pipeline_run(
@@ -86,7 +87,7 @@ pub(super) fn pipeline_run(
     namespace: &str,
     sha: &str,
 ) -> Result<Record<PipelineRun>, Error> {
-    let (name, result, value) = manifest(raw, "PipelineRun")?;
+    let (name, result, _, value) = manifest(raw, "PipelineRun")?;
     let run = parse_pipeline_run(&value).ok_or(Error::Unreadable(
         "the PipelineRun manifest has no name or namespace",
     ))?;
@@ -99,7 +100,7 @@ pub(super) fn pipeline_run(
 }
 
 pub(super) fn task_run(raw: &Value, wanted: &str) -> Result<Record<TaskRun>, Error> {
-    let (name, result, value) = manifest(raw, "TaskRun")?;
+    let (name, result, _, value) = manifest(raw, "TaskRun")?;
     if result != wanted {
         return Err(Error::Unreadable(
             "the TaskRun does not belong to the requested result",

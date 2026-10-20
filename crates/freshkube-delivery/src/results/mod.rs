@@ -94,6 +94,7 @@ impl std::fmt::Display for Cap {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum State {
     Off,
+    Skipped,
     Loading,
     NotForwarded,
     NotInstalled,
@@ -110,6 +111,7 @@ pub(crate) enum State {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Error {
     Off,
+    Skipped(Skip),
     NotForwarded,
     NotInstalled,
     LogsNotServed,
@@ -118,6 +120,24 @@ pub(crate) enum Error {
     Refused { status: u16, token_set: bool },
     Http(u16),
     Unreadable(&'static str),
+}
+
+/// Results was not asked because the live read cannot establish absence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Skip {
+    LiveFailed,
+    LiveCapped,
+}
+
+impl std::fmt::Display for Skip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::LiveFailed => "the cluster's PipelineRuns were not read",
+            Self::LiveCapped => {
+                "the live build read stopped at the cap, so absence could not be established"
+            }
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,6 +169,7 @@ impl Error {
     pub(crate) fn state(&self) -> State {
         match self {
             Self::Off => State::Off,
+            Self::Skipped(_) => State::Skipped,
             Self::NotForwarded => State::NotForwarded,
             Self::NotInstalled | Self::LogsNotServed => State::NotInstalled,
             Self::LogMissing => State::Empty,
@@ -163,6 +184,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Off => f.write_str("Tekton Results isn't set up"),
+            Self::Skipped(why) => write!(f, "Tekton Results wasn't read: {why}"),
             Self::NotForwarded => f.write_str("Tekton Results isn't forwarded yet"),
             Self::NotInstalled => {
                 f.write_str("the Tekton Results API isn't installed or served here")

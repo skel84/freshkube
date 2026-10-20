@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use tokio::time::Instant;
 
-use super::{Cap, Client, Error, Listing, Log, Record};
+use super::{Cap, Client, Error, Listing, Log, Record, Skip};
 use crate::source::Source;
 use crate::tekton::{Build, Origin, TaskRun};
 
@@ -30,28 +30,17 @@ pub(crate) async fn supplement(
     sha: &str,
     until: Instant,
 ) -> (Source<Vec<Build>>, Result<History, Error>) {
+    if matches!(client, Err(Error::Off)) {
+        return (live, Err(Error::Off));
+    }
+    let builds = match &mut live {
+        Source::Read(builds) => builds,
+        Source::Capped(..) => return (live, Err(Error::Skipped(Skip::LiveCapped))),
+        _ => return (live, Err(Error::Skipped(Skip::LiveFailed))),
+    };
     let client = match client {
         Ok(client) => client,
         Err(error) => return (live, Err(error)),
-    };
-    let builds = match &mut live {
-        Source::Read(builds) => builds,
-        Source::Capped(..) => {
-            return (
-                live,
-                Err(Error::Unreadable(
-                    "the live build read stopped at the cap, so absence could not be established",
-                )),
-            );
-        }
-        _ => {
-            return (
-                live,
-                Err(Error::Unreadable(
-                    "the cluster's PipelineRuns were not read",
-                )),
-            );
-        }
     };
     let listing = match client.pipeline_runs(namespace, sha, until).await {
         Ok(listing) => listing,
@@ -91,7 +80,9 @@ pub(crate) async fn supplement(
         }
         let (read_tasks, tasks_unread) = match &tasks[&result] {
             Ok(listing) => {
-                history.cap = history.cap.or(listing.cap);
+                if listing.cap == Some(Cap::Tasks) {
+                    history.cap = history.cap.or(Some(Cap::Tasks));
+                }
                 let read = listing
                     .records
                     .iter()

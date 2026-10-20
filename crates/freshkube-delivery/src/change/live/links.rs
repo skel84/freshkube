@@ -209,7 +209,7 @@ fn archived_logs(at: &At, build: &Build) -> Action {
             } else if let Some(cap) = listing.cap {
                 format!("Tekton Results log metadata wasn't fully read: {cap}")
             } else if let Some(why) = &build.tasks_unread {
-                format!("The run's TaskRuns weren't read: {why}")
+                format!("The run's TaskRuns: {why}")
             } else {
                 "Tekton Results kept no log for this task".into()
             }
@@ -217,7 +217,11 @@ fn archived_logs(at: &At, build: &Build) -> Action {
         None => "Tekton Results log metadata wasn't read".into(),
     };
     let action = match task {
-        Some(task) => step_logs(at, task),
+        Some(task) => Action::new(Target::Logs {
+            what: task.task.clone().unwrap_or_else(|| task.name.clone()),
+            pod: pod_object(at, &task.namespace, ""),
+            container: task.steps.first().cloned(),
+        }),
         None => Action::new(Target::Logs {
             what: "the run".into(),
             pod: pod_object(at, &build.run.namespace, ""),

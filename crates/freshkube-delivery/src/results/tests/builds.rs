@@ -235,18 +235,31 @@ async fn results_failures_preserve_live_builds_and_name_the_entry() {
             tekton::Origin::Cluster
         );
         let change = change(&answer);
-        assert!(
-            change
-                .missing
-                .iter()
-                .any(|line| line.text.contains("Tekton Results on cluster-b"))
-        );
-        let expected = match status {
-            401 | 403 => Gap::Refused,
-            404 => Gap::NotServed,
-            _ => Gap::Unreadable,
+        let (gap, text) = match status {
+            401 => (
+                Gap::Refused,
+                "Tekton Results on cluster-b refused the request (401); no token is set for this address.",
+            ),
+            403 => (
+                Gap::Refused,
+                "Tekton Results on cluster-b refused the request (403); no token is set for this address.",
+            ),
+            404 => (
+                Gap::NotServed,
+                "Tekton Results on cluster-b isn't installed or served.",
+            ),
+            503 => (
+                Gap::Unreadable,
+                "Tekton Results on cluster-b didn't answer: the gateway returned HTTP 503.",
+            ),
+            _ => unreachable!(),
         };
-        assert!(change.missing.iter().any(|line| line.gap == expected));
+        let lines: Vec<_> = change
+            .missing
+            .iter()
+            .filter(|line| line.text.starts_with("Tekton Results"))
+            .collect();
+        assert_eq!(lines, vec![&crate::change::Missing::new(gap, text)]);
     }
 }
 
@@ -260,6 +273,12 @@ async fn unread_live_builds_never_request_results_or_publish_archive_builds() {
     )
     .await;
     assert!(matches!(answer.builds, Source::Refused(_)));
+    assert_eq!(answer.build_history, Err(Error::Skipped(Skip::LiveFailed)));
+    assert_eq!(
+        answer.build_history.as_ref().unwrap_err().state(),
+        State::Skipped
+    );
+    assert!(!format!("{:?}", change(&answer)).contains("Tekton Results"));
     assert!(server.requests.lock().unwrap().is_empty());
 }
 
@@ -280,19 +299,23 @@ async fn capped_live_builds_cannot_establish_that_an_archived_run_was_pruned() {
             tekton::Origin::Cluster
         );
         assert!(server.requests.lock().unwrap().is_empty());
-        assert!(
-            answer
-                .build_history
-                .as_ref()
-                .unwrap_err()
-                .to_string()
-                .contains("absence could not be established")
+        assert_eq!(answer.build_history, Err(Error::Skipped(Skip::LiveCapped)));
+        assert_eq!(
+            answer.build_history.as_ref().unwrap_err().state(),
+            State::Skipped
         );
-        assert!(
-            change(&answer)
-                .missing
-                .iter()
-                .any(|line| line.text.contains("cap"))
+        let change = change(&answer);
+        let lines: Vec<_> = change
+            .missing
+            .iter()
+            .filter(|line| line.text.starts_with("Tekton Results"))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![&crate::change::Missing::new(
+                Gap::Unreadable,
+                "Tekton Results on cluster-b wasn't read: the live build read stopped at the cap, so absence could not be established."
+            )]
         );
     }
 }
@@ -364,7 +387,6 @@ async fn missing_runs_keep_the_no_run_statement_with_results_why() {
     let server = Server::new(false, vec![page(vec![])]);
     let client = client(&server).await;
     for (history, expected) in [
-        (Err(Error::Off), "Tekton Results isn't set up for cluster-b"),
         (
             Ok(client.as_ref()),
             "Tekton Results has no run for this commit",
@@ -389,8 +411,16 @@ async fn missing_runs_keep_the_no_run_statement_with_results_why() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn capped_history_keeps_the_cap_in_read_from_and_missing() {
-    // Five pages may contain the same record: only one UID is published.
-    let replies = (0..5).map(|n| Reply::json(json!({"records": [record(pipeline("live-uid"))], "nextPageToken": format!("next-{n}")}))).collect();
+    let replies = (0..5)
+        .map(|n| {
+            let records = if n == 0 {
+                vec![record(pipeline("live-uid"))]
+            } else {
+                vec![]
+            };
+            Reply::json(json!({"records": records, "nextPageToken": format!("next-{n}")}))
+        })
+        .collect();
     let server = Server::new(false, replies);
     let client = client(&server).await;
     let answer = evidence(&reader(vec![pipeline("live-uid")], vec![]), Ok(&client)).await;
@@ -408,7 +438,10 @@ async fn capped_history_keeps_the_cap_in_read_from_and_missing() {
         .iter()
         .find(|row| row.name == "Run checkout-7")
         .unwrap();
-    assert!(read_from(row).contains("5-page cap"));
+    assert_eq!(
+        read_from(row),
+        "Tekton · cluster-b · also in Tekton Results · Showing 1 run; more weren't read (the 5-page cap)"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -489,4 +522,109 @@ async fn the_pool_opens_one_address_client_and_counts_a_two_change_refresh() {
     assert!(projects[0].followed.values().all(Result::is_ok));
     assert!(started.elapsed() < crate::changes::live::BUDGET);
     assert_eq!(server.requests.lock().unwrap().len(), 6);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_results_derives_exactly_as_main() {
+    use crate::entry::pool::{Open, Pool};
+    use freshkube_core::workspace::{Entry, Role, Sources, Workspace};
+    let entry = Entry::new("cluster-b", Role::Cicd, "cluster-b");
+    assert!(entry.results.is_none());
+    let sources = Sources::of(&Workspace::new(vec![entry]));
+    // Complete Change debug fingerprints captured on main 62f0c92f, using
+    // that revision's derive.rs and links.rs with these invented fixtures.
+    for (name, reader, expected) in [
+        (
+            "live",
+            reader(vec![pipeline("live-uid")], vec![]),
+            "fff83c6dacfc7cfc9000396397f2cb9461aebe9dcad0414f2928324ee36ef5a7",
+        ),
+        (
+            "empty",
+            reader(vec![], vec![]),
+            "ca0b7347abf8bb16fc5b1144b21130aca4fd30684bdc66b6759b34cbcfa67971",
+        ),
+        (
+            "capped",
+            reader(vec![pipeline("live-uid")], vec![]).capped("pipelineruns"),
+            "fff83c6dacfc7cfc9000396397f2cb9461aebe9dcad0414f2928324ee36ef5a7",
+        ),
+        (
+            "refused",
+            reader(vec![], vec![]).refusing("pipelineruns"),
+            "ceed894f02052b4b6c7d6ccfa3daec02999daaa8474bfb0d0b3f352de3287f02",
+        ),
+    ] {
+        let pool = Pool::new(
+            &sources,
+            Some(Open {
+                entry: Some("cluster-b"),
+                reader: Ok(&reader),
+            }),
+            |_| std::future::ready(Ok(FixtureReader::default())),
+            crate::changes::live::BUDGET,
+        );
+        let history = pool.results(Instant::now() + Duration::from_secs(20)).await;
+        assert!(matches!(history, Err(Error::Off)));
+        let evidence = evidence(&reader, history).await;
+        let change = change(&evidence);
+        let debug = format!("{change:#?}");
+        let digest = ring::digest::digest(&ring::digest::SHA256, debug.as_bytes());
+        let hash: String = digest
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(hash, expected, "{name}: {debug}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn task_page_and_byte_caps_stay_with_tasks_not_build_history() {
+    for pages in [true, false] {
+        let mut replies = vec![page(vec![record(pipeline("run-uid"))])];
+        if pages {
+            replies.extend((0..5).map(|n| {
+                Reply::json(json!({"records": [], "nextPageToken": format!("next-{n}")}))
+            }));
+        } else {
+            replies.push(Reply::raw(200, vec![b' '; crate::read::MAX_BODY_BYTES + 1]));
+        }
+        replies.push(page(vec![]));
+        let server = Server::new(false, replies);
+        let client = client(&server).await;
+        let answer = evidence(&reader(vec![], vec![]), Ok(&client)).await;
+        assert_eq!(answer.build_history.as_ref().unwrap().cap, None);
+        let why = answer.builds.read().unwrap()[0]
+            .tasks_unread
+            .as_deref()
+            .unwrap();
+        assert_eq!(
+            why,
+            if pages {
+                "more TaskRuns weren't read: the 5-page cap"
+            } else {
+                "more TaskRuns weren't read: the 32 MiB response cap"
+            }
+        );
+        let change = change(&answer);
+        let row = change
+            .hops
+            .iter()
+            .find(|row| row.name == "Run checkout-7")
+            .unwrap();
+        assert_eq!(read_from(row), "Tekton Results · cluster-b");
+        let Shows::Hop(detail) = &row.shows else {
+            panic!()
+        };
+        let logs = detail
+            .actions
+            .iter()
+            .find(|action| matches!(action.target, Target::Logs { .. }))
+            .unwrap();
+        assert_eq!(
+            logs.disabled.as_deref(),
+            Some(format!("The run's TaskRuns: {why}").as_str())
+        );
+    }
 }

@@ -171,7 +171,7 @@ A Results record joins as the run it records. `Build` gains where it was read fr
 - **Deduplicated by UID.** A run read both ways (still on the cluster, still in Results) is one build: the live copy wins, and the record only adds `also in Tekton Results` to Read from. The key is `metadata.uid`, never name and namespace, which a recreated run reuses.
 - **Same links, same rules.** Commit → PipelineRun on the SHA label and witnesses, PipelineRun → supply chain on the digest. A run from Results has the observations of the object it records, and its `Read from` says `Tekton Results · cluster-b` instead of `Tekton · cluster-b`.
 - **Never fresher than the cluster.** Results is read only for what the cluster did not return: the live read goes first; a SHA with no live run, or fewer than the Results copy knows of, adds the rest. A failed or unreachable Results never hides a live run. A failed or capped live build read is not supplemented (including a TaskRun cap, which the current reader folds into the same outcome): a partial listing cannot establish that an unmatched Results run is absent from the cluster; the live builds, cap and reason stay.
-- **A positively named pruned run with no record keeps "Run pruned".** It is still `Run pruned, logs gone`, with why Results didn't help (not configured, not reachable, no record). The live read currently knows only the commit when no run is returned, so it keeps the existing no-run statement and adds Results' reason; it cannot claim pruning without a run identity. The pruned wording stays in example data until such a read exists. It never reads as a clean history.
+- **A positively named pruned run with no record keeps "Run pruned".** It is still `Run pruned, logs gone`, with why Results didn't help (not configured, not reachable, no record). The live read currently knows only the commit when no run is returned, so it keeps the existing no-run statement and adds a configured Results' reason; it cannot claim pruning without a run identity. The pruned wording stays in example data until such a read exists. It never reads as a clean history.
 
 ### Not reachable, and the other states
 
@@ -179,7 +179,8 @@ Each is its own state with why, on the Changes list's footer, the change page's 
 
 | State | When | Says |
 | --- | --- | --- |
-| Off | The entry has no `results` | `Tekton Results isn't set up for cluster-b`; the change page doesn't offer it. |
+| Off | The entry has no `results` | No Results text on the change page; Read from and no-run wording stay as for the live read alone. |
+| Skipped | The live build read failed or was capped, so Results wasn't asked | A failed live read adds no Results text. A cap says `Tekton Results on cluster-b wasn't read: the live build read stopped at the cap, so absence could not be established.` |
 | Loading | A Results read is in flight | `Reading Tekton Results`; a configured source never reads as off during its first read. |
 | Not forwarded | `forward` is set and no Forward is running | `Not forwarded yet · Forward` (a button on the entry, never started by a read). |
 | Not installed | The forward's Service isn't found | `The Service tekton-results-api-service isn't in tekton-pipelines on cluster-b`. |

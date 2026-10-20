@@ -191,6 +191,13 @@ async fn log_availability_matches_task_uid_and_always_disables_the_pod_action() 
             .find(|action| matches!(action.target, Target::Logs { .. }))
             .unwrap();
         assert_eq!(logs.disabled.as_deref(), Some(expected));
+        let Target::Logs { pod, .. } = &logs.target else {
+            panic!()
+        };
+        assert!(
+            pod.name.is_empty(),
+            "archived pod names must never reach the live reader"
+        );
         assert_eq!(server.requests.lock().unwrap().len(), 3);
     }
 }
@@ -253,18 +260,37 @@ async fn capped_or_refused_log_metadata_never_claims_the_task_log_is_missing() {
                 .any(|line| line.text.contains("Tekton Results on cluster-b"))
         );
     }
-    let server = Server::new(
-        false,
-        (0..5)
-            .map(|n| Reply::json(json!({"records": [], "nextPageToken": format!("next-{n}")})))
-            .collect(),
+    let mut task = manifest("TaskRun", "v1");
+    task["metadata"]["uid"] = json!("task-uid");
+    let mut replies = vec![
+        page(vec![record(pipeline("run-uid"))]),
+        page(vec![record(task)]),
+    ];
+    replies.extend(
+        (0..5).map(|n| Reply::json(json!({"records": [], "nextPageToken": format!("next-{n}")}))),
     );
+    let server = Server::new(false, replies);
     let client = super::client(&server).await;
-    let listing = within(client.logs(RESULT, Instant::now() + Duration::from_secs(20)))
-        .await
+    let evidence = evidence(&reader(vec![], vec![]), Ok(&client)).await;
+    let change = change(&evidence);
+    let row = change
+        .hops
+        .iter()
+        .find(|row| row.name == "Run checkout-7")
         .unwrap();
-    assert_eq!(listing.cap, Some(Cap::Pages));
-    assert_eq!(listing.total, None);
+    let Shows::Hop(detail) = &row.shows else {
+        panic!()
+    };
+    let logs = detail
+        .actions
+        .iter()
+        .find(|action| matches!(action.target, Target::Logs { .. }))
+        .unwrap();
+    assert_eq!(
+        logs.disabled.as_deref(),
+        Some("Tekton Results log metadata wasn't fully read: the 5-page cap")
+    );
+    assert_eq!(server.requests.lock().unwrap().len(), 7);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -286,6 +312,55 @@ async fn malformed_log_metadata_and_foreign_results_are_unreadable() {
     let server = Server::new(false, vec![page(vec![missing_uid]), page(vec![foreign])]);
     let client = super::client(&server).await;
     for _ in 0..2 {
+        assert!(matches!(
+            within(client.logs(RESULT, Instant::now() + Duration::from_secs(20))).await,
+            Err(Error::Unreadable(_))
+        ));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn log_debug_shows_only_length_and_cap() {
+    for capped in [false, true] {
+        let mut bytes = b"invented-private-log".to_vec();
+        if capped {
+            bytes.resize(MOST_LOG_BYTES + 1, b'x');
+        }
+        let server = Server::new(false, vec![text(bytes)]);
+        let client = super::client(&server).await;
+        let content =
+            within(client.log(RESULT, "record-a", Instant::now() + Duration::from_secs(20)))
+                .await
+                .unwrap();
+        assert_eq!(
+            format!("{content:?}"),
+            format!(
+                "Content {{ bytes: {}, capped: {capped} }}",
+                content.text.len()
+            )
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn log_needs_the_task_uid_and_matching_namespace_but_not_its_own_uid() {
+    for version in ["v1alpha2", "v1alpha3"] {
+        let value = json!({"apiVersion": format!("results.tekton.dev/{version}"), "kind": "Log",
+            "metadata": {"name": "checkout-7-log", "namespace": "acme"},
+            "spec": {"resource": {"uid": "task-uid"}},
+            "status": {"isStored": true, "size": 42}});
+        let mut foreign = value.clone();
+        foreign["metadata"]["namespace"] = json!("other");
+        let server = Server::new(
+            false,
+            vec![page(vec![record(value)]), page(vec![record(foreign)])],
+        );
+        let client = super::client(&server).await;
+        let listing = within(client.logs(RESULT, Instant::now() + Duration::from_secs(20)))
+            .await
+            .unwrap();
+        assert_eq!(listing.records[0].run.task_uid, "task-uid");
+        assert!(listing.records[0].run.stored);
         assert!(matches!(
             within(client.logs(RESULT, Instant::now() + Duration::from_secs(20))).await,
             Err(Error::Unreadable(_))
