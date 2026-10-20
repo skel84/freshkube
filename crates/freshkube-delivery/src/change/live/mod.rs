@@ -80,6 +80,9 @@ pub struct Place {
     pub public_key_file: Option<std::path::PathBuf>,
     /// The pipeline record configured in the same setup.
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
+    /// How an Application with no authorized-stage annotation names its
+    /// Stage, from the same setup.
+    pub stage_naming: Option<freshkube_core::setup::StageNaming>,
 }
 
 impl Place {
@@ -672,7 +675,7 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         transparency_log: false,
         transparency_url: None,
         commit_names: Default::default(),
-        stage_naming: None,
+        stage_naming: place.stage_naming.as_ref().map(Into::into),
         map_hint: match place.mapping.settings {
             true => MapHint::Settings {
                 listed: place.mapping.entries.clone(),

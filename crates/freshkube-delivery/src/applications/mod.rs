@@ -179,6 +179,9 @@ pub enum Basis {
     /// An Argo CD Application that names a Kargo Stage or Project (its
     /// authorized-stage annotation, or the configured naming).
     NamesProject,
+    /// An Argo CD Application tied to a Kargo Project by the configured name
+    /// template alone: no annotation, and no project key.
+    NamedByTemplate,
     /// Its `part-of` value is this application's name. A guess from the
     /// name alone, so shown as such.
     SameName,
@@ -264,6 +267,13 @@ pub enum Note {
     JoinedAcrossSessions {
         name: String,
         sessions: Vec<SessionKey>,
+    },
+    /// An Argo CD Application's name is the configured template's for Stages
+    /// of more than one Project, so it is tied to none of them. `stages` are
+    /// `project/stage`.
+    NameFitsSeveralStages {
+        member: MemberRef,
+        stages: Vec<String>,
     },
     /// An Argo CD Application may manage this workload, but that cluster's
     /// Applications were not fully read, so it went by its label.

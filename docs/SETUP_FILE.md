@@ -108,6 +108,14 @@ supply_chain:
     result: build-evidence        # the PipelineRun result that holds it
     commit: /commit               # JSON pointers into that result
     digest: /image/digest
+
+# How an Argo CD Application with no authorized-stage annotation names its
+# Kargo Stage (#804). Optional: without it, such an Application is never tied
+# to a Stage.
+delivery:
+  stage_naming:
+    name_template: 'app-{project}-in-{stage}'   # must contain {stage}
+    # project_key: example.test/project         # optional; see below
 ```
 
 What each part means, and the rules a read enforces. The `metrics` blocks follow [Metrics](#metrics) below. The `results`, per-entry `coroot` and `supply_chain` shapes are this design's proposal; #268's slice 1 and #269's slice 8 confirm or change them before slice 1 below types them.
@@ -121,6 +129,7 @@ What each part means, and the rules a read enforces. The `metrics` blocks follow
 - **`metrics`** is one choice, `mode`: `automatic` (the default, and what a file without `metrics` means), `central` or `per-entry`. `central` takes a `store`, the hosting `entry` and a Service in it (namespace, name, port, `https`, and a path prefix with or without its slashes, normalised as `PrometheusService::with_path` does today), or a `url`; and a `label`, `cluster` unless set. A URL's bearer token is `token: keys.json` or nothing; like `coroot.key`, any other value is refused unrepeated. A Service needs no token: the hosting entry's own Kubernetes credentials reach it. `store` and `label` under another mode are kept, unread, so switching modes back and forth loses nothing.
 - **Per entry, `metrics`** may set `value`, the entry's value of the central label (its id unless set), and `source`, its own `service` or `url` (the store's shapes without `entry`). A `source` wins under any mode, sets exactly one of `service` and `url`, and takes a `token` only with a `url`. A label name must be a Prometheus label name (`metrics.label`, checked under `central` only) and a value non-empty.
 - **`supply_chain`** is workspace-wide ([#268](https://github.com/skel84/freshkube/issues/268), decision 1): a public key file the person names, never read from a cluster; the transparency log, read only when `transparency_log` is `true`; and the evidence result, with the JSON pointers to its commit and digest.
+- **`delivery.stage_naming`** ([#804](https://github.com/skel84/freshkube/issues/804)) ties an Application that carries no `kargo.akuity.io/authorized-stage` annotation to its Kargo Stage by name. `name_template` is required and must contain `{stage}`; `{project}` is optional. A template without `{stage}` is refused as its own fault, naming the key. `project_key` is optional: an annotation, or else a label, of that key on the Application that holds its Kargo project. With it, an Application claims a Stage when its project key names the Stage's project and its name is exactly the template's: a claim by convention. Without it, the name alone makes the claim, which is weaker and says so (the Link column and the change page show it as Claimed, never Confirmed, in words that say it matched by the name template only). The annotation still wins: an Application with the annotation is tied only to the Stage it names, whatever its name. A name-only claim is never graded above Claimed, whatever the Promotion's pushed commit and the synced revision say. Two rules keep a name from guessing: when more than one Application claims a Stage by name only (the same name in two namespaces Argo CD is read in), none of them is linked to it and each says "N Applications match the naming template for this Stage"; and an Application whose name fits Stages of more than one project (`a-b` in project `c` and `a` in project `b-c` both make `a-b-c` under `{stage}-{project}`) is tied to none of them on the Applications page, which says why. Annotation and project-key claims are unaffected. Absent means off.
 - **Unknown keys** are kept and written back as they were read, at every level, as [#699](https://github.com/skel84/freshkube/issues/699) did for the JSON files, and Settings names them.
 - **The file** is read only when it is a regular file of at most 256 KiB, and a new one is created `0600`, as `workspace.json` is.
 

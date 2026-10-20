@@ -28,7 +28,7 @@ The header's gear keeps only "Quick controls": Talos auto-refresh, Appearance an
 
 App sections are padded forms. Settings dialogs use `freshkube_ui::dialog::frame`: Kit caps the surface to the window and scrolls its body, with the title and the platform-ordered actions in its fixed header and footer.
 
-Workspace sections are table pages: Clusters and Delivery sources hold the selection in the shared Inspector, while Argo CD destinations edits in a dialog. Only the three lists put a segment in the status bar. Delivery sources' check runs only while its section shows: leaving the section, or the page, drops a check in flight.
+Workspace sections are table pages: Clusters and Delivery sources hold the selection in the shared Inspector, while Argo CD destinations edits in a dialog. Only the three lists put a segment in the status bar. Delivery sources' check runs only while its section shows: leaving the section, or the page, drops a check in flight. When the setup has `delivery.stage_naming` ([#804](https://github.com/skel84/freshkube/issues/804)), Delivery sources also lists a read-only Stage naming row (`sources/rows.rs`, `Read::StageNaming`): the template, and whether a Stage is named by project key or by name only. It is read from the file, so Check sources doesn't touch it, and it is edited in `freshkube.yaml` only.
 
 **Where a section is saved.** Every group ends with one muted line from `form::SavedIn`, naming the file, and the store when a key goes elsewhere:
 

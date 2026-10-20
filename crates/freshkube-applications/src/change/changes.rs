@@ -127,6 +127,7 @@ impl Changes {
                     sources: across.sources,
                     public_key_file: across.public_key_file,
                     evidence_result: across.evidence_result,
+                    stage_naming: across.stage_naming,
                 }),
                 kubeconfig: across.kubeconfig,
             }),
