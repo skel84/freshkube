@@ -189,7 +189,7 @@ The button is greyed out with why for a cluster that isn't the open one, for a D
 
 ## What a deploy did, linked to the chain (design)
 
-This is the design step of [#269](https://github.com/skel84/freshkube/issues/269) (Part B, its slice 8), written on 19 October 2026 at main `8766bf1`. It is for the owner to approve; nothing here is built, and the [open questions](#open-questions-for-the-owner) say what is still undecided. Every name below is invented: acme, `checkout`, cluster-a, cluster-b, cluster-c.
+This is the design step of [#269](https://github.com/skel84/freshkube/issues/269) (Part B, its slice 8), written on 19 October 2026 at main `8766bf1`. The owner approved it on 20 October 2026; nothing here is built, and the [decisions](#decisions) record the owner's answers. Every name below is invented: acme, `checkout`, cluster-a, cluster-b, cluster-c.
 
 The change page follows one change to the pods that run it, and today it only links out to Coroot. This design makes it say what Coroot found after the deploy, in Coroot's words, and lets a Coroot revision lead back to the change. It reads Coroot and never writes to it.
 
@@ -316,7 +316,7 @@ DESIGN.md's change page text is updated by slice 4, so it doesn't collide with [
 
 **Narrow windows and large text.** At 760 × 560 and text size 20 the Inspector stacks under the trail, and the section's charts are one per row at the Inspector's width; counts and findings wrap, never cut. Sizes are `dp`.
 
-**Changes list.** The Inspector of a change shows, for each Stage with a Deployment, `After the deploy: open the change to read it` (a link to the change page) until the change page has read that Stage's outcome this session; then it shows the mark and the status word. A row's Stages cell takes no mark: it is link confidence and Stage state, and the verdict is neither. See the [questions](#open-questions-for-the-owner).
+**Changes list.** The Inspector of a change shows, for each Stage with a Deployment, `After the deploy: open the change to read it` (a link to the change page) until the change page has read that Stage's outcome this session; then it shows the mark and the status word. A row's Stages cell takes no mark: it is link confidence and Stage state, and the verdict is neither. See [decision 2](#decisions).
 
 ### Slices
 
@@ -339,13 +339,15 @@ Each slice is one pull request with a changelog fragment under `changelog.d/coro
 
 Slices 1 to 3 can run beside each other and beside Part A. Slice 4 is the earliest the owner sees anything, and it works on example data before any live Coroot is linked.
 
-### Open questions for the owner
+### Decisions
 
-1. **Refuse two entries that link the same Coroot cluster?** It keeps an application's owner unambiguous, and the reverse link needs it. *Recommendation: yes, a setup error naming both entries.*
-2. **The Changes list: a mark without reads?** The owner chose a mark there and reading only the selected hop. Reading every row's Stages would break the second. *Recommendation: the mark shows only for outcomes the change page already read this session, and the Inspector says "open the change to read it" otherwise; the Stages cell takes no mark.*
-3. **The window on the change page.** *Recommendation: a fixed ±30 min, with Compare in Observability for another one; a picker here doubles the section's controls for a rarely changed choice.*
-4. **Charts in the Inspector, or only counts and Compare?** *Recommendation: the one report's charts (at most four), since "what its metrics did" is the section's point and the panels already exist.*
-5. **Does Coroot's verdict count in the chips?** *Recommendation: no. The chips count a hop's own state, and Coroot's verdict is Coroot's; the mark beside the hop is where it shows.*
-6. **Marker focus by start time or by a marker identity?** *Recommendation: by start time, as designed above, since it leaves `Marker` and Monitoring's own markers untouched.*
-7. **A Rollout.** Option C after the spike. *Recommendation: C, as above, with no Coroot verdict drawn for it.*
-8. **No fallback to a connection-wide link.** An entry without `coroot.cluster` is "not linked", even when a workspace has one entry. *Recommendation: no fallback; the old link was never saved, and a second way to link would let one entry's application draw as another's again.*
+The owner answered the open questions on 20 October 2026: all as recommended.
+
+1. **Two entries that link the same Coroot cluster are refused,** as a setup error that names both entries. It keeps an application's owner unambiguous, and the reverse link needs it.
+2. **The Changes list marks only what the change page has already read** this session. Otherwise its Inspector says "open the change to read it". The Stages cell takes no mark.
+3. **The change page's window is fixed at ±30 min.** Compare in Observability keeps the picker.
+4. **The Inspector shows the one report's charts,** at most four.
+5. **Coroot's verdict doesn't count in the chips.** The chips count a hop's own state; the mark beside the hop is where the verdict shows.
+6. **Marker focus goes by start time,** so `Marker` and Monitoring's own markers stay untouched.
+7. **Argo Rollouts use option C:** a window around Kubernetes' own start, with no Coroot verdict, after a read-only spike that names the application Coroot keeps for a Rollout's pods.
+8. **No fallback to a connection-wide link.** An entry without `coroot.cluster` is "not linked", even in a one-entry workspace.
