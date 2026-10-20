@@ -1,15 +1,16 @@
 # Signed attestations and Tekton Results
 
-This is the design step of [#268](https://github.com/skel84/freshkube/issues/268), written on 19 October 2026 at main `8766bf1`. It decides how the build side of the delivery chain gets its two missing pieces: a signature check that can make build → supply chain Confirmed, and history for runs the cluster no longer holds. Nothing here is built; the [slices](#slices) say what lands where, and the owner's [decisions](#decisions) settle the open questions. Every name is invented: acme, `checkout`, `cluster-a`, `cluster-b`, `cluster-c`, `example.com`, `registry.example.com`.
+This is the design step of [#268](https://github.com/skel84/freshkube/issues/268), written on 19 October 2026 at main `8766bf1`. It decides how the build side of the delivery chain gets its two missing pieces: a signature check that can make build → supply chain Confirmed, and history for runs the cluster no longer holds. The [slices](#slices) say what lands where, and the owner's [decisions](#decisions) settle the open questions. Every name is invented: acme, `checkout`, `cluster-a`, `cluster-b`, `cluster-c`, `example.com`, `registry.example.com`.
 
 It follows the owner's decisions on #268 (16 October): trust is a public key file the person names, never read from the cluster; the transparency log is off until turned on; Tekton Results is reached by an address or by a port forward, per workspace entry; a signature that fails to verify is Claimed with the hop marked failing; the drawn chain is [#698](https://github.com/skel84/freshkube/issues/698)'s. Where the settings live is already settled by [SETUP_FILE.md](SETUP_FILE.md) (`results`, `supply_chain` and `evidence`, typed in `crates/freshkube-core/src/setup/types.rs`) and by [DESIGN.md](DESIGN.md#the-settings-page); this page adds only what those leave open.
 
 ## Where things stand
 
 - `crates/freshkube-delivery/src/tekton.rs` finds a commit's PipelineRuns by the `pipelinesascode.tekton.dev/sha` label and their TaskRuns by `tekton.dev/pipelineRun`, and reads `IMAGE_URL`, `IMAGE_DIGEST`, Conforma's `TEST_OUTPUT` and the `chains.tekton.dev/signed` annotation.
-- `join/build.rs` (`supply_chain_links`) joins PipelineRun → supply chain on the image digest. With the annotation at `true` the link is Claimed (`Chains' annotation says signed; the signature was not verified`); any other value, or none, is Unknown. `provenance.rs` lists no kind for the supply-chain side of a link (`Hop::SupplyChain => &[]`), because no read object reports a signature; that is why no link there can be Confirmed.
-- A PipelineRun the cluster pruned is not found. Example data says `Run pruned, logs gone`; live, the run is simply absent.
-- Core's `EvidenceResult` exists, the live read passes `None`, and `supply_chain.evidence` in the setup file will feed it.
+- `join/build.rs` (`supply_chain_links`) matches the verifier's result exhaustively. A verified signature with a matching subject digest can confirm the supply-chain link, supported by a reported `Attestation` observation. Chains' annotation alone remains Claimed at most.
+- A PipelineRun the cluster pruned can be read from the build entry's configured Tekton Results address, with its recorded tasks and attestations. Without Results, an absent run keeps the existing no-run statement and says history isn't set up; it is never assumed to be pruned.
+- The app hands top-level `supply_chain.public_key_file` and `supply_chain.evidence` to both the change page and the Changes list. Each read opens the public key off the UI thread, and the evidence result name and commit/digest JSON pointers feed the existing join. A signature that verifies and names the build's digest can now show Confirmed; an evidence record alone cannot.
+- The existing setup reload owner forwards the new setup to Applications. It cancels delivery reads made with the previous setup, including hidden pages, and the next read opens the key file and address-specific Results store again. Reloading the same key path also rereads its contents. The app still leaves transparency lookup off; slice 4 and its caller wiring remain separate.
 
 ## The rule
 
@@ -146,8 +147,9 @@ The spike settled the REST shape and the filter (see [What the spike found](#wha
 The crate-private client lives in `freshkube-delivery/src/results/` and
 supplements the build read after the live listing succeeds. One client is
 opened per pool and every request ends by the refresh's deadline. The pool
-accepts the app's optional address key store; handing it from the application
-pages to their read jobs is a follow-up after pull request 791. It keeps up to 10 PipelineRuns or
+receives the app's existing optional address key store through Applications
+and both delivery read jobs. A configured token with no store reports
+`the key store isn't available to this read`; it is never treated as Off. It keeps up to 10 PipelineRuns or
 1,000 TaskRuns, reads at most five pages of up to 200 records, and bounds
 each response to 32 MiB and each decoded manifest to 4 MiB. Its listing keeps
 the stopping reason (run, task, page or byte cap) and an exact total only if

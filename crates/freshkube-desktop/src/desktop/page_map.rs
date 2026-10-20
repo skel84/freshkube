@@ -148,6 +148,7 @@ impl Pages {
             crate::applications::ApplicationsPage::new(
                 runtime.clone(),
                 options.debug.applications,
+                secrets.clone(),
                 window,
                 cx,
             )
@@ -286,9 +287,11 @@ fn page_handles(
 }
 
 impl Pages {
-    /// The setup file's last good setup, from the shell: Monitoring finds its
-    /// metrics as its `metrics` block says.
+    /// The setup owner's last good setup: Monitoring finds its metrics and
+    /// Applications replaces delivery trust and cancels older reads.
     pub(super) fn set_setup(&self, setup: freshkube_core::setup::Setup, cx: &mut App) {
+        self.applications
+            .update(cx, |page, cx| page.set_setup(&setup, cx));
         super::entity_pages::set_metrics_setup(&self.monitoring, setup, cx);
     }
 

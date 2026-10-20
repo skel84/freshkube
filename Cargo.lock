@@ -2427,6 +2427,7 @@ dependencies = [
 name = "freshkube-applications"
 version = "0.16.0"
 dependencies = [
+ "base64",
  "chrono",
  "freshkube-core",
  "freshkube-delivery",
@@ -2439,12 +2440,15 @@ dependencies = [
  "freshkube-ui",
  "futures",
  "gpui-kit",
+ "http",
  "k8s-openapi",
  "kube",
  "rustls",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tower 0.5.2",
  "tracing",
 ]
 

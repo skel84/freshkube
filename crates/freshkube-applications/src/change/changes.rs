@@ -90,12 +90,14 @@ impl Changes {
     /// carries one; a live one reads from `access` across the workspace,
     /// each part where `across` says, its Stages' destinations resolved
     /// through its mapping.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn fetch(
         &self,
         project: &str,
         stage: &str,
         runtime: &tokio::runtime::Handle,
         access: &ClusterAccess,
+        secrets: Option<freshkube_core::secrets::Secrets>,
         across: Across,
         delay: Duration,
     ) -> Option<Fetch> {
@@ -112,6 +114,8 @@ impl Changes {
             Self::Live(live) => Some(Fetch::Live {
                 runtime: runtime.clone(),
                 access: access.clone(),
+                secrets,
+                setup_revision: 0,
                 place: Box::new(Place {
                     cluster: live.cluster.clone(),
                     label: live.label.clone(),
@@ -120,6 +124,8 @@ impl Changes {
                     argocd_namespace: live.argocd_namespace.clone(),
                     mapping: across.mapping,
                     sources: across.sources,
+                    public_key_file: across.public_key_file,
+                    evidence_result: across.evidence_result,
                 }),
                 kubeconfig: across.kubeconfig,
             }),
