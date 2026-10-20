@@ -1,0 +1,1 @@
+- **Destinations:** keep a server URL's scheme and both slashes together when Edit and Remove dialogs wrap.

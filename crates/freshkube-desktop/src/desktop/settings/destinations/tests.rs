@@ -30,6 +30,60 @@ fn server(server: &str, entry: &str) -> Destination {
 }
 
 #[gpui_kit::test]
+async fn removing_a_long_server_wraps_the_address_but_keeps_both_slashes(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    let url = "https://cluster-with-a-long-invented-name-for-the-dialog-wrapping-regression.example.test:6443/a/long/path";
+    write(
+        guard.path(),
+        &serde_json::json!({
+            "version": 1,
+            "clusters": [{"id": "prod", "role": "environment", "context": "example-prod"}],
+            "destinations": [{"server": url, "entry": "prod"}],
+        })
+        .to_string(),
+    );
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
+    for size in [13., 20.] {
+        cx.update_window(handle, |_, window, cx| {
+            crate::text_size::set(size, cx);
+            window.render_frame(cx);
+            window.click("settings-destination-0", cx);
+            window.press("backspace", cx);
+            window.render_frame(cx);
+            let scheme = window
+                .find("settings-destination-remove-url-scheme")
+                .bounds();
+            let address = window
+                .find("settings-destination-remove-url-address")
+                .bounds();
+            let url_bounds = window.find("settings-destination-remove-url").bounds();
+            let style = window.text_style();
+            let font_size = crate::ui::dp_px(13., window);
+            let scheme_line = window.text_system().shape_line(
+                "https://".into(),
+                font_size,
+                &[style.to_run(8)],
+                None,
+            );
+            // Both slashes occupy the first line, beside the address. The
+            // address really wraps, rather than the whole URL overflowing.
+            assert!((scheme.size.width - scheme_line.width()).abs() <= gpui_kit::px(1.));
+            assert!(scheme.size.height < font_size * 2.);
+            assert!(address.size.height > scheme.size.height);
+            assert!((scheme.top() - address.top()).abs() <= gpui_kit::px(1.));
+            assert!((scheme.right() - address.left()).abs() <= gpui_kit::px(1.));
+            assert!(address.right() <= url_bounds.right() + gpui_kit::px(1.));
+            window.click("settings-destination-remove-cancel", cx);
+            window.render_frame(cx);
+        })
+        .unwrap();
+    }
+    assert_eq!(destinations(guard.path()), vec![server(url, "prod")]);
+}
+
+#[gpui_kit::test]
 fn the_example_lists_its_destinations_on_a_table_page(cx: &mut TestAppContext) {
     for (width, height) in [(1280., 880.), (760., 560.)] {
         let (_runtime, handle, view) = fixture(cx, width, height);

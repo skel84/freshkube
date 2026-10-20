@@ -264,10 +264,21 @@ impl Destinations {
                         .aria_label(format!("Remove the mapping for {what}"))
                         .gap_3()
                         .text_size(dp(13.))
-                        .child(format!(
-                            "Argo CD Applications with destination {what} show it as Unknown \
-                             again. Nothing on a cluster is touched."
-                        ))
+                        .child(match &key {
+                            Key::Server(server) => v_flex()
+                                .child("Argo CD Applications with destination server")
+                                .child(freshkube_ui::url::url_text(
+                                    "settings-destination-remove-url",
+                                    server,
+                                ))
+                                .child("show it as Unknown again. Nothing on a cluster is touched.")
+                                .into_any_element(),
+                            Key::Name(_) => format!(
+                                "Argo CD Applications with destination {what} show it as Unknown \
+                                 again. Nothing on a cluster is touched."
+                            )
+                            .into_any_element(),
+                        })
                         .child(fields::actions(
                             fields::Action::new(
                                 "settings-destination-remove-confirm",
