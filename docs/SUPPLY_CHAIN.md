@@ -140,7 +140,26 @@ Everything is a `GET` or a list under the existing 5 s per-request and the read'
 3. **Logs.** A step's log is a log record of the same result, read on demand when the person opens Logs for a pruned run, in pages, to at most 1 MiB, with a `Showing the first 1 MiB` note beyond. A step whose log Results didn't keep says so and disables Logs with why.
 4. **Attestations come with the record.** A record's `data` carries the run's annotations as they were when it was stored, Chains' among them, so a pruned run is verified the same way a live one is. A record stored before Chains signed has no attestation: that is `no attestation in the record (it may predate signing)`, which is not `unsigned`.
 
-The spike settled the REST shape and the filter (see [What the spike found](#what-the-spike-found)); what it could not confirm is listed there, and slice 5 settles it against a real Results install.
+The spike settled the REST shape and the filter (see [What the spike found](#what-the-spike-found)); what it could not confirm is listed there. Slice 5 tests the address client against loopback fake servers only; a real Results install remains unchecked.
+
+Slice 5's crate-private client lives in `freshkube-delivery/src/results/` and
+is not connected to the build read yet. It keeps up to 10 PipelineRuns or
+1,000 TaskRuns, reads at most five pages of up to 200 records, and bounds
+each response to 32 MiB and each decoded manifest to 4 MiB. Its listing keeps
+the stopping reason (run, task, page or byte cap) and an exact total only if
+the final page was read. A response-byte cap retains records from earlier
+pages and leaves the total unknown. Malformed or out-of-scope records are
+unreadable, never empty history. Record manifests use the existing run
+parsers, including their annotations. The owner's `Snapshot` retains a
+same-identity refresh failure as stale, with its last successful timestamp;
+the identity includes the client's revision and the full query.
+
+The address token account is `Tekton Results <normalized base URL>` in the
+key store. With no `token: keys.json`, the store is not read. A missing key
+allows an anonymous request; an unreadable store or malformed key is named
+and never silently ignored. Redirects are not followed. Plain HTTP requires
+a literal loopback IP, so DNS cannot steer plaintext credentials elsewhere.
+No cluster credential or forward is read or started by this client.
 
 ### Joining a Results record
 
@@ -158,11 +177,12 @@ Each is its own state with why, on the Changes list's footer, the change page's 
 | State | When | Says |
 | --- | --- | --- |
 | Off | The entry has no `results` | `Tekton Results isn't set up for cluster-b`; the change page doesn't offer it. |
+| Loading | A Results read is in flight | `Reading Tekton Results`; a configured source never reads as off during its first read. |
 | Not forwarded | `forward` is set and no Forward is running | `Not forwarded yet · Forward` (a button on the entry, never started by a read). |
 | Not installed | The forward's Service isn't found | `The Service tekton-results-api-service isn't in tekton-pipelines on cluster-b`. |
 | Unreachable | Connect, TLS or timeout | `Tekton Results at results.example.com didn't answer: …` with the cause (certificate not trusted, timed out, refused). |
 | Refused | 401 or 403 | `Tekton Results refused the request (403)` and, for the address route with no token, `no token is set for this address`. |
-| Capped | More runs than `MOST_RESULT_RUNS` | `Showing 10 of 14 runs in Tekton Results`. |
+| Capped | The run, task, page or response-byte cap stopped the read | `Showing 10 runs; more weren't read`, with the stopping cap. An exact total is shown only when paging finished; it is never estimated. |
 | Stale | A refresh failed | The last answer stays, marked stale with its time, as every read does. |
 | Empty | Read, no record | `Tekton Results has no run for this commit`. Only this one reads as none. |
 
@@ -268,7 +288,7 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | 2 | **The verifier.** A pure module: key file (PEM, P-256, fingerprint), DSSE check, statement parse, subject match, `Verification` with its variants. First the dependency check ([The crates](#the-crates)); then `sigstore-verify`, or `p256` and `ecdsa` with DSSE written here if it fails the reuse policy. Tested against `cosign`-made fixtures, committed as invented test data with a README, and not only keys generated in the tests; a negative test for each variant. The chosen crates added, with `NOTICE`. | Claude | new `freshkube-delivery/src/verify/`, `Cargo.toml`, `NOTICE` | 1 |
 | 3 | **Verification in the join.** `supply_chain_links` matches `Verification` exhaustively; the `Attestation` kind and reported observation in `provenance.rs`; a verified provenance adds a reported witness to commit → PipelineRun; the setup's key is handed to `change::live` and the Changes list's read; `KNOWN_GAPS` empty. The tests of the [rule](#the-rule). | Claude | `join/build.rs`, `join/observe.rs`, `provenance.rs`, `change/live` | 2, `setup` types |
 | 4 | **The transparency log.** The entry lookup, the match, the `required when on` rule, the URL from Chains' config or the setting. Off does nothing. | Claude | new `freshkube-delivery/src/rekor.rs`, `join/build.rs` | 3 |
-| 5 | **A Results client.** Address route: GET, TLS and CA, token from the key store, deadline and caps; the record shapes parsed with the existing run parsers; the states of the table. Against a fake server (`RealIo`), never a real address. | Claude | new `freshkube-delivery/src/results.rs`, `Cargo.toml` | 1 |
+| 5 | **A Results client.** Address route: GET, TLS and CA, token from the key store, deadline and caps; the record shapes parsed with the existing run parsers; the states of the table. Against a loopback fake server in Tokio tests with 30-second wait bounds, never a real address. | Claude | `freshkube-delivery/src/results/`, `Cargo.toml` | 1 |
 | 6 | **Results in the build read.** `Origin`, dedupe by UID with the live copy winning, the join, `Read from`, logs on demand, `Run pruned` with its why. | Claude | `collect.rs`, `tekton.rs`, `change/live`, `join/` | 5 |
 | 7 | **The Results forward.** The shell turns an explicit Forward into the address the client reads; Stop; the entry's state. | Claude | `freshkube-resources` `forwards/`, desktop shell wiring | 5, #697 slice 12 for its button |
 | 8 | **Example data.** Invented attestations and Results records for acme's `checkout`, one per state above; a `change::example::Shape` for each, reachable through `FRESHKUBE_APPLICATIONS`; parser and join tests on them. | Codex | `change/example.rs`, `changes/example.rs`, `fixtures.rs`, AGENTS.md knob table | 3, 6 |

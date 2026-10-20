@@ -2496,6 +2496,7 @@ dependencies = [
  "http",
  "http-body-util",
  "kube",
+ "reqwest",
  "ring",
  "rustls",
  "serde",
@@ -2504,6 +2505,7 @@ dependencies = [
  "talos-rs",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "url",
 ]
 
