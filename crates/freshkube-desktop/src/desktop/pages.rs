@@ -540,6 +540,15 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if page != Page::Settings
+            && self.guard_settings(
+                move |pilot, window, cx| pilot.navigate_from_keyboard(page, window, cx),
+                window,
+                cx,
+            )
+        {
+            return;
+        }
         // Focus the shell first so a screen can then take focus for its list.
         window.focus(&self.focus, cx);
         self.navigate(page, window, cx);
@@ -548,6 +557,15 @@ impl Pilot {
     /// Log collection keeps running in the background across screens; other
     /// screens load when shown and stay idle while hidden.
     pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        if page != Page::Settings
+            && self.guard_settings(
+                move |pilot, window, cx| pilot.navigate(page, window, cx),
+                window,
+                cx,
+            )
+        {
+            return;
+        }
         self.target.cancel_object_open();
         self.navigation.page = page;
         self.navigation.column_changed();
@@ -589,6 +607,14 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let destination = kind.clone();
+        if self.guard_settings(
+            move |pilot, window, cx| pilot.open_kind(destination, window, cx),
+            window,
+            cx,
+        ) {
+            return;
+        }
         if kind.key() == "nodes" {
             self.navigate_from_keyboard(Page::Nodes, window, cx);
             return;
@@ -642,6 +668,15 @@ impl Pilot {
     /// Custom Resources, and Control plane without Talos, show their column
     /// and keep the page until a row is chosen.
     pub(super) fn show_area(&mut self, area: Area, window: &mut Window, cx: &mut Context<Self>) {
+        if area != Area::Settings
+            && self.guard_settings(
+                move |pilot, window, cx| pilot.show_area(area, window, cx),
+                window,
+                cx,
+            )
+        {
+            return;
+        }
         match area {
             Area::Overview => self.navigate_from_keyboard(Page::Overview, window, cx),
             Area::Nodes => self.navigate_from_keyboard(Page::Nodes, window, cx),
