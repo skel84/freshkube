@@ -104,15 +104,11 @@ pub(super) fn write(directory: &Path, text: &str) {
 }
 
 /// Adds a cluster through the form, as a person would.
-fn add(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, context: &str, talosconfig: &str) {
+fn add(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, context: &str) {
     window.click("settings-add", cx);
     window.render_frame(cx);
     window.click("settings-form-context", cx);
     window.input(context, cx);
-    if !talosconfig.is_empty() {
-        window.click("settings-form-talosconfig", cx);
-        window.input(talosconfig, cx);
-    }
     window.click("settings-form-save", cx);
 }
 
@@ -127,14 +123,13 @@ async fn editing_a_cluster_changes_its_role_and_keeps_its_place(cx: &mut TestApp
         window.click("settings-cluster-prod", cx);
         window.press("e", cx);
         window.render_frame(cx);
-        // The id is shown, not a field: there is nothing to type into, and
-        // the id saved below is the one the cluster had. (Clicking the text
-        // does not move the keyboard off the context field, so typing after
-        // it would edit the context; this test does not type.)
-        assert!(window.find("settings-form-id").visible());
-        assert!(window.try_find("settings-form-id-input").is_none());
-        window.click(("settings-role", 1usize), cx);
-        window.click("settings-form-save", cx);
+        // Edit puts the keyboard in the Inspector's first field.
+        assert_eq!(
+            window.find("settings-identity-context").focused(),
+            Some(true)
+        );
+        window.click(("settings-identity-role", 1usize), cx);
+        window.click("settings-identity-save", cx);
     })
     .unwrap();
     saved(cx, handle, &view).await;
@@ -264,7 +259,7 @@ async fn the_first_save_preserves_a_hand_edit_and_later_saves_keep_the_backup(
     write(guard.path(), &hand_edit);
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
-    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci"))
         .unwrap();
     saved(cx, handle, &view).await;
     assert_eq!(ids(guard.path()), vec!["mgmt", "prod", "acme-ci"]);
@@ -280,7 +275,7 @@ async fn the_first_save_preserves_a_hand_edit_and_later_saves_keep_the_backup(
             text.contains("the hand-edited file is freshkube.yaml.bak"),
             "{text}"
         );
-        add(window, cx, "acme-next", "");
+        add(window, cx, "acme-next");
     })
     .unwrap();
     saved(cx, handle, &view).await;
@@ -305,7 +300,7 @@ async fn the_first_save_preserves_a_hand_edit_and_later_saves_keep_the_backup(
     cx.update_window(handle, |_, window, cx| window.click("settings-reload", cx))
         .unwrap();
     saved(cx, handle, &view).await;
-    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-next", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-next"))
         .unwrap();
     saved(cx, handle, &view).await;
     assert_eq!(std::fs::read_to_string(&backup).unwrap(), second_edit);
@@ -319,7 +314,7 @@ async fn a_save_that_cannot_preserve_the_backup_changes_nothing(cx: &mut TestApp
     std::fs::create_dir(guard.path().join("freshkube.yaml.bak")).unwrap();
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
-    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci"))
         .unwrap();
     saved(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
@@ -363,7 +358,7 @@ async fn unknown_keys_are_named_and_kept_by_a_save(cx: &mut TestAppContext) {
         let warning = page.warning.clone().unwrap();
         assert!(warning.contains("mgmt.talosconfg"), "{warning}");
         assert!(!warning.contains("destinations"), "{warning}");
-        add(window, cx, "acme-ci", "");
+        add(window, cx, "acme-ci");
     })
     .unwrap();
     saved(cx, handle, &view).await;
@@ -377,30 +372,45 @@ async fn unknown_keys_are_named_and_kept_by_a_save(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-async fn a_form_the_file_would_refuse_says_why_and_saves_nothing(cx: &mut TestAppContext) {
+async fn a_group_the_file_would_refuse_says_why_and_saves_nothing(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let before = std::fs::read(guard.path().join("freshkube.yaml")).unwrap();
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
-        add(window, cx, "acme-ci", "relative/talosconfig");
+        window.click("settings-cluster-prod", cx);
         window.render_frame(cx);
-        assert!(window.find("settings-form-error").visible());
-        // The message names the field that is wrong, not an id.
-        let text = window
-            .find("settings-form-error")
-            .label()
-            .unwrap_or_default()
-            .to_owned();
+        window.click("settings-identity-talosconfig-input", cx);
+        window.input("relative/talosconfig", cx);
+    })
+    .unwrap();
+    // The page hears of the typing once the update is over.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-identity-save", cx);
+        window.render_frame(cx);
+        // The message is at the field that is wrong, not in a banner.
         assert!(
-            text.starts_with("Talosconfig must be an absolute path"),
-            "{text}"
+            window
+                .find("settings-identity-talosconfig-row-error")
+                .visible()
         );
-        window.click("settings-form-cancel", cx);
+        let page = view.read(cx).settings_page.read(cx);
+        let error = page.field_error(super::entry::Field::Talosconfig);
+        assert_eq!(
+            error.as_deref(),
+            Some("Talosconfig must be an absolute path")
+        );
     })
     .unwrap();
     cx.run_until_parked();
-    assert!(!guard.path().join("freshkube.yaml").exists());
+    assert_eq!(
+        std::fs::read(guard.path().join("freshkube.yaml")).unwrap(),
+        before
+    );
     cx.update_window(handle, |_, _, cx| {
         assert!(view.read(cx).settings_page.read(cx).notice.is_none());
     })
@@ -498,7 +508,7 @@ async fn a_file_made_after_launch_is_not_replaced_by_the_first_save(cx: &mut Tes
     open_settings(cx, handle, &view).await;
     // Another window, or an editor, makes the file after this one launched.
     write(guard.path(), TWO);
-    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci"))
         .unwrap();
     saved(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
@@ -560,11 +570,9 @@ async fn a_second_change_while_a_save_runs_is_refused(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
-        add(window, cx, "first", "");
+        add(window, cx, "first");
         let page = view.read(cx).settings_page.clone();
-        let second = page.update(cx, |page, cx| {
-            page.upsert(None, Role::Cicd, "second", "", "", cx)
-        });
+        let second = page.update(cx, |page, cx| page.add_cluster(Role::Cicd, "second", cx));
         assert!(second.is_err(), "a save is running");
     })
     .unwrap();
@@ -682,24 +690,43 @@ async fn a_talos_context_is_saved_with_its_talosconfig_and_refused_without_one(
     let talosconfig = guard.path().join("acme.talosconfig");
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci"))
+        .unwrap();
+    saved(cx, handle, &view).await;
+    // The new cluster is selected, and its groups are built after the frame.
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        window.click("settings-add", cx);
         window.render_frame(cx);
-        window.click("settings-form-context", cx);
-        window.input("acme-ci", cx);
-        window.click("settings-form-talos-context", cx);
+        window.click("settings-identity-talos-context", cx);
         window.input("acme-talos", cx);
-        window.click("settings-form-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        let text = window
-            .find("settings-form-error")
-            .label()
-            .unwrap_or_default()
-            .to_owned();
-        assert_eq!(text, "A Talos context needs a talosconfig");
-        window.click("settings-form-talosconfig", cx);
+        window.click("settings-identity-save", cx);
+        window.render_frame(cx);
+        let page = view.read(cx).settings_page.read(cx);
+        let error = page.field_error(super::entry::Field::TalosContext);
+        assert_eq!(
+            error.as_deref(),
+            Some("A Talos context needs a talosconfig")
+        );
+        assert!(
+            window
+                .find("settings-identity-talos-context-row-error")
+                .visible()
+        );
+        window.click("settings-identity-talosconfig-input", cx);
         window.input(&talosconfig.display().to_string(), cx);
-        window.click("settings-form-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-identity-save", cx);
     })
     .unwrap();
     saved(cx, handle, &view).await;
@@ -732,7 +759,7 @@ async fn a_settings_save_writes_yaml_keeps_other_setup_and_leaves_json_untouched
     let legacy = directory.path().join("workspace.json");
     std::fs::write(&legacy, TWO).unwrap();
     open_settings(cx, handle, &view).await;
-    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-c", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-c"))
         .unwrap();
     saved(cx, handle, &view).await;
     let actual = std::fs::read(directory.path().join("freshkube.yaml")).unwrap();
@@ -756,7 +783,7 @@ async fn a_broken_file_between_opening_the_form_and_saving_refuses_and_clears_th
     let directory = tempfile::tempdir().unwrap();
     let (_runtime, handle, view) = launch(cx, directory.path());
     open_settings(cx, handle, &view).await;
-    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-a", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-a"))
         .unwrap();
     saved(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
@@ -815,7 +842,7 @@ async fn a_deleted_file_clears_the_receipt_and_the_next_save_recreates_it(cx: &m
     let directory = tempfile::tempdir().unwrap();
     let (_runtime, handle, view) = launch(cx, directory.path());
     open_settings(cx, handle, &view).await;
-    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-a", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-a"))
         .unwrap();
     saved(cx, handle, &view).await;
     std::fs::remove_file(directory.path().join("freshkube.yaml")).unwrap();
@@ -831,7 +858,7 @@ async fn a_deleted_file_clears_the_receipt_and_the_next_save_recreates_it(cx: &m
                 .unwrap()
                 .contains("is gone")
         );
-        add(window, cx, "cluster-b", "");
+        add(window, cx, "cluster-b");
     })
     .unwrap();
     saved(cx, handle, &view).await;
@@ -847,7 +874,7 @@ async fn saved_banners_clear_on_section_changes_reloads_and_conflicts(cx: &mut T
     open_settings(cx, handle, &view).await;
     for (index, event) in ["section", "reload", "conflict"].into_iter().enumerate() {
         cx.update_window(handle, |_, window, cx| {
-            add(window, cx, &format!("cluster-{index}"), "")
+            add(window, cx, &format!("cluster-{index}"))
         })
         .unwrap();
         saved(cx, handle, &view).await;
@@ -907,7 +934,7 @@ async fn a_save_over_a_previous_launchs_output_needs_no_backup(cx: &mut TestAppC
     write(directory.path(), &setup::to_text(&initial));
     let (_runtime, handle, view) = launch(cx, directory.path());
     open_settings(cx, handle, &view).await;
-    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-a", ""))
+    cx.update_window(handle, |_, window, cx| add(window, cx, "cluster-a"))
         .unwrap();
     saved(cx, handle, &view).await;
     assert_eq!(ids(directory.path()), ["cluster-a"]);

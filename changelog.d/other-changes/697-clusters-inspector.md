@@ -1,0 +1,1 @@
+- **Settings:** edit a workspace cluster in the Inspector beside the Clusters table, in an Identity group and a Metrics group that each save and revert on their own to freshkube.yaml, with errors shown at the field; choose the workspace's kubeconfig from the Clusters header; Add asks only for a role and a context.
