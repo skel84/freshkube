@@ -60,6 +60,12 @@ pub struct Results {
     /// An `https://` or `http://` URL the person enters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub address: Option<String>,
+    /// The address's bearer token, kept separately in `keys.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<KeysJson>,
+    /// Additional certificate authorities, PEM, for the address's TLS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_file: Option<PathBuf>,
     /// A Service and port in the entry's cluster, forwarded only when the
     /// person presses Forward.
     #[serde(default, skip_serializing_if = "Option::is_none")]

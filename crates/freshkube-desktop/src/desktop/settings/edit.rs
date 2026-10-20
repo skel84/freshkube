@@ -108,32 +108,32 @@ impl SettingsPage {
         window.open_dialog(cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_id = id.clone();
-            dialog
-                .w(ui::dp_px(420., window))
-                .title(format!("Remove {id}?"))
-                .child(
-                    v_flex()
-                        .id("settings-remove-dialog")
-                        .test_support()
-                        .role(Role::Dialog)
-                        .aria_label(format!("Remove {id}"))
-                        .gap_3()
-                        .text_size(dp(13.))
-                        .child(body.clone())
-                        .child(freshkube_ui::form::actions(
-                            freshkube_ui::form::Action::new(
-                                "settings-remove-confirm",
-                                "Remove",
-                                move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = confirm_page
-                                        .update(cx, |page, cx| page.remove(&confirm_id, cx));
-                                },
-                            )
-                            .danger(),
-                            freshkube_ui::form::Action::cancel("settings-remove-cancel"),
-                        )),
-                )
+            freshkube_ui::dialog::frame(
+                dialog,
+                420.,
+                format!("Remove {id}?"),
+                v_flex()
+                    .id("settings-remove-dialog")
+                    .test_support()
+                    .role(Role::Dialog)
+                    .aria_label(format!("Remove {id}"))
+                    .gap_3()
+                    .text_size(dp(13.))
+                    .child(body.clone()),
+                freshkube_ui::form::actions(
+                    freshkube_ui::form::Action::new(
+                        "settings-remove-confirm",
+                        "Remove",
+                        move |_, window, cx| {
+                            window.close_dialog(cx);
+                            _ = confirm_page.update(cx, |page, cx| page.remove(&confirm_id, cx));
+                        },
+                    )
+                    .danger(),
+                    freshkube_ui::form::Action::cancel("settings-remove-cancel"),
+                ),
+                window,
+            )
         });
     }
 
@@ -353,6 +353,16 @@ impl SettingsPage {
                 self.sync_setup(file.clone(), false, cx);
                 if let Some(id) = self.select_on_save.take() {
                     self.select(id, cx);
+                    if let Some(window) = self.window {
+                        let view = cx.entity().downgrade();
+                        _ = window.update(cx, |_, window, _| {
+                            table::reveal_when_settled(
+                                view,
+                                |page| page.selected.is_some(),
+                                window,
+                            );
+                        });
+                    }
                 }
                 if std::mem::take(&mut self.deselect_on_save) {
                     self.selected = None;

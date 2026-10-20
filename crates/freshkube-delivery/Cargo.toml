@@ -20,11 +20,18 @@ http-body-util = "0.1"
 url = "2"
 rustls.workspace = true
 serde.workspace = true
+base64.workspace = true
+# The check that can make a link Confirmed: ECDSA over P-256 through `ring`,
+# already in the build for rustls. See docs/SUPPLY_CHAIN.md, "The crates".
+ring = "0.17"
 chrono.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [features]
 testing = []
 
 [dev-dependencies]
+freshkube-core = { workspace = true, features = ["testing"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }

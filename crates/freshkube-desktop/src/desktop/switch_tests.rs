@@ -907,6 +907,7 @@ async fn a_held_link_is_dropped_when_the_entrys_kubeconfig_lacks_its_context(
     let (guard, _) = talos_folder_with_workspace_kubeconfig(KUBECONFIG);
     start_on_dev_first(&guard);
     let (_runtime, handle, view) = live_launch(cx, guard.path(), false);
+    let heard = crate::desktop::testing::record_notices(cx, &view);
     cx.wait_for_io(handle, |_, cx| !view.read(cx).config_loading)
         .await;
     open_and_hold_link(cx, handle, &view, "mgmt");
@@ -932,7 +933,7 @@ async fn a_held_link_is_dropped_when_the_entrys_kubeconfig_lacks_its_context(
         );
         // The notice that was pushed, word for word.
         assert_eq!(
-            pilot.told.last().map(String::as_str),
+            heard.borrow().last().map(String::as_str),
             Some(
                 "Can’t open p: mgmt’s kubeconfig can’t be used (The context 'acme-mgmt' isn't in this kubeconfig, so it wasn't used)"
             )
