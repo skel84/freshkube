@@ -260,3 +260,19 @@ pub(super) fn area(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App, id: &s
     }
     panic!("{id} never scrolled into the rail");
 }
+
+/// Observe the shell's notice event; the recorder belongs to the test.
+pub(super) fn record_notices(
+    cx: &mut TestAppContext,
+    pilot: &Entity<Pilot>,
+) -> std::rc::Rc<std::cell::RefCell<Vec<String>>> {
+    let messages = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let heard = messages.clone();
+    cx.update(|cx| {
+        cx.subscribe(pilot, move |_, notice: &super::switch::Notice, _| {
+            heard.borrow_mut().push(notice.0.clone());
+        })
+        .detach();
+    });
+    messages
+}

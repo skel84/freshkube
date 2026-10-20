@@ -276,7 +276,12 @@ impl Pilot {
                             .xsmall()
                             .label("Simulate failure")
                             .tooltip("Example only: pretend the next refresh failed")
-                            .on_click(cx.listener(|view, _, _, cx| view.simulate_failure(cx))),
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                if let Some(source) = view.mode.example_source_mut() {
+                                    source.fail_next_overview();
+                                    view.refresh(window, cx);
+                                }
+                            })),
                     )
                 })
                 .when(self.mode().is_example(), |this| {
