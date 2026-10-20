@@ -115,12 +115,15 @@ mod tests {
     use Cursor::{Link, Node};
     use Step::{Back, Forward, Next, Previous};
 
-    /// A chain a → b → c → d, with a side branch `gap` hung from `b` in
-    /// the column of `c`, below it.
-    fn chain() -> (
+    /// Boxes by key and corner, and calls by their ends.
+    type Fixture = (
         Vec<(&'static str, f32, f32)>,
         Vec<(&'static str, &'static str)>,
-    ) {
+    );
+
+    /// A chain a → b → c → d, with a side branch `gap` hung from `b` in
+    /// the column of `c`, below it.
+    fn chain() -> Fixture {
         (
             vec![
                 ("a", 0., 0.),
@@ -135,10 +138,7 @@ mod tests {
 
     /// Two Stages that run one commit: `freight` feeds both, which sit in
     /// one column.
-    fn two_stages() -> (
-        Vec<(&'static str, f32, f32)>,
-        Vec<(&'static str, &'static str)>,
-    ) {
+    fn two_stages() -> Fixture {
         (
             vec![
                 ("commit", 0., 0.),

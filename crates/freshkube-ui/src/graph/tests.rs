@@ -1038,7 +1038,7 @@ fn open_chain(
     width: f32,
     text: Option<f32>,
 ) -> (AnyWindowHandle, Entity<Map>) {
-    cx.update(|cx| bind_keys(cx));
+    cx.update(bind_keys);
     let graph = cx.update(|cx| chain().with_keys(cx));
     open(cx, graph, width, text)
 }
@@ -1088,7 +1088,7 @@ fn arrow_keys_walk_the_chain_and_leave_the_page_alone_without_keys(cx: &mut Test
 
 #[gpui_kit::test]
 fn a_graph_without_keys_ignores_the_arrows(cx: &mut TestAppContext) {
-    cx.update(|cx| bind_keys(cx));
+    cx.update(bind_keys);
     let (handle, map) = open(cx, chain(), 1280., None);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
