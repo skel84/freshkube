@@ -61,6 +61,7 @@ fn invented(nodes: usize, edges: usize) -> (Vec<GraphNode<usize>>, Vec<GraphEdge
             tooltip: SharedString::default(),
             style: EdgeStyle::Auto,
             pill: None,
+            pill_tone: None,
         });
     }
     (boxes, calls)
@@ -156,6 +157,7 @@ fn an_unpaged_graph_with_one_caller_of_forty_keeps_them_in_one_column() {
             tooltip: SharedString::default(),
             style: EdgeStyle::Auto,
             pill: None,
+            pill_tone: None,
         })
         .collect();
     let mut state = GraphState::new("map", text()).unpaged();
@@ -963,6 +965,7 @@ fn chain() -> GraphState<usize> {
         tooltip: SharedString::default(),
         style,
         pill: pill.map(Into::into),
+        pill_tone: None,
     };
     let edges = vec![
         call(0, 1, EdgeStyle::Solid, Some("3f9a1c2")),
@@ -1270,10 +1273,20 @@ fn a_background_click_focuses_and_rings_the_cursor_then_blur_clears_it(cx: &mut 
     })
     .unwrap();
     cx.run_until_parked();
-    cx.update_window(handle, |_,window,cx| {
-        window.render_frame(cx);
-        let Some(Cursor::Node(key)) = map.read(cx).cursor else { panic!("cursor is retained"); };
-        let bounds = window.find(format!("map-node-{key}")).bounds().scale(window.scale_factor());
-        assert!(!window.painted_quads().iter().any(|q| q.bounds == bounds && q.border_widths.left.0 >= 2. * window.scale_factor()), "the cursor's border clears when focus leaves");
-    }).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.simulate_next_frame(cx);
+        let Some(Cursor::Node(key)) = map.read(cx).cursor else {
+            panic!("cursor is retained");
+        };
+        let bounds = window
+            .find(format!("map-node-{key}"))
+            .bounds()
+            .scale(window.scale_factor());
+        assert!(
+            !window.painted_quads().iter().any(|q| q.bounds == bounds
+                && q.border_widths.left.0 >= 2. * window.scale_factor()),
+            "the cursor's border clears when focus leaves"
+        );
+    })
+    .unwrap();
 }

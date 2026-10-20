@@ -35,6 +35,12 @@ pub fn set_store(backend: Rc<dyn ViewStore>, cx: &mut App) {
             backend,
             windows: HashMap::new(),
         });
+        cx.on_window_closed(|cx, id| {
+            cx.update_global::<Store, _>(|store, _| {
+                store.windows.remove(&id);
+            });
+        })
+        .detach();
     }
 }
 
@@ -80,5 +86,34 @@ impl ViewStore for Kept {
     fn save(&self, view: ChangeView, cx: &App) {
         self.current.set(view);
         self.backend.save(view, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::{AppContext, Context, IntoElement, Render, TestAppContext, div, px, size};
+
+    struct View;
+    impl Render for View {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn closing_a_window_releases_its_kept_view(cx: &mut TestAppContext) {
+        let mut kept = None;
+        let handle = cx.open_window(size(px(500.), px(400.)), |window, cx| {
+            let view = store(window, cx);
+            view.save(ChangeView::Chain, cx);
+            kept = Some(Rc::downgrade(&view));
+            View
+        });
+        assert!(kept.as_ref().unwrap().upgrade().is_some());
+        cx.update_window(handle.into(), |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert!(kept.unwrap().upgrade().is_none());
     }
 }

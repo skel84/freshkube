@@ -226,11 +226,7 @@ pub(super) fn render_graph<S: GraphSource>(
                             })
                             .max_w(dp(PILL_W))
                             .tab_stop(!keyed)
-                            .children(match edge.style {
-                                EdgeStyle::Dashed => ui::status_glyph(Tone::Info, cx),
-                                EdgeStyle::Dotted => ui::status_glyph(Tone::Unknown, cx),
-                                _ => None,
-                            })
+                            .children(edge.pill_tone.and_then(|tone| ui::status_glyph(tone, cx)))
                             .child(
                                 mono(edge.pill.clone().unwrap_or_default())
                                     .text_size(dp(11.))

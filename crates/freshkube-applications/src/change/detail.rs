@@ -145,19 +145,25 @@ impl ChangePage {
                 let card = self.trail.cards.get(hop.key.as_str())?;
                 let edge = self.trail.edges.iter().find(|edge| &edge.to == card)?;
                 let before = self.change.hop(&edge.from)?;
+                let why = match &hop.shows {
+                    Shows::Hop(detail) => detail.unlinked.clone(),
+                    Shows::Stage(_) => None,
+                }
+                .unwrap_or_else(|| {
+                    "No join detail was read; the Inspector shows the two hops as supplied.".into()
+                });
                 Some(LinkLines {
                     confidence: hop.link.unwrap_or(Confidence::Unknown),
                     by: "by recorded hop".into(),
                     label: format!(
-                        "{}: no join detail was read",
+                        "{}: {why}",
                         link_word(hop.link.unwrap_or(Confidence::Unknown))
                     )
                     .into(),
                     before: before.name.clone().into(),
                     before_says: before.detail.clone().into(),
                     here_says: hop.detail.clone().into(),
-                    why: "No join detail was read; the Inspector shows the two hops as supplied."
-                        .into(),
+                    why: why.into(),
                 })
             });
         }

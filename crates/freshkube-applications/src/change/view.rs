@@ -253,7 +253,18 @@ impl Render for ChangePage {
             .on_action(cx.listener(|this, _: &PreviousHop, window, cx| this.step(-1, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleView, window, cx| this.toggle_view(window, cx)))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))
-            .on_action(cx.listener(|this, _: &OpenHop, _, cx| this.open_selected(cx)))
+            .on_action(cx.listener(|this, _: &OpenHop, window, cx| {
+                if this.focus.is_focused(window)
+                    || this
+                        .graph
+                        .focus_handle()
+                        .is_some_and(|focus| focus.is_focused(window))
+                {
+                    this.open_selected(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .flex()
             .flex_col()
             .size_full()

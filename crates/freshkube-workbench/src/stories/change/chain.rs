@@ -123,6 +123,11 @@ impl ChainStory {
                     tooltip: format!("{} → {} · {}", names[from], names[to], CASES[self.case].1)
                         .into(),
                     style,
+                    pill_tone: match style {
+                        EdgeStyle::Dashed => Some(Tone::Info),
+                        EdgeStyle::Dotted => Some(Tone::Unknown),
+                        _ => None,
+                    },
                     pill: Some(
                         if style == EdgeStyle::Dotted {
                             "no key"

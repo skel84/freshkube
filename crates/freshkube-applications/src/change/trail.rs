@@ -16,7 +16,7 @@ pub(super) struct Trail {
 }
 
 impl Trail {
-    pub(super) fn derive(change: &Change, rows: &[HopRow], groups: &[GroupLine]) -> Self {
+    pub(super) fn derive(change: &Change, rows: &[HopRow]) -> Self {
         let mut trail = Self::default();
         let mut stages = BTreeMap::new();
         for (hop, row) in change.hops.iter().zip(rows) {
@@ -32,21 +32,17 @@ impl Trail {
                 continue;
             }
             let (label, detail, tone) = match hop.shows {
-                Shows::Stage(stage) => {
-                    let group = &groups[row.group];
-                    (
-                        change.stages[stage].name.clone().into(),
-                        std::iter::once(change.stages[stage].words.as_str())
-                            .chain(group.detail.iter().skip(2).map(String::as_str))
-                            .collect::<Vec<_>>()
-                            .join(" · ")
-                            .into(),
-                        gate_tone(change, rows, stage),
-                    )
-                }
+                Shows::Stage(stage) => (
+                    change.stages[stage].name.clone().into(),
+                    std::iter::once(change.stages[stage].words.as_str())
+                        .chain(reach_words(&change.stages[stage]).as_deref())
+                        .collect::<Vec<_>>()
+                        .join(" · ")
+                        .into(),
+                    gate_tone(change, rows, stage),
+                ),
                 _ => (row.name.clone(), row.detail.clone(), row.tone),
             };
-            let ghost = matches!(&hop.shows, Shows::Hop(detail) if matches!(detail.state.as_str(), "Not found" | "Refused" | "Not served" | "Unknown"));
             trail.nodes.push(GraphNode {
                 key: key.clone(),
                 id: format!("change-card-{key}").into(),
@@ -54,7 +50,7 @@ impl Trail {
                 detail,
                 tone: Some(tone),
                 tooltip: row.label.clone(),
-                ghost,
+                ghost: row.ghost,
             });
         }
         for hop in &change.hops {
@@ -93,7 +89,13 @@ impl Trail {
                         link.why
                     )
                 })
-                .unwrap_or_else(|| "Unknown: a side can't be read".into());
+                .unwrap_or_else(|| {
+                    match &hop.shows {
+                        Shows::Hop(detail) => detail.unlinked.clone(),
+                        Shows::Stage(_) => None,
+                    }
+                    .unwrap_or_else(|| "Unknown: a side can't be read".into())
+                });
             trail.edges.push(GraphEdge {
                 from: from.clone(),
                 to: to.clone(),
@@ -109,6 +111,7 @@ impl Trail {
                     Confidence::Unknown => EdgeStyle::Dotted,
                 },
                 pill: Some(label.into()),
+                pill_tone: link_glyph(confidence),
             });
         }
         trail

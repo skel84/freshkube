@@ -278,7 +278,7 @@ fn missing_policy_and_an_anchored_unserved_source_are_unknown_in_both_views(
         policy.detail = "Not found".into();
         policy.link = Some(Confidence::Unknown);
         if let Shows::Hop(detail) = &mut policy.shows {
-            detail.state = "Not found".into();
+            detail.state = "No policy result reported".into();
             detail.link = None;
         }
         change.missing.push(
@@ -344,8 +344,18 @@ fn chain_uses_loading_rows_failure_retry_empty_and_stale_states(cx: &mut TestApp
         });
         window.render_frame(cx);
         assert!(window.try_find("change-failed").is_some());
-        window.click("change-retry", cx);
-        assert!(page.read(cx).is_reading());
+        for _ in 0..20 {
+            if window.find("change-retry").focused() == Some(true) {
+                break;
+            }
+            window.press("tab", cx);
+        }
+        assert_eq!(window.find("change-retry").focused(), Some(true));
+        window.press("enter", cx);
+        assert!(
+            page.read(cx).is_reading(),
+            "Enter activates the focused Retry button"
+        );
     })
     .unwrap();
     cx.executor().advance_clock(Duration::from_secs(2));
@@ -353,6 +363,7 @@ fn chain_uses_loading_rows_failure_retry_empty_and_stale_states(cx: &mut TestApp
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.try_find("change-chain").is_some());
+        page.update(cx, |page, cx| page.focus(window, cx));
         window.simulate_next_frame(cx);
         assert!(
             page.read(cx)
@@ -376,6 +387,13 @@ fn chain_uses_loading_rows_failure_retry_empty_and_stale_states(cx: &mut TestApp
         page.update(cx, |page, cx| page.read_answer(empty, window, cx));
         window.render_frame(cx);
         assert!(window.try_find("change-chain").is_none());
+        window.simulate_next_frame(cx);
+        assert!(page.read(cx).focus.is_focused(window));
+        window.press("v", cx);
+        assert_eq!(page.read(cx).view, ChangeView::List);
+        window.press("v", cx);
+        assert_eq!(page.read(cx).view, ChangeView::Chain);
+        window.press("escape", cx);
     })
     .unwrap();
 }
@@ -694,6 +712,49 @@ fn a_change_opened_in_remembered_chain_reveals_its_initial_stage(cx: &mut TestAp
         let card = window.find("change-card-prod-lon-eligible").bounds();
         assert!(card.left() >= pane.left() - px(1.));
         assert!(card.right() <= pane.right() + px(1.));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn selecting_a_link_keeps_the_supplied_unlinked_reason(cx: &mut TestAppContext) {
+    let (handle, page) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        chain(&page, window, cx);
+        let hop = page.read(cx).change.hop("prod-ams-argocd").unwrap();
+        let Shows::Hop(detail) = &hop.shows else {
+            panic!("Application");
+        };
+        let why = detail.unlinked.clone().unwrap();
+        let edge = page
+            .read(cx)
+            .trail
+            .edges
+            .iter()
+            .find(|edge| edge.to == "prod-ams-argocd")
+            .unwrap()
+            .clone();
+        assert_eq!(edge.tooltip.as_ref(), why);
+        page.update(cx, |page, cx| {
+            page.step_to(Cursor::Link(edge.from, edge.to), window, cx)
+        });
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("change-detail-link")
+                .label()
+                .unwrap()
+                .contains(&why)
+        );
+        window.click("change-view-list", cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .find("change-detail-link")
+                .label()
+                .unwrap()
+                .contains(&why)
+        );
     })
     .unwrap();
 }

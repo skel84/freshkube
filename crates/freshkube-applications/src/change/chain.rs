@@ -49,7 +49,7 @@ impl ChangePage {
     }
 
     pub(super) fn derive_chain(&mut self) {
-        self.trail = super::trail::Trail::derive(&self.change, &self.rows, &self.groups);
+        self.trail = super::trail::Trail::derive(&self.change, &self.rows);
         self.graph
             .set(self.trail.nodes.clone(), self.trail.edges.clone());
         self.dim_chain();

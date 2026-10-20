@@ -152,17 +152,8 @@ fn rank(tone: Tone) -> u8 {
 /// that. A Stage that runs other Freight keeps its rows' words and glyph.
 pub fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone) {
     let mut words = vec![detail.to_owned(), stage.words.to_lowercase()];
-    let on = stage
-        .cluster
-        .cluster()
-        .map(|cluster| format!(" on {cluster}"))
-        .unwrap_or_default();
-    let reach = match &stage.reach {
-        Reach::NotReached | Reach::Linked(Confidence::Confirmed) => return (words, rows),
-        Reach::Linked(confidence) => {
-            format!("pods{on} {}", link_word(*confidence).to_lowercase())
-        }
-        Reach::Refused(kinds) => format!("{kinds} refused"),
+    let Some(reach) = reach_words(stage) else {
+        return (words, rows);
     };
     words.push(reach);
     let tone = reach_tone(&stage.reach);
@@ -173,6 +164,23 @@ pub fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone
         _ => rows,
     };
     (words, tone)
+}
+
+/// A Stage's downstream reach, independent of the group's word order.
+fn reach_words(stage: &Stage) -> Option<String> {
+    let on = stage
+        .cluster
+        .cluster()
+        .map(|cluster| format!(" on {cluster}"))
+        .unwrap_or_default();
+    let reach = match &stage.reach {
+        Reach::NotReached | Reach::Linked(Confidence::Confirmed) => return None,
+        Reach::Linked(confidence) => {
+            format!("pods{on} {}", link_word(*confidence).to_lowercase())
+        }
+        Reach::Refused(kinds) => format!("{kinds} refused"),
+    };
+    Some(reach)
 }
 
 /// How sure it is that a Stage's pods run the change, as a glyph's tone:
@@ -216,6 +224,8 @@ pub struct HopRow {
     pub from: SharedString,
     pub time: SharedString,
     pub link: Option<Confidence>,
+    /// An unread or missing hop, derived from state and confidence.
+    pub ghost: bool,
     /// Coroot's verdict on the revision, once the outcome was read. It is
     /// not the hop's state and not its link, and no chip counts it.
     pub coroot: Option<Mark>,
@@ -402,6 +412,8 @@ impl ChangePage {
                     label: format!("{}: {}{link}", hop.name, hop.detail).into(),
                     time: time.into(),
                     link: hop.link,
+                    ghost: hop.state == HealthIndicator::Unknown
+                        && hop.link == Some(Confidence::Unknown),
                     coroot: None,
                 }
             })

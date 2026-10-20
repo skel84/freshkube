@@ -187,7 +187,21 @@ impl ChangePage {
             (text.into(), label.into())
         });
         if let Some(change) = self.loader.data().filter(|_| answered).cloned() {
+            let graph_focused = self
+                .graph
+                .focus_handle()
+                .is_some_and(|focus| focus.is_focused(window));
             self.show(change);
+            if graph_focused && self.rows.is_empty() {
+                let this = cx.entity().downgrade();
+                window.on_next_frame(move |window, cx| {
+                    _ = this.update(cx, |page, cx| {
+                        if page.visible && page.rows.is_empty() {
+                            page.focus(window, cx);
+                        }
+                    });
+                });
+            }
             if let Some(stage) = self.stage.take() {
                 self.select_stage(&stage, window, cx);
             }

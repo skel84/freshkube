@@ -123,6 +123,8 @@ pub struct GraphEdge<K> {
     /// A label in a pill at the line's middle, which selects the call when
     /// clicked; the call then carries no marker. `None` draws the marker.
     pub pill: Option<SharedString>,
+    /// Optional glyph beside the pill's label, supplied by the caller.
+    pub pill_tone: Option<Tone>,
 }
 
 impl<K: PartialEq> GraphEdge<K> {

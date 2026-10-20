@@ -50,6 +50,7 @@ impl ObservabilityPage {
                 tooltip: edge.tooltip.clone().into(),
                 style: EdgeStyle::Auto,
                 pill: None,
+                pill_tone: None,
             })
             .collect();
         self.map_display.set(nodes, edges);

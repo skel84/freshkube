@@ -344,9 +344,13 @@ impl Render for ChangesPage {
                 cx.listener(|this, _: &PreviousChange, window, cx| this.step(-1, window, cx)),
             )
             .on_action(cx.listener(|this, _: &ClearChange, _, cx| this.clear_selection(cx)))
-            .on_action(
-                cx.listener(|this, _: &OpenChange, window, cx| this.open_selected(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &OpenChange, window, cx| {
+                if this.focus.is_focused(window) {
+                    this.open_selected(window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .flex()
             .flex_col()
             .size_full()
