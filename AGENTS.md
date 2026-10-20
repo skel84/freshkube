@@ -244,4 +244,5 @@ Behaviour that is not a rule lives in one doc per feature, each starting with it
 - Applications, the Changes list and the change page (`crates/freshkube-applications/`): [docs/features/applications.md](docs/features/applications.md).
 - The Nodes workspace and its node pane (`desktop/nodes/`): [docs/features/nodes.md](docs/features/nodes.md).
 - The frame, the Overview and the Kubernetes summary session (`desktop/shell/`, `presentation/`, `kubernetes_summary/`): [docs/features/shell.md](docs/features/shell.md).
+- Settings, its sections and the setup file's saves (`desktop/settings/`, `setup_file.rs`, `freshkube_ui::form`): [docs/features/settings.md](docs/features/settings.md).
 - Monitoring and the CPU and memory history (`freshkube-monitoring`): [docs/features/monitoring.md](docs/features/monitoring.md), with its design in [docs/MONITORING.md](docs/MONITORING.md). Rules kept here: a hidden Monitoring page finds nothing, resolves nothing and asks no panel; panels draw only Console colours.

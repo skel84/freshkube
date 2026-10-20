@@ -1,0 +1,124 @@
+# Settings
+
+The behaviour of the Settings rail area: its seven sections, the shared form rules they follow and how they save to `freshkube.yaml`. The design is DESIGN.md's [The Settings page](../DESIGN.md#the-settings-page); the setup file's format, reload and migration are in [SETUP_FILE.md](../SETUP_FILE.md). Where this document and the code differ, the code wins. Written at main `2af002d`, after [#697](https://github.com/skel84/freshkube/issues/697)'s slices 1 to 10.
+
+Code:
+
+- `crates/freshkube-desktop/src/desktop/settings/` is the page. `mod.rs` holds `SettingsPage`, Clusters' table, banners and status, and `sections.rs` holds `SettingsSection`, `SettingsEvent` and General. Clusters also uses `source.rs` (the table), `form.rs` (the Add dialog), `edit.rs` (add, remove, move, the kubeconfig, `commit`, Reload), `kubeconfig_row.rs` and `entry/` (the Inspector's Identity and Metrics groups). The other sections are `connection.rs`, `monitoring.rs`, `coroot.rs`, `destinations/` and `sources/`.
+- `crates/freshkube-desktop/src/setup_file.rs` is `SetupFile`, the shell's owner of `freshkube.yaml`: its poll, `save_workspace` and `save_with`, the receipt and the file's problem. `desktop/startup/setup.rs` hands its changes to the page, and `desktop/shell/frame.rs` draws the receipt in the status bar.
+- `crates/freshkube-ui/src/form.rs` draws groups, rows, errors, `SavedIn`, the secret field, path fields and the platform-ordered actions; `platform.rs` answers which side the default button takes.
+- Monitoring's per-context source and Dashboards folder stay in `crates/freshkube-monitoring/src/page/` (`source.rs`, `settings.rs`, with `store.rs` for `monitoring.json`). Coroot's connection is `crates/freshkube-observability/src/connection.rs`, its one-line card `settings.rs` and its `coroot.json` `remember.rs`. Desktop routes the events between them (`desktop/entity_pages.rs`). General's Appearance and auto-refresh are saved by `desktop/shell/chrome.rs`, and text size by `freshkube-ui`'s `text_size.rs`.
+- `crates/freshkube-core/src/setup/` parses and writes the setup file (`commit_with_backup`), and core's `secrets.rs` is `keys.json`.
+
+Tests that prove it (the files with a `#[test]`, `#[tokio::test]` or `#[gpui_kit::test]`, found with `git grep -l '#\[test\]\|#\[tokio::test\]\|#\[gpui_kit::test\]'` run over the paths above):
+
+- `crates/freshkube-desktop/src/desktop/settings/`: `tests.rs` (the column, slugs, `OpenSettings`, General's and Connection's layouts, the reload receipt), `entry/tests.rs` (the Inspector), `edit_tests.rs` (Add, Remove, Move, Reload, the Saved banner), `monitoring_tests.rs`, `coroot_tests.rs`, `destinations/tests.rs`, `sources/tests.rs`; inline tests in `sections.rs`.
+- `crates/freshkube-desktop/src/desktop/tests/settings.rs` (Connection's Talos group and Kubernetes API) and `tests/kubernetes_only.rs`; `tests/metrics.rs` for the metrics scope the Monitoring section saves.
+- `crates/freshkube-desktop/src/setup_file.rs` (poll, debounce, own writes, saves) and `desktop/startup/migrate.rs`; inline tests in `desktop/shell/chrome.rs` (General's preferences).
+- `crates/freshkube-ui/src/form.rs`, `platform.rs` and `text_size.rs`; core's `setup/tests.rs` and `setup/migrate_tests.rs`; inline tests in `freshkube-observability/src/remember.rs`, `freshkube-monitoring/src/store.rs` and core's `secrets.rs`.
+
+## The page and its sections
+
+Settings is one `Page::Settings` with one `SettingsPage`, which shows one `SettingsSection` at a time. The rail has a Settings button, and its column (`shell/source.rs`, `settings_lines`) lists the sections in two groups: *App* (General, Connection, Monitoring, Coroot) and *Workspace* (Clusters, Argo CD destinations, Delivery sources). Each row is `nav-settings-<slug>` and is current while its section shows. Each section is also a page slug, `settings-<slug>`, for `FRESHKUBE_PAGE`; a bare `settings` opens Clusters, the default. `OpenSettings` (⌘, on macOS; Windows and Linux bind no key, since Control-, is the dock's) and the gear's "All settings…" open the section shown last, which the page holds for the session and doesn't save.
+
+The header's gear keeps only "Quick controls": Talos auto-refresh, Appearance and Text size, the same preferences as General. Below them, "All settings…" closes the popover and opens the area.
+
+App sections are padded forms. Workspace sections are table pages: Clusters and Delivery sources hold the selection in the shared Inspector, while Argo CD destinations edits in a dialog. Only the three lists put a segment in the status bar. Delivery sources' check runs only while its section shows: leaving the section, or the page, drops a check in flight.
+
+**Where a section is saved.** Every group ends with one muted line from `form::SavedIn`, naming the file, and the store when a key goes elsewhere:
+
+| Section | Saved-in line |
+| --- | --- |
+| General | `Saved in preferences.json`, or `Not saved; resets at launch` without a preferences folder (`--fixture` has none) |
+| Connection | Talos: `Saved in connection.json`, or `Not saved; resets at launch` with example data or no preferences. Kubernetes API: always `Not saved; resets at launch`. Kubernetes-only launches: `Saved in connection.json` once a file is remembered |
+| Monitoring | Metrics source: `Saved in freshkube.yaml`, or `Saved in freshkube.yaml; the token in keys.json`. This context: `Saved in monitoring.json`, with `; the token in keys.json` for a token |
+| Coroot | `Saved in freshkube.yaml, the key in keys.json`, or `Saved in freshkube.yaml` for Anonymous or a key file; `Not saved; resets at launch` in example data |
+| Clusters | Each Inspector group: `Saved in freshkube.yaml` |
+| Argo CD destinations | The dialog: `Saved in freshkube.yaml` |
+| Delivery sources | Routing: `Saved in freshkube.yaml · sources` |
+
+## The shared form rules
+
+`freshkube_ui::form` draws a section's groups; the page owns the drafts, the checks and the saving.
+
+- **Save and Revert.** A group of linked fields (Connection's Talos group, Monitoring's Metrics source, Coroot's Connection, each Clusters Inspector group) has a pair at its foot. The default button trails on macOS and Linux (Revert, Save) and leads on Windows (Save, Revert); dialogs order Cancel the same way. Save is off while the group is clean or can't be saved, and Revert while it is clean. Return in a field presses the group's default button, and Escape reverts a changed group once. A changed group draws an accent `•` after its heading. A choice that stands alone saves at once: Appearance, Text size, auto-refresh, the workspace's kubeconfig, the Dashboards folder, a pin, and Clusters' Add, Remove and Move. The Kubernetes API's mode applies at once and isn't saved.
+- **Inline errors.** A field is checked when it loses the keyboard, and the whole group on Save (and on Monitoring's Test). The error replaces the field's hint, in `crit_ink`, and the input's border turns `crit`. Save then moves the keyboard to the first failing field, top to bottom, and writes nothing; Connection, Clusters, Monitoring and the destination dialog do this. A refusal no field explains shows in a banner: Clusters' Inspector puts it at its top, Monitoring in a "Not saved" banner.
+- **Locked fields.** A section that can't save says why and changes nothing. With example data, without a preferences folder, or while `freshkube.yaml` is broken or changed on disk, Clusters' Inspector disables every field, choice and Browse… and shows one of "Example data isn’t saved", "This window keeps no preferences, so there is nowhere to save", "freshkube.yaml isn't usable. Nothing was written; fix the file and reload." or the changed-on-disk words below. Monitoring disables Save and puts the reason in the mode's hint; Coroot disables every control in example data and refuses a save over a broken file with the same words; the lists' actions are off, with the reason in their tooltips. Connection's example data disables the Talos inputs and Browse… ("Example data doesn’t read a talosconfig.") and the Kubernetes API's choices.
+- **The style checks.** `scripts/check-style.sh`'s `label` rule fails a hand-drawn 12.5 semibold label outside `form`, and its `buttons` rule fails a hand-placed Revert, Discard or dialog Cancel, so every group and dialog takes the platform order from `form::actions`. #697's pending entries are gone.
+
+## General
+
+Two groups. *Display*: Appearance (System, Light, Dark), which runs the app menu's appearance actions, and Text size, one button per step from 12 to 20 ("Size in pixels; keyboard shortcuts also change it."). *Refresh*: the Talos auto-refresh switch, off without Talos; its hint says whether Talos refreshes every 15 s, is off, or needs a Talos connection, and that Kubernetes updates are watched. Each choice saves at once in `preferences.json` (`appearance`, `talos_auto_refresh` and `text_size`), keeping the others and any unknown keys, and applies at the next launch. `FRESHKUBE_THEME` and `FRESHKUBE_TEXT_SIZE` override them for one debug session without saving.
+
+## Connection
+
+*Talos*: the talosconfig, a path field with Browse… (Browse clears the context), and its context, empty for the file's current one. Blur checks the draft by reading the file's contexts (a `Loader`): an unreadable file puts its error on the path, and a context the file lacks says "Choose a context that is in this talosconfig." Save applies the file to the connection and remembers it in `connection.json`; an invalid draft leaves the applied connection as it was.
+
+*Kubernetes API*, while Talos is connected: Automatic, From Talos, or File with its kubeconfig (Browse…) and a context list with the current one tagged. A choice applies at once, File once its file has a known context, and none is remembered. A Kubernetes-only launch shows its kubeconfig files with Browse… instead.
+
+## Clusters
+
+A table page of the workspace's entries, in file order with no sort: an unlabelled status column, Cluster (the id), Role, Context and Talosconfig. The status column shows a Warn mark when an entry did not open as defined, and the row's tooltip adds the note. With no file the table is empty, and the status bar counts the one cluster this window opened as an implicit workspace of one.
+
+- **Toolbar, keys and row menu.** Add (`a`), Edit (Enter or `e`), Remove (Backspace), Move up and Move down (⌘⌥↑ and ⌘⌥↓, Control-Alt on Windows and Linux) and Reload (`r`); ↑ and ↓ move the selection, and Escape clears it. Edit opens no dialog: it puts the keyboard in the Inspector's Context field. The row menu holds Edit, Remove, Move up and Move down.
+- **Add** is a small dialog, "Add a cluster": Role (Core, CI/CD, Environment; Environment by default) and the kubeconfig Context. The id is derived from the context (`Workspace::fresh_id`: lower case, other characters to `-`, `-2` and on for a taken one). The dialog stays open with what was typed if the save fails, and selects the new row once saved.
+- **Remove** asks first, "Remove {id}?": it takes the entry out of `freshkube.yaml` and touches nothing on the cluster or in any kubeconfig or talosconfig, and says when Argo CD destinations stay mapped to it, marked. It drops the entry's unsaved Inspector changes without asking.
+- **The kubeconfig row**, in the header's second line, shows the workspace's `kubeconfig` path or "Automatic: KUBECONFIG, then the home default". Browse… chooses a file, never edits it, and Use automatic clears it; each saves at once.
+- **The Inspector**, beside the table or under it on a narrow page (`inspector::split`), is headed by the selected entry's id and holds two groups:
+  - *Identity*: Role, Context, the talosconfig (a path field whose Browse… fills the draft), and the Talos context. Errors: an empty context, a talosconfig that isn't an absolute path, a Talos context without a talosconfig.
+  - *Metrics*: the label value, the entry's value of the central store's label (its id unless set), and its own store, None, Service (namespace, Service, port, reached through this cluster's API server) or URL ("A store of its own wins under any mode."). A URL's token is never shown; a URL save keeps it, and choosing Service or None drops it from the block.
+  - Each Save writes only that entry's keys through `SetupFile::save_workspace`, keeping the rest of the setup and its unknown keys.
+- **Save, Discard or Stay.** Changing the selection (click, arrows, Escape, the row menu) or pressing Add while an Inspector group has changes asks through the platform's prompt (`window.prompt`): "Save the changes to {id}?", with Save, Discard and Stay. Save writes the groups first and stays on the entry if a field fails. Reload doesn't ask: it rebases the drafts on the file read again, and drops them only when a change on disk was waiting.
+- **Status.** "{n} clusters · {m} destinations mapped · freshkube.yaml · Kubeconfig: …" ("Example workspace" with example data; a part that would say 0 destinations is left out), or "1 cluster · implicit: the one this window opened".
+
+## Monitoring
+
+Three groups.
+
+- **Metrics source**, the setup file's `metrics` ([SETUP_FILE.md](../SETUP_FILE.md#metrics)): one choice as a segment, Automatic, Central or Per entry. Automatic has no fields. Per entry says that each entry names its own source under its clusters entry in `freshkube.yaml`; the Clusters Inspector's Metrics group edits it, and this line doesn't link there yet. Central chooses a store, a Service (the hosting entry, namespace, Service, port, HTTPS, path) or a URL with its token, then the cluster label (a Prometheus label name). Save writes only `setup.metrics` through `SetupFile::save_with`.
+  - **The token** is a secret field: once saved, "Kept in keys.json" with Replace… and Forget, never its value; a changed URL asks for its own token. Save puts the token in `keys.json` (account `Prometheus <url>`) before it writes the YAML; a refused write restores the previous token, or removes the new one.
+  - **Test** checks the unsaved values against the open entry, read-only, and answers "Passed", "Failed" or "Unknown" with why (no workspace entry open, no Kubernetes connection for the entry or the hosting entry), or times out after 45 s. A changed draft or a hidden section drops the check.
+- **This context.** A context that is a workspace entry, or example data, says that the setup file decides its source. Any other context keeps Monitoring's own choice, Automatic, Service or URL, with its own read-only Test; Save writes it to `monitoring.json` and its token to `keys.json`, forgetting the token of a URL it replaces.
+- **Dashboards folder**: the folder or "None", with Choose… and Forget, each saved at once in `monitoring.json`; off with example data.
+
+Example data shows the example setup's metrics; Save, Test and Revert do nothing. What the Monitoring page does with the scope it saves is in [monitoring.md](monitoring.md).
+
+## Coroot
+
+One *Connection* group: the server, how to sign in (API key, Session, Anonymous), the credential (hidden for Anonymous; "API key" or "Session value", a secret field kept in `keys.json`, or "Read from the key file named in freshkube.yaml" when the block names an `api_key_file`), the project (optional), and a Status line: the save's error, else Observability's failure, "Connecting…", "Connected to {server}" or "Not connected", with Disconnect while connected. The group's default button is labelled Connect.
+
+- **Connect** checks the fields, then writes the `coroot` block through `SetupFile::save_with` over the file's own block, keeping its unknown keys (an unchanged block isn't written), and asks Observability to connect (`SettingsEvent::Connect`, routed by `entity_pages.rs`). Observability stores a typed key in `keys.json` (account `Coroot <url>`) at once, whether or not the connect then works; once it is stored, the block gets `key: keys.json` and the field lets the key go. With nothing typed, Connect reads the stored key or the key file.
+- **Disconnect** keeps the block and saves `coroot_reconnect: false` in `preferences.json`, so the next launch doesn't connect.
+- **Forget** removes `key` from the block, then drops the stored key from `keys.json`.
+- **`coroot.json`** is written only while no setup has been handed over; once a setup is in use, the connection lives in `freshkube.yaml`.
+- **Example data** shows the example connection with every control off and saves nothing; a window without preferences has nowhere to save.
+
+Observability no longer holds the connection: with none, its card is one line, "Coroot isn't connected · Open Settings", which opens this section (`ObservabilityEvent::OpenSettings`). The header's Coroot button opens this section when nothing is connected, and the link panel, with Open Settings, when connected.
+
+## Argo CD destinations
+
+A table page of the workspace's `destinations`: a status column, Destination, Match by (Server URL or Cluster name) and Workspace cluster. Map (`a`), Edit (Enter or `e`) and Remove (Backspace) run from the toolbar, the keys and the row menu; Map and Edit need a workspace cluster. Map and Edit open a dialog with one *Mapping* group: Match by, the value (`spec.destination.server` or `.name`) and the workspace cluster, a searchable select. The value is checked on blur (empty, not an http or https address, Argo CD's own cluster, already mapped), and Save focuses the first invalid field. Remove asks first. A mapping whose cluster the workspace no longer lists shows the Unknown mark and says to edit it. Every change saves to `freshkube.yaml` through the page's `commit`, with Clusters' refusals.
+
+## Delivery sources
+
+A table page with one row per part, Kargo, Builds and Argo CD, then Workloads, read on every entry a destination maps to: a status column, Part, Entry, Chosen by (Pinned, the role, Workspace of one, No entry with that role, or Pinned, not listed), State and Reads. While `freshkube.yaml` has a problem, a "Setup file" row says it isn't used.
+
+- **Check sources** (the toolbar, `c` or the row menu) reads each part where it is chosen, through a `Loader` keyed on the sources, the kubeconfig, the open connection and example data, with a 30 s deadline. The table shows loading rows meanwhile, and the status bar says "Last checked HH:MM" once it lands. States: Not checked, Reading, Readable, Refused, Not served, Unreachable and Not in the workspace. Example data answers at once.
+- **The Inspector** says why a part is read where it is (Chosen by, State, Reads) and holds its *Routing*: Pin to entry… and Follow roles, also in the row menu. A pin saves at once in `freshkube.yaml`'s `sources`, keeping the other parts and unknown keys, and is refused in example data, without preferences, or while the file is broken or changed.
+
+## The setup file's saves
+
+Every workspace section, Monitoring's metrics and Coroot save through `SetupFile` (`save_workspace` calls `save_with`), which edits a copy of the last good setup, writes it off the UI thread and keeps every part it wasn't asked to change, unknown keys included.
+
+- **Refusals.** The file is read again just before the write. A file changed since it was read refuses the save with "freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is." A file that doesn't parse refuses every save: "freshkube.yaml isn't usable. Nothing was written." Nothing is ever written over it.
+- **`.bak`.** When the file on disk isn't the app's own last write, so it was edited by hand, the save first copies it to `freshkube.yaml.bak` (`commit_with_backup`), replacing an older backup; a backup that can't be written leaves the setup file alone.
+- **The receipt.** A save sets `SetupFile`'s receipt, and an outside change read by the poll sets "Reloaded". The status bar shows it on every page as "Saved · 14:02" or "Reloaded · 14:02" (`setup-reload-status`), with the full text in its tooltip: "Saved freshkube.yaml · 14:02", plus " · the hand-edited file is freshkube.yaml.bak" when a backup was made. A file problem or a missing file clears it, and it hides while an unsaved edit is stale.
+- **Banners.** Clusters, Argo CD destinations, Delivery sources and Coroot draw the page's banners (`render_banners`): "Workspace file not used" for a `workspace.json` that couldn't be migrated, "Setup file" for `freshkube.yaml`'s problem, "Unsaved edit is stale", "Unknown keys" (at most five named, then how many more), "Not saved" (Crit) with the save's error, and "Saved" (Good). "Saved" repeats what the last save through the page's `commit` did (an entry added, changed, moved or removed, a mapping, a pin) with the receipt, "Added cluster-b. Saved freshkube.yaml · 14:02", and clears on a section change, Reload, a change on disk or a problem.
+- **An outside edit.** `SetupFile` polls the file every 2 seconds ([SETUP_FILE.md](../SETUP_FILE.md#reload-on-change)). While a dialog is open, a save runs, or a Clusters Inspector group has changes, a change waits behind "freshkube.yaml changed on disk. Reload to drop the unsaved changes."; otherwise the page takes it at once. Monitoring's and Coroot's drafts don't hold it back.
+
+## Open follow-ups
+
+- [#754](https://github.com/skel84/freshkube/issues/754): no guard when leaving a form section with unsaved changes, and no unsaved dot on the section's row in the column.
+- [#758](https://github.com/skel84/freshkube/issues/758): Monitoring's follow-ups from the 0.16.0 smokes: a URL's token left in `keys.json` after switching to a Service, the Dashboards folder out of view, Test's look, and the `.bak` only in the receipt's tooltip.
+- [#759](https://github.com/skel84/freshkube/issues/759): Settings dialogs overflow a small window at large text.
+- Slices 11 and 12, with [#268](https://github.com/skel84/freshkube/issues/268) and [#269](https://github.com/skel84/freshkube/issues/269): the setup file already types the per-entry `results` and `coroot` and the `supply_chain` block, but Settings shows none of them yet: no Delivery or Build history group in the Clusters Inspector, no Observability link per entry, and no Supply chain or Results row in Delivery sources.
