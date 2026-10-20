@@ -643,6 +643,10 @@ impl SettingsPage {
         let secrets = draft.page.read(cx).settings_secrets();
         let cleanup_secrets = secrets.clone();
         let before = file.read(cx).setup.clone();
+        let preferences = self
+            .file
+            .as_ref()
+            .map(|file| file.with_file_name("preferences.json"));
         let url = metrics.store.as_ref().and_then(|s| s.url.clone());
         let saved_metrics = metrics.clone();
         draft.saving = Some(cx.spawn_in(window, async move |this, cx| {
@@ -689,7 +693,12 @@ impl SettingsPage {
             let cleanup = if result.is_ok() {
                 let after = file.read_with(cx, |file, _| file.setup.clone());
                 cx.background_spawn(async move {
-                    super::metrics_tokens::forget_replaced(cleanup_secrets, before, after)
+                    super::metrics_tokens::forget_replaced(
+                        cleanup_secrets,
+                        before,
+                        after,
+                        preferences,
+                    )
                 })
                 .await
             } else {

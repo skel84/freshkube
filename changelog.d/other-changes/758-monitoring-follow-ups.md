@@ -1,1 +1,1 @@
-- **Monitoring settings:** remove a replaced URL's unused token after saving, including in the Clusters Inspector; reveal the Dashboards folder from the column, and return focus to the form after Test.
+- **Monitoring settings:** remove a replaced URL's unused token after saving, including in the Clusters Inspector, while keeping accounts shared with other setup stores or contexts; reveal the Dashboards folder from the column, and return focus to the form after Test.

@@ -800,6 +800,17 @@ fn set_secrets(
     });
 }
 
+fn write_context_source(directory: &std::path::Path, token: bool) {
+    let value = serde_json::json!({"sources": {
+        "outside-example": {"kind": "url", "url": "https://metrics.example.test", "token": token}
+    }});
+    std::fs::write(
+        directory.join("monitoring.json"),
+        serde_json::to_vec(&value).unwrap(),
+    )
+    .unwrap();
+}
+
 /// Deletion must see a committed file with no remaining reference to the
 /// account. The fake never reads a key file or the system credential store.
 struct TokenStore {
@@ -855,6 +866,13 @@ impl freshkube_core::secrets::SecretStore for TokenStore {
                 .any(|url| crate::monitoring::token_account(url) == account),
             "the YAML reference must be saved away before deleting its token"
         );
+        assert!(
+            !crate::monitoring::saved_token_urls(&self.file.with_file_name("preferences.json"))
+                .unwrap()
+                .iter()
+                .any(|url| crate::monitoring::token_account(url) == account),
+            "a context still naming this token must keep it"
+        );
         self.forgotten
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.memory.forget(account)
@@ -866,7 +884,14 @@ async fn monitoring_retires_only_unreferenced_tokens_after_a_successful_save(
     cx: &mut TestAppContext,
 ) {
     for action in ["service", "url", "forget", "automatic"] {
-        for condition in ["unreferenced", "shared", "refused"] {
+        for condition in [
+            "unreferenced",
+            "shared",
+            "context",
+            "anonymous-context",
+            "unreadable-contexts",
+            "refused",
+        ] {
             let directory = tempfile::tempdir().unwrap();
             let file = directory.path().join("freshkube.yaml");
             let mut setup = setup::parse(url_setup().as_bytes()).unwrap();
@@ -880,9 +905,15 @@ async fn monitoring_retires_only_unreferenced_tokens_after_a_successful_save(
             }
             let original = setup::to_text(&setup);
             std::fs::write(&file, &original).unwrap();
+            if matches!(condition, "context" | "anonymous-context") {
+                write_context_source(directory.path(), condition == "context");
+            }
             let (runtime, handle, _pilot, page) = live(cx, directory.path(), "cluster-a").await;
             let store = TokenStore::new(file.clone());
             set_secrets(cx, &runtime, &page, directory.path(), store.clone());
+            if condition == "unreadable-contexts" {
+                std::fs::write(directory.path().join("monitoring.json"), "{").unwrap();
+            }
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
                 match action {
@@ -935,12 +966,20 @@ async fn monitoring_retires_only_unreferenced_tokens_after_a_successful_save(
             })
             .unwrap();
             saved(cx, handle, &page).await;
-            store.assert_kept(condition != "unreferenced" || action == "automatic");
+            store.assert_kept(
+                !matches!(condition, "unreferenced" | "anonymous-context") || action == "automatic",
+            );
             if condition == "refused" {
                 assert_eq!(std::fs::read_to_string(&file).unwrap(), "version: [");
                 cx.read(|cx| assert!(page.read(cx).monitoring.as_ref().unwrap().error.is_some()));
             } else {
-                cx.read(|cx| assert!(page.read(cx).monitoring.as_ref().unwrap().error.is_none()));
+                cx.read(|cx| {
+                    let draft = page.read(cx).monitoring.as_ref().unwrap();
+                    assert_eq!(
+                        draft.error.is_some(),
+                        condition == "unreadable-contexts" && action != "automatic"
+                    );
+                });
                 let saved = setup::parse(&std::fs::read(&file).unwrap()).unwrap();
                 if action == "service" {
                     let source = saved.metrics.store.unwrap();
@@ -956,7 +995,7 @@ async fn monitoring_retires_only_unreferenced_tokens_after_a_successful_save(
 #[gpui_kit::test]
 async fn monitoring_inspector_retires_service_and_none_tokens_after_save(cx: &mut TestAppContext) {
     for service in [false, true] {
-        for condition in ["unreferenced", "central", "entry", "refused"] {
+        for condition in ["unreferenced", "central", "entry", "context", "refused"] {
             let directory = tempfile::tempdir().unwrap();
             let file = directory.path().join("freshkube.yaml");
             let mut setup = setup::parse(url_setup().as_bytes()).unwrap();
@@ -976,6 +1015,9 @@ async fn monitoring_inspector_retires_service_and_none_tokens_after_save(cx: &mu
                 setup.workspace.clusters.push(other);
             }
             std::fs::write(&file, setup::to_text(&setup)).unwrap();
+            if condition == "context" {
+                write_context_source(directory.path(), true);
+            }
             let (_runtime, handle, pilot, page) = live(cx, directory.path(), "cluster-a").await;
             let store = TokenStore::new(file.clone());
             cx.update_window(handle, |_, window, cx| {
