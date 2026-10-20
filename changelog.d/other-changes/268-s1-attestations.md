@@ -1,0 +1,1 @@
+- **Delivery chain:** Tekton Chains' attestations are now read from a run's annotations (the envelope, the subjects and predicate it claims) and `chains-config` is parsed, with size and count bounds. Nothing is verified yet and nothing in the app changes.

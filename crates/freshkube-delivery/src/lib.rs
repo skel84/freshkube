@@ -18,6 +18,7 @@
 pub(crate) mod address;
 pub mod applications;
 pub mod argocd;
+pub(crate) mod chains;
 pub mod change;
 pub mod changes;
 pub(crate) mod collect;
@@ -34,6 +35,7 @@ pub(crate) mod rollouts;
 pub(crate) mod shared;
 pub mod source;
 pub(crate) mod tekton;
+pub(crate) mod verify;
 pub(crate) mod versions;
 pub mod words;
 
