@@ -286,14 +286,6 @@ impl ObservabilityPage {
             .collect();
         choices.sort_by(|a, b| a.1.cmp(&b.1));
         self.app_choices = choices.into();
-        self.cluster_ids = raw
-            .iter()
-            .filter(|a| !a.id.is_external())
-            .map(|a| a.id.cluster_id().to_string())
-            .filter(|id| !id.is_empty())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
         self.check_wanted_listed();
         if self
             .selected_app

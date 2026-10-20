@@ -108,7 +108,7 @@ fn mount_with(
     let page = page.unwrap();
     if fixture {
         let source = example_source(false);
-        cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(&source), cx)));
+        cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(&source), None, cx)));
     }
     cx.update(|cx| page.update(cx, |page, cx| page.set_visible(true, cx)));
     (runtime, handle.into(), page)
@@ -492,7 +492,7 @@ fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestApp
             assert!(read.borrow().revision() > revision);
             let prior = page.live.source.clone();
             page.live.access = Some("access:a".into());
-            page.associate(Some("coroot-cluster".into()), cx);
+            page.entry_for_test(Some((Some("two"), "coroot-cluster")), cx);
             assert_ne!(prior, page.live.source);
             assert_eq!(
                 page.live.source.as_ref().unwrap().association(),
@@ -503,7 +503,7 @@ fn source_project_credentials_and_range_invalidate_old_requests(cx: &mut TestApp
             );
             let read = hold_read(page, cx);
             let revision = read.borrow().revision();
-            page.set_source(None, cx);
+            page.set_source(None, None, cx);
             assert!(read.borrow().revision() > revision);
             assert!(page.live.source.as_ref().unwrap().association().is_none());
             let prior = page.live.range;
@@ -1719,7 +1719,7 @@ fn held_examples_forget_what_the_page_answered(cx: &mut TestAppContext) {
         assert!(page.incident_count().is_some());
     });
     let held = example_source(true);
-    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(&held), cx)));
+    cx.update(|cx| page.update(cx, |page, cx| page.set_source(Some(&held), None, cx)));
     cx.read(|cx| {
         let page = page.read(cx);
         assert!(page.applications.is_empty());

@@ -372,7 +372,7 @@ async fn a_revision_asked_for_while_hidden_is_read_once_the_page_shows(cx: &mut 
     connected(cx, handle, &page, server.url.clone()).await;
     cx.update(|cx| {
         page.update(cx, |page, cx| {
-            page.associate(Some("cluster-a".into()), cx);
+            page.link_for_test("cluster-a", cx);
             page.set_visible(false, cx);
         })
     });
@@ -459,7 +459,7 @@ async fn a_revision_asked_for_needs_the_clusters_association_and_coroots_listing
 
     // Linked, the Deployment's revision is found by its hash, without
     // asking for it again.
-    cx.update(|cx| page.update(cx, |page, cx| page.associate(Some("cluster-a".into()), cx)));
+    cx.update(|cx| page.update(cx, |page, cx| page.link_for_test("cluster-a", cx)));
     revision_read(cx, handle, &page).await;
     assert_eq!(outcome(cx), Some(Outcome::Found));
     cx.read(|cx| {
