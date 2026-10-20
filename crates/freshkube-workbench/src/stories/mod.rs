@@ -89,6 +89,12 @@ pub const STORIES: &[Story] = &[
         icon: || IconName::Settings,
         build: form::build,
     },
+    Story {
+        slug: "change-chain",
+        title: "Change chain",
+        icon: || IconName::Waypoints,
+        build: change::chain::build,
+    },
 ];
 
 /// A story's index by its slug.

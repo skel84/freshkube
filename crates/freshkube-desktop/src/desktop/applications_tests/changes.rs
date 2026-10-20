@@ -389,7 +389,14 @@ fn a_failed_read_offers_retry(cx: &mut TestAppContext) {
         changes(&view, cx).update(cx, |page, cx| page.fail_read("connection refused", cx));
         window.render_frame(cx);
         assert!(window.find("changes-failed").visible());
-        window.click("changes-retry", cx);
+        for _ in 0..100 {
+            if window.find("changes-retry").focused() == Some(true) {
+                break;
+            }
+            window.press("tab", cx);
+        }
+        assert_eq!(window.find("changes-retry").focused(), Some(true));
+        window.press("enter", cx);
         window.render_frame(cx);
         assert!(changes(&view, cx).read(cx).is_reading());
     })

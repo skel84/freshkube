@@ -1219,3 +1219,39 @@ fn the_form_story_stacks_narrow_labels_and_orders_its_actions(cx: &mut TestAppCo
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_change_chain_controls_and_keys_show_each_case(cx: &mut TestAppContext) {
+    use super::stories::change::chain::ChainStory;
+    use freshkube_ui::graph::{Cursor, GraphSource};
+    let (handle, workbench) = open(cx, super::stories::find("change-chain").unwrap());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let story = workbench
+            .read(cx)
+            .view()
+            .clone()
+            .downcast::<ChainStory>()
+            .unwrap();
+        for case in [
+            "confirmed",
+            "claimed",
+            "unknown",
+            "refused",
+            "missing",
+            "stages",
+        ] {
+            window.click(format!("change-chain-case-{case}"), cx);
+            window.render_frame(cx);
+            let focus = story.read(cx).graph().focus_handle().unwrap().clone();
+            window.focus(&focus, cx);
+            window.press("down", cx);
+            assert_eq!(story.read(cx).cursor(), Some(Cursor::Node(0)));
+            window.press("right", cx);
+            assert_eq!(story.read(cx).cursor(), Some(Cursor::Link(0, 1)));
+            window.render_frame(cx);
+            assert!(window.try_find("change-chain-detail").is_some());
+        }
+    })
+    .unwrap();
+}
