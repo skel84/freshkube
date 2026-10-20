@@ -122,6 +122,11 @@ impl SourceForm {
 }
 
 impl MonitoringPage {
+    /// Whether Settings' per-context source differs from its saved values.
+    pub fn has_unsaved_source(&self) -> bool {
+        self.form.as_ref().is_some_and(|form| form.dirty)
+    }
+
     /// Creates the form on first use and fills it again when the context
     /// changed since. Settings calls this before it draws.
     pub fn source_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -376,7 +381,7 @@ impl MonitoringPage {
         cx.notify();
     }
 
-    pub(super) fn revert_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn revert_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.fill_form(self.context(), window, cx);
         cx.notify();
     }
@@ -419,7 +424,7 @@ impl MonitoringPage {
     }
 
     /// Keeps the form for the context and connects with it.
-    pub(super) fn save_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn save_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(context) = self.context() else {
             return;
         };
@@ -468,6 +473,7 @@ impl MonitoringPage {
             form.error = None;
         }
         self.reconnect(cx);
+        cx.notify();
     }
 
     /// Forgets the saved token for the context's URL.

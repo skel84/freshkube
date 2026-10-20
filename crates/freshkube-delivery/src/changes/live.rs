@@ -55,6 +55,10 @@ pub struct Where {
     /// Where Kargo, the builds and Argo CD are read; the workspace of one's
     /// reads everything from the open cluster.
     pub sources: Sources,
+    /// The top-level setup's public key, opened afresh off the UI thread.
+    pub public_key_file: Option<std::path::PathBuf>,
+    /// The pipeline record configured in the same setup.
+    pub evidence_result: Option<freshkube_core::setup::Evidence>,
 }
 
 impl Where {
@@ -260,6 +264,8 @@ where
                 argocd_namespace: at.argocd_namespace.clone(),
                 mapping: at.mapping.clone(),
                 sources: at.sources.clone(),
+                public_key_file: at.public_key_file.clone(),
+                evidence_result: at.evidence_result.clone(),
             };
             (place, listed)
         })

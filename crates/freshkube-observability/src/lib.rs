@@ -97,6 +97,11 @@ pub enum ObservabilityEvent {
     Connection,
     /// The credential store holds the key typed in Settings for this server.
     KeyKept(String),
+    /// Keeping a key typed in Settings failed; the draft must stay open.
+    KeyNotKept {
+        server: String,
+        why: String,
+    },
 }
 
 /// Where the Coroot connection stands, for Settings' Coroot section.
