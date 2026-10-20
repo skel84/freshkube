@@ -354,9 +354,9 @@ fn stage_link(stage: &str) -> Option<LinkDetail> {
             Confidence::Unknown,
             "eligibility",
             &format!("Freight {FREIGHT}"),
-            "the Freight is from checkout-warehouse",
+            "the Freight is from checkout-images",
             "dev is eligible from the Warehouse",
-            "The Freight is eligible for dev from checkout-warehouse, but no join key between the Freight and dev was read.",
+            "The Freight is eligible for dev from checkout-images, but no join key between the Freight and dev was read.",
         ),
         "prod-ams" => link(
             Confidence::Unknown,
@@ -1477,12 +1477,23 @@ mod tests {
     #[test]
     fn stage_links_explain_their_parents_without_claiming_a_join() {
         let change = change(now());
+        let Shows::Hop(freight) = &change.hop("freight").unwrap().shows else {
+            panic!("Freight detail");
+        };
+        let warehouse = freight
+            .fields
+            .iter()
+            .find(|field| field.label == "Warehouse")
+            .unwrap();
+        let Value::Mono(warehouse) = &warehouse.value else {
+            panic!("Warehouse name");
+        };
         for (name, parent, before, evidence, reach) in [
             (
                 "dev",
                 "freight",
                 format!("Freight {FREIGHT}"),
-                "checkout-warehouse",
+                warehouse.as_str(),
                 Reach::Linked(Confidence::Confirmed),
             ),
             (
