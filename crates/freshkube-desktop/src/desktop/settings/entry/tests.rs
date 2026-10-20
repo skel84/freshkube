@@ -43,6 +43,7 @@ fn set(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Pilot, field: Fi
         view.read(cx).settings_page.clone().update(cx, |page, cx| {
             let input = page.entry.as_ref().unwrap().input(field).unwrap().clone();
             input.update(cx, |input, cx| input.set_value(text.to_owned(), window, cx));
+            page.entry_edited(cx);
         });
         window.render_frame(cx);
     })
@@ -730,9 +731,297 @@ async fn example_data_shows_the_groups_and_changes_nothing(cx: &mut TestAppConte
         let page = view.read(cx).settings_page.read(cx);
         assert!(page.saving.is_none());
         assert_eq!(page.workspace().clusters[0].context, "core-fra");
+    })
+    .unwrap();
+    // Choosing Save for changes the page can't save says why, and stays.
+    cx.update_window(handle, |_, window, cx| {
+        view.read(cx)
+            .settings_page
+            .clone()
+            .update(cx, |page, cx| page.entry_edited(cx));
+        window.click("settings-cluster-cicd-fra", cx);
+    })
+    .unwrap();
+    cx.simulate_prompt_answer("Save");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = view.read(cx).settings_page.read(cx);
+        assert_eq!(page.selected.as_deref(), Some("core-fra"));
+        assert!(matches!(
+            page.notice,
+            Some(crate::desktop::settings::Notice::Failed(_))
+        ));
+        assert!(window.find("settings-save-failed").visible());
         let _ = Group::Identity;
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+async fn add_with_unsaved_changes_asks_first_and_keeps_them_when_saved(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    select(cx, handle, "prod");
+    set(cx, handle, &view, Field::Context, "acme-prod-4");
+    let dialog = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| {
+            window.try_find("settings-cluster-form").is_some()
+        })
+        .unwrap()
+    };
+    // Stay: no dialog, and the changes are still there.
+    cx.update_window(handle, |_, window, cx| window.click("settings-add", cx))
+        .unwrap();
+    let (message, _) = cx.pending_prompt().expect("a prompt");
+    assert!(message.contains("prod"), "{message}");
+    cx.simulate_prompt_answer("Stay");
+    cx.run_until_parked();
+    assert!(!dialog(cx));
+    assert_eq!(values(cx, handle, &view).0.context, "acme-prod-4");
+    // Discard: the dialog opens, and the changes are gone.
+    cx.update_window(handle, |_, window, cx| window.click("settings-add", cx))
+        .unwrap();
+    cx.simulate_prompt_answer("Discard");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(dialog(cx));
+    assert_eq!(values(cx, handle, &view).0.context, "acme-prod");
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-form-cancel", cx)
+    })
+    .unwrap();
+    // Save: the changes are written, then the dialog opens; adding there
+    // keeps the saved change.
+    set(cx, handle, &view, Field::Context, "acme-prod-4");
+    cx.update_window(handle, |_, window, cx| window.click("settings-add", cx))
+        .unwrap();
+    cx.simulate_prompt_answer("Save");
+    cx.run_until_parked();
+    saved(cx, handle, &view).await;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    assert!(dialog(cx));
+    assert_eq!(
+        entry(&read_workspace(guard.path()), "prod").context,
+        "acme-prod-4"
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-form-context", cx);
+        window.input("acme-next", cx);
+        window.click("settings-form-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    let written = read_workspace(guard.path());
+    assert_eq!(entry(&written, "prod").context, "acme-prod-4");
+    assert_eq!(written.clusters.len(), 3);
+}
+
+#[gpui_kit::test]
+async fn reload_keeps_unsaved_changes_unless_the_file_changed_under_them(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    select(cx, handle, "prod");
+    set(cx, handle, &view, Field::Context, "typed");
+    cx.update_window(handle, |_, _, cx| {
+        view.read(cx)
+            .settings_page
+            .clone()
+            .update(cx, |page, cx| page.reload(cx));
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(view.read(cx).settings_page.read(cx).has_unsaved_edits(cx));
+    })
+    .unwrap();
+    assert_eq!(values(cx, handle, &view).0.context, "typed");
+    // Reloading to take a change made on disk is what drops them.
+    cx.update_window(handle, |_, _, cx| {
+        view.read(cx).settings_page.clone().update(cx, |page, cx| {
+            page.pending_setup = true;
+            page.reload(cx)
+        });
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(!view.read(cx).settings_page.read(cx).has_unsaved_edits(cx));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(values(cx, handle, &view).0.context, "acme-prod");
+}
+
+#[gpui_kit::test]
+async fn the_row_menu_offers_nothing_for_a_row_the_prompt_has_not_moved_to(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_ui::menu::MenuAction;
+    use freshkube_ui::table::TableSource as _;
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    select(cx, handle, "prod");
+    let menu = |cx: &mut TestAppContext, key: &'static str| {
+        cx.update_window(handle, |_, window, cx| {
+            view.read(cx).settings_page.clone().update(cx, |page, cx| {
+                page.row_menu(&key.into(), window, cx)
+                    .iter()
+                    .filter_map(|action| match action {
+                        MenuAction::Item { label, enabled, .. } => {
+                            Some((label.to_string(), *enabled))
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap()
+    };
+    // Nothing is typed, so the menu follows the row it was opened on.
+    let clean = menu(cx, "mgmt");
+    assert!(
+        clean
+            .iter()
+            .any(|(label, enabled)| label == "Remove" && *enabled)
+    );
+    select(cx, handle, "prod");
+    set(cx, handle, &view, Field::Context, "typed");
+    let pending = menu(cx, "mgmt");
+    assert!(!pending.is_empty());
+    assert!(pending.iter().all(|(_, enabled)| !enabled), "{pending:?}");
+    cx.simulate_prompt_answer("Stay");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        assert_eq!(
+            view.read(cx).settings_page.read(cx).selected.as_deref(),
+            Some("prod")
+        );
+    })
+    .unwrap();
+    // The selected row's own menu still works.
+    let own = menu(cx, "prod");
+    assert!(
+        own.iter()
+            .any(|(label, enabled)| label == "Remove" && *enabled)
+    );
+}
+
+#[gpui_kit::test]
+async fn removing_the_selected_cluster_drops_its_unsaved_changes_without_a_prompt(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    select(cx, handle, "prod");
+    set(cx, handle, &view, Field::Context, "typed");
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-remove", cx);
+        window.render_frame(cx);
+        window.click("settings-remove-confirm", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    cx.run_until_parked();
+    assert!(cx.pending_prompt().is_none());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = view.read(cx).settings_page.read(cx);
+        assert!(!page.has_unsaved_edits(cx));
+        assert_eq!(page.selected, None);
+        assert!(window.try_find("settings-detail").is_none());
+    })
+    .unwrap();
+    let ids: Vec<_> = read_workspace(guard.path())
+        .clusters
+        .into_iter()
+        .map(|e| e.id)
+        .collect();
+    assert_eq!(ids, vec!["mgmt"]);
+}
+
+#[gpui_kit::test]
+async fn text_a_save_trims_leaves_the_group_clean_afterwards(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    select(cx, handle, "prod");
+    set(cx, handle, &view, Field::Context, "acme-prod-5 ");
+    to_metrics(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-source-service", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    set(cx, handle, &view, Field::Namespace, " monitoring ");
+    set(cx, handle, &view, Field::Service, "prometheus");
+    set(cx, handle, &view, Field::Port, "09090");
+    to_metrics(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-save", cx)
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    to_top(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-identity-save", cx)
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = view.read(cx).settings_page.read(cx);
+        // Nothing is left to save, so no prompt will ask about it.
+        assert!(!page.has_unsaved_edits(cx));
+        assert!(window.try_find("settings-identity-dirty").is_none());
+        assert!(window.try_find("settings-metrics-dirty").is_none());
+    })
+    .unwrap();
+    let (identity, metrics) = values(cx, handle, &view);
+    assert_eq!(identity.context, "acme-prod-5");
+    assert_eq!(
+        (metrics.namespace.as_str(), metrics.port.as_str()),
+        ("monitoring", "9090")
+    );
+    let written = read_workspace(guard.path());
+    let prod = entry(&written, "prod");
+    assert_eq!(prod.context, "acme-prod-5");
+    let service = prod
+        .metrics
+        .as_deref()
+        .unwrap()
+        .source
+        .as_ref()
+        .unwrap()
+        .service
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        (service.namespace.as_str(), service.port),
+        ("monitoring", 9090)
+    );
 }
 
 /// The table page is the shared one with nothing selected; with a cluster

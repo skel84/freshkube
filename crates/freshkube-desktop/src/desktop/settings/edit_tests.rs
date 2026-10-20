@@ -384,6 +384,12 @@ async fn a_group_the_file_would_refuse_says_why_and_saves_nothing(cx: &mut TestA
         window.render_frame(cx);
         window.click("settings-identity-talosconfig-input", cx);
         window.input("relative/talosconfig", cx);
+    })
+    .unwrap();
+    // The page hears of the typing once the update is over.
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         window.click("settings-identity-save", cx);
         window.render_frame(cx);
         // The message is at the field that is wrong, not in a banner.
@@ -687,11 +693,19 @@ async fn a_talos_context_is_saved_with_its_talosconfig_and_refused_without_one(
     cx.update_window(handle, |_, window, cx| add(window, cx, "acme-ci"))
         .unwrap();
     saved(cx, handle, &view).await;
+    // The new cluster is selected, and its groups are built after the frame.
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
-        // The new cluster is selected, so its groups are open.
         window.render_frame(cx);
         window.click("settings-identity-talos-context", cx);
         window.input("acme-talos", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         window.click("settings-identity-save", cx);
         window.render_frame(cx);
         let page = view.read(cx).settings_page.read(cx);
@@ -707,6 +721,11 @@ async fn a_talos_context_is_saved_with_its_talosconfig_and_refused_without_one(
         );
         window.click("settings-identity-talosconfig-input", cx);
         window.input(&talosconfig.display().to_string(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
         window.click("settings-identity-save", cx);
     })
     .unwrap();

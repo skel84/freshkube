@@ -182,7 +182,9 @@ impl TableSource for SettingsPage {
     ) -> Vec<menu::MenuAction> {
         self.request_select(Some(key.clone()), window, cx);
         self.focus(window, cx);
-        let editable = self.editable();
+        // Unsaved changes hold the selection on its row until the prompt is
+        // answered; the actions are then not for this row.
+        let editable = self.editable() && !self.selection_pending(key);
         let at = self.rows.iter().position(|row| &row.id == key);
         let last = self.rows.len().saturating_sub(1);
         vec![

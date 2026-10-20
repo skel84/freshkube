@@ -336,6 +336,9 @@ impl SettingsPage {
                 if std::mem::take(&mut self.deselect_on_save) {
                     self.selected = None;
                 }
+                if std::mem::take(&mut self.open_form_on_save) {
+                    self.open_form_after_save(cx);
+                }
                 if let Some(receipt) = &file.read(cx).receipt {
                     self.notice = Some(Notice::Saved(format!("{what} {receipt}").into()));
                 }
@@ -343,6 +346,7 @@ impl SettingsPage {
             Err(error) => {
                 self.select_on_save = None;
                 self.deselect_on_save = false;
+                self.open_form_on_save = false;
                 self.pending_setup |= matches!(error, crate::setup_file::SaveError::Changed);
                 self.sync_setup(file, self.pending_setup, cx);
                 self.notice = Some(Notice::Failed(error.to_string().into()));
@@ -360,14 +364,18 @@ impl SettingsPage {
             return;
         };
         let read = file.update(cx, |file, cx| file.reload(cx));
+        // Reload drops unsaved changes only to take a change made on disk,
+        // as the banner says; otherwise they are rebased on the new file.
+        let drops = self.pending_setup;
         self.saving = Some(cx.spawn(async move |this, cx| {
             read.await;
             _ = this.update(cx, |this, cx| {
                 this.saving = None;
                 this.notice = None;
                 this.pending_setup = false;
-                // Reload drops the drafts, as its banner says.
-                this.entry = None;
+                if drops {
+                    this.drop_entry();
+                }
                 this.sync_setup(file, false, cx);
             });
         }));

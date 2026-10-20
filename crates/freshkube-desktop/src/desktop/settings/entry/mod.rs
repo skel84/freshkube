@@ -69,7 +69,18 @@ pub(super) struct EntryDraft {
     metrics: metrics::Metrics,
     /// Why the setup refused a save that no field explains.
     error: Option<SharedString>,
+    /// Whether each group differs from the file, derived when a field, the
+    /// choice of a group or the baseline changes, so a frame only reads it.
+    dirty: [bool; 2],
     _subscriptions: Vec<Subscription>,
+}
+
+/// What a change of selection, or the Add dialog, waits for: the selected
+/// cluster's unsaved changes saved, discarded or kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Next {
+    Select(Option<SharedString>),
+    Add,
 }
 
 impl EntryDraft {
@@ -85,6 +96,7 @@ impl EntryDraft {
             identity: identity::Identity::new(entry, window, cx),
             metrics: metrics::Metrics::new(entry, window, cx),
             error: None,
+            dirty: [false; 2],
             _subscriptions: Vec::new(),
         };
         for field in Field::ALL {
@@ -118,11 +130,13 @@ impl EntryDraft {
             .or_else(|| self.metrics.input(field))
     }
 
-    fn dirty(&self, group: Group, cx: &App) -> bool {
-        match group {
-            Group::Identity => self.identity.dirty(cx),
-            Group::Metrics => self.metrics.dirty(cx),
-        }
+    fn dirty(&self, group: Group) -> bool {
+        self.dirty[group as usize]
+    }
+
+    /// Derives which groups differ from the file.
+    fn refresh_dirty(&mut self, cx: &App) {
+        self.dirty = [self.identity.dirty(cx), self.metrics.dirty(cx)];
     }
 
     /// Takes what the file now holds for the entry as the baseline. A group
@@ -130,22 +144,25 @@ impl EntryDraft {
     /// stays dirty only if they still differ.
     fn refresh(&mut self, entry: &Entry, revision: u64, window: &mut Window, cx: &mut App) {
         self.synced = revision;
+        // A group with nothing typed shows the file; so does one whose text
+        // is what a save just wrote, trimmed as the file holds it.
         let identity = identity::Values::of(entry);
         if identity != self.identity.baseline {
-            let clean = !self.identity.dirty(cx);
+            let was_clean = !self.identity.dirty(cx);
             self.identity.baseline = identity.clone();
-            if clean {
+            if was_clean || !self.identity.dirty(cx) {
                 self.identity.load(&identity, window, cx);
             }
         }
         let metrics = metrics::Values::of(entry);
         if metrics != self.metrics.baseline {
-            let clean = !self.metrics.dirty(cx);
+            let was_clean = !self.metrics.dirty(cx);
             self.metrics.baseline = metrics.clone();
-            if clean {
+            if was_clean || !self.metrics.dirty(cx) {
                 self.metrics.load(&metrics, window, cx);
             }
         }
+        self.refresh_dirty(cx);
         self.metrics.has_token = entry
             .metrics
             .as_deref()
@@ -167,9 +184,29 @@ impl EntryDraft {
 }
 
 impl SettingsPage {
-    /// Builds the drafts for the selected entry, or refreshes them when the
-    /// file changed; nothing for no selection. Called as the page draws.
+    /// Whether the drafts are those of the selection as the workspace
+    /// stands.
+    fn entry_is_current(&self) -> bool {
+        self.entry_key.as_ref() == Some(&(self.selected.clone(), self.revision))
+    }
+
+    /// Asks for the drafts to be built after this frame, when the selection
+    /// or the workspace has changed since they were. Building them makes
+    /// inputs, which needs the window, so it waits for the frame to end.
+    pub(super) fn sync_entry_after_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.window = Some(window.window_handle());
+        if !self.entry_is_current() {
+            cx.defer_in(window, |page, window, cx| page.sync_entry(window, cx));
+        }
+    }
+
+    /// Builds the drafts for the selected entry, or rebases them on what
+    /// the file now holds; nothing for no selection.
     pub(super) fn sync_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.entry_is_current() {
+            return;
+        }
+        self.entry_key = Some((self.selected.clone(), self.revision));
         let entry = self
             .selected
             .as_ref()
@@ -182,48 +219,55 @@ impl SettingsPage {
             .cloned();
         let Some(entry) = entry else {
             self.entry = None;
+            cx.notify();
             return;
         };
         let revision = self.revision;
         match &mut self.entry {
             Some(draft) if draft.id.as_ref() == entry.id.as_str() => {
-                if draft.synced != revision {
-                    draft.refresh(&entry, revision, window, cx);
-                }
+                draft.refresh(&entry, revision, window, cx);
             }
             _ => self.entry = Some(EntryDraft::new(&entry, revision, window, cx)),
         }
+        cx.notify();
+    }
+
+    /// Drops the drafts, to be built again from the file.
+    pub(super) fn drop_entry(&mut self) {
+        self.entry = None;
+        self.entry_key = None;
     }
 
     /// Whether the selected entry has a group with unsaved changes.
-    pub(in crate::desktop) fn has_unsaved_edits(&self, cx: &App) -> bool {
-        !self.dirty_groups(cx).is_empty()
+    pub(in crate::desktop) fn has_unsaved_edits(&self, _: &App) -> bool {
+        !self.dirty_groups().is_empty()
     }
 
-    fn dirty_groups(&self, cx: &App) -> Vec<Group> {
+    fn dirty_groups(&self) -> Vec<Group> {
         let Some(draft) = &self.entry else {
             return Vec::new();
         };
         [Group::Identity, Group::Metrics]
             .into_iter()
-            .filter(|group| draft.dirty(*group, cx))
+            .filter(|group| draft.dirty(*group))
             .collect()
     }
 
-    /// Moves the selection to `target`. With unsaved changes in a group it
-    /// first asks, through the platform's prompt, whether to Save them,
-    /// Discard them or Stay.
-    pub(super) fn request_select(
-        &mut self,
-        target: Option<SharedString>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if target == self.selected {
+    /// Settles the selected cluster's unsaved changes, then does `next`:
+    /// moves the selection, or opens the Add dialog. With changes in a
+    /// group it first asks, through the platform's prompt, whether to Save
+    /// them, Discard them or Stay.
+    pub(super) fn settle_edits(&mut self, next: Next, window: &mut Window, cx: &mut Context<Self>) {
+        if let Next::Select(target) = &next
+            && *target == self.selected
+        {
             return;
         }
-        if !self.has_unsaved_edits(cx) {
-            self.apply_selection(target, cx);
+        if let Some(draft) = self.entry.as_mut() {
+            draft.refresh_dirty(cx);
+        }
+        if self.dirty_groups().is_empty() {
+            self.proceed(next, window, cx);
             return;
         }
         let name = self
@@ -244,24 +288,57 @@ impl SettingsPage {
             };
             _ = this.update_in(cx, |page, window, cx| match choice {
                 0 => {
-                    let groups = page.dirty_groups(cx);
-                    page.save_groups(groups, Some(target), window, cx);
+                    let groups = page.dirty_groups();
+                    page.save_groups(groups, Some(next), window, cx);
                 }
-                1 => page.apply_selection(target, cx),
+                1 => {
+                    for group in page.dirty_groups() {
+                        page.revert_group(group, window, cx);
+                    }
+                    page.proceed(next, window, cx);
+                }
                 _ => {}
             });
         })
         .detach();
     }
 
-    fn apply_selection(&mut self, target: Option<SharedString>, cx: &mut Context<Self>) {
-        match target {
-            Some(key) => self.select(key, cx),
-            None => {
-                self.selected = None;
-                cx.notify();
-            }
+    /// Moves the selection to `target`, with the same prompt for changes.
+    pub(super) fn request_select(
+        &mut self,
+        target: Option<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settle_edits(Next::Select(target), window, cx);
+    }
+
+    /// Add: its dialog, once the selected cluster's changes are settled.
+    pub(super) fn request_add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editable() && !window.has_active_dialog(cx) {
+            self.settle_edits(Next::Add, window, cx);
         }
+    }
+
+    fn proceed(&mut self, next: Next, window: &mut Window, cx: &mut Context<Self>) {
+        match next {
+            Next::Select(Some(key)) => {
+                self.select(key, cx);
+                self.sync_entry(window, cx);
+            }
+            Next::Select(None) => {
+                self.selected = None;
+                self.sync_entry(window, cx);
+            }
+            Next::Add => self.open_form(window, cx),
+        }
+        cx.notify();
+    }
+
+    /// Whether a change of selection is waiting on the prompt: the row the
+    /// pointer is on isn't the selected one yet.
+    pub(super) fn selection_pending(&self, key: &str) -> bool {
+        self.selected.as_deref() != Some(key)
     }
 
     /// The error shown at `field`, if any.
@@ -291,6 +368,7 @@ impl SettingsPage {
         if let Some(draft) = self.entry.as_mut() {
             draft.identity.role = role;
             draft.error = None;
+            draft.refresh_dirty(cx);
             cx.notify();
         }
     }
@@ -300,6 +378,16 @@ impl SettingsPage {
             draft.metrics.kind = kind;
             draft.metrics.errors = metrics::Errors::default();
             draft.error = None;
+            draft.refresh_dirty(cx);
+            cx.notify();
+        }
+    }
+
+    /// A field's text changed other than by typing, as a file chosen with
+    /// Browse… does: the marks of the groups follow it.
+    pub(super) fn entry_edited(&mut self, cx: &mut Context<Self>) {
+        if let Some(draft) = self.entry.as_mut() {
+            draft.refresh_dirty(cx);
             cx.notify();
         }
     }
@@ -318,6 +406,7 @@ impl SettingsPage {
                     draft.error = None;
                     draft.identity.errors.set(field, None);
                     draft.metrics.errors.set(field, None);
+                    draft.refresh_dirty(cx);
                     cx.notify();
                 }
             }
@@ -342,11 +431,11 @@ impl SettingsPage {
     }
 
     pub(super) fn save_group(&mut self, group: Group, window: &mut Window, cx: &mut Context<Self>) {
-        if self
-            .entry
-            .as_ref()
-            .is_some_and(|draft| draft.dirty(group, cx))
-        {
+        // What was typed in this very update has not been heard of yet.
+        if let Some(draft) = self.entry.as_mut() {
+            draft.refresh_dirty(cx);
+        }
+        if self.entry.as_ref().is_some_and(|draft| draft.dirty(group)) {
             self.save_groups(vec![group], None, window, cx);
         }
     }
@@ -371,21 +460,24 @@ impl SettingsPage {
                 draft.metrics.load(&baseline, window, cx);
             }
         }
+        draft.refresh_dirty(cx);
         cx.notify();
     }
 
     /// Checks `groups`, and if every field passes, writes them in one save
-    /// of this entry's keys. `leave` says where the selection goes once the
-    /// save has landed. A failing field shows its error and takes focus;
-    /// nothing is written then.
+    /// of this entry's keys. `next` is what follows once the save has
+    /// landed. A failing field shows its error and takes focus; nothing is
+    /// written then, and nothing follows. A page that can't save says why.
     pub(super) fn save_groups(
         &mut self,
         groups: Vec<Group>,
-        leave: Option<Option<SharedString>>,
+        next: Option<Next>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         if !self.editable() {
+            self.notice = Some(Notice::Failed(self.why_not_editable().into()));
+            cx.notify();
             return false;
         }
         let Some(draft) = self.entry.as_mut() else {
@@ -420,8 +512,8 @@ impl SettingsPage {
             return false;
         }
         let id = draft.id.clone();
-        let mut next = self.workspace.clone();
-        let Some(entry) = next
+        let mut next_workspace = self.workspace.clone();
+        let Some(entry) = next_workspace
             .clusters
             .iter_mut()
             .find(|entry| entry.id.as_str() == id.as_ref())
@@ -434,7 +526,7 @@ impl SettingsPage {
         if let Some(values) = &metrics {
             values.apply(entry);
         }
-        let saveable = next
+        let saveable = next_workspace
             .check_saveable()
             .map_err(|why| SharedString::from(edit::capitalized(&why.to_string())));
         if let Some(draft) = self.entry.as_mut() {
@@ -444,13 +536,28 @@ impl SettingsPage {
             cx.notify();
             return false;
         }
-        match leave {
-            Some(Some(key)) => self.select_on_save = Some(key),
-            Some(None) => self.deselect_on_save = true,
+        match next {
+            Some(Next::Select(Some(key))) => self.select_on_save = Some(key),
+            Some(Next::Select(None)) => self.deselect_on_save = true,
+            Some(Next::Add) => self.open_form_on_save = true,
             None => {}
         }
-        self.commit(next, format!("Changed {id}."), cx);
+        self.commit(next_workspace, format!("Changed {id}."), cx);
         true
+    }
+
+    /// Opens the Add dialog once a save has landed, in the window the page
+    /// was drawn in.
+    pub(super) fn open_form_after_save(&mut self, cx: &mut Context<Self>) {
+        let Some(handle) = self.window else {
+            return;
+        };
+        let page = cx.entity();
+        cx.defer(move |cx| {
+            _ = handle.update(cx, |_, window, cx| {
+                page.update(cx, |page, cx| page.open_form(window, cx))
+            });
+        });
     }
 
     /// Browse… for the talosconfig: the chosen file fills the field, and
@@ -480,27 +587,33 @@ impl SettingsPage {
                 draft.identity.talosconfig.update(cx, |input, cx| {
                     input.set_value(path.display().to_string(), window, cx)
                 });
-                cx.notify();
+                page.entry_edited(cx);
             });
         })
         .detach();
     }
 
-    /// Escape in a group reverts it once; with nothing to revert it hands
-    /// the keyboard back to the table.
-    fn leave_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Escape in a group reverts it once. With nothing to revert it isn't
+    /// handled here, and goes on to hand the keyboard to the column.
+    fn leave_inspector(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(draft) = &self.entry else {
-            return;
+            return false;
         };
         match draft.focused(window, cx) {
-            Some(group) if draft.dirty(group, cx) => self.revert_group(group, window, cx),
-            _ => window.focus(&self.focus, cx),
+            Some(group) if draft.dirty(group) => {
+                self.revert_group(group, window, cx);
+                true
+            }
+            _ => false,
         }
     }
 
-    /// The Inspector for the selected cluster, if one is.
+    /// The Inspector for the selected cluster, if its drafts are built.
     pub(super) fn render_entry(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let draft = self.entry.as_ref()?;
+        if self.selected.as_deref() != Some(draft.id.as_ref()) {
+            return None;
+        }
         let p = crate::palette::palette(cx);
         let editable = self.editable();
         let id = draft.id.clone();
@@ -520,8 +633,7 @@ impl SettingsPage {
             .test_support()
             .gap(dp(20.))
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" {
-                    page.leave_inspector(window, cx);
+                if event.keystroke.key == "escape" && page.leave_inspector(window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -541,8 +653,16 @@ impl SettingsPage {
                     .aria_label(why.clone())
                     .child(ui::warning_banner(None, why, None, cx))
             }))
-            .child(draft.identity.render(editable, cx))
-            .child(draft.metrics.render(editable, cx));
+            .child(
+                draft
+                    .identity
+                    .render(editable, draft.dirty(Group::Identity), cx),
+            )
+            .child(
+                draft
+                    .metrics
+                    .render(editable, draft.dirty(Group::Metrics), cx),
+            );
         Some(
             Inspector::new("settings-detail")
                 .heading(title)

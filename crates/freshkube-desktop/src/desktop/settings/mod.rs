@@ -137,10 +137,18 @@ pub(crate) struct SettingsPage {
     select_on_save: Option<SharedString>,
     /// Whether the selection clears once the save in flight has landed.
     deselect_on_save: bool,
+    /// Whether the Add dialog opens once the save in flight has landed.
+    open_form_on_save: bool,
+    /// The window the page was last drawn in, for what follows a save.
+    window: Option<AnyWindowHandle>,
     selected: Option<SharedString>,
     /// The selected cluster's groups in the Inspector.
     entry: Option<entry::EntryDraft>,
+    /// The selection and workspace revision the drafts were built for.
+    entry_key: Option<(Option<SharedString>, u64)>,
     split: InspectorSplit,
+    /// The workspace's own kubeconfig as the header row shows it.
+    kubeconfig_path: Option<SharedString>,
     /// A list section's frame, which scrolls in a short window.
     page_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -291,8 +299,12 @@ impl SettingsPage {
             revision: 0,
             select_on_save: None,
             deselect_on_save: false,
+            open_form_on_save: false,
+            window: None,
             selected: None,
             entry: None,
+            entry_key: None,
+            kubeconfig_path: None,
             split: InspectorSplit::new(PREFIX, cx),
             page_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
@@ -323,6 +335,10 @@ impl SettingsPage {
             ),
         };
         self.workspace = workspace.clone();
+        self.kubeconfig_path = workspace
+            .kubeconfig
+            .as_ref()
+            .map(|path| path.display().to_string().into());
         self.revision = self.revision.wrapping_add(1);
         self.set_unknown_warning(cx);
         self.rows = workspace
@@ -434,6 +450,7 @@ impl SettingsPage {
             .is_some_and(|key| !self.rows.iter().any(|row| &row.id == key))
         {
             self.selected = None;
+            self.drop_entry();
         }
         cx.notify();
     }
@@ -635,7 +652,7 @@ impl SettingsPage {
             editable,
             "Add a cluster to the workspace",
             AddCluster,
-            |this, window, cx| this.open_form(window, cx),
+            |this, window, cx| this.request_add(window, cx),
             cx,
         );
         let (edit, edit_fold) = self.render_action(
@@ -769,7 +786,7 @@ impl SettingsPage {
     /// to edge with the selected one's groups in the Inspector, beside the
     /// table on a wide page and under it on a narrow one.
     fn render_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        self.sync_entry(window, cx);
+        self.sync_entry_after_frame(window, cx);
         let header = self.render_header(window, cx);
         let table = div()
             .key_context(CONTEXT)
@@ -781,7 +798,7 @@ impl SettingsPage {
             .on_action(
                 cx.listener(|this, _: &ClearCluster, window, cx| this.clear_selection(window, cx)),
             )
-            .on_action(cx.listener(|this, _: &AddCluster, window, cx| this.open_form(window, cx)))
+            .on_action(cx.listener(|this, _: &AddCluster, window, cx| this.request_add(window, cx)))
             .on_action(
                 cx.listener(|this, _: &EditCluster, window, cx| this.edit_selected(window, cx)),
             )

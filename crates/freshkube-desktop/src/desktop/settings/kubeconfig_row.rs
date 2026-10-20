@@ -9,7 +9,7 @@ impl SettingsPage {
     pub(super) fn render_kubeconfig(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = crate::palette::palette(cx);
         let editable = self.editable();
-        let path = self.workspace.kubeconfig.as_ref();
+        let path = self.kubeconfig_path.as_ref();
         h_flex()
             .id("settings-kubeconfig")
             .test_support()
@@ -27,10 +27,11 @@ impl SettingsPage {
                     .truncate()
                     .when(path.is_some(), |this| this.font_family(MONO_FONT))
                     .when(path.is_none(), |this| this.text_color(p.muted))
-                    .child(match path {
-                        Some(path) => path.display().to_string(),
-                        None => "Automatic: KUBECONFIG, then the home default".into(),
-                    }),
+                    .child(
+                        path.cloned().unwrap_or_else(|| {
+                            "Automatic: KUBECONFIG, then the home default".into()
+                        }),
+                    ),
             )
             .child(
                 Button::new("settings-kubeconfig-browse")

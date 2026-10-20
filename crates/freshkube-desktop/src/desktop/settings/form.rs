@@ -127,6 +127,14 @@ impl Render for ClusterForm {
             .aria_label("Cluster")
             .gap_3()
             .text_size(dp(13.))
+            .children(self.error.clone().map(|why| {
+                div()
+                    .id("settings-form-error")
+                    .test_support()
+                    .role(Role::Alert)
+                    .aria_label(why.clone())
+                    .child(ui::warning_banner(None, why, None, cx))
+            }))
             .child(
                 kit_form::group("settings-cluster", "Cluster")
                     .narrow(true)
@@ -168,13 +176,5 @@ impl Render for ClusterForm {
                     ))
                     .render(cx),
             )
-            .children(self.error.clone().map(|why| {
-                div()
-                    .id("settings-form-error")
-                    .test_support()
-                    .role(Role::Alert)
-                    .aria_label(why.clone())
-                    .child(ui::warning_banner(None, why, None, cx))
-            }))
     }
 }

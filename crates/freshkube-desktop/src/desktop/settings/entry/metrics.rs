@@ -134,6 +134,32 @@ impl Values {
         }
     }
 
+    /// The values as a save would write them: trimmed, a port without its
+    /// leading zeros, and only the fields of the store chosen. Text a save
+    /// changes this way doesn't keep the group dirty.
+    pub(super) fn normalized(&self) -> Self {
+        let mut values = Self {
+            value: self.value.trim().to_owned(),
+            kind: self.kind,
+            namespace: String::new(),
+            name: String::new(),
+            port: String::new(),
+            url: String::new(),
+        };
+        match self.kind {
+            Kind::Mode => {}
+            Kind::Service => {
+                values.namespace = self.namespace.trim().to_owned();
+                values.name = self.name.trim().to_owned();
+                values.port = port(&self.port)
+                    .map(|port| port.to_string())
+                    .unwrap_or_else(|| self.port.trim().to_owned());
+            }
+            Kind::Url => values.url = self.url.trim().to_owned(),
+        }
+        values
+    }
+
     /// The errors of the fields of the store chosen; the others aren't
     /// written, so they can't fail.
     pub(super) fn check(&self) -> Errors {
@@ -261,7 +287,7 @@ impl Metrics {
     }
 
     pub(super) fn dirty(&self, cx: &App) -> bool {
-        self.values(cx) != self.baseline
+        self.values(cx).normalized() != self.baseline.normalized()
     }
 
     pub(super) fn load(&mut self, values: &Values, window: &mut Window, cx: &mut App) {
@@ -278,8 +304,12 @@ impl Metrics {
         }
     }
 
-    pub(super) fn render(&self, editable: bool, cx: &Context<SettingsPage>) -> AnyElement {
-        let dirty = self.dirty(cx);
+    pub(super) fn render(
+        &self,
+        editable: bool,
+        dirty: bool,
+        cx: &Context<SettingsPage>,
+    ) -> AnyElement {
         let field =
             |input: &Entity<InputState>, id: &'static str, label: &'static str, error: bool| {
                 let input = Input::new(input)

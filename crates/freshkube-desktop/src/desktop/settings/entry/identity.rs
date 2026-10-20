@@ -78,6 +78,17 @@ impl Values {
         }
     }
 
+    /// The values as a save would write them, so text a save trims doesn't
+    /// keep the group dirty.
+    pub(super) fn normalized(&self) -> Self {
+        Self {
+            role: self.role,
+            context: self.context.trim().to_owned(),
+            talosconfig: self.talosconfig.trim().to_owned(),
+            talos_context: self.talos_context.trim().to_owned(),
+        }
+    }
+
     /// Every field's error, the words the Add dialog used.
     pub(super) fn check(&self) -> Errors {
         let talosconfig = self.talosconfig.trim();
@@ -158,7 +169,7 @@ impl Identity {
     }
 
     pub(super) fn dirty(&self, cx: &App) -> bool {
-        self.values(cx) != self.baseline
+        self.values(cx).normalized() != self.baseline.normalized()
     }
 
     /// Puts `values` in the fields, without errors.
@@ -174,8 +185,12 @@ impl Identity {
         }
     }
 
-    pub(super) fn render(&self, editable: bool, cx: &Context<SettingsPage>) -> AnyElement {
-        let dirty = self.dirty(cx);
+    pub(super) fn render(
+        &self,
+        editable: bool,
+        dirty: bool,
+        cx: &Context<SettingsPage>,
+    ) -> AnyElement {
         let field =
             |input: &Entity<InputState>, id: &'static str, label: &'static str, error: bool| {
                 let input = Input::new(input)
