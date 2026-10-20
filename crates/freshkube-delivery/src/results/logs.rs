@@ -58,6 +58,7 @@ impl Client {
             "",
             MOST_RESULT_TASKS,
             Cap::Logs,
+            None,
             until,
             |raw| {
                 let (record, actual, name, value) = manifest(raw, "Log")?;

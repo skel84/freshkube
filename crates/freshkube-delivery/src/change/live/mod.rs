@@ -652,6 +652,11 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
     let (contexts, cluster_names) = place.mapping.pairs();
     Plan {
         sha: commit_of(freight).unwrap_or_default().to_owned(),
+        digests: freight
+            .images
+            .iter()
+            .filter_map(|image| image.digest.clone())
+            .collect(),
         followed: Some(freight.name.clone()),
         kargo_project: place.project.clone(),
         argocd_namespace: place.argocd_namespace.clone(),

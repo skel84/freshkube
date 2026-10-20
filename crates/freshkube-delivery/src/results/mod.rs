@@ -24,7 +24,7 @@ use crate::digest::is_full_sha;
 use crate::read::{MAX_BODY_BYTES, MAX_PAGES, PAGE_LIMIT};
 use crate::tekton::{MOST_TASK_READS, PipelineRun, SHA_LABEL, TaskRun};
 
-pub(crate) use builds::{Archive, History, supplement};
+pub(crate) use builds::{Archive, History, supplement, supplement_digests};
 pub(crate) use logs::Log;
 
 pub(crate) const MOST_RESULT_RUNS: usize = MOST_TASK_READS;
@@ -351,8 +351,31 @@ impl Client {
             &filter,
             MOST_RESULT_RUNS,
             Cap::Runs,
+            None,
             until,
             |record| records::pipeline_run(record, namespace, sha),
+        )
+        .await
+    }
+
+    /// The namespace's latest PipelineRun records, newest first and at most
+    /// [`MOST_RESULT_RUNS`], whatever commit they carry. A result can't be
+    /// selected on, so a digest is looked for in these in memory.
+    pub(crate) async fn latest_pipeline_runs(
+        &self,
+        namespace: &str,
+        until: Instant,
+    ) -> Result<Listing<PipelineRun>, Error> {
+        transport::segment(namespace)?;
+        let filter = "data_type == 'tekton.dev/v1.PipelineRun' || data_type == 'tekton.dev/v1beta1.PipelineRun'";
+        self.list(
+            &format!("{namespace}/results/-/records"),
+            filter,
+            MOST_RESULT_RUNS,
+            Cap::Runs,
+            Some("create_time desc"),
+            until,
+            |record| records::pipeline_run_of(record, namespace),
         )
         .await
     }
@@ -370,6 +393,7 @@ impl Client {
             filter,
             MOST_RESULT_TASKS,
             Cap::Tasks,
+            None,
             until,
             |record| records::task_run(record, result),
         )

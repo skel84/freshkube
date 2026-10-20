@@ -71,9 +71,11 @@ impl<'a> Sides<'a> {
     /// Where the side of a link `hop` names was read.
     fn at(&self, hop: Joined) -> &At {
         match hop {
-            Joined::PullRequest | Joined::Commit | Joined::PipelineRun | Joined::SupplyChain => {
-                &self.builds
-            }
+            Joined::PullRequest
+            | Joined::Commit
+            | Joined::Image
+            | Joined::PipelineRun
+            | Joined::SupplyChain => &self.builds,
             Joined::Freight | Joined::Warehouse | Joined::Promotion | Joined::Stage => &self.kargo,
             Joined::Application => &self.argocd,
             Joined::Rollout | Joined::Deployment | Joined::Pod => {
@@ -100,7 +102,8 @@ pub fn derive(
         .read()
         .and_then(|all| all.iter().find(|item| item.name == freight.name))
         .unwrap_or(freight);
-    let trail = (!evidence.sha.is_empty()).then(|| join::join(evidence));
+    let trail = (!evidence.sha.is_empty() || evidence.digest_search.is_some())
+        .then(|| join::join(evidence));
     let links = freight_links(evidence, freight);
     let stages = reachable(freight, evidence);
     let sides = Sides::of(place);
@@ -576,6 +579,7 @@ fn kind_key(hop: Joined) -> &'static str {
     match hop {
         Joined::PullRequest => "pr",
         Joined::Commit => "commit",
+        Joined::Image => "image",
         Joined::PipelineRun => "run",
         Joined::SupplyChain => "chain",
         Joined::Freight => "freight",
@@ -601,7 +605,7 @@ fn kind_of(hop: Joined) -> Option<&'static str> {
         Joined::Rollout => "Rollout",
         Joined::Deployment => "Deployment",
         Joined::Pod => "Pod",
-        Joined::PullRequest | Joined::Commit => return None,
+        Joined::PullRequest | Joined::Commit | Joined::Image => return None,
     })
 }
 
@@ -610,6 +614,7 @@ fn caption(hop: Joined) -> &'static str {
     match hop {
         Joined::PullRequest => "Pull request",
         Joined::Commit => "Commit",
+        Joined::Image => "Image",
         Joined::PipelineRun => "PipelineRun",
         Joined::SupplyChain => "Supply chain",
         Joined::Freight => "Kargo Freight",
@@ -1128,7 +1133,7 @@ fn build_hops(
             group: 0,
             state: Unknown,
             name: "Builds".into(),
-            detail: "The Freight names no commit or image revision, so no build is looked for"
+            detail: "The Freight names no commit and no image digest, so no build is looked for"
                 .into(),
             from: sides.builds.label.clone(),
             at: None,
@@ -1141,8 +1146,9 @@ fn build_hops(
                 notice: Some(Notice {
                     state: Warning,
                     lead: "Not joined.".into(),
-                    body: "The Freight names no commit and no image revision, and builds \
-                           are found by commit only."
+                    body: "The Freight names no commit and no image digest. Builds are \
+                           found by commit (the sha label) or by image digest (a build's \
+                           IMAGE_DIGEST result)."
                         .into(),
                 }),
                 fields: Vec::new(),
@@ -1340,7 +1346,21 @@ fn unread_stages(sides: &Sides, why: &str) -> Hop {
 /// Why no build leads to the Freight, when the join made no link into it.
 fn unjoined(evidence: &Evidence, freight: &Freight, entry: &str) -> String {
     if evidence.sha.is_empty() {
-        return "the Freight names no commit or image revision, so no build was looked for".into();
+        return match &evidence.digest_search {
+            None => {
+                "the Freight names no commit and no image digest, so no build was looked for".into()
+            }
+            Some(search) => {
+                let mut why = format!(
+                    "the Freight names no commit, so builds were looked for by its image digest: {}",
+                    search.why_none()
+                );
+                if let Some(history) = history::reason(evidence, entry) {
+                    why.push_str(&format!("; {history}"));
+                }
+                why
+            }
+        };
     }
     let commit = short(&evidence.sha);
     let from = if freight.commits.is_empty() {

@@ -16,9 +16,9 @@ pub(super) fn missing(
     for (unread, kinds) in [
         (
             &reached.builds,
-            // No build is looked for without a commit.
+            // No build is looked for without a commit or an image digest.
             vec![
-                (!evidence.sha.is_empty())
+                (!evidence.sha.is_empty() || evidence.digest_search.is_some())
                     .then(|| kind(&evidence.builds, "PipelineRuns", &sides.builds))
                     .flatten(),
             ],
@@ -77,7 +77,7 @@ pub(super) fn missing(
             }
         }
     }
-    if !evidence.sha.is_empty() {
+    if !evidence.sha.is_empty() || evidence.digest_search.is_some() {
         lines.extend(history::missing(evidence, &sides.builds.label));
     }
     lines.dedup();

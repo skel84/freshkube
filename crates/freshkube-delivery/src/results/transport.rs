@@ -183,6 +183,7 @@ impl Client {
         filter: &str,
         cap: usize,
         reason: Cap,
+        order: Option<&str>,
         until: Instant,
         parse: impl Fn(&Value) -> Result<Record<T>, Error>,
     ) -> Result<Listing<T>, Error> {
@@ -206,6 +207,9 @@ impl Client {
                     "page_size",
                     &(cap - records.len()).min(PAGE_LIMIT as usize).to_string(),
                 );
+            if let Some(order) = order {
+                url.query_pairs_mut().append_pair("order_by", order);
+            }
             if !next.is_empty() {
                 url.query_pairs_mut().append_pair("page_token", &next);
             }

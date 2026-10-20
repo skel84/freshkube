@@ -404,6 +404,7 @@ async fn main() {
     let plan = Plan {
         followed: None,
         sha,
+        digests: Vec::new(),
         kargo_project: project,
         argocd_namespace: argocd_ns,
         build_namespace: Some(build_ns),
