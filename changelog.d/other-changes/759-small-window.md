@@ -1,0 +1,1 @@
+- **Small windows:** Settings dialogs keep their actions visible, long table cells truncate with full-text tooltips, Clusters' stacked Inspector scrolls on its own, and the rail opens at the top at every text size.
