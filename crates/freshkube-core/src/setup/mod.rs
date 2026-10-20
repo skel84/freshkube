@@ -69,7 +69,8 @@ pub struct Setup {
     pub coroot: Option<Coroot>,
     /// The supply chain's trust; `None` verifies no signature.
     pub supply_chain: Option<SupplyChain>,
-    /// How delivery ties Applications to Stages; `None` is the defaults.
+    /// How delivery reads builds and ties Applications to Stages; `None` is the
+    /// defaults.
     pub delivery: Option<Delivery>,
     /// Keys this version doesn't know, written back as they were read.
     extra: Extra,
@@ -95,6 +96,8 @@ impl std::fmt::Display for Place {
 pub enum Fault {
     Empty(String),
     NotUrl(String),
+    /// Not a Kubernetes namespace name; the value is never repeated.
+    NotNamespace(String),
     NonLoopbackHttp(String),
     RelativePath(String),
     ZeroPort(String),
@@ -132,6 +135,7 @@ impl std::fmt::Display for Fault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Fault::Empty(at) => write!(f, "{at} is empty"),
+            Fault::NotNamespace(at) => write!(f, "{at} isn’t a Kubernetes namespace name"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
             Fault::NonLoopbackHttp(at) => write!(f, "{at}: plain HTTP is allowed only on loopback"),
             Fault::RelativePath(at) => write!(f, "{at} isn’t an absolute path"),

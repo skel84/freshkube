@@ -214,6 +214,10 @@ pub(super) fn supply_chain(chain: &SupplyChain) -> Result<(), Fault> {
 }
 
 pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
+    if let Some(namespace) = &delivery.build_namespace {
+        non_empty(namespace, "delivery.build_namespace".into())?;
+        namespace_name(namespace, "delivery.build_namespace".into())?;
+    }
     if let Some(naming) = &delivery.stage_naming {
         let at = "delivery.stage_naming";
         non_empty(&naming.name_template, format!("{at}.name_template"))?;
@@ -225,6 +229,21 @@ pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
         }
     }
     Ok(())
+}
+
+/// A DNS-1123 label: lowercase alphanumerics and `-`, at most 63, starting
+/// and ending alphanumeric.
+fn namespace_name(text: &str, at: String) -> Result<(), Fault> {
+    let alnum = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let fine = text.len() <= 63
+        && text.chars().all(|c| alnum(c) || c == '-')
+        && text.chars().next().is_some_and(alnum)
+        && text.chars().last().is_some_and(alnum);
+    if fine {
+        Ok(())
+    } else {
+        Err(Fault::NotNamespace(at))
+    }
 }
 
 fn non_empty(text: &str, at: String) -> Result<(), Fault> {

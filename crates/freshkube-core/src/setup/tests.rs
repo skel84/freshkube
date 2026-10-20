@@ -1074,3 +1074,54 @@ fn a_stage_naming_template_needs_only_a_stage_somewhere_in_it() {
         assert_eq!(naming.name_template, template);
     }
 }
+
+#[test]
+fn the_build_namespace_is_an_optional_delivery_key() {
+    // Off when absent, and a setup without it writes nothing for it.
+    assert_eq!(ok("version: 1\n").delivery, None);
+    assert!(!to_text(&ok("version: 1\n")).contains("delivery"));
+    let setup = ok("version: 1\ndelivery:\n  build_namespace: acme-builds\n");
+    assert_eq!(
+        setup
+            .delivery
+            .as_ref()
+            .and_then(|delivery| delivery.build_namespace.as_deref()),
+        Some("acme-builds")
+    );
+    let written = to_text(&setup);
+    assert!(
+        written.contains("build_namespace: acme-builds"),
+        "{written}"
+    );
+    assert_eq!(ok(&written), setup);
+    assert_eq!(
+        rule("version: 1\ndelivery:\n  build_namespace: ''\n"),
+        "delivery.build_namespace is empty"
+    );
+}
+
+#[test]
+fn unknown_keys_under_delivery_are_kept_and_named_beside_the_build_namespace() {
+    let setup = ok("version: 1\ndelivery:\n  build_namespace: acme-builds\n  delivery_note: 1\n");
+    assert_eq!(setup.unknown_keys(), ["delivery.delivery_note"]);
+    assert_eq!(ok(&to_text(&setup)), setup);
+}
+
+#[test]
+fn the_build_namespace_must_be_a_namespace_name_and_is_never_repeated() {
+    let long = "a".repeat(64);
+    for bad in [" a/b", "../x", "Acme", "-a", "a-", "a b", long.as_str()] {
+        assert_eq!(
+            rule(&format!(
+                "version: 1\ndelivery:\n  build_namespace: '{bad}'\n"
+            )),
+            "delivery.build_namespace isn’t a Kubernetes namespace name",
+            "{bad:?}"
+        );
+    }
+    for good in ["a", "acme-builds", "x1", &"a".repeat(63)] {
+        ok(&format!(
+            "version: 1\ndelivery:\n  build_namespace: {good}\n"
+        ));
+    }
+}

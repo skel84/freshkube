@@ -76,6 +76,7 @@ fn place(workspace: &Workspace) -> Place {
         sources: Sources::of(workspace),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
         stage_naming: None,
     }
 }
@@ -617,6 +618,7 @@ async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
         sources: Sources::of(&workspace),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
         stage_naming: None,
     };
     let world = || {

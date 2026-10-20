@@ -490,3 +490,37 @@ async fn a_remap_keeps_the_last_good_change_on_refresh_failure(cx: &mut TestAppC
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let mut configured = setup(None, None, false);
+    let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
+    wait_list(cx, window, &app).await;
+    let change = open_change(cx, window, &app);
+    cx.update_window(window, |_, _, cx| {
+        assert_eq!(app.read(cx).across().build_namespace, None);
+        assert_eq!(change.read(cx).build_namespace(), None);
+    })
+    .unwrap();
+    let mut delivery = freshkube_core::setup::Delivery::default();
+    delivery.build_namespace = Some("acme-builds".into());
+    configured.delivery = Some(delivery);
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(
+            app.read(cx).across().build_namespace.as_deref(),
+            Some("acme-builds")
+        );
+        assert_eq!(change.read(cx).build_namespace(), Some("acme-builds"));
+    })
+    .unwrap();
+    // A reload that drops the key drops it from the reads too.
+    configured.delivery = None;
+    cx.update_window(window, |_, _, cx| {
+        app.update(cx, |page, cx| page.set_setup(&configured, cx));
+        assert_eq!(app.read(cx).across().build_namespace, None);
+        assert_eq!(change.read(cx).build_namespace(), None);
+    })
+    .unwrap();
+}

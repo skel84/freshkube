@@ -383,6 +383,7 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
         sources: Default::default(),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
         stage_naming: None,
     };
     let unserved = live::read(&FixtureReader::default(), &at, now(), live::BUDGET).await;
@@ -405,6 +406,7 @@ async fn a_live_read_lists_freight_and_follows_only_what_runs() {
         sources: Default::default(),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
         stage_naming: None,
     };
     let freight = |name: &str| {
@@ -538,6 +540,7 @@ fn at() -> live::Where {
         sources: Default::default(),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
         stage_naming: None,
     }
 }
@@ -716,6 +719,7 @@ fn across() -> live::Where {
         sources: Sources::of(&workspace),
         public_key_file: None,
         evidence_result: None,
+        build_namespace: None,
         ..at()
     }
 }

@@ -147,6 +147,7 @@ impl ChangePage {
                     kubeconfig,
                     public_key_file: place.public_key_file.clone(),
                     evidence_result: place.evidence_result.clone(),
+                    build_namespace: place.build_namespace.clone(),
                     stage_naming: place.stage_naming.clone(),
                 };
                 let (job, receiver) = backend::spawn_job(
@@ -296,12 +297,22 @@ impl ChangePage {
         cx.notify();
     }
 
+    /// The build namespace a live read searches, for tests.
+    #[cfg(test)]
+    pub(crate) fn build_namespace(&self) -> Option<&str> {
+        match &self.fetch {
+            Fetch::Live { place, .. } => place.build_namespace.as_deref(),
+            Fetch::Example { .. } => None,
+        }
+    }
+
     /// Trust belongs to this setup, including when the file at its path
     /// changed. Reset cancels both tasks and rejects any old request ticket.
     pub(crate) fn reload_setup(
         &mut self,
         public_key_file: Option<std::path::PathBuf>,
         evidence_result: Option<freshkube_core::setup::Evidence>,
+        build_namespace: Option<String>,
         stage_naming: Option<freshkube_core::setup::StageNaming>,
         cx: &mut Context<Self>,
     ) {
@@ -314,6 +325,7 @@ impl ChangePage {
             *setup_revision += 1;
             place.public_key_file = public_key_file;
             place.evidence_result = evidence_result;
+            place.build_namespace = build_namespace;
             place.stage_naming = stage_naming;
             self.loader.reset();
             self.stale = None;

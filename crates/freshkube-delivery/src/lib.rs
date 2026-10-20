@@ -46,6 +46,8 @@ mod attested;
 #[cfg(test)]
 mod deployment_tests;
 #[cfg(test)]
+mod digest_builds_tests;
+#[cfg(test)]
 pub(crate) mod fixtures;
 #[cfg(test)]
 mod provenance;

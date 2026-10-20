@@ -1,4 +1,5 @@
 mod builds;
+mod digest;
 mod logs;
 mod server;
 

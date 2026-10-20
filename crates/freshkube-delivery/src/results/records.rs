@@ -87,11 +87,22 @@ pub(super) fn pipeline_run(
     namespace: &str,
     sha: &str,
 ) -> Result<Record<PipelineRun>, Error> {
+    let record = pipeline_run_of(raw, namespace)?;
+    if record.run.sha.as_deref() != Some(sha) {
+        return Err(Error::Unreadable(
+            "the PipelineRun does not match the requested namespace and commit",
+        ));
+    }
+    Ok(record)
+}
+
+/// A PipelineRun record of `namespace`, whatever commit it carries.
+pub(super) fn pipeline_run_of(raw: &Value, namespace: &str) -> Result<Record<PipelineRun>, Error> {
     let (name, result, _, value) = manifest(raw, "PipelineRun")?;
     let run = parse_pipeline_run(&value).ok_or(Error::Unreadable(
         "the PipelineRun manifest has no name or namespace",
     ))?;
-    if (namespace != "-" && namespace != run.namespace) || run.sha.as_deref() != Some(sha) {
+    if namespace != "-" && namespace != run.namespace {
         return Err(Error::Unreadable(
             "the PipelineRun does not match the requested namespace and commit",
         ));

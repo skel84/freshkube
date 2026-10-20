@@ -38,7 +38,7 @@ pub struct BuiltDigest {
 /// only when a result reports the commit and the run succeeded; a Freight
 /// image with no digest is never compared.
 pub(super) fn digest_conflicts(
-    builds: &[Build],
+    builds: &[&Build],
     names: &CommitNames,
     sha: &str,
     freight: &Freight,
@@ -49,6 +49,7 @@ pub(super) fn digest_conflicts(
     }
     let reporting: Vec<&Build> = builds
         .iter()
+        .copied()
         .filter(|build| {
             build.run.succeeded.as_deref() == Some("True")
                 && build.witness(names, sha).is_some_and(|witness| {

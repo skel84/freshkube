@@ -287,13 +287,18 @@ impl Coroot {
     }
 }
 
-/// How delivery reads the setup's Applications and Kargo Stages.
+/// How delivery reads the setup's builds, Applications and Kargo Stages.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
     /// How an Application with no authorized-stage annotation names its
     /// Stage; off when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage_naming: Option<StageNaming>,
+    /// The namespace the builds run in. A build is searched for by its image
+    /// digest only in a namespace named here; without it only a commit finds
+    /// a build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_namespace: Option<String>,
     #[serde(flatten)]
     pub(super) extra: Extra,
 }
@@ -302,7 +307,7 @@ impl Delivery {
     pub fn naming(stage_naming: StageNaming) -> Self {
         Self {
             stage_naming: Some(stage_naming),
-            extra: Extra::default(),
+            ..Self::default()
         }
     }
 }
