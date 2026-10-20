@@ -483,12 +483,14 @@ async fn a_connected_page_keeps_connection_settings_behind_the_sidebar_action(
         window.render_frame(cx);
         assert!(window.try_find("obs-refresh").is_some());
         assert!(window.try_find("obs-connect-open-settings").is_none());
-        assert!(window.try_find("obs-unmap").is_none());
+        assert!(window.try_find("obs-entry-link").is_none());
         assert!(window.try_find("obs-connect-settings").is_none());
         page.update(cx, |page, cx| page.show_connection(cx));
         window.render_frame(cx);
         assert!(window.try_find("obs-connect-open-settings").is_some());
-        assert!(window.try_find("obs-unmap").is_some());
+        assert!(window.try_find("obs-entry-link").is_some());
+        assert!(window.try_find("obs-unmap").is_none());
+        assert!(window.try_find("obs-associate").is_none());
         window.click("obs-connect-settings", cx);
         window.render_frame(cx);
         assert!(window.try_find("obs-connect-open-settings").is_none());

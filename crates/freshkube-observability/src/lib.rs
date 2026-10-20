@@ -31,6 +31,7 @@ mod applications;
 use applications::{columns as application_columns, header as applications_header};
 mod connection;
 mod deployments;
+mod entry;
 mod example;
 #[cfg(test)]
 mod fake_tests;
@@ -139,7 +140,17 @@ pub struct ObservabilityPage {
     memory: Option<remember::Memory>,
     categories: std::rc::Rc<Vec<CategoryChoice>>,
     namespaces: std::rc::Rc<Vec<String>>,
-    cluster_ids: Vec<String>,
+    /// The workspace entries and the open one, whose `coroot` key says which
+    /// Coroot cluster the Kubernetes links read ([`entry`]).
+    entries: Vec<freshkube_core::workspace::Entry>,
+    open_entry: Option<String>,
+    entry_link: entry::EntryLink,
+    /// The connection's `coroot.project`, which an entry's link uses when it
+    /// names none.
+    connection_project: Option<String>,
+    /// What the link says of Kubernetes links, derived when it, the shown
+    /// project or the listed projects change.
+    link_note: Option<entry::LinkNote>,
     destination: Destination,
     applications: Vec<Application>,
     matrix: Vec<MatrixRow>,
@@ -364,7 +375,11 @@ impl ObservabilityPage {
             memory: preferences.map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),
-            cluster_ids: vec![],
+            entries: vec![],
+            open_entry: None,
+            entry_link: entry::EntryLink::Closed,
+            connection_project: None,
+            link_note: None,
             destination: Destination::Applications,
             applications: vec![],
             matrix: vec![],

@@ -431,11 +431,7 @@ impl ObservabilityPage {
                     cx,
                 );
             }
-            if let Some(project) = project
-                && let Some(project) = self.live.projects.iter().find(|p| p.id == project).cloned()
-            {
-                self.select_project(&project, cx);
-            }
+            self.open_first_project(project.as_deref(), cx);
             self.save_reconnect(true, cx);
             return;
         }
@@ -470,10 +466,18 @@ impl ObservabilityPage {
             };
             self.run_key_step(step, keep, cx);
         }
-        if let Some(project) = project
-            && let Some(project) = self.live.projects.iter().find(|p| p.id == project)
+        self.open_first_project(project.as_deref(), cx);
+    }
+
+    /// The project a new connection opens on: the open entry's linked one,
+    /// else the one remembered for this server.
+    fn open_first_project(&mut self, remembered: Option<&str>, cx: &mut Context<Self>) {
+        if self.select_linked_project(cx) {
+            return;
+        }
+        if let Some(project) = remembered
+            && let Some(project) = self.live.projects.iter().find(|p| p.id == project).cloned()
         {
-            let project = project.clone();
             self.select_project(&project, cx);
         }
     }
