@@ -126,8 +126,8 @@ impl Group {
     }
 }
 
-/// A field's label and its control. Every row reserves a message line;
-/// errors replace hints or the empty line.
+/// A field's label and its control. Rows that call [`Row::error`] reserve
+/// a message line; errors replace hints or the empty line.
 pub fn row(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -139,6 +139,7 @@ pub fn row(
         control: control.into_any_element(),
         hint: None,
         error: None,
+        checked: false,
     }
 }
 
@@ -148,6 +149,7 @@ pub struct Row {
     control: AnyElement,
     hint: Option<AnyElement>,
     error: Option<SharedString>,
+    checked: bool,
 }
 
 impl Row {
@@ -162,7 +164,9 @@ impl Row {
         self
     }
 
+    /// Mark this row as checked, reserving its message line even with `None`.
     pub fn error(mut self, error: Option<impl Into<SharedString>>) -> Self {
+        self.checked = true;
         self.error = error.map(Into::into);
         self
     }
@@ -192,7 +196,7 @@ impl Row {
                     .min_w_0()
                     .gap(dp(4.))
                     .child(self.control)
-                    .child(
+                    .children(
                         self.error
                             .map(IntoElement::into_any_element)
                             .or(self.hint)
@@ -207,8 +211,9 @@ impl Row {
                                     .into_any_element()
                             })
                             // A blank line follows the same font metrics as a message.
-                            .unwrap_or_else(|| {
-                                div().text_size(dp(12.)).child(" ").into_any_element()
+                            .or_else(|| {
+                                self.checked
+                                    .then(|| div().text_size(dp(12.)).child(" ").into_any_element())
                             }),
                     ),
             )
@@ -511,6 +516,7 @@ mod tests {
         narrow: bool,
         error: bool,
         hint: bool,
+        checked: bool,
         side: Option<Side>,
         chosen: bool,
         typing: bool,
@@ -528,8 +534,12 @@ mod tests {
             } else {
                 input
             };
-            let field =
-                row("field", "Context", input).error(self.error.then_some("Enter a context."));
+            let field = row("field", "Context", input);
+            let field = if self.checked {
+                field.error(self.error.then_some("Enter a context."))
+            } else {
+                field
+            };
             let field = if self.hint {
                 field.hint("Choose a context.")
             } else {
@@ -600,6 +610,7 @@ mod tests {
                 narrow: false,
                 error: false,
                 hint: true,
+                checked: true,
                 side: None,
                 chosen: false,
                 typing: false,
@@ -720,6 +731,39 @@ mod tests {
                     window.render_frame(cx);
                     assert_eq!(window.find("field-error").role(), Some(Role::Alert));
                     assert_eq!(window.find("next-field").bounds().top(), next);
+                })
+                .unwrap();
+            }
+        }
+    }
+
+    #[gpui_kit::test]
+    fn unchecked_rows_without_hints_keep_their_original_height(cx: &mut TestAppContext) {
+        let (handle, form) = open(cx);
+        for text in [13., 20.] {
+            for narrow in [false, true] {
+                cx.update_window(handle, |_, window, cx| {
+                    crate::text_size::set(text, cx);
+                    form.update(cx, |form, cx| {
+                        form.checked = false;
+                        form.hint = false;
+                        form.narrow = narrow;
+                        cx.notify();
+                    });
+                    window.render_frame(cx);
+                    let field = window.find("field").bounds();
+                    let next = window.find("next-field").bounds();
+                    let scale = text / 13.;
+                    let height = if narrow {
+                        2. * CONTROL_HEIGHT + 4.
+                    } else {
+                        CONTROL_HEIGHT
+                    };
+                    close(field.size.height, height * scale);
+                    close(next.size.height, height * scale);
+                    close(next.top() - field.bottom(), 10. * scale);
+                    assert!(window.try_find("field-hint").is_none());
+                    assert!(window.try_find("field-error").is_none());
                 })
                 .unwrap();
             }
