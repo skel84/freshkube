@@ -64,8 +64,7 @@ struct Words {
 }
 
 impl Section {
-    /// The state in words, for tests.
-    #[cfg(any(test, feature = "testing"))]
+    /// The state in words, shared with the Changes list session memo.
     pub(in crate::change) fn words(&self) -> String {
         match &self.state {
             State::Reading => "Reading".into(),
