@@ -13,6 +13,7 @@ mod edit;
 #[cfg(test)]
 mod edit_tests;
 mod form;
+mod monitoring;
 mod sections;
 mod source;
 pub(super) mod sources;
@@ -102,6 +103,7 @@ pub(super) enum Origin {
 
 pub(crate) struct SettingsPage {
     connection: Option<connection::ConnectionForm>,
+    monitoring: Option<monitoring::MonitoringForm>,
     rows: Vec<ClusterRow>,
     columns: Vec<Column>,
     width: f32,
@@ -264,6 +266,7 @@ impl SettingsPage {
         let (columns, width) = source::columns(&[]);
         Self {
             connection: None,
+            monitoring: None,
             rows: Vec::new(),
             columns,
             width,
@@ -471,6 +474,11 @@ impl SettingsPage {
                 page.prepare_connection(window, cx)
             });
         }
+        if self.section == SettingsSection::Monitoring {
+            cx.defer_in(window, |page, window, cx| {
+                page.prepare_monitoring(window, cx)
+            });
+        }
         let focus = match self.section {
             SettingsSection::Destinations => self.destinations.read(cx).focus_handle(),
             SettingsSection::Sources => self.sources.read(cx).focus_handle(),
@@ -503,6 +511,7 @@ impl SettingsPage {
 
     fn sync_sources(&mut self, cx: &mut Context<Self>) {
         self.sync_connection_visibility();
+        self.sync_monitoring_visibility(cx);
         let shown = self.visible && self.section == SettingsSection::Sources;
         self.sources
             .update(cx, |sources, cx| sources.set_visible(shown, cx));
@@ -726,6 +735,7 @@ impl Render for SettingsPage {
         match self.section {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
+            SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self
                 .list_frame(window)
