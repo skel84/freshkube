@@ -377,7 +377,7 @@ impl Pilot {
                 .action(
                     "monitoring-add-folder",
                     "Choose a folder",
-                    ColumnKey::Settings,
+                    ColumnKey::SettingsSection(SettingsSection::Monitoring),
                 )
                 .into(),
             ),

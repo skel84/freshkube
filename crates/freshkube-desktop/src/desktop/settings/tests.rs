@@ -465,7 +465,7 @@ fn the_gear_panels_dividers_keep_their_pixel_in_a_short_window(cx: &mut TestAppC
                 divider.bounds()
             );
         }
-        assert_eq!(found, 3, "Connection’s two dividers left the gear");
+        assert_eq!(found, 1, "Monitoring’s two dividers left the gear");
     })
     .unwrap();
 }
@@ -629,42 +629,6 @@ fn open_settings_and_all_settings_open_the_section_shown_last(cx: &mut TestAppCo
     .unwrap();
 }
 
-/// A section whose controls aren't here yet says where they are, on a
-/// padded page, and its button goes there: the gear's menu. It has no line
-/// in the status bar.
-#[gpui_kit::test]
-fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    for (slug, section, title) in SECTIONS.into_iter().take(3).skip(2) {
-        cx.update_window(handle, |_, window, cx| {
-            view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
-            window.render_frame(cx);
-            layout_check::assert_page_frame(
-                window,
-                cx,
-                &layout_check::PageFrame {
-                    page: "settings-page",
-                    title: Box::leak(format!("settings-{slug}-title").into_boxed_str()),
-                    title_text: title,
-                    content: Box::leak(format!("settings-{slug}-pointer").into_boxed_str()),
-                },
-            );
-            assert!(window.try_find("settings-scope").is_none(), "{slug}");
-            window.click(format!("settings-{slug}-open"), cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            let pilot = view.read(cx);
-            assert_eq!(pilot.navigation.page, Page::Settings, "{slug}");
-            assert!(pilot.navigation.settings_open, "{slug}");
-            view.update(cx, |pilot, _| pilot.navigation.settings_open = false);
-        })
-        .unwrap();
-    }
-}
-
 #[gpui_kit::test]
 fn connection_is_a_settings_form_at_each_window_and_text_size(cx: &mut TestAppContext) {
     use crate::{text_size, ui};
@@ -751,7 +715,7 @@ fn general_and_quick_controls_describe_auto_refresh_when_off(cx: &mut TestAppCon
         assert!(window.find("settings-quick-refresh-hint").visible());
         assert!(window.try_find("browse-config").is_none());
         assert!(window.try_find("kubeconfig-mode").is_none());
-        assert!(window.find("monitoring-source-settings").visible());
+        assert!(window.try_find("monitoring-source-settings").is_none());
         window.click("auto-refresh", cx);
         window.render_frame(cx);
         assert!(window.find("settings-quick-refresh-hint").visible());

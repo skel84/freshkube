@@ -181,6 +181,7 @@ impl TableSource for Destinations {
         self.select(key.clone(), cx);
         self.focus(window, cx);
         vec![
+            menu::MenuAction::new("Map", MapDestination).enabled(self.mappable()),
             menu::MenuAction::new("Edit", EditDestination).enabled(self.mappable()),
             menu::MenuAction::new("Remove", RemoveDestination).enabled(self.editable),
         ]

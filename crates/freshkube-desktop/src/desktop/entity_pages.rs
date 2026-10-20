@@ -447,11 +447,7 @@ impl Pilot {
             }
             PageEvent::Service(event) => self.service_event(event, window, cx),
             PageEvent::Overview(event) => self.overview_event(event, window, cx),
-            PageEvent::Settings(SettingsEvent::OpenMenu) => {
-                self.navigation.settings_open = true;
-                cx.notify();
-            }
-            PageEvent::Settings(SettingsEvent::CorootConnect(request)) => {
+            PageEvent::Settings(SettingsEvent::Connect(request)) => {
                 let (server, auth, key) = (
                     request.server.clone(),
                     request.auth,
@@ -461,12 +457,12 @@ impl Pilot {
                     page.connect_from_settings(&server, auth, key, window, cx)
                 });
             }
-            PageEvent::Settings(SettingsEvent::CorootDisconnect) => {
+            PageEvent::Settings(SettingsEvent::Disconnect) => {
                 self.pages
                     .observability
                     .update(cx, |page, cx| page.disconnect_from_settings(window, cx));
             }
-            PageEvent::Settings(SettingsEvent::CorootForget(server)) => {
+            PageEvent::Settings(SettingsEvent::Forget(server)) => {
                 self.pages
                     .observability
                     .update(cx, |page, cx| page.forget_key_from_settings(server, cx));

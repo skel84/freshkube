@@ -354,7 +354,7 @@ impl SettingsPage {
         let block = form.block(current.as_ref(), cx);
         if current.as_ref() == Some(&block) {
             // Nothing to write: the file already says this.
-            cx.emit(super::SettingsEvent::CorootConnect(request));
+            cx.emit(super::SettingsEvent::Connect(request));
             return;
         }
         let Some(file) = self.setup_file.clone().filter(|_| editable) else {
@@ -415,7 +415,7 @@ impl SettingsPage {
                 let forgotten = outcome.is_ok();
                 page.coroot_saved(outcome, None, window, cx);
                 if forgotten {
-                    cx.emit(super::SettingsEvent::CorootForget(server));
+                    cx.emit(super::SettingsEvent::Forget(server));
                 }
             });
         }));
@@ -454,7 +454,7 @@ impl SettingsPage {
                     }
                 }
                 if let Some(request) = request {
-                    cx.emit(super::SettingsEvent::CorootConnect(request));
+                    cx.emit(super::SettingsEvent::Connect(request));
                 }
             }
             Err(error) => {
@@ -530,7 +530,7 @@ impl SettingsPage {
     }
 
     fn disconnect_coroot(&mut self, cx: &mut Context<Self>) {
-        cx.emit(super::SettingsEvent::CorootDisconnect);
+        cx.emit(super::SettingsEvent::Disconnect);
     }
 
     pub(super) fn render_coroot(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -650,6 +650,7 @@ impl SettingsPage {
                 .into_any_element()
         } else if kept {
             form::secret("coroot-credential", form::Secret::Kept, cx)
+                .store_name(freshkube_core::secrets::STORE_NAME)
                 .on_replace(cx.listener(|page, _, window, cx| page.replace_coroot_key(window, cx)))
                 .on_forget(cx.listener(|page, _, window, cx| page.forget_coroot_key(window, cx)))
                 .into_any_element()

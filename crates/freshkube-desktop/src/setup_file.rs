@@ -242,7 +242,18 @@ impl SetupFile {
         expected: Seen,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), SaveError>> {
-        self.save_with(expected, move |setup| setup.workspace = workspace, cx)
+        let missing = self.setup.is_none();
+        self.save_with(
+            expected,
+            move |setup| {
+                if missing {
+                    *setup = Setup::new(workspace);
+                } else {
+                    setup.workspace = workspace;
+                }
+            },
+            cx,
+        )
     }
 
     /// Saves one Settings edit to the setup, keeping its other parts.
@@ -257,23 +268,11 @@ impl SetupFile {
         };
         self.writing = true;
         self.write_generation = self.write_generation.wrapping_add(1);
-        let setup = match self.setup.clone() {
-            Some(mut setup) => {
-                edit(&mut setup);
-                setup
-            }
-            // The first save: `Setup::new` moves the workspace's unknown
-            // keys beside it, as the file keeps them.
-            None => {
-                let mut edited = Setup::default();
-                edit(&mut edited);
-                let mut setup = Setup::new(edited.workspace);
-                setup.metrics = edited.metrics;
-                setup.coroot = edited.coroot;
-                setup.supply_chain = edited.supply_chain;
-                setup
-            }
-        };
+        let mut setup = self
+            .setup
+            .clone()
+            .unwrap_or_else(|| Setup::new(Workspace::default()));
+        edit(&mut setup);
         let own = self.last_written.clone();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -553,6 +552,35 @@ mod tests {
 
     fn model(reader: &Entity<Reader>, cx: &mut TestAppContext) -> Entity<SetupFile> {
         cx.update(|cx| reader.read(cx).file.clone())
+    }
+
+    #[gpui_kit::test]
+    fn save_with_starts_a_missing_setup_and_workspace_saves_keep_metrics(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, reader) = mount(cx, directory.path(), false);
+        let file = model(&reader, cx);
+        let save = file.update(cx, |file, cx| {
+            file.save_with(
+                Seen::Missing,
+                |setup| setup.metrics.mode = setup::Mode::PerEntry,
+                cx,
+            )
+        });
+        cx.spawn(async move |_| assert!(save.await.is_ok()))
+            .detach();
+        cx.run_until_parked();
+        let expected = cx.read(|cx| file.read(cx).seen.clone());
+        let workspace = setup::parse(FIRST.as_bytes()).unwrap().workspace;
+        let save = file.update(cx, |file, cx| {
+            file.save_workspace(workspace.clone(), expected, cx)
+        });
+        cx.spawn(async move |_| assert!(save.await.is_ok()))
+            .detach();
+        cx.run_until_parked();
+        let saved =
+            setup::parse(&std::fs::read(directory.path().join("freshkube.yaml")).unwrap()).unwrap();
+        assert_eq!(saved.workspace, workspace);
+        assert_eq!(saved.metrics.mode, setup::Mode::PerEntry);
     }
 
     #[gpui_kit::test]
