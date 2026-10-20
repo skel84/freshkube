@@ -446,13 +446,7 @@ fn the_service_map_keeps_its_highlighted_box_and_hover_paint(cx: &mut TestAppCon
                 .painted_quads()
                 .iter()
                 .filter(|quad| quad.bounds == bounds)
-                .map(|quad| {
-                    (
-                        quad.background.clone(),
-                        quad.border_color,
-                        quad.border_widths,
-                    )
-                })
+                .map(|quad| (quad.background, quad.border_color, quad.border_widths))
                 .collect::<Vec<_>>()
         };
         window.hover("map-node-0", cx);
