@@ -42,6 +42,13 @@ impl ChangesPage {
     /// A refresh that failed over an earlier read, then what may be
     /// missing.
     fn render_notes(&self, cx: &App) -> Option<AnyElement> {
+        let setup = self.setup_problem.as_ref().map(|text| {
+            ui::warning_banner(None, text.clone(), None, cx)
+                .id("changes-setup-problem")
+                .aria_label(text.clone())
+                .test_support()
+                .role(Role::Status)
+        });
         let refresh = self.stale.as_ref().map(|(text, label)| {
             ui::warning_banner(Some("Couldn't read again".into()), text.clone(), None, cx)
                 .id("changes-stale")
@@ -56,7 +63,7 @@ impl ChangesPage {
                 .test_support()
                 .role(Role::Status)
         });
-        if refresh.is_none() && missing.is_none() {
+        if setup.is_none() && refresh.is_none() && missing.is_none() {
             return None;
         }
         Some(
@@ -65,6 +72,7 @@ impl ChangesPage {
                 .flex()
                 .flex_col()
                 .gap(dp(page::PANE_PADDING_Y))
+                .children(setup)
                 .children(refresh)
                 .children(missing)
                 .into_any_element(),
@@ -404,9 +412,13 @@ impl Render for ChangesPage {
                 cx.listener(|this, _: &PreviousChange, window, cx| this.step(-1, window, cx)),
             )
             .on_action(cx.listener(|this, _: &ClearChange, _, cx| this.clear_selection(cx)))
-            .on_action(
-                cx.listener(|this, _: &OpenChange, window, cx| this.open_selected(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &OpenChange, window, cx| {
+                if this.focus.is_focused(window) {
+                    this.open_selected(window, cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .flex()
             .flex_col()
             .size_full()

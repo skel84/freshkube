@@ -26,6 +26,7 @@
 //! shows, and opens the change page in its own place.
 mod across;
 mod change;
+pub mod change_view;
 mod changes;
 mod column;
 mod display;
@@ -317,6 +318,8 @@ pub struct ApplicationsPage {
     /// The banner for a refresh that failed over an earlier read, and its
     /// label, derived with the display.
     stale: Option<(SharedString, SharedString)>,
+    /// Sanitized setup-file warning, also handed to changes opened later.
+    setup_problem: Option<SharedString>,
     /// The table's lines, derived when the rows or a filter change.
     lines: Vec<Entry>,
     /// Rows per rule under the filters, for the group headers.
@@ -420,6 +423,7 @@ impl ApplicationsPage {
             live_coroot: change::Live::default(),
             display: Display::default(),
             stale: None,
+            setup_problem: None,
             lines: Vec::new(),
             groups: [0; 4],
             counts: [0; 4],
@@ -523,6 +527,21 @@ impl ApplicationsPage {
                 self.read(cx);
             }
         }
+    }
+
+    /// The setup owner's safe warning text; no setup bytes reach a banner.
+    pub fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
+        freshkube_probe::probe::hit("applications.setup_handoff");
+        let problem = problem.map(SharedString::from);
+        if self.setup_problem == problem {
+            return;
+        }
+        self.setup_problem = problem.clone();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));
+        }
+        self.changes
+            .update(cx, |page, cx| page.set_setup_problem(problem, cx));
     }
 
     /// The setup owner calls this after each reload. Even the same path can
@@ -977,6 +996,7 @@ impl ApplicationsPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
             page.set_coroot(coroot, cx);
+            page.set_setup_problem(self.setup_problem.clone(), cx);
             page
         });
         let subscription =

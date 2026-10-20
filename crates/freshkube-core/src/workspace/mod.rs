@@ -563,10 +563,14 @@ pub fn choose_start<'a>(workspace: &'a Workspace, remembered: Option<&str>) -> O
 /// paths are absolute.
 pub fn example() -> Workspace {
     let entry = |id: &str, role| Entry::new(id, role, id);
+    // One entry is linked to the example Coroot, so example data shows both
+    // states of an entry's `coroot` key; the others are not.
+    let mut core = entry("core-fra", Role::Core);
+    core.coroot = Some(Box::new(crate::setup::EntryCoroot::new("fixture")));
     Workspace {
         kubeconfig: None,
         clusters: vec![
-            entry("core-fra", Role::Core),
+            core,
             entry("cicd-fra", Role::Cicd),
             entry("dev-fra", Role::Environment),
             entry("stage-fra", Role::Environment),
