@@ -32,7 +32,7 @@ impl SourcesList {
         }
     }
 
-    fn editable(&self, cx: &App) -> bool {
+    pub(super) fn editable(&self, cx: &App) -> bool {
         self.page
             .upgrade()
             .is_some_and(|page| page.read(cx).editable())
