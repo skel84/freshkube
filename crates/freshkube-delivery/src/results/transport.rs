@@ -71,7 +71,7 @@ pub(super) fn segment(value: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn request_error(error: reqwest::Error) -> Error {
+pub(super) fn request_error(error: reqwest::Error) -> Error {
     if error.is_timeout() {
         return Error::Unreachable(Cause::TimedOut);
     }
@@ -179,7 +179,7 @@ impl Client {
 
     pub(super) async fn list<T>(
         &self,
-        parent: &str,
+        collection: &str,
         filter: &str,
         cap: usize,
         reason: Cap,
@@ -199,8 +199,7 @@ impl Client {
                 .map_err(|_| Error::Unreadable("invalid address"))?
                 .pop_if_empty()
                 .extend(["apis", "results.tekton.dev", "v1alpha2", "parents"])
-                .extend(parent.split('/'))
-                .push("records");
+                .extend(collection.split('/'));
             url.query_pairs_mut()
                 .append_pair("filter", filter)
                 .append_pair(
