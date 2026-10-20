@@ -21,6 +21,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_calls_list_marks_dashed_and_dotted_lines_only() {
+        assert_eq!(style_mark(EdgeStyle::Dashed), Some("╌"));
+        assert_eq!(style_mark(EdgeStyle::Dotted), Some("┄"));
+        assert_eq!(style_mark(EdgeStyle::Solid), None);
+        assert_eq!(style_mark(EdgeStyle::Auto), None);
+    }
+
+    #[test]
+    fn only_a_box_cursor_on_that_key_rings_a_box() {
+        assert!(at_cursor(&Some(Cursor::Node(1)), &1));
+        assert!(!at_cursor(&Some(Cursor::Node(1)), &2));
+        assert!(!at_cursor(&Some(Cursor::Link(1, 2)), &1));
+        assert!(!at_cursor(&None, &1));
+    }
+
+    #[test]
     fn claimed_and_unknown_lines_are_stroked_differently_and_auto_is_the_maps_rule() {
         assert_eq!(dash(EdgeStyle::Solid, None), Dash::Solid);
         assert_eq!(dash(EdgeStyle::Dashed, None), Dash::Dashed);
@@ -264,6 +280,16 @@ pub(super) fn dash(style: EdgeStyle, tone: Option<Tone>) -> Dash {
         (EdgeStyle::Solid, _) | (EdgeStyle::Auto, Some(Tone::Good)) => Dash::Solid,
         (EdgeStyle::Dotted, _) => Dash::Dotted,
         (EdgeStyle::Dashed | EdgeStyle::Auto, _) => Dash::Dashed,
+    }
+}
+
+/// The mark the Calls list shows for a call's line, so its style reads
+/// there too; the service map's `Auto` and a solid line show none.
+pub(super) fn style_mark(style: EdgeStyle) -> Option<&'static str> {
+    match style {
+        EdgeStyle::Dashed => Some("╌"),
+        EdgeStyle::Dotted => Some("┄"),
+        EdgeStyle::Solid | EdgeStyle::Auto => None,
     }
 }
 
