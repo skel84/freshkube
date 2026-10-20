@@ -929,6 +929,7 @@ fn a_kargo_part_is_a_switch_to_its_cicd_entry_away(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_part_in_an_unmapped_acme_cluster_is_refused_and_nothing_moves(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880., Variant::Acme);
+    let heard = crate::desktop::testing::record_notices(cx, &view);
     let before = cx
         .update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -961,7 +962,7 @@ fn a_part_in_an_unmapped_acme_cluster_is_refused_and_nothing_moves(cx: &mut Test
             Some("prod-lon isn't the open cluster, so its objects don't open in Resources".into())
         );
         assert_eq!(
-            view.read(cx).told.last().map(String::as_str),
+            heard.borrow().last().map(String::as_str),
             Some("Can’t open checkout-worker: it belongs to a cluster that isn’t open")
         );
         assert_eq!(view.read(cx).applications().1, Page::Applications);

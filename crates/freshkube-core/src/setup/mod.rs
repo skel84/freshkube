@@ -48,6 +48,18 @@ const HEADER: &str = "\
 
 type Extra = serde_json::Map<String, serde_json::Value>;
 
+const EXAMPLE: &str = include_str!("../../../freshkube-prefs/src/examples/freshkube.yaml");
+
+/// Reads and validates the bundled example with absolute paths on this platform.
+pub fn example() -> Result<Setup, Invalid> {
+    // Windows requires a drive for the example's Unix home to be absolute.
+    #[cfg(windows)]
+    let text = EXAMPLE.replace("/home/acme", "C:/home/acme");
+    #[cfg(not(windows))]
+    let text = EXAMPLE;
+    parse(text.as_bytes())
+}
+
 /// Everything `freshkube.yaml` says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Setup {
@@ -98,6 +110,17 @@ pub enum Fault {
     CentralWithoutStore,
     /// `coroot` sets both `key` and `api_key_file`.
     KeyTwice,
+    /// An entry names a Coroot cluster, and neither it nor `coroot` names a
+    /// project, so no application of that cluster could be found.
+    CorootWithoutProject(String),
+    /// Two entries link the same Coroot cluster of the same project, so a
+    /// Coroot application would belong to both. Ids, in file order.
+    CorootTwice {
+        first: String,
+        second: String,
+        project: String,
+        cluster: String,
+    },
 }
 
 impl std::fmt::Display for Fault {
@@ -115,6 +138,19 @@ impl std::fmt::Display for Fault {
                 f.write_str("metrics.mode is central, and metrics.store is missing")
             }
             Fault::KeyTwice => f.write_str("coroot sets both key and api_key_file"),
+            Fault::CorootWithoutProject(id) => write!(
+                f,
+                "the cluster “{id}” names a Coroot cluster, and neither it nor coroot names a project"
+            ),
+            Fault::CorootTwice {
+                first,
+                second,
+                project,
+                cluster,
+            } => write!(
+                f,
+                "the Coroot cluster “{cluster}” of project “{project}” is linked to “{first}” and “{second}”"
+            ),
         }
     }
 }
@@ -188,6 +224,10 @@ impl Setup {
         for entry in &self.workspace.clusters {
             rule(validate::entry(entry))?;
         }
+        rule(validate::coroot_links(
+            &self.workspace.clusters,
+            self.coroot.as_ref().and_then(|c| c.project.as_deref()),
+        ))?;
         rule(validate::metrics(&self.metrics))?;
         if let Some(coroot) = &self.coroot {
             rule(validate::coroot(coroot))?;

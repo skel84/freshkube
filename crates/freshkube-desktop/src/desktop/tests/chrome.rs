@@ -54,7 +54,14 @@ fn the_cached_chrome_acts_on_the_shell(cx: &mut TestAppContext) {
 /// Refresh shows the read in flight, and nothing in the chrome repeats.
 #[gpui_kit::test]
 fn nothing_in_the_chrome_moves_while_talos_loads(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
     cx.update(|cx| cx.set_reduce_motion(false));
     cx.update_window(handle, |_, window, cx| window.press("secondary-2", cx))
         .unwrap();
@@ -228,7 +235,7 @@ fn cached_screen_redraws_after_data_and_theme_change(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn cached_overview_redraws_after_data_and_theme_change(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         draw(window, cx);
@@ -237,7 +244,8 @@ fn cached_overview_redraws_after_data_and_theme_change(cx: &mut TestAppContext) 
     .unwrap();
     cx.run_until_parked();
     let drawn = count("overview");
-    cx.update(|cx| view.update(cx, |pilot, cx| pilot.simulate_failure(cx)));
+    cx.update_window(handle, |_, window, cx| window.click("fixture-fail", cx))
+        .unwrap();
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| draw(window, cx))
         .unwrap();
@@ -268,33 +276,45 @@ fn overview_redraws_for_its_own_changes(cx: &mut TestAppContext) {
     })
     .unwrap();
     cx.run_until_parked();
-    let mut redrawn = |change: &dyn Fn(&mut Pilot, &mut gpui_kit::Context<Pilot>)| {
+    let mut redrawn = |change: &dyn Fn(&mut gpui_kit::Window, &mut gpui_kit::App)| {
         let before = count("overview");
-        cx.update(|cx| view.update(cx, |view, cx| change(view, cx)));
+        cx.update_window(handle, |_, window, cx| change(window, cx))
+            .unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| draw(window, cx))
             .unwrap();
         count("overview") - before
     };
-    let shell = redrawn(&|_, cx| cx.notify());
-    let cards = redrawn(&|view, cx| view.rebuild_joined_nodes(cx));
+    let shell = redrawn(&|_, cx| view.update(cx, |_, cx| cx.notify()));
+    let cards = redrawn(&|_, cx| view.update(cx, |view, cx| view.rebuild_joined_nodes(cx)));
     // A refresh that fails through the shell: the observer hands Overview
     // the stale state, with the joined nodes rebuilt in the same frame.
-    let stale = redrawn(&|view, cx| view.simulate_failure(cx));
-    let after_stale = redrawn(&|_, cx| cx.notify());
-    let attention = redrawn(&|view, cx| {
-        let attention = view.pages.node_workspace.read(cx).attention.clone();
-        view.pages
-            .overview_page
-            .update(cx, |page, cx| page.set_attention(attention, cx));
+    // Click helpers force render_frame, which bypasses caches. Queue the
+    // source's answer and refresh normally to count only scheduled redraws.
+    let stale = redrawn(&|window, cx| {
+        view.update(cx, |view, cx| {
+            view.mode.example_source_mut().unwrap().fail_next_overview();
+            view.refresh(window, cx);
+        })
     });
-    let state = redrawn(&|view, cx| {
-        view.config_error = Some("unreadable".into());
-        cx.notify();
+    let after_stale = redrawn(&|_, cx| view.update(cx, |_, cx| cx.notify()));
+    let attention = redrawn(&|_, cx| {
+        view.update(cx, |view, cx| {
+            let attention = view.pages.node_workspace.read(cx).attention.clone();
+            view.pages
+                .overview_page
+                .update(cx, |page, cx| page.set_attention(attention, cx));
+        })
     });
-    let unchanged = redrawn(&|_, cx| cx.notify());
-    let show_all = redrawn(&|view, cx| view.expand_attention(cx));
-    let cached = redrawn(&|view, cx| view.pages.notify_cached(cx));
+    let state = redrawn(&|_, cx| {
+        view.update(cx, |view, cx| {
+            view.config_error = Some("unreadable".into());
+            cx.notify();
+        })
+    });
+    let unchanged = redrawn(&|_, cx| view.update(cx, |_, cx| cx.notify()));
+    let show_all = redrawn(&|_, cx| view.update(cx, |view, cx| view.expand_attention(cx)));
+    let cached = redrawn(&|_, cx| view.update(cx, |view, cx| view.pages.notify_cached(cx)));
     let text_size = redrawn(&|_, cx| Theme::update(cx, |theme| theme.font_size = px(20.)));
     assert_eq!(
         [

@@ -399,6 +399,7 @@ fn another_switch_drops_a_held_link(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_link_whose_connection_is_not_the_entrys_now_says_it_reconnected(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let heard = crate::desktop::testing::record_notices(cx, &view);
     switch(cx, handle, &view, "dev-fra");
     let mut link = pod_link("dev-fra");
     link.connection = Some("another-access".into());
@@ -407,9 +408,9 @@ fn a_link_whose_connection_is_not_the_entrys_now_says_it_reconnected(cx: &mut Te
     assert!(!held(cx, &view));
     assert_eq!(opened(cx, &view), None, "never opened by name alone");
     // And the notice that was actually pushed says why.
-    cx.read(|cx| {
+    cx.read(|_| {
         assert_eq!(
-            view.read(cx).told.last().map(String::as_str),
+            heard.borrow().last().map(String::as_str),
             Some("dev-fra reconnected since this link was made; open it again")
         )
     });
@@ -764,6 +765,7 @@ fn a_running_shell_is_asked_about_in_the_same_question(cx: &mut TestAppContext) 
 #[gpui_kit::test]
 fn a_cluster_the_workspace_does_not_list_is_still_refused(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = on_checkout_part(cx, LON_WORKER);
+    let heard = crate::desktop::testing::record_notices(cx, &view);
     let before = active(cx, &view);
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(
@@ -776,9 +778,9 @@ fn a_cluster_the_workspace_does_not_list_is_still_refused(cx: &mut TestAppContex
     cx.run_until_parked();
     assert!(cx.pending_prompt().is_none(), "nothing to switch to");
     assert_eq!(active(cx, &view), before);
-    cx.read(|cx| {
+    cx.read(|_| {
         assert_eq!(
-            view.read(cx).told.last().map(String::as_str),
+            heard.borrow().last().map(String::as_str),
             Some("Can’t open checkout-worker: it belongs to a cluster that isn’t open")
         );
     });
@@ -789,6 +791,7 @@ fn a_cluster_the_workspace_does_not_list_is_still_refused(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn an_entry_no_longer_listed_is_refused(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let heard = crate::desktop::testing::record_notices(cx, &view);
     let before = active(cx, &view);
     let link = resources::ResourceLink::Object(
         builtin("deployments.apps").unwrap(),
@@ -809,9 +812,9 @@ fn an_entry_no_longer_listed_is_refused(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(cx.pending_prompt().is_none());
     assert_eq!(active(cx, &view), before);
-    cx.read(|cx| {
+    cx.read(|_| {
         assert_eq!(
-            view.read(cx).told.last().map(String::as_str),
+            heard.borrow().last().map(String::as_str),
             Some("Can’t open checkout-api: it belongs to a cluster that isn’t open")
         );
     });
@@ -822,6 +825,7 @@ fn an_entry_no_longer_listed_is_refused(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_missing_object_after_the_switch_says_so(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
+    let heard = crate::desktop::testing::record_notices(cx, &view);
     let link = resources::ResourceLink::Object(
         builtin("deployments.apps").unwrap(),
         ObjectRef {
@@ -840,7 +844,7 @@ fn a_missing_object_after_the_switch_says_so(cx: &mut TestAppContext) {
     .unwrap();
     cx.run_until_parked();
     let before = notices(cx, handle);
-    let told = cx.read(|cx| view.read(cx).told.len());
+    let told = heard.borrow().len();
     cx.simulate_prompt_answer("Switch");
     cx.run_until_parked();
     assert_eq!(active(cx, &view), key("dev-fra"));
@@ -850,7 +854,7 @@ fn a_missing_object_after_the_switch_says_so(cx: &mut TestAppContext) {
     assert_eq!(notices(cx, handle), before + 1, "says it can't open it");
     cx.read(|cx| {
         let pilot = view.read(cx);
-        assert_eq!(pilot.told.len(), told, "{:?}", &pilot.told[told..]);
+        assert_eq!(heard.borrow().len(), told, "{:?}", &heard.borrow()[told..]);
         assert!(pilot.switch.pending_link.is_none());
     });
 }

@@ -88,7 +88,14 @@ fn state(cx: &mut TestAppContext, handle: AnyWindowHandle, what: &str) -> [bool;
 async fn pages_wait_while_the_overview_loads_and_show_data_once_it_answers(
     cx: &mut TestAppContext,
 ) {
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
     for page in PAGES {
         show_page(cx, handle, &view, page);
         assert_eq!(
@@ -127,11 +134,16 @@ fn settled(window: &mut Window) -> bool {
 
 #[gpui_kit::test]
 fn pages_show_the_failure_when_the_first_overview_read_fails(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
-    cx.update_window(handle, |_, _, cx| {
-        view.update(cx, |pilot, cx| pilot.simulate_failure(cx))
-    })
-    .unwrap();
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
+    cx.update_window(handle, |_, window, cx| window.click("fixture-fail", cx))
+        .unwrap();
     for page in PAGES {
         show_page(cx, handle, &view, page);
         assert_eq!(
@@ -213,11 +225,16 @@ fn the_node_panes_screens_follow_the_same_rule(cx: &mut TestAppContext) {
 /// read is in flight, then the data.
 #[gpui_kit::test]
 async fn retry_after_a_failed_first_read_waits_and_then_shows_data(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
-    cx.update_window(handle, |_, _, cx| {
-        view.update(cx, |pilot, cx| pilot.simulate_failure(cx))
-    })
-    .unwrap();
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
+    cx.update_window(handle, |_, window, cx| window.click("fixture-fail", cx))
+        .unwrap();
     show_page(cx, handle, &view, Page::Etcd);
     assert_eq!(state(cx, handle, "failure"), [false, true, false]);
 
@@ -286,8 +303,12 @@ fn kubernetes_only_health(
 /// first answer, however long that takes, then shows it.
 #[gpui_kit::test]
 async fn kubernetes_only_health_waits_for_the_summary_then_shows_it(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) =
-        kubernetes_only_health(cx, GpuiOptions::fixture().holding_talos());
+    let (_runtime, handle, view) = kubernetes_only_health(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+    );
     for _ in 0..3 {
         assert_eq!(state(cx, handle, "held"), [true, false, false]);
         cx.executor().advance_clock(Duration::from_secs(1));
@@ -365,4 +386,44 @@ fn health_waits_only_while_a_summary_session_reads(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert_eq!(state(cx, handle, "a held session"), [true, false, false]);
+}
+
+/// The example control fails through the overview read, retains its last
+/// answer and history, and the ordinary Refresh recovers on the next answer.
+#[gpui_kit::test]
+fn the_example_failure_button_keeps_history_and_refresh_recovers(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture(), 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        let (node, history) = {
+            let pilot = view.read(cx);
+            let node = pilot
+                .target
+                .nodes
+                .iter()
+                .find(|node| node.load.is_some())
+                .unwrap()
+                .name
+                .clone();
+            let history = pilot.pages.node_workspace.read(cx).load_history.get(&node);
+            (node, history)
+        };
+        assert_eq!(history.len(), crate::presentation::LOAD_HISTORY_LEN);
+        window.click("fixture-fail", cx);
+        {
+            let pilot = view.read(cx);
+            assert!(pilot.overview.is_stale());
+            assert!(pilot.overview.data().is_some());
+            assert_eq!(
+                pilot.pages.node_workspace.read(cx).load_history.get(&node),
+                history
+            );
+        }
+        window.click("refresh", cx);
+        let pilot = view.read(cx);
+        assert!(!pilot.overview.is_stale());
+        assert!(pilot.overview.error().is_none());
+        let refreshed = pilot.pages.node_workspace.read(cx).load_history.get(&node);
+        assert_eq!(&refreshed[..refreshed.len() - 1], &history[1..]);
+    })
+    .unwrap();
 }
