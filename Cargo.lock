@@ -2499,6 +2499,7 @@ dependencies = [
  "http-body-util",
  "kube",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

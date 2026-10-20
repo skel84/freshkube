@@ -34,6 +34,18 @@ promql-parser 0.11.0
   Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.
   Used unmodified, as a library.
 
+ring 0.17.14
+  Checks a signature on a Tekton Chains attestation against a public key the
+  person names (ECDSA over P-256 with SHA-256). Already in the build for TLS.
+  https://github.com/briansmith/ring
+  Copyright 2015-2016 Brian Smith, and the BoringSSL authors for the code
+  taken from it
+  Licensed under ISC and Apache-2.0 (Apache-2.0 AND ISC, per its manifest);
+  the crate's own LICENSE and LICENSE-other-bits are in
+  licenses/ring-LICENSE.txt, and the Apache License text is in
+  licenses/Apache-2.0.txt.
+  Used unmodified, as a library.
+
 Figtree 2.0.3 (Regular, SemiBold, Bold and Black)
   https://github.com/erikdkennedy/figtree
   Copyright 2022 The Figtree Project Authors

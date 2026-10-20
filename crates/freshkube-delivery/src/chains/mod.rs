@@ -114,6 +114,8 @@ pub struct EnvelopeSignature {
 /// What an in-toto statement says, read before anything is verified.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Claims {
+    /// `_type`: `https://in-toto.io/Statement/v0.1` or `/v1`.
+    pub statement_type: Option<String>,
     pub predicate_type: Option<String>,
     pub subjects: Vec<Subject>,
     /// Subjects past [`MOST_SUBJECTS`].
@@ -142,6 +144,8 @@ pub enum Malformed {
     NotAnEnvelope(&'static str),
     /// The envelope's payload is not an in-toto statement.
     NotAStatement(&'static str),
+    /// The `payload` annotation is not the statement the envelope signs.
+    PayloadDiffers,
 }
 
 impl std::fmt::Display for Malformed {
@@ -157,6 +161,9 @@ impl std::fmt::Display for Malformed {
                 )
             }
             Self::NotAnEnvelope(why) | Self::NotAStatement(why) => f.write_str(why),
+            Self::PayloadDiffers => {
+                f.write_str("the payload annotation is not the statement the envelope signs")
+            }
         }
     }
 }
@@ -304,6 +311,7 @@ fn claims_of(statement: &Value) -> Claims {
     let subjects = list.iter().take(MOST_SUBJECTS).map(subject_of).collect();
     let subjects_omitted = list.len().saturating_sub(MOST_SUBJECTS);
     Claims {
+        statement_type: text(statement, "/_type"),
         predicate_type: text(statement, "/predicateType"),
         subjects,
         subjects_omitted,
@@ -383,7 +391,7 @@ impl Attestation {
     }
 }
 
-mod config;
+pub(crate) mod config;
 
 #[cfg(test)]
 mod tests;
