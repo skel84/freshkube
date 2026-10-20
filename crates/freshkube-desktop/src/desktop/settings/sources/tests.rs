@@ -241,9 +241,9 @@ fn reads_truncates_inside_the_table_at_both_window_sizes(cx: &mut TestAppContext
                 use freshkube_ui::table::TableColumn;
                 let sources = list(&view, cx).read(cx);
                 for column in &sources.columns {
-                    let values: Vec<_> = sources.rows.iter().map(|row| if column.label().as_ref() == "Entry" { &row.entry } else { &row.why }).collect();
+                    let values = sources.rows.iter().map(|row| if column.label().as_ref() == "Entry" { &row.entry } else { &row.why });
                     if matches!(column.label().as_ref(), "Entry" | "Chosen by") {
-                        assert_eq!(column.width(), freshkube_ui::table::fit(column.label(), values.into_iter(), freshkube_ui::table::WIDEST));
+                        assert_eq!(column.width(), freshkube_ui::table::fit(column.label(), values, freshkube_ui::table::WIDEST));
                     }
                 }
             }
@@ -920,6 +920,24 @@ async fn pin_and_follow_roles_keep_other_parts_and_unknown_keys(cx: &mut TestApp
         })
         .unwrap();
     }
+    write(guard.path(), "version: [broken");
+    cx.update_window(handle, |_, window, cx| {
+        dispatch_pin_from_menu(&list(&view, cx), window, cx, Some("cluster-a"));
+    })
+    .unwrap();
+    cx.run_until_parked();
+    saved(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-save-failed").visible());
+        let status = view.read(cx).settings_page.read(cx).status().unwrap();
+        assert!(
+            !status.text(None).contains("Saved"),
+            "{}",
+            status.text(None)
+        );
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

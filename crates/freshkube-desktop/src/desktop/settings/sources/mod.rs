@@ -407,6 +407,13 @@ impl SourcesList {
         cx.defer(move |cx| {
             _ = page.update(cx, |page, cx| {
                 let mut parts = vec![status::Part::new("Delivery sources")];
+                if let Some(time) = checked {
+                    parts.push(status::Part::new(format!("Last checked {time}")));
+                }
+                if running {
+                    parts.push(status::Part::new("Reading sources"));
+                }
+                page.sources_status = status::Segment::new(None::<SharedString>, parts.clone());
                 if let Some(super::Notice::Saved(_)) = &page.notice
                     && let Some(file) = &page.setup_file
                 {
@@ -419,12 +426,6 @@ impl SourcesList {
                         )),
                     );
                 }
-                if let Some(time) = checked {
-                    parts.push(status::Part::new(format!("Last checked {time}")));
-                }
-                if running {
-                    parts.push(status::Part::new("Reading sources"));
-                }
                 let mut segment = status::Segment::new(None::<SharedString>, parts);
                 if let Some(super::Notice::Saved(_)) = &page.notice
                     && let Some(receipt) = page
@@ -434,7 +435,7 @@ impl SourcesList {
                 {
                     segment = segment.note(receipt);
                 }
-                page.sources_status = segment;
+                page.sources_saved_status = segment;
                 cx.notify();
             });
         });
