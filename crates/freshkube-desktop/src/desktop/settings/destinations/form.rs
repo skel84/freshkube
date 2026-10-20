@@ -55,10 +55,14 @@ pub(super) fn open(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<DestinationForm> {
-    let title = match &editing {
+    let by_server = editing
+        .as_ref()
+        .is_some_and(|editing| matches!(editing.key, Key::Server(_)));
+    let title: SharedString = match &editing {
         Some(Editing { key, .. }) => format!("Change the mapping for {}", key.describe()),
         None => "Map an Argo CD destination".to_owned(),
-    };
+    }
+    .into();
     let form = cx.new(|cx| DestinationForm::new(page, list, editing, entries, window, cx));
     let value = form.read(cx).value.clone();
     let shown = form.clone();
@@ -66,7 +70,19 @@ pub(super) fn open(
         dialog
             .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
             .overlay_closable(false)
-            .title(title.clone())
+            .title(if by_server {
+                // Kit's dialog close trigger is a small icon button, size_6.
+                // Reserve the same rem width beside the flowing title.
+                div()
+                    .pr_6()
+                    .child(freshkube_ui::url::url_text(
+                        "settings-destination-edit-url",
+                        &title,
+                    ))
+                    .into_any_element()
+            } else {
+                title.clone().into_any_element()
+            })
             .child(shown.clone())
     });
     // A dialog remembers what had focus when it opened: focus its field after.

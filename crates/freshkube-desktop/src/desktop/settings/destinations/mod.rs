@@ -250,6 +250,11 @@ impl Destinations {
         self.focus(window, cx);
         let page = self.page.clone();
         let what = key.describe();
+        let body: SharedString = format!(
+            "Argo CD Applications with destination {what} show it as Unknown \
+             again. Nothing on a cluster is touched."
+        )
+        .into();
         window.open_dialog(cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_key = key.clone();
@@ -264,10 +269,14 @@ impl Destinations {
                         .aria_label(format!("Remove the mapping for {what}"))
                         .gap_3()
                         .text_size(dp(13.))
-                        .child(format!(
-                            "Argo CD Applications with destination {what} show it as Unknown \
-                             again. Nothing on a cluster is touched."
-                        ))
+                        .child(match &key {
+                            Key::Server(_) => freshkube_ui::url::url_text(
+                                "settings-destination-remove-url",
+                                &body,
+                            )
+                            .into_any_element(),
+                            Key::Name(_) => body.clone().into_any_element(),
+                        })
                         .child(fields::actions(
                             fields::Action::new(
                                 "settings-destination-remove-confirm",

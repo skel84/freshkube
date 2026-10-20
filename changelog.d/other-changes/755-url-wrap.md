@@ -1,0 +1,1 @@
+- **Destinations:** keep URL schemes and hyphenated labels together as dialog text wraps, and keep Edit titles clear of the close button.
