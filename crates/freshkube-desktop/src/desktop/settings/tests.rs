@@ -52,6 +52,67 @@ fn all_settings_opens_the_example_workspace(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+#[gpui_kit::test]
+fn a_clusters_first_right_click_keeps_the_menu_open(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| {
+                pilot.show_settings(SettingsSection::Clusters, window, cx);
+            });
+            window.render_frame(cx);
+            assert!(window.try_find("settings-detail").is_none());
+            if width == 760. {
+                window.blur(cx);
+            }
+            window.right_click("settings-cluster-core-fra", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                view.read(cx).settings_page.read(cx).selected.as_deref(),
+                Some("core-fra")
+            );
+            assert!(window.find("popup-menu").visible());
+            assert!(
+                window
+                    .within("popup-menu")
+                    .find(0usize)
+                    .label()
+                    .unwrap()
+                    .starts_with("Edit")
+            );
+            window.press("escape", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find("popup-menu").is_none());
+            assert!(window.find("settings-detail").visible());
+            assert_eq!(
+                window.find("settings-detail-title").label(),
+                Some("core-fra")
+            );
+            window.right_click("settings-cluster-cicd-fra", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.find("popup-menu").visible());
+            assert_eq!(
+                window.find("settings-detail-title").label(),
+                Some("cicd-fra")
+            );
+            window.press("escape", cx);
+        })
+        .unwrap();
+    }
+}
+
 /// Each list section is a table page, at both window sizes and the
 /// smallest and largest text.
 #[gpui_kit::test]
