@@ -99,7 +99,7 @@ One *Connection* group: the server, how to sign in (API key, Session, Anonymous)
 - **`coroot.json`** is written only while no setup has been handed over; once a setup is in use, the connection lives in `freshkube.yaml`.
 - **Example data** shows the example connection with every control off and saves nothing; a window without preferences has nowhere to save.
 
-Observability no longer holds the connection: with none, its card is one line, "Coroot isn't connected · Open Settings", which opens this section (`ObservabilityEvent::OpenSettings`). The header's Coroot button opens this section when nothing is connected, and the link panel, with Open Settings, when connected.
+Observability no longer holds the connection: with none, its card is one line, "Coroot isn't connected · Open Settings", which opens this section (`ObservabilityEvent::OpenSettings`). The header's Coroot button opens this section when nothing is connected, and the link panel, with Open Settings, when connected. The link panel also says which Coroot cluster the open entry's Kubernetes links read, or why it has none; that is `clusters[].coroot` in the setup file (`freshkube-observability`'s `entry.rs`), edited by hand until the Clusters Inspector's Observability group exists.
 
 ## Argo CD destinations
 

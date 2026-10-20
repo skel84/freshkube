@@ -414,10 +414,12 @@ impl Pilot {
             .as_ref()
             .and_then(|setup| setup.coroot.as_ref())
             .and_then(|coroot| coroot.project.clone());
-        let links = crate::applications::CorootLinks::of(
-            &self.settings_page.read(cx).workspace().clusters,
-            project.as_deref(),
-        );
+        let clusters = self.settings_page.read(cx).workspace().clusters.clone();
+        let links = crate::applications::CorootLinks::of(&clusters, project.as_deref());
+        // Observability's own pages read the open entry's key as well.
+        self.pages.observability.update(cx, |page, cx| {
+            page.set_entries(&clusters, project.as_deref(), cx)
+        });
         let reader = crate::observability::OutcomeReader::new(&self.pages.observability);
         self.pages.applications.update(cx, |page, cx| {
             page.set_coroot(
