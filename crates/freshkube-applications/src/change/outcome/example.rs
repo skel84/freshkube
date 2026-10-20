@@ -10,7 +10,7 @@ use freshkube_delivery::change::example::POD_HASH;
 use freshkube_observability::{After, after_example};
 use gpui_kit::*;
 
-use super::{ChangePage, Memo, ask_of};
+use super::{ChangePage, Identity, Memo, ask_of};
 
 /// An outcome every Deployment hop shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,6 +144,9 @@ impl ChangePage {
                 stale: failed.map(|error| error.to_string()),
             },
         );
+        if let Some(identity) = Identity::example(&self.change, hop, kind, self.outcomes.window) {
+            self.publish_outcome(identity, hop, cx);
+        }
         self.detail = self.derive_detail();
         self.sync_marks();
         cx.notify();

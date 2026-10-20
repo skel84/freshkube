@@ -17,6 +17,7 @@
 //! no state reads as fine.
 mod example;
 mod section;
+mod session;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -37,6 +38,7 @@ pub use example::Kind;
 #[cfg(any(test, feature = "testing"))]
 pub(super) use section::Act;
 pub(super) use section::Section;
+pub(crate) use session::{SessionMemo, session as session_memo};
 
 /// An outcome read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
@@ -73,7 +75,7 @@ impl Links {
         )
     }
 
-    fn of_entry(&self, entry: &str) -> Result<&api::Link, Unlinked> {
+    pub(crate) fn of_entry(&self, entry: &str) -> Result<&api::Link, Unlinked> {
         match self.0.get(entry) {
             Some(Ok(link)) => Ok(link),
             Some(Err(why)) => Err(*why),
@@ -101,13 +103,63 @@ pub enum Coroot {
     Live(Live),
 }
 
-/// What a read is for.
+/// Slice 4's exact read identity, shared by the read owner and the memo.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Key {
-    hop: String,
-    query: api::Query,
-    window: api::RevisionWindow,
-    provider: Option<api::ProviderId>,
+pub(crate) struct Key {
+    pub(crate) hop: String,
+    pub(crate) query: api::Query,
+    pub(crate) window: api::RevisionWindow,
+    pub(crate) provider: Option<api::ProviderId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Identity {
+    Live(Key),
+    Example {
+        hop: String,
+        deployment: Object,
+        hash: Option<String>,
+        window: api::RevisionWindow,
+        kind: Option<Kind>,
+    },
+}
+
+impl Identity {
+    fn provider(&self) -> Option<api::ProviderId> {
+        match self {
+            Self::Live(key) => key.provider,
+            Self::Example { .. } => None,
+        }
+    }
+
+    pub(crate) fn example(
+        change: &Change,
+        hop: &str,
+        kind: Option<Kind>,
+        window: api::RevisionWindow,
+    ) -> Option<Self> {
+        let ask = ask_of(change, hop)?;
+        if ask.object.kind != "Deployment" {
+            return None;
+        }
+        let (deployment, hash) = (ask.object, ask.hash);
+        Some(Self::Example {
+            hop: hop.to_owned(),
+            deployment,
+            hash,
+            window,
+            kind,
+        })
+    }
+}
+
+/// A status uses the change page's mark and word; other outcomes use its
+/// complete sentence. Staleness describes the read, never a new verdict.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Summary {
+    pub(crate) mark: Option<Mark>,
+    pub(crate) words: SharedString,
+    pub(crate) stale: Option<SharedString>,
 }
 
 /// An outcome kept for a hop while its question stays the same.
@@ -429,6 +481,7 @@ impl ChangePage {
             Err(_) => api::Outcome::Failed(api::ReadError::Failed),
         };
         self.keep(&key, outcome, cx);
+        self.publish_outcome(Identity::Live(key.clone()), &key.hop, cx);
         self.detail = self.derive_detail();
         self.sync_marks();
         cx.notify();
@@ -467,6 +520,33 @@ impl ChangePage {
                 stale: None,
             },
         );
+    }
+
+    /// Hand off only a completed read, already checked against the request
+    /// and current provider. No charts or live work enter the session memo.
+    fn publish_outcome(&self, identity: Identity, hop: &str, cx: &mut Context<Self>) {
+        let Some(memo) = self.outcomes.memo.get(hop) else {
+            return;
+        };
+        let words = match memo.after.as_deref() {
+            Some(after) => after.status_word().into(),
+            None => match self.section(hop) {
+                Some(section) => section.words().into(),
+                None => return,
+            },
+        };
+        let summary = Summary {
+            mark: memo.after.as_deref().map(Mark::of),
+            words,
+            stale: memo.stale.as_ref().map(|why| {
+                format!(
+                    "Showing the last read at {}. {why}",
+                    super::clock(memo.read)
+                )
+                .into()
+            }),
+        };
+        session_memo(cx).update(cx, |memo, cx| memo.keep(identity, summary, cx));
     }
 
     /// Drops what was read for a question the change no longer asks: a

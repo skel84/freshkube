@@ -912,3 +912,42 @@ fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppCont
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn list_keeps_known_unread_applications_and_pods_with_their_reason(cx: &mut TestAppContext) {
+    for (shape, key) in [
+        (Shape::ArgoRefused, "dev-argocd"),
+        (
+            Shape::DestinationUnreachable,
+            "dev-reported-checkout-dev-0-pods",
+        ),
+    ] {
+        let (handle, page) = open(cx, 1280., 880., shape, Duration::ZERO, 13.);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let supplied = page.read(cx).shown().hop(key).unwrap().clone();
+            let reason = page.read(cx).shown().missing.last().unwrap().text.clone();
+            assert_eq!(supplied.state, HealthIndicator::Unknown);
+            assert!(supplied.detail.contains(&reason));
+            page.update(cx, |page, cx| page.select(key, window, cx));
+            window.render_frame(cx);
+            let id: SharedString = format!("change-hop-{key}").into();
+            let row = window.find(id.clone());
+            assert!(row.visible());
+            assert!(row.label().unwrap().contains(&reason));
+            assert!(row.label().unwrap().contains("link Unknown"));
+            window.click(id, cx);
+            window.render_frame(cx);
+            assert_eq!(page.read(cx).selected().map(|key| key.as_ref()), Some(key));
+            assert!(
+                window
+                    .find("change-detail-link")
+                    .label()
+                    .unwrap()
+                    .starts_with("Unknown")
+            );
+            assert!(page.read(cx).action_labels().is_empty());
+        })
+        .unwrap();
+    }
+}

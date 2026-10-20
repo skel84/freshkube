@@ -224,7 +224,18 @@ fn sources_with_builds(workspace: &Workspace, entry: &str) -> Sources {
 async fn argo_cd_refused_on_its_entry_says_so() {
     let change = read_across(
         &workspace(),
-        |world| world.argocd = std::mem::take(&mut world.argocd).refusing("applications"),
+        |world| {
+            world.argocd = std::mem::take(&mut world.argocd).refusing("applications");
+            world.kargo = std::mem::take(&mut world.kargo).with(
+                "stages",
+                vec![
+                    stage_of("dev", &[], &["f-new"]),
+                    stage_of("east", &["dev"], &["f-new"]),
+                    stage_of("west", &["dev"], &["f-new"]),
+                    stage_of("later", &["dev"], &["f-old"]),
+                ],
+            );
+        },
         &[],
     )
     .await
@@ -239,6 +250,50 @@ async fn argo_cd_refused_on_its_entry_says_so() {
         "{missing:?}"
     );
     assert!(matches!(change.stages[0].reach, Reach::Refused(_)));
+    for stage in ["dev", "east", "west"] {
+        let app = change
+            .hops
+            .iter()
+            .find(|hop| hop.key == format!("{stage}-argocd-0"))
+            .unwrap();
+        assert_unread(app, &format!("{stage}-eligible"), missing[0].1);
+        assert_eq!(app.name, "Application not read");
+        let super::super::Shows::Hop(detail) = &app.shows else {
+            unreachable!()
+        };
+        assert_eq!(detail.title, "Application not read");
+    }
+    let later = change
+        .stages
+        .iter()
+        .position(|stage| stage.name == "later")
+        .unwrap();
+    let group = change
+        .groups
+        .iter()
+        .position(|group| group.phase == super::super::Phase::Stage(later))
+        .unwrap();
+    assert_eq!(
+        change.hops_of(group).count(),
+        3,
+        "the unlooked-up Stage has only gates"
+    );
+}
+
+fn assert_unread(hop: &super::super::Hop, after: &str, reason: &str) {
+    assert_eq!(hop.state, HealthIndicator::Unknown);
+    assert_eq!(hop.link, Some(Confidence::Unknown));
+    assert_eq!(hop.after.as_deref(), Some(after));
+    assert_eq!(hop.at, None);
+    assert!(hop.detail.contains(reason), "{}", hop.detail);
+    let super::super::Shows::Hop(detail) = &hop.shows else {
+        panic!("placeholder");
+    };
+    let link = detail.link.as_ref().unwrap();
+    assert_eq!(link.confidence, Confidence::Unknown);
+    assert_eq!(link.key, None);
+    assert!(link.why.contains(reason));
+    assert!(detail.actions.is_empty());
 }
 
 #[tokio::test]
@@ -266,6 +321,19 @@ async fn a_destination_unreachable_reports_what_argo_cd_says() {
     let super::super::Shows::Hop(detail) = &reported.shows else {
         panic!("{reported:?}");
     };
+    let pods = change
+        .hops
+        .iter()
+        .find(|hop| hop.after.as_deref() == Some(reported.key.as_str()))
+        .unwrap();
+    assert_unread(
+        pods,
+        &reported.key,
+        "Couldn't reach env-c: connection refused",
+    );
+    assert_eq!(pods.name, "Pods");
+    assert_eq!(pods.from, "env-c");
+    assert_eq!(reported.after.as_deref(), Some("dev-argocd-0"));
     // What Argo CD reports stays its claim, saying why it isn't more.
     assert_eq!(reported.link, Some(Confidence::Claimed));
     assert_eq!(
@@ -591,4 +659,66 @@ async fn a_destination_reporting_only_a_statefulset_is_claimed_unread() {
         .expect("Argo CD's StatefulSet");
     assert_eq!(reported.link, Some(Confidence::Claimed));
     assert!(change.missing.is_empty(), "{:?}", change.missing);
+}
+
+#[tokio::test]
+async fn each_reported_workload_keeps_its_own_unread_pods() {
+    let change = read_across(
+        &workspace(),
+        |world| {
+            let mut app = application(Some(ENV));
+            app["status"]["resources"] = json!([
+                {"group":"argoproj.io", "kind":"Rollout", "namespace":"shop", "name":"api"},
+                {"group":"apps", "kind":"Deployment", "namespace":"shop", "name":"api"},
+                {"group":"apps", "kind":"StatefulSet", "namespace":"shop", "name":"store"},
+                {"group":"apps", "kind":"DaemonSet", "namespace":"shop", "name":"agent"},
+                {"kind":"Service", "namespace":"shop", "name":"api"}
+            ]);
+            world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
+        },
+        &["env-c"],
+    )
+    .await
+    .unwrap();
+    let workloads: Vec<_> = change
+        .hops
+        .iter()
+        .filter(|hop| hop.after.as_deref() == Some("dev-argocd-0"))
+        .collect();
+    assert_eq!(workloads.len(), 4, "only the reported workload controllers");
+    for workload in workloads {
+        assert_eq!(workload.link, Some(Confidence::Claimed));
+        let pods: Vec<_> = change
+            .hops
+            .iter()
+            .filter(|hop| hop.after.as_deref() == Some(workload.key.as_str()))
+            .collect();
+        assert_eq!(pods.len(), 1);
+        assert_unread(
+            pods[0],
+            &workload.key,
+            "Couldn't reach env-c: connection refused",
+        );
+    }
+    let mut keys: Vec<_> = change.hops.iter().map(|hop| &hop.key).collect();
+    keys.sort();
+    let count = keys.len();
+    keys.dedup();
+    assert_eq!(keys.len(), count);
+}
+
+#[tokio::test]
+async fn an_unreachable_destination_with_no_reported_workload_adds_no_pods_placeholder() {
+    let change = read_across(
+        &workspace(),
+        |world| {
+            let mut app = application(Some(ENV));
+            app["status"]["resources"] = json!([]);
+            world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
+        },
+        &["env-c"],
+    )
+    .await
+    .unwrap();
+    assert!(!change.hops.iter().any(|hop| hop.key.contains("-reported-")));
 }

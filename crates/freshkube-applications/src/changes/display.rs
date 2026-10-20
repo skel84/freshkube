@@ -20,6 +20,8 @@ pub struct Cell {
     pub word: SharedString,
     /// Why, in the Inspector.
     pub why: SharedString,
+    /// Inspector-only Coroot line; never part of the Stages cell.
+    pub(crate) after: Option<super::outcome::Line>,
 }
 
 /// One hop of the trail, as the Inspector lists it.
@@ -361,6 +363,7 @@ fn row(row: &Row, now: DateTime<Utc>) -> ChangeRow {
             tone: (stage.reach != Reach::NotReached).then(|| reach_tone(&stage.reach)),
             word: reach_word(&stage.reach).into(),
             why: why(&stage.name, &stage.reach, row).into(),
+            after: None,
         })
         .collect();
     let state = state_words(&row.state);
