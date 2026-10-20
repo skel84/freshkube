@@ -289,6 +289,7 @@ pub struct ApplicationsPage {
     secrets: Option<freshkube_core::secrets::Secrets>,
     public_key_file: Option<std::path::PathBuf>,
     evidence_result: Option<freshkube_core::setup::Evidence>,
+    build_namespace: Option<String>,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
@@ -410,6 +411,7 @@ impl ApplicationsPage {
             secrets,
             public_key_file: None,
             evidence_result: None,
+            build_namespace: None,
             source: None,
             visible: false,
             variant,
@@ -536,11 +538,16 @@ impl ApplicationsPage {
             .supply_chain
             .as_ref()
             .and_then(|chain| chain.evidence.clone());
+        self.build_namespace = setup
+            .delivery
+            .as_ref()
+            .and_then(|delivery| delivery.build_namespace.clone());
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| {
                 page.reload_setup(
                     self.public_key_file.clone(),
                     self.evidence_result.clone(),
+                    self.build_namespace.clone(),
                     cx,
                 )
             });
@@ -549,6 +556,7 @@ impl ApplicationsPage {
             page.reload_setup(
                 self.public_key_file.clone(),
                 self.evidence_result.clone(),
+                self.build_namespace.clone(),
                 cx,
             )
         });
@@ -601,6 +609,7 @@ impl ApplicationsPage {
             kubeconfig: self.clusters.kubeconfig.clone(),
             public_key_file: self.public_key_file.clone(),
             evidence_result: self.evidence_result.clone(),
+            build_namespace: self.build_namespace.clone(),
         }
     }
 

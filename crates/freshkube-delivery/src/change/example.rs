@@ -1030,6 +1030,9 @@ pub enum Shape {
     ArgoRefused,
     /// `dev-fra`, the `dev` Stage's destination, couldn't be reached.
     DestinationUnreachable,
+    /// The Freight names an image and no commit, so the build is joined to
+    /// it by the image digest a result of the build reports.
+    ImageOnly,
 }
 
 /// Why the example's unreachable entry wasn't read.
@@ -1042,7 +1045,7 @@ impl Shape {
     /// The words of what wasn't read, as a live read says it.
     fn words(self) -> Option<String> {
         match self {
-            Self::Whole | Self::Spread => None,
+            Self::Whole | Self::Spread | Self::ImageOnly => None,
             Self::KargoUnreachable => Some(words::unreachable(CICD, NO_ANSWER)),
             Self::ArgoRefused => Some(format!(
                 "Argo CD Applications were refused on {CORE}: applications.argoproj.io is \
@@ -1069,11 +1072,15 @@ impl Shape {
             spread(&mut change);
             return Ok(change);
         }
+        if self == Self::ImageOnly {
+            image_only(&mut change);
+            return Ok(change);
+        }
         let Some(why) = self.words() else {
             return Ok(change);
         };
         match self {
-            Self::Whole | Self::Spread => {}
+            Self::Whole | Self::Spread | Self::ImageOnly => {}
             Self::KargoUnreachable => {
                 return Err(Failure::new(
                     FailureKind::Unreachable,
@@ -1149,6 +1156,51 @@ impl Shape {
         };
         change.missing.push(Missing::new(gap, why));
         Ok(change)
+    }
+}
+
+/// The example's Freight as a Warehouse that subscribes to an image alone
+/// makes it: no commit, so no pull request or commit hop, and the build is
+/// joined to the Freight on the image digest.
+fn image_only(change: &mut Change) {
+    change.origin = Origin {
+        pull_request: None,
+        commit: None,
+        title: None,
+    };
+    change
+        .hops
+        .retain(|hop| !matches!(hop.key.as_str(), "pr" | "pr-run"));
+    for hop in &mut change.hops {
+        let Shows::Hop(detail) = &mut hop.shows else {
+            continue;
+        };
+        match hop.key.as_str() {
+            "push-run" => {
+                hop.after = None;
+                detail.link = link(
+                    Confidence::Confirmed,
+                    "digest",
+                    "Freight image",
+                    DIGEST,
+                    "a result of the run, IMAGE_DIGEST, reports the Freight's image digest",
+                    "The Freight names no commit, so the build is found by the digest its \
+                     results report. A digest names one image, whichever commit built it.",
+                );
+            }
+            "freight" => {
+                detail.fields.retain(|field| field.label != "Commit");
+                detail.link = link(
+                    Confidence::Confirmed,
+                    "digest",
+                    "Image checkout-api",
+                    DIGEST,
+                    "the Freight names the same digest",
+                    "The digest matches on both sides.",
+                );
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1391,6 +1443,39 @@ mod tests {
             original.hops_of(group).collect::<Vec<_>>()
         );
         assert_eq!(changed.stages[1], original.stages[1]);
+    }
+
+    #[test]
+    fn an_image_only_freight_starts_at_the_build_the_digest_found() {
+        let original = change(now());
+        let image = Shape::ImageOnly.apply(original.clone()).unwrap();
+        assert!(image.hop("pr").is_none() && image.hop("pr-run").is_none());
+        assert_eq!(image.origin.commit, None);
+        assert!(image.missing.is_empty());
+        let build = image.hop("push-run").unwrap();
+        assert_eq!(build.after, None);
+        let Shows::Hop(detail) = &build.shows else {
+            panic!("a hop's detail");
+        };
+        let joined = detail.link.as_ref().unwrap();
+        assert_eq!(
+            (joined.confidence, joined.by.as_str()),
+            (Confidence::Confirmed, "digest")
+        );
+        assert_eq!(joined.key.as_deref(), Some(DIGEST));
+        let Shows::Hop(freight) = &image.hop("freight").unwrap().shows else {
+            panic!("a hop's detail");
+        };
+        assert!(freight.fields.iter().all(|field| field.label != "Commit"));
+        // Every other hop is the example's own.
+        assert_eq!(
+            image.hops.iter().filter(|h| h.group > 1).count(),
+            original.hops.iter().filter(|h| h.group > 1).count()
+        );
+        let mut keys: Vec<_> = image.hops.iter().map(|hop| &hop.key).collect();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), image.hops.len());
     }
 
     #[test]

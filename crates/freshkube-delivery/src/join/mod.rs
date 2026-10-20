@@ -215,7 +215,7 @@ impl DigestSearch {
             .join(", ");
         match &self.outcome {
             DigestOutcome::NoNamespace => {
-                "no build namespace is set, so builds can't be searched by image digest".to_owned()
+                "no build namespace is set (delivery.build_namespace in freshkube.yaml), so builds can't be searched by image digest".to_owned()
             }
             DigestOutcome::Failed(why) => {
                 format!("builds couldn't be searched by image digest ({digests}): {why}")

@@ -108,6 +108,11 @@ supply_chain:
     result: build-evidence        # the PipelineRun result that holds it
     commit: /commit               # JSON pointers into that result
     digest: /image/digest
+
+# How delivery reads builds. Optional: without it, a build is found by its
+# commit alone, across every namespace of the builds' cluster.
+delivery:
+  build_namespace: acme-builds    # where the builds run (#803)
 ```
 
 What each part means, and the rules a read enforces. The `metrics` blocks follow [Metrics](#metrics) below. The `results`, per-entry `coroot` and `supply_chain` shapes are this design's proposal; #268's slice 1 and #269's slice 8 confirm or change them before slice 1 below types them.
@@ -120,6 +125,7 @@ What each part means, and the rules a read enforces. The `metrics` blocks follow
 - **`metrics`** is one choice, `mode`: `automatic` (the default, and what a file without `metrics` means), `central` or `per-entry`. `central` takes a `store`, the hosting `entry` and a Service in it (namespace, name, port, `https`, and a path prefix with or without its slashes, normalised as `PrometheusService::with_path` does today), or a `url`; and a `label`, `cluster` unless set. A URL's bearer token is `token: keys.json` or nothing; like `coroot.key`, any other value is refused unrepeated. A Service needs no token: the hosting entry's own Kubernetes credentials reach it. `store` and `label` under another mode are kept, unread, so switching modes back and forth loses nothing.
 - **Per entry, `metrics`** may set `value`, the entry's value of the central label (its id unless set), and `source`, its own `service` or `url` (the store's shapes without `entry`). A `source` wins under any mode, sets exactly one of `service` and `url`, and takes a `token` only with a `url`. A label name must be a Prometheus label name (`metrics.label`, checked under `central` only) and a value non-empty.
 - **`supply_chain`** is workspace-wide ([#268](https://github.com/skel84/freshkube/issues/268), decision 1): a public key file the person names, never read from a cluster; the transparency log, read only when `transparency_log` is `true`; and the evidence result, with the JSON pointers to its commit and digest.
+- **`delivery.build_namespace`** ([#803](https://github.com/skel84/freshkube/issues/803)) names the namespace the builds run in, read from the same cluster the commit reads use today: the entry the workspace's `sources` give for builds, else the open connection. Without it a build is found by its commit alone, as before. With it, a Freight that names no commit is also looked for by image digest: delivery lists that namespace's PipelineRuns and TaskRuns, a page cap each, compares their `IMAGE_DIGEST` results in memory with the Freight's image digests, and, when a Results address is set for that entry, the archive's latest ten PipelineRun records. A Freight that names a commit is searched by both when the key is set, and the commit reads are scoped to the namespace too. Without the key, the Build hop of an image-only Freight says the build namespace isn't set and names `delivery.build_namespace`. It must be a non-empty name; nothing checks that the namespace exists, and a wrong one finds no build.
 - **Unknown keys** are kept and written back as they were read, at every level, as [#699](https://github.com/skel84/freshkube/issues/699) did for the JSON files, and Settings names them.
 - **The file** is read only when it is a regular file of at most 256 KiB, and a new one is created `0600`, as `workspace.json` is.
 

@@ -1,0 +1,1 @@
+- **Builds by image digest:** a Kargo Freight that names an image and no commit is now joined to its build by the `IMAGE_DIGEST` a PipelineRun, TaskRun or archived Results record reports, in the namespace the new `delivery.build_namespace` setup key names; the Build hop says when the key isn't set.

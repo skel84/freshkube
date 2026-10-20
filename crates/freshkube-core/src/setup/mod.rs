@@ -34,8 +34,8 @@ mod validate;
 
 pub use migrate::{Kept, Outcome, migrate};
 pub use types::{
-    Coroot, DEFAULT_LABEL, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson, Metrics,
-    MetricsService, Mode, Results, SignIn, Source, Store, SupplyChain,
+    Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson,
+    Metrics, MetricsService, Mode, Results, SignIn, Source, Store, SupplyChain,
 };
 
 /// The comment every written file starts with.
@@ -69,6 +69,8 @@ pub struct Setup {
     pub coroot: Option<Coroot>,
     /// The supply chain's trust; `None` verifies no signature.
     pub supply_chain: Option<SupplyChain>,
+    /// How delivery reads builds; `None` is the defaults.
+    pub delivery: Option<Delivery>,
     /// Keys this version doesn't know, written back as they were read.
     extra: Extra,
 }
@@ -237,6 +239,9 @@ impl Setup {
         if let Some(chain) = &self.supply_chain {
             rule(validate::supply_chain(chain))?;
         }
+        if let Some(delivery) = &self.delivery {
+            rule(validate::delivery(delivery))?;
+        }
         Ok(())
     }
 
@@ -261,6 +266,7 @@ impl Setup {
                     | "metrics"
                     | "coroot"
                     | "supply_chain"
+                    | "delivery"
             )
         }) {
             return Err(Invalid::WrongShape(None));
@@ -290,6 +296,9 @@ impl Setup {
             if let Some(evidence) = &chain.evidence {
                 named(&mut keys, "supply_chain.evidence", &evidence.extra);
             }
+        }
+        if let Some(delivery) = &self.delivery {
+            named(&mut keys, "delivery", &delivery.extra);
         }
         for entry in &self.workspace.clusters {
             entry_keys(&mut keys, entry);
@@ -356,6 +365,8 @@ struct Read {
     coroot: Option<Coroot>,
     #[serde(default)]
     supply_chain: Option<SupplyChain>,
+    #[serde(default)]
+    delivery: Option<Delivery>,
     #[serde(flatten)]
     extra: Extra,
 }
@@ -377,6 +388,8 @@ struct Write<'a> {
     coroot: &'a Option<Coroot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     supply_chain: &'a Option<SupplyChain>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delivery: &'a Option<Delivery>,
     #[serde(flatten)]
     extra: &'a Extra,
 }
@@ -421,6 +434,7 @@ pub fn parse(bytes: &[u8]) -> Result<Setup, Invalid> {
         metrics: read.metrics,
         coroot: read.coroot,
         supply_chain: read.supply_chain,
+        delivery: read.delivery,
         extra: read.extra,
     };
     setup.validate()?;
@@ -439,6 +453,7 @@ pub fn to_text(setup: &Setup) -> String {
         metrics: &setup.metrics,
         coroot: &setup.coroot,
         supply_chain: &setup.supply_chain,
+        delivery: &setup.delivery,
         extra: &setup.extra,
     };
     let body = serde_yaml::to_string(&write).expect("a setup serializes");

@@ -25,6 +25,8 @@ pub struct Across {
     pub public_key_file: Option<std::path::PathBuf>,
     /// The pipeline record configured in the same setup.
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
+    /// The namespace the builds run in, from the same setup.
+    pub build_namespace: Option<String>,
     /// The workspace's kubeconfig, `None` for the automatic one.
     pub kubeconfig: Option<PathBuf>,
 }

@@ -5,8 +5,8 @@
 use std::path::Path;
 
 use super::{
-    Coroot, EntryCoroot, EntryMetrics, Fault, Metrics, Mode, Results, Source, Store, SupplyChain,
-    types::MetricsService,
+    Coroot, Delivery, EntryCoroot, EntryMetrics, Fault, Metrics, Mode, Results, Source, Store,
+    SupplyChain, types::MetricsService,
 };
 use crate::{base_url::parse_base_url, workspace::Entry};
 
@@ -209,6 +209,13 @@ pub(super) fn supply_chain(chain: &SupplyChain) -> Result<(), Fault> {
         non_empty(&evidence.result, format!("{at}.result"))?;
         pointer(&evidence.commit, format!("{at}.commit"))?;
         pointer(&evidence.digest, format!("{at}.digest"))?;
+    }
+    Ok(())
+}
+
+pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
+    if let Some(namespace) = &delivery.build_namespace {
+        non_empty(namespace, "delivery.build_namespace".into())?;
     }
     Ok(())
 }

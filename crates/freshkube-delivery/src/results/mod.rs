@@ -11,6 +11,7 @@ mod records;
 #[cfg(test)]
 mod tests;
 mod transport;
+use transport::Query;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -348,10 +349,12 @@ impl Client {
         );
         self.list(
             &format!("{parent}/records"),
-            &filter,
+            Query {
+                filter: &filter,
+                order: None,
+            },
             MOST_RESULT_RUNS,
             Cap::Runs,
-            None,
             until,
             |record| records::pipeline_run(record, namespace, sha),
         )
@@ -370,10 +373,12 @@ impl Client {
         let filter = "data_type == 'tekton.dev/v1.PipelineRun' || data_type == 'tekton.dev/v1beta1.PipelineRun'";
         self.list(
             &format!("{namespace}/results/-/records"),
-            filter,
+            Query {
+                filter,
+                order: Some("create_time desc"),
+            },
             MOST_RESULT_RUNS,
             Cap::Runs,
-            Some("create_time desc"),
             until,
             |record| records::pipeline_run_of(record, namespace),
         )
@@ -390,10 +395,12 @@ impl Client {
             "data_type == 'tekton.dev/v1.TaskRun' || data_type == 'tekton.dev/v1beta1.TaskRun'";
         self.list(
             &format!("{result}/records"),
-            filter,
+            Query {
+                filter,
+                order: None,
+            },
             MOST_RESULT_TASKS,
             Cap::Tasks,
-            None,
             until,
             |record| records::task_run(record, result),
         )

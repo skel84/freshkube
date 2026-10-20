@@ -287,6 +287,18 @@ impl Coroot {
     }
 }
 
+/// How delivery reads the setup's builds, Applications and Kargo Stages.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Delivery {
+    /// The namespace the builds run in. A build is searched for by its image
+    /// digest only in a namespace named here; without it only a commit finds
+    /// a build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_namespace: Option<String>,
+    #[serde(flatten)]
+    pub(super) extra: Extra,
+}
+
 /// The supply chain's trust.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SupplyChain {

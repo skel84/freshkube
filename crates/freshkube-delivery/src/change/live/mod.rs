@@ -80,6 +80,9 @@ pub struct Place {
     pub public_key_file: Option<std::path::PathBuf>,
     /// The pipeline record configured in the same setup.
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
+    /// The namespace the builds run in, from the same setup. A build is
+    /// searched for by image digest only in it.
+    pub build_namespace: Option<String>,
 }
 
 impl Place {
@@ -660,7 +663,7 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         followed: Some(freight.name.clone()),
         kargo_project: place.project.clone(),
         argocd_namespace: place.argocd_namespace.clone(),
-        build_namespace: None,
+        build_namespace: place.build_namespace.clone(),
         github_repo: None,
         contexts,
         cluster_names,
