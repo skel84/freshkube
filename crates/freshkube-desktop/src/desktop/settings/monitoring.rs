@@ -474,9 +474,6 @@ impl SettingsPage {
                 },
             ));
         }
-        draft
-            ._subscriptions
-            .push(cx.observe(&page, |_, _, cx| cx.notify()));
         draft._subscriptions.push(cx.subscribe(
             &entry,
             |page, _, _: &SelectEvent<Vec<SharedString>>, cx| {
