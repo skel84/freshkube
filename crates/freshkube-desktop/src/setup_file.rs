@@ -64,6 +64,9 @@ pub(crate) struct SetupFile {
     pub(crate) coroot_reconnect: bool,
     stat: FileStat,
     write_generation: u64,
+    /// Accepted setup changes and successful explicit reloads, including
+    /// identical bytes: referenced key files can change independently.
+    read_revision: u64,
     writing: bool,
     _poll: Option<Task<()>>,
 }
@@ -91,6 +94,7 @@ impl SetupFile {
             coroot_reconnect: true,
             stat: FileStat::Missing,
             write_generation: 0,
+            read_revision: 0,
             writing: false,
             _poll: None,
         };
@@ -191,7 +195,7 @@ impl SetupFile {
                         if this
                             .update(cx, |this, cx| {
                                 if generation == this.write_generation && !this.writing {
-                                    this.apply(stat.clone(), outcome, initial, cx);
+                                    this.apply(stat.clone(), outcome, initial, false, cx);
                                 }
                             })
                             .is_err()
@@ -215,6 +219,9 @@ impl SetupFile {
 
     /// Invalidates an in-flight read as well as suppressing the next poll.
     fn record_write(&mut self, setup: Setup, seen: Seen, stat: FileStat) {
+        if self.setup.as_ref() != Some(&setup) {
+            self.read_revision += 1;
+        }
         self.setup = Some(setup);
         self.problem = None;
         self.last_written = Some(seen.clone());
@@ -318,7 +325,7 @@ impl SetupFile {
             Err(refused) => {
                 if let Some(disk) = refused.disk {
                     let (stat, outcome) = *disk;
-                    self.apply(stat, outcome, false, cx);
+                    self.apply(stat, outcome, false, false, cx);
                 }
                 Err(refused.error)
             }
@@ -337,13 +344,26 @@ impl SetupFile {
             let (stat, disk) = cx.background_spawn(async move { read_now(&file) }).await;
             _ = this.update(cx, |this, cx| {
                 if this.write_generation == generation {
-                    this.apply(stat, disk, false, cx);
+                    this.apply(stat, disk, false, true, cx);
                 }
             });
         })
     }
 
-    fn apply(&mut self, stat: FileStat, outcome: Outcome, initial: bool, cx: &mut Context<Self>) {
+    /// The delivery hand-off consumes each accepted read only once.
+    pub(crate) fn read_revision(&self) -> u64 {
+        self.read_revision
+    }
+
+    fn apply(
+        &mut self,
+        stat: FileStat,
+        outcome: Outcome,
+        initial: bool,
+        explicit: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let reloaded = explicit && matches!(&outcome, Outcome::Parsed(Ok(_), _));
         self.stat = stat;
         let old_problem = self.problem.clone();
         let mut setup_changed = false;
@@ -372,10 +392,13 @@ impl SetupFile {
             self.receipt = None;
             self.receipt_label.clear();
         }
+        if setup_changed || reloaded {
+            self.read_revision += 1;
+        }
         if initial {
             cx.emit(Event::Ready);
-        } else if setup_changed || old_problem != self.problem {
-            if setup_changed {
+        } else if setup_changed || reloaded || old_problem != self.problem {
+            if setup_changed || reloaded {
                 self.set_receipt("Reloaded", false);
             }
             cx.emit(Event::Changed { setup_changed });
@@ -877,5 +900,35 @@ mod tests {
             freshkube_core::workspace::Workspace::default()
         );
         assert!(written.supply_chain.is_none());
+    }
+
+    #[gpui_kit::test]
+    async fn an_identical_explicit_reload_advances_the_read_revision(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("freshkube.yaml");
+        std::fs::write(&path, FIRST).unwrap();
+        let (_, reader) = mount(cx, directory.path(), false);
+        let file = model(&reader, cx);
+        let before = cx.read(|cx| file.read(cx).read_revision());
+        assert!(before > 0);
+        let reload = file.update(cx, |file, cx| file.reload(cx));
+        reload.await;
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 1);
+        assert_eq!(
+            cx.read(|cx| file.read(cx).setup.clone()),
+            Some(setup::parse(FIRST.as_bytes()).unwrap())
+        );
+        // A quiet poll and an unsuccessful explicit reload accept no new setup.
+        advance(cx, POLL * 2);
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 1);
+        std::fs::write(&path, "version: [broken").unwrap();
+        file.update(cx, |file, cx| file.reload(cx)).await;
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 1);
+        // A changed successful reload advances once, rather than once for
+        // the changed bytes and again for the explicit action.
+        std::fs::write(&path, SECOND).unwrap();
+        file.update(cx, |file, cx| file.reload(cx)).await;
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 2);
     }
 }

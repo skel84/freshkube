@@ -29,6 +29,7 @@ use crate::{
 /// keeps beside it. The age label is the session's, made by the caller
 /// because Overview draws it.
 pub(super) struct Pages {
+    delivery_revision: std::cell::Cell<Option<u64>>,
     pub(super) map: BTreeMap<PageId, ScreenHandle>,
     pub(super) logs: Entity<LogPanel>,
     pub(super) search: Entity<search::Search>,
@@ -167,6 +168,7 @@ impl Pages {
             &resources,
         ));
         Self {
+            delivery_revision: std::cell::Cell::new(None),
             map: pages,
             logs,
             search,
@@ -289,9 +291,18 @@ fn page_handles(
 impl Pages {
     /// The setup owner's last good setup: Monitoring finds its metrics and
     /// Applications replaces delivery trust and cancels older reads.
-    pub(super) fn set_setup(&self, setup: freshkube_core::setup::Setup, cx: &mut App) {
-        self.applications
-            .update(cx, |page, cx| page.set_setup(&setup, cx));
+    pub(super) fn set_setup(
+        &self,
+        setup: freshkube_core::setup::Setup,
+        revision: u64,
+        cx: &mut App,
+    ) {
+        // Settings notifications also repeat this hand-off. Only an accepted
+        // setup read invalidates delivery jobs, including same-path reloads.
+        if self.delivery_revision.replace(Some(revision)) != Some(revision) {
+            self.applications
+                .update(cx, |page, cx| page.set_setup(&setup, cx));
+        }
         super::entity_pages::set_metrics_setup(&self.monitoring, setup, cx);
     }
 
@@ -346,5 +357,64 @@ impl Pages {
         let nodes = self.node_workspace.read(cx).resource_facts.clone();
         self.resources
             .update(cx, |resources, cx| resources.set_node_facts(nodes, cx));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{AppContext, TestAppContext, test::TestWindowExt};
+
+    #[gpui_kit::test]
+    fn a_repeated_setup_handoff_keeps_the_application_read(cx: &mut TestAppContext) {
+        use crate::applications::testing::change::Fetch;
+        use freshkube_delivery::change::live::{Mapping, Place};
+        let (runtime, window, pilot) = crate::desktop::testing::fixture(cx, 1280., 880.);
+        cx.update_window(window, |_, window, cx| {
+            window.click("nav-applications", cx);
+            window.render_frame(cx);
+            let applications = pilot.read(cx).pages.applications.clone();
+            applications.update(cx, |page, cx| {
+                page.open_named("checkout", window, cx);
+                page.follow_named("prod-ams", window, cx);
+            });
+            let change = applications.read(cx).change_page().cloned().unwrap();
+            change.update(cx, |page, cx| {
+                page.set_shown(false, cx);
+                page.fetch = Fetch::Live {
+                    runtime: runtime.handle().clone(),
+                    access: crate::resources::ClusterAccess::EXAMPLE,
+                    secrets: None,
+                    setup_revision: 0,
+                    kubeconfig: None,
+                    place: Box::new(Place {
+                        cluster: "cluster-b".into(),
+                        label: "cluster-b".into(),
+                        project: "checkout".into(),
+                        freight: "freight-a".into(),
+                        argocd_namespace: "argocd".into(),
+                        mapping: Mapping::default(),
+                        sources: Default::default(),
+                        public_key_file: None,
+                        evidence_result: None,
+                    }),
+                };
+            });
+            let setup = freshkube_core::setup::Setup::default();
+            pilot.update(cx, |pilot, cx| pilot.pages.set_setup(setup.clone(), 1, cx));
+            change.update(cx, |page, _| {
+                page.loader
+                    .start("invented-connection/checkout/freight-a/setup/1".into());
+            });
+            let before = change.read(cx).loader.revision();
+            assert!(change.read(cx).is_reading());
+            // Simulate an unrelated Settings notification repeating the
+            // same owner's read. It must not cancel or expire delivery.
+            pilot.update(cx, |pilot, cx| pilot.pages.set_setup(setup.clone(), 1, cx));
+            assert_eq!(change.read(cx).loader.revision(), before);
+            assert!(change.read(cx).is_reading());
+            pilot.update(cx, |pilot, cx| pilot.pages.set_setup(setup, 2, cx));
+            assert!(change.read(cx).loader.revision() > before);
+        })
+        .unwrap();
     }
 }
