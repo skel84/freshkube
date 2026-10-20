@@ -58,6 +58,8 @@ fn place() -> Place {
         argocd_namespace: "argocd".into(),
         mapping: Mapping::default(),
         sources: Default::default(),
+        public_key_file: None,
+        evidence_result: None,
     }
 }
 
@@ -509,6 +511,8 @@ async fn the_pool_opens_one_address_client_and_counts_a_two_change_refresh() {
             ..Default::default()
         },
         sources: sources.clone(),
+        public_key_file: None,
+        evidence_result: None,
     };
     let read = within(crate::changes::live::read_in(
         &pool,
@@ -525,12 +529,14 @@ async fn the_pool_opens_one_address_client_and_counts_a_two_change_refresh() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn without_results_derives_exactly_as_main() {
+async fn without_supply_chain_or_results_derives_exactly_as_main() {
     use crate::entry::pool::{Open, Pool};
     use freshkube_core::workspace::{Entry, Role, Sources, Workspace};
     let entry = Entry::new("cluster-b", Role::Cicd, "cluster-b");
     assert!(entry.results.is_none());
-    let sources = Sources::of(&Workspace::new(vec![entry]));
+    let setup = freshkube_core::setup::Setup::new(Workspace::new(vec![entry]));
+    assert!(setup.supply_chain.is_none());
+    let sources = Sources::of(&setup.workspace);
     // Complete Change debug fingerprints captured on main 62f0c92f, using
     // that revision's derive.rs and links.rs with these invented fixtures.
     for (name, reader, expected) in [
@@ -564,6 +570,8 @@ async fn without_results_derives_exactly_as_main() {
             |_| std::future::ready(Ok(FixtureReader::default())),
             crate::changes::live::BUDGET,
         );
+        // The app now supplies its store even when no entry uses Results.
+        let pool = pool.with_secrets(Some(Arc::new(MemoryStore::default())));
         let history = pool.results(Instant::now() + Duration::from_secs(20)).await;
         assert!(matches!(history, Err(Error::Off)));
         let evidence = evidence(&reader, history).await;

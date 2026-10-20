@@ -99,6 +99,8 @@ enum Entry {
 
 pub struct ChangesPage {
     runtime: tokio::runtime::Handle,
+    secrets: Option<freshkube_core::secrets::Secrets>,
+    setup_revision: u64,
     source: Option<ClusterSource>,
     visible: bool,
     /// What example data couldn't read (`FRESHKUBE_APPLICATIONS`).
@@ -109,7 +111,7 @@ pub struct ChangesPage {
     /// The read, its answer and the work in flight, keyed by the
     /// connection. It is hidden while the list is, and its answer's age
     /// decides whether showing reads.
-    loader: Loader<Read, String>,
+    loader: Loader<Read, (String, u64)>,
     /// Which connection each cluster is, for the change page's links.
     connections: Connections,
     /// Where a live read reads each part, and how the workspace maps Argo
@@ -169,6 +171,7 @@ impl ChangesPage {
     pub(crate) fn new(
         runtime: tokio::runtime::Handle,
         shape: Shape,
+        secrets: Option<freshkube_core::secrets::Secrets>,
         cx: &mut Context<Self>,
     ) -> Self {
         let loading = kit::LoadingRows::new(PREFIX);
@@ -182,6 +185,8 @@ impl ChangesPage {
         let outcomes = cx.observe(&outcome_memo, |page, _, cx| page.sync_outcomes(cx));
         Self {
             runtime,
+            secrets,
+            setup_revision: 0,
             source: None,
             visible: false,
             shape,
@@ -285,6 +290,31 @@ impl ChangesPage {
         }
     }
 
+    /// A setup reload replaces trust and cancels every delivery read made
+    /// with the old setup, including a change opened from this list.
+    pub(crate) fn reload_setup(
+        &mut self,
+        public_key_file: Option<std::path::PathBuf>,
+        evidence_result: Option<freshkube_core::setup::Evidence>,
+        cx: &mut Context<Self>,
+    ) {
+        self.setup_revision += 1;
+        self.across.public_key_file = public_key_file.clone();
+        self.across.evidence_result = evidence_result.clone();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| {
+                page.reload_setup(public_key_file, evidence_result, cx)
+            });
+        }
+        if self.is_live() {
+            self.loader.reset();
+            self.show_read(cx);
+            if self.visible {
+                self.read(cx);
+            }
+        }
+    }
+
     /// Where the change opened from the list gets what Coroot found after
     /// a deploy; the change shown follows.
     pub fn set_coroot(&mut self, coroot: Coroot, cx: &mut Context<Self>) {
@@ -373,7 +403,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start(source.id.clone());
+        let request = self.loader.start((source.id.clone(), self.setup_revision));
         match &source.access {
             ClusterAccess::Example(hold) => {
                 // Held, it stays in flight, so the page keeps its loading
@@ -409,8 +439,11 @@ impl ChangesPage {
                     argocd_namespace: self.argocd_namespace.clone(),
                     mapping: self.across.mapping.clone(),
                     sources: self.across.sources.clone(),
+                    public_key_file: self.across.public_key_file.clone(),
+                    evidence_result: self.across.evidence_result.clone(),
                 };
                 let across = self.across.clone();
+                let secrets = self.secrets.clone();
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
                     DEADLINE,
@@ -428,7 +461,8 @@ impl ChangesPage {
                             }),
                             |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
                             core_changes::live::BUDGET,
-                        );
+                        )
+                        .with_secrets(secrets);
                         let read = core_changes::live::read_in(
                             &pool,
                             &at,
@@ -457,7 +491,7 @@ impl ChangesPage {
     /// A read's answer, published only while it is the one in flight.
     fn answer(
         &mut self,
-        request: &Request<String>,
+        request: &Request<(String, u64)>,
         result: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
@@ -701,6 +735,8 @@ impl ChangesPage {
             (access, _) => Fetch::Live {
                 runtime: self.runtime.clone(),
                 access: access.clone(),
+                secrets: self.secrets.clone(),
+                setup_revision: self.setup_revision,
                 place: Box::new(Place {
                     cluster: source.id.clone(),
                     label: source.context.clone(),
@@ -709,6 +745,8 @@ impl ChangesPage {
                     argocd_namespace: self.argocd_namespace.clone(),
                     mapping: self.across.mapping.clone(),
                     sources: self.across.sources.clone(),
+                    public_key_file: self.across.public_key_file.clone(),
+                    evidence_result: self.across.evidence_result.clone(),
                 }),
                 kubeconfig: self.across.kubeconfig.clone(),
             },
@@ -754,7 +792,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start(source.id);
+        let request = self.loader.start((source.id, self.setup_revision));
         let read = Read {
             changes,
             example: None,
@@ -767,7 +805,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start(source.id);
+        let request = self.loader.start((source.id, self.setup_revision));
         self.answer(&request, Err(why.into()), cx);
     }
 }

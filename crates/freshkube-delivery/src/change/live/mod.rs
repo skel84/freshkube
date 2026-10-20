@@ -76,6 +76,10 @@ pub struct Place {
     /// Where Kargo, the builds and Argo CD are read; the workspace of one's
     /// reads everything from this cluster.
     pub sources: Sources,
+    /// The top-level setup's public key, opened afresh off the UI thread.
+    pub public_key_file: Option<std::path::PathBuf>,
+    /// The pipeline record configured in the same setup.
+    pub evidence_result: Option<freshkube_core::setup::Evidence>,
 }
 
 impl Place {
@@ -657,8 +661,14 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         cluster_names,
         argocd: place.argocd(),
         environment: place.here().to_owned(),
-        evidence_result: None,
-        public_key_file: None,
+        evidence_result: place.evidence_result.as_ref().map(|record| {
+            crate::tekton::EvidenceResult {
+                result: record.result.clone(),
+                commit_pointer: record.commit.clone(),
+                digest_pointer: record.digest.clone(),
+            }
+        }),
+        public_key_file: place.public_key_file.clone(),
         commit_names: Default::default(),
         stage_naming: None,
         map_hint: match place.mapping.settings {

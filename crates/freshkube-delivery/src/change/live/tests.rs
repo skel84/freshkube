@@ -24,6 +24,8 @@ pub(super) fn place(freight: &str) -> Place {
         argocd_namespace: "argocd".into(),
         mapping: Mapping::default(),
         sources: Default::default(),
+        public_key_file: None,
+        evidence_result: None,
     }
 }
 
@@ -1772,6 +1774,8 @@ async fn the_changes_list_finds_an_application_in_the_second_namespace() {
         argocd_namespace: "delivery".into(),
         mapping: Mapping::default(),
         sources: Default::default(),
+        public_key_file: None,
+        evidence_result: None,
     };
     let read =
         crate::changes::live::read(&reader, &at, observed_at(), crate::changes::live::BUDGET).await;
@@ -1825,6 +1829,8 @@ async fn changes_and_applications_share_the_namespace_cap() {
         argocd_namespace: "a-ops".into(),
         mapping: Mapping::default(),
         sources: Default::default(),
+        public_key_file: None,
+        evidence_result: None,
     };
     let read =
         crate::changes::live::read(&reader, &at, observed_at(), crate::changes::live::BUDGET).await;
