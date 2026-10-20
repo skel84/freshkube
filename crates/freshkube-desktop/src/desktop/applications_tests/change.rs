@@ -1306,6 +1306,8 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
             page.fetch = Fetch::Live {
                 runtime: runtime.handle().clone(),
                 access: ClusterAccess::EXAMPLE,
+                secrets: None,
+                setup_revision: 0,
                 place: Box::new(Place {
                     // The open example cluster's key, as live objects carry.
                     cluster: "core-fra".into(),
@@ -1315,6 +1317,8 @@ fn the_footer_names_the_context_not_the_connection_key(cx: &mut TestAppContext) 
                     argocd_namespace: "argocd".into(),
                     mapping: Default::default(),
                     sources: Default::default(),
+                    public_key_file: None,
+                    evidence_result: None,
                 }),
                 kubeconfig: None,
             };

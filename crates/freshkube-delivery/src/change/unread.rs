@@ -2,10 +2,9 @@
 //! parent is supplied by delivery; no object or running image is guessed.
 
 use super::*;
-use crate::words;
 
 pub(super) fn pods(workload: &Hop, cluster: &str, why: &str) -> Hop {
-    let reason = words::unreadable("Pods", cluster, why);
+    let reason = format!("Pods couldn't be read: {why}");
     Hop {
         key: format!("{}-pods", workload.key),
         group: workload.group,
@@ -23,7 +22,7 @@ pub(super) fn pods(workload: &Hop, cluster: &str, why: &str) -> Hop {
             notice: Some(Notice {
                 state: HealthIndicator::Warning,
                 lead: "Not readable.".into(),
-                body: reason.clone(),
+                body: sentence(&reason),
             }),
             fields: vec![Field {
                 label: "Read from".into(),
@@ -36,7 +35,7 @@ pub(super) fn pods(workload: &Hop, cluster: &str, why: &str) -> Hop {
                 key: None,
                 before_says: workload.detail.clone(),
                 here_says: "not read".into(),
-                why: reason,
+                why: sentence(&reason),
             }),
             unlinked: None,
             actions: Vec::new(),

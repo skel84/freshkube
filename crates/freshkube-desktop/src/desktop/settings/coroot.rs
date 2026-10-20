@@ -99,6 +99,7 @@ pub(super) struct CorootForm {
     /// Why the last save was refused or failed.
     save_error: Option<SharedString>,
     saving: bool,
+    keeping_key: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -204,6 +205,29 @@ fn server_error(server: &str) -> Option<SharedString> {
 }
 
 impl SettingsPage {
+    pub(super) fn save_coroot_unsaved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.metrics_secrets.is_none()
+            && let Some(form) = &mut self.coroot
+            && form.sign_in != SignIn::Anonymous
+            && !form.typed(cx).is_empty()
+        {
+            form.save_error = Some("This window has nowhere to save a key.".into());
+            cx.notify();
+            return;
+        }
+        self.connect_coroot(window, cx);
+    }
+
+    pub(super) fn coroot_has_unsaved(&self, cx: &App) -> bool {
+        self.coroot.as_ref().is_some_and(|form| form.dirty(cx))
+    }
+
+    pub(super) fn coroot_is_saving(&self) -> bool {
+        self.coroot
+            .as_ref()
+            .is_some_and(|form| form.saving || form.keeping_key)
+    }
+
     /// Takes the form's fields from the file's block. Prepared after the
     /// current update, since it creates inputs.
     pub(super) fn prepare_coroot(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -226,6 +250,7 @@ impl SettingsPage {
             credential_error: None,
             save_error: None,
             saving: false,
+            keeping_key: false,
             _subscriptions: Vec::new(),
         };
         form.reset(baseline, window, cx);
@@ -304,7 +329,7 @@ impl SettingsPage {
         self.editable()
     }
 
-    fn revert_coroot(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn revert_coroot(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let baseline = Baseline::of(self.coroot_block(cx).as_ref());
         if let Some(form) = self.coroot.as_mut() {
             form.reset(baseline, window, cx);
@@ -340,6 +365,7 @@ impl SettingsPage {
             return;
         }
         let editable = self.coroot_editable();
+        let can_keep = self.metrics_secrets.is_some();
         let why_not = self.why_not_editable();
         let current = self.coroot_block(cx);
         let Some(form) = self.coroot.as_mut() else {
@@ -357,7 +383,10 @@ impl SettingsPage {
         let block = form.block(current.as_ref(), cx);
         if current.as_ref() == Some(&block) {
             // Nothing to write: the file already says this.
+            form.keeping_key =
+                can_keep && !request.key.0.is_empty() && form.sign_in != SignIn::Anonymous;
             cx.emit(super::SettingsEvent::Connect(request));
+            cx.notify();
             return;
         }
         let Some(file) = self.setup_file.clone().filter(|_| editable) else {
@@ -436,6 +465,7 @@ impl SettingsPage {
         let Some(file) = self.setup_file.clone() else {
             return;
         };
+        let can_keep = self.metrics_secrets.is_some();
         match outcome {
             Ok(()) => {
                 self.sync_setup(file, false, cx);
@@ -443,6 +473,9 @@ impl SettingsPage {
                 if let Some(form) = self.coroot.as_mut() {
                     form.saving = false;
                     let typed = request.as_ref().map(|r| r.key.0.clone());
+                    form.keeping_key = can_keep
+                        && typed.as_ref().is_some_and(|key| !key.is_empty())
+                        && form.sign_in != SignIn::Anonymous;
                     if let Some(typed) = typed {
                         // A key typed now stays in its field until it is
                         // stored and the block names it.
@@ -472,6 +505,21 @@ impl SettingsPage {
         cx.notify();
     }
 
+    pub(in crate::desktop) fn coroot_key_failed(
+        &mut self,
+        server: &str,
+        why: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(form) = &mut self.coroot
+            && form.server_text(cx) == server
+        {
+            form.keeping_key = false;
+            form.save_error = Some(why.to_owned().into());
+            cx.notify();
+        }
+    }
+
     /// The credential store holds the key just typed for `server`: the block
     /// names it now, and the field lets go of the text.
     pub(in crate::desktop) fn coroot_key_kept(
@@ -486,11 +534,22 @@ impl SettingsPage {
         let Some(block) = self.coroot_block(cx) else {
             return;
         };
-        if block.server != server
-            || block.key.is_some()
-            || block.sign_in == SignIn::Anonymous
-            || block.api_key_file.is_some()
-        {
+        if block.server != server {
+            return;
+        }
+        if let Some(form) = &mut self.coroot {
+            form.keeping_key = false;
+        }
+        if block.key.is_some() {
+            // Replacing an already-kept key needs no second YAML write.
+            let baseline = Baseline::of(Some(&block));
+            if let Some(form) = &mut self.coroot {
+                form.reset(baseline, window, cx);
+            }
+            cx.notify();
+            return;
+        }
+        if block.sign_in == SignIn::Anonymous || block.api_key_file.is_some() {
             return;
         }
         let why_not = self.why_not_editable();
@@ -586,7 +645,8 @@ impl SettingsPage {
     ) -> AnyElement {
         let example = self.origin == Origin::Example;
         let dirty = form.dirty(cx);
-        let busy = form.saving || self.coroot_state == ConnectionState::Connecting;
+        let busy =
+            form.saving || form.keeping_key || self.coroot_state == ConnectionState::Connecting;
         let key_disabled = !self.coroot_editable() || busy;
         let p = palette(cx);
         let anonymous = form.sign_in == SignIn::Anonymous;

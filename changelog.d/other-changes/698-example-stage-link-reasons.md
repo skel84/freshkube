@@ -1,0 +1,1 @@
+- **Change trail:** the example explains the unconfirmed links from Freight to dev and from stage to the production Stages.

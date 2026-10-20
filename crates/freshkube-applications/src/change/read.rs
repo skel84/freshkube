@@ -49,6 +49,9 @@ pub enum Fetch {
     Live {
         runtime: tokio::runtime::Handle,
         access: ClusterAccess,
+        secrets: Option<freshkube_core::secrets::Secrets>,
+        /// Distinguishes reloads even when the key path is unchanged.
+        setup_revision: u64,
         place: Box<Place>,
         /// The workspace's kubeconfig, `None` for the automatic one.
         kubeconfig: Option<std::path::PathBuf>,
@@ -57,13 +60,20 @@ pub enum Fetch {
 
 impl Fetch {
     /// Which change this is: an answer for another is never shown as its.
-    fn identity(&self) -> String {
+    pub(crate) fn identity(&self) -> String {
         match self {
             Self::Example {
                 project, freight, ..
             } => format!("example/{project}/{freight}"),
-            Self::Live { place, .. } => {
-                format!("{}/{}/{}", place.cluster, place.project, place.freight)
+            Self::Live {
+                place,
+                setup_revision,
+                ..
+            } => {
+                format!(
+                    "{}/{}/{}/setup/{setup_revision}",
+                    place.cluster, place.project, place.freight
+                )
             }
         }
     }
@@ -126,13 +136,17 @@ impl ChangePage {
             Fetch::Live {
                 runtime,
                 access,
+                secrets,
                 place,
                 kubeconfig,
+                ..
             } => {
                 let across = Across {
                     mapping: place.mapping.clone(),
                     sources: place.sources.clone(),
                     kubeconfig,
+                    public_key_file: place.public_key_file.clone(),
+                    evidence_result: place.evidence_result.clone(),
                 };
                 let (job, receiver) = backend::spawn_job(
                     &runtime,
@@ -149,7 +163,8 @@ impl ChangePage {
                             }),
                             |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
                             live::BUDGET,
-                        );
+                        )
+                        .with_secrets(secrets);
                         live::read_in(&pool, &place, Utc::now())
                             .await
                             .map_err(|failure| failure.message)
@@ -278,6 +293,32 @@ impl ChangePage {
             self.refresh(cx);
         }
         cx.notify();
+    }
+
+    /// Trust belongs to this setup, including when the file at its path
+    /// changed. Reset cancels both tasks and rejects any old request ticket.
+    pub(crate) fn reload_setup(
+        &mut self,
+        public_key_file: Option<std::path::PathBuf>,
+        evidence_result: Option<freshkube_core::setup::Evidence>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Fetch::Live {
+            place,
+            setup_revision,
+            ..
+        } = &mut self.fetch
+        {
+            *setup_revision += 1;
+            place.public_key_file = public_key_file;
+            place.evidence_result = evidence_result;
+            self.loader.reset();
+            self.stale = None;
+            self.hide_outcomes();
+            self.show(self.fetch.unread());
+            self.refresh(cx);
+            cx.notify();
+        }
     }
 
     /// Refresh: reads again while shown.

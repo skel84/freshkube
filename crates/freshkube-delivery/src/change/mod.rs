@@ -482,3 +482,16 @@ pub struct Stage {
     /// The Stage itself, to open in Resources.
     pub object: Object,
 }
+
+/// Source words as a complete explanatory sentence.
+fn sentence(text: &str) -> String {
+    let mut chars = text.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut out: String = first.to_uppercase().chain(chars).collect();
+    if !out.ends_with('.') {
+        out.push('.');
+    }
+    out
+}

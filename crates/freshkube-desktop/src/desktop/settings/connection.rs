@@ -306,6 +306,18 @@ impl ConnectionForm {
 }
 
 impl SettingsPage {
+    pub(super) fn connection_has_unsaved(&self, cx: &App) -> bool {
+        self.connection
+            .as_ref()
+            .is_some_and(|draft| draft.dirty(cx))
+    }
+
+    pub(super) fn connection_is_saving(&self) -> bool {
+        self.connection
+            .as_ref()
+            .is_some_and(|draft| draft.committing)
+    }
+
     /// Focus is handed over while Pilot is borrowed; prepare after that update.
     pub(super) fn prepare_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.connection.is_some() || self.section != SettingsSection::Connection {
@@ -417,14 +429,14 @@ impl SettingsPage {
         .detach();
     }
 
-    fn revert_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn revert_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(draft) = self.connection.as_mut() {
             draft.reset(draft.baseline.clone(), window, cx);
             cx.notify();
         }
     }
 
-    fn save_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn save_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.inspect_connection(true, window, cx);
     }
 
