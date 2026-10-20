@@ -645,15 +645,6 @@ impl MonitoringPage {
             *rebuild = Rebuild::Unused;
         }
     }
-
-    /// Asks again after a failure, from the start.
-    pub(super) fn retry(&mut self, cx: &mut Context<Self>) {
-        self.connection_reads.forget();
-        self.connection = Connection::None;
-        cx.emit(MonitoringEvent::History);
-        self.connect(cx);
-        cx.notify();
-    }
 }
 
 /// The server and its version, as the source's tooltip says it.

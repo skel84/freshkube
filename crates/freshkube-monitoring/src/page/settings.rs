@@ -151,6 +151,7 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
                         "Namespace",
                         input("monitoring-source-namespace", &draft.namespace),
                     )
+                    .hint("Where the store’s Service runs.")
                     .error(draft.error(Field::Namespace)),
                 )
                 .row(
@@ -159,6 +160,7 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
                         "Service",
                         input("monitoring-source-name", &draft.name),
                     )
+                    .hint("The store’s Service in that namespace.")
                     .error(draft.error(Field::Name)),
                 )
                 .row(
@@ -167,6 +169,7 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
                         "Port",
                         input("monitoring-source-port", &draft.port),
                     )
+                    .hint("The Service’s port, such as 9090.")
                     .error(draft.error(Field::Port)),
                 )
                 .row(form::row(
@@ -199,6 +202,7 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
                         "URL",
                         input("monitoring-source-address", &draft.url),
                     )
+                    .hint("An http:// or https:// address for the store.")
                     .error(draft.error(Field::Url)),
                 )
                 .row(form::row(

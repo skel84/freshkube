@@ -1,0 +1,1 @@
+- **Forms and Inspectors:** validation errors replace useful field hints without shifting later rows, and Inspector bodies keep their padding while scrolling so lines stay clear of the heading.

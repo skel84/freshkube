@@ -114,6 +114,65 @@ fn entry<'a>(workspace: &'a freshkube_core::workspace::Workspace, id: &str) -> &
 }
 
 #[gpui_kit::test]
+async fn a_first_right_click_can_edit_without_bypassing_unsaved_changes(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.right_click("settings-cluster-prod", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("popup-menu").visible());
+        window.within("popup-menu").click(0usize, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-detail").visible());
+        assert_eq!(
+            window.find("settings-identity-context").focused(),
+            Some(true)
+        );
+        window.press("secondary-a", cx);
+        window.input("acme-edited", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.right_click("settings-cluster-mgmt", cx);
+    })
+    .unwrap();
+    let (message, _) = cx.pending_prompt().expect("unsaved changes still ask");
+    assert!(message.contains("prod"), "{message}");
+    cx.simulate_prompt_answer("Stay");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The popup is for mgmt, so its commands cannot change prod.
+        assert!(window.find("popup-menu").visible());
+        window.within("popup-menu").click(0usize, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            view.read(cx).settings_page.read(cx).selected.as_deref(),
+            Some("prod")
+        );
+    })
+    .unwrap();
+    assert_eq!(values(cx, handle, &view).0.context, "acme-edited");
+    assert_eq!(
+        entry(&read_workspace(guard.path()), "prod").context,
+        "acme-prod"
+    );
+}
+
+#[gpui_kit::test]
 async fn selecting_a_cluster_fills_both_groups(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();

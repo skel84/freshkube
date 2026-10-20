@@ -173,6 +173,10 @@ The selected revision's Inspector shows Coroot's findings in Coroot's words, wit
 
 The window's read has its own identity (application, revision and window) and generation; another revision or window drops the read in flight, and so does hiding the page. Example data answers from the example hour: the newest revision's window reaches past now and ends early, and one older than seven days has no data.
 
+**Show on charts** opens the Application page on the revision's first finding report, or SLO when there are no findings. It is in the Deployments row's shared context menu, and on each revision in the Application page's Deployments report table. The captured time range stays unchanged. The revision's start second focuses matching markers: their lines draw heavier and their labels stay visible without hovering. A start outside the window does not move or zoom the chart; an older revision says "Started ⟨time⟩, before this ⟨range⟩ window". The before-window line appears only on reports with chart widgets. Another application or source clears that focus. The Deployments Inspector also focuses its selected revision's marker. Each application's fixture answer is dated on its first read and retained for the page's life, so its revision rows, markers and revision windows share stable start times. In the Application page's Deployments report, only the revisions table (identified by Coroot's `Deployment`, `Deployed`, `Summary` header) is replaced; other table widgets remain visible.
+
+The fixture UI tests in `application/deployments.rs`, `deployments/tests.rs` and Monitoring's `panel/tests.rs` prove both navigation paths, the old-revision line, the focused rendering and clearing it.
+
 ### From the change page
 
 A Deployment's hop on the change page shows its current ReplicaSet's pod-template hash and offers Compare in Observability (core's `Target::Revision`). Coroot names a revision by that hash, so the join is the hash alone; the change page reads nothing for it. The shell hands `RevisionLink` (the connection, the cluster's name, the Deployment and the hash) to `ObservabilityPage::open_revision`, which opens Deployments and finds the revision in what it reads anyway: Coroot's application is `<cluster>:<namespace>:Deployment:<name>`, where the cluster is the Coroot cluster linked to that connection. Nothing is decided while the page is hidden; it looks once it shows. A banner over the list says what came of it, in blue for a found revision, since finding one judges nothing; the row's glyph says how Coroot judges it. The banner shows only over the application it was decided for, so another one opened from the map or a report hides it, and it goes when the user chooses another application or revision. Another connection drops the link and whatever came of it. Anything but a found revision is looked for again when the page shows, on Refresh, when the window changes and when a Coroot cluster is linked, so linking the cluster the banner asks for finds the revision without another Compare.
@@ -235,16 +239,22 @@ Part A (typed APIs) is not designed here. Its only effect on this design is that
 | Found | Coroot's status, its findings, the window and the samples on each side |
 | No such revision | "Coroot keeps no revision ⟨hash⟩ of ⟨namespace/name⟩", with that it keeps a Deployment's last 100 |
 | No such application | "Coroot lists no application ⟨namespace/name⟩ in ⟨cluster⟩" |
-| No such project | "Coroot lists no project ⟨project⟩", naming the key that names it |
+| No such project | "Coroot answered not found for project ⟨project⟩", naming the key that names it. It is Coroot's 404 on the project's applications list, read without a projects request, and it does not claim the project is missing: a wrong proxy path or an old Coroot answers the same |
 | No Coroot connection | "Coroot isn't connected · Open Settings" |
 | No Coroot cluster linked to the entry | "No Coroot cluster is linked to ⟨entry⟩", with where to link one |
 | No project for the entry | "⟨entry⟩ names no Coroot project, and the connection names none" |
 | Refused | "Not permitted to read this application" (the application's page) or "…its window" (the window), as Deployments says them |
-| No data for the window | "Coroot has no data for this window", as Deployments says it; never a missing application |
+| No data for the window | "Coroot has no data for this window", as Deployments says it; never a missing application. It covers Coroot's own 404 for the window and a window page that carries no chart history at all |
 | Data that stops early | The window's last sample, as Deployments says it ("Coroot's data stops at ⟨time⟩") |
 | Failed | The read's message and Retry; a last answer for the same identity stays under it, marked stale |
 | Not a Deployment | An Argo Rollout's Stage: "Coroot keeps revisions of Deployments only" ([Argo Rollouts](#argo-rollouts)) |
 | Not looked for | The hop's current ReplicaSet isn't known or its pods aren't confirmed to run the Freight, with delivery's reason; its revision may be another change's, so nothing is read |
+
+Three rules of the look, kept in `coroot/outcome.rs`:
+
+- **The newest revision of a hash wins.** Rolling back to an older ReplicaSet re-uses its pod-template hash, so Coroot can keep several revisions with one hash. It sends them newest first, and the running ReplicaSet is the latest rollout, so the first match is the one.
+- **An entry with a blank `project` is a named cluster without a project**, not an unlinked entry: "No project for the entry".
+- **An answer is for its entry, link, window and connection.** `Answer::is_for(query, window, provider)` compares all of them, and an applications list (`Listed`) carries the link and connection it was read for; one from another link is read again rather than trusted.
 
 **A Coroot answer for another entry's application never draws as this one's.** Three guards, each proved by a test:
 

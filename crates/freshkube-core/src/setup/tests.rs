@@ -1,7 +1,5 @@
 use super::*;
 
-const EXAMPLE: &str = include_str!("../../../freshkube-prefs/src/examples/freshkube.yaml");
-
 /// The example's paths are Unix ones; a Windows path is absolute only with a
 /// drive, so the tests read them under one.
 fn portable(text: &str) -> String {
@@ -37,8 +35,31 @@ fn with_cluster(rest: &str) -> String {
 }
 
 #[test]
+fn the_example_reader_supplies_absolute_paths() {
+    let setup = example().expect("the bundled example parses and validates on every platform");
+    assert!(setup.workspace.kubeconfig.as_ref().unwrap().is_absolute());
+    assert!(
+        setup.workspace.clusters[0]
+            .talosconfig
+            .as_ref()
+            .unwrap()
+            .is_absolute()
+    );
+    assert!(
+        setup
+            .supply_chain
+            .as_ref()
+            .unwrap()
+            .public_key_file
+            .as_ref()
+            .unwrap()
+            .is_absolute()
+    );
+}
+
+#[test]
 fn the_example_reads_as_the_design_describes() {
-    let setup = ok(EXAMPLE);
+    let setup = example().expect("the bundled example is valid");
     let workspace = &setup.workspace;
     assert_eq!(workspace.kubeconfig, Some(home("/home/acme/.kube/config")));
     let ids: Vec<_> = workspace.clusters.iter().map(|e| e.id.as_str()).collect();
@@ -106,7 +127,7 @@ fn the_example_reads_as_the_design_describes() {
 
 #[test]
 fn the_example_survives_a_round_trip_and_the_text_settles() {
-    let setup = ok(EXAMPLE);
+    let setup = example().expect("the bundled example is valid");
     let text = to_text(&setup);
     assert_eq!(ok(&text), setup);
     // Written again, the same bytes: a save over the app's own output
@@ -116,7 +137,7 @@ fn the_example_survives_a_round_trip_and_the_text_settles() {
 
 #[test]
 fn the_text_starts_with_the_header_and_follows_the_fixed_order() {
-    let text = to_text(&ok(EXAMPLE));
+    let text = to_text(&example().expect("the bundled example is valid"));
     let header: String = EXAMPLE.lines().take(4).map(|l| format!("{l}\n")).collect();
     assert!(text.starts_with(&header), "{text}");
     let order = [
@@ -176,6 +197,7 @@ clusters:
       address: https://results.example.test
       results_note: 1
     coroot:
+      project: shop-api
       cluster: cluster-a
       coroot_note: [1, 2]
     metrics:
@@ -703,7 +725,7 @@ fn the_workspace_json_shape_is_unchanged_by_the_new_entry_keys() {
 fn commit_writes_a_file_that_reads_back_and_refuses_a_changed_one() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("config").join("freshkube.yaml");
-    let setup = ok(EXAMPLE);
+    let setup = example().expect("the bundled example is valid");
     let seen = commit(&file, &Seen::Missing, &setup).unwrap();
     assert_eq!(seen, Seen::Bytes(std::fs::read(&file).unwrap()));
     assert_eq!(ok(&std::fs::read_to_string(&file).unwrap()), setup);
@@ -743,7 +765,7 @@ fn commit_writes_a_file_that_reads_back_and_refuses_a_changed_one() {
 fn commit_writes_nothing_for_an_invalid_setup() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("freshkube.yaml");
-    let mut setup = ok(EXAMPLE);
+    let mut setup = example().expect("the bundled example is valid");
     setup.coroot.as_mut().unwrap().server = "nonsense".into();
     let result = commit(&file, &Seen::Missing, &setup);
     assert!(
@@ -758,7 +780,7 @@ fn commit_writes_nothing_for_an_invalid_setup() {
 
 #[test]
 fn a_setup_too_large_to_read_back_is_not_written() {
-    let mut setup = ok(EXAMPLE);
+    let mut setup = example().expect("the bundled example is valid");
     setup.extra.insert(
         "padding".into(),
         serde_json::Value::String("x".repeat(MAX_BYTES as usize)),
@@ -779,6 +801,89 @@ fn the_first_settings_setup_keeps_legacy_workspace_unknown_keys() {
 fn a_legacy_key_reserved_by_setup_is_refused_before_a_save() {
     let workspace = workspace::parse(br#"{"version":1,"metrics":{"future":true}}"#).unwrap();
     assert!(Setup::new(workspace).check_saveable().is_err());
+}
+
+/// Two clusters, each with `coroot` lines after its context.
+fn with_links(connection: &str, a: &str, b: &str) -> String {
+    format!(
+        "version: 1\nclusters:\n  - id: cluster-a\n    role: core\n    context: cluster-a\n{a}  - id: cluster-c\n    role: core\n    context: cluster-c\n{b}{connection}"
+    )
+}
+
+const SHOP: &str =
+    "coroot:\n  server: https://coroot.example.test\n  sign_in: anonymous\n  project: shop-api\n";
+
+#[test]
+fn two_entries_may_not_link_one_coroot_cluster() {
+    let link = "    coroot:\n      cluster: cluster-a\n";
+    // Both take the connection's project.
+    assert_eq!(
+        rule(&with_links(SHOP, link, link)),
+        "the Coroot cluster “cluster-a” of project “shop-api” is linked to “cluster-a” and “cluster-c”"
+    );
+    // One names that project itself: still the same project.
+    let own = "    coroot:\n      project: shop-api\n      cluster: cluster-a\n";
+    assert_eq!(
+        refused(&with_links(SHOP, link, own)),
+        Invalid::Rule(Fault::CorootTwice {
+            first: "cluster-a".into(),
+            second: "cluster-c".into(),
+            project: "shop-api".into(),
+            cluster: "cluster-a".into(),
+        })
+    );
+}
+
+#[test]
+fn the_same_cluster_name_in_another_project_is_another_link() {
+    let link = "    coroot:\n      cluster: cluster-a\n";
+    let other = "    coroot:\n      project: shop-web\n      cluster: cluster-a\n";
+    ok(&with_links(SHOP, link, other));
+    // Two clusters of one project are two links.
+    let second = "    coroot:\n      cluster: cluster-c\n";
+    ok(&with_links(SHOP, link, second));
+}
+
+#[test]
+fn a_linked_entry_needs_a_project_from_somewhere() {
+    let link = "    coroot:\n      cluster: cluster-a\n";
+    let own = "    coroot:\n      project: shop-api\n      cluster: cluster-c\n";
+    // Neither the entry nor the connection names one.
+    assert_eq!(
+        rule(&with_links("", link, own)),
+        "the cluster “cluster-a” names a Coroot cluster, and neither it nor coroot names a project"
+    );
+    // A connection without a project is no project either.
+    let bare = "coroot:\n  server: https://coroot.example.test\n  sign_in: anonymous\n";
+    assert_eq!(
+        refused(&with_links(bare, link, own)),
+        Invalid::Rule(Fault::CorootWithoutProject("cluster-a".into()))
+    );
+    // Each one's own project is enough, with no connection at all.
+    let both = "    coroot:\n      project: shop-api\n      cluster: cluster-a\n";
+    ok(&with_links("", both, own));
+    // And so is the connection's, for an entry that names none.
+    ok(&with_links(SHOP, link, own));
+}
+
+#[test]
+fn an_unlinked_entry_needs_nothing_and_a_refusal_repeats_no_value() {
+    ok(&with_links("", "", ""));
+    let link = "    coroot:\n      cluster: cluster-a\n";
+    assert!(!rule(&with_links(SHOP, link, link)).contains("coroot.example.test"));
+}
+
+#[test]
+fn the_example_links_are_distinct_and_survive_a_save() {
+    let setup = ok(EXAMPLE);
+    assert_eq!(setup.validate(), Ok(()));
+    assert_eq!(setup.check_saveable(), Ok(()));
+    // Linking cluster-c to cluster-a's Coroot cluster of the same project
+    // breaks the rule, and the edited setup is not saveable.
+    let mut edited = setup.clone();
+    edited.workspace.clusters[2].coroot = Some(EntryCoroot::new("cluster-a").into());
+    assert!(edited.validate().is_err());
+    assert!(edited.check_saveable().is_err());
 }
 
 #[test]

@@ -1043,8 +1043,18 @@ impl Pilot {
     /// the Resources page again; its watch keeps it current otherwise.
     fn refresh_now(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.switch.registry.active_mut().prompted_access = None;
+        if !self.mode().has_talos() && !self.mode().is_example() {
+            // Local inspection must finish before any page retries through
+            // its access. A replacement publishes the new source itself.
+            self.refresh_kubernetes(true, window, cx);
+            return;
+        }
         self.refresh_summary(window, cx);
         self.refresh(window, cx);
+        self.refresh_page(window, cx);
+    }
+
+    fn refresh_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // The screens refresh with the shell, above.
         let id = self.navigation.page.id();
         if !id.is_screen()
@@ -1060,7 +1070,7 @@ impl Pilot {
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.mode().has_talos() {
-            self.refresh_kubernetes(window, cx);
+            self.refresh_kubernetes(false, window, cx);
             self.ensure_summary(window, cx);
             return;
         }

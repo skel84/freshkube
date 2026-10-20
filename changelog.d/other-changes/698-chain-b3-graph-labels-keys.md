@@ -1,0 +1,1 @@
+- **Graph view:** the shared graph can draw a label on each line, solid, dashed or dotted lines, dashed boxes for what was not found, and arrow keys along its boxes and lines, all off by default, for the change page's coming Chain view. The service map is unchanged.
