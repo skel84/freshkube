@@ -271,6 +271,10 @@ async fn monitoring_fields_report_port_label_and_missing_entry_errors(cx: &mut T
         window.click("metrics-save", cx);
         window.render_frame(cx);
         assert!(window.find("metrics-label-row-error").visible());
+        assert_eq!(
+            page.read(cx).monitoring.as_ref().unwrap().errors.get(&Field::Label).map(String::as_str),
+            Some("Use a Prometheus label name: letters, digits and underscores, not starting with a digit.")
+        );
         window.click("metrics-revert", cx);
         window.render_frame(cx);
         page.update(cx, |page, cx| {
@@ -464,7 +468,7 @@ async fn monitoring_context_outside_the_workspace_saves_monitoring_json(cx: &mut
 fn monitoring_has_the_padded_frame_at_each_window_and_text_size(cx: &mut TestAppContext) {
     for (width, height) in [(1280., 880.), (760., 560.)] {
         let (_runtime, handle, pilot) = fixture(cx, width, height);
-        open(cx, handle, &pilot);
+        let page = open(cx, handle, &pilot);
         for size in [13., 20.] {
             cx.update_window(handle, |_, window, cx| {
                 crate::text_size::set(size, cx);
@@ -491,6 +495,43 @@ fn monitoring_has_the_padded_frame_at_each_window_and_text_size(cx: &mut TestApp
                         control.right() <= group.right() + px(1.),
                         "{width} x {height}, text {size}: {id} exceeds the group"
                     );
+                }
+                let long = "Failed · The store answers: Unreachable · couldn’t connect to the server at https://metrics.example.test while checking the selected entry. The connection attempt ended before the store answered. ".repeat(2);
+                for outcome in [None, Some((ui::Tone::Crit, long))] {
+                    let has_result = outcome.is_some();
+                    page.update(cx, |page, _| {
+                        let draft = page.monitoring.as_mut().unwrap();
+                        draft.mode = setup::Mode::Automatic;
+                        draft.outcome = outcome;
+                    });
+                    layout_check::assert_page_frame(window, cx, &layout_check::PageFrame {
+                        page: "settings-page", title: "settings-monitoring-title", title_text: "Monitoring", content: "settings-monitoring-form",
+                    });
+                    let group = window.find("monitoring-metrics").bounds();
+                    let line = window.find("metrics-test-result").bounds();
+                    let text = window.find("metrics-test-text").bounds();
+                    assert!(line.right() <= group.right() + px(1.));
+                    assert!(text.right() <= line.right() + px(1.));
+                    assert!(text.left() > window.find("metrics-test").bounds().right());
+                    if has_result {
+                        assert!(text.size.height > ui::dp_px(24., window), "the result wraps");
+                        let glyph = window.find("metrics-test-glyph").bounds();
+                        assert!(glyph.right() < text.left());
+                        assert!((glyph.top() - text.top()).abs() <= ui::dp_px(4., window));
+                    } else if width == 760. && size == 20. {
+                        assert!(text.size.height > ui::dp_px(18., window), "the narrow hint wraps");
+                    }
+                }
+                page.update(cx, |page, _| {
+                    page.banner = Some("An invented setup warning.".into());
+                    page.warning = Some("An invented unknown key.".into());
+                    page.monitoring.as_mut().unwrap().error = Some("An invented save refusal.".into());
+                });
+                window.render_frame(cx);
+                for id in ["monitoring-setup-banner", "monitoring-unknown-banner", "monitoring-save-banner"] {
+                    let banner = window.find(id).bounds();
+                    assert!(banner.right() <= group.right() + px(1.));
+                    assert!((banner.left() - group.left()).abs() < px(1.));
                 }
             })
             .unwrap();
@@ -1092,4 +1133,118 @@ async fn monitoring_a_refusal_after_staging_restores_the_previous_token(cx: &mut
     );
     assert_eq!(std::fs::read_to_string(file).unwrap(), "version: [");
     cx.read(|cx| assert!(page.read(cx).monitoring.as_ref().unwrap().error.is_some()));
+}
+
+#[gpui_kit::test]
+async fn monitoring_a_first_token_save_can_skip_a_refused_fallback_read(cx: &mut TestAppContext) {
+    use freshkube_core::secrets::{FileStore, MemoryStore, SecretStore};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    struct RefuseAfterWrite {
+        store: FileStore,
+        file: std::path::PathBuf,
+        refuse: AtomicBool,
+        writes: AtomicUsize,
+    }
+    impl SecretStore for RefuseAfterWrite {
+        fn read(&self, account: &str) -> Result<Option<String>, String> {
+            self.store.read(account)
+        }
+        fn write(&self, account: &str, value: &str) -> Result<(), String> {
+            self.store.write(account, value)?;
+            self.writes.fetch_add(1, Ordering::SeqCst);
+            if self.refuse.swap(false, Ordering::SeqCst) {
+                std::fs::write(&self.file, "version: [").unwrap();
+            }
+            Ok(())
+        }
+        fn forget(&self, account: &str) -> Result<(), String> {
+            self.store.forget(account)
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("freshkube.yaml");
+    std::fs::write(&file, SETUP).unwrap();
+    let (runtime, handle, _pilot, page) = live(cx, directory.path(), "cluster-a").await;
+    assert!(!directory.path().join("keys.json").exists());
+    let fallback = Arc::new(MemoryStore::default());
+    fallback.unavailable.store(true, Ordering::SeqCst);
+    let secrets = Arc::new(RefuseAfterWrite {
+        store: FileStore::new(&directory.path().join("preferences.json"), Some(fallback)),
+        file: file.clone(),
+        refuse: AtomicBool::new(false),
+        writes: AtomicUsize::new(0),
+    });
+    set_secrets(cx, &runtime, &page, directory.path(), secrets.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.click("metrics-store-url", cx);
+        window.render_frame(cx);
+        replace(window, cx, "metrics-url", "https://metrics.example.test");
+        replace(window, cx, "metrics-token-input", "first-example-token");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &page).await;
+    let first = "Prometheus https://metrics.example.test/";
+    assert_eq!(
+        secrets.read(first).unwrap().as_deref(),
+        Some("first-example-token")
+    );
+    assert!(
+        setup::parse(&std::fs::read(&file).unwrap())
+            .unwrap()
+            .metrics
+            .store
+            .unwrap()
+            .token
+            .is_some()
+    );
+    cx.read(|cx| assert!(page.read(cx).monitoring.as_ref().unwrap().error.is_none()));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        replace(
+            window,
+            cx,
+            "metrics-url",
+            "https://other-metrics.example.test",
+        );
+        window.render_frame(cx);
+        replace(window, cx, "metrics-token-input", "refused-example-token");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    secrets.refuse.store(true, Ordering::SeqCst);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &page).await;
+    assert_eq!(secrets.writes.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        secrets
+            .read("Prometheus https://other-metrics.example.test/")
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        secrets.read(first).unwrap().as_deref(),
+        Some("first-example-token")
+    );
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "version: [");
+    cx.read(|cx| {
+        let error = page
+            .read(cx)
+            .monitoring
+            .as_ref()
+            .unwrap()
+            .error
+            .as_ref()
+            .unwrap();
+        assert!(error.contains("The new token was removed; its previous value couldn’t be read."));
+    });
 }

@@ -96,6 +96,14 @@ pub(super) struct MonitoringForm {
 }
 
 impl MonitoringForm {
+    fn kept_token(&self, url: &str) -> bool {
+        self.baseline
+            .store
+            .as_ref()
+            .is_some_and(|store| store.url.as_deref() == Some(url) && store.token.is_some())
+            && !self.forget_token
+    }
+
     fn values(&self, cx: &App) -> Values {
         let text = |state: &Entity<InputState>| state.read(cx).value().to_string();
         Values {
@@ -209,8 +217,7 @@ impl MonitoringForm {
         let mut store = next.store.clone().unwrap_or_default();
         if v.by_url {
             let url = monitoring::normalise_url(v.url.trim()).map_err(|why| (Field::Url, why))?;
-            let kept =
-                store.url.as_ref() == Some(&url) && store.token.is_some() && !self.forget_token;
+            let kept = self.kept_token(&url);
             store.entry = None;
             store.service = None;
             store.url = Some(url);
@@ -272,7 +279,13 @@ impl MonitoringForm {
         check.metrics = next.clone();
         check
             .validate()
-            .map_err(|why| (Field::Label, why.to_string()))?;
+            .map_err(|why| {
+                let message = match why {
+                    setup::Invalid::Rule(setup::Fault::LabelName(_)) => "Use a Prometheus label name: letters, digits and underscores, not starting with a digit.".into(),
+                    why => why.to_string(),
+                };
+                (Field::Label, message)
+            })?;
         Ok(next)
     }
 
@@ -633,6 +646,7 @@ impl SettingsPage {
             if result.is_err()
                 && let Ok(Some(staged)) = staged
             {
+                let previous_unknown = staged.previous_unknown;
                 let rollback = cx
                     .background_spawn(async move {
                         match staged.previous {
@@ -642,10 +656,18 @@ impl SettingsPage {
                     })
                     .await;
                 if rollback.is_err() {
-                    result = Err(
+                    result = Err(if previous_unknown {
+                        "The setup wasn’t saved, and the new token couldn’t be removed."
+                    } else {
                         "The setup wasn’t saved, and its previous token couldn’t be restored."
-                            .into(),
-                    );
+                    }
+                    .into());
+                } else if previous_unknown {
+                    result = result.map_err(|why| {
+                        format!(
+                            "{why} The new token was removed; its previous value couldn’t be read."
+                        )
+                    });
                 }
             }
             _ = this.update_in(cx, |page, window, cx| {
@@ -859,12 +881,18 @@ impl SettingsPage {
             .child(page::PageHeader::new("settings-monitoring", "Monitoring").render(window, cx))
             .children(self.banner.as_ref().map(|why| {
                 ui::warning_banner(Some("Freshkube setup".into()), why.clone(), None, cx)
+                    .id("monitoring-setup-banner")
+                    .test_support()
+                    .w_full()
+                    .max_w(dp(form::MAX_WIDTH))
             }))
-            .children(
-                self.warning
-                    .as_ref()
-                    .map(|why| ui::warning_banner(None, why.clone(), None, cx)),
-            )
+            .children(self.warning.as_ref().map(|why| {
+                ui::warning_banner(None, why.clone(), None, cx)
+                    .id("monitoring-unknown-banner")
+                    .test_support()
+                    .w_full()
+                    .max_w(dp(form::MAX_WIDTH))
+            }))
             .children(
                 self.monitoring
                     .as_ref()
@@ -877,6 +905,10 @@ impl SettingsPage {
                             None,
                             cx,
                         )
+                        .id("monitoring-save-banner")
+                        .test_support()
+                        .w_full()
+                        .max_w(dp(form::MAX_WIDTH))
                     }),
             )
             .child(content)
@@ -936,15 +968,9 @@ impl SettingsPage {
         let url_changed = saved_store
             .and_then(|store| store.url.as_ref())
             .is_some_and(|saved| Some(saved) != url.as_ref());
-        let kept = draft
-            .baseline
-            .store
-            .as_ref()
-            .is_some_and(|store| store.token.is_some())
-            && !url_changed
+        let kept = url.as_ref().is_some_and(|url| draft.kept_token(url))
             && draft.token.read(cx).value().is_empty()
-            && !draft.replacing_token
-            && !draft.forget_token;
+            && !draft.replacing_token;
         let secret = if kept {
             form::Secret::Kept
         } else {
@@ -1138,6 +1164,8 @@ impl SettingsPage {
                 })
         };
         let line = h_flex()
+            .w_full()
+            .min_w_0()
             .gap(dp(8.))
             .items_start()
             .child(
@@ -1145,29 +1173,52 @@ impl SettingsPage {
                     .outline()
                     .small()
                     .label("Test")
+                    .flex_none()
                     .h(dp(ui::CONTROL_HEIGHT))
                     .disabled(example || draft.read.is_loading() || saving)
                     .on_click(cx.listener(|page, _, window, cx| page.test_monitoring(window, cx))),
             )
             .child(
-                div()
+                h_flex()
                     .id("metrics-test-result")
                     .test_support()
+                    .role(Role::Status)
+                    .aria_label(result.clone())
+                    .flex_1()
+                    .min_w_0()
+                    .items_start()
+                    .gap(dp(6.))
                     .text_size(dp(12.))
                     .children(
                         draft
                             .outcome
                             .as_ref()
-                            .and_then(|(tone, _)| ui::status_glyph(*tone, cx)),
+                            .and_then(|(tone, _)| ui::status_glyph(*tone, cx))
+                            .map(|glyph| {
+                                div()
+                                    .id("metrics-test-glyph")
+                                    .test_support()
+                                    .flex_none()
+                                    .mt(dp(3.))
+                                    .child(glyph)
+                            }),
                     )
-                    .child(result),
+                    .child(
+                        div()
+                            .id("metrics-test-text")
+                            .test_support()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .child(result),
+                    ),
             );
-        let saved = if draft
-            .baseline
-            .store
-            .as_ref()
-            .is_some_and(|s| s.token.is_some())
-            || !draft.token.read(cx).value().is_empty()
+        let saved = if draft.mode == Mode::Central
+            && draft.by_url
+            && (!draft.token.read(cx).value().is_empty()
+                || monitoring::normalise_url(draft.url.read(cx).value().trim())
+                    .ok()
+                    .is_some_and(|url| draft.kept_token(&url)))
         {
             form::SavedIn::file(format!("freshkube.yaml; the token in {STORE_NAME}"))
         } else {
@@ -1222,6 +1273,7 @@ struct TokenEdit {
     secrets: Secrets,
     account: String,
     previous: Option<String>,
+    previous_unknown: bool,
 }
 
 /// Stage the token before writing its reference; a refused setup restores it.
@@ -1238,7 +1290,11 @@ fn stage_token(
         return Ok(None);
     };
     let account = crate::monitoring::token_account(&url);
-    let previous = secrets.read(&account)?;
+    let (previous, previous_unknown) = match secrets.read(&account) {
+        Ok(previous) => (previous, false),
+        Err(_) if !typed.is_empty() => (None, true),
+        Err(why) => return Err(why),
+    };
     if !typed.is_empty() {
         secrets.write(&account, &typed)?;
     } else {
@@ -1248,6 +1304,7 @@ fn stage_token(
         secrets,
         account,
         previous,
+        previous_unknown,
     }))
 }
 
