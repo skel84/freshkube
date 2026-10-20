@@ -1271,7 +1271,7 @@ async fn monitoring_columns_folder_action_opens_the_monitoring_section(cx: &mut 
 }
 
 #[gpui_kit::test]
-async fn monitoring_keeps_its_draft_after_a_clusters_save(cx: &mut TestAppContext) {
+async fn monitoring_keeps_its_draft_after_staying_and_a_workspace_save(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("freshkube.yaml");
     std::fs::write(&file, SETUP).unwrap();
@@ -1285,6 +1285,18 @@ async fn monitoring_keeps_its_draft_after_a_clusters_save(cx: &mut TestAppContex
         pilot.update(cx, |pilot, cx| {
             pilot.show_settings(SettingsSection::Clusters, window, cx)
         });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-unsaved-stay", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        assert_eq!(page.read(cx).section(), SettingsSection::Monitoring);
+        // Another setup group can save while this section keeps its draft.
         page.update(cx, |page, cx| {
             let mut next = page.workspace.clone();
             let mut entry = next.clusters[0].clone();
