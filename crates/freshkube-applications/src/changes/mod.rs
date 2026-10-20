@@ -139,6 +139,8 @@ pub struct ChangesPage {
     display: Display,
     /// A refresh that failed over an earlier read, and its label.
     stale: Option<(SharedString, SharedString)>,
+    /// The setup owner's sanitized problem, independent of cluster reads.
+    setup_problem: Option<SharedString>,
     lines: Vec<Entry>,
     /// Each group's rows, in [`Fold::ALL`]'s order, and the rows the lines
     /// show; derived with the lines.
@@ -202,6 +204,7 @@ impl ChangesPage {
             read_namespace: None,
             display,
             stale: None,
+            setup_problem: None,
             lines: Vec::new(),
             group_rows: [0; 3],
             shown_rows: 0,
@@ -288,6 +291,21 @@ impl ChangesPage {
         if remapped && self.is_live() {
             self.read_again(cx);
         }
+    }
+
+    pub(crate) fn set_setup_problem(
+        &mut self,
+        problem: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.setup_problem == problem {
+            return;
+        }
+        self.setup_problem = problem.clone();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| page.set_setup_problem(problem, cx));
+        }
+        cx.notify();
     }
 
     /// A setup reload replaces trust and cancels every delivery read made
@@ -701,6 +719,7 @@ impl ChangesPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, None, connections, visible, window, cx);
             page.set_parent("Changes");
+            page.set_setup_problem(self.setup_problem.clone(), cx);
             page.set_coroot(coroot, cx);
             page
         });
