@@ -951,3 +951,40 @@ fn list_keeps_known_unread_applications_and_pods_with_their_reason(cx: &mut Test
         .unwrap();
     }
 }
+
+#[gpui_kit::test]
+fn unread_applications_and_pods_are_drawn_as_parented_ghost_cards(cx: &mut TestAppContext) {
+    for (shape, key) in [
+        (Shape::ArgoRefused, "dev-argocd"),
+        (
+            Shape::DestinationUnreachable,
+            "dev-reported-checkout-dev-0-pods",
+        ),
+    ] {
+        let (handle, page) = open(cx, 1280., 880., shape, Duration::ZERO, 13.);
+        cx.update_window(handle, |_, window, cx| {
+            chain(&page, window, cx);
+            let p = page.read(cx);
+            let hop = p.shown().hop(key).unwrap();
+            let parent = &p.trail.cards[hop.after.as_deref().unwrap()];
+            let card = p.graph.nodes().iter().find(|card| card.key == key).unwrap();
+            assert!(card.ghost, "{key} is a ghost card");
+            assert_eq!(card.id.as_ref(), format!("change-card-{key}"));
+            let edge = p.graph.edges().iter().find(|edge| edge.to == key).unwrap();
+            assert_eq!(&edge.from, parent);
+            assert_eq!(edge.style, EdgeStyle::Dotted);
+            let edge_id = edge.marker_id.clone();
+            page.update(cx, |page, cx| page.select(key, window, cx));
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+            let id: SharedString = format!("change-card-{key}").into();
+            assert!(window.find(id).visible());
+            assert!(
+                window.try_find(edge_id).is_some(),
+                "the parent edge is drawn"
+            );
+        })
+        .unwrap();
+    }
+}
