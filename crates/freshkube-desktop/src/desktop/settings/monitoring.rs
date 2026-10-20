@@ -948,6 +948,7 @@ impl SettingsPage {
                     "metrics-token-row",
                     "Token",
                     form::secret("metrics-token", secret, cx)
+                        .store_name(STORE_NAME)
                         .on_replace(cx.listener(|page, _, _, cx| {
                             page.monitoring_edit(|d| d.replacing_token = true, cx)
                         }))
