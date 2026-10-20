@@ -138,6 +138,13 @@ pub struct Link {
     /// digest while a build of the commit reports another; empty otherwise.
     /// Never a failure: rebuilds of one commit report different digests.
     pub conflicts: Vec<DigestConflict>,
+    /// Whether the supply-chain link's signature is marked failing: true
+    /// exactly when the key the person named can't be used, the signature
+    /// doesn't verify with it, the attestation can't be read, or no subject
+    /// of it is the build's digest. A link with no key, no attestation found,
+    /// or a verified signature leaves it false. Shown as the hop's Warn
+    /// status, the way a digest conflict is.
+    pub signature_warn: bool,
 }
 
 impl Link {
@@ -158,7 +165,14 @@ impl Link {
             reason: reason.into(),
             evidence: Vec::new(),
             conflicts: Vec::new(),
+            signature_warn: false,
         }
+    }
+
+    /// The link with its signature marked failing, or not.
+    fn warned(mut self, warn: bool) -> Self {
+        self.signature_warn = warn;
+        self
     }
 
     /// The link with what it was read from.

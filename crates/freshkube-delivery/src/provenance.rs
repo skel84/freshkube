@@ -1106,6 +1106,7 @@ fn the_rule_fails_on_a_side_with_nothing_read() {
         reason: String::new(),
         evidence,
         conflicts: Vec::new(),
+        signature_warn: false,
     };
     let declared =
         Observation::declared(role::ENVIRONMENT, object("Rollout"), "/spec", Some(digest));

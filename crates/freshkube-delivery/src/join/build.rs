@@ -442,6 +442,7 @@ pub(super) fn supply_chain_links(
                 ),
             )
             .observed(evidence)
+            .warned(standing.warn)
         })
         .collect()
 }
@@ -451,6 +452,8 @@ struct Standing {
     confidence: Confidence,
     words: String,
     evidence: Vec<Observation>,
+    /// The link's signature is marked failing, see [`Link::signature_warn`].
+    warn: bool,
 }
 
 /// One attestation of the build and what the verifier made of it.
@@ -607,6 +610,7 @@ fn standing(build: &Build, proof: &Proof, digest: &Digest) -> Standing {
             confidence,
             words,
             evidence: Vec::new(),
+            warn: annotated && matches!(trust, Trust::Unusable(_)),
         };
     };
     let mut confidence = confidence_of(&chosen.outcome);
@@ -645,6 +649,23 @@ fn standing(build: &Build, proof: &Proof, digest: &Digest) -> Standing {
         confidence,
         words,
         evidence,
+        warn: warns(&chosen.outcome),
+    }
+}
+
+/// Whether a verdict marks the signature failing: the four rows of the
+/// design's table that carry the Warn status. A new variant does not compile
+/// until it is placed here.
+fn warns(outcome: &Verification) -> bool {
+    match outcome {
+        Verification::KeyUnusable(_)
+        | Verification::SignatureFailed { .. }
+        | Verification::Malformed(_)
+        | Verification::SubjectDiffers { .. } => true,
+        Verification::Verified(_)
+        | Verification::NoTrust
+        | Verification::NotStoredHere(_)
+        | Verification::NotRead(_) => false,
     }
 }
 
