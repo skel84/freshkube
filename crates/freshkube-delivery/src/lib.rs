@@ -41,6 +41,8 @@ pub(crate) mod versions;
 pub mod words;
 
 #[cfg(test)]
+mod attested;
+#[cfg(test)]
 mod deployment_tests;
 #[cfg(test)]
 pub(crate) mod fixtures;
