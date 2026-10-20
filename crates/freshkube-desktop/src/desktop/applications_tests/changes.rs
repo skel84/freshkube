@@ -403,6 +403,60 @@ fn a_failed_read_offers_retry(cx: &mut TestAppContext) {
     .unwrap();
 }
 
+#[gpui_kit::test]
+fn a_short_error_scrolls_under_the_header_with_a_setup_banner(cx: &mut TestAppContext) {
+    use gpui_kit::{ScrollDelta, point, px};
+
+    let (_runtime, handle, view) = open_with(cx, 760., 560., |page| page.set_hold(true));
+    cx.update(|cx| crate::text_size::set(20., cx));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let page = changes(&view, cx);
+        let reason = "The API did not answer. Try reading again.";
+        page.update(cx, |page, cx| {
+            page.fail_read(reason, cx);
+            // Exercise the notes slot with a setup warning independently of
+            // the setup-file handoff, which is covered separately.
+            let warning = "freshkube.yaml isn't used. The setup file could not be read. \
+                           Reload it in Settings.";
+            page.display.missing = Some((warning.into(), warning.into()));
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.find("changes-missing").visible());
+        assert!(matches!(page.read(cx).body(), Body::Failed { reason: text } if text == reason));
+        let title = window.find("changes-title").bounds();
+        let before = window.find("changes-failed").bounds();
+        window.scroll(
+            "changes-state-scroll",
+            ScrollDelta::Pixels(point(px(0.), px(-2000.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert_eq!(window.find("changes-title").bounds(), title);
+        assert!(window.find("changes-missing").visible());
+        let state = window.find("changes-failed").bounds();
+        let viewport = window.find("changes-page").bounds();
+        assert!(
+            state.top() < before.top(),
+            "the error content must scroll: {before:?} to {state:?}"
+        );
+        // The state includes the read error after Retry. Its bottom must
+        // be reachable too, rather than just the button's centre.
+        assert!(
+            state.bottom() <= viewport.bottom() + px(1.),
+            "{state:?} in {viewport:?}"
+        );
+        let retry = window.find("changes-retry");
+        assert!(retry.visible());
+        assert!(retry.bounds().top() >= title.bottom());
+        assert!(retry.bounds().bottom() <= viewport.bottom());
+        window.click("changes-retry", cx);
+        assert!(page.read(cx).is_reading(), "Retry starts another read");
+    })
+    .unwrap();
+}
+
 /// Rows beside a project that wasn't read keep the table, with a banner.
 #[gpui_kit::test]
 fn a_refused_project_beside_rows_is_a_banner(cx: &mut TestAppContext) {
