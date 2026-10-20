@@ -1299,11 +1299,10 @@ impl SettingsPage {
 }
 
 fn example_setup() -> Setup {
-    setup::parse(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../freshkube-prefs/src/examples/freshkube.yaml"
-    )))
-    .expect("the example setup is valid")
+    setup::example().unwrap_or_else(|why| {
+        tracing::warn!("Example setup not used: {why}");
+        Setup::default()
+    })
 }
 
 struct TokenEdit {
