@@ -269,3 +269,65 @@ async fn a_provenance_that_does_not_verify_is_not_a_witness() {
         Confidence::Claimed
     );
 }
+
+#[tokio::test]
+async fn the_signature_is_marked_failing_for_exactly_the_four_warn_rows() {
+    let statement = provenance(NEW, SHA);
+    let key = signing_key_pem();
+    // Signed for one statement, carrying another: the signature fails.
+    let mut tampered: Value =
+        serde_json::from_str(&signed_envelope(PAYLOAD_TYPE, &statement)).unwrap();
+    let other = provenance(OLD, SHA);
+    tampered["payload"] = json!(b64(other.to_string()));
+    let tampered = world_with(&tampered.to_string(), &other);
+
+    let warns = [
+        ("key unusable", signed(&statement), Some("not a key")),
+        ("signature fails", tampered, Some(key.as_str())),
+        (
+            "malformed",
+            world_with("not json", &statement),
+            Some(key.as_str()),
+        ),
+        (
+            "subject differs",
+            signed(&provenance(OLD, SHA)),
+            Some(key.as_str()),
+        ),
+    ];
+    for (row, world, pem) in warns {
+        let trail = trail_with(&world, pem).await;
+        assert!(
+            supply(&trail).signature_warn,
+            "{row}: {}",
+            supply(&trail).reason
+        );
+        assert_eq!(supply(&trail).confidence, Confidence::Claimed, "{row}");
+    }
+
+    // The key can't be used and nothing was stored where it is read: still
+    // the key-unusable row, as long as Chains says it signed.
+    let unattested = trail_with(&healthy().with_meta(), Some("not a key")).await;
+    assert!(supply(&unattested).signature_warn);
+
+    let quiet = [
+        ("verified", signed(&statement), Some(key.as_str())),
+        ("no key set", signed(&statement), None),
+        ("nothing stored", healthy().with_meta(), Some(key.as_str())),
+    ];
+    for (row, world, pem) in quiet {
+        let trail = trail_with(&world, pem).await;
+        assert!(!supply(&trail).signature_warn, "{row}");
+    }
+    // Unknown: no annotation, no attestation.
+    let mut bare = healthy().with_meta();
+    let mut run = pipeline_run(SHA, false, Some(NEW));
+    run["metadata"]["annotations"] = json!({});
+    bare.tekton = bare.tekton.with("pipelineruns", vec![run]);
+    let unknown = trail_with(&bare, Some("not a key")).await;
+    assert_eq!(supply(&unknown).confidence, Confidence::Unknown);
+    assert!(!supply(&unknown).signature_warn);
+    // No other link carries it.
+    let verified = verified_trail().await;
+    assert!(verified.links.iter().all(|link| !link.signature_warn));
+}

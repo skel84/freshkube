@@ -1617,6 +1617,7 @@ async fn a_local_application_without_pods_stays_unknown_beside_one_elsewhere() {
         reason: String::new(),
         evidence: Vec::new(),
         conflicts: Vec::new(),
+        signature_warn: false,
     };
     let stage = link(
         Hop::Freight,
