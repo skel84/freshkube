@@ -159,6 +159,13 @@ fn per_entry_links_to_clusters_and_selects_the_first_entry(cx: &mut TestAppConte
         })
         .unwrap();
         cx.run_until_parked();
+        // Choosing Per entry changed the draft, so leaving asks first.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("settings-unsaved-discard", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(
@@ -206,6 +213,13 @@ fn per_entry_explanation_wraps_at_text_twenty_in_a_small_window(cx: &mut TestApp
         assert!(link.bounds().top() >= explanation.bottom() - px(1.));
         assert!(link.visible());
         window.click("metrics-per-entry-clusters", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // Choosing Per entry changed the draft, so leaving asks first.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("settings-unsaved-discard", cx);
     })
     .unwrap();
     cx.run_until_parked();

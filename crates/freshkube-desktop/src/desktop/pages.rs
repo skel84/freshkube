@@ -540,12 +540,6 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.navigate(page, window, cx);
-    }
-
-    /// Log collection keeps running in the background across screens; other
-    /// screens load when shown and stay idle while hidden.
-    pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         if page != Page::Settings
             && self.guard_settings(
                 move |pilot, window, cx| pilot.navigate_from_keyboard(page, window, cx),
@@ -555,8 +549,23 @@ impl Pilot {
         {
             return;
         }
-        // Focus the shell after the guard accepts, then let the page take focus.
+        // Focus the shell first so a screen can then take focus for its list.
         window.focus(&self.focus, cx);
+        self.navigate(page, window, cx);
+    }
+
+    /// Log collection keeps running in the background across screens; other
+    /// screens load when shown and stay idle while hidden.
+    pub(super) fn navigate(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+        if page != Page::Settings
+            && self.guard_settings(
+                move |pilot, window, cx| pilot.navigate(page, window, cx),
+                window,
+                cx,
+            )
+        {
+            return;
+        }
         self.target.cancel_object_open();
         self.navigation.page = page;
         self.navigation.column_changed();

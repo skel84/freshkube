@@ -457,3 +457,51 @@ async fn coroot_key_write_failure_keeps_the_draft(cx: &mut TestAppContext) {
     cx.run_until_parked();
     arrived(cx, &pilot, Route::Rail);
 }
+
+#[gpui_kit::test]
+async fn typing_in_a_dirty_section_draws_the_column_once_at_most(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), SETUP);
+    let (_runtime, handle, pilot) = launch(cx, directory.path());
+    let section = SettingsSection::Monitoring;
+    open(cx, handle, &pilot, section);
+    edit(cx, handle, section, "c");
+    marker(cx, handle, section, true);
+    let before = freshkube_probe::probe::count("column.derive");
+    for key in ["l", "u", "s"] {
+        cx.update_window(handle, |_, window, cx| window.input(key, cx))
+            .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+            .unwrap();
+    }
+    let drawn = freshkube_probe::probe::count("column.derive") - before;
+    assert!(drawn <= 1, "drawn {drawn}");
+    marker(cx, handle, section, true);
+}
+
+#[gpui_kit::test]
+async fn a_navigation_that_is_not_the_keyboard_leaves_focus_alone(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), SETUP);
+    let (_runtime, handle, pilot) = launch(cx, directory.path());
+    let _other = cx
+        .update_window(handle, |_, window, cx| {
+            window.activate_window();
+            let other = cx.focus_handle();
+            window.focus(&other, cx);
+            other
+        })
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| pilot.navigate(Page::Nodes, window, cx));
+        assert!(!pilot.read(cx).focus.is_focused(window));
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate_from_keyboard(Page::Overview, window, cx)
+        });
+        assert!(pilot.read(cx).focus.is_focused(window));
+    })
+    .unwrap();
+}

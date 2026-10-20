@@ -88,6 +88,7 @@ impl Pilot {
         if !std::mem::take(&mut self.navigation.column_stale) {
             return;
         }
+        crate::desktop::probe::hit("column.derive");
         let derived = match self.navigation.area {
             Area::Group(slug) => self.group_lines(slug, cx),
             Area::Custom => self.custom_lines(cx),

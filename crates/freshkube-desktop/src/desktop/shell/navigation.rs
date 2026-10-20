@@ -13,6 +13,10 @@ use std::collections::BTreeMap;
 pub(in crate::desktop) struct Navigation {
     pub(in crate::desktop) page: Page,
     pub(super) settings_leave: Option<super::settings_guard::Leave>,
+    /// The Settings section shown, and which sections showed the unsaved dot
+    /// (in `SettingsSection::GROUPS` order), when the shell last learned of a
+    /// change.
+    settings_unsaved: (Option<SettingsSection>, Vec<bool>),
     /// The rail's area, whose pages or kinds the column lists.
     pub(in crate::desktop) area: Area,
     /// The Kubernetes kind the Resources page shows.
@@ -69,6 +73,7 @@ impl Navigation {
         Self {
             page: Page::Overview,
             settings_leave: None,
+            settings_unsaved: (None, Vec::new()),
             area: Area::Overview,
             resource_kind: default_kind(),
             last_kind: default_kind(),
@@ -128,6 +133,24 @@ impl Navigation {
     /// them as they are.
     pub(in crate::desktop) fn column_changed(&mut self) {
         self.column_stale = true;
+    }
+
+    /// Records the Settings section shown and which sections have unsaved
+    /// changes and, when that differs from last time, says the column
+    /// changed. A key typed into a draft that is already changed does
+    /// neither. Returns whether it did.
+    pub(in crate::desktop) fn settings_unsaved_changed(
+        &mut self,
+        section: SettingsSection,
+        unsaved: Vec<bool>,
+    ) -> bool {
+        let now = (Some(section), unsaved);
+        let flipped = self.settings_unsaved != now;
+        if flipped {
+            self.settings_unsaved = now;
+            self.column_changed();
+        }
+        flipped
     }
 
     /// The title bar's name for the page shown.
