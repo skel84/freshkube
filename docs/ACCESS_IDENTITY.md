@@ -33,6 +33,15 @@ the old access. The Talos Kubernetes access adapter checks its pinned local
 revision before and after preparing a client; direct connection attempts do the
 same. There is no filesystem watcher: changes take effect at reload/refresh.
 
+In Kubernetes-only mode, Monitoring's Try again and Resources' Retry use the
+shell's Refresh action. A manual refresh waits for local inspection (including
+one already running) before refreshing the visible page and summary. Changed
+files replace access and publish the new source to every page before it reads;
+unchanged files retain access and selection. The UI regressions in
+[`desktop/tests/kubernetes_only.rs`](../crates/freshkube-desktop/src/desktop/tests/kubernetes_only.rs)
+exercise both controls with an edited temporary kubeconfig and a refused
+loopback server.
+
 Transport policy is explicit: Kubernetes watch reconnects, client-cache eviction,
 direct `forget()`/retry and tonic channel reconnects retain access identity and
 compatible object selection. Rebuilding the authenticated Talos client after the
