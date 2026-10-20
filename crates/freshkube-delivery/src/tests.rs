@@ -25,6 +25,7 @@ pub(super) fn plan(contexts: &[(&str, &str)]) -> Plan {
         argocd: "core".into(),
         cluster_names: Vec::new(),
         evidence_result: None,
+        public_key_file: None,
         stage_naming: None,
         map_hint: Default::default(),
         names: Default::default(),
