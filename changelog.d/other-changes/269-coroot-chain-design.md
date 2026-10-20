@@ -1,0 +1,1 @@
+- **Coroot in the delivery chain, design:** COROOT.md now describes a Coroot link per workspace entry, an "After the deploy" section on the change page that shows Coroot's findings and the samples either side of the start, and a way back from a revision to its change (design only; nothing in the app changes yet).

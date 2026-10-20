@@ -21,6 +21,28 @@ use freshkube_core::resources::ResourceKind;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+/// The standalone page's host handles Refresh as the desktop shell does.
+struct RefreshHost(Entity<ResourcesScreen>);
+
+impl gpui_kit::Render for RefreshHost {
+    fn render(
+        &mut self,
+        _: &mut gpui_kit::Window,
+        cx: &mut gpui_kit::Context<Self>,
+    ) -> impl gpui_kit::IntoElement {
+        use gpui_kit::prelude::*;
+        gpui_kit::div()
+            .size_full()
+            .on_action(
+                cx.listener(|host, _: &freshkube_ui::page::Refresh, window, cx| {
+                    host.0.update(cx, |page, cx| page.refresh(window, cx));
+                    cx.propagate();
+                }),
+            )
+            .child(self.0.clone())
+    }
+}
+
 /// A built-in or example custom kind by its kubectl key.
 fn kind(key: &str) -> ResourceKind {
     example::kind(key).unwrap()
@@ -75,7 +97,8 @@ fn mount_window(
             view
         });
         screen = Some(view.clone());
-        Root::new(view, window, cx)
+        let host = cx.new(|_| RefreshHost(view));
+        Root::new(host, window, cx)
     });
     cx.run_until_parked();
     (runtime, screen.unwrap(), handle.into())
