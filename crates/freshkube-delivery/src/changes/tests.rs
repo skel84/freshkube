@@ -381,6 +381,8 @@ async fn a_live_read_says_why_kargo_wasnt_read() {
         argocd_namespace: "argocd".into(),
         mapping: Default::default(),
         sources: Default::default(),
+        public_key_file: None,
+        evidence_result: None,
     };
     let unserved = live::read(&FixtureReader::default(), &at, now(), live::BUDGET).await;
     assert!(matches!(unserved.projects, Source::NotInstalled(_)));
@@ -400,6 +402,8 @@ async fn a_live_read_lists_freight_and_follows_only_what_runs() {
         argocd_namespace: "argocd".into(),
         mapping: Default::default(),
         sources: Default::default(),
+        public_key_file: None,
+        evidence_result: None,
     };
     let freight = |name: &str| {
         json!({
@@ -530,6 +534,8 @@ fn at() -> live::Where {
         argocd_namespace: "argocd".into(),
         mapping: Default::default(),
         sources: Default::default(),
+        public_key_file: None,
+        evidence_result: None,
     }
 }
 
@@ -705,6 +711,8 @@ fn across() -> live::Where {
     ]);
     live::Where {
         sources: Sources::of(&workspace),
+        public_key_file: None,
+        evidence_result: None,
         ..at()
     }
 }

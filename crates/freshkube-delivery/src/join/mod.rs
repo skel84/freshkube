@@ -230,6 +230,7 @@ pub struct Evidence {
     /// The words for a context, by its key, where they differ ([`Evidence::name`]).
     pub names: BTreeMap<String, String>,
     pub builds: Source<Vec<Build>>,
+    pub(crate) build_history: Result<crate::results::History, crate::results::Error>,
     pub kargo: KargoRead,
     pub applications: Source<Vec<Application>>,
     /// Where each Application's destination points, by `namespace/name`.

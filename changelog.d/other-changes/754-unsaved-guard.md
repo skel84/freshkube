@@ -1,0 +1,1 @@
+- **Settings:** leaving a section with unsaved changes asks whether to Save, Discard or Stay, and its column row marks the pending changes.

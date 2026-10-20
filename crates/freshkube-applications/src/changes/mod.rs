@@ -12,6 +12,7 @@
 //! older than [`FRESH_FOR`], on Refresh, and never while hidden, which
 //! drops the read in flight. Another connection drops what was read.
 pub(crate) mod display;
+pub(crate) mod outcome;
 mod table;
 mod view;
 
@@ -98,6 +99,8 @@ enum Entry {
 
 pub struct ChangesPage {
     runtime: tokio::runtime::Handle,
+    secrets: Option<freshkube_core::secrets::Secrets>,
+    setup_revision: u64,
     source: Option<ClusterSource>,
     visible: bool,
     /// What example data couldn't read (`FRESHKUBE_APPLICATIONS`).
@@ -108,7 +111,7 @@ pub struct ChangesPage {
     /// The read, its answer and the work in flight, keyed by the
     /// connection. It is hidden while the list is, and its answer's age
     /// decides whether showing reads.
-    loader: Loader<Read, String>,
+    loader: Loader<Read, (String, u64)>,
     /// Which connection each cluster is, for the change page's links.
     connections: Connections,
     /// Where a live read reads each part, and how the workspace maps Argo
@@ -116,6 +119,9 @@ pub struct ChangesPage {
     across: Across,
     /// Where an opened change gets what Coroot found after a deploy.
     coroot: Coroot,
+    outcome_memo: Entity<crate::change::SessionMemo>,
+    _outcomes: Subscription,
+    _connection: Option<Subscription>,
     /// Where Argo CD's Applications are read, as the Applications read
     /// found it.
     #[cfg(any(test, feature = "testing"))]
@@ -165,6 +171,7 @@ impl ChangesPage {
     pub(crate) fn new(
         runtime: tokio::runtime::Handle,
         shape: Shape,
+        secrets: Option<freshkube_core::secrets::Secrets>,
         cx: &mut Context<Self>,
     ) -> Self {
         let loading = kit::LoadingRows::new(PREFIX);
@@ -174,8 +181,12 @@ impl ChangesPage {
         // The list starts hidden, and so does its read.
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
+        let outcome_memo = crate::change::session_memo(cx);
+        let outcomes = cx.observe(&outcome_memo, |page, _, cx| page.sync_outcomes(cx));
         Self {
             runtime,
+            secrets,
+            setup_revision: 0,
             source: None,
             visible: false,
             shape,
@@ -184,6 +195,9 @@ impl ChangesPage {
             connections: Connections::default(),
             across: Across::default(),
             coroot: Coroot::None,
+            outcome_memo,
+            _outcomes: outcomes,
+            _connection: None,
             argocd_namespace: "argocd".into(),
             read_namespace: None,
             display,
@@ -264,6 +278,7 @@ impl ChangesPage {
         let remapped = across != self.across;
         self.connections = connections.clone();
         self.across = across.clone();
+        self.sync_outcomes(cx);
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
         }
@@ -275,16 +290,50 @@ impl ChangesPage {
         }
     }
 
+    /// A setup reload replaces trust and cancels every delivery read made
+    /// with the old setup, including a change opened from this list.
+    pub(crate) fn reload_setup(
+        &mut self,
+        public_key_file: Option<std::path::PathBuf>,
+        evidence_result: Option<freshkube_core::setup::Evidence>,
+        cx: &mut Context<Self>,
+    ) {
+        self.setup_revision += 1;
+        self.across.public_key_file = public_key_file.clone();
+        self.across.evidence_result = evidence_result.clone();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| {
+                page.reload_setup(public_key_file, evidence_result, cx)
+            });
+        }
+        if self.is_live() {
+            self.loader.reset();
+            self.show_read(cx);
+            if self.visible {
+                self.read(cx);
+            }
+        }
+    }
+
     /// Where the change opened from the list gets what Coroot found after
     /// a deploy; the change shown follows.
     pub fn set_coroot(&mut self, coroot: Coroot, cx: &mut Context<Self>) {
         if coroot == self.coroot {
             return;
         }
+        self._connection = match &coroot {
+            Coroot::Live(live) => live
+                .reader
+                .as_ref()
+                .and_then(|reader| reader.on_connection(cx, |page, cx| page.sync_outcomes(cx))),
+            _ => None,
+        };
         self.coroot = coroot.clone();
+        self.sync_outcomes(cx);
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_coroot(coroot, cx));
         }
+        cx.notify();
     }
 
     /// Where the Applications read found Argo CD's Applications. A live
@@ -354,7 +403,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start(source.id.clone());
+        let request = self.loader.start((source.id.clone(), self.setup_revision));
         match &source.access {
             ClusterAccess::Example(hold) => {
                 // Held, it stays in flight, so the page keeps its loading
@@ -390,8 +439,11 @@ impl ChangesPage {
                     argocd_namespace: self.argocd_namespace.clone(),
                     mapping: self.across.mapping.clone(),
                     sources: self.across.sources.clone(),
+                    public_key_file: self.across.public_key_file.clone(),
+                    evidence_result: self.across.evidence_result.clone(),
                 };
                 let across = self.across.clone();
+                let secrets = self.secrets.clone();
                 let (job, receiver) = backend::spawn_job(
                     &self.runtime,
                     DEADLINE,
@@ -409,7 +461,8 @@ impl ChangesPage {
                             }),
                             |chosen| entry::connect_entry(kubeconfigs.clone(), chosen),
                             core_changes::live::BUDGET,
-                        );
+                        )
+                        .with_secrets(secrets);
                         let read = core_changes::live::read_in(
                             &pool,
                             &at,
@@ -438,7 +491,7 @@ impl ChangesPage {
     /// A read's answer, published only while it is the one in flight.
     fn answer(
         &mut self,
-        request: &Request<String>,
+        request: &Request<(String, u64)>,
         result: Result<Read, String>,
         cx: &mut Context<Self>,
     ) {
@@ -459,6 +512,7 @@ impl ChangesPage {
             cluster.as_deref().unwrap_or_default(),
             Utc::now(),
         );
+        self.sync_outcomes(cx);
         self.stale = self.loader.data().and(self.loader.error()).map(|why| {
             let text = format!("Showing the last read. {why}");
             let label = format!("Couldn't read again: {text}");
@@ -593,6 +647,7 @@ impl ChangesPage {
         if self.folded.remove(&fold) {
             self.rebuild(cx);
         }
+        self.sync_outcomes(cx);
         kit::reveal(self, ScrollStrategy::Nearest);
         if freshkube_ui::page::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
             kit::reveal_when_settled(
@@ -680,6 +735,8 @@ impl ChangesPage {
             (access, _) => Fetch::Live {
                 runtime: self.runtime.clone(),
                 access: access.clone(),
+                secrets: self.secrets.clone(),
+                setup_revision: self.setup_revision,
                 place: Box::new(Place {
                     cluster: source.id.clone(),
                     label: source.context.clone(),
@@ -688,6 +745,8 @@ impl ChangesPage {
                     argocd_namespace: self.argocd_namespace.clone(),
                     mapping: self.across.mapping.clone(),
                     sources: self.across.sources.clone(),
+                    public_key_file: self.across.public_key_file.clone(),
+                    evidence_result: self.across.evidence_result.clone(),
                 }),
                 kubeconfig: self.across.kubeconfig.clone(),
             },
@@ -733,7 +792,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start(source.id);
+        let request = self.loader.start((source.id, self.setup_revision));
         let read = Read {
             changes,
             example: None,
@@ -746,7 +805,7 @@ impl ChangesPage {
         let Some(source) = self.source.clone() else {
             return;
         };
-        let request = self.loader.start(source.id);
+        let request = self.loader.start((source.id, self.setup_revision));
         self.answer(&request, Err(why.into()), cx);
     }
 }
