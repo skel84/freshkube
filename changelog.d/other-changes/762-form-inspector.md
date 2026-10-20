@@ -1,0 +1,1 @@
+- **Forms and Inspectors:** validation errors keep the next row in place even without a hint, and Inspector bodies keep their padding while scrolling so lines stay clear of the heading.

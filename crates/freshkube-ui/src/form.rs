@@ -126,7 +126,8 @@ impl Group {
     }
 }
 
-/// A field's label and its control. Errors replace hints, never add a line.
+/// A field's label and its control. Every row reserves a message line;
+/// errors replace hints or the empty line.
 pub fn row(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -191,19 +192,24 @@ impl Row {
                     .min_w_0()
                     .gap(dp(4.))
                     .child(self.control)
-                    .when_some(
-                        self.error.map(IntoElement::into_any_element).or(self.hint),
-                        |this, text| {
-                            this.child(
+                    .child(
+                        self.error
+                            .map(IntoElement::into_any_element)
+                            .or(self.hint)
+                            .map(|text| {
                                 div()
                                     .id(part(&self.id, if error { "error" } else { "hint" }))
                                     .test_support()
                                     .when(error, |this| this.role(Role::Alert))
                                     .text_size(dp(12.))
                                     .text_color(if error { p.crit_ink } else { p.muted })
-                                    .child(text),
-                            )
-                        },
+                                    .child(text)
+                                    .into_any_element()
+                            })
+                            // A blank line follows the same font metrics as a message.
+                            .unwrap_or_else(|| {
+                                div().text_size(dp(12.)).child(" ").into_any_element()
+                            }),
                     ),
             )
     }
@@ -504,6 +510,7 @@ mod tests {
         input: Entity<InputState>,
         narrow: bool,
         error: bool,
+        hint: bool,
         side: Option<Side>,
         chosen: bool,
         typing: bool,
@@ -520,6 +527,13 @@ mod tests {
                 invalid(input, cx)
             } else {
                 input
+            };
+            let field =
+                row("field", "Context", input).error(self.error.then_some("Enter a context."));
+            let field = if self.hint {
+                field.hint("Choose a context.")
+            } else {
+                field
             };
             let pair = actions(
                 Action::new("save", "Save", |_, _, _| {}),
@@ -539,11 +553,8 @@ mod tests {
                     group("group", "Connection")
                         .dirty(true)
                         .narrow(self.narrow)
-                        .row(
-                            row("field", "Context", input)
-                                .hint("Choose a context.")
-                                .error(self.error.then_some("Enter a context.")),
-                        )
+                        .row(field)
+                        .row(row("next-field", "Namespace", div().h(dp(CONTROL_HEIGHT))))
                         .saved_in(SavedIn::file("workspace.json"))
                         .render(cx),
                 )
@@ -588,6 +599,7 @@ mod tests {
                 input: cx.new(|cx| InputState::new(window, cx).default_value("cluster-a")),
                 narrow: false,
                 error: false,
+                hint: true,
                 side: None,
                 chosen: false,
                 typing: false,
@@ -682,6 +694,35 @@ mod tests {
                 }
             })
             .unwrap();
+        }
+    }
+
+    #[gpui_kit::test]
+    fn an_error_without_a_hint_keeps_the_next_row_in_place(cx: &mut TestAppContext) {
+        let (handle, form) = open(cx);
+        for text in [13., 20.] {
+            for narrow in [false, true] {
+                cx.update_window(handle, |_, window, cx| {
+                    crate::text_size::set(text, cx);
+                    form.update(cx, |form, cx| {
+                        form.hint = false;
+                        form.error = false;
+                        form.narrow = narrow;
+                        cx.notify();
+                    });
+                    window.render_frame(cx);
+                    assert!(window.try_find("field-hint").is_none());
+                    let next = window.find("next-field").bounds().top();
+                    form.update(cx, |form, cx| {
+                        form.error = true;
+                        cx.notify();
+                    });
+                    window.render_frame(cx);
+                    assert_eq!(window.find("field-error").role(), Some(Role::Alert));
+                    assert_eq!(window.find("next-field").bounds().top(), next);
+                })
+                .unwrap();
+            }
         }
     }
 
