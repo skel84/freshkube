@@ -291,6 +291,15 @@ impl GraphStory {
                 tooltip: SharedString::default(),
                 style: if chain { JOINS[ix].1 } else { EdgeStyle::Auto },
                 pill: chain.then(|| JOINS[ix].0.into()),
+                pill_tone: if chain {
+                    match JOINS[ix].1 {
+                        EdgeStyle::Dashed => Some(Tone::Info),
+                        EdgeStyle::Dotted => Some(Tone::Unknown),
+                        _ => None,
+                    }
+                } else {
+                    None
+                },
             })
             .collect();
         self.graph.set(nodes, edges);

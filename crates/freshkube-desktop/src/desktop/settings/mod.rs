@@ -27,6 +27,9 @@ mod source;
 pub(super) mod sources;
 #[cfg(test)]
 pub(super) mod tests;
+mod unsaved;
+#[cfg(test)]
+mod unsaved_tests;
 
 use crate::ui::{self, dp};
 use freshkube_core::workspace::{self, Loaded, Workspace};

@@ -483,6 +483,15 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.settings_page.read(cx).section() != section
+            && self.guard_settings(
+                move |pilot, window, cx| pilot.show_settings(section, window, cx),
+                window,
+                cx,
+            )
+        {
+            return;
+        }
         self.settings_page
             .update(cx, |page, cx| page.show(section, cx));
         self.navigation.column_changed();
@@ -518,6 +527,10 @@ impl Pilot {
                 let state = self.pages.observability.read(cx).connection_state();
                 self.settings_page
                     .update(cx, |page, cx| page.set_coroot_state(state, cx));
+            }
+            ObservabilityEvent::KeyNotKept { server, why } => {
+                self.settings_page
+                    .update(cx, |page, cx| page.coroot_key_failed(server, why, cx));
             }
             ObservabilityEvent::KeyKept(server) => {
                 self.settings_page

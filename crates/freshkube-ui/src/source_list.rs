@@ -129,10 +129,12 @@ pub struct Row<K> {
     depth: u8,
     mono: bool,
     current: bool,
+    unsaved: bool,
     disclosure: Option<bool>,
     count: Option<(SharedString, Option<Tone>)>,
     mark: Option<(Tone, SharedString)>,
     mark_id: SharedString,
+    dirty_id: SharedString,
     label_id: SharedString,
     detail: Option<SharedString>,
     shortcut: Option<SharedString>,
@@ -146,6 +148,7 @@ impl<K> Row<K> {
         Self {
             key,
             mark_id: format!("{id}-mark").into(),
+            dirty_id: format!("{id}-dirty").into(),
             label_id: format!("{id}-label").into(),
             id,
             tip: label.clone(),
@@ -154,6 +157,7 @@ impl<K> Row<K> {
             depth: 0,
             mono: false,
             current: false,
+            unsaved: false,
             disclosure: None,
             count: None,
             mark: None,
@@ -193,6 +197,12 @@ impl<K> Row<K> {
     }
 
     /// A count at the right, toned when it counts problems.
+    /// Shows the shared accent dot in the row's trailing count position.
+    pub fn unsaved(mut self, unsaved: bool) -> Self {
+        self.unsaved = unsaved;
+        self
+    }
+
     pub fn count(mut self, count: impl Into<SharedString>, tone: Option<Tone>) -> Self {
         self.count = Some((count.into(), tone));
         self
@@ -722,6 +732,9 @@ fn row_line<V: SourceListHost>(
                 .flex_none()
                 .gap(dp(6.))
                 .children(count)
+                .when(row.unsaved, |this| {
+                    this.child(crate::form::dirty_marker(row.dirty_id.clone(), cx))
+                })
                 .children(mark),
         )
         .follow_tooltip(row.tip.clone())

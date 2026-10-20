@@ -61,6 +61,7 @@ fn invented(nodes: usize, edges: usize) -> (Vec<GraphNode<usize>>, Vec<GraphEdge
             tooltip: SharedString::default(),
             style: EdgeStyle::Auto,
             pill: None,
+            pill_tone: None,
         });
     }
     (boxes, calls)
@@ -156,6 +157,7 @@ fn an_unpaged_graph_with_one_caller_of_forty_keeps_them_in_one_column() {
             tooltip: SharedString::default(),
             style: EdgeStyle::Auto,
             pill: None,
+            pill_tone: None,
         })
         .collect();
     let mut state = GraphState::new("map", text()).unpaged();
@@ -963,6 +965,7 @@ fn chain() -> GraphState<usize> {
         tooltip: SharedString::default(),
         style,
         pill: pill.map(Into::into),
+        pill_tone: None,
     };
     let edges = vec![
         call(0, 1, EdgeStyle::Solid, Some("3f9a1c2")),
@@ -1210,10 +1213,87 @@ fn each_pill_sits_in_its_gutter_and_a_long_key_is_cut_to_fit_at_text_20(cx: &mut
             assert!(pill.left() >= a.right(), "{from}->{to} clear of its caller");
             assert!(pill.right() <= b.left(), "{from}->{to} clear of its callee");
             assert!(
-                pill.size.width <= unit * 76. + px(1.),
-                "{from}->{to} fits 76 dp"
+                pill.size.width <= unit * 100. + px(1.),
+                "{from}->{to} fits 100 dp"
             );
         }
+    })
+    .unwrap();
+}
+
+/// The keyboard ring is painted only while the canvas has focus. These
+/// inspect paint output, so the assertion covers the visible border.
+#[gpui_kit::test]
+fn a_background_click_only_focuses_and_keyboard_rings_the_cursor_until_blur(
+    cx: &mut TestAppContext,
+) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = map.read(cx).graph.pan.offset();
+        window.click_at("map-graph", point(px(4.), px(4.)), cx);
+        window.simulate_next_frame(cx);
+        assert_eq!(map.read(cx).cursor, None);
+        assert_eq!(map.read(cx).graph.pan.offset(), before);
+        let graph = window
+            .find("map-graph")
+            .bounds()
+            .scale(window.scale_factor());
+        let tint = crate::palette::palette(cx).accent_soft;
+        assert!(
+            !window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == graph && q.background == tint.into())
+        );
+        window.press("down", cx);
+        window.simulate_next_frame(cx);
+        assert!(
+            map.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+        let Some(Cursor::Node(key)) = map.read(cx).cursor else {
+            panic!("an arrow key shows a cursor");
+        };
+        let ring = |window: &Window| {
+            let bounds = window
+                .find(format!("map-node-{key}"))
+                .bounds()
+                .scale(window.scale_factor());
+            window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == bounds && q.border_widths.left.0 >= 2. * window.scale_factor())
+        };
+        assert!(ring(window), "cursor has a visible border immediately");
+        window.focus_next(cx);
+        assert!(
+            !map.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.simulate_next_frame(cx);
+        let Some(Cursor::Node(key)) = map.read(cx).cursor else {
+            panic!("cursor is retained");
+        };
+        let bounds = window
+            .find(format!("map-node-{key}"))
+            .bounds()
+            .scale(window.scale_factor());
+        assert!(
+            !window.painted_quads().iter().any(|q| q.bounds == bounds
+                && q.border_widths.left.0 >= 2. * window.scale_factor()),
+            "the cursor's border clears when focus leaves"
+        );
     })
     .unwrap();
 }

@@ -276,7 +276,7 @@ impl ObservabilityPage {
             if let Err(error) = task.await {
                 _ = this.update(cx, |this, cx| {
                     if let Some(memory) = &mut this.memory {
-                        memory.error = Some(error.into());
+                        memory.error = Some(error.clone().into());
                     }
                     cx.notify();
                 });
@@ -526,7 +526,15 @@ impl ObservabilityPage {
                     }
                     this.save_memory(cx);
                 } else {
-                    memory.error = Some(error.into());
+                    memory.error = Some(error.clone().into());
+                }
+                if let Some(server) = kept {
+                    cx.emit(ObservabilityEvent::KeyNotKept {
+                        server,
+                        why: format!(
+                            "Couldn't save the key: {error}. It stays in memory until you quit."
+                        ),
+                    });
                 }
                 cx.notify();
             });

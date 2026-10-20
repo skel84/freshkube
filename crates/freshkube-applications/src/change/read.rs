@@ -202,7 +202,39 @@ impl ChangePage {
             (text.into(), label.into())
         });
         if let Some(change) = self.loader.data().filter(|_| answered).cloned() {
+            let graph_focused = self
+                .graph
+                .focus_handle()
+                .is_some_and(|focus| focus.is_focused(window));
+            let focus_chain = self.rows.is_empty()
+                && self.view == ChangeView::Chain
+                && self.focus.is_focused(window);
             self.show(change);
+            if focus_chain && !self.rows.is_empty() {
+                let this = cx.entity().downgrade();
+                window.on_next_frame(move |window, cx| {
+                    _ = this.update(cx, |page, cx| {
+                        if page.visible
+                            && page.view == ChangeView::Chain
+                            && !page.rows.is_empty()
+                            && page.focus.is_focused(window)
+                        {
+                            page.focus(window, cx);
+                            cx.notify();
+                        }
+                    });
+                });
+            }
+            if graph_focused && self.rows.is_empty() {
+                let this = cx.entity().downgrade();
+                window.on_next_frame(move |window, cx| {
+                    _ = this.update(cx, |page, cx| {
+                        if page.visible && page.rows.is_empty() {
+                            page.focus(window, cx);
+                        }
+                    });
+                });
+            }
             if let Some(stage) = self.stage.take() {
                 self.select_stage(&stage, window, cx);
             }
