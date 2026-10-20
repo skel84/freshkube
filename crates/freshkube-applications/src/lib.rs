@@ -26,6 +26,7 @@
 //! shows, and opens the change page in its own place.
 mod across;
 mod change;
+pub mod change_view;
 mod changes;
 mod column;
 mod display;

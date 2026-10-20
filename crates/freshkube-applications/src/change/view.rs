@@ -57,11 +57,13 @@ impl ChangePage {
             .on_click(page::dispatch(page::Refresh, &self.focus));
         let (kargo, kargo_fold) = self.render_open_in_kargo(&header, cx);
         let (copy, copy_fold) = self.render_copy_link(&header, cx);
+        let (view, view_fold) = self.view_control(cx);
         header
             .chips(Some(chips))
             .foldable(kargo, kargo_fold)
             .foldable(copy, copy_fold)
             .control(refresh)
+            .foldable(view, view_fold)
             .render(window, cx)
     }
 
@@ -220,6 +222,12 @@ impl Render for ChangePage {
         let notes = self.render_notes(cx);
         let body = match self.render_failed(cx) {
             Some(failed) => failed,
+            None if self.view == ChangeView::Chain
+                && self.loading_rows().is_none()
+                && !self.rows.is_empty() =>
+            {
+                self.render_chain(window, cx)
+            }
             None => self.render_table(window, cx),
         };
         let short = page::is_short(window);
@@ -229,8 +237,20 @@ impl Render for ChangePage {
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &NextHop, window, cx| this.step(1, window, cx)))
             .on_action(cx.listener(|this, _: &PreviousHop, window, cx| this.step(-1, window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleView, window, cx| this.toggle_view(window, cx)))
             .on_action(cx.listener(|this, _: &Back, _, cx| this.back(cx)))
-            .on_action(cx.listener(|this, _: &OpenHop, _, cx| this.open_selected(cx)))
+            .on_action(cx.listener(|this, _: &OpenHop, window, cx| {
+                if this.focus.is_focused(window)
+                    || this
+                        .graph
+                        .focus_handle()
+                        .is_some_and(|focus| focus.is_focused(window))
+                {
+                    this.open_selected(cx);
+                } else {
+                    cx.propagate();
+                }
+            }))
             .flex()
             .flex_col()
             .size_full()
