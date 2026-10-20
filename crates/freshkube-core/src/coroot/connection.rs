@@ -87,6 +87,16 @@ impl Provider {
         }
     }
 
+    /// The source of a project a setup file names, which is not one the
+    /// person selected from [`projects`](Self::projects).
+    pub(super) fn linked_source(&self, project: &str) -> Source {
+        Source {
+            provider: self.id,
+            project: project.to_owned(),
+            association: None,
+        }
+    }
+
     pub(super) fn project(
         &self,
         source: &Source,

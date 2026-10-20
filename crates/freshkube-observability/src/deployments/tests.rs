@@ -117,16 +117,17 @@ fn coroots_404_for_a_window_is_no_data_with_no_charts() {
 #[test]
 fn the_examples_windows_answer_as_coroot_would() {
     let app = crate::example::id(crate::example::WORKER);
-    let revisions = app_example::revisions();
+    let view = app_example::app_view(&app);
+    let revisions = view.revisions.as_ref().unwrap().as_ref().unwrap();
     let window =
         |ix: usize| api::RevisionWindow::both(std::time::Duration::from_secs(WINDOWS[ix].0));
-    let newest = app_example::around(&app, &revisions[0], window(0)).unwrap();
+    let newest = app_example::around(&view, &revisions[0], window(0)).unwrap();
     let api::Around::View(_) = &newest.answer else {
         panic!("the newest revision has data");
     };
     let detail = detail::prepare(&newest, "");
     assert!(!detail.charts().is_empty(), "the first report with charts");
-    let oldest = app_example::around(&app, &revisions[2], window(2)).unwrap();
+    let oldest = app_example::around(&view, &revisions[2], window(2)).unwrap();
     assert!(matches!(oldest.answer, api::Around::NoData));
 }
 
@@ -152,6 +153,68 @@ mod ui_tests {
 
     fn row_id(cx: &mut TestAppContext, page: &Page, ix: usize) -> SharedString {
         cx.read(|cx| page.read(cx).revision_observations.rows[ix].id.clone())
+    }
+
+    #[gpui_kit::test]
+    fn show_on_charts_from_the_row_menu_opens_slo_with_the_revision_focused(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, handle, page) = open_example(cx, 1260., 900.);
+        let first = row_id(cx, &page, 0);
+        let (revision, range) = page.read_with(cx, |page, _| {
+            (
+                page.revision_observations.rows[0].revision.clone(),
+                page.live.range,
+            )
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // Start on another row so the menu must select its own revision.
+            window.click(row_id_from_page(&page, cx, 1), cx);
+            window.render_frame(cx);
+            window.right_click(first, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window
+                    .within("popup-menu")
+                    .find(0usize)
+                    .label()
+                    .unwrap()
+                    .starts_with("Show on charts")
+            );
+            window.within("popup-menu").click(0usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let page = page.read(cx);
+            assert_eq!(page.destination, Destination::Application);
+            assert_eq!(page.report_name, "SLO", "no findings fall back to SLO");
+            assert_eq!(page.live.range, range);
+            assert_eq!(
+                page.focused_revision.as_ref().unwrap().started_at,
+                revision.started_at
+            );
+            assert!(!page.app_charts.is_empty());
+            assert!(
+                page.app_charts.iter().all(|chart| chart
+                    .view()
+                    .read(cx)
+                    .focused_marker_labels()
+                    .len()
+                    == 1)
+            );
+        })
+        .unwrap();
+    }
+
+    fn row_id_from_page(page: &Page, cx: &gpui_kit::App, ix: usize) -> SharedString {
+        page.read(cx).revision_observations.rows[ix].id.clone()
     }
 
     #[gpui_kit::test]
