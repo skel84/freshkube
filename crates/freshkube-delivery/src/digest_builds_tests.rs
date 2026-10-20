@@ -273,3 +273,81 @@ async fn a_run_found_by_both_keys_is_the_commits() {
         Confidence::Confirmed
     );
 }
+
+fn with_url(mut run: Value, url: &str) -> Value {
+    run["status"]["results"][0]["value"] = json!(url);
+    run
+}
+
+#[tokio::test]
+async fn a_digest_result_alone_counts() {
+    let mut run = bare_run("digest-run", Some(NEW));
+    run["status"]["results"] = json!([{"name": "IMAGE_DIGEST", "value": NEW}]);
+    let world = image_only_world(vec![run], vec![]);
+    let trail = by_digest(&world, Some("acme-builds")).await;
+    assert_eq!(image_link(&trail).confidence, Confidence::Confirmed);
+    assert_eq!(
+        one(&trail, Hop::PipelineRun, Hop::Freight).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn prefixed_type_hints_count() {
+    let mut run = bare_run("digest-run", None);
+    run["status"]["results"] = json!([
+        {"name": "build-IMAGE_URL", "value": format!("{REPO}:v1.4.0")},
+        {"name": "build-IMAGE_DIGEST", "value": NEW}
+    ]);
+    let world = image_only_world(vec![run], vec![]);
+    let trail = by_digest(&world, Some("acme-builds")).await;
+    assert_eq!(image_link(&trail).confidence, Confidence::Confirmed);
+}
+
+#[tokio::test]
+async fn the_same_digest_under_another_repository_stays_confirmed() {
+    let run = with_url(
+        bare_run("digest-run", Some(NEW)),
+        "mirror.example/acme/storefront:v1",
+    );
+    let world = image_only_world(vec![run], vec![]);
+    let trail = by_digest(&world, Some("acme-builds")).await;
+    assert_eq!(image_link(&trail).confidence, Confidence::Confirmed);
+    assert_eq!(
+        one(&trail, Hop::PipelineRun, Hop::Freight).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_failed_digest_read_leaves_the_commit_builds_and_skips_the_archive() {
+    use super::collect::{Clusters, collect};
+    use super::join::DigestOutcome;
+    let mut world = healthy();
+    world.tekton = world.tekton.refusing_namespace_lists("pipelineruns");
+    let github = FixtureGitHub::default();
+    let clusters = Clusters {
+        kargo: &world.kargo,
+        argocd: &world.argocd,
+        tekton: &world.tekton,
+        environment: &world.environment,
+        github: &github,
+    };
+    let mut plan = super::tests::plan(CONTEXTS);
+    plan.digests = vec![Digest::parse(NEW).unwrap()];
+    let evidence = collect(&clusters, &plan, super::tests::observed_at()).await;
+    let search = evidence.digest_search.as_ref().unwrap();
+    assert!(
+        matches!(search.outcome, DigestOutcome::Failed(_)),
+        "{search:?}"
+    );
+    assert!(search.archive.is_none());
+    assert_eq!(evidence.builds.read().unwrap().len(), 1);
+    let trail = super::join::join(&evidence);
+    // The commit still joins; the failed digest search adds no link beside it.
+    assert!(link(&trail, Hop::Image, Hop::PipelineRun).is_empty());
+    assert_eq!(
+        one(&trail, Hop::PipelineRun, Hop::Freight).confidence,
+        Confidence::Confirmed
+    );
+}

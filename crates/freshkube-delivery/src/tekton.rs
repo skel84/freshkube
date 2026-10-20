@@ -265,16 +265,20 @@ pub(crate) fn parse_task_run(value: &Value) -> Option<TaskRun> {
     })
 }
 
-/// The images a set of results names: a `IMAGE_URL` result paired with the
-/// `IMAGE_DIGEST` that has the same prefix, as Chains' type hinting does.
+/// The images a set of results names, as Chains' type hinting does: each
+/// `IMAGE_DIGEST` (or `<prefix>IMAGE_DIGEST`), with the `IMAGE_URL` that has
+/// the same prefix when there is one. A digest alone counts; its `url` is then
+/// empty.
 pub(crate) fn built_images(results: &BTreeMap<String, String>) -> Vec<BuiltImage> {
     results
         .iter()
-        .filter_map(|(name, url)| {
-            let prefix = name.strip_suffix("IMAGE_URL")?;
-            let digest = results.get(&format!("{prefix}IMAGE_DIGEST"))?;
+        .filter_map(|(name, digest)| {
+            let prefix = name.strip_suffix("IMAGE_DIGEST")?;
+            let url = results
+                .get(&format!("{prefix}IMAGE_URL"))
+                .map_or("", |url| url.trim());
             Some(BuiltImage {
-                url: url.trim().to_owned(),
+                url: url.to_owned(),
                 digest: Digest::parse(digest)?,
             })
         })
@@ -750,12 +754,15 @@ pub(crate) async fn read_builds_by_digest<R: Reader>(
         .filter(|task| task.namespace == namespace && reports(&task.results))
         .filter_map(|task| task.pipeline_run.as_deref())
         .collect();
-    let mut fetched = 0;
+    let mut asked = std::collections::BTreeSet::new();
     for owner in owners {
-        if runs.iter().any(|run| run.name == owner) || fetched >= MOST_TASK_READS {
+        // Each run is asked for once, however many of its tasks report.
+        if runs.iter().any(|run| run.name == owner)
+            || asked.len() >= MOST_TASK_READS
+            || !asked.insert(owner)
+        {
             continue;
         }
-        fetched += 1;
         if let Ok(value) = reader.get(&pipeline_runs, Some(namespace), owner).await
             && let Some(run) = parse_pipeline_run(&value)
             && run.namespace == namespace

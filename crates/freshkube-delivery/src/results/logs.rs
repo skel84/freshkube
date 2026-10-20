@@ -3,7 +3,7 @@
 use tokio::time::Instant;
 
 use super::records::{manifest, result_parts};
-use super::transport::{Query, request_error, segment};
+use super::transport::{request_error, segment};
 use super::{Cap, Cause, Client, Error, Listing, MOST_RESULT_TASKS, REQUEST_DEADLINE, Record};
 
 /// A whole task log, never inferred by splitting step prefixes.
@@ -55,10 +55,7 @@ impl Client {
         result_parts(result)?;
         self.list(
             &format!("{result}/logs"),
-            Query {
-                filter: "",
-                order: None,
-            },
+            "",
             MOST_RESULT_TASKS,
             Cap::Logs,
             until,

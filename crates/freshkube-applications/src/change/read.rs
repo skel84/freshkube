@@ -264,6 +264,15 @@ impl ChangePage {
         cx.notify();
     }
 
+    /// The build namespace a live read searches, for tests.
+    #[cfg(test)]
+    pub(crate) fn build_namespace(&self) -> Option<&str> {
+        match &self.fetch {
+            Fetch::Live { place, .. } => place.build_namespace.as_deref(),
+            Fetch::Example { .. } => None,
+        }
+    }
+
     /// Trust belongs to this setup, including when the file at its path
     /// changed. Reset cancels both tasks and rejects any old request ticket.
     pub(crate) fn reload_setup(

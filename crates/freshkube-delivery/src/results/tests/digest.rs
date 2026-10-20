@@ -77,7 +77,7 @@ async fn a_run_result_in_the_archive_joins_an_image_only_freight() {
     assert_eq!(builds[0].found_by, FoundBy::Digest);
     let requests = server.requests.lock().unwrap().clone();
     assert!(
-        requests[0].contains("order_by=create_time+desc") && requests[0].contains("page_size=10"),
+        requests[0].contains("page_size=10") && !requests[0].contains("order_by"),
         "{}",
         requests[0]
     );
@@ -162,7 +162,7 @@ async fn no_archived_record_reports_the_digest() {
     let change = change(&evidence);
     let text = format!("{change:?}");
     assert!(
-        text.contains("was searched for the image digest in its latest 1 run only"),
+        text.contains("was searched for the image digest in the first 1 run it returned"),
         "{text}"
     );
 }
@@ -175,7 +175,7 @@ async fn only_the_latest_runs_are_asked_for_and_read() {
     let server = Server::new(false, vec![page(records)]);
     let client = client(&server).await;
     let listing =
-        within(client.latest_pipeline_runs("acme", Instant::now() + Duration::from_secs(20)))
+        within(client.first_pipeline_runs("acme", Instant::now() + Duration::from_secs(20)))
             .await
             .unwrap();
     assert_eq!(listing.records.len(), MOST_RESULT_RUNS);

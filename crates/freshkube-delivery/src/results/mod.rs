@@ -11,7 +11,6 @@ mod records;
 #[cfg(test)]
 mod tests;
 mod transport;
-use transport::Query;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -349,10 +348,7 @@ impl Client {
         );
         self.list(
             &format!("{parent}/records"),
-            Query {
-                filter: &filter,
-                order: None,
-            },
+            &filter,
             MOST_RESULT_RUNS,
             Cap::Runs,
             until,
@@ -361,10 +357,11 @@ impl Client {
         .await
     }
 
-    /// The namespace's latest PipelineRun records, newest first and at most
-    /// [`MOST_RESULT_RUNS`], whatever commit they carry. A result can't be
-    /// selected on, so a digest is looked for in these in memory.
-    pub(crate) async fn latest_pipeline_runs(
+    /// The first [`MOST_RESULT_RUNS`] PipelineRun records the archive returns
+    /// for the namespace, whatever commit they carry; no order is asked for.
+    /// A result can't be selected on, so a digest is looked for in these in
+    /// memory.
+    pub(crate) async fn first_pipeline_runs(
         &self,
         namespace: &str,
         until: Instant,
@@ -373,10 +370,7 @@ impl Client {
         let filter = "data_type == 'tekton.dev/v1.PipelineRun' || data_type == 'tekton.dev/v1beta1.PipelineRun'";
         self.list(
             &format!("{namespace}/results/-/records"),
-            Query {
-                filter,
-                order: Some("create_time desc"),
-            },
+            filter,
             MOST_RESULT_RUNS,
             Cap::Runs,
             until,
@@ -395,10 +389,7 @@ impl Client {
             "data_type == 'tekton.dev/v1.TaskRun' || data_type == 'tekton.dev/v1beta1.TaskRun'";
         self.list(
             &format!("{result}/records"),
-            Query {
-                filter,
-                order: None,
-            },
+            filter,
             MOST_RESULT_TASKS,
             Cap::Tasks,
             until,

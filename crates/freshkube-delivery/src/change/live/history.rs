@@ -79,7 +79,7 @@ pub(super) fn reason(evidence: &Evidence, entry: &str) -> Option<String> {
                 "Tekton Results has no run for this commit".into()
             } else if evidence.sha.is_empty() {
                 format!(
-                    "{prefix} was searched for the image digest in its latest {} only, so an older build isn't found",
+                    "{prefix} was searched for the image digest in the first {} it returned, so a build outside them isn't found",
                     runs(history.runs)
                 )
             } else {

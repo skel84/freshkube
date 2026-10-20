@@ -112,12 +112,6 @@ enum Page {
     Capped,
 }
 
-/// What a listing asks of the server: which records, and in what order.
-pub(super) struct Query<'a> {
-    pub filter: &'a str,
-    pub order: Option<&'a str>,
-}
-
 impl Client {
     async fn page(&self, url: Url, until: Instant) -> Result<Page, Error> {
         let ends = until.min(Instant::now() + REQUEST_DEADLINE);
@@ -186,7 +180,7 @@ impl Client {
     pub(super) async fn list<T>(
         &self,
         collection: &str,
-        query: Query<'_>,
+        filter: &str,
         cap: usize,
         reason: Cap,
         until: Instant,
@@ -207,14 +201,11 @@ impl Client {
                 .extend(["apis", "results.tekton.dev", "v1alpha2", "parents"])
                 .extend(collection.split('/'));
             url.query_pairs_mut()
-                .append_pair("filter", query.filter)
+                .append_pair("filter", filter)
                 .append_pair(
                     "page_size",
                     &(cap - records.len()).min(PAGE_LIMIT as usize).to_string(),
                 );
-            if let Some(order) = query.order {
-                url.query_pairs_mut().append_pair("order_by", order);
-            }
             if !next.is_empty() {
                 url.query_pairs_mut().append_pair("page_token", &next);
             }

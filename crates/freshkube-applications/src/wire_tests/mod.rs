@@ -444,8 +444,10 @@ async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppConte
     let mut configured = setup(None, None, false);
     let (window, app) = mount(cx, &runtime, &configured, None, true, Arc::default());
     wait_list(cx, window, &app).await;
+    let change = open_change(cx, window, &app);
     cx.update_window(window, |_, _, cx| {
         assert_eq!(app.read(cx).across().build_namespace, None);
+        assert_eq!(change.read(cx).build_namespace(), None);
     })
     .unwrap();
     let mut delivery = freshkube_core::setup::Delivery::default();
@@ -457,6 +459,7 @@ async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppConte
             app.read(cx).across().build_namespace.as_deref(),
             Some("acme-builds")
         );
+        assert_eq!(change.read(cx).build_namespace(), Some("acme-builds"));
     })
     .unwrap();
     // A reload that drops the key drops it from the reads too.
@@ -464,6 +467,7 @@ async fn setup_build_namespace_reaches_every_delivery_read(cx: &mut TestAppConte
     cx.update_window(window, |_, _, cx| {
         app.update(cx, |page, cx| page.set_setup(&configured, cx));
         assert_eq!(app.read(cx).across().build_namespace, None);
+        assert_eq!(change.read(cx).build_namespace(), None);
     })
     .unwrap();
 }

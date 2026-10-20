@@ -153,7 +153,7 @@ pub(crate) async fn supplement_digests(
         Ok(client) => client,
         Err(error) => return (live, Err(error)),
     };
-    let listing = match client.latest_pipeline_runs(namespace, until).await {
+    let listing = match client.first_pipeline_runs(namespace, until).await {
         Ok(listing) => listing,
         Err(error) => return (live, Err(error)),
     };

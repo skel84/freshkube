@@ -978,3 +978,22 @@ fn unknown_keys_under_delivery_are_kept_and_named_beside_the_build_namespace() {
     assert_eq!(setup.unknown_keys(), ["delivery.delivery_note"]);
     assert_eq!(ok(&to_text(&setup)), setup);
 }
+
+#[test]
+fn the_build_namespace_must_be_a_namespace_name_and_is_never_repeated() {
+    let long = "a".repeat(64);
+    for bad in [" a/b", "../x", "Acme", "-a", "a-", "a b", long.as_str()] {
+        assert_eq!(
+            rule(&format!(
+                "version: 1\ndelivery:\n  build_namespace: '{bad}'\n"
+            )),
+            "delivery.build_namespace isn’t a Kubernetes namespace name",
+            "{bad:?}"
+        );
+    }
+    for good in ["a", "acme-builds", "x1", &"a".repeat(63)] {
+        ok(&format!(
+            "version: 1\ndelivery:\n  build_namespace: {good}\n"
+        ));
+    }
+}

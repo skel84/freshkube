@@ -435,7 +435,11 @@ pub(super) fn supply_chain_links(
                 standing.confidence,
                 format!(
                     "{} {}; {}; {verdict}",
-                    written_repository(&image.url),
+                    if image.url.is_empty() {
+                        format!("image {}", image.digest.short())
+                    } else {
+                        written_repository(&image.url)
+                    },
                     tag(&image.url)
                         .map(|t| format!("(tag {t})"))
                         .unwrap_or_default(),

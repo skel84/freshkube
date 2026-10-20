@@ -95,6 +95,8 @@ impl std::fmt::Display for Place {
 pub enum Fault {
     Empty(String),
     NotUrl(String),
+    /// Not a Kubernetes namespace name; the value is never repeated.
+    NotNamespace(String),
     NonLoopbackHttp(String),
     RelativePath(String),
     ZeroPort(String),
@@ -130,6 +132,7 @@ impl std::fmt::Display for Fault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Fault::Empty(at) => write!(f, "{at} is empty"),
+            Fault::NotNamespace(at) => write!(f, "{at} isn’t a Kubernetes namespace name"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
             Fault::NonLoopbackHttp(at) => write!(f, "{at}: plain HTTP is allowed only on loopback"),
             Fault::RelativePath(at) => write!(f, "{at} isn’t an absolute path"),
