@@ -83,6 +83,7 @@ pub(super) struct MonitoringForm {
     replacing_token: bool,
     forget_token: bool,
     dirty: bool,
+    focus: FocusHandle,
     entry_open: Option<String>,
     entry_in_workspace: bool,
     errors: BTreeMap<Field, String>,
@@ -371,6 +372,7 @@ impl SettingsPage {
             replacing_token: false,
             forget_token: false,
             dirty: false,
+            focus: cx.focus_handle(),
             entry_open: pilot.read(cx).source().entry,
             entry_in_workspace: pilot
                 .read(cx)
@@ -475,7 +477,20 @@ impl SettingsPage {
                     });
                 }
                 if draft.dirty && model.seen != draft.seen && draft.saving.is_none() {
-                    draft.error = Some(crate::setup_file::SaveError::Changed.to_string());
+                    let changed = crate::setup_file::SaveError::Changed.to_string();
+                    if model.problem.is_none()
+                        && model
+                            .setup
+                            .as_ref()
+                            .is_some_and(|s| s.metrics == draft.baseline)
+                    {
+                        draft.seen = model.seen.clone();
+                        if draft.error.as_ref() == Some(&changed) {
+                            draft.error = None;
+                        }
+                    } else {
+                        draft.error = Some(changed);
+                    }
                 }
                 if !draft.dirty
                     && draft.saving.is_none()
@@ -720,6 +735,11 @@ impl SettingsPage {
             _ => Some(open),
         };
         let Some(access) = access else {
+            draft.outcome = Some((
+                ui::Tone::Unknown,
+                "Unknown · The hosting entry has no Kubernetes connection.".into(),
+            ));
+            cx.notify();
             return;
         };
         let typed = draft.token.read(cx).value().trim().to_owned();
@@ -834,17 +854,6 @@ impl SettingsPage {
         }
         page::padded("settings-page")
             .track_focus(&self.focus)
-            .capture_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape"
-                    && page.monitoring.as_ref().is_some_and(|d| {
-                        d.values(cx) != d.initial
-                            && !d.page.read(cx).settings_source_focused(window, cx)
-                    })
-                {
-                    page.revert_monitoring(window, cx);
-                    cx.stop_propagation();
-                }
-            }))
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .child(page::PageHeader::new("settings-monitoring", "Monitoring").render(window, cx))
@@ -922,11 +931,18 @@ impl SettingsPage {
         draft: &MonitoringForm,
         cx: &Context<Self>,
     ) -> form::Group {
+        let url = monitoring::normalise_url(draft.url.read(cx).value().trim()).ok();
+        let saved_store = draft.baseline.store.as_ref();
+        let url_changed = saved_store
+            .and_then(|store| store.url.as_ref())
+            .is_some_and(|saved| Some(saved) != url.as_ref());
         let kept = draft
             .baseline
             .store
             .as_ref()
             .is_some_and(|store| store.token.is_some())
+            && !url_changed
+            && draft.token.read(cx).value().is_empty()
             && !draft.replacing_token
             && !draft.forget_token;
         let secret = if kept {
@@ -962,7 +978,13 @@ impl SettingsPage {
                             )
                         })),
                 )
-                .hint("A bearer token; leave empty when the store needs none.")
+                .hint(
+                    if url_changed && saved_store.is_some_and(|store| store.token.is_some()) {
+                        "The URL changed. Enter a token for this URL."
+                    } else {
+                        "A bearer token; leave empty when the store needs none."
+                    },
+                )
                 .error(draft.error(Field::Token)),
             );
         group
@@ -1151,7 +1173,7 @@ impl SettingsPage {
         } else {
             form::SavedIn::file("freshkube.yaml")
         };
-        group
+        let content = group
             .row(form::row("metrics-test-row", "Test", line))
             .saved_in(saved)
             .actions(form::actions(
@@ -1169,6 +1191,21 @@ impl SettingsPage {
                 .disabled(!draft.dirty || saving),
             ))
             .render(cx)
+            .into_any_element();
+        div()
+            .track_focus(&draft.focus)
+            .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key == "escape"
+                    && page
+                        .monitoring
+                        .as_ref()
+                        .is_some_and(|d| d.values(cx) != d.initial)
+                {
+                    page.revert_monitoring(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(content)
             .into_any_element()
     }
 }
@@ -1200,12 +1237,12 @@ fn stage_token(
     let Some((secrets, url)) = secrets.zip(url) else {
         return Ok(None);
     };
-    let account = format!("Prometheus {url}");
+    let account = crate::monitoring::token_account(&url);
     let previous = secrets.read(&account)?;
-    if forget {
-        secrets.forget(&account)?;
-    } else {
+    if !typed.is_empty() {
         secrets.write(&account, &typed)?;
+    } else {
+        secrets.forget(&account)?;
     }
     Ok(Some(TokenEdit {
         secrets,
@@ -1228,7 +1265,7 @@ async fn read_token(
     let Some(secrets) = secrets else {
         return Ok(None);
     };
-    tokio::task::spawn_blocking(move || secrets.read(&format!("Prometheus {url}")))
+    tokio::task::spawn_blocking(move || secrets.read(&crate::monitoring::token_account(&url)))
         .await
         .map_err(|_| "The token read stopped.".to_owned())?
 }

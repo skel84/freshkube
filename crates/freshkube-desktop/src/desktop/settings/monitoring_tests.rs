@@ -693,3 +693,403 @@ async fn monitoring_discards_a_check_when_the_draft_changes_or_the_section_hides
         }
     }
 }
+
+fn url_setup() -> String {
+    let mut setup = setup::parse(SETUP.as_bytes()).unwrap();
+    let store = setup.metrics.store.as_mut().unwrap();
+    store.entry = None;
+    store.service = None;
+    store.url = Some("https://metrics.example.test/".into());
+    store.token = Some(setup::KeysJson);
+    setup::to_text(&setup)
+}
+
+fn set_secrets(
+    cx: &mut TestAppContext,
+    runtime: &tokio::runtime::Runtime,
+    page: &Entity<SettingsPage>,
+    directory: &std::path::Path,
+    secrets: freshkube_core::secrets::Secrets,
+) {
+    cx.update(|cx| {
+        let monitoring = cx.new(|cx| {
+            super::MonitoringPage::new(
+                runtime.handle().clone(),
+                Some(&directory.join("preferences.json")),
+                Some(secrets),
+                cx,
+            )
+        });
+        page.update(cx, |page, _| {
+            page.monitoring.as_mut().unwrap().page = monitoring
+        });
+    });
+}
+
+#[gpui_kit::test]
+async fn monitoring_forget_then_a_new_token_keeps_the_new_token(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("freshkube.yaml");
+    std::fs::write(&file, url_setup()).unwrap();
+    let (runtime, handle, _pilot, page) = live(cx, directory.path(), "cluster-a").await;
+    let secrets = Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let account = "Prometheus https://metrics.example.test/";
+    secrets
+        .keys
+        .lock()
+        .unwrap()
+        .insert(account.into(), "old-example-token".into());
+    set_secrets(cx, &runtime, &page, directory.path(), secrets.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-token-forget", cx);
+        window.render_frame(cx);
+        replace(window, cx, "metrics-token-input", "new-example-token");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &page).await;
+    assert_eq!(
+        secrets
+            .keys
+            .lock()
+            .unwrap()
+            .get(account)
+            .map(String::as_str),
+        Some("new-example-token")
+    );
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(
+        setup::parse(text.as_bytes())
+            .unwrap()
+            .metrics
+            .store
+            .unwrap()
+            .token
+            .is_some()
+    );
+    assert!(!text.contains("new-example-token"));
+}
+
+#[gpui_kit::test]
+async fn monitoring_a_changed_url_asks_for_its_own_token(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("freshkube.yaml");
+    std::fs::write(&file, url_setup()).unwrap();
+    let (runtime, handle, _pilot, page) = live(cx, directory.path(), "cluster-a").await;
+    let secrets = Arc::new(freshkube_core::secrets::MemoryStore::default());
+    set_secrets(cx, &runtime, &page, directory.path(), secrets.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("metrics-token-kept").visible());
+        replace(
+            window,
+            cx,
+            "metrics-url",
+            "https://other-metrics.example.test",
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("metrics-token-kept").is_none());
+        assert!(window.find("metrics-token-input").visible());
+        assert_eq!(
+            page.read(cx)
+                .monitoring
+                .as_ref()
+                .unwrap()
+                .token
+                .read(cx)
+                .value(),
+            ""
+        );
+        assert!(window.find("metrics-token-row-hint").visible());
+        replace(window, cx, "metrics-token-input", "other-example-token");
+        replace(window, cx, "metrics-url", "https://metrics.example.test/");
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("metrics-token-kept").is_none());
+        assert!(window.find("metrics-token-input").visible());
+        replace(
+            window,
+            cx,
+            "metrics-url",
+            "https://other-metrics.example.test/",
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &page).await;
+    let store = setup::parse(&std::fs::read(file).unwrap())
+        .unwrap()
+        .metrics
+        .store
+        .unwrap();
+    assert_eq!(
+        store.url.as_deref(),
+        Some("https://other-metrics.example.test/")
+    );
+    assert!(store.token.is_some());
+    assert_eq!(
+        secrets
+            .keys
+            .lock()
+            .unwrap()
+            .get("Prometheus https://other-metrics.example.test/")
+            .map(String::as_str),
+        Some("other-example-token")
+    );
+}
+
+#[gpui_kit::test]
+fn monitoring_columns_folder_action_opens_the_monitoring_section(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.navigate(crate::desktop::Page::Monitoring, window, cx)
+        });
+        window.render_frame(cx);
+        window.click("monitoring-add-folder", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            pilot.read(cx).navigation.page,
+            crate::desktop::Page::Settings
+        );
+        assert_eq!(
+            pilot.read(cx).settings_page.read(cx).section(),
+            SettingsSection::Monitoring
+        );
+        assert!(!pilot.read(cx).navigation.settings_open);
+        assert!(window.find("monitoring-folder-choose").visible());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn monitoring_keeps_its_draft_after_a_clusters_save(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("freshkube.yaml");
+    std::fs::write(&file, SETUP).unwrap();
+    let (_runtime, handle, pilot, page) = live(cx, directory.path(), "cluster-a").await;
+    cx.update_window(handle, |_, window, cx| {
+        replace(window, cx, "metrics-port", "9091")
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        pilot.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Clusters, window, cx)
+        });
+        page.update(cx, |page, cx| {
+            let mut next = page.workspace.clone();
+            let mut entry = next.clusters[0].clone();
+            entry.id = "cluster-b".into();
+            entry.context = "cluster-b".into();
+            next.clusters.push(entry);
+            page.commit(next, "Added cluster-b.".into(), cx);
+        });
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).saving.is_none())
+        .await;
+    cx.run_until_parked();
+    open(cx, handle, &pilot);
+    cx.update_window(handle, |_, window, cx| {
+        let draft = page.read(cx).monitoring.as_ref().unwrap();
+        assert!(draft.error.is_none());
+        assert!(draft.dirty);
+        assert_eq!(draft.port.read(cx).value(), "9091");
+        assert_eq!(draft.seen, draft.file.read(cx).seen);
+        window.click("metrics-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &page).await;
+    let setup = setup::parse(&std::fs::read(file).unwrap()).unwrap();
+    assert_eq!(setup.workspace.clusters.len(), 2);
+    assert_eq!(setup.metrics.store.unwrap().service.unwrap().port, 9091);
+}
+
+#[gpui_kit::test]
+async fn monitoring_escape_closes_the_picker_then_reverts_only_the_focused_group(
+    cx: &mut TestAppContext,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("freshkube.yaml"), SETUP).unwrap();
+    let (_runtime, handle, _pilot, page) = live(cx, directory.path(), "cluster-outside").await;
+    cx.update_window(handle, |_, window, cx| {
+        replace(window, cx, "metrics-port", "9091")
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-entry", cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("metrics-entry").expanded(), Some(true));
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("metrics-entry").expanded(), Some(false));
+        assert_eq!(
+            page.read(cx)
+                .monitoring
+                .as_ref()
+                .unwrap()
+                .port
+                .read(cx)
+                .value(),
+            "9091"
+        );
+        window.click("monitoring-source-url", cx);
+        window.render_frame(cx);
+        replace(
+            window,
+            cx,
+            "monitoring-source-address",
+            "https://context-metrics.example.test",
+        );
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("monitoring-source-address").is_none());
+        assert_eq!(
+            page.read(cx)
+                .monitoring
+                .as_ref()
+                .unwrap()
+                .port
+                .read(cx)
+                .value(),
+            "9091"
+        );
+        window.click("monitoring-folder-choose", cx);
+    })
+    .unwrap();
+    assert!(cx.did_prompt_for_paths());
+    cx.simulate_path_prompt_response(|_| None);
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.press("escape", cx);
+        assert_eq!(
+            page.read(cx)
+                .monitoring
+                .as_ref()
+                .unwrap()
+                .port
+                .read(cx)
+                .value(),
+            "9091"
+        );
+        window.click("metrics-port", cx);
+        window.press("escape", cx);
+        assert_eq!(
+            page.read(cx)
+                .monitoring
+                .as_ref()
+                .unwrap()
+                .port
+                .read(cx)
+                .value(),
+            "9090"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn monitoring_a_refusal_after_staging_restores_the_previous_token(cx: &mut TestAppContext) {
+    use freshkube_core::secrets::{MemoryStore, SecretStore};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct BreakAfterStaging {
+        memory: MemoryStore,
+        file: std::path::PathBuf,
+        writes: AtomicUsize,
+    }
+    impl SecretStore for BreakAfterStaging {
+        fn read(&self, account: &str) -> Result<Option<String>, String> {
+            self.memory.read(account)
+        }
+        fn write(&self, account: &str, value: &str) -> Result<(), String> {
+            self.memory.write(account, value)?;
+            if self.writes.fetch_add(1, Ordering::SeqCst) == 0 {
+                std::fs::write(&self.file, "version: [").unwrap();
+            }
+            Ok(())
+        }
+        fn forget(&self, account: &str) -> Result<(), String> {
+            self.memory.forget(account)
+        }
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let file = directory.path().join("freshkube.yaml");
+    std::fs::write(&file, url_setup()).unwrap();
+    let (runtime, handle, _pilot, page) = live(cx, directory.path(), "cluster-a").await;
+    let secrets = Arc::new(BreakAfterStaging {
+        memory: MemoryStore::default(),
+        file: file.clone(),
+        writes: AtomicUsize::new(0),
+    });
+    let account = "Prometheus https://metrics.example.test/";
+    secrets
+        .memory
+        .keys
+        .lock()
+        .unwrap()
+        .insert(account.into(), "previous-example-token".into());
+    set_secrets(cx, &runtime, &page, directory.path(), secrets.clone());
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-token-replace", cx);
+        window.render_frame(cx);
+        replace(
+            window,
+            cx,
+            "metrics-token-input",
+            "replacement-example-token",
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("metrics-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &page).await;
+    assert_eq!(
+        secrets.writes.load(Ordering::SeqCst),
+        2,
+        "the token was staged and then restored"
+    );
+    assert_eq!(
+        secrets.read(account).unwrap().as_deref(),
+        Some("previous-example-token")
+    );
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "version: [");
+    cx.read(|cx| assert!(page.read(cx).monitoring.as_ref().unwrap().error.is_some()));
+}

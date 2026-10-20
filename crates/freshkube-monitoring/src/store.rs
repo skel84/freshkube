@@ -56,7 +56,7 @@ pub(crate) enum Choice {
 }
 
 /// The credential store account that holds a URL's token.
-pub(crate) fn token_account(url: &str) -> String {
+pub fn token_account(url: &str) -> String {
     format!("Prometheus {url}")
 }
 

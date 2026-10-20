@@ -378,13 +378,6 @@ impl MonitoringPage {
         cx.notify();
     }
 
-    /// Whether Escape belongs to the per-context group.
-    pub fn settings_source_focused(&self, window: &Window, cx: &App) -> bool {
-        self.form
-            .as_ref()
-            .is_some_and(|form| form.focus.contains_focused(window, cx))
-    }
-
     /// Drops an explicit Settings check when the section hides.
     pub fn pause_settings(&mut self) {
         if let Some(form) = &mut self.form {

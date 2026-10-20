@@ -114,7 +114,19 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
             };
             _ = weak.update(cx, |page, cx| page.set_mode(mode, cx));
         });
-    let mut group = group.row(form::row("monitoring-context-mode", "Source", modes));
+    let hint: SharedString = match mode {
+        Mode::Automatic => "Finds Prometheus, VictoriaMetrics, Thanos or Mimir in the cluster and reads it through the Kubernetes API’s service proxy.".into(),
+        Mode::Service => "Reads through the Kubernetes API’s service proxy with this context’s credentials. VictoriaMetrics’ vmselect uses the prefix select/0/prometheus; Mimir uses prometheus.".into(),
+        Mode::Url if this.secrets.is_some() => format!("Reads directly from this computer. A token is sent as a bearer token and kept in {STORE_NAME}.").into(),
+        Mode::Url => "Reads directly from this computer. A token is kept until Freshkube quits.".into(),
+    };
+    let mut group = group
+        .row(form::row(
+            "monitoring-context-name",
+            "Context",
+            context.clone(),
+        ))
+        .row(form::row("monitoring-context-mode", "Source", modes).hint(hint));
     let input = |id: &'static str, state: &Entity<InputState>| {
         let input = Input::new(state).id(id).small().h(dp(ui::CONTROL_HEIGHT));
         if draft.error.as_ref().is_some_and(|(field, _)| match field {
