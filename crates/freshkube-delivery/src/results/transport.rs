@@ -99,11 +99,17 @@ fn request_error(error: reqwest::Error) -> Error {
 }
 
 #[derive(Deserialize)]
-struct Page {
+struct RecordPage {
     #[serde(default)]
     records: Vec<Value>,
     #[serde(default, rename = "nextPageToken", alias = "next_page_token")]
     next: String,
+}
+
+/// A byte cap is a partial listing outcome, private to this transport.
+enum Page {
+    Read(RecordPage),
+    Capped,
 }
 
 impl Client {
@@ -127,6 +133,9 @@ impl Client {
                     });
                 }
                 404 => return Err(Error::NotInstalled),
+                status @ 502..=504 => {
+                    return Err(Error::Unreachable(Cause::Gateway(status)));
+                }
                 status => return Err(Error::Http(status)),
             }
             // Count bytes as they arrive, including a chunked body with no
@@ -135,12 +144,12 @@ impl Client {
                 .content_length()
                 .is_some_and(|len| len > MAX_BODY_BYTES as u64)
             {
-                return Err(Error::Capped(Cap::Bytes));
+                return Ok(Page::Capped);
             }
             let mut body = Vec::new();
             while let Some(chunk) = response.chunk().await.map_err(request_error)? {
                 if chunk.len() > MAX_BODY_BYTES - body.len() {
-                    return Err(Error::Capped(Cap::Bytes));
+                    return Ok(Page::Capped);
                 }
                 body.extend_from_slice(&chunk);
             }
@@ -161,6 +170,7 @@ impl Client {
                 ));
             }
             serde_json::from_value(value)
+                .map(Page::Read)
                 .map_err(|_| Error::Unreadable("the Results record list has an invalid shape"))
         })
         .await
@@ -201,11 +211,11 @@ impl Client {
                 url.query_pairs_mut().append_pair("page_token", &next);
             }
             let page = match self.page(url, until).await {
-                Ok(page) => page,
-                Err(Error::Capped(cap)) => {
+                Ok(Page::Read(page)) => page,
+                Ok(Page::Capped) => {
                     return Ok(Listing {
                         records,
-                        cap: Some(cap),
+                        cap: Some(Cap::Bytes),
                         total: None,
                     });
                 }
@@ -247,6 +257,10 @@ impl Client {
             }
             next = page.next;
         }
-        unreachable!("the last page returns a capped listing")
+        Ok(Listing {
+            records,
+            cap: Some(Cap::Pages),
+            total: None,
+        })
     }
 }

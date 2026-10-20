@@ -7,11 +7,11 @@ No cluster or Results installation was contacted.
 Generated with OpenSSL, using a validity of 7,300 days and loopback IP SANs:
 
 ```sh
-openssl req -x509 -newkey rsa:2048 -nodes -keyout loopback-key.pem \
+openssl req -x509 -newkey rsa:2048 -nodes -keyout loopback-raw-key.pem \
   -out loopback-cert.pem -days 7300 -subj '/CN=Results test server' \
   -addext 'subjectAltName=IP:127.0.0.1,IP:::1' \
   -addext 'basicConstraints=critical,CA:FALSE'
-openssl pkcs8 -topk8 -nocrypt -in loopback-key.pem -out loopback-pkcs8.pem
+openssl pkcs8 -topk8 -nocrypt -in loopback-raw-key.pem -out loopback-key.pem
 ```
 
 `loopback-key.pem` holds the resulting PKCS#8 key. The tests load both files

@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::runtime::Runtime;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_rustls::TlsAcceptor;
 
@@ -41,7 +40,7 @@ pub(super) struct Server {
 }
 
 impl Server {
-    pub fn new(runtime: &Runtime, tls: bool, replies: Vec<Reply>) -> Self {
+    pub fn new(tls: bool, replies: Vec<Reply>) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -62,7 +61,7 @@ impl Server {
             .unwrap();
             TlsAcceptor::from(Arc::new(config))
         });
-        let task = runtime.spawn({
+        let task = tokio::spawn({
             let requests = requests.clone();
             let replies = queued.clone();
             async move {

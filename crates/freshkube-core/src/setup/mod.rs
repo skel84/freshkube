@@ -93,6 +93,7 @@ impl std::fmt::Display for Place {
 pub enum Fault {
     Empty(String),
     NotUrl(String),
+    NonLoopbackHttp(String),
     RelativePath(String),
     ZeroPort(String),
     /// Exactly one of the keys `of` is set.
@@ -128,6 +129,7 @@ impl std::fmt::Display for Fault {
         match self {
             Fault::Empty(at) => write!(f, "{at} is empty"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
+            Fault::NonLoopbackHttp(at) => write!(f, "{at}: plain HTTP is allowed only on loopback"),
             Fault::RelativePath(at) => write!(f, "{at} isn’t an absolute path"),
             Fault::ZeroPort(at) => write!(f, "{at} isn’t a port"),
             Fault::OneOf { at, of } => write!(f, "{at} must set exactly one of {of}"),

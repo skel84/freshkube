@@ -908,13 +908,41 @@ fn results_address_credentials_are_typed_and_round_trip() {
 
 #[test]
 fn results_address_settings_do_not_go_with_a_forward() {
-    for extra in [
-        "      token: keys.json\n",
-        "      ca_file: /home/acme/ca.pem\n",
+    for (extra, field) in [
+        ("      token: keys.json\n", "token"),
+        ("      ca_file: /home/acme/ca.pem\n", "ca_file"),
     ] {
         let text = with_cluster(&format!(
             "    results:\n      forward: {{namespace: acme, service: results, port: 8080}}\n{extra}"
         ));
-        assert!(matches!(refused(&text), Invalid::Rule(_)));
+        assert_eq!(
+            rule(&text),
+            format!("the cluster “cluster-a” results.{field} only goes with address")
+        );
+    }
+}
+
+#[test]
+fn results_plain_http_is_only_saved_for_literal_loopback() {
+    for address in [
+        "http://results.example.test",
+        "http://192.0.2.1",
+        "http://localhost",
+    ] {
+        let text = with_cluster(&format!("    results: {{address: '{address}'}}\n"));
+        assert_eq!(
+            rule(&text),
+            "the cluster “cluster-a” results.address: plain HTTP is allowed only on loopback"
+        );
+    }
+    for address in [
+        "https://results.example.test",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.2",
+        "http://[::1]:8080",
+    ] {
+        ok(&with_cluster(&format!(
+            "    results: {{address: '{address}'}}\n"
+        )));
     }
 }

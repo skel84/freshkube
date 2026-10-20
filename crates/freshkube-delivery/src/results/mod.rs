@@ -23,7 +23,7 @@ use freshkube_core::snapshot::Snapshot;
 use tokio::time::Instant;
 
 use crate::digest::is_full_sha;
-use crate::read::{MAX_PAGES, PAGE_LIMIT};
+use crate::read::{MAX_BODY_BYTES, MAX_PAGES, PAGE_LIMIT};
 use crate::tekton::{MOST_TASK_READS, PipelineRun, SHA_LABEL, TaskRun};
 
 pub(crate) const MOST_RESULT_RUNS: usize = MOST_TASK_READS;
@@ -54,6 +54,7 @@ pub(crate) struct Listing<T> {
     /// Why records were left unread. Results gives no total count; a cap
     /// never implies that a missing run does not exist.
     pub cap: Option<Cap>,
+    /// Records returned by the server, including any beyond the parsed cap.
     /// Exact only when the final page was read; never estimated.
     pub total: Option<usize>,
 }
@@ -72,7 +73,7 @@ impl std::fmt::Display for Cap {
             Self::Runs => write!(f, "the {MOST_RESULT_RUNS}-run cap"),
             Self::Tasks => write!(f, "the {MOST_RESULT_TASKS}-task cap"),
             Self::Pages => write!(f, "the {MAX_PAGES}-page cap"),
-            Self::Bytes => f.write_str("the 32 MiB response cap"),
+            Self::Bytes => write!(f, "the {} MiB response cap", MAX_BODY_BYTES / (1024 * 1024)),
         }
     }
 }
@@ -82,6 +83,7 @@ impl std::fmt::Display for Cap {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum State {
     Off,
+    Loading,
     NotForwarded,
     NotInstalled,
     Unreachable,
@@ -102,7 +104,6 @@ pub(crate) enum Error {
     Unreachable(Cause),
     Refused { status: u16, token_set: bool },
     Http(u16),
-    Capped(Cap),
     Unreadable(&'static str),
 }
 
@@ -112,6 +113,19 @@ pub(crate) enum Cause {
     Certificate,
     Connect,
     Transport,
+    Gateway(u16),
+}
+
+impl std::fmt::Display for Cause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TimedOut => f.write_str("the request timed out"),
+            Self::Certificate => f.write_str("certificate not trusted"),
+            Self::Connect => f.write_str("the connection failed"),
+            Self::Transport => f.write_str("the response could not be received"),
+            Self::Gateway(status) => write!(f, "the gateway returned HTTP {status}"),
+        }
+    }
 }
 
 impl Error {
@@ -123,7 +137,6 @@ impl Error {
             Self::Unreachable(_) => State::Unreachable,
             Self::Refused { .. } => State::Refused,
             Self::Http(_) | Self::Unreadable(_) => State::Unreadable,
-            Self::Capped(cap) => State::Capped(*cap),
         }
     }
 }
@@ -136,16 +149,7 @@ impl std::fmt::Display for Error {
             Self::NotInstalled => {
                 f.write_str("the Tekton Results API isn't installed or served here")
             }
-            Self::Unreachable(cause) => write!(
-                f,
-                "Tekton Results didn't answer: {}",
-                match cause {
-                    Cause::TimedOut => "the request timed out",
-                    Cause::Certificate => "certificate not trusted",
-                    Cause::Connect => "the connection failed",
-                    Cause::Transport => "the response could not be received",
-                }
-            ),
+            Self::Unreachable(cause) => write!(f, "Tekton Results didn't answer: {cause}"),
             Self::Refused { status, token_set } => {
                 write!(f, "Tekton Results refused the request ({status})")?;
                 if !token_set {
@@ -154,10 +158,6 @@ impl std::fmt::Display for Error {
                 Ok(())
             }
             Self::Http(status) => write!(f, "Tekton Results returned HTTP {status}"),
-            Self::Capped(cap) => write!(
-                f,
-                "Tekton Results stopped at {cap}; more records weren't read"
-            ),
             Self::Unreadable(why) => write!(f, "Tekton Results could not be read: {why}"),
         }
     }
@@ -167,7 +167,9 @@ impl std::fmt::Display for Error {
 /// (namespace, SHA or result), not just the address. Snapshot owns freshness
 /// and request generation, exactly as it does for ordinary cluster reads.
 pub(crate) fn state<T, I: Clone + Eq>(snapshot: &Snapshot<Listing<T>, I, Error>) -> State {
-    if snapshot.is_stale() {
+    if snapshot.is_loading() {
+        State::Loading
+    } else if snapshot.is_stale() {
         State::Stale
     } else if let Some(error) = snapshot.error() {
         error.state()
