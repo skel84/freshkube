@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use freshkube_graph::layout::{Route, route};
+use freshkube_graph::layout::{Metrics, Route, route_with};
 use gpui_kit::{
     AnyElement, App, Context, ScrollHandle, ScrollStrategy, SharedString, UniformListScrollHandle,
     Window,
@@ -28,6 +28,9 @@ pub use view::GraphView;
 
 /// Boxes on one page of the graph.
 pub const PER_PAGE: usize = 24;
+/// The gutter between columns of a graph drawn with [`GraphState::unpaged`],
+/// wide enough for a label on each line.
+pub const LABELLED_GUTTER: f32 = 84.;
 /// Calls on a page that carry a marker; the selected call always does.
 pub const MARKERS: usize = 24;
 /// Stacked, the graph starts as tall as it draws, within 300 and 700, and
@@ -231,6 +234,10 @@ pub struct GraphState<K> {
     visible: Vec<usize>,
     selected: Option<(K, K)>,
     page: usize,
+    /// Boxes on one page.
+    per_page: usize,
+    /// The sizes the layout uses.
+    metrics: Metrics,
     problems: bool,
     text: GraphText,
     scroll: UniformListScrollHandle,
@@ -250,6 +257,8 @@ impl<K: Clone + Ord> GraphState<K> {
             visible: vec![],
             selected: None,
             page: 0,
+            per_page: PER_PAGE,
+            metrics: Metrics::MAP,
             problems: false,
             text,
             scroll: UniformListScrollHandle::new(),
@@ -259,6 +268,17 @@ impl<K: Clone + Ord> GraphState<K> {
         };
         state.prepare();
         state
+    }
+
+    /// Draws every box on one page, in columns that never wrap and a gutter
+    /// wide enough for a label on each line. A graph is paged and wraps by
+    /// default, as the service map does.
+    #[must_use]
+    pub fn unpaged(mut self) -> Self {
+        self.per_page = usize::MAX;
+        self.metrics = Metrics::labelled(LABELLED_GUTTER);
+        self.prepare();
+        self
     }
 
     /// New boxes and calls. The selection stays while its call does, and
@@ -303,7 +323,7 @@ impl<K: Clone + Ord> GraphState<K> {
             return false;
         };
         if let Some((from, _)) = self.ends[ix] {
-            self.page = from / PER_PAGE;
+            self.page = from / self.per_page;
         }
         self.selected = Some(key);
         self.prepare();
@@ -411,10 +431,11 @@ impl<K: Clone + Ord> GraphState<K> {
         {
             self.selected = None;
         }
-        let pages = self.nodes.len().div_ceil(PER_PAGE).max(1);
+        let pages = self.nodes.len().div_ceil(self.per_page).max(1);
         self.page = self.page.min(pages - 1);
-        let start = self.page * PER_PAGE;
-        let mut on_page: Vec<usize> = (start..self.nodes.len().min(start + PER_PAGE)).collect();
+        let start = self.page * self.per_page;
+        let end = self.nodes.len().min(start.saturating_add(self.per_page));
+        let mut on_page: Vec<usize> = (start..end).collect();
         // The selected call stays inspectable across pages.
         if let Some(key) = &self.selected
             && let Some((from, to)) = self
@@ -445,7 +466,7 @@ impl<K: Clone + Ord> GraphState<K> {
             .filter_map(|(from, to)| Some((*local.get(from)?, *local.get(to)?)))
             .filter(|&link| routed.insert(link, routed.len()).is_none())
             .collect();
-        let layout = route(&mut corners, &links);
+        let layout = route_with(&self.metrics, &mut corners, &links);
         let placed: Vec<_> = on_page
             .iter()
             .zip(&corners)

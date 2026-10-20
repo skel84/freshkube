@@ -275,11 +275,34 @@ async fn the_first_save_preserves_a_hand_edit_and_later_saves_keep_the_backup(
             text.contains("the hand-edited file is freshkube.yaml.bak"),
             "{text}"
         );
+        let label = window.find("setup-reload-status");
+        assert!(label.visible());
+        let file = view.read(cx).setup_file.read(cx);
+        assert_eq!(label.label(), file.receipt.as_deref());
+        assert!(
+            label
+                .label()
+                .unwrap()
+                .contains("the hand-edited file is freshkube.yaml.bak")
+        );
+        assert!(file.receipt_label().starts_with("Saved · backup .bak · "));
         add(window, cx, "acme-next");
     })
     .unwrap();
     saved(cx, handle, &view).await;
     assert_eq!(std::fs::read_to_string(&backup).unwrap(), hand_edit);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let label = window.find("setup-reload-status");
+        assert!(label.visible());
+        let text = label.label().unwrap();
+        let file = view.read(cx).setup_file.read(cx);
+        assert_eq!(Some(text), file.receipt.as_deref());
+        assert!(text.starts_with("Saved freshkube.yaml · "), "{text}");
+        assert!(file.receipt_label().starts_with("Saved · "));
+        assert!(!file.receipt_label().contains("backup"));
+    })
+    .unwrap();
     cx.update(|cx| {
         assert!(
             !view
