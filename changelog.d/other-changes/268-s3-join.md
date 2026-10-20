@@ -1,0 +1,1 @@
+- **Delivery chain:** a build's link to its supply chain is now Confirmed when an attestation's signature verifies with the public key named in `supply_chain.public_key_file` and a subject carries the digest the build reported; a provenance that verifies and names the commit also confirms the commit's link to the build. Every other case stays Claimed or Unknown, with the reason.

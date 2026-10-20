@@ -35,6 +35,7 @@ use super::rollouts::{
 };
 use super::source::Source;
 use super::tekton::{CommitNames, EvidenceResult, read_builds};
+use super::verify::Trust;
 
 /// Which namespaces to read, all named by the caller.
 #[derive(Clone, Debug)]
@@ -70,6 +71,9 @@ pub struct Plan {
     /// Where the pipeline's own evidence record is, if the platform writes
     /// one. Not read unless configured.
     pub evidence_result: Option<EvidenceResult>,
+    /// The public key signatures are verified against; nothing is verified
+    /// unless it is named.
+    pub public_key_file: Option<std::path::PathBuf>,
     /// Parameter and result names, besides upstream's, under which the
     /// pipelines record the commit they built. Empty unless configured.
     pub commit_names: CommitNames,
@@ -208,6 +212,10 @@ pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, 
         followed: plan.followed.clone(),
         observed_at,
         evidence_result: plan.evidence_result.clone(),
+        trust: plan
+            .public_key_file
+            .as_deref()
+            .map_or(Trust::Unset, Trust::from_key_file),
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
         map_hint: plan.map_hint.clone(),

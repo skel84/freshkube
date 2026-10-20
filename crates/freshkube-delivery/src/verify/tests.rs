@@ -68,7 +68,7 @@ fn outcome(trust: &Trust, attestation: &Attestation) -> Verification {
 
 /// A throwaway key pair for the envelopes the tests sign themselves,
 /// generated fresh on each run.
-fn signing_key() -> &'static (EcdsaKeyPair, TrustedKey) {
+pub(crate) fn signing_key() -> &'static (EcdsaKeyPair, TrustedKey) {
     static KEY: std::sync::OnceLock<(EcdsaKeyPair, TrustedKey)> = std::sync::OnceLock::new();
     KEY.get_or_init(|| {
         let rng = SystemRandom::new();
@@ -81,7 +81,7 @@ fn signing_key() -> &'static (EcdsaKeyPair, TrustedKey) {
     })
 }
 
-fn signed_envelope(payload_type: &str, statement: &Value) -> String {
+pub(crate) fn signed_envelope(payload_type: &str, statement: &Value) -> String {
     let (pair, _) = signing_key();
     let body = statement.to_string();
     let signature = pair
@@ -98,7 +98,7 @@ fn signed_envelope(payload_type: &str, statement: &Value) -> String {
     .to_string()
 }
 
-fn statement_with(subjects: Vec<Value>) -> Value {
+pub(crate) fn statement_with(subjects: Vec<Value>) -> Value {
     json!({
         "_type": "https://in-toto.io/Statement/v0.1",
         "predicateType": "https://slsa.dev/provenance/v0.2",
@@ -107,8 +107,14 @@ fn statement_with(subjects: Vec<Value>) -> Value {
     })
 }
 
-fn subject(digest: &str) -> Value {
+pub(crate) fn subject(digest: &str) -> Value {
     json!({"name": "registry.example.com/acme/checkout", "digest": {"sha256": digest}})
+}
+
+/// The key file the signing key's public half would be, as PEM.
+pub(crate) fn signing_key_pem() -> String {
+    let (pair, _) = signing_key();
+    TrustedKey::pem_of_point(pair.public_key().as_ref())
 }
 
 fn short_hex() -> &'static str {

@@ -41,6 +41,7 @@ use super::pods::RunningImage;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
 use super::tekton::{Build, CommitNames, EvidenceResult};
+use super::verify::Trust;
 use freshkube_core::resources::Failure;
 
 /// How sure a link is.
@@ -177,6 +178,9 @@ pub struct Evidence {
     /// Where the pipeline's own evidence record is; `None` when the caller
     /// configured none.
     pub evidence_result: Option<EvidenceResult>,
+    /// What signatures are verified against. [`Trust::Unset`] verifies
+    /// nothing.
+    pub(crate) trust: Trust,
     /// Parameter and result names, besides upstream's, that name a build's
     /// commit.
     pub commit_names: CommitNames,
@@ -696,11 +700,12 @@ pub fn join(evidence: &Evidence) -> Trail {
                 ));
             }
             for build in builds {
-                links.push(commit_link(sha, build, names));
+                links.push(commit_link(sha, build, names, &evidence.trust));
                 links.extend(supply_chain_links(
                     build,
                     evidence.evidence_result.as_ref(),
                     names,
+                    &evidence.trust,
                 ));
             }
             builds

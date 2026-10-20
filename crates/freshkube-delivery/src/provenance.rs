@@ -22,9 +22,9 @@ fn kinds(hop: Hop) -> &'static [&'static str] {
         // The change itself, or the Freight's commit it was joined to.
         Hop::Commit => &["Commit"],
         Hop::PipelineRun => &["PipelineRun", "TaskRun"],
-        // Only an annotation of Chains' says a build was signed, and it is
-        // declared; no read object reports the signature.
-        Hop::SupplyChain => &[],
+        // Only a signature that verified is reported: the attestation it
+        // covers. Chains' annotation says a build was signed and is declared.
+        Hop::SupplyChain => &["Attestation"],
         Hop::Freight => &["Freight"],
         // The Freight's origin is Kargo's own record; the Warehouse reports
         // the digests it discovered.
@@ -52,12 +52,18 @@ fn key_text(key: &Key) -> String {
 /// Whether the link has, on `hop`'s side, an observation of a read object
 /// that is reported, never declared or derived, and carries the link's key.
 /// A Rollout's side stands on its own pods.
-fn stands_on(link: &Link, hop: Hop) -> bool {
+pub(crate) fn stands_on(link: &Link, hop: Hop) -> bool {
     let key = key_text(&link.key);
     if hop == Hop::Rollout && rollout_stands_on_its_pods(link, &key) {
         return true;
     }
     if hop == Hop::Deployment && deployment_stands_on_its_pods(link, &key) {
+        return true;
+    }
+    // A provenance whose signature verified is a reported witness to the
+    // commit the run was built from.
+    if hop == Hop::PipelineRun && link.from == Hop::Commit && verified_provenance_names(link, &key)
+    {
         return true;
     }
     link.evidence.iter().any(|seen| {
@@ -70,6 +76,20 @@ fn stands_on(link: &Link, hop: Hop) -> bool {
                 .value
                 .as_deref()
                 .is_some_and(|value| value.eq_ignore_ascii_case(&key))
+    })
+}
+
+/// Whether the link has a reported observation of a verified attestation
+/// that names `key`'s commit.
+fn verified_provenance_names(link: &Link, key: &str) -> bool {
+    link.evidence.iter().any(|seen| {
+        seen.object.kind == "Attestation"
+            && seen.fact == Fact::Reported
+            && seen.field.starts_with("/predicate/")
+            && seen
+                .value
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case(key))
     })
 }
 
@@ -222,6 +242,7 @@ async fn every_trail() -> Vec<Trail> {
         .await,
         run(&alone, &ENV).await,
         run(&no_digest, &ENV).await,
+        crate::attested::verified_trail().await,
     ]
 }
 
@@ -249,6 +270,7 @@ async fn a_confirmed_link_stands_on_what_was_read_on_each_side() {
         (Hop::PullRequest, Hop::PipelineRun),
         (Hop::PullRequest, Hop::Freight),
         (Hop::Commit, Hop::PipelineRun),
+        (Hop::PipelineRun, Hop::SupplyChain),
         (Hop::PipelineRun, Hop::Freight),
         (Hop::Commit, Hop::Freight),
         (Hop::Freight, Hop::Warehouse),
@@ -758,9 +780,9 @@ async fn chains_signed_annotation_is_a_claim_never_a_confirmation() {
     let chain = one(&trail, Hop::PipelineRun, Hop::SupplyChain);
     assert_eq!(chain.confidence, Confidence::Claimed);
     assert!(
-        chain
-            .reason
-            .contains("Chains' annotation says signed; the signature was not verified"),
+        chain.reason.contains(
+            "Chains' annotation says signed; no public key is set, so nothing was verified"
+        ),
         "{}",
         chain.reason
     );

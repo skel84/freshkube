@@ -1,12 +1,16 @@
+use crate::chains::{Attestation, Form};
 use crate::digest::{Digest, tag, written_repository};
 use crate::github::PullRequest;
 use crate::kargo::Freight;
+use crate::observation::ObjectRef;
 use crate::source::{Source, cap_note};
 use crate::tekton::{Build, CommitNames, EvidenceResult, WitnessSource};
+use crate::verify::{NotRead, Trust, Verification, Verified, verify};
 
 use super::argo::short_commit;
 use super::observe::{
-    built_image, chains_signed, change, concluded, freight_side, pull_request, run_commit,
+    attested_commit, attested_digest, built_image, chains_signed, change, concluded, freight_side,
+    pull_request, run_commit,
 };
 use super::*;
 
@@ -83,7 +87,7 @@ pub(super) fn pull_request_links(
         );
         if merge_is || head_is {
             for build in builds {
-                let run = commit_link(sha, build, &evidence.commit_names);
+                let run = commit_link(sha, build, &evidence.commit_names, &evidence.trust);
                 let numbered = match build.run.pull_request {
                     Some(number) if number != pr.number => {
                         format!("; the run says pull request #{number}, not #{}", pr.number)
@@ -153,7 +157,7 @@ fn head_build_links(
     }
     let mut links = Vec::new();
     for build in builds {
-        let run = commit_link(head, build, &evidence.commit_names);
+        let run = commit_link(head, build, &evidence.commit_names, &evidence.trust);
         let run_confidence = run.confidence;
         let head_run = run_commit(build, &evidence.commit_names, head);
         let digests: Vec<Digest> = build.images().into_iter().map(|i| i.digest).collect();
@@ -226,7 +230,7 @@ fn head_build_links(
     links
 }
 
-pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link {
+pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames, trust: &Trust) -> Link {
     let subject = id(&build.run.namespace, &build.run.name);
     let outcome = match (&build.run.succeeded, &build.run.reason) {
         (Some(status), Some(reason)) => format!("Succeeded={status} ({reason})"),
@@ -254,6 +258,15 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
         seen
     };
     let reported_other = !others.is_empty();
+    let attested = verified_attestations(build, trust)
+        .into_iter()
+        .find(|attested| {
+            attested
+                .verified
+                .commit
+                .as_deref()
+                .is_some_and(|commit| commit.eq_ignore_ascii_case(sha))
+        });
     let link = match build.witness(names, sha) {
         Some(witness) if witness.reported() && witness.commit.eq_ignore_ascii_case(sha) => {
             let rule = match witness.source {
@@ -268,6 +281,24 @@ pub(super) fn commit_link(sha: &str, build: &Build, names: &CommitNames) -> Link
                 Key::Sha(sha.to_owned()),
                 Confidence::Confirmed,
                 format!("a result of the build reports the commit; {outcome}"),
+            )
+        }
+        // A provenance whose signature verifies is a witness the cluster's
+        // annotations cannot forge: reported, like a result.
+        _ if attested.is_some() && !reported_other => {
+            let attested = attested.expect("checked by the guard");
+            evidence.push(attested_commit(&attested.object, &attested.verified));
+            evidence.push(concluded("a verified provenance == the change", sha));
+            Link::new(
+                Hop::Commit,
+                Hop::PipelineRun,
+                subject,
+                Key::Sha(sha.to_owned()),
+                Confidence::Confirmed,
+                format!(
+                    "a provenance of the build names the commit, and its signature verifies with key {}; {outcome}",
+                    attested.verified.key
+                ),
             )
         }
         Some(_) if reported_other => Link::new(
@@ -329,6 +360,7 @@ pub(super) fn supply_chain_links(
     build: &Build,
     evidence_result: Option<&EvidenceResult>,
     names: &CommitNames,
+    trust: &Trust,
 ) -> Vec<Link> {
     let verdict = match build.conforma() {
         Some(conforma) => format!(
@@ -385,41 +417,201 @@ pub(super) fn supply_chain_links(
     images
         .into_iter()
         .map(|image| {
-            let (confidence, chains) = match build.chains_state().as_deref() {
-                // Nothing read in the cluster verifies a signature: Chains'
-                // annotation says so, and only a claim can stand on it.
-                Some("true") => (
-                    Confidence::Claimed,
-                    "Chains' annotation says signed; the signature was not verified".to_owned(),
-                ),
-                Some(state) => (
-                    Confidence::Unknown,
-                    format!("Chains reports signed={state}"),
-                ),
-                None => (Confidence::Unknown, "no Chains annotation".to_owned()),
-            };
-            // The build reports the digest; Chains' annotation, declared, is
-            // all that says it signed it.
+            let standing = standing(build, trust, &image.digest);
+            // The build reports the digest; what else is said about it is
+            // the attestation's, reported only once its signature verified,
+            // and Chains' annotation, declared.
             let mut evidence: Vec<Observation> =
                 built_image(build, &image.digest).into_iter().collect();
+            evidence.extend(standing.evidence);
             evidence.extend(chains_signed(build));
             Link::new(
                 Hop::PipelineRun,
                 Hop::SupplyChain,
                 subject.clone(),
                 Key::Digest(image.digest.clone()),
-                confidence,
+                standing.confidence,
                 format!(
-                    "{} {}; {chains}; {verdict}",
+                    "{} {}; {}; {verdict}",
                     written_repository(&image.url),
                     tag(&image.url)
                         .map(|t| format!("(tag {t})"))
-                        .unwrap_or_default()
+                        .unwrap_or_default(),
+                    standing.words
                 ),
             )
             .observed(evidence)
         })
         .collect()
+}
+
+/// What the supply-chain link says of one image, and what it stands on.
+struct Standing {
+    confidence: Confidence,
+    words: String,
+    evidence: Vec<Observation>,
+}
+
+/// One attestation of the build and what the verifier made of it.
+struct Judged {
+    object: ObjectRef,
+    attestation: Attestation,
+    outcome: Verification,
+}
+
+/// A verified attestation of the build.
+struct Attested {
+    object: ObjectRef,
+    verified: Verified,
+}
+
+/// Every attestation of the run and its tasks, judged against `digest`. An
+/// image's signature is not an attestation of the run and is left out.
+fn judge(build: &Build, trust: &Trust, digest: &Digest) -> Vec<Judged> {
+    build
+        .attestations()
+        .into_iter()
+        .filter(|(_, attestation)| attestation.form == Form::Run)
+        .map(|(object, attestation)| Judged {
+            outcome: verify(trust, attestation, digest),
+            attestation: attestation.clone(),
+            object,
+        })
+        .collect()
+}
+
+/// The attestations of `build` that verify with the person's key for one of
+/// the images the build reported.
+fn verified_attestations(build: &Build, trust: &Trust) -> Vec<Attested> {
+    let images = build.images();
+    build
+        .attestations()
+        .into_iter()
+        .filter(|(_, attestation)| attestation.form == Form::Run)
+        .filter_map(|(object, attestation)| {
+            images
+                .iter()
+                .find_map(|image| match verify(trust, attestation, &image.digest) {
+                    Verification::Verified(verified) => Some(Attested {
+                        object: attestation.verified_object(&object),
+                        verified,
+                    }),
+                    Verification::NoTrust
+                    | Verification::KeyUnusable(_)
+                    | Verification::Malformed(_)
+                    | Verification::SignatureFailed { .. }
+                    | Verification::SubjectDiffers { .. }
+                    | Verification::NotStoredHere(_)
+                    | Verification::NotRead(_) => None,
+                })
+        })
+        .collect()
+}
+
+/// How much a verdict says, for choosing which of a build's attestations the
+/// link reports: a difference or a failure is more than a missing key.
+fn weight(outcome: &Verification) -> u8 {
+    match outcome {
+        Verification::Verified(_) => 7,
+        Verification::SubjectDiffers { .. } => 6,
+        Verification::SignatureFailed { .. } => 5,
+        Verification::Malformed(_) => 4,
+        Verification::KeyUnusable(_) => 3,
+        Verification::NotStoredHere(_) => 2,
+        Verification::NoTrust => 1,
+        Verification::NotRead(NotRead::ImageSignature)
+        | Verification::NotRead(NotRead::Unread)
+        | Verification::NotRead(NotRead::SubjectsCutAtCap) => 0,
+    }
+}
+
+/// The confidence a verdict gives the link. The one arm that confirms is
+/// `Verified`; a new variant does not compile until it is placed here. An
+/// attestation that exists but was not verified is a claim.
+fn confidence_of(outcome: &Verification) -> Confidence {
+    match outcome {
+        Verification::Verified(_) => Confidence::Confirmed,
+        Verification::NoTrust
+        | Verification::KeyUnusable(_)
+        | Verification::Malformed(_)
+        | Verification::SignatureFailed { .. }
+        | Verification::SubjectDiffers { .. }
+        | Verification::NotStoredHere(_)
+        | Verification::NotRead(_) => Confidence::Claimed,
+    }
+}
+
+/// Chains' annotation in words.
+fn annotation_words(build: &Build) -> (bool, String) {
+    match build.chains_state().as_deref() {
+        Some("true") => (true, "Chains' annotation says signed".to_owned()),
+        Some(state) => (false, format!("Chains reports signed={state}")),
+        None => (false, "no Chains annotation".to_owned()),
+    }
+}
+
+fn standing(build: &Build, trust: &Trust, digest: &Digest) -> Standing {
+    let (annotated, annotation) = annotation_words(build);
+    let judged = judge(build, trust, digest);
+    let chosen = judged
+        .iter()
+        .find(|judged| judged.outcome.confirms())
+        .or_else(|| {
+            judged
+                .iter()
+                .min_by_key(|judged| std::cmp::Reverse(weight(&judged.outcome)))
+        });
+    let Some(chosen) = chosen else {
+        // Nothing of the run's own was stored where it is read. That is not
+        // "unsigned": only Chains' annotation, declared, says anything.
+        let (confidence, words) = match (annotated, trust) {
+            (true, Trust::Unset) => (
+                Confidence::Claimed,
+                format!("{annotation}; no public key is set, so nothing was verified"),
+            ),
+            (true, Trust::Unusable(problem)) => (
+                Confidence::Claimed,
+                format!("{annotation}; the public key can't be used: {problem}"),
+            ),
+            (true, Trust::Key(_)) => (
+                Confidence::Claimed,
+                format!("{annotation}; no attestation was found to verify"),
+            ),
+            (false, _) => (Confidence::Unknown, annotation),
+        };
+        return Standing {
+            confidence,
+            words,
+            evidence: Vec::new(),
+        };
+    };
+    let confidence = confidence_of(&chosen.outcome);
+    let (words, evidence) = match &chosen.outcome {
+        Verification::Verified(verified) => {
+            let object = chosen.attestation.verified_object(&chosen.object);
+            (
+                format!("{}; {annotation}", chosen.outcome),
+                vec![attested_digest(&object, &verified.subject)],
+            )
+        }
+        Verification::NoTrust
+        | Verification::KeyUnusable(_)
+        | Verification::Malformed(_)
+        | Verification::SignatureFailed { .. }
+        | Verification::SubjectDiffers { .. }
+        | Verification::NotStoredHere(_)
+        | Verification::NotRead(_) => (
+            format!("{}; {annotation}", chosen.outcome),
+            // Declared, however it was signed: whoever can patch the run
+            // can write the annotation.
+            vec![chosen.attestation.observation(chosen.object.clone())],
+        ),
+    };
+    Standing {
+        confidence,
+        words,
+        evidence,
+    }
 }
 
 /// The names of the run's own results, which a configured evidence result

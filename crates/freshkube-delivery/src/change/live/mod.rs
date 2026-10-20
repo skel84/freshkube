@@ -646,6 +646,7 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         argocd: place.argocd(),
         environment: place.here().to_owned(),
         evidence_result: None,
+        public_key_file: None,
         commit_names: Default::default(),
         stage_naming: None,
         map_hint: match place.mapping.settings {

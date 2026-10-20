@@ -413,6 +413,7 @@ async fn main() {
         cluster_names: args.known_as_name.clone(),
         map_hint: Default::default(),
         names: Default::default(),
+        public_key_file: None,
         evidence_result: match (
             &args.evidence_result,
             &args.evidence_commit,

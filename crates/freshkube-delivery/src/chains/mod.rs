@@ -354,10 +354,6 @@ fn source_commit(statement: &Value) -> Option<String> {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the join reads them in the verification step")
-)]
 impl Attestation {
     /// The annotation the signature was read from, as a JSON pointer into
     /// the run.
@@ -390,6 +386,29 @@ impl Attestation {
         )
     }
 }
+
+impl Attestation {
+    /// The attestation as an object an observation can stand on, once its
+    /// signature has verified: Chains' annotation on `run`, at the version
+    /// that was read. Only a verified attestation is reported; an unverified
+    /// one is [`Attestation::observation`], declared.
+    pub(crate) fn verified_object(&self, run: &ObjectRef) -> ObjectRef {
+        ObjectRef {
+            group: CHAINS_GROUP.to_owned(),
+            kind: ATTESTATION_KIND.to_owned(),
+            namespace: run.namespace.clone(),
+            name: self.key.clone(),
+            uid: run.uid.clone(),
+            resource_version: run.resource_version.clone(),
+        }
+    }
+}
+
+/// The API group Chains' annotations are written under, which an
+/// [`Attestation`]'s object is named in.
+const CHAINS_GROUP: &str = "chains.tekton.dev";
+/// The kind of the object a verified attestation's observations are of.
+pub(crate) const ATTESTATION_KIND: &str = "Attestation";
 
 pub(crate) mod config;
 

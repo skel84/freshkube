@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 
 use serde_json::Value;
 
-use super::chains::{Attestations, parse_attestations};
+use super::chains::{Attestation, Attestations, parse_attestations};
 use super::digest::{Digest, is_full_sha, text};
 use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Resource, Scope, label_equals};
@@ -435,6 +435,26 @@ impl Build {
             .find(|state| state.as_str() == "true")
             .or(states.first())
             .map(|state| (*state).clone())
+    }
+
+    /// The attestations of the run Chains stored, the run's own first and
+    /// then each task's in order, each with the object it was read from.
+    pub(crate) fn attestations(&self) -> Vec<(ObjectRef, &Attestation)> {
+        let run = self.run.object_ref();
+        let own = self
+            .run
+            .attestations
+            .read
+            .iter()
+            .map(move |a| (run.clone(), a));
+        let tasks = self.tasks.iter().flat_map(|task| {
+            let object = task.object_ref();
+            task.attestations
+                .read
+                .iter()
+                .map(move |a| (object.clone(), a))
+        });
+        own.chain(tasks).collect()
     }
 
     /// The pipeline's own evidence record, from the configured result.
