@@ -111,6 +111,14 @@ fn icon(area: Area) -> IconName {
 }
 
 impl Pilot {
+    pub(in crate::desktop) fn start_rail_at_top(&mut self, window: &Window) {
+        self.navigation
+            .rail_scroll
+            .set_offset(point(px(0.), px(0.)));
+        self.navigation.rail_revealed = Some((self.navigation.area, super::column::room(window)));
+        self.navigation.rail_reveal_pass = None;
+    }
+
     pub(in crate::desktop) fn render_rail(
         &mut self,
         window: &mut Window,
@@ -149,17 +157,23 @@ impl Pilot {
                 children += 1;
             }
         }
-        // A short window or large text scrolls the rail; keep the active
-        // area in view whenever it, or the room, changes.
+        // Open at the top, including when a debug page starts in Settings.
+        // Reveal an area only after navigation changes it; resizing the
+        // window or changing text size keeps the user's scroll position.
         let key = (self.navigation.area, super::column::room(window));
-        if self.navigation.rail_revealed != Some(key)
-            && super::column::reveal_item(
-                &self.navigation.rail_scroll,
-                &mut self.navigation.rail_reveal_pass,
-                key,
-                active,
-                window,
-            )
+        let changed_area = self
+            .navigation
+            .rail_revealed
+            .is_some_and(|(area, _)| area != key.0);
+        if self.navigation.rail_revealed.is_none()
+            || ((changed_area || self.navigation.rail_reveal_pass.is_some())
+                && super::column::reveal_item(
+                    &self.navigation.rail_scroll,
+                    &mut self.navigation.rail_reveal_pass,
+                    key,
+                    active,
+                    window,
+                ))
         {
             self.navigation.rail_revealed = Some(key);
         }

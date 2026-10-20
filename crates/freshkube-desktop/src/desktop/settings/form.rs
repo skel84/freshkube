@@ -26,18 +26,33 @@ pub(super) struct ClusterForm {
 pub(super) fn open(page: Entity<SettingsPage>, window: &mut Window, cx: &mut App) {
     let form = cx.new(|cx| ClusterForm::new(page, window, cx));
     let context = form.read(cx).context.clone();
-    window.open_dialog(cx, move |dialog, window, _| {
-        dialog
-            .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
-            .overlay_closable(false)
-            .title("Add a cluster")
-            .child(form.clone())
+    window.open_dialog(cx, move |dialog, window, cx| {
+        freshkube_ui::dialog::frame(
+            dialog,
+            460.,
+            "Add a cluster",
+            form.clone(),
+            ClusterForm::actions(&form, cx),
+            window,
+        )
     });
     // A dialog remembers what had focus when it opened: focus its field after.
     context.update(cx, |state, cx| state.focus(window, cx));
 }
 
 impl ClusterForm {
+    fn actions(form: &Entity<Self>, cx: &App) -> impl IntoElement {
+        let pending = form.read(cx).pending;
+        let form = form.downgrade();
+        kit_form::actions(
+            kit_form::Action::new("settings-form-save", "Save", move |_, _, cx| {
+                _ = form.update(cx, |form, cx| form.submit(cx));
+            })
+            .disabled(pending),
+            kit_form::Action::cancel("settings-form-cancel"),
+        )
+    }
+
     fn new(page: Entity<SettingsPage>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let context =
             cx.new(|cx| InputState::new(window, cx).placeholder("Context name in the kubeconfig"));
@@ -165,15 +180,6 @@ impl Render for ClusterForm {
                         )
                         .hint("Talosconfig and the rest are set in the Inspector."),
                     )
-                    .actions(kit_form::actions(
-                        kit_form::Action::new(
-                            "settings-form-save",
-                            "Save",
-                            cx.listener(|form, _, _, cx| form.submit(cx)),
-                        )
-                        .disabled(self.pending),
-                        kit_form::Action::cancel("settings-form-cancel"),
-                    ))
                     .render(cx),
             )
     }

@@ -348,6 +348,8 @@ fn the_shell_binds_the_keys_and_actions_it_did(cx: &mut TestAppContext) {
     });
     let mut expected = vec![
         "app::About",
+        "app::OpenClustersSettings",
+        "app::OpenCorootSettings",
         "app::OpenSettings",
         "input::Copy",
         "inspector::ToggleInspector",

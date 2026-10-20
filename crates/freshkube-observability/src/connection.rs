@@ -3,15 +3,19 @@ use super::*;
 use crate::{backend, state::Snapshot};
 use freshkube_core::cluster_source::{ClusterAccess, ClusterSource};
 use freshkube_core::coroot as api;
+use freshkube_core::job::OwnedJob;
 use freshkube_reads::Loader;
 use std::{cell::RefCell, future::Future, time::Duration};
 use tokio::runtime::Handle;
 
-/// Only an explicit Connect in Settings may connect a hidden page.
+/// Only an explicit Connect in Settings, or a change page reading Coroot,
+/// may connect a hidden page.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ConnectOrigin {
     Page,
     Settings,
+    /// A change page reads Coroot while this page is hidden.
+    Change,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,6 +56,12 @@ pub(super) type ReadJob = Rc<RefCell<Loader<(), Option<ReadScope>>>>;
 pub(super) struct Live {
     pub runtime: Handle,
     pub visible: bool,
+    /// The provider was made for a change page while this page was hidden:
+    /// it is nothing but the provider, and showing the page lists the
+    /// projects and chooses the remembered one.
+    pub provider_only: bool,
+    /// Building the provider for a change page, on the I/O worker.
+    pub provider_job: Option<(OwnedJob, Task<()>)>,
     pub access: Option<String>,
     pub provider: Option<api::Provider>,
     pub source: Option<api::Source>,
@@ -103,6 +113,8 @@ impl Live {
         Self {
             runtime,
             visible: false,
+            provider_only: false,
+            provider_job: None,
             access: None,
             provider: None,
             source: None,
@@ -291,6 +303,7 @@ impl ObservabilityPage {
         if visible {
             self.refresh_current(cx);
             self.restore(ConnectOrigin::Page, cx);
+            self.finish_provider_only(cx);
         } else {
             self.live.cancel();
         }
@@ -393,6 +406,8 @@ impl ObservabilityPage {
     }
     pub(super) fn invalidate_connection(&mut self) {
         self.live.provider = None;
+        self.live.provider_only = false;
+        self.live.provider_job = None;
         self.live.source = None;
         self.live.projects.clear();
         self.live.project_labels.clear();
@@ -420,6 +435,10 @@ impl ObservabilityPage {
     pub fn connection_state(&self) -> ConnectionState {
         if self.live.connecting {
             ConnectionState::Connecting
+        } else if self.live.provider.is_some() && self.live.provider_only {
+            // Made for a change page and never asked anything: a wrong key
+            // would read as connected, so it says nothing of the sort.
+            ConnectionState::Disconnected
         } else if self.live.provider.is_some() {
             ConnectionState::Connected
         } else if let Some(error) = &self.live.error {
@@ -472,20 +491,31 @@ impl ObservabilityPage {
     pub fn forget_key_from_settings(&mut self, server: &str, cx: &mut Context<Self>) {
         self.forget_stored_key(server, cx);
     }
-    pub(super) fn connect(&mut self, origin: ConnectOrigin, cx: &mut Context<Self>) {
-        if self.fixture || (!self.live.visible && origin != ConnectOrigin::Settings) {
-            return;
-        }
+    /// What the form says to connect with: the address, the credentials,
+    /// the sign-in and the value kept for it. The only place the key is
+    /// read from the form, and it never reaches a log, an error or `Debug`.
+    fn credentials(&self, cx: &App) -> (String, api::Credentials, usize, String) {
         // A pasted URL or key often brings a space or line break with it.
         let url = self.url.read(cx).value().trim().to_owned();
         let typed = self.secret.read(cx).value().trim().to_owned();
         let value = self.credential_value(&url, typed);
-        let (auth, saved_url, saved_value) = (self.auth, url.clone(), value.clone());
         let credentials = match self.auth {
-            0 => api::Credentials::ApiKey(value),
-            1 => api::Credentials::Session(value),
+            0 => api::Credentials::ApiKey(value.clone()),
+            1 => api::Credentials::Session(value.clone()),
             _ => api::Credentials::None,
         };
+        (url, credentials, self.auth, value)
+    }
+    pub(super) fn connect(&mut self, origin: ConnectOrigin, cx: &mut Context<Self>) {
+        if self.fixture || (!self.live.visible && origin == ConnectOrigin::Page) {
+            return;
+        }
+        if origin == ConnectOrigin::Change && !self.live.visible {
+            self.connect_provider_only(cx);
+            return;
+        }
+        let (url, credentials, auth, value) = self.credentials(cx);
+        let (saved_url, saved_value) = (url.clone(), value);
         // Replacing credentials invalidates everything before the new read starts,
         // even if construction/authentication later fails.
         self.invalidate_connection();
@@ -510,7 +540,91 @@ impl ObservabilityPage {
                         this.settings_open = false;
                         this.remember_connection(saved_url, auth, saved_value, cx);
                     }
+                    Err(error) => {
+                        this.live.provider = None;
+                        this.live.error = Some(connect_error(error, auth));
+                    }
+                }
+                cx.emit(ObservabilityEvent::Connection);
+                cx.notify();
+            },
+            cx,
+        );
+    }
+    /// The provider for a change page while this page is hidden, and
+    /// nothing else: no request is made, no project listed, no read
+    /// started. It is built on the I/O worker, as `connect` builds it.
+    /// Showing the page finishes the connection
+    /// ([`Self::finish_provider_only`]).
+    fn connect_provider_only(&mut self, cx: &mut Context<Self>) {
+        let (url, credentials, auth, _) = self.credentials(cx);
+        self.invalidate_connection();
+        let (job, receiver) = backend::spawn_job(
+            &self.live.runtime,
+            Duration::from_secs(5),
+            api::ReadError::Timeout,
+            async move { api::Provider::new(&url, credentials) },
+        );
+        let task = cx.spawn(async move |this, cx| {
+            let result = receiver.await.unwrap_or(Err(api::ReadError::Failed));
+            _ = this.update(cx, |this, cx| {
+                // Replaced, shown, or connected another way meanwhile: this
+                // provider is no longer the one asked for.
+                if this.live.provider_job.take().is_none() || this.live.provider.is_some() {
+                    return;
+                }
+                match result {
+                    Ok(provider) => {
+                        this.live.provider = Some(provider);
+                        this.live.provider_only = true;
+                    }
                     Err(error) => this.live.error = Some(connect_error(error, auth)),
+                }
+                cx.emit(ObservabilityEvent::Connection);
+                cx.notify();
+            });
+        });
+        self.live.provider_job = Some((job, task));
+    }
+    /// Shown, a provider made for a change page lists the projects as
+    /// the first connection does, over the same provider. The page counts
+    /// as connected only when the list lands: hiding it mid-listing leaves
+    /// the provider as it was, to list again on the next show.
+    fn finish_provider_only(&mut self, cx: &mut Context<Self>) {
+        if !self.live.provider_only || self.live.connecting {
+            return;
+        }
+        let Some(provider) = self.live.provider.clone() else {
+            return;
+        };
+        let (url, _, auth, value) = self.credentials(cx);
+        self.live.connecting = true;
+        cx.emit(ObservabilityEvent::Connection);
+        self.spawn_read(
+            async move {
+                provider
+                    .projects()
+                    .await
+                    .map(|projects| (provider, projects))
+            },
+            move |this, result, cx| {
+                this.live.connecting = false;
+                this.live.provider_only = false;
+                match result {
+                    Ok((provider, projects)) => {
+                        this.live.provider = Some(provider);
+                        this.live.project_labels = projects
+                            .iter()
+                            .map(|p| format!("{} · {}", p.name, p.id))
+                            .collect();
+                        this.live.projects = projects;
+                        this.settings_open = false;
+                        this.remember_connection(url, auth, value, cx);
+                    }
+                    Err(error) => {
+                        this.live.provider = None;
+                        this.live.error = Some(connect_error(error, auth));
+                    }
                 }
                 cx.emit(ObservabilityEvent::Connection);
                 cx.notify();

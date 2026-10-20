@@ -3,7 +3,14 @@ use super::*;
 #[gpui_kit::test]
 fn a_cold_nodes_table_draws_its_header_over_the_loading_rows(cx: &mut TestAppContext) {
     // Nothing has answered: neither Talos nor the summary built the rows.
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
     cx.update_window(handle, |_, window, cx| {
         window.press("secondary-2", cx);
         window.render_frame(cx);
@@ -160,7 +167,14 @@ fn the_loading_motion_stops_when_the_list_is_refused_or_fails(cx: &mut TestAppCo
 /// table, and the motion stops; the cards view never mounts it.
 #[gpui_kit::test]
 fn the_nodes_loading_motion_stops_on_a_failure_or_the_cards(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
     cx.update(|cx| cx.set_reduce_motion(false));
     cx.update_window(handle, |_, window, cx| window.press("secondary-2", cx))
         .unwrap();
@@ -190,7 +204,8 @@ fn the_nodes_loading_motion_stops_on_a_failure_or_the_cards(cx: &mut TestAppCont
     cx.run_until_parked();
     motion_frame(cx, handle);
     assert!(motion_frame(cx, handle) > 0, "the table's rows move again");
-    cx.update(|cx| view.update(cx, |view, cx| view.simulate_failure(cx)));
+    cx.update_window(handle, |_, window, cx| window.click("fixture-fail", cx))
+        .unwrap();
     cx.run_until_parked();
     assert_motion_stopped(cx, handle, "a failure");
     cx.update_window(handle, |_, window, cx| {
@@ -237,7 +252,14 @@ fn the_lifecycle_loading_motion_stops_on_its_answer_or_a_failure(cx: &mut TestAp
 /// pulses them, and the first answer stops the motion.
 #[gpui_kit::test]
 fn screen_tables_show_the_shared_loading_rows_until_the_first_answer(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
     cx.update(|cx| cx.set_reduce_motion(false));
     let pages = [
         (Page::Health, "workloads", "Workloads"),
@@ -339,7 +361,14 @@ fn next_frame(cx: &mut TestAppContext, handle: AnyWindowHandle) {
 /// rail draws the mark on the next frame.
 #[gpui_kit::test]
 fn the_cached_rail_draws_the_marks_the_first_answer_brings(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    let (_runtime, handle, view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
     next_frame(cx, handle);
     cx.update_window(handle, |_, window, _| {
         assert!(window.within("nav-nodes").try_find("rail-mark").is_none());
@@ -367,7 +396,14 @@ fn the_cached_rail_draws_the_marks_the_first_answer_brings(cx: &mut TestAppConte
 /// again: the motion goes with the cards and comes back with the table.
 #[gpui_kit::test]
 fn a_nodes_view_switch_redraws_the_shell(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = mount(cx, GpuiOptions::fixture().holding_talos(), 1280., 880.);
+    let (_runtime, handle, _view) = mount(
+        cx,
+        GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
+        1280.,
+        880.,
+    );
     cx.update(|cx| cx.set_reduce_motion(false));
     cx.update_window(handle, |_, window, cx| window.press("secondary-2", cx))
         .unwrap();
