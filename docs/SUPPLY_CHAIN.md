@@ -78,7 +78,7 @@ No Secret is read, not even the Chains signing Secret's public half. The public 
 Constants in `chains.rs`, next to `MOST_TASK_READS`, each with a reason in its comment and a test at the edge:
 
 - a payload or signature annotation: at most 256 KiB decoded; larger is `Malformed: too large`, not truncated and verified;
-- attestations per run: at most 16 (a PipelineRun's tasks each carry their own); more are counted and named;
+- attestations per run: at most 16 (a PipelineRun's tasks each carry their own), the run's own keys read before any image's so a crowd of image signatures can't push it out; more are counted and named;
 - subjects per statement: 64; certificate chain: not read.
 
 ### The crates
