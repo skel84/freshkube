@@ -30,57 +30,112 @@ fn server(server: &str, entry: &str) -> Destination {
 }
 
 #[gpui_kit::test]
-async fn removing_a_long_server_wraps_the_address_but_keeps_both_slashes(cx: &mut TestAppContext) {
+async fn removing_a_server_flows_inline_and_wraps_only_between_chunks(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
-    let guard = tempfile::tempdir().unwrap();
-    let url = "https://cluster-with-a-long-invented-name-for-the-dialog-wrapping-regression.example.test:6443/a/long/path";
-    write(
-        guard.path(),
-        &serde_json::json!({
-            "version": 1,
-            "clusters": [{"id": "prod", "role": "environment", "context": "example-prod"}],
-            "destinations": [{"server": url, "entry": "prod"}],
-        })
-        .to_string(),
-    );
-    let (_runtime, handle, view) = launch(cx, guard.path());
-    open_section(cx, handle, &view, SettingsSection::Destinations).await;
-    for size in [13., 20.] {
-        cx.update_window(handle, |_, window, cx| {
-            crate::text_size::set(size, cx);
-            window.render_frame(cx);
-            window.click("settings-destination-0", cx);
-            window.press("backspace", cx);
-            window.render_frame(cx);
-            let scheme = window
-                .find("settings-destination-remove-url-scheme")
-                .bounds();
-            let address = window
-                .find("settings-destination-remove-url-address")
-                .bounds();
-            let url_bounds = window.find("settings-destination-remove-url").bounds();
-            let style = window.text_style();
-            let font_size = crate::ui::dp_px(13., window);
-            let scheme_line = window.text_system().shape_line(
-                "https://".into(),
-                font_size,
-                &[style.to_run(8)],
-                None,
-            );
-            // Both slashes occupy the first line, beside the address. The
-            // address really wraps, rather than the whole URL overflowing.
-            assert!((scheme.size.width - scheme_line.width()).abs() <= gpui_kit::px(1.));
-            assert!(scheme.size.height < font_size * 2.);
-            assert!(address.size.height > scheme.size.height);
-            assert!((scheme.top() - address.top()).abs() <= gpui_kit::px(1.));
-            assert!((scheme.right() - address.left()).abs() <= gpui_kit::px(1.));
-            assert!(address.right() <= url_bounds.right() + gpui_kit::px(1.));
-            window.click("settings-destination-remove-cancel", cx);
-            window.render_frame(cx);
-        })
-        .unwrap();
+    for (url, first_chunk, short) in [
+        ("https://b.example.test", "https://b", true),
+        (
+            "https://a-very-long-cluster-name-for-the-wrap-check.region-one.zone-two.example.test:6443",
+            "https://a",
+            false,
+        ),
+    ] {
+        let guard = tempfile::tempdir().unwrap();
+        write(
+            guard.path(),
+            &serde_json::json!({
+                "version": 1,
+                "clusters": [{"id": "prod", "role": "environment", "context": "example-prod"}],
+                "destinations": [{"server": url, "entry": "prod"}],
+            })
+            .to_string(),
+        );
+        let (_runtime, handle, view) = launch(cx, guard.path());
+        open_section(cx, handle, &view, SettingsSection::Destinations).await;
+        for size in [13., 20.] {
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(size, cx);
+                window.render_frame(cx);
+                window.click("settings-destination-0", cx);
+                window.press("backspace", cx);
+                window.render_frame(cx);
+                let paragraph = window.find("settings-destination-remove-url").bounds();
+                let first_word = window
+                    .find("settings-destination-remove-url-chunk-0")
+                    .bounds();
+                let scheme = window
+                    .find("settings-destination-remove-url-chunk-6")
+                    .bounds();
+                let style = window.text_style();
+                let font_size = crate::ui::dp_px(13., window);
+                let shaped_width = |text: &str| {
+                    window
+                        .text_system()
+                        .shape_line(
+                            text.to_owned().into(),
+                            font_size,
+                            &[style.to_run(text.len())],
+                            None,
+                        )
+                        .width()
+                        .ceil()
+                };
+                // Both slashes and the first host label stay on one line.
+                assert!((scheme.size.width - shaped_width(first_chunk)).abs() <= gpui_kit::px(1.));
+                assert!((first_word.size.width - shaped_width("Argo ")).abs() <= gpui_kit::px(1.));
+                let line_height = first_word.size.height;
+                assert!(line_height < font_size * 2.);
+                let mut previous: Option<gpui_kit::Bounds<gpui_kit::Pixels>> = None;
+                for ix in 0.. {
+                    let Some(chunk) =
+                        window.try_find(format!("settings-destination-remove-url-chunk-{ix}"))
+                    else {
+                        break;
+                    };
+                    let bounds = chunk.bounds();
+                    // No chunk in either URL is oversized: none may split mid-word.
+                    assert!((bounds.size.height - line_height).abs() <= gpui_kit::px(1.));
+                    assert!(bounds.right() <= paragraph.right() + gpui_kit::px(1.));
+                    if let Some(previous) = previous {
+                        if (bounds.top() - previous.top()).abs() <= gpui_kit::px(1.) {
+                            // Spaces belong to words; URL chunks have no added gap.
+                            assert!((bounds.left() - previous.right()).abs() <= gpui_kit::px(1.));
+                        } else {
+                            assert!(
+                                (bounds.top() - previous.top() - line_height).abs()
+                                    <= gpui_kit::px(1.)
+                            );
+                            assert!(previous.right() + bounds.size.width > paragraph.right() - gpui_kit::px(1.));
+                            // Every new line returns to the paragraph edge.
+                            assert!((bounds.left() - paragraph.left()).abs() <= gpui_kit::px(1.));
+                        }
+                    }
+                    previous = Some(bounds);
+                }
+                if short {
+                    // NoopTextSystem uses a wide fixed advance for every glyph.
+                    // Assert natural packing rather than the native font's exact
+                    // line count (which the lead checks in the running app).
+                    let text = format!("Argo CD Applications with destination server {url} show it as Unknown again. Nothing on a cluster is touched.");
+                    let least_lines = (shaped_width(&text) / paragraph.size.width).ceil();
+                    assert!(paragraph.size.height <= line_height * least_lines + gpui_kit::px(1.));
+                } else {
+                    assert!(paragraph.size.height > line_height * 2.);
+                    let last_url_chunk = window
+                        .find("settings-destination-remove-url-chunk-21")
+                        .bounds();
+                    assert!(
+                        last_url_chunk.top() > scheme.top(),
+                        "the long URL must actually wrap"
+                    );
+                }
+                window.click("settings-destination-remove-cancel", cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+        }
+        assert_eq!(destinations(guard.path()), vec![server(url, "prod")]);
     }
-    assert_eq!(destinations(guard.path()), vec![server(url, "prod")]);
 }
 
 #[gpui_kit::test]

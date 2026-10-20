@@ -55,14 +55,14 @@ pub(super) fn open(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<DestinationForm> {
-    let server = editing.as_ref().and_then(|editing| match &editing.key {
-        Key::Server(server) => Some(server.clone()),
-        Key::Name(_) => None,
-    });
-    let title = match &editing {
+    let by_server = editing
+        .as_ref()
+        .is_some_and(|editing| matches!(editing.key, Key::Server(_)));
+    let title: SharedString = match &editing {
         Some(Editing { key, .. }) => format!("Change the mapping for {}", key.describe()),
         None => "Map an Argo CD destination".to_owned(),
-    };
+    }
+    .into();
     let form = cx.new(|cx| DestinationForm::new(page, list, editing, entries, window, cx));
     let value = form.read(cx).value.clone();
     let shown = form.clone();
@@ -70,15 +70,11 @@ pub(super) fn open(
         dialog
             .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
             .overlay_closable(false)
-            .title(match &server {
-                Some(server) => v_flex()
-                    .child("Change the mapping for server")
-                    .child(freshkube_ui::url::url_text(
-                        "settings-destination-edit-url",
-                        server,
-                    ))
-                    .into_any_element(),
-                None => title.clone().into_any_element(),
+            .title(if by_server {
+                freshkube_ui::url::url_text("settings-destination-edit-url", &title)
+                    .into_any_element()
+            } else {
+                title.clone().into_any_element()
             })
             .child(shown.clone())
     });
