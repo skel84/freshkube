@@ -277,7 +277,15 @@ async fn the_first_save_preserves_a_hand_edit_and_later_saves_keep_the_backup(
         );
         let label = window.find("setup-reload-status");
         assert!(label.visible());
-        assert!(label.label().unwrap().starts_with("Saved · backup .bak · "));
+        let file = view.read(cx).setup_file.read(cx);
+        assert_eq!(label.label(), file.receipt.as_deref());
+        assert!(
+            label
+                .label()
+                .unwrap()
+                .contains("the hand-edited file is freshkube.yaml.bak")
+        );
+        assert!(file.receipt_label().starts_with("Saved · backup .bak · "));
         add(window, cx, "acme-next");
     })
     .unwrap();
@@ -288,8 +296,11 @@ async fn the_first_save_preserves_a_hand_edit_and_later_saves_keep_the_backup(
         let label = window.find("setup-reload-status");
         assert!(label.visible());
         let text = label.label().unwrap();
-        assert!(text.starts_with("Saved · "), "{text}");
-        assert!(!text.contains("backup"), "{text}");
+        let file = view.read(cx).setup_file.read(cx);
+        assert_eq!(Some(text), file.receipt.as_deref());
+        assert!(text.starts_with("Saved freshkube.yaml · "), "{text}");
+        assert!(file.receipt_label().starts_with("Saved · "));
+        assert!(!file.receipt_label().contains("backup"));
     })
     .unwrap();
     cx.update(|cx| {

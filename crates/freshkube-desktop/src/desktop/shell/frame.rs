@@ -80,7 +80,7 @@ impl Pilot {
                             .id("setup-reload-status")
                             .test_support()
                             .role(Role::Status)
-                            .aria_label(label.clone())
+                            .aria_label(receipt.clone())
                             .tooltip({
                                 let receipt = receipt.clone();
                                 move |window, cx| {

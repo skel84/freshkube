@@ -250,7 +250,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
                 .find("setup-reload-status")
                 .label()
                 .unwrap()
-                .starts_with("Reloaded · ")
+                .starts_with("Reloaded freshkube.yaml · ")
         );
         assert_eq!(
             pilot.pages.observability.read(cx).coroot_url(cx),

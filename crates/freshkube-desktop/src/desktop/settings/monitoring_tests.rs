@@ -147,6 +147,14 @@ fn per_entry_links_to_clusters_and_selects_the_first_entry(cx: &mut TestAppConte
             window.click("metrics-per-entry", cx);
             window.render_frame(cx);
             assert!(window.find("metrics-per-entry-row-hint").visible());
+            assert_eq!(
+                window.find("metrics-per-entry-explanation").label(),
+                Some("Each entry names its own source in freshkube.yaml.")
+            );
+            assert_eq!(
+                window.find("metrics-per-entry-clusters").label(),
+                Some("Edit it in Clusters")
+            );
             window.click("metrics-per-entry-clusters", cx);
         })
         .unwrap();
@@ -174,6 +182,39 @@ fn per_entry_links_to_clusters_and_selects_the_first_entry(cx: &mut TestAppConte
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn per_entry_explanation_wraps_at_text_twenty_in_a_small_window(cx: &mut TestAppContext) {
+    let (_runtime, handle, pilot) = fixture(cx, 760., 560.);
+    cx.update_window(handle, |_, _, cx| crate::text_size::set(20., cx))
+        .unwrap();
+    let page = open(cx, handle, &pilot);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("metrics-per-entry", cx);
+        window.render_frame(cx);
+        let hint = window.find("metrics-per-entry-row-hint").bounds();
+        let explanation = window.find("metrics-per-entry-explanation").bounds();
+        let link = window.find("metrics-per-entry-clusters");
+        assert!(
+            explanation.size.height > ui::dp_px(24., window),
+            "the explanation must wrap: {explanation:?}"
+        );
+        assert!(explanation.left() >= hint.left() - px(1.));
+        assert!(explanation.right() <= hint.right() + px(1.));
+        assert!(link.bounds().right() <= hint.right() + px(1.));
+        assert!(link.bounds().top() >= explanation.bottom() - px(1.));
+        assert!(link.visible());
+        window.click("metrics-per-entry-clusters", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(page.read(cx).section(), SettingsSection::Clusters);
+        assert_eq!(page.read(cx).selected.as_deref(), Some("core-fra"));
+    })
+    .unwrap();
 }
 
 async fn saved(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<SettingsPage>) {

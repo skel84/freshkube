@@ -1184,14 +1184,32 @@ impl SettingsPage {
             Mode::PerEntry => {
                 group = group.row(
                     form::row("metrics-per-entry-row", "Entries", div()).hint_element(
-                        Button::new("metrics-per-entry-clusters")
-                            .link()
-                            .small()
-                            .px_0()
-                            .label("Edit sources in Clusters")
-                            .on_click(cx.listener(|_, _, _, cx| {
-                                cx.emit(super::SettingsEvent::OpenClusters)
-                            })),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .min_w_0()
+                            .w_full()
+                            .child(
+                                div()
+                                    .id("metrics-per-entry-explanation")
+                                    .test_support()
+                                    .w_full()
+                                    .aria_label(
+                                        "Each entry names its own source in freshkube.yaml.",
+                                    )
+                                    .child("Each entry names its own source in freshkube.yaml."),
+                            )
+                            .child(
+                                Button::new("metrics-per-entry-clusters")
+                                    .link()
+                                    .small()
+                                    .px_0()
+                                    .label("Edit it in Clusters")
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(super::SettingsEvent::OpenClusters)
+                                    })),
+                            ),
                     ),
                 );
             }
