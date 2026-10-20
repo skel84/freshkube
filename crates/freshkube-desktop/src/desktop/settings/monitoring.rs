@@ -315,6 +315,20 @@ impl MonitoringForm {
 }
 
 impl SettingsPage {
+    pub(in crate::desktop) fn reveal_monitoring_folder(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.defer_in(window, |page, window, cx| {
+            // The first frame must already contain the form: an empty one
+            // would consume the scroll request before the folder is drawn.
+            page.prepare_monitoring(window, cx);
+            page.monitoring_scroll.scroll_to_bottom();
+            cx.notify();
+        });
+    }
+
     pub(super) fn prepare_monitoring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.monitoring.is_some() || self.section != SettingsSection::Monitoring {
             return;
@@ -627,12 +641,13 @@ impl SettingsPage {
             String::new()
         };
         let secrets = draft.page.read(cx).settings_secrets();
+        let cleanup_secrets = secrets.clone();
+        let before = file.read(cx).setup.clone();
         let url = metrics.store.as_ref().and_then(|s| s.url.clone());
-        let forget = metrics.mode == Mode::Central && draft.by_url && draft.forget_token;
         let saved_metrics = metrics.clone();
         draft.saving = Some(cx.spawn_in(window, async move |this, cx| {
             let staged = cx
-                .background_spawn(async move { stage_token(secrets, url, typed, forget) })
+                .background_spawn(async move { stage_token(secrets, url, typed) })
                 .await;
             let mut result = match &staged {
                 Ok(_) => Ok(()),
@@ -671,6 +686,15 @@ impl SettingsPage {
                     });
                 }
             }
+            let cleanup = if result.is_ok() {
+                let after = file.read_with(cx, |file, _| file.setup.clone());
+                cx.background_spawn(async move {
+                    super::metrics_tokens::forget_replaced(cleanup_secrets, before, after)
+                })
+                .await
+            } else {
+                Ok(())
+            };
             _ = this.update_in(cx, |page, window, cx| {
                 let Some(draft) = &mut page.monitoring else {
                     return;
@@ -686,6 +710,7 @@ impl SettingsPage {
                                 .update(cx, |page, _| page.settings_token_changed(url));
                         }
                         draft.reset(metrics, file.read(cx).seen.clone(), entries, window, cx);
+                        draft.error = cleanup.err();
                     }
                     Err(why) => draft.error = Some(why),
                 }
@@ -703,6 +728,7 @@ impl SettingsPage {
             return;
         };
         let draft = self.monitoring.as_mut().unwrap();
+        window.focus(&draft.focus, cx);
         let Some(pilot) = draft.pilot.upgrade() else {
             return;
         };
@@ -877,6 +903,7 @@ impl SettingsPage {
         }
         page::padded("settings-page")
             .track_focus(&self.focus)
+            .track_scroll(&self.monitoring_scroll)
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .child(page::PageHeader::new("settings-monitoring", "Monitoring").render(window, cx))
@@ -1282,9 +1309,8 @@ fn stage_token(
     secrets: Option<Secrets>,
     url: Option<String>,
     typed: String,
-    forget: bool,
 ) -> Result<Option<TokenEdit>, String> {
-    if typed.is_empty() && !forget {
+    if typed.is_empty() {
         return Ok(None);
     }
     let Some((secrets, url)) = secrets.zip(url) else {
@@ -1293,14 +1319,9 @@ fn stage_token(
     let account = crate::monitoring::token_account(&url);
     let (previous, previous_unknown) = match secrets.read(&account) {
         Ok(previous) => (previous, false),
-        Err(_) if !typed.is_empty() => (None, true),
-        Err(why) => return Err(why),
+        Err(_) => (None, true),
     };
-    if !typed.is_empty() {
-        secrets.write(&account, &typed)?;
-    } else {
-        secrets.forget(&account)?;
-    }
+    secrets.write(&account, &typed)?;
     Ok(Some(TokenEdit {
         secrets,
         account,

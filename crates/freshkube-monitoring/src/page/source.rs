@@ -297,7 +297,7 @@ impl MonitoringPage {
 
     /// Checks the form as typed against the cluster or the URL. Nothing
     /// is saved, and the page's own connection is left alone.
-    pub(super) fn test_source(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn test_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
         };
@@ -305,6 +305,9 @@ impl MonitoringPage {
             Ok(draft) => draft,
             Err((field, why)) => return self.form_error(field, why, None, cx),
         };
+        if let Some(form) = &self.form {
+            window.focus(&form.focus, cx);
+        }
         let access = source.access.clone();
         let work: Work = match draft {
             Draft::Automatic => Box::pin(async move {

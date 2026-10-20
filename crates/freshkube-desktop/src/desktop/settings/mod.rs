@@ -18,6 +18,7 @@ mod edit_tests;
 mod entry;
 mod form;
 mod kubeconfig_row;
+mod metrics_tokens;
 mod monitoring;
 mod sections;
 mod source;
@@ -120,6 +121,7 @@ pub(crate) struct SettingsPage {
     /// doesn't know; every save writes a changed copy of it.
     workspace: Workspace,
     setup_file: Option<Entity<crate::setup_file::SetupFile>>,
+    metrics_secrets: Option<freshkube_core::secrets::Secrets>,
     setup_refusal: bool,
     pending_setup: bool,
     uses_setup: bool,
@@ -161,6 +163,8 @@ pub(crate) struct SettingsPage {
     kubeconfig_path: Option<SharedString>,
     /// A list section's frame, which scrolls in a short window.
     page_scroll: ScrollHandle,
+    /// Monitoring's form scrolls independently from the workspace lists.
+    monitoring_scroll: ScrollHandle,
     focus: FocusHandle,
     /// The section shown, and shown again when Settings next opens.
     section: SettingsSection,
@@ -286,7 +290,11 @@ impl SettingsPage {
         &self.workspace
     }
 
-    pub(super) fn new(runtime: tokio::runtime::Handle, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        runtime: tokio::runtime::Handle,
+        metrics_secrets: Option<freshkube_core::secrets::Secrets>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (columns, width) = source::columns(&[]);
         Self {
             connection: None,
@@ -300,6 +308,7 @@ impl SettingsPage {
             origin: Origin::Alone,
             workspace: Workspace::default(),
             setup_file: None,
+            metrics_secrets,
             setup_refusal: false,
             pending_setup: false,
             uses_setup: false,
@@ -322,6 +331,7 @@ impl SettingsPage {
             kubeconfig_path: None,
             split: InspectorSplit::new(PREFIX, cx),
             page_scroll: ScrollHandle::new(),
+            monitoring_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             section: SettingsSection::default(),
             visible: false,

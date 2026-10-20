@@ -100,7 +100,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
                     .update(cx, |input, cx| input.set_value(url, window, cx));
                 form.token
                     .update(cx, |input, cx| input.set_value(token, window, cx));
-                page.test_source(cx);
+                page.test_source(window, cx);
             })
         })
         .unwrap();
