@@ -1,0 +1,1 @@
+- **Example data:** move simulated overview failures and initial load history into the example source, and observe shell notices through events without test-only fields on the application.

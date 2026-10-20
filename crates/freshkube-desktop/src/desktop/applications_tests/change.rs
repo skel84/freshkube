@@ -336,6 +336,7 @@ fn a_workspace_change_reaches_the_change_page_at_once(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn switch_and_open_lands_on_prod_amss_deployment_in_example_data(cx: &mut TestAppContext) {
     let (_runtime, handle, view) = open(cx, 1280., 880.);
+    let heard = crate::desktop::testing::record_notices(cx, &view);
     cx.update_window(handle, |_, window, cx| {
         window.click(hop("prod-ams-pods"), cx);
         window.render_frame(cx);
@@ -373,7 +374,11 @@ fn switch_and_open_lands_on_prod_amss_deployment_in_example_data(cx: &mut TestAp
             )
         );
         assert_eq!(pilot.opened_tab(cx), crate::resources::Tab::Overview);
-        assert!(pilot.told.is_empty(), "nothing to say: {:?}", pilot.told);
+        assert!(
+            heard.borrow().is_empty(),
+            "nothing to say: {:?}",
+            heard.borrow()
+        );
     })
     .unwrap();
 }

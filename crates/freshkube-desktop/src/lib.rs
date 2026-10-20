@@ -115,12 +115,6 @@ impl GpuiOptions {
         }
     }
 
-    /// Example data that never answers Talos, as `FRESHKUBE_FIXTURE_HOLD=talos`.
-    #[cfg(test)]
-    pub(crate) fn holding_talos(mut self) -> Self {
-        self.debug.hold.talos = true;
-        self
-    }
     /// Remembers preferences between launches. A saved Talos selection is
     /// restored when no explicit config is supplied. A saved Kubernetes-only
     /// choice is restored to a Kubernetes-only launch that names neither a
