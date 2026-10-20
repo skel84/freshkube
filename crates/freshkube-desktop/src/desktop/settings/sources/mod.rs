@@ -18,6 +18,7 @@
 //! finds them: a Talos entry the app opens through its control plane's
 //! kubeconfig, its context in none of those files, reads as unreachable
 //! here (#564 PR 2).
+mod inspector;
 mod rows;
 mod source;
 #[cfg(test)]
@@ -31,7 +32,7 @@ use freshkube_core::snapshot::Request;
 use freshkube_core::workspace::{Chosen, Part, Sources};
 use freshkube_delivery::entry::{self, Checked, Reach};
 use freshkube_reads::{Loader, OnShow};
-use freshkube_ui::{menu, page, table};
+use freshkube_ui::{inspector::InspectorSplit, menu, page, status, table};
 use gpui_kit::component::{Disableable, Sizable, button::Button, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -53,7 +54,10 @@ gpui_kit::actions!(
     settings,
     [
         /// Reads one item of each part from its entry.
-        CheckSources
+        CheckSources,
+        NextSource,
+        PreviousSource,
+        CloseSource
     ]
 );
 
@@ -106,6 +110,13 @@ struct CheckIdentity {
 
 pub(crate) struct SourcesList {
     rows: Vec<SourceRow>,
+    selected: Option<Read>,
+    /// A row popup keeps the table's ancestry until focus returns.
+    menu_holds_inspector: bool,
+    menu_had_focus: bool,
+    split: InspectorSplit,
+    loading: table::LoadingRows,
+    checked_at: Option<SharedString>,
     setup_problem: Option<String>,
     columns: Vec<Column>,
     width: f32,
@@ -139,6 +150,12 @@ impl SourcesList {
         let sources = Sources::of(&Default::default());
         let mut list = Self {
             rows: Vec::new(),
+            selected: None,
+            menu_holds_inspector: false,
+            menu_had_focus: false,
+            split: InspectorSplit::new(PREFIX, cx),
+            loading: table::LoadingRows::new(PREFIX),
+            checked_at: None,
             setup_problem: None,
             columns: Vec::new(),
             width: 0.,
@@ -164,6 +181,7 @@ impl SourcesList {
         if self.setup_problem != problem {
             self.setup_problem = problem;
             self.derive_rows();
+            self.publish_status(cx);
             cx.notify();
         }
     }
@@ -177,10 +195,12 @@ impl SourcesList {
         cx: &mut Context<Self>,
     ) {
         self.sources = Sources::of(workspace);
+        self.checked_at = None;
         self.kubeconfig = workspace.kubeconfig.clone();
         self.example = example;
         self.forget();
         self.derive_rows();
+        self.publish_status(cx);
         cx.notify();
     }
 
@@ -196,8 +216,10 @@ impl SourcesList {
         }
         self.source = source;
         if self.reads_open() {
+            self.checked_at = None;
             self.forget();
             self.derive_rows();
+            self.publish_status(cx);
             cx.notify();
         }
     }
@@ -209,6 +231,7 @@ impl SourcesList {
         if !visible && self.check == Check::Running {
             self.forget();
             self.derive_rows();
+            self.publish_status(cx);
             cx.notify();
         }
     }
@@ -258,7 +281,9 @@ impl SourcesList {
         if example {
             self.read.resolve(self.identity(), Ok(()));
             self.check = Check::Done(self.example_check());
+            self.checked_at = Some(chrono::Local::now().format("%H:%M").to_string().into());
             self.derive_rows();
+            self.publish_status(cx);
             cx.notify();
             return;
         }
@@ -305,6 +330,7 @@ impl SourcesList {
         });
         self.read.run(Some(job), task);
         self.derive_rows();
+        self.publish_status(cx);
         cx.notify();
     }
 
@@ -322,11 +348,13 @@ impl SourcesList {
         ) {
             return;
         }
+        self.checked_at = Some(chrono::Local::now().format("%H:%M").to_string().into());
         self.check = match result {
             Ok(checked) => Check::Done(checked),
             Err(why) => Check::Failed(why),
         };
         self.derive_rows();
+        self.publish_status(cx);
         cx.notify();
     }
 
@@ -374,6 +402,26 @@ impl SourcesList {
             .get(&(entry.to_owned(), read))
             .cloned()
             .unwrap_or(Reach::Readable)
+    }
+
+    /// Derive the status outside render and notify its page owner.
+    fn publish_status(&self, cx: &mut Context<Self>) {
+        let page = self.page.clone();
+        let checked = self.checked_at.clone();
+        let running = self.check == Check::Running;
+        cx.defer(move |cx| {
+            _ = page.update(cx, |page, cx| {
+                let mut parts = vec![status::Part::new("Delivery sources")];
+                if let Some(time) = checked {
+                    parts.push(status::Part::new(format!("Last checked {time}")));
+                }
+                if running {
+                    parts.push(status::Part::new("Reading sources"));
+                }
+                page.sources_status = status::Segment::new(None::<SharedString>, parts);
+                cx.notify();
+            });
+        });
     }
 
     fn focus(&self, window: &mut Window, cx: &mut App) {
@@ -432,33 +480,91 @@ impl SourcesList {
 
 impl Render for SourcesList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The row owns its popup element state. Keep the table's ancestry
+        // until the menu has had focus and returned it to this list.
+        if self.menu_holds_inspector {
+            if !self.focus.is_focused(window) {
+                self.menu_had_focus = true;
+            } else if self.menu_had_focus {
+                self.menu_holds_inspector = false;
+                self.menu_had_focus = false;
+                table::reveal_when_settled(
+                    cx.entity().downgrade(),
+                    |list| list.selected.is_some(),
+                    window,
+                );
+            }
+        }
         let header = self.render_header(window, cx);
         let banners = self
             .page
             .upgrade()
             .map(|page| page.read(cx).render_banners(cx))
             .unwrap_or_default();
-        // Four delivery rows and, when unusable, the setup file.
+        let beside = crate::screens::page_width(window) >= freshkube_ui::inspector::SPLIT_WIDTH;
+        let details = self.render_inspector(window, cx);
+        let room = crate::screens::page_width(window)
+            - if beside && details.is_some() {
+                self.split.live_width(cx)
+            } else {
+                0.
+            };
+        self.width = source::fit_columns(&mut self.columns, (room - 2.).max(0.));
+        let table = div()
+            .id("settings-sources-table")
+            .test_support()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .child(
+                table::DataTable::new()
+                    .render(self, window, cx)
+                    .flex_1()
+                    .min_h_0(),
+            )
+            .into_any_element();
+        let split = freshkube_ui::inspector::split(
+            "settings-sources-split",
+            &self.split,
+            beside,
+            table,
+            details,
+            window,
+        );
         v_flex()
             .id("settings-sources")
-            .flex_none()
+            .test_support()
+            .flex_1()
+            .min_h_0()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &CheckSources, _, cx| this.check(cx)))
+            .on_action(cx.listener(|this, action: &inspector::PinSource, _, cx| {
+                this.pin(action.entry.clone(), cx)
+            }))
+            .on_action(cx.listener(|this, _: &NextSource, _, cx| this.step(1, cx)))
+            .on_action(cx.listener(|this, _: &PreviousSource, _, cx| this.step(-1, cx)))
+            .on_action(cx.listener(|this, _: &CloseSource, _, cx| {
+                if this.selected.take().is_some() {
+                    cx.notify();
+                } else {
+                    cx.propagate();
+                }
+            }))
             .child(page::toolbar(cx).child(header))
             .children(banners)
-            .child(
-                div()
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|this, _: &CheckSources, _, cx| this.check(cx)))
-                    .child(
-                        table::DataTable::new()
-                            .fit(self.rows.len())
-                            .render(self, window, cx),
-                    ),
-            )
+            .child(split)
     }
 }
 
 /// The list's keys: C checks.
 pub(in crate::desktop) fn key_bindings() -> Vec<KeyBinding> {
-    vec![KeyBinding::new("c", CheckSources, Some(CONTEXT))]
+    vec![
+        KeyBinding::new("c", CheckSources, Some(CONTEXT)),
+        KeyBinding::new("down", NextSource, Some(CONTEXT)),
+        KeyBinding::new("up", PreviousSource, Some(CONTEXT)),
+        KeyBinding::new("escape", CloseSource, Some(CONTEXT)),
+    ]
 }
