@@ -54,6 +54,15 @@ pub struct StageNaming {
     pub name_template: String,
 }
 
+impl From<&freshkube_core::setup::StageNaming> for StageNaming {
+    fn from(naming: &freshkube_core::setup::StageNaming) -> Self {
+        Self {
+            project_key: naming.project_key.clone(),
+            name_template: naming.name_template.clone(),
+        }
+    }
+}
+
 impl StageNaming {
     pub fn name_for(&self, project: &str, stage: &str) -> String {
         self.name_template

@@ -298,6 +298,15 @@ pub struct Delivery {
     pub(super) extra: Extra,
 }
 
+impl Delivery {
+    pub fn naming(stage_naming: StageNaming) -> Self {
+        Self {
+            stage_naming: Some(stage_naming),
+            extra: Extra::default(),
+        }
+    }
+}
+
 /// A name template tying an Application to a Kargo Stage.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StageNaming {

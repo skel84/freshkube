@@ -296,14 +296,16 @@ impl ChangesPage {
         &mut self,
         public_key_file: Option<std::path::PathBuf>,
         evidence_result: Option<freshkube_core::setup::Evidence>,
+        stage_naming: Option<freshkube_core::setup::StageNaming>,
         cx: &mut Context<Self>,
     ) {
         self.setup_revision += 1;
         self.across.public_key_file = public_key_file.clone();
         self.across.evidence_result = evidence_result.clone();
+        self.across.stage_naming = stage_naming.clone();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| {
-                page.reload_setup(public_key_file, evidence_result, cx)
+                page.reload_setup(public_key_file, evidence_result, stage_naming, cx)
             });
         }
         if self.is_live() {
@@ -441,6 +443,7 @@ impl ChangesPage {
                     sources: self.across.sources.clone(),
                     public_key_file: self.across.public_key_file.clone(),
                     evidence_result: self.across.evidence_result.clone(),
+                    stage_naming: self.across.stage_naming.clone(),
                 };
                 let across = self.across.clone();
                 let secrets = self.secrets.clone();
@@ -747,6 +750,7 @@ impl ChangesPage {
                     sources: self.across.sources.clone(),
                     public_key_file: self.across.public_key_file.clone(),
                     evidence_result: self.across.evidence_result.clone(),
+                    stage_naming: self.across.stage_naming.clone(),
                 }),
                 kubeconfig: self.across.kubeconfig.clone(),
             },

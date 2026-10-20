@@ -26,6 +26,7 @@ pub(super) fn place(freight: &str) -> Place {
         sources: Default::default(),
         public_key_file: None,
         evidence_result: None,
+        stage_naming: None,
     }
 }
 
@@ -1776,6 +1777,7 @@ async fn the_changes_list_finds_an_application_in_the_second_namespace() {
         sources: Default::default(),
         public_key_file: None,
         evidence_result: None,
+        stage_naming: None,
     };
     let read =
         crate::changes::live::read(&reader, &at, observed_at(), crate::changes::live::BUDGET).await;
@@ -1831,6 +1833,7 @@ async fn changes_and_applications_share_the_namespace_cap() {
         sources: Default::default(),
         public_key_file: None,
         evidence_result: None,
+        stage_naming: None,
     };
     let read =
         crate::changes::live::read(&reader, &at, observed_at(), crate::changes::live::BUDGET).await;
