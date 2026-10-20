@@ -6,6 +6,7 @@ mod logs;
 mod traces;
 
 use super::{Destination, ObservabilityPage, Report, Status, tests::mount};
+use crate::connection::ConnectOrigin;
 use freshkube_core::coroot as api;
 use freshkube_ui::real_io::RealIo;
 use gpui_kit::test::TestWindowExt;
@@ -228,7 +229,7 @@ async fn connected(
                 .update(cx, |input, cx| input.set_value(url, window, cx));
             page.secret
                 .update(cx, |input, cx| input.set_value("sanitized-key", window, cx));
-            page.connect(cx);
+            page.connect(ConnectOrigin::Page, cx);
         })
     })
     .unwrap();
