@@ -328,9 +328,12 @@ pub mod example {
         // around checkout's revision borrows the worker's charts and is
         // otherwise checkout's page.
         let worker = crate::example::id(crate::example::WORKER);
-        let mut view =
-            crate::application::example::around(&worker, revision, api::RevisionWindow::default())
-                .ok()?;
+        let mut view = crate::application::example::around(
+            &crate::application::example::app_view(&worker),
+            revision,
+            api::RevisionWindow::default(),
+        )
+        .ok()?;
         if let api::Around::View(page) = &mut view.answer {
             page.map.app.id = app;
             page.revisions = Some(Ok(revisions.clone()));
