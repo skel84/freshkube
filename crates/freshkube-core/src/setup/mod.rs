@@ -48,6 +48,18 @@ const HEADER: &str = "\
 
 type Extra = serde_json::Map<String, serde_json::Value>;
 
+const EXAMPLE: &str = include_str!("../../../freshkube-prefs/src/examples/freshkube.yaml");
+
+/// Reads and validates the bundled example with absolute paths on this platform.
+pub fn example() -> Result<Setup, Invalid> {
+    // Windows requires a drive for the example's Unix home to be absolute.
+    #[cfg(windows)]
+    let text = EXAMPLE.replace("/home/acme", "C:/home/acme");
+    #[cfg(not(windows))]
+    let text = EXAMPLE;
+    parse(text.as_bytes())
+}
+
 /// Everything `freshkube.yaml` says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Setup {

@@ -76,6 +76,7 @@ pub fn run(options: Options) {
             motion::follow_system(cx);
             cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
             source_list::bind_keys(cx);
+            freshkube_ui::graph::bind_keys(cx);
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {

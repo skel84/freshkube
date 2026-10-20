@@ -1,0 +1,1 @@
+{"buildType":"https://tekton.dev/chains/v2/slsa","builder":{"id":"https://tekton.dev/chains/v2"},"materials":[{"uri":"git+https://git.example.com/acme/checkout.git","digest":{"sha1":"0123456789abcdef0123456789abcdef01234567"}}]}
