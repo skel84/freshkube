@@ -64,13 +64,14 @@ pub(crate) struct Placed {
     /// Across the window, 0 to 1.
     pub at: f32,
     pub kind: MarkerKind,
+    pub focused: bool,
     pub label: SharedString,
     /// "Today 13:12".
     pub time: SharedString,
 }
 
 /// The markers that fall within `chart`'s window.
-pub(super) fn place(markers: &[Marker], chart: &Chart) -> Rc<[Placed]> {
+pub(super) fn place(markers: &[Marker], chart: &Chart, focus: Option<i64>) -> Rc<[Placed]> {
     let span = (chart.end - chart.start).max(1.);
     markers
         .iter()
@@ -79,6 +80,7 @@ pub(super) fn place(markers: &[Marker], chart: &Chart) -> Rc<[Placed]> {
             (0.0..=1.0).contains(&at).then(|| Placed {
                 at,
                 kind: marker.kind,
+                focused: focus == Some(marker.at),
                 label: marker.label.clone().into(),
                 time: when(marker.at as f64).into(),
             })
@@ -110,8 +112,18 @@ pub(super) fn paint(
     for marker in markers {
         let (color, line, glyph) = ink(marker.kind, p);
         let x = (left + width * marker.at).floor();
+        let weight = if marker.focused {
+            #[cfg(test)]
+            crate::probe::hit("monitoring-focused-marker");
+            px(3.)
+        } else {
+            px(1.)
+        };
         window.paint_quad(fill(
-            Bounds::new(origin + point(x, top), size(px(1.), height)),
+            Bounds::new(
+                origin + point(x - (weight - px(1.)) / 2., top),
+                size(weight, height),
+            ),
             color.opacity(line),
         ));
         let foot = origin + point(x + px(0.5), top + height);

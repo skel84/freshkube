@@ -12,7 +12,8 @@ use gpui_kit::{AppContext, Context, EventEmitter, Task};
 const POLL: Duration = Duration::from_secs(2);
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Includes the inode because editors commonly replace a file by rename.
+/// Metadata alone can miss same-size edits and editor renames that keep mtime.
+/// Compare bounded contents too; cloning a stat shares its bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum FileStat {
     Missing,
@@ -21,6 +22,7 @@ enum FileStat {
         len: u64,
         modified: Option<std::time::SystemTime>,
         regular: bool,
+        contents: Option<std::sync::Arc<[u8]>>,
         #[cfg(unix)]
         inode: u64,
     },
@@ -34,6 +36,13 @@ impl FileStat {
                 len: metadata.len(),
                 modified: metadata.modified().ok(),
                 regular: metadata.is_file(),
+                contents: if metadata.is_file() && metadata.len() <= MAX_BYTES {
+                    read_bounded_regular_file(file, MAX_BYTES)
+                        .ok()
+                        .map(Into::into)
+                } else {
+                    None
+                },
                 #[cfg(unix)]
                 inode: std::os::unix::fs::MetadataExt::ino(&metadata),
             },
@@ -227,10 +236,16 @@ impl SetupFile {
         &self.receipt_label
     }
 
-    fn set_receipt(&mut self, action: &str, note: &str) {
+    fn set_receipt(&mut self, action: &str, backup: bool) {
         let now = chrono::Local::now();
         let time = now.format("%H:%M");
-        self.receipt_label = format!("{action} · {time}");
+        let short_note = if backup { " · backup .bak" } else { "" };
+        let note = if backup {
+            " · the hand-edited file is freshkube.yaml.bak"
+        } else {
+            ""
+        };
+        self.receipt_label = format!("{action}{short_note} · {time}");
         self.receipt = Some(format!("{action} freshkube.yaml{note} · {time}"));
     }
 
@@ -294,12 +309,7 @@ impl SetupFile {
         match result {
             Ok(write) => {
                 self.record_write(write.setup, write.seen, write.stat);
-                let backup = if write.backup {
-                    " · the hand-edited file is freshkube.yaml.bak"
-                } else {
-                    ""
-                };
-                self.set_receipt("Saved", backup);
+                self.set_receipt("Saved", write.backup);
                 cx.emit(Event::Changed {
                     setup_changed: true,
                 });
@@ -366,7 +376,7 @@ impl SetupFile {
             cx.emit(Event::Ready);
         } else if setup_changed || old_problem != self.problem {
             if setup_changed {
-                self.set_receipt("Reloaded", "");
+                self.set_receipt("Reloaded", false);
             }
             cx.emit(Event::Changed { setup_changed });
         }
@@ -554,6 +564,19 @@ mod tests {
         cx.update(|cx| reader.read(cx).file.clone())
     }
 
+    fn keep_modified(path: &std::path::Path, modified: std::time::SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(path).unwrap().modified().unwrap(),
+            modified
+        );
+    }
+
     #[gpui_kit::test]
     fn save_with_starts_a_missing_setup_and_workspace_saves_keep_metrics(cx: &mut TestAppContext) {
         let directory = tempfile::tempdir().unwrap();
@@ -606,10 +629,16 @@ mod tests {
         std::fs::write(&path, FIRST).unwrap();
         let (_, reader) = mount(cx, directory.path(), false);
         let reads = probe::count("setup.read");
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
         std::fs::write(&path, "version:").unwrap();
+        keep_modified(&path, modified);
         advance(cx, POLL);
         advance(cx, DEBOUNCE / 2);
         std::fs::write(&path, SECOND).unwrap();
+        // Model a coarse timestamp: the final edit has the accepted file's
+        // length and mtime, but must still restart the quiet interval.
+        keep_modified(&path, modified);
+        assert_eq!(FIRST.len(), SECOND.len());
         advance(cx, DEBOUNCE / 2);
         assert_eq!(probe::count("setup.read"), reads);
         advance(cx, DEBOUNCE);
@@ -633,6 +662,28 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn a_same_size_edit_with_the_same_mtime_is_reloaded(cx: &mut TestAppContext) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("freshkube.yaml");
+        std::fs::write(&path, FIRST).unwrap();
+        let (_, reader) = mount(cx, directory.path(), false);
+        let original = std::fs::metadata(&path).unwrap();
+        std::fs::write(&path, SECOND).unwrap();
+        keep_modified(&path, original.modified().unwrap());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), original.len());
+        advance(cx, POLL);
+        cx.update(|cx| assert_eq!(reader.read(cx).changes, 0));
+        advance(cx, DEBOUNCE);
+        cx.update(|cx| {
+            assert_eq!(reader.read(cx).changes, 1);
+            assert_eq!(
+                reader.read(cx).file.read(cx).seen,
+                Seen::Bytes(SECOND.as_bytes().to_vec())
+            );
+        });
+    }
+
+    #[gpui_kit::test]
     fn an_editor_can_rename_over_the_file(cx: &mut TestAppContext) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("freshkube.yaml");
@@ -640,18 +691,11 @@ mod tests {
         let (_, reader) = mount(cx, directory.path(), false);
         let replacement = directory.path().join("editor.tmp");
         std::fs::write(&replacement, SECOND).unwrap();
-        // Same length, and the same mtime on filesystems that support it:
-        // only the inode tells these two files apart on Unix.
-        #[cfg(unix)]
-        {
-            let original = std::fs::metadata(&path).unwrap();
-            std::fs::File::options()
-                .write(true)
-                .open(&replacement)
-                .unwrap()
-                .set_times(std::fs::FileTimes::new().set_modified(original.modified().unwrap()))
-                .unwrap();
-        }
+        // Force the collision on every platform, including Windows where
+        // FileStat has no inode to distinguish these same-length files.
+        let original = std::fs::metadata(&path).unwrap();
+        keep_modified(&replacement, original.modified().unwrap());
+        assert_eq!(FIRST.len(), SECOND.len());
         std::fs::rename(replacement, &path).unwrap();
         advance(cx, POLL);
         advance(cx, DEBOUNCE);

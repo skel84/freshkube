@@ -1,0 +1,1 @@
+- **Settings:** Monitoring's example setup uses portable paths on Windows and logs a failure instead of crashing if the example cannot be read.

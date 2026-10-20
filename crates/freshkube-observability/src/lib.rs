@@ -109,6 +109,7 @@ impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 pub struct ObservabilityPage {
     /// The shell's source is example data ([`Self::set_source`]).
     fixture: bool,
+    example_views: application::example::Views,
     /// Example data holds its applications, incidents and traces, as its
     /// source's hold says, so their tables stay on their loading rows.
     hold: bool,
@@ -193,6 +194,7 @@ pub struct ObservabilityPage {
     report_snapshot: Option<reports::ReportSnapshot>,
     /// Coroot's own view of the selected application, as the page shows it.
     app_page: Option<application::AppPage>,
+    focused_revision: Option<application::FocusedRevision>,
     /// One entity per table the chosen report shows.
     app_tables: Vec<Entity<application::ReportTable>>,
     /// A panel for each chart the chosen report shows, and no other.
@@ -332,6 +334,7 @@ impl ObservabilityPage {
         ];
         let mut this = Self {
             fixture: false,
+            example_views: Default::default(),
             hold: false,
             loading: freshkube_ui::table::TableLoading::new("obs-table", cx),
             live: connection::Live::new(runtime, cx.background_executor().now()),
@@ -400,6 +403,7 @@ impl ObservabilityPage {
             flame_matches: vec![],
             report_snapshot: None,
             app_page: None,
+            focused_revision: None,
             app_tables: vec![],
             app_charts: vec![],
             app_picks: BTreeMap::new(),
@@ -482,6 +486,7 @@ impl ObservabilityPage {
         report: Report,
         cx: &mut Context<Self>,
     ) {
+        self.focused_revision = None;
         self.selected_app = Some(id);
         self.report = report;
         self.report_name = report.server_name().into();

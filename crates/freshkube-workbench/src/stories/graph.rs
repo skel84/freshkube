@@ -7,7 +7,8 @@
 
 use freshkube_graph::layout;
 use freshkube_ui::graph::{
-    GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView, inspector_split,
+    Cursor, EdgeStyle, GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView,
+    inspector_split,
 };
 use freshkube_ui::inspector::InspectorSplit;
 use freshkube_ui::page::{self, PageHeader};
@@ -41,15 +42,42 @@ pub enum Shape {
     Cycle,
     /// A few calls and services with none.
     Loose,
+    /// Twenty callees of one caller on one page, in one column: unpaged.
+    Unwrapped,
+    /// A chain whose lines carry the key they joined on, drawn solid,
+    /// dashed or dotted by how sure the join is.
+    Labels,
+    /// The chain with a box for a piece that was not found, hung from the
+    /// box it would join.
+    Branch,
+    /// The branched chain, walked with the arrow keys.
+    Keys,
 }
 
 impl Shape {
-    const ALL: [(Shape, &'static str, &'static str); 4] = [
+    const ALL: [(Shape, &'static str, &'static str); 8] = [
         (Shape::Shop, "shop", "Shop"),
         (Shape::FanOut, "fan-out", "Fan-out"),
         (Shape::Cycle, "cycle", "Cycle"),
         (Shape::Loose, "loose", "Unconnected"),
+        (Shape::Unwrapped, "unwrapped", "Unwrapped"),
+        (Shape::Labels, "labels", "Labels"),
+        (Shape::Branch, "branch", "Side branch"),
+        (Shape::Keys, "keys", "Keys"),
     ];
+
+    /// Whether the shape draws a chain: unpaged and unwrapped.
+    fn unpaged(self) -> bool {
+        matches!(
+            self,
+            Shape::Unwrapped | Shape::Labels | Shape::Branch | Shape::Keys
+        )
+    }
+
+    /// Whether the arrow keys walk it.
+    fn keys(self) -> bool {
+        self == Shape::Keys
+    }
 
     /// Its services, by name, namespace and tone, and its calls between them.
     fn graph(self) -> (Vec<Service>, Vec<Link>) {
@@ -100,6 +128,40 @@ impl Shape {
                 let calls = vec![(0, 1, Tone::Good), (1, 2, Tone::Good), (2, 0, Tone::Warn)];
                 (nodes, calls)
             }
+            Shape::Unwrapped => {
+                let mut nodes = vec![("gateway".to_string(), "app-a", Tone::Good)];
+                nodes.extend((1..=20).map(|ix| (format!("service-{ix:02}"), "app-a", Tone::Good)));
+                let calls = (1..=20).map(|to| (0, to, Tone::Good)).collect();
+                (nodes, calls)
+            }
+            Shape::Labels | Shape::Branch | Shape::Keys => {
+                let mut nodes = named(
+                    &[
+                        "pull-request",
+                        "commit",
+                        "pipeline-run",
+                        "image",
+                        "freight",
+                        "stage-dev",
+                        "stage-prod",
+                    ],
+                    "change",
+                );
+                let mut calls = vec![
+                    (0, 1, Tone::Good),
+                    (1, 2, Tone::Good),
+                    (2, 3, Tone::Good),
+                    (3, 4, Tone::Good),
+                    (4, 5, Tone::Good),
+                    (4, 6, Tone::Good),
+                ];
+                if self != Shape::Labels {
+                    nodes.push(("policy-result".to_string(), "change", Tone::Unknown));
+                    calls.push((2, 7, Tone::Unknown));
+                }
+                nodes[6].2 = Tone::Warn;
+                (nodes, calls)
+            }
             Shape::Loose => {
                 let mut nodes = named(&["shop-web", "shop-api", "shop-redis"], "shop");
                 nodes.extend(named(&["batch-report", "cron-cleanup"], "app-b"));
@@ -111,6 +173,26 @@ impl Shape {
     }
 }
 
+fn text() -> GraphText {
+    GraphText {
+        nouns: ("services", "calls"),
+        title: "Calls".into(),
+        problems: "Problem calls".into(),
+        caption: "Callers on the left · dashed lines have a problem".into(),
+    }
+}
+
+/// What each call of the chain shapes joined on, and how sure that join is.
+const JOINS: [(&str, EdgeStyle); 7] = [
+    ("3f9a1c2", EdgeStyle::Solid),
+    ("3f9a1c2", EdgeStyle::Solid),
+    ("sha256:9f", EdgeStyle::Dashed),
+    ("sha256:9f", EdgeStyle::Solid),
+    ("freight-4", EdgeStyle::Solid),
+    ("freight-4", EdgeStyle::Solid),
+    ("no key", EdgeStyle::Dotted),
+];
+
 /// The story's graph: a shape's services as boxes, drawn by the same
 /// [`GraphView`] as the service map.
 pub struct GraphStory {
@@ -121,26 +203,21 @@ pub struct GraphStory {
     /// Placed and counted when the shape changes; drawing only reads them.
     crossings: usize,
     meta: SharedString,
+    /// Where the arrow keys are, for the shape with keys.
+    cursor: Option<Cursor<usize>>,
 }
 
 impl GraphStory {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut story = Self {
             shape: Shape::Shop,
-            graph: GraphState::new(
-                PREFIX,
-                GraphText {
-                    nouns: ("services", "calls"),
-                    title: "Calls".into(),
-                    problems: "Problem calls".into(),
-                    caption: "Callers on the left · dashed lines have a problem".into(),
-                },
-            ),
+            graph: GraphState::new(PREFIX, text()),
             split: inspector_split("workbench-graph", cx),
             crossings: 0,
             meta: SharedString::default(),
+            cursor: None,
         };
-        story.place();
+        story.place(cx);
         story
     }
 
@@ -164,13 +241,29 @@ impl GraphStory {
     fn set_shape(&mut self, shape: Shape, cx: &mut Context<Self>) {
         if shape != self.shape {
             self.shape = shape;
-            self.place();
+            self.place(cx);
             cx.notify();
         }
     }
 
-    fn place(&mut self) {
+    /// The graph a shape draws on: paged and wrapping, or a chain's, with
+    /// the keys only the shape with keys has.
+    fn fresh(&self, cx: &mut App) -> GraphState<usize> {
+        let mut graph = GraphState::new(PREFIX, text());
+        if self.shape.unpaged() {
+            graph = graph.unpaged();
+        }
+        if self.shape.keys() {
+            graph = graph.with_keys(cx);
+        }
+        graph
+    }
+
+    fn place(&mut self, cx: &mut Context<Self>) {
+        self.graph = self.fresh(cx);
+        self.cursor = None;
         let (services, calls) = self.shape.graph();
+        let chain = matches!(self.shape, Shape::Labels | Shape::Branch | Shape::Keys);
         let nodes = services
             .into_iter()
             .enumerate()
@@ -181,19 +274,23 @@ impl GraphStory {
                 label: label.into(),
                 detail: namespace.into(),
                 tone: Some(tone),
+                ghost: chain && tone == Tone::Unknown,
             })
             .collect::<Vec<_>>();
         let edges = calls
             .iter()
-            .map(|&(from, to, tone)| GraphEdge {
+            .enumerate()
+            .map(|(ix, &(from, to, tone))| GraphEdge {
                 from,
                 to,
                 marker_id: SharedString::from(format!("{PREFIX}-call-{from}--{to}")),
                 row_id: SharedString::from(format!("{PREFIX}-row-{from}--{to}")),
-                tone: Some(tone),
+                tone: if chain { None } else { Some(tone) },
                 width: 1.1,
                 label: format!("{} → {}", nodes[from].label, nodes[to].label).into(),
                 tooltip: SharedString::default(),
+                style: if chain { JOINS[ix].1 } else { EdgeStyle::Auto },
+                pill: chain.then(|| JOINS[ix].0.into()),
             })
             .collect();
         self.graph.set(nodes, edges);
@@ -239,6 +336,17 @@ impl GraphSource for GraphStory {
 
     fn graph_split(&self) -> &InspectorSplit {
         &self.split
+    }
+
+    fn cursor(&self) -> Option<Cursor<usize>> {
+        self.cursor.clone()
+    }
+
+    fn step_to(&mut self, cursor: Cursor<usize>, _: &mut Window, _: &mut Context<Self>) {
+        if let Cursor::Link(from, to) = &cursor {
+            self.graph.select(from, to);
+        }
+        self.cursor = Some(cursor);
     }
 
     /// The story has nothing to open; a box shows only its hover.
