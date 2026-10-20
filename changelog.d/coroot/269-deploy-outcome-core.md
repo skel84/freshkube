@@ -1,0 +1,1 @@
+- **What Coroot found after a deploy, in core:** a Deployment's revision and the window around its start can be looked up for any workspace entry that links a Coroot cluster, with each way the look can end kept apart; nothing in the app shows it yet.

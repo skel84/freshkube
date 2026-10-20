@@ -236,10 +236,16 @@ impl SetupFile {
         &self.receipt_label
     }
 
-    fn set_receipt(&mut self, action: &str, note: &str) {
+    fn set_receipt(&mut self, action: &str, backup: bool) {
         let now = chrono::Local::now();
         let time = now.format("%H:%M");
-        self.receipt_label = format!("{action} · {time}");
+        let short_note = if backup { " · backup .bak" } else { "" };
+        let note = if backup {
+            " · the hand-edited file is freshkube.yaml.bak"
+        } else {
+            ""
+        };
+        self.receipt_label = format!("{action}{short_note} · {time}");
         self.receipt = Some(format!("{action} freshkube.yaml{note} · {time}"));
     }
 
@@ -303,12 +309,7 @@ impl SetupFile {
         match result {
             Ok(write) => {
                 self.record_write(write.setup, write.seen, write.stat);
-                let backup = if write.backup {
-                    " · the hand-edited file is freshkube.yaml.bak"
-                } else {
-                    ""
-                };
-                self.set_receipt("Saved", backup);
+                self.set_receipt("Saved", write.backup);
                 cx.emit(Event::Changed {
                     setup_changed: true,
                 });
@@ -375,7 +376,7 @@ impl SetupFile {
             cx.emit(Event::Ready);
         } else if setup_changed || old_problem != self.problem {
             if setup_changed {
-                self.set_receipt("Reloaded", "");
+                self.set_receipt("Reloaded", false);
             }
             cx.emit(Event::Changed { setup_changed });
         }
