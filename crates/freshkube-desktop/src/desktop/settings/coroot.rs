@@ -496,7 +496,14 @@ impl SettingsPage {
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .child(header)
-            .children(self.render_banners(cx))
+            .child(
+                div()
+                    .w_full()
+                    .max_w(dp(form::MAX_WIDTH))
+                    .flex()
+                    .flex_col()
+                    .children(self.render_banners(cx)),
+            )
             .child(content)
             .into_any_element()
     }
@@ -579,6 +586,7 @@ impl SettingsPage {
                 .into_any_element()
         } else if kept {
             form::secret("coroot-credential", form::Secret::Kept, cx)
+                .kept_in(freshkube_core::secrets::STORE_NAME)
                 .on_replace(cx.listener(|page, _, window, cx| page.replace_coroot_key(window, cx)))
                 .on_forget(cx.listener(|page, _, window, cx| page.forget_coroot_key(window, cx)))
                 .into_any_element()
@@ -635,10 +643,11 @@ impl SettingsPage {
 
         let saved_in = if example {
             form::SavedIn::session()
-        } else if anonymous {
+        } else if anonymous || form.baseline.key_file {
             form::SavedIn::file("freshkube.yaml")
         } else {
-            form::SavedIn::file("freshkube.yaml").and_credential("the key")
+            form::SavedIn::file("freshkube.yaml")
+                .and_credential_in("the key", freshkube_core::secrets::STORE_NAME)
         };
 
         let mut group = form::group("coroot-connection", "Connection")

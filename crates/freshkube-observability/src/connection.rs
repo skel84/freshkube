@@ -442,6 +442,11 @@ impl ObservabilityPage {
         let typed = typed.trim().to_owned();
         self.secret
             .update(cx, |input, cx| input.set_value(typed.clone(), window, cx));
+        // The block names `keys.json`, so the key is kept now, whether or not
+        // this connect works.
+        if auth != 2 && !typed.is_empty() {
+            self.keep_key(server, &typed, cx);
+        }
         if typed.is_empty() && auth != 2 {
             // The key is in the store: read it, then connect.
             if let Some(memory) = &mut self.memory {

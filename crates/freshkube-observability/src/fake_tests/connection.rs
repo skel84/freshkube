@@ -626,3 +626,41 @@ async fn a_disconnect_survives_setup_changes_until_an_explicit_connect(cx: &mut 
     })
     .await;
 }
+
+#[gpui_kit::test]
+async fn a_key_typed_in_settings_is_kept_even_when_the_connect_fails(cx: &mut TestAppContext) {
+    use super::super::remember::account;
+    use crate::secrets::MemoryStore;
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let store = Arc::new(MemoryStore::default());
+    let (_runtime, handle, page) =
+        super::super::tests::mount_remembering(cx, &preferences, store.clone());
+    // Nothing listens here.
+    let server = "http://127.0.0.1:9";
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.connect_from_settings(server, 0, "  sanitized-key ".into(), window, cx)
+        })
+    })
+    .unwrap();
+    let (saved, name) = (store.clone(), account(server));
+    cx.wait_for_io(handle, move |_, _| {
+        saved.keys.lock().unwrap().contains_key(&name)
+    })
+    .await;
+    assert_eq!(
+        store
+            .keys
+            .lock()
+            .unwrap()
+            .get(&account(server))
+            .map(String::as_str),
+        Some("sanitized-key")
+    );
+    let observed = page.clone();
+    cx.wait_for_io(handle, move |_, cx| observed.read(cx).live.error.is_some())
+        .await;
+    assert!(!directory.path().join("coroot.json").exists());
+}

@@ -481,12 +481,13 @@ impl ObservabilityPage {
                 if saving {
                     memory.saved.remember = false;
                     memory.key = None;
-                    memory.error = Some(
-                        format!(
-                            "Couldn't save the key: {error}. It stays in memory until you quit."
-                        )
-                        .into(),
+                    let words = format!(
+                        "Couldn't save the key: {error}. It stays in memory until you quit."
                     );
+                    memory.error = Some(words.clone().into());
+                    if this.live.provider.is_none() {
+                        this.live.error = Some(words);
+                    }
                     this.save_memory(cx);
                 } else {
                     memory.error = Some(error.into());
@@ -550,6 +551,24 @@ impl ObservabilityPage {
                 cx,
             );
         }
+    }
+
+    /// The store keeps `key` for `server`; a store that can't says why in the
+    /// connection's state.
+    pub(super) fn keep_key(&mut self, server: &str, key: &str, cx: &mut Context<Self>) {
+        let Some(memory) = &mut self.memory else {
+            return;
+        };
+        if !memory.can_remember() {
+            return;
+        }
+        memory.key = Some((server.to_owned(), key.to_owned()));
+        let (account, key) = (account(server), key.to_owned());
+        self.run_key_step(
+            move |_, store| store.map_or(Ok(()), |store| store.write(&account, &key)),
+            true,
+            cx,
+        );
     }
 
     /// The store no longer keeps the key for `server`.
