@@ -316,10 +316,10 @@ fn credential_preflight(value: &Value) -> Result<(), Invalid> {
         {
             return Err(Invalid::KeyValue(None));
         }
-        if let Some(address) = block.get(endpoint).and_then(Value::as_str) {
-            if workspace::has_userinfo(address) {
-                return Err(Invalid::KeyValue(None));
-            }
+        if let Some(address) = block.get(endpoint).and_then(Value::as_str)
+            && workspace::has_userinfo(address)
+        {
+            return Err(Invalid::KeyValue(None));
         }
         Ok(())
     };
