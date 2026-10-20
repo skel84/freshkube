@@ -154,6 +154,12 @@ pub trait GraphSource: Sized + 'static {
         None
     }
 
+    /// Keep a highlighted card's selected styling through hover. Ordinary
+    /// maps keep the button's existing hover treatment.
+    fn persistent_highlight(&self) -> bool {
+        false
+    }
+
     /// Cut a card's detail at a whole word; ordinary maps keep their truncation.
     fn word_details(&self) -> bool {
         false
@@ -374,7 +380,8 @@ impl<K: Clone + Ord> GraphState<K> {
     #[must_use]
     pub fn unpaged(mut self) -> Self {
         self.per_page = usize::MAX;
-        self.metrics = Metrics::labelled(LABELLED_GUTTER);
+        self.metrics.column = self.metrics.node_w + LABELLED_GUTTER;
+        self.metrics.max_rows = usize::MAX;
         self.prepare();
         self
     }
@@ -678,7 +685,10 @@ impl<K: Clone + Ord> GraphState<K> {
                 let pill_at = if last[0].0 < route.tip.0 {
                     // Keep the pill level with its target, beyond the steep
                     // part of neighbouring curves, with room before the card.
-                    (route.tip.0 - canvas::PILL_W / 2. - 12., route.tip.1)
+                    (
+                        route.tip.0 - canvas::PILL_W / 2. - canvas::PILL_GAP,
+                        route.tip.1,
+                    )
                 } else {
                     freshkube_graph::layout::point_at(last, 0.75)
                 };
@@ -731,6 +741,63 @@ impl<K: Clone + Ord> GraphState<K> {
             pages,
         };
     }
+}
+
+/// Reveals the highlighted card on both axes until the canvas bounds have
+/// changed and then held, for at most six frames. A stacked Inspector learns
+/// its size during layout and can apply it on a later frame. Stops when the
+/// card is no longer highlighted or `showing` returns false.
+pub fn reveal_when_settled<S: GraphSource>(
+    view: gpui_kit::WeakEntity<S>,
+    key: S::Key,
+    showing: fn(&S) -> bool,
+    window: &Window,
+) {
+    settle_reveal(view, key, showing, None, false, 6, window);
+}
+
+fn settle_reveal<S: GraphSource>(
+    view: gpui_kit::WeakEntity<S>,
+    key: S::Key,
+    showing: fn(&S) -> bool,
+    last: Option<(gpui_kit::Pixels, gpui_kit::Pixels)>,
+    changed: bool,
+    frames: usize,
+    window: &Window,
+) {
+    window.on_next_frame(move |window, cx| {
+        let Some(bounds) = view
+            .update(cx, |source, cx| {
+                if !showing(source) || source.highlighted() != Some(&key) {
+                    return None;
+                }
+                let graph = source.graph();
+                graph.reveal_node(&key, window);
+                let bounds = (
+                    graph.pan.bounds().size.width,
+                    graph.vertical.bounds().size.height,
+                );
+                cx.notify();
+                Some(bounds)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        if frames > 1 && !(changed && Some(bounds) == last) {
+            let changed = changed || last.is_some_and(|last| last != bounds);
+            settle_reveal(
+                view,
+                key,
+                showing,
+                Some(bounds),
+                changed,
+                frames - 1,
+                window,
+            );
+        }
+    });
 }
 
 #[cfg(test)]

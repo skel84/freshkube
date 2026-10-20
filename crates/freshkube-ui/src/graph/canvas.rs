@@ -68,7 +68,31 @@ pub(super) fn render_graph<S: GraphSource>(
     if let Some(focus) = state.focus.as_ref() {
         let mut watch = state.focus_watch.borrow_mut();
         if watch.is_empty() {
-            watch.push(cx.on_focus(focus, window, |_, _, cx| cx.notify()));
+            watch.push(cx.on_focus(focus, window, |this, window, cx| {
+                this.graph_mut().keyboard = window.last_input_was_keyboard();
+                if this.graph().keyboard {
+                    let key = this
+                        .cursor()
+                        .map(|cursor| match cursor {
+                            Cursor::Node(key) | Cursor::Link(_, key) => key,
+                        })
+                        .or_else(|| {
+                            this.graph()
+                                .placed()
+                                .next()
+                                .map(|(node, ..)| node.key.clone())
+                        });
+                    if let Some(key) = key {
+                        this.graph().reveal_node(&key, window);
+                    }
+                }
+                let entity = cx.entity().downgrade();
+                // Focus listeners run after drawing; request a frame for the ring.
+                window.on_next_frame(move |_, cx| {
+                    _ = entity.update(cx, |_, cx| cx.notify());
+                });
+                cx.notify();
+            }));
             watch.push(cx.on_blur(focus, window, |this, _, cx| {
                 this.graph_mut().keyboard = false;
                 cx.notify();
@@ -132,7 +156,12 @@ pub(super) fn render_graph<S: GraphSource>(
     .size_full();
     let highlighted = source.highlighted();
     let cursor = if focused && state.keyboard {
-        source.cursor()
+        source.cursor().or_else(|| {
+            state
+                .placed()
+                .next()
+                .map(|(node, ..)| Cursor::Node(node.key.clone()))
+        })
     } else {
         None
     };
@@ -206,7 +235,7 @@ pub(super) fn render_graph<S: GraphSource>(
                 .w(dp(PILL_W))
                 .h(dp(PILL_H))
                 .flex()
-                .justify_center()
+                .justify_end()
                 .child(
                     div().rounded_full().bg(p.surface).child(
                         Button::new(edge.marker_id.clone())
@@ -228,6 +257,7 @@ pub(super) fn render_graph<S: GraphSource>(
                             })
                             .max_w(dp(PILL_W))
                             .tab_stop(!keyed)
+                            .when(matches!(&cursor, Some(Cursor::Link(from, to)) if from == &edge.from && to == &edge.to), |this| this.border_2())
                             .children(edge.pill_tone.and_then(|tone| ui::status_glyph(tone, cx)))
                             .child(
                                 mono(edge.pill.clone().unwrap_or_default())
@@ -252,7 +282,7 @@ pub(super) fn render_graph<S: GraphSource>(
             let node = &state.nodes[placed.node];
             let key = node.key.clone();
             Button::new(node.id.clone())
-                .selected(highlighted == Some(&node.key))
+                .selected(source.persistent_highlight() && highlighted == Some(&node.key))
                 .when(state.dimmed.contains(&node.key), |this| this.opacity(0.35))
                 .tab_stop(!keyed)
                 .outline()
@@ -353,8 +383,10 @@ fn at_cursor<K: PartialEq>(cursor: &Option<Cursor<K>>, key: &K) -> bool {
 }
 
 /// The size of a pill on a line, in dp: wide enough for a short key in
-/// monospace, and the box that centres it.
+/// monospace, and the box that aligns it beside its target.
 pub(super) const PILL_W: f32 = 100.;
+/// Space between a forward link's pill and its target card.
+pub(super) const PILL_GAP: f32 = 8.;
 const PILL_H: f32 = 22.;
 
 /// The listener for one arrow key: ask the graph where it goes from the

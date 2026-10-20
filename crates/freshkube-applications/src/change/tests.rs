@@ -468,6 +468,7 @@ fn chain_and_inspector_keep_the_wide_frame(cx: &mut TestAppContext) {
         chain(&page, window, cx);
         page.update(cx, |page, cx| page.select("freight", window, cx));
         window.render_frame(cx);
+        settle_chain(window, cx);
         layout_check::settle_header(window, cx);
         layout_check::assert_edge_frame_from(
             window,
@@ -581,6 +582,7 @@ fn narrow_chain_at_text_20_reveals_a_far_card_and_stacks_the_inspector(cx: &mut 
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.render_frame(cx);
+        settle_chain(window, cx);
         layout_check::settle_header(window, cx);
         layout_check::assert_inspector(
             window,
@@ -898,7 +900,7 @@ fn settle_chain(window: &mut Window, cx: &mut App) {
     );
     window.render_frame(cx);
     // The stacked Inspector can change the canvas's height after it opens.
-    for _ in 0..4 {
+    for _ in 0..6 {
         if window.simulate_next_frame(cx) == 0 {
             break;
         }
@@ -975,6 +977,32 @@ fn narrow_chain_at_text_20_reveals_both_axes_after_layout(cx: &mut TestAppContex
 #[gpui_kit::test]
 fn wide_chain_at_text_20_reveals_both_axes_after_layout(cx: &mut TestAppContext) {
     assert_stacked_chain_reveal(cx, 1280., 880., 20.);
+}
+
+#[gpui_kit::test]
+fn chain_reveals_again_when_the_stacked_canvas_shrinks_on_a_later_frame(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 880., Shape::Whole, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        chain(&page, window, cx);
+        page.update(cx, |page, cx| page.select("prod-lon-eligible", window, cx));
+        window.render_frame(cx);
+        assert!(window.simulate_next_frame(cx) > 0);
+        window.render_frame(cx);
+        let before = window.find("change-chain-canvas").bounds().size.height;
+        // Model the split applying a smaller height after the first reveal.
+        let state = page.read(cx).split.stacked_state().clone();
+        state.update(cx, |state, cx| state.resize_panel(0, px(180.), window, cx));
+        window.render_frame(cx);
+        settle_chain(window, cx);
+        assert!(window.find("change-chain-canvas").bounds().size.height < before);
+        assert_card_in_canvas("prod-lon-eligible", window);
+        assert_eq!(
+            window.simulate_next_frame(cx),
+            0,
+            "settled reveal stops requesting frames"
+        );
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -1117,9 +1145,8 @@ fn mouse_selection_keeps_the_selected_border_and_only_keyboard_navigation_rings_
     .unwrap();
 }
 
-#[gpui_kit::test]
-fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppContext) {
-    let (handle, page) = open(cx, 1600., 1000., Shape::Whole, Duration::ZERO, 13.);
+fn assert_crossing_pill_clearance(cx: &mut TestAppContext, width: f32, height: f32, text: f32) {
+    let (handle, page) = open(cx, width, height, Shape::Whole, Duration::ZERO, text);
     cx.update_window(handle, |_, window, cx| {
         chain(&page, window, cx);
         let ams = window.find("change-link-prod-ams-eligible").bounds();
@@ -1140,12 +1167,9 @@ fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppCont
         let origin = window.find("change-chain-graph").bounds().origin;
         let unit = freshkube_ui::ui::dp_px(1., window);
         let p = page.read(cx);
-        let (_, route) = p
-            .graph
-            .shown()
-            .find(|(edge, _)| edge.to == "prod-ams-eligible")
-            .unwrap();
-        // The whole curve, including its stroke, clears the other pill.
+        for (key, pill) in [("prod-ams-eligible", lon), ("prod-lon-eligible", ams)] {
+        let (_, route) = p.graph.shown().find(|(edge, _)| edge.to == key).unwrap();
+        // Both curves, including their strokes, clear the other pill.
         for segment in &route.segments {
             for step in 0..=1000 {
                 let t = step as f32 / 1000.;
@@ -1158,16 +1182,32 @@ fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppCont
                 let at = origin + point(unit * x, unit * y);
                 let margin = unit * 4.;
                 assert!(
-                    at.x < lon.left() - margin
-                        || at.x > lon.right() + margin
-                        || at.y < lon.top() - margin
-                        || at.y > lon.bottom() + margin,
-                    "prod-ams at {at:?} needs clearance from prod-lon pill {lon:?}"
+                    at.x < pill.left() - margin
+                        || at.x > pill.right() + margin
+                        || at.y < pill.top() - margin
+                        || at.y > pill.bottom() + margin,
+                    "{key} at {at:?} needs clearance from the other pill {pill:?}; route {route:?}"
                 );
             }
         }
+        }
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppContext) {
+    assert_crossing_pill_clearance(cx, 1600., 1000., 13.);
+}
+
+#[gpui_kit::test]
+fn narrow_chain_clears_pills_in_both_directions(cx: &mut TestAppContext) {
+    assert_crossing_pill_clearance(cx, 760., 560., 13.);
+}
+
+#[gpui_kit::test]
+fn narrow_chain_at_text_20_clears_pills_in_both_directions(cx: &mut TestAppContext) {
+    assert_crossing_pill_clearance(cx, 760., 560., 20.);
 }
 
 #[gpui_kit::test]
