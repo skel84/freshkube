@@ -12,24 +12,6 @@ pub(super) fn missing(
     sides: &Sides,
     reached: &Reached,
 ) -> Vec<Missing> {
-    fn kind<T>(source: &Source<T>, what: &str, at: &At) -> Option<Missing> {
-        let entry = &at.label;
-        match source {
-            Source::Refused(why) => Some(Missing::new(
-                Gap::Refused,
-                words::were_refused(what, entry, why),
-            )),
-            Source::NotInstalled(_) => Some(Missing::new(
-                Gap::NotServed,
-                words::arent_served(what, entry),
-            )),
-            Source::Unreadable(why) => Some(Missing::new(
-                Gap::Unreadable,
-                words::unreadable(what, entry, why),
-            )),
-            Source::Read(_) | Source::Capped(..) => None,
-        }
-    }
     let mut lines: Vec<Missing> = Vec::new();
     for (unread, kinds) in [
         (
@@ -100,4 +82,42 @@ pub(super) fn missing(
     }
     lines.dedup();
     lines
+}
+
+fn kind<T>(source: &Source<T>, what: &str, at: &At) -> Option<Missing> {
+    let entry = &at.label;
+    match source {
+        Source::Refused(why) => Some(Missing::new(
+            Gap::Refused,
+            words::were_refused(what, entry, why),
+        )),
+        Source::NotInstalled(_) => Some(Missing::new(
+            Gap::NotServed,
+            words::arent_served(what, entry),
+        )),
+        Source::Unreadable(why) => Some(Missing::new(
+            Gap::Unreadable,
+            words::unreadable(what, entry, why),
+        )),
+        Source::Read(_) | Source::Capped(..) => None,
+    }
+}
+
+/// Keep the existing joined Application hop, with the same reason as its
+/// source gap. This does not create a join or change its confidence.
+pub(super) fn unread_application(hop: &mut Hop, source: &Source<Vec<Application>>, at: &At) {
+    let Some(gap) = kind(source, "Argo CD Applications", at) else {
+        return;
+    };
+    hop.detail = gap.text.clone();
+    if let Shows::Hop(detail) = &mut hop.shows {
+        detail.notice = Some(Notice {
+            state: Warning,
+            lead: "Not readable.".into(),
+            body: sentence(&gap.text),
+        });
+        if let Some(link) = &mut detail.link {
+            link.why = sentence(&gap.text);
+        }
+    }
 }

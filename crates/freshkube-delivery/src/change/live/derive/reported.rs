@@ -53,14 +53,18 @@ pub(super) fn reported_hops(sides: &Sides, stage: &str, group: usize, away: Away
                 .any(|(g, kind)| object.group == *g && object.kind == *kind)
         })
         .enumerate()
-        .map(|(n, object)| {
-            reported_hop(
+        .flat_map(|(n, object)| {
+            let workload = reported_hop(
                 sides,
                 format!("{stage}-reported-{}-{n}", app.name),
                 group,
                 &away,
                 object,
-            )
+            );
+            let pods = away
+                .why
+                .map(|why| crate::change::unread::pods(&workload, away.entry, why));
+            std::iter::once(workload).chain(pods)
         })
         .collect()
 }

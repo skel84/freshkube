@@ -1088,6 +1088,14 @@ impl Shape {
                     let Some(group) = stage_group(&change, ix) else {
                         continue;
                     };
+                    // The supplied Application is the evidence for a placeholder;
+                    // a Stage alone does not imply an Application exists.
+                    if !change.hops_of(group).any(|hop| {
+                        matches!(&hop.shows,
+                        Shows::Hop(detail) if detail.kind == "Argo CD Application")
+                    }) {
+                        continue;
+                    }
                     let stage = &mut change.stages[ix];
                     if stage.reach != Reach::NotReached {
                         stage.reach = Reach::Refused("Argo CD Applications".into());
@@ -1105,7 +1113,7 @@ impl Shape {
                     let at = at.min(change.hops.len());
                     change
                         .hops
-                        .insert(at, refused_application(&name, group, &why));
+                        .insert(at, refused_application(&change.project, &name, group, &why));
                 }
             }
             Self::DestinationUnreachable => {
@@ -1128,7 +1136,9 @@ impl Shape {
                         |hop: &Hop| hop.group == group && hop.from == cluster && !is_gate(hop);
                     if let Some(at) = change.hops.iter().position(read_there) {
                         change.hops.retain(|hop| !read_there(hop));
-                        change.hops.insert(at, reported(name, cluster, group, &why));
+                        let workload = reported(name, cluster, group, &why);
+                        let pods = super::unread::pods(&workload, cluster, &why);
+                        change.hops.splice(at..at, [workload, pods]);
                     }
                 }
             }
@@ -1216,21 +1226,21 @@ fn is_gate(hop: &Hop) -> bool {
 }
 
 /// In place of what Argo CD's Applications would have said of a Stage.
-fn refused_application(stage: &str, group: usize, why: &str) -> Hop {
+fn refused_application(project: &str, stage: &str, group: usize, why: &str) -> Hop {
     Hop {
         key: format!("{stage}-argocd"),
         group,
         state: Unknown,
-        name: "Argo CD Application".into(),
-        detail: format!("Not readable: {why}"),
+        name: "Application not read".into(),
+        detail: why.into(),
         from: CORE.into(),
         at: None,
         link: Some(Confidence::Unknown),
         after: Some(format!("{stage}-eligible")),
         shows: Shows::Hop(Box::new(HopDetail {
             kind: "Argo CD Application".into(),
-            title: format!("{PROJECT}-{stage}"),
-            state: "Not readable".into(),
+            title: "Application not read".into(),
+            state: "Unknown".into(),
             notice: Some(Notice {
                 state: Warning,
                 lead: "Not readable.".into(),
@@ -1239,14 +1249,17 @@ fn refused_application(stage: &str, group: usize, why: &str) -> Hop {
                      can be followed."
                 ),
             }),
-            fields: vec![mono("Read from", CORE)],
+            fields: vec![
+                mono("Kargo Stage", &format!("{project}/{stage}")),
+                mono("Read from", CORE),
+            ],
             link: link(
                 Confidence::Unknown,
-                "revision",
-                "Promotion",
-                "git-push wrote the env branch",
-                "can't be read",
-                "A side can't be read, so the link is Unknown.",
+                "nothing",
+                "Stage",
+                "not reported",
+                "not read",
+                why,
             ),
             unlinked: None,
             actions: Vec::new(),
@@ -1309,6 +1322,154 @@ mod tests {
 
     fn now() -> DateTime<Utc> {
         DateTime::from_timestamp(1_760_000_000, 0).unwrap()
+    }
+
+    fn assert_unread(hop: &Hop, after: &str, reason: &str) {
+        assert_eq!(hop.state, Unknown);
+        assert_eq!(hop.link, Some(Confidence::Unknown));
+        assert_eq!(hop.after.as_deref(), Some(after));
+        assert_eq!(hop.at, None);
+        assert!(hop.detail.contains(reason), "{}", hop.detail);
+        let Shows::Hop(detail) = &hop.shows else {
+            panic!("placeholder");
+        };
+        let link = detail.link.as_ref().unwrap();
+        assert_eq!(link.confidence, Confidence::Unknown);
+        assert_eq!(link.key, None);
+        assert!(link.why.contains(reason));
+        assert!(detail.actions.is_empty());
+    }
+
+    #[test]
+    fn argo_refused_keeps_each_known_application_without_guessing_its_name() {
+        let original = change(now());
+        let change = Shape::ArgoRefused.apply(original.clone()).unwrap();
+        let reason = &change.missing.last().unwrap().text;
+        assert_eq!(change.missing.last().unwrap().gap, Gap::Refused);
+        for (ix, stage) in change.stages.iter().enumerate() {
+            let group = stage_group(&change, ix).unwrap();
+            let hops: Vec<_> = change.hops_of(group).collect();
+            assert_eq!(
+                hops.len(),
+                4,
+                "three gates and one Application: {}",
+                stage.name
+            );
+            let app = change.hop(&format!("{}-argocd", stage.name)).unwrap();
+            assert_unread(app, &format!("{}-eligible", stage.name), reason);
+            assert_eq!(app.name, "Application not read");
+            let Shows::Hop(detail) = &app.shows else {
+                unreachable!()
+            };
+            assert_eq!(detail.title, "Application not read");
+            assert_eq!(stage.link, original.stages[ix].link);
+        }
+        assert_eq!(
+            change
+                .hops
+                .iter()
+                .filter(|h| h.group < 2)
+                .collect::<Vec<_>>(),
+            original
+                .hops
+                .iter()
+                .filter(|h| h.group < 2)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn argo_refused_does_not_invent_an_application_for_a_stage_without_one() {
+        let mut original = change(now());
+        let group = stage_group(&original, 1).unwrap();
+        original
+            .hops
+            .retain(|hop| hop.group != group || is_gate(hop));
+        let changed = Shape::ArgoRefused.apply(original.clone()).unwrap();
+        assert_eq!(
+            changed.hops_of(group).collect::<Vec<_>>(),
+            original.hops_of(group).collect::<Vec<_>>()
+        );
+        assert_eq!(changed.stages[1], original.stages[1]);
+    }
+
+    #[test]
+    fn an_unreachable_destination_keeps_unknown_pods_after_its_reported_workload() {
+        let original = change(now());
+        let change = Shape::DestinationUnreachable
+            .apply(original.clone())
+            .unwrap();
+        let workload = change.hop("dev-reported-checkout-dev-0").unwrap();
+        assert_eq!(workload.after.as_deref(), Some("dev-argocd"));
+        assert_eq!(workload.link, Some(Confidence::Claimed));
+        let pods = change
+            .hops
+            .iter()
+            .find(|hop| hop.after.as_deref() == Some(workload.key.as_str()))
+            .unwrap();
+        assert_unread(pods, &workload.key, &change.missing.last().unwrap().text);
+        assert_eq!(pods.name, "Pods");
+        assert_eq!(pods.from, "dev-fra");
+        assert_eq!(change.stages[0].reach, Reach::Linked(Confidence::Unknown));
+        assert_eq!(
+            change
+                .hops
+                .iter()
+                .filter(|h| h.group != workload.group)
+                .collect::<Vec<_>>(),
+            original
+                .hops
+                .iter()
+                .filter(|h| h.group != workload.group)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn an_unreachable_destination_without_a_reported_workload_gets_no_pods() {
+        let mut original = change(now());
+        let group = stage_group(&original, 0).unwrap();
+        original
+            .hops
+            .retain(|hop| hop.group != group || hop.from != UNREACHED.1);
+        let changed = Shape::DestinationUnreachable
+            .apply(original.clone())
+            .unwrap();
+        assert_eq!(
+            changed.hops_of(group).collect::<Vec<_>>(),
+            original.hops_of(group).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn other_shapes_match_main() {
+        // SHA-256 of each complete read's Debug representation at the fixed
+        // instant, recorded from origin/main 973fa31a before behavior changes.
+        // Covers every example project's followed Freight, not only wonky-otter.
+        for (shape, expected) in [
+            (
+                Shape::Whole,
+                "0a7d92cab95d17f41134d7fea0c62af00f57300a7cc8f31c63e862f9bdc687a1",
+            ),
+            (
+                Shape::Spread,
+                "4b8a71cc9e8406b4a0a0cca29c8aca95bc5b907eadbf2b8ebd4a88199ad79cd6",
+            ),
+            (
+                Shape::KargoUnreachable,
+                "d61703e0bea6105747726f36c06118b8e56be1b624712232fc5a82d989807a35",
+            ),
+        ] {
+            let read = crate::changes::example::read_shaped(now(), shape);
+            let bytes = format!("{read:?}");
+            let digest = ring::digest::digest(&ring::digest::SHA256, bytes.as_bytes());
+            let hex: String = digest
+                .as_ref()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(hex, expected, "{shape:?} differs from main");
+        }
     }
 
     #[test]

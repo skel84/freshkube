@@ -215,7 +215,9 @@ pub fn derive(
             placed.push(Some(key.clone()));
             if link.to == Joined::Application {
                 hops.extend(reported.into_iter().map(|mut hop| {
-                    hop.after = Some(key.clone());
+                    if hop.after.is_none() {
+                        hop.after = Some(key.clone());
+                    }
                     hop
                 }));
             }
@@ -1054,6 +1056,9 @@ fn link_hop(
         })),
     };
     history::decorate(&mut hop, evidence, link, &sides.builds.label);
+    if missing && link.to == Joined::Application {
+        gaps::unread_application(&mut hop, &evidence.applications, at);
+    }
     hop
 }
 
