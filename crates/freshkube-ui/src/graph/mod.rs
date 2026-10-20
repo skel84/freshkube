@@ -32,7 +32,7 @@ pub use view::GraphView;
 pub const PER_PAGE: usize = 24;
 /// The gutter between columns of a graph drawn with [`GraphState::unpaged`],
 /// wide enough for a label on each line.
-pub const LABELLED_GUTTER: f32 = 84.;
+pub const LABELLED_GUTTER: f32 = 112.;
 /// The room `reveal_node` leaves beside a box it scrolls to, in dp.
 const REVEAL_MARGIN: f32 = 24.;
 /// Calls on a page that carry a marker; the selected call always does.

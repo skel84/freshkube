@@ -7,7 +7,7 @@ use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, PathBuilder, TestSupportExt, Window, canvas, div, point};
 
-use freshkube_graph::layout::{NODE_H, NODE_W};
+use freshkube_graph::layout::{Metrics, NODE_H, NODE_W};
 
 use super::view::{glyph, mono, muted};
 use super::{
@@ -97,8 +97,15 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
     )
     .size_full();
     let highlighted = source.highlighted();
+    let cursor = source.cursor();
     // With keys the graph is one Tab stop; its boxes and calls are not.
     let keyed = state.focus.is_some();
+    // A labelled graph leaves room under its last row for the scrollbar.
+    let room = if state.metrics == Metrics::MAP {
+        0.
+    } else {
+        12.
+    };
     div()
         .id(state.ids.graph.clone())
         .test_support()
@@ -110,10 +117,11 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 .on_action(walk::<S, WalkPrevious>(Step::Previous, cx))
                 .on_action(walk::<S, WalkNext>(Step::Next, cx))
         })
+        .focus_visible(|style| style.bg(p.accent_soft))
         .relative()
         .flex_none()
         .w(dp(display.width))
-        .h(dp(display.height))
+        .h(dp(display.height + room))
         .child(calls)
         .children(display.markers.iter().map(|&ix| {
             let edge = &state.edges[display.shown[ix].edge];
@@ -154,39 +162,41 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 .flex()
                 .justify_center()
                 .child(
-                    Button::new(edge.marker_id.clone())
-                        .outline()
-                        .group("fog-control")
-                        .h(dp(PILL_H))
-                        .px(dp(8.))
-                        .rounded_full()
-                        .bg(if display.selected == Some(ix) {
-                            p.accent_soft
-                        } else {
-                            p.surface
-                        })
-                        .border_color(if display.selected == Some(ix) {
-                            p.accent_line
-                        } else {
-                            p.line_strong
-                        })
-                        .max_w(dp(PILL_W))
-                        .tab_stop(!keyed)
-                        .child(
-                            mono(edge.pill.clone().unwrap_or_default())
-                                .text_size(dp(11.))
-                                .truncate(),
-                        )
-                        .when(edge.tooltip.is_empty(), |this| {
-                            this.tooltip(edge.pill.clone().unwrap_or_default())
-                        })
-                        .when(!edge.tooltip.is_empty(), |this| {
-                            this.tooltip(edge.tooltip.clone())
-                        })
-                        .on_click(cx.listener(move |this: &mut S, _, _, cx| {
-                            this.graph_mut().select(&from, &to);
-                            cx.notify();
-                        })),
+                    div().rounded_full().bg(p.surface).child(
+                        Button::new(edge.marker_id.clone())
+                            .outline()
+                            .group("fog-control")
+                            .h(dp(PILL_H))
+                            .px(dp(8.))
+                            .rounded_full()
+                            .bg(if display.selected == Some(ix) {
+                                p.accent_soft
+                            } else {
+                                p.surface
+                            })
+                            .border_color(if display.selected == Some(ix) {
+                                p.accent_line
+                            } else {
+                                p.line_strong
+                            })
+                            .max_w(dp(PILL_W))
+                            .tab_stop(!keyed)
+                            .child(
+                                mono(edge.pill.clone().unwrap_or_default())
+                                    .text_size(dp(11.))
+                                    .truncate(),
+                            )
+                            .when(edge.tooltip.is_empty(), |this| {
+                                this.tooltip(edge.pill.clone().unwrap_or_default())
+                            })
+                            .when(!edge.tooltip.is_empty(), |this| {
+                                this.tooltip(edge.tooltip.clone())
+                            })
+                            .on_click(cx.listener(move |this: &mut S, _, _, cx| {
+                                this.graph_mut().select(&from, &to);
+                                cx.notify();
+                            })),
+                    ),
                 )
         }))
         .children(display.placed.iter().map(|placed| {
@@ -204,11 +214,15 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 .px(dp(10.))
                 .gap(dp(8.))
                 .bg(p.surface_2)
-                .border_color(if highlighted == Some(&node.key) {
-                    p.accent_line
-                } else {
-                    p.line_strong
-                })
+                .border_color(
+                    if highlighted == Some(&node.key) || at_cursor(&cursor, &node.key) {
+                        p.accent_line
+                    } else {
+                        p.line_strong
+                    },
+                )
+                // The keyboard's box carries a thicker ring.
+                .when(at_cursor(&cursor, &node.key), |this| this.border_2())
                 .when(node.ghost, |this| this.border_dashed())
                 .justify_start()
                 .child(glyph(node.tone, cx))
@@ -251,6 +265,11 @@ pub(super) fn dash(style: EdgeStyle, tone: Option<Tone>) -> Dash {
         (EdgeStyle::Dotted, _) => Dash::Dotted,
         (EdgeStyle::Dashed | EdgeStyle::Auto, _) => Dash::Dashed,
     }
+}
+
+/// Whether the keyboard's cursor is on the box `key`.
+fn at_cursor<K: PartialEq>(cursor: &Option<Cursor<K>>, key: &K) -> bool {
+    matches!(cursor, Some(Cursor::Node(at)) if at == key)
 }
 
 /// The size of a pill on a line, in dp: wide enough for a short key in
