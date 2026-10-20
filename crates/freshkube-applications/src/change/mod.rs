@@ -306,6 +306,7 @@ pub struct ChangePage {
     trail: trail::Trail,
     graph: GraphState<SharedString>,
     link_selected: bool,
+    chain_reveal_pending: bool,
     selected: Option<SharedString>,
     /// What the Inspector says of the selection.
     detail: Option<detail::Detail>,
@@ -366,6 +367,7 @@ impl ChangePage {
             trail: Default::default(),
             graph: chain::state(cx),
             link_selected: false,
+            chain_reveal_pending: false,
             selected: None,
             detail: None,
             detail_scroll: ScrollHandle::new(),
@@ -578,7 +580,7 @@ impl ChangePage {
             {
                 self.graph.reveal_node(key, window);
             }
-            self.reveal_chain_when_drawn(window, cx);
+            self.chain_reveal_pending = true;
         } else {
             kit::reveal(self, ScrollStrategy::Nearest);
         }

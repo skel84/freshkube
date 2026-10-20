@@ -33,7 +33,7 @@ pub use view::GraphView;
 pub const PER_PAGE: usize = 24;
 /// The gutter between columns of a graph drawn with [`GraphState::unpaged`],
 /// wide enough for a label on each line.
-pub const LABELLED_GUTTER: f32 = 112.;
+pub const LABELLED_GUTTER: f32 = 176.;
 /// The room `reveal_node` leaves beside a box it scrolls to, in dp.
 const REVEAL_MARGIN: f32 = 24.;
 /// Calls on a page that carry a marker; the selected call always does.
@@ -120,7 +120,7 @@ pub struct GraphEdge<K> {
     pub tooltip: SharedString,
     /// How the line is drawn.
     pub style: EdgeStyle,
-    /// A label in a pill at the line's middle, which selects the call when
+    /// A label in a pill near the line's target, which selects the call when
     /// clicked; the call then carries no marker. `None` draws the marker.
     pub pill: Option<SharedString>,
     /// Optional glyph beside the pill's label, supplied by the caller.
@@ -229,6 +229,8 @@ struct Placed {
 struct Shown {
     edge: usize,
     route: Route,
+    /// Beside the target, away from crossings in the middle of the route.
+    pill_at: (f32, f32),
 }
 
 /// The current page, derived when anything it shows changes.
@@ -638,9 +640,12 @@ impl<K: Clone + Ord> GraphState<K> {
             .filter_map(|&edge| {
                 let (from, to) = self.ends[edge]?;
                 let link = (*local.get(&from)?, *local.get(&to)?);
+                let route = layout.routes[routed[&link]].clone();
+                let pill_at = freshkube_graph::layout::point_at(route.segments.last()?, 0.75);
                 Some(Shown {
                     edge,
-                    route: layout.routes[routed[&link]].clone(),
+                    route,
+                    pill_at,
                 })
             })
             .collect();

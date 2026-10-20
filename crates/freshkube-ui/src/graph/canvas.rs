@@ -149,18 +149,12 @@ pub(super) fn render_graph<S: GraphSource>(
                 .on_action(walk::<S, WalkNext>(Step::Next, cx))
         })
         .when(keyed, |this| {
-            this.focus(|style| style.bg(p.accent_soft))
-                .on_click(cx.listener(|this: &mut S, _, window, cx| {
-                    if let Some(focus) = this.graph().focus_handle() {
-                        window.focus(focus, cx);
-                    }
-                    if this.cursor().is_none()
-                        && let Some(cursor) = this.graph().step(None, Step::Next)
-                    {
-                        this.step_to(cursor, window, cx);
-                    }
-                    cx.notify();
-                }))
+            this.on_click(cx.listener(|this: &mut S, _, window, cx| {
+                if let Some(focus) = this.graph().focus_handle() {
+                    window.focus(focus, cx);
+                }
+                cx.notify();
+            }))
         })
         .relative()
         .flex_none()
@@ -193,10 +187,9 @@ pub(super) fn render_graph<S: GraphSource>(
         }))
         .children(display.pills.iter().map(|&ix| {
             let edge = &state.edges[display.shown[ix].edge];
-            let (x, y) = display.shown[ix].route.mid;
+            let (x, y) = display.shown[ix].pill_at;
             let (from, to) = (edge.from.clone(), edge.to.clone());
-            // A fixed-width box centred on the line's middle, so the pill
-            // sits on the line whatever its label.
+            // A fixed-width box on the route's final bend, beside its target.
             div()
                 .absolute()
                 .left(dp(x - PILL_W / 2.))
@@ -423,6 +416,20 @@ impl GraphCanvas {
                             .id(state.ids.scroll.clone())
                             .test_support()
                             .track_scroll(&state.pan)
+                            .when(state.focus.is_some(), |this| {
+                                this.on_mouse_down_out(cx.listener(
+                                    |this: &mut S, _, window, cx| {
+                                        if this
+                                            .graph()
+                                            .focus_handle()
+                                            .is_some_and(|focus| focus.is_focused(window))
+                                        {
+                                            window.blur(cx);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                            })
                             .w_full()
                             .min_w_0()
                             .overflow_x_scroll()

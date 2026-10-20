@@ -758,3 +758,157 @@ fn selecting_a_link_keeps_the_supplied_unlinked_reason(cx: &mut TestAppContext) 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn every_example_change_draws_the_supplied_parent_links(cx: &mut TestAppContext) {
+    use freshkube_delivery::{changes::example, source::Source};
+    use std::collections::BTreeSet;
+    let (handle, page) = fixture(cx);
+    let now = DateTime::from_timestamp(1_760_000_000, 0).unwrap();
+    let Source::Read(projects) = example::read_shaped(now, Shape::Whole).projects else {
+        panic!("example projects");
+    };
+    let mut checked = 0;
+    for project in projects {
+        let Source::Read(freights) = project.freight else {
+            panic!("example Freight");
+        };
+        for freight in freights {
+            let change = example::change_of(&project.name, &freight.name, now).unwrap();
+            cx.update_window(handle, |_, window, cx| {
+                page.update(cx, |page, cx| page.read_answer(change, window, cx));
+                let page = page.read(cx);
+                let expected: BTreeSet<_> = page
+                    .change
+                    .hops
+                    .iter()
+                    .filter_map(|hop| {
+                        let from = page.trail.cards.get(hop.after.as_deref()?)?;
+                        let to = &page.trail.cards[hop.key.as_str()];
+                        (from != to).then(|| (from.clone(), to.clone()))
+                    })
+                    .collect();
+                let actual: BTreeSet<_> = page
+                    .trail
+                    .edges
+                    .iter()
+                    .map(|edge| (edge.from.clone(), edge.to.clone()))
+                    .collect();
+                assert!(!expected.is_empty(), "{} has a linked trail", freight.name);
+                assert_eq!(actual, expected, "{}", freight.name);
+                assert_eq!(page.trail.edges.len(), expected.len());
+            })
+            .unwrap();
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 6);
+}
+
+#[gpui_kit::test]
+fn the_short_example_has_the_same_disabled_page_actions_in_list_and_chain(cx: &mut TestAppContext) {
+    let (handle, page) = fixture(cx);
+    let change = freshkube_delivery::changes::example::change_of(
+        "checkout",
+        "brave-lynx",
+        DateTime::from_timestamp(1_760_000_000, 0).unwrap(),
+    )
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        for view in [ChangeView::List, ChangeView::Chain] {
+            page.update(cx, |page, cx| page.set_view(view, window, cx));
+            window.render_frame(cx);
+            assert!(page.read(cx).page_link.is_err());
+            window.click("change-copy-link", cx);
+            window.click("change-open-in-kargo", cx);
+            assert!(!page.read(cx).copied);
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn background_clicks_never_select_or_scroll_and_outside_clicks_blur(cx: &mut TestAppContext) {
+    let (handle, page) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        chain(&page, window, cx);
+        page.update(cx, |page, cx| page.back(cx));
+        window.simulate_next_frame(cx);
+        let before = window.find("change-card-pr").bounds();
+        window.click_at("change-chain-graph", point(px(4.), px(4.)), cx);
+        window.simulate_next_frame(cx);
+        assert!(page.read(cx).selected.is_none());
+        assert!(page.read(cx).detail.is_none());
+        assert_eq!(window.find("change-card-pr").bounds(), before);
+        assert!(
+            page.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+        window.click_at(
+            "change-chain",
+            point(
+                px(4.),
+                window.find("change-chain").bounds().size.height - px(4.),
+            ),
+            cx,
+        );
+        window.simulate_next_frame(cx);
+        assert!(
+            !page
+                .read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_first_switch_to_chain_reveals_the_list_selection_after_layout(cx: &mut TestAppContext) {
+    let (handle, page) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        page.update(cx, |page, cx| page.select("prod-ams-argocd", window, cx));
+        window.click("change-view-chain", cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        let pane = window.find("change-chain-scroll").bounds();
+        let card = window.find("change-card-prod-ams-argocd").bounds();
+        assert!(card.left() >= pane.left() - px(1.), "{card:?} in {pane:?}");
+        assert!(
+            card.right() <= pane.right() + px(1.),
+            "{card:?} in {pane:?}"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn crossing_links_keep_their_pills_beside_their_own_targets(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 1600., 1000., Shape::Whole, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        chain(&page, window, cx);
+        let ams = window.find("change-link-prod-ams-eligible").bounds();
+        let lon = window.find("change-link-prod-lon-eligible").bounds();
+        let ams_card = window.find("change-card-prod-ams-eligible").bounds();
+        let lon_card = window.find("change-card-prod-lon-eligible").bounds();
+        assert!(
+            (ams.center().y - ams_card.center().y).abs()
+                < (ams.center().y - lon_card.center().y).abs()
+        );
+        assert!(
+            (lon.center().y - lon_card.center().y).abs()
+                < (lon.center().y - ams_card.center().y).abs()
+        );
+        assert!(ams.bottom() < lon.top() || lon.bottom() < ams.top());
+    })
+    .unwrap();
+}

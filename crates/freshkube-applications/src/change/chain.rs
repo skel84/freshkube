@@ -107,24 +107,9 @@ impl ChangePage {
             );
         }
         self.focus(window, cx);
-        // The new canvas/Inspector acquires its bounds on the next frame.
-        let this = cx.entity().downgrade();
-        window.on_next_frame(move |window, cx| {
-            _ = this.update(cx, |this, cx| {
-                if this.view == ChangeView::Chain {
-                    if let Some(key) = this
-                        .selected
-                        .as_ref()
-                        .and_then(|key| this.trail.cards.get(key))
-                    {
-                        this.graph.reveal_node(key, window);
-                    }
-                } else {
-                    kit::reveal(this, ScrollStrategy::Nearest);
-                }
-                cx.notify();
-            });
-        });
+        // Schedule the reveal from render, after the canvas is actually
+        // drawn. A callback queued here can precede its first layout.
+        self.chain_reveal_pending = view == ChangeView::Chain;
         cx.notify();
     }
 
@@ -181,6 +166,9 @@ impl ChangePage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if std::mem::take(&mut self.chain_reveal_pending) {
+            self.reveal_chain_when_drawn(window, cx);
+        }
         let canvas = GraphCanvas::render(self, window, cx);
         let legend = kit::legend_line(
             "change-chain-legend",

@@ -218,20 +218,6 @@ impl ChangePage {
 impl Render for ChangePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = crate::perf::span("page.render");
-        // A view switched while loading focused the always-drawn wrapper.
-        // Once its canvas is drawn, give the Chain its single key stop.
-        if self.view == ChangeView::Chain && !self.rows.is_empty() && self.focus.is_focused(window)
-        {
-            let this = cx.entity().downgrade();
-            window.on_next_frame(move |window, cx| {
-                _ = this.update(cx, |page, cx| {
-                    if page.visible && page.view == ChangeView::Chain && !page.rows.is_empty() {
-                        page.focus(window, cx);
-                        cx.notify();
-                    }
-                });
-            });
-        }
         let header = self.render_header(window, cx);
         let notes = self.render_notes(cx);
         let body = match self.render_failed(cx) {
