@@ -44,7 +44,8 @@ pub mod testing {
         pub use crate::change::read::Fetch;
         pub use crate::change::table::columns;
         pub use crate::change::{
-            ChangeEvent, ChangePage, Changes, LiveChanges, link_glyph, link_word, stage_line,
+            ChangeEvent, ChangePage, Changes, Coroot, Links, Live, LiveChanges, OutcomeKind,
+            link_glyph, link_word, stage_line,
         };
     }
     pub mod display {
@@ -101,7 +102,8 @@ use gpui_kit::*;
 
 use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
 use across::{Across, Alone};
-use change::{ChangeEvent, ChangePage, Changes};
+use change::{ChangeEvent, ChangePage, Changes, Coroot};
+pub use change::{Links as CorootLinks, Live as CorootLive, OutcomeKind};
 use changes::ChangesEvent;
 pub use changes::ChangesPage;
 pub use column::Column;
@@ -301,6 +303,10 @@ pub struct ApplicationsPage {
     /// flight with a real task; zero answers at once.
     example_delay: Duration,
     clusters: Clusters,
+    /// Observability's connection and each entry's Coroot link, as the
+    /// shell hands them; the change page reads what Coroot found after a
+    /// deploy through them.
+    live_coroot: change::Live,
     #[cfg(any(test, feature = "testing"))]
     pub display: Display,
     #[cfg(not(any(test, feature = "testing")))]
@@ -403,6 +409,7 @@ impl ApplicationsPage {
             loader,
             example_delay: Duration::ZERO,
             clusters: Clusters::default(),
+            live_coroot: change::Live::default(),
             display: Display::default(),
             stale: None,
             lines: Vec::new(),
@@ -503,6 +510,35 @@ impl ApplicationsPage {
                 self.read(cx);
             }
         }
+    }
+
+    /// Where the change pages get what Coroot found after a deploy: the
+    /// example's answers in example data, else Observability's connection
+    /// and the entries' links.
+    fn coroot(&self) -> Coroot {
+        match &self.source {
+            None => Coroot::None,
+            Some(source) if matches!(source.access, ClusterAccess::Example(_)) => {
+                Coroot::Example(self.variant.outcome())
+            }
+            Some(_) => Coroot::Live(self.live_coroot.clone()),
+        }
+    }
+
+    /// The shell hands over Observability's connection and each workspace
+    /// entry's Coroot link. The change shown asks again over them; answers
+    /// read under the old link are cleared.
+    pub fn set_coroot(&mut self, live: CorootLive, cx: &mut Context<Self>) {
+        if live == self.live_coroot {
+            return;
+        }
+        self.live_coroot = live;
+        let coroot = self.coroot();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| page.set_coroot(coroot.clone(), cx));
+        }
+        self.changes
+            .update(cx, |changes, cx| changes.set_coroot(coroot, cx));
     }
 
     /// Tells the Changes list which connection each cluster is and where
@@ -892,8 +928,12 @@ impl ApplicationsPage {
         // open entry is stands for the open example cluster.
         let connections = self.connections(read);
         let visible = self.visible;
-        let page =
-            cx.new(|cx| ChangePage::new(fetch, Some(stage), connections, visible, window, cx));
+        let coroot = self.coroot();
+        let page = cx.new(|cx| {
+            let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
+            page.set_coroot(coroot, cx);
+            page
+        });
         let subscription =
             cx.subscribe_in(&page, window, |this, _, event, window, cx| match event {
                 ChangeEvent::Back => this.close_change(window, cx),

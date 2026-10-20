@@ -218,7 +218,11 @@ impl ObservabilityPage {
         self.settings_open = true;
         if self.live.visible {
             self.restore(ConnectOrigin::Page, cx);
+        } else if self.wants_change {
+            self.restore(ConnectOrigin::Change, cx);
         }
+        // Whatever the change page read over the old connection is foreign.
+        cx.emit(ObservabilityEvent::Connection);
         cx.notify();
     }
 
@@ -359,8 +363,11 @@ impl ObservabilityPage {
                             && this.live.provider.is_none()
                             && !this.live.connecting
                         {
-                            if !this.live.visible && origin == ConnectOrigin::Page {
-                                // The key arrived after hiding. Retry on the
+                            if (!this.live.visible && origin == ConnectOrigin::Page)
+                                || (origin == ConnectOrigin::Change && !this.wants_change)
+                            {
+                                // The key arrived after hiding, or after the
+                                // change page stopped asking. Retry on the
                                 // next show, retaining the reconnect choice.
                                 memory.restore = true;
                             } else {

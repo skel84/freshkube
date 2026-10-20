@@ -32,7 +32,17 @@ pub(super) struct Detail {
     state: SharedString,
     banner: Option<(Tone, SharedString, SharedString)>,
     body: Body,
+    /// What Coroot found after the deploy, for a Deployment's hop.
+    after: Option<super::outcome::Section>,
     actions: Vec<ActionLine>,
+}
+
+impl Detail {
+    /// The outcome section in words, for the page's tests.
+    #[cfg(any(test, feature = "testing"))]
+    pub(super) fn after_words(&self) -> Option<String> {
+        self.after.as_ref().map(|section| section.words())
+    }
 }
 
 enum Body {
@@ -106,12 +116,12 @@ impl ChangePage {
     pub(super) fn derive_detail(&self) -> Option<Detail> {
         let hop = self.change.hop(self.selected.as_ref()?)?;
         Some(match &hop.shows {
-            Shows::Hop(detail) => self.hop_detail(tone(hop.state), detail),
+            Shows::Hop(detail) => self.hop_detail(&hop.key, tone(hop.state), detail),
             Shows::Stage(stage) => self.stage_detail(&self.change.stages[*stage]),
         })
     }
 
-    fn hop_detail(&self, tone: Tone, hop: &HopDetail) -> Detail {
+    fn hop_detail(&self, key: &str, tone: Tone, hop: &HopDetail) -> Detail {
         Detail {
             kind: hop.kind.clone().into(),
             title: hop.title.clone().into(),
@@ -129,6 +139,7 @@ impl ChangePage {
                 link: hop.link.as_ref().map(link_lines),
                 unlinked: hop.unlinked.clone().map(Into::into),
             },
+            after: self.section(key),
             actions: self.buttons(&hop.actions),
         }
     }
@@ -199,6 +210,7 @@ impl ChangePage {
                 steps: stage.steps.iter().map(check_line).collect(),
                 analyses: stage.verification.iter().map(check_line).collect(),
             },
+            after: None,
             actions: self.buttons(&[open]),
         }
     }
@@ -290,6 +302,7 @@ impl ChangePage {
     /// The Inspector for the selected hop, or `None` without one.
     pub(super) fn render_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let detail = self.detail.as_ref()?;
+        let after = detail.after.as_ref().map(|section| section.render(cx));
         let inspector = Inspector::new("change-detail")
             .heading(heading(detail, cx))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
@@ -303,6 +316,8 @@ impl ChangePage {
             } => render_hop(inspector, fields, link.as_ref(), unlinked.as_ref(), cx),
             Body::Stage { .. } => render_stage(inspector, &detail.body, cx),
         };
+        // Above the actions, below the hop's fields and link.
+        let inspector = inspector.children(after);
         Some(
             inspector
                 .footer(Some(self.render_actions(&detail.actions, cx)))

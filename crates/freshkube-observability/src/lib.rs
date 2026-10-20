@@ -25,6 +25,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{collections::BTreeMap, rc::Rc};
+mod after;
 mod application;
 mod applications;
 use applications::{columns as application_columns, header as applications_header};
@@ -63,6 +64,9 @@ mod testing;
 mod tests;
 mod traces;
 mod view;
+#[cfg(any(test, feature = "testing"))]
+pub use after::Script;
+pub use after::{After, OutcomeReader, ReadConnection, example as after_example};
 pub use deployments::RevisionLink;
 use model::Application;
 pub use model::Destination;
@@ -119,6 +123,9 @@ pub struct ObservabilityPage {
     secret: Entity<InputState>,
     auth: usize,
     settings_open: bool,
+    /// A change page shows and wants Coroot connected, though this page
+    /// is hidden: the shell's flag, driven by the change page's visibility.
+    wants_change: bool,
     /// What the connection remembers between launches; none in fixture
     /// mode or without a preferences folder.
     memory: Option<remember::Memory>,
@@ -339,6 +346,7 @@ impl ObservabilityPage {
             secret,
             auth: 0,
             settings_open: false,
+            wants_change: false,
             memory: preferences.map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),
