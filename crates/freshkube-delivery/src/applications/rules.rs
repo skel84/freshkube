@@ -322,6 +322,19 @@ pub(super) fn argo(
     projects: &BTreeSet<String>,
 ) -> HashMap<(SessionKey, String, String), ApplicationId> {
     let mut home = HashMap::new();
+    let stages: Vec<(&str, &str)> = inputs
+        .sessions
+        .iter()
+        .flat_map(|session| session.kargo.read().into_iter().flatten())
+        .flat_map(|project| {
+            project
+                .stages
+                .read()
+                .into_iter()
+                .flatten()
+                .map(|stage| (project.name.as_str(), stage.name.as_str()))
+        })
+        .collect();
     for session in &inputs.sessions {
         let sets = session
             .argo_application_sets
@@ -329,9 +342,14 @@ pub(super) fn argo(
             .map_or(&[][..], Vec::as_slice);
         for application in session.argo_applications.read().into_iter().flatten() {
             let naming = inputs.stage_naming.as_ref();
-            let project = projects
-                .iter()
-                .find(|project| application.is_of_project(project, naming));
+            // A name only one Stage fits puts the Application in its project.
+            let by_name = match application.name_only_fits(naming, stages.iter().copied())[..] {
+                [(project, _)] => Some(project),
+                _ => None,
+            };
+            let project = projects.iter().find(|project| {
+                application.is_of_project(project, naming) || by_name == Some(project.as_str())
+            });
             let own_name = application
                 .owner_application_set
                 .as_deref()

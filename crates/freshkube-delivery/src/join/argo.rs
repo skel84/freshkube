@@ -80,6 +80,21 @@ pub(super) fn application_links(
     links
 }
 
+/// Whether a name-only claim ties the Application to a Stage of the project
+/// read, so to the project. Only the one project is read, and one name gives
+/// one Stage of it; the ambiguity of a name that fits Stages of several
+/// projects is for the Applications page, which reads them all.
+fn is_named_for_project(evidence: &Evidence, app: &Application) -> bool {
+    let stages = evidence.kargo.stages.read().map_or(&[][..], Vec::as_slice);
+    !app.name_only_fits(
+        evidence.stage_naming.as_ref(),
+        stages
+            .iter()
+            .map(|stage| (stage.project.as_str(), stage.name.as_str())),
+    )
+    .is_empty()
+}
+
 /// Whether a succeeded Promotion of this Freight to this Stage pushed the very
 /// commit the Application synced. That is a SHA join, and the only thing that
 /// confirms the Application receives this Stage's changes. It stays a claim
@@ -150,7 +165,8 @@ fn stage_application_proof(
             && other
                 .claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
                 .is_none()
-            && other.is_of_project(&stage.project, evidence.stage_naming.as_ref())
+            && (other.is_of_project(&stage.project, evidence.stage_naming.as_ref())
+                || is_named_for_project(evidence, other))
     });
     if let Some(truncation) = evidence.applications.capped() {
         // An Application of another stage at the same commit may be among

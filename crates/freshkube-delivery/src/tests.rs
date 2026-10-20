@@ -54,7 +54,7 @@ pub(super) async fn run_with(
 /// configure.
 pub(super) fn naming() -> StageNaming {
     StageNaming {
-        project_key: "example.test/project".into(),
+        project_key: Some("example.test/project".into()),
         name_template: "app-{project}-in-{stage}".into(),
     }
 }
@@ -1259,6 +1259,110 @@ async fn a_name_that_is_not_the_template_is_not_claimed() {
     assert_eq!(
         one(&trail, Hop::Stage, Hop::Application).confidence,
         Confidence::Unknown
+    );
+}
+
+/// A setup that names no project key: the name template alone.
+fn name_only() -> StageNaming {
+    StageNaming {
+        project_key: None,
+        ..naming()
+    }
+}
+
+/// [`unannotated_application`] without the project it names, as the setup of
+/// the name-only tests has it.
+fn application_without_project() -> serde_json::Value {
+    let mut app = unannotated_application();
+    app["metadata"]["annotations"] = serde_json::json!({});
+    app
+}
+
+async fn stage_application_link(world: &World, naming: Option<StageNaming>) -> super::join::Link {
+    let trail = run_configured(world, &ENV, &FixtureGitHub::default(), None, |plan| {
+        plan.stage_naming = naming
+    })
+    .await;
+    one(&trail, Hop::Stage, Hop::Application).clone()
+}
+
+#[tokio::test]
+async fn a_template_alone_claims_the_stage_by_name_only() {
+    let world = without_rollouts_with(application_without_project());
+    let link = stage_application_link(&world, Some(name_only())).await;
+    // Claimed, never Confirmed, and in words that tell it from a project key's.
+    assert_eq!(link.confidence, Confidence::Claimed, "{link:#?}");
+    assert!(
+        link.reason
+            .contains("matched by the configured name template only"),
+        "{}",
+        link.reason
+    );
+    assert!(!link.reason.contains("under the configured key"));
+}
+
+#[tokio::test]
+async fn the_template_must_match_the_whole_name() {
+    let mut app = application_without_project();
+    app["metadata"]["name"] = serde_json::json!("app-storefront-in-dev-extra");
+    let link = stage_application_link(&without_rollouts_with(app), Some(name_only())).await;
+    assert_eq!(link.confidence, Confidence::Unknown);
+    assert!(link.reason.contains("no Application names this Stage"));
+}
+
+#[tokio::test]
+async fn the_authorized_stage_annotation_still_wins_over_the_name() {
+    let mut app = application_without_project();
+    app["metadata"]["annotations"] =
+        serde_json::json!({"kargo.akuity.io/authorized-stage": "storefront:dev"});
+    app["metadata"]["name"] = serde_json::json!("unrelated");
+    let link = stage_application_link(&without_rollouts_with(app), Some(name_only())).await;
+    assert!(
+        link.reason.starts_with("authorized-stage annotation"),
+        "{}",
+        link.reason
+    );
+}
+
+#[tokio::test]
+async fn an_annotation_for_another_stage_blocks_the_name() {
+    let mut app = application_without_project();
+    app["metadata"]["annotations"] =
+        serde_json::json!({"kargo.akuity.io/authorized-stage": "storefront:prod"});
+    let link = stage_application_link(&without_rollouts_with(app), Some(name_only())).await;
+    assert_eq!(link.confidence, Confidence::Unknown);
+}
+
+#[tokio::test]
+async fn a_set_project_key_is_still_required() {
+    let world = without_rollouts_with(application_without_project());
+    let link = stage_application_link(&world, Some(naming())).await;
+    assert_eq!(link.confidence, Confidence::Unknown);
+}
+
+#[tokio::test]
+async fn a_name_only_sibling_at_the_same_commit_keeps_the_claim_a_claim() {
+    let mut world = promoted(NEW, "Succeeded", PUSHED);
+    // The setup names no project key, and a later stage's Application is
+    // named for its own stage, at the commit the promotion pushed.
+    let mut dev = application_without_project();
+    dev["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    let mut prod = application_without_project();
+    prod["metadata"]["name"] = serde_json::json!("app-storefront-in-prod");
+    prod["status"]["sync"]["revision"] = serde_json::json!(PUSHED);
+    world.argocd = world.argocd.with("applications", vec![dev, prod]);
+    let mut prod_stage = stage(&[]);
+    prod_stage["metadata"]["name"] = serde_json::json!("prod");
+    world.kargo = world
+        .kargo
+        .with("stages", vec![stage_holding("f-new", NEW), prod_stage]);
+    let link = stage_application_link(&world, Some(name_only())).await;
+    assert_eq!(link.confidence, Confidence::Claimed, "{link:#?}");
+    assert!(
+        link.reason
+            .contains("another stage's Application is at it too"),
+        "{}",
+        link.reason
     );
 }
 

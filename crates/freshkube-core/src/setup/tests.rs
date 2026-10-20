@@ -946,3 +946,70 @@ fn results_plain_http_is_only_saved_for_literal_loopback() {
         )));
     }
 }
+
+#[test]
+fn stage_naming_is_a_template_with_an_optional_project_key() {
+    let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
+    // Off when absent.
+    assert_eq!(ok("version: 1\n").delivery, None);
+    let setup = ok(&text("    name_template: '{stage}-{project}'\n"));
+    let naming = setup.delivery.as_ref().unwrap().stage_naming.as_ref();
+    assert_eq!(naming.unwrap().name_template, "{stage}-{project}");
+    assert_eq!(naming.unwrap().project_key, None);
+    let keyed = ok(&text(
+        "    name_template: 'app-{project}-in-{stage}'\n    project_key: example.test/project\n",
+    ));
+    let naming = keyed.delivery.as_ref().unwrap().stage_naming.as_ref();
+    assert_eq!(
+        naming.unwrap().project_key.as_deref(),
+        Some("example.test/project")
+    );
+    let written = to_text(&keyed);
+    assert!(
+        written.contains("project_key: example.test/project"),
+        "{written}"
+    );
+    assert_eq!(ok(&written), keyed);
+    // A setup without it writes nothing for it.
+    assert!(!to_text(&ok("version: 1\n")).contains("delivery"));
+}
+
+#[test]
+fn a_stage_naming_template_without_stage_is_a_fault_of_its_own() {
+    let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
+    assert_eq!(
+        rule(&text("    name_template: 'app-{project}'\n")),
+        "delivery.stage_naming.name_template has no {stage} in it, so it names no Stage"
+    );
+    assert_eq!(
+        rule(&text("    name_template: ''\n")),
+        "delivery.stage_naming.name_template is empty"
+    );
+    assert_eq!(
+        rule(&text("    name_template: '{stage}'\n    project_key: ''\n")),
+        "delivery.stage_naming.project_key is empty"
+    );
+    // The template is required once the block is there.
+    assert!(matches!(
+        refused(&text("    project_key: example.test/project\n")),
+        Invalid::WrongShape(_)
+    ));
+}
+
+#[test]
+fn unknown_keys_under_delivery_are_kept_and_named() {
+    let setup = ok("\
+version: 1
+delivery:
+  delivery_note: 1
+  stage_naming: {name_template: '{stage}', naming_note: 2}
+");
+    assert_eq!(
+        setup.unknown_keys(),
+        [
+            "delivery.delivery_note",
+            "delivery.stage_naming.naming_note"
+        ]
+    );
+    assert_eq!(ok(&to_text(&setup)), setup);
+}

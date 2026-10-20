@@ -24,6 +24,8 @@ pub(crate) const AUTHORIZED_STAGE: &str = "kargo.akuity.io/authorized-stage";
 pub enum StageClaim {
     Annotation,
     NamedByConvention,
+    /// Matched by the name template alone: the setup names no project key.
+    NamedOnly,
 }
 
 impl StageClaim {
@@ -33,6 +35,9 @@ impl StageClaim {
             Self::NamedByConvention => {
                 "named by the configured template, with the Kargo project under the configured key; no authorized-stage annotation"
             }
+            Self::NamedOnly => {
+                "matched by the configured name template only, with no project key and no authorized-stage annotation"
+            }
         }
     }
 }
@@ -41,10 +46,11 @@ impl StageClaim {
 /// Application to a Kargo stage, written by whoever runs the join: an
 /// annotation the setup names (or a label of that key) on the Application,
 /// holding the Kargo project, and a name template using `{project}` and
-/// `{stage}`. Off unless configured.
+/// `{stage}`. Without a key, the name alone ties an Application to a Stage.
+/// Off unless configured.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StageNaming {
-    pub project_key: String,
+    pub project_key: Option<String>,
     pub name_template: String,
 }
 
@@ -528,16 +534,20 @@ impl Application {
     /// The Kargo project under the setup's key: the annotation, else the
     /// label.
     fn named_project(&self, naming: &StageNaming) -> Option<&str> {
+        let key = naming.project_key.as_ref()?;
         self.metadata_annotations
-            .get(&naming.project_key)
-            .or_else(|| self.metadata_labels.get(&naming.project_key))
+            .get(key)
+            .or_else(|| self.metadata_labels.get(key))
             .map(String::as_str)
     }
 
     /// How this Application claims the Kargo stage `project:stage`, if it
     /// does. The annotation names the stage outright. Where `naming` is
-    /// configured, an Application whose annotation names the project and whose
-    /// name is the template's is a weaker claim, reported as such.
+    /// configured with a project key, an Application whose annotation names the
+    /// project and whose name is the template's is a weaker claim, reported as
+    /// such. Without a key, the name alone is weaker still
+    /// ([`StageClaim::NamedOnly`]); a name that fits several Stages is not
+    /// weighed here, see [`Application::name_only_fits`].
     pub fn claims_stage(
         &self,
         project: &str,
@@ -549,15 +559,41 @@ impl Application {
             Some(_) => None,
             None => {
                 let naming = naming?;
-                (self.named_project(naming) == Some(project)
-                    && self.name == naming.name_for(project, stage))
-                .then_some(StageClaim::NamedByConvention)
+                if self.name != naming.name_for(project, stage) {
+                    return None;
+                }
+                match naming.project_key {
+                    Some(_) => (self.named_project(naming) == Some(project))
+                        .then_some(StageClaim::NamedByConvention),
+                    None => Some(StageClaim::NamedOnly),
+                }
             }
         }
     }
 
+    /// The `(project, stage)` pairs among `stages` whose name under the
+    /// template is this Application's, when the claim is by name only: the
+    /// setup names no project key and the Application has no authorized-stage
+    /// annotation. More than one means the name can't tell them apart.
+    pub(crate) fn name_only_fits<'a>(
+        &self,
+        naming: Option<&StageNaming>,
+        stages: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Vec<(&'a str, &'a str)> {
+        match naming {
+            Some(naming) if naming.project_key.is_none() && self.authorized_stage.is_none() => {
+                stages
+                    .into_iter()
+                    .filter(|(project, stage)| self.name == naming.name_for(project, stage))
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Whether the Application is of the Kargo project, by the authorized-stage
-    /// annotation or under the configured key.
+    /// annotation or under the configured key. A name-only template says
+    /// nothing here: see [`Application::name_only_fits`].
     pub fn is_of_project(&self, project: &str, naming: Option<&StageNaming>) -> bool {
         self.authorized_stage
             .as_ref()
@@ -892,6 +928,48 @@ mod tests {
             "status": status,
         }))
         .expect("an Application")
+    }
+
+    fn name_only(template: &str) -> StageNaming {
+        StageNaming {
+            project_key: None,
+            name_template: template.into(),
+        }
+    }
+
+    #[test]
+    fn a_name_only_claim_is_weaker_than_a_named_convention_and_says_so() {
+        let application = app(json!({}), json!({}));
+        let claim = application
+            .claims_stage("shop", "storefront", Some(&name_only("{stage}")))
+            .expect("the name is the template's");
+        // `storefront` is the template for stage `storefront` of any project.
+        assert_eq!(claim, StageClaim::NamedOnly);
+        assert!(claim.describe().contains("name template only"));
+        assert_ne!(claim.describe(), StageClaim::NamedByConvention.describe());
+        assert_eq!(
+            application.claims_stage("shop", "other", Some(&name_only("{stage}"))),
+            None
+        );
+    }
+
+    #[test]
+    fn name_only_fits_lists_every_stage_the_name_could_belong_to() {
+        let application = app(json!({}), json!({}));
+        let stages = [
+            ("shop", "storefront"),
+            ("other", "storefront"),
+            ("shop", "x"),
+        ];
+        let fits = application.name_only_fits(Some(&name_only("{stage}")), stages);
+        assert_eq!(fits, [("shop", "storefront"), ("other", "storefront")]);
+        // A project key makes the claim by convention, not by name only.
+        let keyed = StageNaming {
+            project_key: Some("example.test/project".into()),
+            ..name_only("{stage}")
+        };
+        assert!(application.name_only_fits(Some(&keyed), stages).is_empty());
+        assert!(application.name_only_fits(None, stages).is_empty());
     }
 
     #[test]
