@@ -206,25 +206,27 @@ async fn a_connected_page_keeps_connection_settings_behind_the_sidebar_action(
         });
         window.render_frame(cx);
         assert!(window.try_find("obs-refresh").is_some());
-        assert!(window.try_find("obs-disconnect").is_none());
+        assert!(window.try_find("obs-connect-open-settings").is_none());
         assert!(window.try_find("obs-unmap").is_none());
         assert!(window.try_find("obs-connect-settings").is_none());
         page.update(cx, |page, cx| page.show_connection(cx));
         window.render_frame(cx);
-        assert!(window.try_find("obs-disconnect").is_some());
+        assert!(window.try_find("obs-connect-open-settings").is_some());
         assert!(window.try_find("obs-unmap").is_some());
         window.click("obs-connect-settings", cx);
         window.render_frame(cx);
-        assert!(window.try_find("obs-disconnect").is_none());
+        assert!(window.try_find("obs-connect-open-settings").is_none());
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut TestAppContext) {
+async fn connecting_from_settings_invalidates_the_connection_and_object_links(
+    cx: &mut TestAppContext,
+) {
     cx.executor().allow_parking();
     let (_runtime, handle, page) = mount(cx, false);
-    cx.update_window(handle, |_, window, cx| {
+    cx.update_window(handle, |_, _, cx| {
         page.update(cx, |page, _| {
             let provider =
                 api::Provider::new("http://127.0.0.1:1", api::Credentials::None).unwrap();
@@ -247,47 +249,43 @@ async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut Te
             page.live.visible = false;
             assert!(!page.link_is_current(&source, &app, &subject));
             page.live.visible = true;
-            page.settings_open = true;
         });
-        window.render_frame(cx);
-        window.click("obs-credential", cx);
-        window.input("replacement", cx);
     })
     .unwrap();
-    cx.run_until_parked();
-    cx.update(|cx| {
-        let page = page.read(cx);
-        assert!(page.live.provider.is_none());
-        assert!(page.live.source.is_none());
-        assert!(page.selected_app.is_none());
-        assert_eq!(page.secret.read(cx).value(), "replacement");
-    });
+    // A Connect from Settings drops the old connection and its links at
+    // once, and a failed one says so in Observability's words.
     cx.update_window(handle, |_, window, cx| {
-        window.click("obs-disconnect", cx);
-        assert!(page.read(cx).secret.read(cx).value().is_empty());
-        window.click("obs-credential", cx);
-        window.input("retained-after-failure", cx);
-        window.click("obs-url", cx);
-        window.input("not-a-url", cx);
+        page.update(cx, |page, cx| {
+            page.connect_from_settings("not-a-url", 0, "retained-after-failure".into(), window, cx)
+        });
+        let current = page.read(cx);
+        assert!(current.live.provider.is_none());
+        assert!(current.live.source.is_none());
+        assert!(current.selected_app.is_none());
+        assert_eq!(current.secret.read(cx).value(), "retained-after-failure");
+        assert_eq!(
+            current.connection_state(),
+            crate::ConnectionState::Connecting
+        );
     })
     .unwrap();
-    cx.run_until_parked();
-    cx.update_window(handle, |_, window, cx| window.click("obs-connect", cx))
-        .unwrap();
     let observed = page.clone();
     cx.wait_for_io(handle, move |_, cx| observed.read(cx).live.error.is_some())
         .await;
     cx.update_window(handle, |_, window, cx| {
-        assert!(page.read(cx).live.provider.is_none());
-        assert_eq!(
-            page.read(cx).secret.read(cx).value(),
-            "retained-after-failure"
+        let state = page.read(cx).connection_state();
+        assert!(
+            matches!(state, crate::ConnectionState::Failed(_)),
+            "{state:?}"
         );
-        window.click("obs-disconnect", cx);
-        assert!(page.read(cx).secret.read(cx).value().is_empty());
-        assert!(page.read(cx).live.error.is_none());
-        window.click("obs-credential", cx);
-        window.input("pending-credential", cx);
+        page.update(cx, |page, cx| page.disconnect_from_settings(window, cx));
+        let current = page.read(cx);
+        assert!(current.secret.read(cx).value().is_empty());
+        assert!(current.live.error.is_none());
+        assert_eq!(
+            current.connection_state(),
+            crate::ConnectionState::Disconnected
+        );
     })
     .unwrap();
     cx.run_until_parked();
@@ -307,7 +305,7 @@ async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut Te
         let read = page.read(cx).live.jobs[0].clone();
         let revision = read.borrow().revision();
         assert_eq!(page.read(cx).live.jobs.len(), 1);
-        window.click("obs-disconnect", cx);
+        page.update(cx, |page, cx| page.disconnect_from_settings(window, cx));
         let current = page.read(cx);
         assert!(current.secret.read(cx).value().is_empty());
         assert!(!current.live.connecting);
@@ -315,6 +313,27 @@ async fn editing_credentials_invalidates_connection_and_object_links(cx: &mut Te
         assert!(read.borrow().revision() > revision);
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+async fn a_connect_from_settings_reads_while_the_page_is_hidden(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let (runtime, handle, page) = mount(cx, false);
+    let server = Server::new(&runtime);
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.connect_from_settings(&server.url, 0, "sanitized-key".into(), window, cx)
+        });
+    })
+    .unwrap();
+    settled(cx, handle, &page).await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert!(!page.live.visible);
+        assert!(page.live.provider.is_some(), "{:?}", page.live.error);
+        assert_eq!(page.connection_state(), crate::ConnectionState::Connected);
+    });
 }
 
 #[gpui_kit::test]
@@ -334,9 +353,8 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
     let key_account = account(&server.url);
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        window.click("obs-remember", cx);
         page.update(cx, |page, cx| {
-            assert!(page.memory.as_ref().unwrap().saved.remember);
+            page.memory.as_mut().unwrap().saved.remember = true;
             page.url.update(cx, |input, cx| {
                 input.set_value(server.url.clone(), window, cx)
             });
@@ -507,9 +525,7 @@ async fn a_setup_disconnect_and_connect_save_the_reconnect_preference(cx: &mut T
     cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
         .await;
     cx.update_window(handle, |_, window, cx| {
-        page.update(cx, |page, cx| page.show_connection(cx));
-        window.render_frame(cx);
-        window.click("obs-disconnect", cx);
+        page.update(cx, |page, cx| page.disconnect_from_settings(window, cx));
     })
     .unwrap();
     let preference = |expected: bool| {
@@ -522,7 +538,9 @@ async fn a_setup_disconnect_and_connect_save_the_reconnect_preference(cx: &mut T
     cx.update_window(handle, |_, window, cx| {
         assert!(page.read(cx).live.provider.is_none());
         assert_eq!(page.read(cx).coroot_url(cx), server.url);
-        window.click("obs-connect", cx);
+        page.update(cx, |page, cx| {
+            page.connect_from_settings(&server.url, 2, String::new(), window, cx)
+        });
     })
     .unwrap();
     cx.wait_for_io(handle, |_, cx| {
@@ -552,9 +570,7 @@ async fn a_disconnect_survives_setup_changes_until_an_explicit_connect(cx: &mut 
     cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
         .await;
     cx.update_window(handle, |_, window, cx| {
-        page.update(cx, |page, cx| page.show_connection(cx));
-        window.render_frame(cx);
-        window.click("obs-disconnect", cx);
+        page.update(cx, |page, cx| page.disconnect_from_settings(window, cx));
     })
     .unwrap();
     cx.run_until_parked();
@@ -585,9 +601,10 @@ async fn a_disconnect_survives_setup_changes_until_an_explicit_connect(cx: &mut 
 
     // An explicit Connect can change the choice for the rest of the session.
     cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
         assert_eq!(page.read(cx).coroot_url(cx), second.url);
-        window.click("obs-connect", cx);
+        page.update(cx, |page, cx| {
+            page.connect_from_settings(&second.url, 2, String::new(), window, cx)
+        });
     })
     .unwrap();
     cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
@@ -608,4 +625,42 @@ async fn a_disconnect_survives_setup_changes_until_an_explicit_connect(cx: &mut 
             .is_some_and(|source| source.project() == "p2")
     })
     .await;
+}
+
+#[gpui_kit::test]
+async fn a_key_typed_in_settings_is_kept_even_when_the_connect_fails(cx: &mut TestAppContext) {
+    use super::super::remember::account;
+    use crate::secrets::MemoryStore;
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let store = Arc::new(MemoryStore::default());
+    let (_runtime, handle, page) =
+        super::super::tests::mount_remembering(cx, &preferences, store.clone());
+    // Nothing listens here.
+    let server = "http://127.0.0.1:9";
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.connect_from_settings(server, 0, "  sanitized-key ".into(), window, cx)
+        })
+    })
+    .unwrap();
+    let (saved, name) = (store.clone(), account(server));
+    cx.wait_for_io(handle, move |_, _| {
+        saved.keys.lock().unwrap().contains_key(&name)
+    })
+    .await;
+    assert_eq!(
+        store
+            .keys
+            .lock()
+            .unwrap()
+            .get(&account(server))
+            .map(String::as_str),
+        Some("sanitized-key")
+    );
+    let observed = page.clone();
+    cx.wait_for_io(handle, move |_, cx| observed.read(cx).live.error.is_some())
+        .await;
+    assert!(!directory.path().join("coroot.json").exists());
 }
