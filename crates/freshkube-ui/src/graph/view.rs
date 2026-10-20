@@ -345,6 +345,10 @@ fn render_row<S: GraphSource>(
                 line()
                     .w_full()
                     .child(glyph(edge.tone, cx))
+                    .children(
+                        super::canvas::style_mark(edge.style)
+                            .map(|mark| muted(mark, cx).flex_none()),
+                    )
                     .child(mono(edge.label.clone()).flex_1().truncate()),
             )
             .when(!edge.tooltip.is_empty(), |this| {

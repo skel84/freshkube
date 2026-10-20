@@ -27,6 +27,7 @@ fn invented(nodes: usize, edges: usize) -> (Vec<GraphNode<usize>>, Vec<GraphEdge
             detail: "app-a".into(),
             tone: Some(Tone::Good),
             tooltip: format!("service-{ix:03}").into(),
+            ghost: false,
         })
         .collect();
     let mut seen = std::collections::BTreeSet::new();
@@ -58,6 +59,8 @@ fn invented(nodes: usize, edges: usize) -> (Vec<GraphNode<usize>>, Vec<GraphEdge
             width: 1.1,
             label: format!("service-{from:03} → service-{to:03}").into(),
             tooltip: SharedString::default(),
+            style: EdgeStyle::Auto,
+            pill: None,
         });
     }
     (boxes, calls)
@@ -151,6 +154,8 @@ fn an_unpaged_graph_with_one_caller_of_forty_keeps_them_in_one_column() {
             width: 1.1,
             label: SharedString::default(),
             tooltip: SharedString::default(),
+            style: EdgeStyle::Auto,
+            pill: None,
         })
         .collect();
     let mut state = GraphState::new("map", text()).unpaged();
@@ -265,6 +270,8 @@ struct Map {
     graph: GraphState<usize>,
     split: InspectorSplit,
     opened: Vec<usize>,
+    /// Where the keyboard is, for a graph with keys.
+    cursor: Option<Cursor<usize>>,
     /// Where the split saves its width, as the app's file would.
     sizes: Rc<MemorySizes>,
 }
@@ -287,6 +294,17 @@ impl GraphSource for Map {
     fn open(&mut self, node: &usize, _: &mut Window, cx: &mut Context<Self>) {
         self.opened.push(*node);
         cx.notify();
+    }
+
+    fn cursor(&self) -> Option<Cursor<usize>> {
+        self.cursor.clone()
+    }
+
+    fn step_to(&mut self, cursor: Cursor<usize>, _: &mut Window, _: &mut Context<Self>) {
+        if let Cursor::Link(from, to) = &cursor {
+            self.graph.select(from, to);
+        }
+        self.cursor = Some(cursor);
     }
 
     fn inspector_head(
@@ -376,6 +394,7 @@ fn open_saved(
             graph,
             split: inspector_split(MAP, cx),
             opened: vec![],
+            cursor: None,
             sizes,
         });
         view = Some(map.clone());
@@ -912,6 +931,289 @@ fn a_drag_stops_at_the_graph(cx: &mut TestAppContext) {
         let inspector = window.find("map-inspector").bounds();
         assert_eq!(lead.top(), inspector.top(), "still beside");
         assert!(lead.size.width >= crate::ui::dp_px(graph, window));
+    })
+    .unwrap();
+}
+
+/// A chain with labels and the three line styles, and a side branch:
+///
+/// ```text
+/// 0 → 1 → 2 → 3 → 4      (1 → 5 is the branch, a ghost)
+/// ```
+fn chain() -> GraphState<usize> {
+    let nodes = (0..6)
+        .map(|ix| GraphNode {
+            key: ix,
+            id: format!("map-node-{ix}").into(),
+            label: format!("hop-{ix}").into(),
+            detail: "Detail".into(),
+            tone: Some(if ix == 5 { Tone::Unknown } else { Tone::Good }),
+            tooltip: SharedString::default(),
+            ghost: ix == 5,
+        })
+        .collect();
+    let call = |from: usize, to: usize, style, pill: Option<&str>| GraphEdge {
+        from,
+        to,
+        marker_id: format!("map-edge-{from}--{to}").into(),
+        row_id: format!("map-link-{from}--{to}").into(),
+        tone: None,
+        width: 1.1,
+        label: format!("hop-{from} → hop-{to}").into(),
+        tooltip: SharedString::default(),
+        style,
+        pill: pill.map(Into::into),
+    };
+    let edges = vec![
+        call(0, 1, EdgeStyle::Solid, Some("3f9a1c2")),
+        call(1, 2, EdgeStyle::Dashed, Some("sha256:9")),
+        call(2, 3, EdgeStyle::Dotted, Some("no key")),
+        call(3, 4, EdgeStyle::Solid, Some("a1b2c3d")),
+        call(1, 5, EdgeStyle::Dotted, Some("no key")),
+    ];
+    let mut state = GraphState::new("map", text()).unpaged();
+    state.set(nodes, edges);
+    state
+}
+
+#[test]
+fn a_pill_replaces_the_marker_and_every_call_with_one_is_drawn() {
+    let mut state = chain();
+    assert_eq!(state.markers().count(), 0);
+    assert_eq!(state.display.pills.len(), 5);
+    // Past the marker cap, pills are still all drawn.
+    let (nodes, mut edges) = invented(60, 200);
+    for edge in &mut edges {
+        edge.pill = Some("key".into());
+    }
+    state.set(nodes, edges);
+    assert_eq!(state.display.pills.len(), state.shown().count());
+    assert_eq!(state.markers().count(), 0);
+    // A call with no pill keeps its marker, within the cap.
+    let (nodes, mut edges) = invented(60, 200);
+    edges[0].pill = Some("key".into());
+    state.set(nodes, edges);
+    assert_eq!(state.display.pills.len(), 1);
+    assert_eq!(state.markers().count(), MARKERS);
+}
+
+#[test]
+fn a_chain_keeps_its_side_branch_in_the_column_after_its_anchor() {
+    let state = chain();
+    let at = |key: usize| boxes(&state).into_iter().find(|b| b.0 == key).unwrap();
+    // The branch hangs from hop 1, so it shares hop 2's column.
+    assert_eq!(at(5).1, at(2).1);
+    assert!(at(5).2 != at(2).2);
+    assert!(at(1).1 < at(5).1);
+}
+
+#[test]
+fn the_state_walks_boxes_and_calls_among_what_it_draws() {
+    let state = chain();
+    let mut at = None;
+    let mut seen = vec![];
+    while let Some(next) = state.step(at.as_ref(), Step::Next) {
+        if let Cursor::Node(key) = &next {
+            seen.push(*key);
+        }
+        at = Some(next);
+    }
+    assert_eq!(seen.len(), 6);
+    assert_eq!(&seen[..2], &[0, 1]);
+    // The branch is a column-mate of hop 2.
+    assert!(seen.contains(&5));
+    assert_eq!(
+        state.step(Some(&Cursor::Node(5)), Step::Back),
+        Some(Cursor::Link(1, 5))
+    );
+    assert_eq!(
+        state.step(Some(&Cursor::Link(1, 5)), Step::Back),
+        Some(Cursor::Node(1))
+    );
+}
+
+/// A graph with keys, in a window wide enough to show the whole chain.
+fn open_chain(
+    cx: &mut TestAppContext,
+    width: f32,
+    text: Option<f32>,
+) -> (AnyWindowHandle, Entity<Map>) {
+    cx.update(bind_keys);
+    let graph = cx.update(|cx| chain().with_keys(cx));
+    open(cx, graph, width, text)
+}
+
+#[gpui_kit::test]
+fn a_pill_selects_its_call_and_a_ghost_is_a_box_like_any_other(cx: &mut TestAppContext) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        for edge in map.read(cx).graph.edges().to_vec() {
+            assert!(window.try_find(edge.marker_id.clone()).is_some());
+        }
+        window.click("map-edge-1--2", cx);
+        assert_eq!(map.read(cx).graph.selected(), Some(&(1, 2)));
+        window.click("map-node-5", cx);
+        assert_eq!(map.read(cx).opened, vec![5]);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn arrow_keys_walk_the_chain_and_leave_the_page_alone_without_keys(cx: &mut TestAppContext) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        let focus = map.read(cx).graph.focus_handle().unwrap().clone();
+        window.focus(&focus, cx);
+        window.render_frame(cx);
+        window.press("down", cx);
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Node(0)));
+        window.press("right", cx);
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Link(0, 1)));
+        assert_eq!(map.read(cx).graph.selected(), Some(&(0, 1)));
+        window.press("right", cx);
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Node(1)));
+        window.press("left", cx);
+        window.press("left", cx);
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Node(0)));
+        // The origin has no call into it: the key goes nowhere.
+        window.press("left", cx);
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Node(0)));
+        window.press("down", cx);
+        window.press("down", cx);
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Node(2)));
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_graph_without_keys_ignores_the_arrows(cx: &mut TestAppContext) {
+    cx.update(bind_keys);
+    let (handle, map) = open(cx, chain(), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("down", cx);
+        window.press("right", cx);
+        assert_eq!(map.read(cx).cursor, None);
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_key_scrolls_a_far_box_into_view_at_large_text(cx: &mut TestAppContext) {
+    let (handle, map) = open_chain(cx, 760., Some(20.));
+    cx.update_window(handle, |_, window, cx| {
+        let focus = map.read(cx).graph.focus_handle().unwrap().clone();
+        window.focus(&focus, cx);
+        window.render_frame(cx);
+        let pan = map.read(cx).graph.pan.clone();
+        assert!(pan.bounds().size.width > px(0.));
+        assert_eq!(pan.offset().x, px(0.));
+        // Walk to the last column.
+        for _ in 0..8 {
+            window.press("down", cx);
+            window.render_frame(cx);
+        }
+        let last = map.read(cx).cursor.clone();
+        assert!(matches!(last, Some(Cursor::Node(_))));
+        let view = pan.bounds();
+        assert!(pan.offset().x < px(0.), "the graph scrolled");
+        let node = match last {
+            Some(Cursor::Node(key)) => key,
+            _ => unreachable!(),
+        };
+        let bounds = window.find(format!("map-node-{node}")).bounds();
+        assert!(bounds.left() >= view.left() - px(1.));
+        assert!(bounds.right() <= view.right() + px(1.));
+    })
+    .unwrap();
+}
+
+/// Presses Tab `presses` times from the start and returns, for each press,
+/// whether focus is inside the graph's canvas and whether it is on the
+/// graph itself.
+fn tab_through(
+    map: &Entity<Map>,
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+    presses: usize,
+) -> Vec<(bool, bool)> {
+    let focus = map.read(cx).graph.focus_handle().cloned();
+    (0..presses)
+        .map(|_| {
+            window.focus_next(cx);
+            match &focus {
+                Some(focus) => (focus.contains_focused(window, cx), focus.is_focused(window)),
+                None => (false, false),
+            }
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn a_graph_with_keys_is_one_tab_stop_and_boxes_and_pills_are_not(cx: &mut TestAppContext) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The toolbar's button comes first; the graph is one stop after it.
+        let steps = tab_through(&map, window, cx, 4);
+        let inside: Vec<_> = steps.iter().filter(|s| s.0).collect();
+        assert_eq!(inside.len(), 1, "{steps:?}");
+        assert!(inside[0].1, "the one stop is the graph: {steps:?}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_graph_without_keys_keeps_its_boxes_and_markers_as_tab_stops(cx: &mut TestAppContext) {
+    let (handle, map) = open(cx, chain(), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = window.find("map-problems").focused();
+        window.focus_next(cx);
+        // Tabbing past the toolbar enters the graph's buttons one by one.
+        let moved = (0..4).any(|_| {
+            window.focus_next(cx);
+            window.render_frame(cx);
+            (0..6).any(|ix| window.find(format!("map-node-{ix}")).focused() == Some(true))
+                || (0..5).any(|ix| {
+                    let edge = &map.read(cx).graph.edges()[ix];
+                    window.find(edge.marker_id.clone()).focused() == Some(true)
+                })
+        });
+        assert!(
+            moved,
+            "a box or a pill takes the Tab (problems was {before:?})"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn each_pill_sits_in_its_gutter_and_a_long_key_is_cut_to_fit_at_text_20(cx: &mut TestAppContext) {
+    let mut graph = chain();
+    let (nodes, mut edges) = (graph.nodes().to_vec(), graph.edges().to_vec());
+    edges[1].pill =
+        Some("sha256:9f3a7c1d0b2e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a".into());
+    graph.set(nodes, edges);
+    let graph = cx.update(|cx| graph.with_keys(cx));
+    let (handle, _) = open(cx, graph, 1280., Some(20.));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let unit = crate::ui::dp_px(1., window);
+        for (from, to) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5)] {
+            let pill = window.find(format!("map-edge-{from}--{to}")).bounds();
+            let (a, b) = (
+                window.find(format!("map-node-{from}")).bounds(),
+                window.find(format!("map-node-{to}")).bounds(),
+            );
+            assert!(pill.left() >= a.right(), "{from}->{to} clear of its caller");
+            assert!(pill.right() <= b.left(), "{from}->{to} clear of its callee");
+            assert!(
+                pill.size.width <= unit * 76. + px(1.),
+                "{from}->{to} fits 76 dp"
+            );
+        }
     })
     .unwrap();
 }

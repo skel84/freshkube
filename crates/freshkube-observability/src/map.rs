@@ -1,6 +1,8 @@
 use super::*;
 use freshkube_core::coroot::AppId;
-use freshkube_ui::graph::{GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView};
+use freshkube_ui::graph::{
+    EdgeStyle, GraphEdge, GraphNode, GraphSource, GraphState, GraphText, GraphView,
+};
 use freshkube_ui::inspector::InspectorSplit;
 
 /// The service map's graph state: its page, filter and selection, and what
@@ -31,6 +33,7 @@ impl ObservabilityPage {
                 detail: node.namespace.clone().into(),
                 tone: tone(node.status),
                 tooltip: node.tooltip.clone().into(),
+                ghost: false,
             })
             .collect();
         let edges = self
@@ -45,6 +48,8 @@ impl ObservabilityPage {
                 width: 0.5 + edge.traffic * 0.6,
                 label: edge.label.clone().into(),
                 tooltip: edge.tooltip.clone().into(),
+                style: EdgeStyle::Auto,
+                pill: None,
             })
             .collect();
         self.map_display.set(nodes, edges);
