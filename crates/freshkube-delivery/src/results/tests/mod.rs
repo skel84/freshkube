@@ -29,7 +29,7 @@ fn settings(address: &str) -> Results {
 }
 
 async fn open(settings: Results, store: Arc<MemoryStore>) -> Result<Client, Error> {
-    within(Client::open(Some(&settings), store)).await
+    within(Client::open(Some(&settings), Some(store))).await
 }
 
 async fn client(server: &Server) -> Arc<Client> {
@@ -180,7 +180,7 @@ async fn off_and_not_forwarded_do_no_io() {
     store.unavailable.store(true, Ordering::SeqCst);
     let other = store.clone();
     assert!(matches!(
-        within(async move { Client::open(None, other).await }).await,
+        within(async move { Client::open(None, Some(other)).await }).await,
         Err(Error::Off)
     ));
     let mut forward = Results::default();

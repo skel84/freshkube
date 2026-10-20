@@ -34,9 +34,11 @@ use tokio::time::Instant;
 
 use super::{MAX_AT_ONCE, OPEN};
 use crate::read::{ListRequest, Listing, Reader, Resource, ServedGroup};
+use crate::results::{self, Client as ResultsClient};
 use crate::shared::SharedReader;
 use crate::words;
 use freshkube_core::resources::{Failure, FailureKind};
+use freshkube_core::secrets::Secrets;
 use freshkube_core::workspace::{Chosen, Entry, Part, Sources};
 
 /// How long a destination's entry may take, connecting and reading: room
@@ -367,6 +369,8 @@ pub struct Pool<'a, R, C, F> {
     /// When the read ends, unless it is the workspace of one.
     ends: Option<Instant>,
     budget: Duration,
+    secrets: Option<Secrets>,
+    results: OnceCell<Result<ResultsClient, results::Error>>,
 }
 
 impl<'a, R, C, F, Fut> Pool<'a, R, C, F>
@@ -402,7 +406,36 @@ where
             connecting: Semaphore::new(MAX_AT_ONCE),
             ends: (!alone).then(|| Instant::now() + budget),
             budget,
+            secrets: None,
+            results: OnceCell::new(),
         }
+    }
+
+    /// The address-specific store supplied by the app, never a cluster credential.
+    pub fn with_secrets(mut self, secrets: Option<Secrets>) -> Self {
+        self.secrets = secrets;
+        self
+    }
+
+    /// One Results client per refresh, shared by every followed Freight.
+    pub(crate) async fn results(&self, until: Instant) -> Result<&ResultsClient, results::Error> {
+        if Instant::now() >= until {
+            return Err(results::Error::Unreachable(results::Cause::TimedOut));
+        }
+        let settings = self
+            .sources
+            .get(Part::Builds)
+            .entry()
+            .and_then(|entry| entry.results.as_deref());
+        tokio::time::timeout_at(
+            until,
+            self.results
+                .get_or_init(|| ResultsClient::open(settings, self.secrets.clone())),
+        )
+        .await
+        .map_err(|_| results::Error::Unreachable(results::Cause::TimedOut))?
+        .as_ref()
+        .map_err(Clone::clone)
     }
 
     pub fn sources(&self) -> &Sources {

@@ -2,13 +2,11 @@
 //! used here. The caller owns the read's job, identity and Snapshot; replacing
 //! the client gives it a new identity even if only the key or CA changed.
 //!
-//! Slice 6 connects this client to the build read. Until then nothing in the
-//! application calls it. Logs and the explicit forward belong to later slices.
-#![cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the build read uses Results in slice 6")
-)]
+//! The build read supplements a successful live listing. Archived log
+//! content has a bounded on-demand API; its dock consumer is a later slice.
 
+mod builds;
+mod logs;
 mod records;
 #[cfg(test)]
 mod tests;
@@ -26,6 +24,9 @@ use crate::digest::is_full_sha;
 use crate::read::{MAX_BODY_BYTES, MAX_PAGES, PAGE_LIMIT};
 use crate::tekton::{MOST_TASK_READS, PipelineRun, SHA_LABEL, TaskRun};
 
+pub(crate) use builds::{Archive, History, supplement};
+pub(crate) use logs::Log;
+
 pub(crate) const MOST_RESULT_RUNS: usize = MOST_TASK_READS;
 const MOST_RESULT_TASKS: usize = PAGE_LIMIT as usize * MAX_PAGES as usize;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
@@ -36,6 +37,10 @@ pub(crate) struct Client {
     http: reqwest::Client,
     base: url::Url,
     token: Option<http::HeaderValue>,
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "slice 9 consumes Results identity and freshness")
+    )]
     id: u64,
 }
 
@@ -63,6 +68,7 @@ pub(crate) struct Listing<T> {
 pub(crate) enum Cap {
     Runs,
     Tasks,
+    Logs,
     Pages,
     Bytes,
 }
@@ -72,6 +78,7 @@ impl std::fmt::Display for Cap {
         match self {
             Self::Runs => write!(f, "the {MOST_RESULT_RUNS}-run cap"),
             Self::Tasks => write!(f, "the {MOST_RESULT_TASKS}-task cap"),
+            Self::Logs => write!(f, "the {MOST_RESULT_TASKS}-log cap"),
             Self::Pages => write!(f, "the {MAX_PAGES}-page cap"),
             Self::Bytes => write!(f, "the {} MiB response cap", MAX_BODY_BYTES / (1024 * 1024)),
         }
@@ -80,6 +87,10 @@ impl std::fmt::Display for Cap {
 
 /// Every state in the design, plus an unreadable response/configuration.
 /// Stale is projected from the owner's Snapshot, never cached by the client.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "slice 9 consumes Results identity and freshness")
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum State {
     Off,
@@ -101,6 +112,8 @@ pub(crate) enum Error {
     Off,
     NotForwarded,
     NotInstalled,
+    LogsNotServed,
+    LogMissing,
     Unreachable(Cause),
     Refused { status: u16, token_set: bool },
     Http(u16),
@@ -129,11 +142,16 @@ impl std::fmt::Display for Cause {
 }
 
 impl Error {
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "slice 9 consumes Results identity and freshness")
+    )]
     pub(crate) fn state(&self) -> State {
         match self {
             Self::Off => State::Off,
             Self::NotForwarded => State::NotForwarded,
-            Self::NotInstalled => State::NotInstalled,
+            Self::NotInstalled | Self::LogsNotServed => State::NotInstalled,
+            Self::LogMissing => State::Empty,
             Self::Unreachable(_) => State::Unreachable,
             Self::Refused { .. } => State::Refused,
             Self::Http(_) | Self::Unreadable(_) => State::Unreadable,
@@ -149,6 +167,8 @@ impl std::fmt::Display for Error {
             Self::NotInstalled => {
                 f.write_str("the Tekton Results API isn't installed or served here")
             }
+            Self::LogsNotServed => f.write_str("this Tekton Results doesn't serve logs"),
+            Self::LogMissing => f.write_str("Tekton Results kept no log for this task"),
             Self::Unreachable(cause) => write!(f, "Tekton Results didn't answer: {cause}"),
             Self::Refused { status, token_set } => {
                 write!(f, "Tekton Results refused the request ({status})")?;
@@ -166,6 +186,10 @@ impl std::fmt::Display for Error {
 /// Use an identity containing the client revision and the entire query
 /// (namespace, SHA or result), not just the address. Snapshot owns freshness
 /// and request generation, exactly as it does for ordinary cluster reads.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "slice 9 consumes Results identity and freshness")
+)]
 pub(crate) fn state<T, I: Clone + Eq>(snapshot: &Snapshot<Listing<T>, I, Error>) -> State {
     if snapshot.is_loading() {
         State::Loading
@@ -196,7 +220,10 @@ impl Client {
     /// Opens on an I/O worker, reading only the explicitly selected key store
     /// and CA file. Missing keys allow an anonymous request; store failures do
     /// not silently downgrade authentication. No I/O for Off or NotForwarded.
-    pub(crate) async fn open(settings: Option<&Results>, secrets: Secrets) -> Result<Self, Error> {
+    pub(crate) async fn open(
+        settings: Option<&Results>,
+        secrets: Option<Secrets>,
+    ) -> Result<Self, Error> {
         let settings = settings.ok_or(Error::Off)?;
         let address = match (&settings.address, &settings.forward) {
             (None, Some(_)) => return Err(Error::NotForwarded),
@@ -210,6 +237,9 @@ impl Client {
         let (token, ca) = tokio::task::spawn_blocking(move || {
             let token = if use_token {
                 secrets
+                    .ok_or(Error::Unreadable(
+                        "the key store isn't available to this read",
+                    ))?
                     .read(&account)
                     .map_err(|_| Error::Unreadable("the key store is unavailable"))?
             } else {
@@ -271,6 +301,10 @@ impl Client {
         })
     }
 
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "slice 9 consumes Results identity and freshness")
+    )]
     pub(crate) fn id(&self) -> u64 {
         self.id
     }
@@ -291,7 +325,7 @@ impl Client {
             "(data_type == 'tekton.dev/v1.PipelineRun' || data_type == 'tekton.dev/v1beta1.PipelineRun') && data.metadata.labels['{SHA_LABEL}'] == '{sha}'"
         );
         self.list(
-            &parent,
+            &format!("{parent}/records"),
             &filter,
             MOST_RESULT_RUNS,
             Cap::Runs,
@@ -310,7 +344,7 @@ impl Client {
         let filter =
             "data_type == 'tekton.dev/v1.TaskRun' || data_type == 'tekton.dev/v1beta1.TaskRun'";
         self.list(
-            result,
+            &format!("{result}/records"),
             filter,
             MOST_RESULT_TASKS,
             Cap::Tasks,
