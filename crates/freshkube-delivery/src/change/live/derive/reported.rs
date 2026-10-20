@@ -2,19 +2,14 @@
 
 use super::*;
 
-/// An Application mapped to another workspace cluster that wasn't read.
-pub(super) struct Away<'a> {
-    app: &'a Application,
-    entry: &'a str,
-    /// Why it wasn't read, when its entry was asked; else nothing asked it,
-    /// as the workspace of one asks no other entry.
-    why: Option<&'a str>,
-}
-
 /// The Application `app_id` names and the workspace cluster it is mapped
 /// to, when that is a cluster the workspace lists other than this one, and
 /// nothing was read there.
-pub(super) fn elsewhere<'a>(place: &Place, evidence: &'a Evidence, app_id: &str) -> Option<Away<'a>> {
+pub(super) fn elsewhere<'a>(
+    place: &Place,
+    evidence: &'a Evidence,
+    app_id: &str,
+) -> Option<Away<'a>> {
     let entry = evidence.destination_of(app_id)?;
     if place.is_here(entry) || !place.mapping.lists(entry) {
         return None;
@@ -43,14 +38,6 @@ pub(in super::super) fn reported_on(evidence: &Evidence, context: &str) -> bool 
         })
     })
 }
-
-/// The workload kinds Argo CD may report for an Application, by group.
-const WORKLOADS: [(&str, &str); 4] = [
-    ("argoproj.io", "Rollout"),
-    ("apps", "Deployment"),
-    ("apps", "StatefulSet"),
-    ("apps", "DaemonSet"),
-];
 
 /// The workloads Argo CD reports for an Application on another workspace
 /// cluster, from its `status.resources`: what Argo CD says, since that
@@ -205,4 +192,3 @@ fn reported_hop(
         })),
     }
 }
-
