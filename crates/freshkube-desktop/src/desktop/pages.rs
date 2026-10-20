@@ -356,7 +356,7 @@ impl Pilot {
         if self.applied.context.as_ref() == Some(&context) {
             // Choosing the context again retries one that failed.
             if !self.mode().has_talos() {
-                self.refresh_kubernetes(window, cx);
+                self.refresh_kubernetes(false, window, cx);
             }
             return;
         }

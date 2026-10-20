@@ -473,6 +473,109 @@ fn mount_kubernetes_only(
     mount(cx, options, 1280., 860.)
 }
 
+fn retry_after_kubeconfig_edit(
+    cx: &mut TestAppContext,
+    page: Page,
+    control: &'static str,
+    inspecting: bool,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("kubeconfig");
+    let config = KUBECONFIG.replace("https://127.0.0.1:1", "https://127.0.0.1:9");
+    std::fs::write(&path, &config).unwrap();
+    let (runtime, handle, view) = mount_kubernetes_only(cx, path.clone(), Some("lab"));
+    wait_until(cx, handle, "the refused connection", |window, _| {
+        kubernetes_status(window).starts_with("Couldn't connect to lab: ")
+    });
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |view, cx| view.navigate(page, window, cx));
+    })
+    .unwrap();
+    let retry = if page == Page::Monitoring {
+        "monitoring-retry"
+    } else {
+        "resource-retry"
+    };
+    wait_until(cx, handle, "the page's refused source", |window, _| {
+        window.try_find(retry).is_some()
+    });
+    let old = cx.read(|cx| view.read(cx).source().kube.unwrap().id);
+    // Keep the selected context, despite changing the file's current one,
+    // and make the server edit observable without contacting any cluster.
+    std::fs::write(
+        &path,
+        config
+            .replace("current-context: lab", "current-context: staging")
+            .replace("https://127.0.0.1:9", "https://127.0.0.1:9/edited"),
+    )
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        if inspecting {
+            view.update(cx, |view, cx| view.refresh_kubernetes(false, window, cx));
+        }
+        window.click(control, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    wait_until(
+        cx,
+        handle,
+        "the first action to take up the edit",
+        |window, cx| {
+            (control == retry || view.read(cx).source().kube.unwrap().id != old)
+                && window.try_find(retry).is_some()
+                && kubernetes_status(window).starts_with("Couldn't connect to lab: ")
+        },
+    );
+    cx.read(|cx| {
+        let pilot = view.read(cx);
+        assert_ne!(
+            pilot.source().kube.unwrap().id,
+            old,
+            "{control} must replace access on its first press"
+        );
+        assert_eq!(pilot.applied.context.as_deref(), Some("lab"));
+    });
+    let source = cx.read(|cx| view.read(cx).source().kube.unwrap());
+    let crate::resources::ClusterAccess::Direct(access) = source.access else {
+        panic!("the page must keep direct access");
+    };
+    assert_eq!(
+        access.revision(),
+        freshkube_core::ConfigurationRevision::from_kubeconfig_sources(&[path])
+    );
+    let probe = runtime.spawn(async move { access.connect().await.err().unwrap() });
+    freshkube_ui::real_io::until_io(cx, "the edited source to refuse", |_| probe.is_finished());
+    let error = runtime.block_on(probe).unwrap();
+    assert_ne!(error.kind, freshkube_core::failure::FailureKind::Config);
+    assert!(!error.message.contains("configuration changed"));
+}
+
+#[gpui_kit::test]
+fn monitoring_try_again_takes_up_a_kubeconfig_edit_on_the_first_press(cx: &mut TestAppContext) {
+    retry_after_kubeconfig_edit(cx, Page::Monitoring, "monitoring-retry", false);
+}
+
+#[gpui_kit::test]
+fn monitoring_refresh_takes_up_a_kubeconfig_edit_on_the_first_press(cx: &mut TestAppContext) {
+    retry_after_kubeconfig_edit(cx, Page::Monitoring, "monitoring-refresh", false);
+}
+
+#[gpui_kit::test]
+fn resources_retry_takes_up_a_kubeconfig_edit_on_the_first_press(cx: &mut TestAppContext) {
+    retry_after_kubeconfig_edit(cx, Page::Resources, "resource-retry", false);
+}
+
+#[gpui_kit::test]
+fn resources_refresh_takes_up_a_kubeconfig_edit_on_the_first_press(cx: &mut TestAppContext) {
+    retry_after_kubeconfig_edit(cx, Page::Resources, "resource-refresh", false);
+}
+
+#[gpui_kit::test]
+fn monitoring_retry_joins_a_pending_kubeconfig_inspection(cx: &mut TestAppContext) {
+    retry_after_kubeconfig_edit(cx, Page::Monitoring, "monitoring-retry", true);
+}
+
 #[gpui_kit::test]
 async fn object_metadata_completion_rechecks_access_even_without_an_epoch_change(
     cx: &mut TestAppContext,
