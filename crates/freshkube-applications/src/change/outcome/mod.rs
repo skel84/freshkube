@@ -34,7 +34,9 @@ use gpui_kit::*;
 use super::{ChangePage, Fetch};
 
 pub use example::Kind;
-pub(super) use section::{Act, Section};
+#[cfg(any(test, feature = "testing"))]
+pub(super) use section::Act;
+pub(super) use section::Section;
 
 /// An outcome read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);

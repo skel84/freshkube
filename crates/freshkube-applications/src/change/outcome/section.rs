@@ -110,6 +110,15 @@ impl ChangePage {
             project: link.map(|link| link.project().to_owned()),
             cluster: link.map(|link| link.cluster().to_owned()),
         };
+        // Example data names an invented project and Coroot cluster.
+        let words = match self.outcomes.coroot {
+            Coroot::Example(_) => Words {
+                project: Some("shop-api".into()),
+                cluster: Some(example_cluster(&ask.object.cluster).into()),
+                ..words
+            },
+            _ => words,
+        };
         // What is decided without asking Coroot.
         if let Some(Err((outcome, _))) = plan {
             return Some(banner(&outcome, &words, ask.why.as_deref()));
@@ -129,10 +138,18 @@ impl ChangePage {
     }
 
     fn remembered(&self, memo: &Memo, words: &Words) -> Section {
-        let footer = Some(SharedString::from(format!(
-            "Read from Coroot · {}",
-            clock(memo.read)
-        )));
+        // Said only for what a read answered: an outcome decided without
+        // asking Coroot has nothing to say it read.
+        let answered = !matches!(
+            memo.outcome,
+            api::Outcome::NoConnection
+                | api::Outcome::NotLinked
+                | api::Outcome::NoProjectForEntry
+                | api::Outcome::NotLooked
+                | api::Outcome::NotDeployment
+        );
+        let footer = answered
+            .then(|| SharedString::from(format!("Read from Coroot · {}", clock(memo.read))));
         let mut section = match &memo.after {
             Some(after) => Section {
                 state: State::Found {
@@ -350,6 +367,15 @@ fn act_button(act: Act, cx: &mut Context<ChangePage>) -> AnyElement {
                 })),
         )
         .into_any_element()
+}
+
+/// The Coroot cluster example data says an entry is.
+fn example_cluster(entry: &str) -> &'static str {
+    match entry {
+        "dev-fra" => "cluster-a",
+        "stage-fra" => "cluster-b",
+        _ => "cluster-c",
+    }
 }
 
 fn muted(text: impl Into<SharedString>, cx: &App) -> Div {

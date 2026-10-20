@@ -165,12 +165,12 @@ fn every_outcome_is_its_own_state_with_its_why(cx: &mut TestAppContext) {
         ),
         (
             OutcomeKind::NoApplication,
-            "Coroot lists no application checkout/checkout-api in its cluster.",
+            "Coroot lists no application checkout/checkout-api in cluster-a.",
             None,
         ),
         (
             OutcomeKind::NoProject,
-            "Coroot answered not found for the entry's project.",
+            "Coroot answered not found for project shop-api.",
             Some("change-after-settings"),
         ),
         (
@@ -249,6 +249,20 @@ fn every_outcome_is_its_own_state_with_its_why(cx: &mut TestAppContext) {
         );
         cx.update_window(handle, |_, window, _| {
             assert!(window.find("change-after-banner").visible(), "{kind:?}");
+            // "Read from Coroot" only for what a read answered.
+            let read = !matches!(
+                kind,
+                OutcomeKind::NoConnection
+                    | OutcomeKind::NotLinked
+                    | OutcomeKind::NoProjectForEntry
+                    | OutcomeKind::NotLooked
+                    | OutcomeKind::NotDeployment
+            );
+            assert_eq!(
+                window.try_find("change-after-footer").is_some(),
+                read,
+                "{kind:?}"
+            );
             assert!(
                 window.try_find("change-after-revision").is_none(),
                 "{kind:?}"
@@ -885,4 +899,74 @@ fn the_applications_list_is_reused_while_shown_and_dropped_on_hide(cx: &mut Test
     assert!(!script.dropped(last));
     let pending = script.pending();
     assert!(pending.last().unwrap().1.is_none(), "{pending:?}");
+}
+
+/// Change A from the application's page, then change B from the Changes
+/// list: closing A releases only A's claim, so Coroot stays wanted for B.
+#[gpui_kit::test]
+fn closing_one_change_leaves_the_connection_wanted_for_another(cx: &mut TestAppContext) {
+    use crate::applications::testing::change::ChangeEvent;
+    let (_runtime, handle, view, a) = open(cx);
+    let script = Script::new();
+    go_live(cx, &view, &a, &script, links());
+    assert_eq!(script.wanting(), 1);
+    // B, from the Changes list.
+    cx.update_window(handle, |_, window, cx| {
+        window.press("escape", cx);
+        window.press("escape", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        let applications = view.read(cx).applications().0;
+        applications.update(cx, |page, cx| page.show_changes(window, cx));
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        view.read(cx)
+            .applications()
+            .0
+            .read(cx)
+            .changes_page()
+            .clone()
+            .update(cx, |page, cx| {
+                page.select("checkout/wonky-otter", window, cx)
+            });
+        window.render_frame(cx);
+        window.press("enter", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let b = cx.read(|cx| {
+        view.read(cx)
+            .applications()
+            .0
+            .read(cx)
+            .changes_page()
+            .read(cx)
+            .change_page()
+            .cloned()
+            .expect("change B shows")
+    });
+    assert_ne!(a.entity_id(), b.entity_id());
+    go_live(cx, &view, &b, &script, links());
+    // Close A, as its Back does.
+    cx.update(|cx| a.update(cx, |_, cx| cx.emit(ChangeEvent::Back)));
+    cx.run_until_parked();
+    drop(a);
+    cx.update(|_| {});
+    cx.run_until_parked();
+    assert_eq!(script.wanting(), 1, "B still wants it");
+    assert!(cx.read(|cx| {
+        view.read(cx)
+            .applications()
+            .0
+            .read(cx)
+            .change_page()
+            .is_none()
+    }));
 }

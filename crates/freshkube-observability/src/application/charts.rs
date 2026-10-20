@@ -181,7 +181,8 @@ fn sides_line(
     }
     let split = history.split_at(at);
     let (mut before, mut after) = (Side::default(), Side::default());
-    for series in &history.series {
+    // The threshold is drawn and in the legend with the rest, so it counts.
+    for series in history.series.iter().chain(history.threshold.as_ref()) {
         let (b, a) = series.sides(&split);
         before.add(b, split.before);
         after.add(a, split.after);

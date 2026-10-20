@@ -178,10 +178,13 @@ async fn a_key_that_lands_after_the_page_was_shown_connects_it(cx: &mut TestAppC
         page.update(cx, |page, cx| {
             page.set_visible(false, cx);
             page.set_setup_connection(&Some(connection), true, window, cx);
-            // The key read starts for the change page, and the page is shown
-            // before it lands.
+            // The key read starts for the change page, which then goes away
+            // (hidden or closed) before the key lands, and Observability is
+            // shown: nothing wants the connection and the page is shown, so
+            // the key connects it as a show does.
             page.want_connection(cx.entity_id(), true, cx);
             assert!(page.memory.as_ref().unwrap().reading);
+            page.want_connection(cx.entity_id(), false, cx);
             page.set_visible(true, cx);
         });
     })
