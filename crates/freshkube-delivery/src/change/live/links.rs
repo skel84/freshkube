@@ -52,13 +52,7 @@ pub(super) fn actions(at: &At, evidence: &Evidence, pages: &Pages, link: &Link) 
                 vec![Action::browser("Open in Argo CD", page)]
             })
             .unwrap_or_default(),
-        Joined::PipelineRun => found("PipelineRun")
-            .and_then(|run| {
-                evidence.builds.read()?.iter().find(|build| {
-                    Some(build.run.namespace.as_str()) == run.namespace.as_deref()
-                        && build.run.name == run.name
-                })
-            })
+        Joined::PipelineRun => super::history::build(evidence, link)
             .map(|build| run_actions(at, build))
             .unwrap_or_default(),
         _ => Vec::new(),
@@ -142,6 +136,9 @@ fn pull_request(build: &Build, number: u64) -> Result<Address, String> {
 /// (one still running before any that ended), in the pod it ran in on
 /// this cluster.
 fn logs(at: &At, build: &Build) -> Action {
+    if build.origin == crate::tekton::Origin::Results {
+        return archived_logs(at, build);
+    }
     let with_pod = || build.tasks.iter().filter(|task| task.pod.is_some());
     let task = with_pod()
         .find(|task| task.succeeded.as_deref() == Some("False"))
@@ -181,4 +178,51 @@ fn pod_object(at: &At, namespace: &str, name: &str) -> Object {
         namespace: namespace.into(),
         name: name.into(),
     }
+}
+
+/// Never send an archived pod name to the live cluster's log reader.
+fn archived_logs(at: &At, build: &Build) -> Action {
+    let task = build
+        .tasks
+        .iter()
+        .find(|task| task.succeeded.as_deref() == Some("False"))
+        .or_else(|| {
+            build
+                .tasks
+                .iter()
+                .max_by_key(|task| (task.completed.is_none(), task.completed))
+        });
+    let reason = match build
+        .archive
+        .as_ref()
+        .and_then(|archive| archive.logs.as_ref())
+    {
+        Some(Err(error)) => error.to_string(),
+        Some(Ok(listing)) => {
+            let kept = task
+                .and_then(|task| task.meta.uid.as_deref())
+                .filter(|uid| !uid.is_empty())
+                .and_then(|uid| listing.records.iter().find(|log| log.run.task_uid == uid))
+                .is_some_and(|log| log.run.stored);
+            if kept {
+                "Tekton Results keeps this log; opening it here comes in a later update".into()
+            } else if let Some(cap) = listing.cap {
+                format!("Tekton Results log metadata wasn't fully read: {cap}")
+            } else if let Some(why) = &build.tasks_unread {
+                format!("The run's TaskRuns weren't read: {why}")
+            } else {
+                "Tekton Results kept no log for this task".into()
+            }
+        }
+        None => "Tekton Results log metadata wasn't read".into(),
+    };
+    let action = match task {
+        Some(task) => step_logs(at, task),
+        None => Action::new(Target::Logs {
+            what: "the run".into(),
+            pod: pod_object(at, &build.run.namespace, ""),
+            container: None,
+        }),
+    };
+    action.disabled(reason)
 }

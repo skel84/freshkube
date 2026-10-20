@@ -173,16 +173,45 @@ pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, 
     observed_at: DateTime<Utc>,
     applications: impl Future<Output = Source<Vec<Application>>>,
 ) -> Evidence {
+    upstream_with_history(
+        clusters,
+        plan,
+        observed_at,
+        applications,
+        Err(crate::results::Error::Off),
+        tokio::time::Instant::now(),
+    )
+    .await
+}
+
+/// The same read, with the pool's Results client and the refresh deadline.
+pub(crate) async fn upstream_with_history<K: Reader, A: Reader, T: Reader, G: GitHub>(
+    clusters: &Upstream<'_, K, A, T, G>,
+    plan: &Plan,
+    observed_at: DateTime<Utc>,
+    applications: impl Future<Output = Source<Vec<Application>>>,
+    history: Result<&crate::results::Client, crate::results::Error>,
+    until: tokio::time::Instant,
+) -> Evidence {
     let builds = async {
-        if plan.sha.is_empty() {
+        let live = if plan.sha.is_empty() {
             Source::Unreadable("the Freight names no commit to find its builds by".into())
         } else {
             read_builds(clusters.tekton, plan.build_namespace.as_deref(), &plan.sha).await
-        }
+        };
+        crate::results::supplement(
+            live,
+            history,
+            plan.build_namespace.as_deref(),
+            &plan.sha,
+            until,
+        )
+        .await
     };
     let kargo = read_project(clusters.kargo, &plan.kargo_project);
     // Each part is asked of its own cluster, so none waits on another's.
-    let (builds, kargo, applications) = futures::join!(builds, kargo, applications);
+    let ((builds, build_history), kargo, applications) =
+        futures::join!(builds, kargo, applications);
     let destinations: BTreeMap<String, DestinationMatch> = applications
         .read()
         .map(|apps| {
@@ -213,6 +242,7 @@ pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, 
         map_hint: plan.map_hint.clone(),
         names: plan.names.clone(),
         builds,
+        build_history,
         kargo,
         applications,
         destinations,

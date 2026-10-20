@@ -16,6 +16,7 @@ pub(super) struct Reply {
     pub headers: String,
     pub chunked: bool,
     pub hold: bool,
+    matching: Option<String>,
 }
 
 impl Reply {
@@ -29,7 +30,13 @@ impl Reply {
             headers: String::new(),
             chunked: false,
             hold: false,
+            matching: None,
         }
+    }
+
+    pub fn matching(mut self, request: &str) -> Self {
+        self.matching = Some(request.into());
+        self
     }
 }
 
@@ -119,15 +126,21 @@ async fn serve(
             "unexpectedly long fake-server request"
         );
     }
-    requests
-        .lock()
-        .unwrap()
-        .push(String::from_utf8(request).unwrap());
-    let reply = replies
-        .lock()
-        .unwrap()
-        .pop_front()
-        .unwrap_or_else(|| Reply::raw(500, Vec::new()));
+    let request = String::from_utf8(request).unwrap();
+    let reply = {
+        let mut replies = replies.lock().unwrap();
+        replies
+            .iter()
+            .position(|reply| {
+                reply
+                    .matching
+                    .as_ref()
+                    .is_none_or(|part| request.contains(part))
+            })
+            .and_then(|index| replies.remove(index))
+            .unwrap_or_else(|| Reply::raw(500, Vec::new()))
+    };
+    requests.lock().unwrap().push(request);
     let framing = if reply.chunked {
         "Transfer-Encoding: chunked\r\n".to_owned()
     } else {

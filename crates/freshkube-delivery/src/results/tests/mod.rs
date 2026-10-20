@@ -1,3 +1,5 @@
+mod builds;
+mod logs;
 mod server;
 
 use std::future::Future;

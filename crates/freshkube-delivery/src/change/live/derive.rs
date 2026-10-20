@@ -8,9 +8,9 @@ use chrono::{DateTime, Utc};
 
 use super::super::*;
 use super::gates::{self, Row, instant};
-use super::links;
 use super::pages::Pages;
 use super::{At, Place, Reached};
+use super::{history, links};
 use crate::argocd::{Application, DestinationMatch, ManagedObject};
 use crate::deployments::current_set;
 use crate::join::{self, Confidence, Evidence, Hop as Joined, Key, Link, Workloads, freight_links};
@@ -950,10 +950,7 @@ fn state_of(
     let id = |namespace: &str, name: &str| format!("{namespace}/{name}") == link.subject;
     match link.to {
         Joined::PipelineRun => {
-            let run = evidence
-                .builds
-                .read()
-                .and_then(|builds| builds.iter().find(|b| id(&b.run.namespace, &b.run.name)));
+            let run = history::build(evidence, link);
             match run.map(|build| build.run.succeeded.as_deref()) {
                 Some(Some("True")) => (Healthy, "Succeeded".into()),
                 Some(Some("False")) => (Error, "Failed".into()),
@@ -1109,12 +1106,7 @@ fn time_of(evidence: &Evidence, link: &Link) -> Option<DateTime<Utc>> {
     if link.to != Joined::PipelineRun {
         return None;
     }
-    evidence.builds.read().and_then(|builds| {
-        builds
-            .iter()
-            .find(|build| format!("{}/{}", build.run.namespace, build.run.name) == link.subject)
-            .and_then(|build| instant(build.run.completed.as_deref()))
-    })
+    history::build(evidence, link).and_then(|build| instant(build.run.completed.as_deref()))
 }
 
 /// The row of `link`, one of `run`: the links of its Stage, or none for a
@@ -1226,7 +1218,7 @@ fn link_hop(
         lead: "Not joined.".into(),
         body: sentence(&link.reason),
     });
-    Hop {
+    let mut hop = Hop {
         key,
         group,
         state,
@@ -1256,7 +1248,9 @@ fn link_hop(
             unlinked: None,
             actions,
         })),
-    }
+    };
+    history::decorate(&mut hop, evidence, link, &sides.builds.label);
+    hop
 }
 
 /// Coroot's revision of the workload a link leads to: a Deployment's is
@@ -1463,7 +1457,12 @@ fn freight_hop(
         state,
         name: format!("Freight {title}"),
         detail: into.map_or_else(
-            || format!("Followed from its Stage; {}", unjoined(evidence, freight)),
+            || {
+                format!(
+                    "Followed from its Stage; {}",
+                    unjoined(evidence, freight, &sides.builds.label)
+                )
+            },
             |link| link.reason.clone(),
         ),
         from: sides.kargo.label.clone(),
@@ -1487,7 +1486,7 @@ fn freight_hop(
             unlinked: into.is_none().then(|| {
                 sentence(&format!(
                     "Followed from its Stage: {}",
-                    unjoined(evidence, freight)
+                    unjoined(evidence, freight, &sides.builds.label)
                 ))
             }),
             actions: vec![
@@ -1541,7 +1540,7 @@ fn unread_stages(sides: &Sides, why: &str) -> Hop {
 }
 
 /// Why no build leads to the Freight, when the join made no link into it.
-fn unjoined(evidence: &Evidence, freight: &Freight) -> String {
+fn unjoined(evidence: &Evidence, freight: &Freight, entry: &str) -> String {
     if evidence.sha.is_empty() {
         return "the Freight names no commit or image revision, so no build was looked for".into();
     }
@@ -1553,7 +1552,10 @@ fn unjoined(evidence: &Evidence, freight: &Freight) -> String {
     };
     match &evidence.builds {
         source if source.read().is_some_and(Vec::is_empty) => {
-            format!("no PipelineRun of {from} was found")
+            format!(
+                "no PipelineRun of {from} was found; {}",
+                history::reason(evidence, entry)
+            )
         }
         source if source.read().is_some() => {
             format!("builds of {from} were read, but none was joined to it")
@@ -1667,6 +1669,9 @@ fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached)
                 );
             }
         }
+    }
+    if !evidence.sha.is_empty() {
+        lines.extend(history::missing(evidence, &sides.builds.label));
     }
     lines.dedup();
     lines
