@@ -740,11 +740,7 @@ impl Pilot {
         if self.mode().is_example() {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
-            let source = self.mode.example_source_mut().expect("example source");
-            let context = self.applied.context.as_deref().unwrap_or_default();
-            self.pages.node_workspace.update(cx, |workspace, _| {
-                source.seed_history(context, &mut workspace.load_history);
-            });
+            self.seed_example_history(cx);
             self.refresh(window, cx);
             self.prepare_context_display(window, cx);
             return;

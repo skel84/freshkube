@@ -571,11 +571,7 @@ impl Pilot {
                 .map(|name| (*name).into())
                 .collect();
             self.applied.context = Some(self.contexts[0].clone());
-            let source = self.mode.example_source_mut().expect("example source");
-            let context = self.applied.context.as_deref().unwrap_or_default();
-            self.pages.node_workspace.update(cx, |workspace, _| {
-                source.seed_history(context, &mut workspace.load_history);
-            });
+            self.seed_example_history(cx);
             self.refresh(window, cx);
         } else if kubernetes_only {
             let kube = kubernetes_only::KubernetesOnly::new(kubeconfig_path, kube_context);
@@ -1143,6 +1139,15 @@ impl Pilot {
         if let Some(screen) = self.active_screen(cx) {
             screen.refresh(window, cx);
         }
+    }
+
+    /// Seeds the context's load history from the example source's clock.
+    fn seed_example_history(&mut self, cx: &mut App) {
+        let source = self.mode.example_source_mut().expect("example source");
+        let context = self.applied.context.as_deref().unwrap_or_default();
+        self.pages.node_workspace.update(cx, |workspace, _| {
+            source.seed_history(context, &mut workspace.load_history);
+        });
     }
 
     /// Records per-refresh history once a snapshot for the applied target lands.

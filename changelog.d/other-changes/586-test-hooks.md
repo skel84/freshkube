@@ -1,1 +1,1 @@
-- **Example data:** move simulated overview failures and initial load history into the example source, and observe shell notices through events without test-only fields on the application.
+- **Tests:** the shell's tests read notices, simulated failures and held Talos reads through the example source, not through test-only fields on the application.

@@ -370,11 +370,7 @@ impl Pilot {
             this.remember_connection(window, cx);
             this.invalidate_target(window, cx);
             if this.mode().is_example() {
-                let source = this.mode.example_source_mut().expect("example source");
-                let context = this.applied.context.as_deref().unwrap_or_default();
-                this.pages.node_workspace.update(cx, |workspace, _| {
-                    source.seed_history(context, &mut workspace.load_history);
-                });
+                this.seed_example_history(cx);
             }
             this.refresh(window, cx);
             this.prepare_context_display(window, cx);
