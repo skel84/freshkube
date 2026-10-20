@@ -130,6 +130,16 @@ async fn saved(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<S
     cx.run_until_parked();
 }
 
+async fn reload(cx: &mut TestAppContext, handle: AnyWindowHandle, page: &Entity<SettingsPage>) {
+    cx.update(|cx| {
+        let file = page.read(cx).monitoring.as_ref().unwrap().file.clone();
+        file.update(cx, |file, cx| file.reload(cx)).detach();
+    });
+    cx.wait_for_io(handle, |_, cx| !page.read(cx).setup_refusal)
+        .await;
+    cx.run_until_parked();
+}
+
 #[gpui_kit::test]
 fn monitoring_modes_revert_and_fixture_controls(cx: &mut TestAppContext) {
     let directory = tempfile::tempdir().unwrap();
@@ -324,6 +334,7 @@ async fn monitoring_refuses_broken_and_changed_files_and_revert_reads_the_latest
     });
     let changed = SETUP.replace("port: 9090", "port: 9092");
     std::fs::write(&file, &changed).unwrap();
+    reload(cx, handle, &page).await;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("metrics-save", cx);
@@ -572,6 +583,7 @@ async fn monitoring_url_tokens_save_separately_and_a_refused_file_restores_them(
     assert!(secrets.keys.lock().unwrap().is_empty());
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "version: [");
     std::fs::write(&file, SETUP).unwrap();
+    reload(cx, handle, &page).await;
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("metrics-save", cx);

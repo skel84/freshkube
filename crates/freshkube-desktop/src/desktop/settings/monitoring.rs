@@ -84,6 +84,7 @@ pub(super) struct MonitoringForm {
     forget_token: bool,
     dirty: bool,
     entry_open: Option<String>,
+    entry_in_workspace: bool,
     errors: BTreeMap<Field, String>,
     error: Option<String>,
     read: Loader<(), (Metrics, Option<String>)>,
@@ -371,6 +372,12 @@ impl SettingsPage {
             forget_token: false,
             dirty: false,
             entry_open: pilot.read(cx).source().entry,
+            entry_in_workspace: pilot
+                .read(cx)
+                .source()
+                .entry
+                .as_ref()
+                .is_some_and(|id| self.workspace.clusters.iter().any(|entry| &entry.id == id)),
             errors: BTreeMap::new(),
             error: None,
             read: Loader::default(),
@@ -437,6 +444,9 @@ impl SettingsPage {
                 identity = next;
                 if let Some(draft) = &mut page.monitoring {
                     draft.entry_open = identity.1.clone();
+                    draft.entry_in_workspace = draft.entry_open.as_ref().is_some_and(|id| {
+                        page.workspace.clusters.iter().any(|entry| &entry.id == id)
+                    });
                     draft.read.reset();
                     draft.outcome = None;
                     draft
@@ -459,6 +469,11 @@ impl SettingsPage {
                     return;
                 };
                 let model = file.read(cx);
+                if let Some(setup) = &model.setup {
+                    draft.entry_in_workspace = draft.entry_open.as_ref().is_some_and(|id| {
+                        setup.workspace.clusters.iter().any(|entry| &entry.id == id)
+                    });
+                }
                 if draft.dirty && model.seen != draft.seen && draft.saving.is_none() {
                     draft.error = Some(crate::setup_file::SaveError::Changed.to_string());
                 }
@@ -561,6 +576,12 @@ impl SettingsPage {
                 .as_ref()
                 .is_none_or(|d| !d.dirty || d.saving.is_some())
         {
+            return;
+        }
+        if !self.editable() {
+            let why = self.why_not_editable().to_owned();
+            self.monitoring.as_mut().unwrap().error = Some(why);
+            cx.notify();
             return;
         }
         let Some(metrics) = self.validate_monitoring(true, None, window, cx) else {
@@ -672,6 +693,19 @@ impl SettingsPage {
             .clone()
             .unwrap_or_else(|| Setup::new(self.workspace.clone()));
         setup.metrics = metrics.clone();
+        if !setup
+            .workspace
+            .clusters
+            .iter()
+            .any(|defined| defined.id == entry)
+        {
+            draft.outcome = Some((
+                ui::Tone::Unknown,
+                "Unknown · The open context isn’t a workspace entry.".into(),
+            ));
+            cx.notify();
+            return;
+        }
         let resolved = draft
             .page
             .read(cx)
@@ -777,7 +811,7 @@ impl SettingsPage {
             .flex_none();
         if let Some(draft) = &self.monitoring {
             content = content.child(self.render_metrics(draft, narrow, cx));
-            let in_workspace = draft.entry_open.is_some();
+            let in_workspace = draft.entry_in_workspace;
             content = content.child(if in_workspace || self.origin == super::Origin::Example {
                 form::group("monitoring-this-context", "This context")
                     .narrow(narrow)
@@ -914,6 +948,7 @@ impl SettingsPage {
                     "metrics-token-row",
                     "Token",
                     form::secret("metrics-token", secret, cx)
+                        .store_name(STORE_NAME)
                         .on_replace(cx.listener(|page, _, _, cx| {
                             page.monitoring_edit(|d| d.replacing_token = true, cx)
                         }))
@@ -1053,6 +1088,8 @@ impl SettingsPage {
                 )
                 .hint(if example {
                     "Example data isn’t saved"
+                } else if !self.editable() {
+                    self.why_not_editable()
                 } else {
                     "Choose where workspace entries read their metrics."
                 }),
@@ -1123,7 +1160,7 @@ impl SettingsPage {
                     "Save",
                     cx.listener(|page, _, window, cx| page.save_monitoring(window, cx)),
                 )
-                .disabled(example || !draft.dirty || saving),
+                .disabled(!self.editable() || !draft.dirty || saving),
                 form::Action::new(
                     "metrics-revert",
                     "Revert",
