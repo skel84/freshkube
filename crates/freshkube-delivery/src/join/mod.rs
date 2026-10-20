@@ -38,6 +38,7 @@ use super::github::PullRequest;
 use super::kargo::{Freight, KargoRead};
 use super::observation::{Fact, Observation};
 use super::pods::RunningImage;
+use super::rekor::LogRead;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
 use super::tekton::{Build, CommitNames, EvidenceResult};
@@ -167,6 +168,13 @@ impl Link {
     }
 }
 
+/// What a signature is checked against, and what the transparency log said:
+/// the evidence's, handed to the links that can confirm.
+pub(crate) struct Proof<'a> {
+    pub(super) trust: &'a Trust,
+    pub(super) log: &'a LogRead,
+}
+
 /// Everything read for one change, each part with its own outcome.
 pub struct Evidence {
     pub sha: String,
@@ -181,6 +189,8 @@ pub struct Evidence {
     /// What signatures are verified against. [`Trust::Unset`] verifies
     /// nothing.
     pub(crate) trust: Trust,
+    /// What the transparency log said, when the person turned it on.
+    pub(crate) log: LogRead,
     /// Parameter and result names, besides upstream's, that name a build's
     /// commit.
     pub commit_names: CommitNames,
@@ -209,6 +219,14 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// What signatures are checked against, for the links that can confirm.
+    pub(super) fn proof(&self) -> Proof<'_> {
+        Proof {
+            trust: &self.trust,
+            log: &self.log,
+        }
+    }
+
     /// How a context is named in words: the name given for its key, else
     /// the key itself, which a kubeconfig context or a workspace entry is.
     pub fn name<'a>(&'a self, context: &'a str) -> &'a str {
@@ -700,12 +718,12 @@ pub fn join(evidence: &Evidence) -> Trail {
                 ));
             }
             for build in builds {
-                links.push(commit_link(sha, build, names, &evidence.trust));
+                links.push(commit_link(sha, build, names, &evidence.proof()));
                 links.extend(supply_chain_links(
                     build,
                     evidence.evidence_result.as_ref(),
                     names,
-                    &evidence.trust,
+                    &evidence.proof(),
                 ));
             }
             builds

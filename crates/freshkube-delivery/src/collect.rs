@@ -30,6 +30,7 @@ use super::join::{
 use super::kargo::read_project;
 use super::pods::{read_deployment_pods, read_namespace_pods, read_rollout_pods};
 use super::read::Reader;
+use super::rekor::LogRead;
 use super::rollouts::{
     AnalysisRun, ReplicaSet, Rollout, read_analysis_runs, read_replica_sets, read_rollouts,
 };
@@ -216,6 +217,7 @@ pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, 
             .public_key_file
             .as_deref()
             .map_or(Trust::Unset, Trust::from_key_file),
+        log: LogRead::Off,
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
         map_hint: plan.map_hint.clone(),

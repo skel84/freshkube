@@ -7,11 +7,14 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 
+use super::collect::{Clusters, collect};
 use super::fixtures::*;
+use super::join::join;
 use super::join::{Confidence, Hop, Link, Trail};
 use super::observation::Fact;
 use super::provenance::stands_on;
-use super::tests::{ENV, one, run_configured};
+use super::rekor::{LogRead, Outcome};
+use super::tests::{ENV, observed_at, one, plan, run_configured};
 use super::verify::tests::{signed_envelope, signing_key_pem, statement_with, subject};
 
 const RUN_KEY: &str = "pipelinerun-7c1f0c52-0000-4000-8000-000000000002";
@@ -268,4 +271,97 @@ async fn a_provenance_that_does_not_verify_is_not_a_witness() {
         one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
         Confidence::Claimed
     );
+}
+
+/// The trail of the verified world with the transparency log switched on and
+/// `outcome` its answer for the run's attestation.
+async fn trail_with_log(log: impl FnOnce(super::rekor::EntryKey) -> LogRead) -> Trail {
+    let world = signed(&provenance(NEW, SHA));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cosign.pub");
+    std::fs::write(&path, signing_key_pem()).unwrap();
+    let github = FixtureGitHub::default();
+    let clusters = Clusters {
+        kargo: &world.kargo,
+        argocd: &world.argocd,
+        tekton: &world.tekton,
+        environment: &world.environment,
+        github: &github,
+    };
+    let mut plan = plan(&ENV);
+    plan.public_key_file = Some(path);
+    let mut evidence = collect(&clusters, &plan, observed_at()).await;
+    let key = (
+        Some("acme-builds".to_owned()),
+        "storefront-push-x".to_owned(),
+        RUN_KEY.to_owned(),
+    );
+    evidence.log = log(key);
+    join(&evidence)
+}
+
+fn answered(outcome: Outcome) -> impl FnOnce(super::rekor::EntryKey) -> LogRead {
+    move |key| LogRead::Read([(key, outcome)].into())
+}
+
+#[tokio::test]
+async fn with_the_log_off_confirmation_does_not_wait_for_it() {
+    let trail = trail_with_log(|_| LogRead::Off).await;
+    let link = supply(&trail);
+    assert_eq!(link.confidence, Confidence::Confirmed, "{}", link.reason);
+    assert!(link.reason.contains("transparency log not read (off)"));
+}
+
+#[tokio::test]
+async fn with_the_log_on_a_matching_entry_confirms() {
+    let trail = trail_with_log(answered(Outcome::Matches { index: 42 })).await;
+    let link = supply(&trail);
+    assert_eq!(link.confidence, Confidence::Confirmed, "{}", link.reason);
+    assert!(link.reason.contains("as entry 42"));
+    assert!(link.reason.contains("log's own signature was not checked"));
+    assert_eq!(
+        one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
+        Confidence::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn with_the_log_on_anything_but_a_matching_entry_is_a_claim() {
+    for (outcome, words) in [
+        (Outcome::NotInLog { index: 42 }, "has no entry 42"),
+        (
+            Outcome::Differs {
+                index: 42,
+                why: "it holds another signature or key",
+            },
+            "differs",
+        ),
+        (Outcome::NoIndex, "names no transparency log entry"),
+        (Outcome::Unreachable("timed out".into()), "didn't answer"),
+        (Outcome::Refused("it answered 403".into()), "refused"),
+    ] {
+        let trail = trail_with_log(answered(outcome.clone())).await;
+        let link = supply(&trail);
+        assert_eq!(link.confidence, Confidence::Claimed, "{outcome:?}");
+        assert!(link.reason.contains(words), "{outcome:?}: {}", link.reason);
+        // The signature still verified, so what it signs stays reported; and
+        // the commit it names is no witness without the log.
+        assert!(link.reason.contains("signature verifies with key"));
+        assert_eq!(
+            one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
+            Confidence::Claimed,
+            "{outcome:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn with_the_log_on_but_unknown_or_unasked_nothing_confirms() {
+    for log in [
+        LogRead::NoUrl("chains-config was refused (403)".into()),
+        LogRead::Read(Default::default()),
+    ] {
+        let trail = trail_with_log(move |_| log).await;
+        assert_eq!(never_confirmed(&trail, "no log read"), Confidence::Claimed);
+    }
 }
