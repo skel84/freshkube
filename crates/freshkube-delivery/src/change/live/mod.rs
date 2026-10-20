@@ -83,6 +83,9 @@ pub struct Place {
     /// The namespace the builds run in, from the same setup. A build is
     /// searched for by image digest only in it.
     pub build_namespace: Option<String>,
+    /// How an Application with no authorized-stage annotation names its
+    /// Stage, from the same setup.
+    pub stage_naming: Option<freshkube_core::setup::StageNaming>,
 }
 
 impl Place {
@@ -680,7 +683,7 @@ fn plan(place: &Place, freight: &Freight) -> Plan {
         transparency_log: false,
         transparency_url: None,
         commit_names: Default::default(),
-        stage_naming: None,
+        stage_naming: place.stage_naming.as_ref().map(Into::into),
         map_hint: match place.mapping.settings {
             true => MapHint::Settings {
                 listed: place.mapping.entries.clone(),

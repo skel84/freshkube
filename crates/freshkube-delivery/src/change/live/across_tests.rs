@@ -77,6 +77,7 @@ fn place(workspace: &Workspace) -> Place {
         public_key_file: None,
         evidence_result: None,
         build_namespace: None,
+        stage_naming: None,
     }
 }
 
@@ -618,6 +619,7 @@ async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
         public_key_file: None,
         evidence_result: None,
         build_namespace: None,
+        stage_naming: None,
     };
     let world = || {
         let mut world = on_deployment_at(ENV, |_| {});

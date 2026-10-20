@@ -218,6 +218,16 @@ pub(super) fn delivery(delivery: &Delivery) -> Result<(), Fault> {
         non_empty(namespace, "delivery.build_namespace".into())?;
         namespace_name(namespace, "delivery.build_namespace".into())?;
     }
+    if let Some(naming) = &delivery.stage_naming {
+        let at = "delivery.stage_naming";
+        non_empty(&naming.name_template, format!("{at}.name_template"))?;
+        if !naming.name_template.contains("{stage}") {
+            return Err(Fault::TemplateWithoutStage(format!("{at}.name_template")));
+        }
+        if let Some(key) = &naming.project_key {
+            non_empty(key, format!("{at}.project_key"))?;
+        }
+    }
     Ok(())
 }
 

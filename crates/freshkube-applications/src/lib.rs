@@ -291,6 +291,7 @@ pub struct ApplicationsPage {
     public_key_file: Option<std::path::PathBuf>,
     evidence_result: Option<freshkube_core::setup::Evidence>,
     build_namespace: Option<String>,
+    stage_naming: Option<freshkube_core::setup::StageNaming>,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
@@ -415,6 +416,7 @@ impl ApplicationsPage {
             public_key_file: None,
             evidence_result: None,
             build_namespace: None,
+            stage_naming: None,
             source: None,
             visible: false,
             variant,
@@ -561,12 +563,19 @@ impl ApplicationsPage {
             .delivery
             .as_ref()
             .and_then(|delivery| delivery.build_namespace.clone());
+        let naming = setup
+            .delivery
+            .as_ref()
+            .and_then(|delivery| delivery.stage_naming.clone());
+        let naming_changed = naming != self.stage_naming;
+        self.stage_naming = naming;
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| {
                 page.reload_setup(
                     self.public_key_file.clone(),
                     self.evidence_result.clone(),
                     self.build_namespace.clone(),
+                    self.stage_naming.clone(),
                     cx,
                 )
             });
@@ -576,9 +585,21 @@ impl ApplicationsPage {
                 self.public_key_file.clone(),
                 self.evidence_result.clone(),
                 self.build_namespace.clone(),
+                self.stage_naming.clone(),
                 cx,
             )
         });
+        // The list derives its Applications' projects from the naming.
+        let live = self
+            .source
+            .as_ref()
+            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example(_)));
+        if naming_changed && live {
+            self.loader.expire();
+            if self.visible {
+                self.read(cx);
+            }
+        }
     }
 
     /// Where the change pages get what Coroot found after a deploy: the
@@ -629,6 +650,7 @@ impl ApplicationsPage {
             public_key_file: self.public_key_file.clone(),
             evidence_result: self.evidence_result.clone(),
             build_namespace: self.build_namespace.clone(),
+            stage_naming: self.stage_naming.clone(),
         }
     }
 
@@ -779,6 +801,7 @@ impl ApplicationsPage {
                 let sources = self.clusters.sources.clone();
                 let kubeconfig = self.clusters.kubeconfig.clone();
                 let destinations = self.clusters.mapping.destinations.clone();
+                let stage_naming = self.stage_naming.as_ref().map(Into::into);
                 let unmapped = unmapped(&sources, &destinations, &self.clusters.entries);
                 let entry = self.entry.clone();
                 let (job, receiver) = backend::spawn_job(
@@ -807,7 +830,7 @@ impl ApplicationsPage {
                         .await;
                         let inputs = Inputs {
                             sessions,
-                            stage_naming: None,
+                            stage_naming,
                             destinations,
                         };
                         Ok(Read {

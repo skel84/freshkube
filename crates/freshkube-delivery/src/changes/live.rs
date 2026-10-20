@@ -61,6 +61,9 @@ pub struct Where {
     pub evidence_result: Option<freshkube_core::setup::Evidence>,
     /// The namespace the builds run in, from the same setup.
     pub build_namespace: Option<String>,
+    /// How an Application with no authorized-stage annotation names its
+    /// Stage, from the same setup.
+    pub stage_naming: Option<freshkube_core::setup::StageNaming>,
 }
 
 impl Where {
@@ -269,6 +272,7 @@ where
                 public_key_file: at.public_key_file.clone(),
                 evidence_result: at.evidence_result.clone(),
                 build_namespace: at.build_namespace.clone(),
+                stage_naming: at.stage_naming.clone(),
             };
             (place, listed)
         })

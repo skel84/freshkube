@@ -290,6 +290,10 @@ impl Coroot {
 /// How delivery reads the setup's builds, Applications and Kargo Stages.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
+    /// How an Application with no authorized-stage annotation names its
+    /// Stage; off when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_naming: Option<StageNaming>,
     /// The namespace the builds run in. A build is searched for by its image
     /// digest only in a namespace named here; without it only a commit finds
     /// a build.
@@ -297,6 +301,39 @@ pub struct Delivery {
     pub build_namespace: Option<String>,
     #[serde(flatten)]
     pub(super) extra: Extra,
+}
+
+impl Delivery {
+    pub fn naming(stage_naming: StageNaming) -> Self {
+        Self {
+            stage_naming: Some(stage_naming),
+            ..Self::default()
+        }
+    }
+}
+
+/// A name template tying an Application to a Kargo Stage.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StageNaming {
+    /// The Application's name, with `{stage}` and optionally `{project}`
+    /// standing for the Stage's names.
+    pub name_template: String,
+    /// The annotation or label of an Application that holds its Kargo
+    /// project. Without it the name alone makes the claim, a weaker one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_key: Option<String>,
+    #[serde(flatten)]
+    pub(super) extra: Extra,
+}
+
+impl StageNaming {
+    pub fn new(name_template: impl Into<String>) -> Self {
+        Self {
+            name_template: name_template.into(),
+            project_key: None,
+            extra: Extra::default(),
+        }
+    }
 }
 
 /// The supply chain's trust.

@@ -35,7 +35,7 @@ mod validate;
 pub use migrate::{Kept, Outcome, migrate};
 pub use types::{
     Coroot, DEFAULT_LABEL, Delivery, EntryCoroot, EntryMetrics, Evidence, Forward, KeysJson,
-    Metrics, MetricsService, Mode, Results, SignIn, Source, Store, SupplyChain,
+    Metrics, MetricsService, Mode, Results, SignIn, Source, StageNaming, Store, SupplyChain,
 };
 
 /// The comment every written file starts with.
@@ -69,7 +69,8 @@ pub struct Setup {
     pub coroot: Option<Coroot>,
     /// The supply chain's trust; `None` verifies no signature.
     pub supply_chain: Option<SupplyChain>,
-    /// How delivery reads builds; `None` is the defaults.
+    /// How delivery reads builds and ties Applications to Stages; `None` is the
+    /// defaults.
     pub delivery: Option<Delivery>,
     /// Keys this version doesn't know, written back as they were read.
     extra: Extra,
@@ -112,6 +113,8 @@ pub enum Fault {
     },
     LabelName(String),
     Pointer(String),
+    /// A name template that has no `{stage}` in it, so it names no Stage.
+    TemplateWithoutStage(String),
     CentralWithoutStore,
     /// `coroot` sets both `key` and `api_key_file`.
     KeyTwice,
@@ -141,6 +144,9 @@ impl std::fmt::Display for Fault {
             Fault::Only { at, with } => write!(f, "{at} only goes with {with}"),
             Fault::LabelName(at) => write!(f, "{at} isn’t a Prometheus label name"),
             Fault::Pointer(at) => write!(f, "{at} isn’t a JSON pointer, which starts with /"),
+            Fault::TemplateWithoutStage(at) => {
+                write!(f, "{at} has no {{stage}} in it, so it names no Stage")
+            }
             Fault::CentralWithoutStore => {
                 f.write_str("metrics.mode is central, and metrics.store is missing")
             }
@@ -302,6 +308,9 @@ impl Setup {
         }
         if let Some(delivery) = &self.delivery {
             named(&mut keys, "delivery", &delivery.extra);
+            if let Some(naming) = &delivery.stage_naming {
+                named(&mut keys, "delivery.stage_naming", &naming.extra);
+            }
         }
         for entry in &self.workspace.clusters {
             entry_keys(&mut keys, entry);

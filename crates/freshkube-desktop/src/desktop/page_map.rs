@@ -404,6 +404,7 @@ mod tests {
                         public_key_file: None,
                         evidence_result: None,
                         build_namespace: None,
+                        stage_naming: None,
                     }),
                 };
             });
