@@ -41,12 +41,18 @@ impl Pilot {
         let pilot = cx.weak_entity();
         window.open_dialog(cx, move |dialog, window, cx| {
             let busy = pilot.upgrade().is_some_and(|pilot| pilot.read(cx).settings_page.read(cx).unsaved_save_in_progress());
-            let (save, discard, stay, cancel) =
-                (pilot.clone(), pilot.clone(), pilot.clone(), pilot.clone());
+            let (save, discard, stay, cancel, enter) =
+                (pilot.clone(), pilot.clone(), pilot.clone(), pilot.clone(), pilot.clone());
             dialog
                 .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
                 .title(format!("Save changes to {}?", section.label()))
                 .overlay_closable(false)
+                .on_ok(move |_, window, cx| {
+                    _ = enter.update(cx, |pilot, cx| pilot.save_settings_leave(window, cx));
+                    // The shared save handler closes before validation, so a
+                    // failing field can take focus in the section.
+                    false
+                })
                 .on_cancel(move |_, _, cx| {
                     _ = cancel.update(cx, |pilot, _| pilot.navigation.settings_leave = None);
                     true
@@ -63,14 +69,7 @@ impl Pilot {
                         .child("Save your changes before leaving this section, discard them, or stay to keep editing.")
                         .child(form::actions(
                             form::Action::new("settings-unsaved-save", "Save", move |_, window, cx| {
-                                window.close_dialog(cx);
-                                _ = save.update(cx, |pilot, cx| {
-                                    if let Some(leave) = &mut pilot.navigation.settings_leave {
-                                        leave.saving = true;
-                                    }
-                                    pilot.settings_page.update(cx, |page, cx| page.save_unsaved(window, cx));
-                                    pilot.finish_settings_leave(window, cx);
-                                });
+                                _ = save.update(cx, |pilot, cx| pilot.save_settings_leave(window, cx));
                             }).disabled(busy),
                             form::Action::new("settings-unsaved-stay", "Stay", move |_, window, cx| {
                                 window.close_dialog(cx);
@@ -92,6 +91,20 @@ impl Pilot {
         // Kit remembers the previous focus on open, so move it afterwards.
         window.focus(&focus, cx);
         true
+    }
+
+    fn save_settings_leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_page.read(cx).unsaved_save_in_progress() {
+            return;
+        }
+        let Some(leave) = &mut self.navigation.settings_leave else {
+            return;
+        };
+        leave.saving = true;
+        window.close_dialog(cx);
+        self.settings_page
+            .update(cx, |page, cx| page.save_unsaved(window, cx));
+        self.finish_settings_leave(window, cx);
     }
 
     /// Called on section notifications and immediately after Save, including

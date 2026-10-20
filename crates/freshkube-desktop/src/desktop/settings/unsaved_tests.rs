@@ -126,7 +126,11 @@ async fn choices(cx: &mut TestAppContext, section: SettingsSection) {
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
                 assert!(window.find("settings-unsaved-dialog").visible());
-                window.click(format!("settings-unsaved-{choice}"), cx);
+                if matches!(route, Route::Shortcut) && choice == "save" {
+                    window.press("enter", cx);
+                } else {
+                    window.click(format!("settings-unsaved-{choice}"), cx);
+                }
             })
             .unwrap();
             cx.run_until_parked();
