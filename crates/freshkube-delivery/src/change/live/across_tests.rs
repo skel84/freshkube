@@ -699,6 +699,12 @@ async fn each_reported_workload_keeps_its_own_unread_pods() {
             &workload.key,
             "Couldn't reach env-c: connection refused",
         );
+        assert_eq!(pods[0].detail.matches("env-c").count(), 1);
+        let super::super::Shows::Hop(detail) = &pods[0].shows else {
+            panic!("Pods detail");
+        };
+        assert!(detail.notice.as_ref().unwrap().body.ends_with('.'));
+        assert!(detail.link.as_ref().unwrap().why.ends_with('.'));
     }
     let mut keys: Vec<_> = change.hops.iter().map(|hop| &hop.key).collect();
     keys.sort();
@@ -721,4 +727,56 @@ async fn an_unreachable_destination_with_no_reported_workload_adds_no_pods_place
     .await
     .unwrap();
     assert!(!change.hops.iter().any(|hop| hop.key.contains("-reported-")));
+    assert!(
+        !change.hops.iter().any(|hop| matches!(&hop.shows,
+            super::super::Shows::Hop(detail) if detail.kind == "Pods"
+        )),
+        "no Pods hop belongs anywhere in this trail"
+    );
+}
+
+#[tokio::test]
+async fn reported_missing_workloads_have_no_unread_pods() {
+    let change = read_across(&workspace(), |world| {
+        let mut app = application(Some(ENV));
+        app["status"]["resources"] = json!([
+            {"group":"apps", "kind":"Deployment", "namespace":"shop", "name":"absent", "health":{"status":"Missing"}},
+            {"group":"argoproj.io", "kind":"Rollout", "namespace":"shop", "name":"absent", "health":{"status":"Missing"}},
+            {"group":"apps", "kind":"StatefulSet", "namespace":"shop", "name":"absent", "health":{"status":"Missing"}},
+            {"group":"apps", "kind":"DaemonSet", "namespace":"shop", "name":"absent", "health":{"status":"Missing"}},
+            {"group":"apps", "kind":"Deployment", "namespace":"shop", "name":"present", "health":{"status":"Healthy"}}
+        ]);
+        world.argocd = std::mem::take(&mut world.argocd).with("applications", vec![app]);
+    }, &["env-c"]).await.unwrap();
+    let reported: Vec<_> = change
+        .hops
+        .iter()
+        .filter(|hop| hop.after.as_deref() == Some("dev-argocd-0"))
+        .collect();
+    assert_eq!(
+        reported.len(),
+        5,
+        "all four Missing workload reports remain beside the existing one"
+    );
+    for workload in reported {
+        let present = workload.name == "Deployment present";
+        assert_eq!(workload.link, Some(Confidence::Claimed));
+        let pods: Vec<_> = change
+            .hops
+            .iter()
+            .filter(|hop| hop.after.as_deref() == Some(workload.key.as_str()))
+            .collect();
+        assert_eq!(pods.len(), usize::from(present), "{}", workload.name);
+    }
+    assert_eq!(
+        change
+            .hops
+            .iter()
+            .filter(|hop| matches!(&hop.shows,
+                super::super::Shows::Hop(detail) if detail.kind == "Pods"
+            ))
+            .count(),
+        1,
+        "only the existing Deployment has unread Pods"
+    );
 }
