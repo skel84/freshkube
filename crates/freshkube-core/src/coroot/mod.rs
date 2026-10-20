@@ -6,6 +6,7 @@ mod chart_panel;
 mod connection;
 mod limits;
 mod logs;
+mod outcome;
 mod profiling;
 mod subject;
 #[cfg(test)]
@@ -31,6 +32,7 @@ pub use logs::{
     Fresh, LOG_LIMITS, LogCursor, LogLine, LogOrigin, LogPattern, LogQuery, LogsMode, LogsView,
     severity_level,
 };
+pub use outcome::{Answer, Link, Outcome, Query, Refused, Workload};
 pub use profiling::{FlameGraph, Frame, ProfileKind, ProfileQuery, ProfileUnit, Profiling};
 pub use subject::ObjectSubject;
 pub use tracing::{HeatRow, Heatmap, TraceSelection, TraceSource, Tracing};

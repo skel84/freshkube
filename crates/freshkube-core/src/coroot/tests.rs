@@ -1454,3 +1454,281 @@ fn revision_text_is_bounded() {
         Err(ReadError::Limit)
     );
 }
+
+// What Coroot found after a deploy (`outcome.rs`).
+
+fn shop_apps() -> serde_json::Value {
+    serde_json::json!({"applications":[
+        {"id":"c:shop:Deployment:auth","status":"ok","category":"application"}]})
+}
+
+/// The application's page with one revision, `9c41e7` started at 1789998000 s.
+fn auth_page() -> serde_json::Value {
+    let mut wire = app_view_wire();
+    let rows = serde_json::json!([deployment_row(
+        "9c41e7:1789998000",
+        "9c41e7: example.test/shop/auth:1.4.0",
+        serde_json::json!([{"report":"SLO","ok":false,"message":"Availability: 97% (objective: 99%)","time":null}])
+    )]);
+    wire["data"]["reports"]
+        .as_array_mut()
+        .unwrap()
+        .push(deployments_report(rows));
+    wire
+}
+
+fn entry(id: &str, coroot: Option<(Option<&str>, &str)>) -> crate::workspace::Entry {
+    let mut entry = crate::workspace::Entry::new(id, crate::workspace::Role::Core, id);
+    entry.coroot = coroot.map(|(project, cluster)| {
+        let mut link = crate::setup::EntryCoroot::new(cluster);
+        link.project = project.map(str::to_owned);
+        Box::new(link)
+    });
+    entry
+}
+
+fn link_of(id: &str, project: &str, cluster: &str) -> Link {
+    Link::of(&entry(id, Some((None, cluster))), Some(project)).unwrap()
+}
+
+fn query(link: Link) -> Query {
+    Query {
+        link,
+        workload: Workload::Deployment,
+        namespace: "shop".into(),
+        name: "auth".into(),
+        hash: Some("9c41e7".into()),
+    }
+}
+
+fn now() -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::from_timestamp(1_790_000_000, 0).unwrap()
+}
+
+fn window() -> RevisionWindow {
+    RevisionWindow::both(Duration::from_secs(1800))
+}
+
+async fn look(responses: Vec<(u16, serde_json::Value)>, query: &Query) -> (Outcome, Vec<String>) {
+    let server = server(responses).await;
+    let provider = Provider::new(&server.url, Credentials::None).unwrap();
+    let answer = provider.outcome(query, None, window(), now()).await;
+    assert!(answer.is_for(query));
+    let requests = server.requests.lock().unwrap().clone();
+    (answer.outcome, requests)
+}
+
+#[tokio::test]
+async fn a_found_revision_carries_its_window_and_costs_three_requests() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let (outcome, requests) = look(
+        vec![(200, shop_apps()), (200, auth_page()), (200, auth_page())],
+        &q,
+    )
+    .await;
+    let Outcome::Found(view) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(view.revision.hash, "9c41e7");
+    assert_eq!(view.revision.findings[0].report, "SLO");
+    assert_eq!(view.from.timestamp(), 1_789_996_200);
+    assert_eq!(view.to.timestamp(), 1_789_999_800);
+    // The applications list, the application's page, then the window; each
+    // names the link's project and the application of the link's cluster.
+    assert_eq!(requests.len(), 3);
+    assert!(
+        requests[0].contains("/api/project/shop-api/overview/applications"),
+        "{}",
+        requests[0]
+    );
+    assert!(
+        requests[1].contains("/api/project/shop-api/app/"),
+        "{}",
+        requests[1]
+    );
+    assert!(
+        requests[2].contains("from=1789996200000"),
+        "{}",
+        requests[2]
+    );
+}
+
+#[tokio::test]
+async fn listed_applications_save_a_request() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let server = server(vec![
+        (200, shop_apps()),
+        (200, auth_page()),
+        (200, auth_page()),
+    ])
+    .await;
+    let provider = Provider::new(&server.url, Credentials::None).unwrap();
+    let source = provider.linked_source("shop-api");
+    let listed = provider.applications(&source, range()).await.unwrap();
+    server.requests.lock().unwrap().clear();
+    let answer = provider.outcome(&q, Some(&listed), window(), now()).await;
+    assert!(matches!(answer.outcome, Outcome::Found(_)));
+    assert_eq!(server.requests.lock().unwrap().len(), 2);
+    // Listed, but not the application asked for.
+    let answer = provider.outcome(&q, Some(&[]), window(), now()).await;
+    assert!(matches!(answer.outcome, Outcome::NoApplication));
+}
+
+#[tokio::test]
+async fn each_way_a_look_can_end_is_its_own_outcome() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let apps = || (200, shop_apps());
+    // No application of that cluster in the list.
+    let (outcome, requests) = look(vec![(200, serde_json::json!({"applications":[]}))], &q).await;
+    assert!(matches!(outcome, Outcome::NoApplication));
+    assert_eq!(requests.len(), 1);
+    // A project the list's 404 says is not there.
+    let (outcome, _) = look(vec![(404, serde_json::json!("Not found\n"))], &q).await;
+    assert!(matches!(outcome, Outcome::NoProject), "{outcome:?}");
+    // The revisions don't hold the hash.
+    let mut other = q.clone();
+    other.hash = Some("ffffff".into());
+    let (outcome, requests) = look(vec![apps(), (200, auth_page())], &other).await;
+    assert!(matches!(outcome, Outcome::NoRevision));
+    assert_eq!(requests.len(), 2);
+    // Refused, by the page and by the window.
+    let (outcome, _) = look(vec![(403, serde_json::json!({}))], &q).await;
+    assert!(matches!(outcome, Outcome::Refused(Refused::Application)));
+    let (outcome, _) = look(
+        vec![apps(), (200, auth_page()), (403, serde_json::json!({}))],
+        &q,
+    )
+    .await;
+    assert!(matches!(outcome, Outcome::Refused(Refused::Window)));
+    // Coroot's own 404 for the window is no data, never a missing application.
+    let (outcome, _) = look(
+        vec![
+            apps(),
+            (200, auth_page()),
+            (404, serde_json::json!("Application not found\n")),
+        ],
+        &q,
+    )
+    .await;
+    assert!(matches!(outcome, Outcome::NoData), "{outcome:?}");
+    // A failure keeps its kind and says nothing from the server.
+    let (outcome, _) = look(
+        vec![apps(), (500, serde_json::json!({"error":"secret"}))],
+        &q,
+    )
+    .await;
+    assert!(matches!(outcome, Outcome::Failed(ReadError::Failed)));
+}
+
+#[tokio::test]
+async fn charts_that_stop_before_the_window_ends_say_where() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let mut early = auth_page();
+    // Coroot's data ends at 1789998600 s, 20 minutes before the window does.
+    let ctx = serde_json::json!({"from":1789996400000_i64,"to":1789998600000_i64,"step":60000,"raw_step":60000,"truncated":false});
+    let text = early.to_string().replace(
+        &serde_json::json!({"from":1789996400000_i64,"to":1790000000000_i64,"step":60000,"raw_step":60000,"truncated":false}).to_string(),
+        &ctx.to_string(),
+    );
+    early = serde_json::from_str(&text).unwrap();
+    let (outcome, _) = look(
+        vec![(200, shop_apps()), (200, auth_page()), (200, early)],
+        &q,
+    )
+    .await;
+    let Outcome::EndsEarly(view, at) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert!(at < view.to, "{at} {}", view.to);
+}
+
+#[tokio::test]
+async fn a_page_without_charts_is_no_data() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let mut bare = auth_page();
+    bare["data"]["reports"] = bare["data"]["reports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["name"] == "Deployments")
+        .cloned()
+        .collect();
+    let (outcome, _) = look(
+        vec![(200, shop_apps()), (200, auth_page()), (200, bare)],
+        &q,
+    )
+    .await;
+    assert!(matches!(outcome, Outcome::NoData), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn nothing_is_read_for_a_rollout_or_an_unconfirmed_replica_set() {
+    let server = server(vec![]).await;
+    let provider = Provider::new(&server.url, Credentials::None).unwrap();
+    let mut q = query(link_of("cluster-a", "shop-api", "c"));
+    q.workload = Workload::Rollout;
+    let answer = provider.outcome(&q, None, window(), now()).await;
+    assert!(matches!(answer.outcome, Outcome::NotDeployment));
+    q.workload = Workload::Deployment;
+    for hash in [None, Some(String::new())] {
+        q.hash = hash;
+        let answer = provider.outcome(&q, None, window(), now()).await;
+        assert!(matches!(answer.outcome, Outcome::NotLooked));
+    }
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn another_application_s_page_never_answers_for_this_one() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let mut foreign = auth_page();
+    foreign["data"]["app_map"]["application"]["id"] =
+        serde_json::json!("c:shop:Deployment:billing");
+    let (outcome, _) = look(vec![(200, shop_apps()), (200, foreign)], &q).await;
+    assert!(
+        matches!(outcome, Outcome::Failed(ReadError::InvalidResponse)),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn a_link_is_the_entry_s_own_and_matching_names_link_nothing() {
+    // Its own project wins over the connection's.
+    let own = Link::of(
+        &entry("cluster-c", Some((Some("shop-web"), "c"))),
+        Some("shop-api"),
+    );
+    assert_eq!(own.unwrap().project(), "shop-web");
+    let inherited = Link::of(&entry("cluster-a", Some((None, "c"))), Some("shop-api")).unwrap();
+    assert_eq!(
+        (inherited.entry(), inherited.project(), inherited.cluster()),
+        ("cluster-a", "shop-api", "c")
+    );
+    // A context called like a Coroot cluster is not linked until it says so.
+    let unlinked = Link::of(&entry("cluster-a", None), Some("shop-api"));
+    assert!(matches!(unlinked, Err(Outcome::NotLinked)));
+    let no_project = Link::of(&entry("cluster-a", Some((None, "c"))), None);
+    assert!(matches!(no_project, Err(Outcome::NoProjectForEntry)));
+    assert!(matches!(
+        Link::of(&entry("cluster-a", Some((Some(" "), "c"))), None),
+        Err(Outcome::NotLinked)
+    ));
+}
+
+#[test]
+fn an_answer_is_for_its_entry_and_its_link_only() {
+    let a = query(link_of("cluster-a", "shop-api", "c"));
+    let answer = Answer {
+        query: a.clone(),
+        outcome: Outcome::NoRevision,
+    };
+    assert!(answer.is_for(&a));
+    // The same Coroot application asked for by another entry.
+    assert!(!answer.is_for(&query(link_of("cluster-c", "shop-api", "c"))));
+    // The link edited: another cluster, another project, another hash.
+    assert!(!answer.is_for(&query(link_of("cluster-a", "shop-api", "d"))));
+    assert!(!answer.is_for(&query(link_of("cluster-a", "shop-web", "c"))));
+    let mut rehashed = a.clone();
+    rehashed.hash = Some("ffffff".into());
+    assert!(!answer.is_for(&rehashed));
+}
