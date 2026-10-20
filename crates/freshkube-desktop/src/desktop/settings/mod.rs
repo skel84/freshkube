@@ -152,6 +152,9 @@ pub(crate) struct SettingsPage {
     /// The window the page was last drawn in, for what follows a save.
     window: Option<AnyWindowHandle>,
     selected: Option<SharedString>,
+    /// Keep the table's ancestry while a row popup opens the Inspector.
+    menu_holds_inspector: bool,
+    menu_had_focus: bool,
     /// The selected cluster's groups in the Inspector.
     entry: Option<entry::EntryDraft>,
     /// The Inspector's scroll, which starts at the top for each cluster.
@@ -325,6 +328,8 @@ impl SettingsPage {
             open_form_on_save: false,
             window: None,
             selected: None,
+            menu_holds_inspector: false,
+            menu_had_focus: false,
             entry: None,
             detail_scroll: ScrollHandle::new(),
             entry_key: None,
@@ -837,6 +842,21 @@ impl SettingsPage {
     /// to edge with the selected one's groups in the Inspector, beside the
     /// table on a wide page and under it on a narrow one.
     fn render_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        // Kit keeps the popup on its row's element state. Moving the table
+        // into the split while it is open would discard that state.
+        if self.menu_holds_inspector {
+            if !self.focus.is_focused(window) {
+                self.menu_had_focus = true;
+            } else if self.menu_had_focus {
+                self.menu_holds_inspector = false;
+                self.menu_had_focus = false;
+                table::reveal_when_settled(
+                    cx.entity().downgrade(),
+                    |page| page.selected.is_some(),
+                    window,
+                );
+            }
+        }
         self.sync_entry_after_frame(window, cx);
         let header = self.render_header(window, cx);
         let table = div()
@@ -869,7 +889,11 @@ impl SettingsPage {
             .child(table::data_table(self, window, cx).flex_1().min_h_0())
             .into_any_element();
         let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
-        let details = self.render_entry(cx);
+        let details = if self.menu_holds_inspector {
+            None
+        } else {
+            self.render_entry(cx)
+        };
         let split = inspector::split(
             "settings-split",
             &self.split,
