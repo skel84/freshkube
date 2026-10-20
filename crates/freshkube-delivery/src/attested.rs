@@ -14,6 +14,7 @@ use super::provenance::stands_on;
 use super::tests::{ENV, one, run_configured};
 use super::verify::tests::{signed_envelope, signing_key_pem, statement_with, subject};
 
+const RUN_UID: &str = "7c1f0c52-0000-4000-8000-000000000002";
 const RUN_KEY: &str = "pipelinerun-7c1f0c52-0000-4000-8000-000000000002";
 const PAYLOAD_TYPE: &str = "application/vnd.in-toto+json";
 const COSIGN_OTHER_KEY: &str = include_str!("../testdata/cosign/other.pub");
@@ -39,6 +40,7 @@ fn provenance(digest: &str, commit: &str) -> Value {
 /// The annotations Chains' `tekton` storage leaves around `envelope`.
 fn annotate(world: &mut World, envelope: &str, statement: &Value) {
     let mut run = pipeline_run(SHA, false, Some(NEW));
+    run["metadata"]["uid"] = json!(RUN_UID);
     run["metadata"]["annotations"][format!("chains.tekton.dev/signature-{RUN_KEY}")] =
         json!(b64(envelope));
     run["metadata"]["annotations"][format!("chains.tekton.dev/payload-{RUN_KEY}")] =
@@ -59,10 +61,25 @@ async fn trail_with(world: &World, pem: Option<&str>) -> Trail {
     if let Some(pem) = pem {
         std::fs::write(&path, pem).unwrap();
     }
-    run_configured(world, &ENV, &FixtureGitHub::default(), None, |plan| {
+    // A squash-merged pull request whose merge commit is the change, so the
+    // pull request's links are in every trail.
+    let github = FixtureGitHub::with(vec![pull_request(7, OTHER_SHA, Some(SHA))]);
+    run_configured(world, &ENV, &github, Some(GH_REPO), |plan| {
         plan.public_key_file = pem.map(|_| path.clone())
     })
     .await
+}
+
+/// Signed for one statement and carrying another that still names the
+/// build's digest: only the signature check can tell.
+fn tampered() -> World {
+    let statement = provenance(NEW, SHA);
+    let mut envelope: Value =
+        serde_json::from_str(&signed_envelope(PAYLOAD_TYPE, &statement)).unwrap();
+    let mut other = provenance(NEW, SHA);
+    other["predicate"]["builder"] = json!({"id": "https://example.com/other-builder"});
+    envelope["payload"] = json!(b64(other.to_string()));
+    world_with(&envelope.to_string(), &other)
 }
 
 fn signed(statement: &Value) -> World {
@@ -165,14 +182,9 @@ async fn a_key_that_cannot_be_used_is_never_confirmed() {
 
 #[tokio::test]
 async fn a_signature_that_fails_is_a_claim_that_says_so() {
-    // Signed for one statement, carrying another.
-    let statement = provenance(NEW, SHA);
-    let mut envelope: Value =
-        serde_json::from_str(&signed_envelope(PAYLOAD_TYPE, &statement)).unwrap();
-    let other = provenance(OLD, SHA);
-    envelope["payload"] = json!(b64(other.to_string()));
-    let world = world_with(&envelope.to_string(), &other);
-    let trail = trail_with(&world, Some(&signing_key_pem())).await;
+    let trail = trail_with(&tampered(), Some(&signing_key_pem())).await;
+    // The tampered statement still names the build's digest, so only the
+    // signature check can have refused it.
     assert_eq!(never_confirmed(&trail, "tampered"), Confidence::Claimed);
     assert!(
         supply(&trail)
@@ -215,15 +227,46 @@ async fn a_payload_cut_at_the_cap_is_never_confirmed() {
 }
 
 #[tokio::test]
-async fn an_attestation_stored_only_for_an_image_is_never_confirmed() {
+async fn an_attestation_stored_under_an_image_key_is_never_confirmed() {
+    // A validly signed in-toto envelope for the build's digest, kept under
+    // an image's 12-digit key: not an attestation of the run.
+    let statement = provenance(NEW, SHA);
     let mut world = healthy().with_meta();
     let mut run = pipeline_run(SHA, false, Some(NEW));
-    run["metadata"]["annotations"]["chains.tekton.dev/signature-1111111111111"] =
-        json!(b64("cosign simple signing"));
-    run["metadata"]["annotations"]["chains.tekton.dev/payload-1111111111111"] = json!(b64("{}"));
+    run["metadata"]["uid"] = json!(RUN_UID);
+    run["metadata"]["annotations"]["chains.tekton.dev/signature-111111111111"] =
+        json!(b64(signed_envelope(PAYLOAD_TYPE, &statement)));
+    run["metadata"]["annotations"]["chains.tekton.dev/payload-111111111111"] =
+        json!(b64(statement.to_string()));
     world.tekton = world.tekton.with("pipelineruns", vec![run]);
     let trail = trail_with(&world, Some(&signing_key_pem())).await;
-    assert_eq!(never_confirmed(&trail, "image only"), Confidence::Claimed);
+    assert_eq!(never_confirmed(&trail, "image key"), Confidence::Claimed);
+    assert_eq!(
+        one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
+        Confidence::Claimed
+    );
+}
+
+#[tokio::test]
+async fn an_attestation_copied_from_another_object_is_never_confirmed() {
+    // The annotations of a signed run, on a run with another uid.
+    let statement = provenance(NEW, SHA);
+    let mut world = healthy().with_meta();
+    let mut run = pipeline_run(SHA, false, Some(NEW));
+    run["metadata"]["uid"] = json!("7c1f0c52-0000-4000-8000-0000000000ff");
+    run["metadata"]["annotations"][format!("chains.tekton.dev/signature-{RUN_KEY}")] =
+        json!(b64(signed_envelope(PAYLOAD_TYPE, &statement)));
+    run["metadata"]["annotations"][format!("chains.tekton.dev/payload-{RUN_KEY}")] =
+        json!(b64(statement.to_string()));
+    world.tekton = world.tekton.with("pipelineruns", vec![run]);
+    let trail = trail_with(&world, Some(&signing_key_pem())).await;
+    assert_eq!(never_confirmed(&trail, "copied"), Confidence::Claimed);
+    assert!(supply(&trail).reason.contains("belongs to another object"));
+    assert!(supply(&trail).signature_warn);
+    assert_eq!(
+        one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
+        Confidence::Claimed
+    );
 }
 
 #[tokio::test]
@@ -261,7 +304,7 @@ async fn a_verified_provenance_that_names_the_commit_is_a_reported_witness() {
 }
 
 #[tokio::test]
-async fn a_provenance_that_does_not_verify_is_not_a_witness() {
+async fn a_provenance_whose_subject_differs_is_not_a_witness() {
     let statement = provenance(OLD, SHA);
     let trail = trail_with(&signed(&statement), Some(&signing_key_pem())).await;
     assert_eq!(
@@ -271,19 +314,93 @@ async fn a_provenance_that_does_not_verify_is_not_a_witness() {
 }
 
 #[tokio::test]
+async fn a_provenance_that_does_not_verify_is_not_a_witness() {
+    // Naming the commit and the build's digest, and signed by no key the
+    // person named, or tampered after signing.
+    for (world, pem) in [
+        (
+            signed(&provenance(NEW, SHA)),
+            include_str!("../testdata/cosign/other.pub"),
+        ),
+        (tampered(), &signing_key_pem()),
+    ] {
+        let trail = trail_with(&world, Some(pem)).await;
+        assert_eq!(
+            one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
+            Confidence::Claimed
+        );
+    }
+}
+
+#[tokio::test]
+async fn two_attestations_one_verified_for_another_commit_and_one_unverified_for_this_one() {
+    let key = signing_key_pem();
+    let mut world = signed(&provenance(NEW, OTHER_SHA));
+    // A task of the run carries a tampered provenance that names SHA.
+    let tampered_task = {
+        let statement = provenance(NEW, SHA);
+        let mut envelope: Value =
+            serde_json::from_str(&signed_envelope(PAYLOAD_TYPE, &statement)).unwrap();
+        let mut other = provenance(NEW, SHA);
+        other["predicate"]["builder"] = json!({"id": "https://example.com/other-builder"});
+        envelope["payload"] = json!(b64(other.to_string()));
+        let task_key = "taskrun-7c1f0c52-0000-4000-8000-000000000003";
+        let mut task = task_run();
+        task["metadata"]["uid"] = json!("7c1f0c52-0000-4000-8000-000000000003");
+        task["metadata"]["annotations"] = json!({
+            format!("chains.tekton.dev/signature-{task_key}"): b64(envelope.to_string()),
+            format!("chains.tekton.dev/payload-{task_key}"): b64(other.to_string()),
+        });
+        task
+    };
+    world.tekton = world.tekton.with("taskruns", vec![tampered_task]);
+    let trail = trail_with(&world, Some(&key)).await;
+    assert_eq!(
+        one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
+        Confidence::Claimed
+    );
+    // The run's own attestation still verifies for the digest.
+    assert_eq!(supply(&trail).confidence, Confidence::Confirmed);
+}
+
+#[tokio::test]
+async fn a_verified_provenance_does_not_raise_the_pull_requests_links() {
+    let trail = verified_trail().await;
+    assert_eq!(
+        one(&trail, Hop::Commit, Hop::PipelineRun).confidence,
+        Confidence::Confirmed
+    );
+    // The pull request's merge commit is the change, and no result of the
+    // build reports it: the links through the build stay what the labels
+    // alone make them.
+    let pr_builds = super::tests::link(&trail, Hop::PullRequest, Hop::PipelineRun);
+    assert!(!pr_builds.is_empty());
+    for pr_build in pr_builds {
+        assert_ne!(
+            pr_build.confidence,
+            Confidence::Confirmed,
+            "{}",
+            pr_build.reason
+        );
+    }
+    for link in trail.links.iter().filter(|l| l.from == Hop::PullRequest) {
+        assert!(
+            link.evidence
+                .iter()
+                .all(|seen| seen.object.kind != "Attestation"),
+            "{link:#?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn the_signature_is_marked_failing_for_exactly_the_four_warn_rows() {
     let statement = provenance(NEW, SHA);
     let key = signing_key_pem();
-    // Signed for one statement, carrying another: the signature fails.
-    let mut tampered: Value =
-        serde_json::from_str(&signed_envelope(PAYLOAD_TYPE, &statement)).unwrap();
-    let other = provenance(OLD, SHA);
-    tampered["payload"] = json!(b64(other.to_string()));
-    let tampered = world_with(&tampered.to_string(), &other);
 
     let warns = [
         ("key unusable", signed(&statement), Some("not a key")),
-        ("signature fails", tampered, Some(key.as_str())),
+        ("signature fails", tampered(), Some(key.as_str())),
         (
             "malformed",
             world_with("not json", &statement),

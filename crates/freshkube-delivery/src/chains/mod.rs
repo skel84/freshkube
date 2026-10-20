@@ -146,6 +146,10 @@ pub enum Malformed {
     NotAStatement(&'static str),
     /// The `payload` annotation is not the statement the envelope signs.
     PayloadDiffers,
+    /// The annotation's key names another object's uid than the one it was
+    /// read from, or the object has no uid: annotations copied from a signed
+    /// run do not make another run signed.
+    OtherObject,
 }
 
 impl std::fmt::Display for Malformed {
@@ -164,6 +168,9 @@ impl std::fmt::Display for Malformed {
             Self::PayloadDiffers => {
                 f.write_str("the payload annotation is not the statement the envelope signs")
             }
+            Self::OtherObject => f.write_str(
+                "the attestation belongs to another object than the one it was read from",
+            ),
         }
     }
 }
@@ -221,6 +228,26 @@ pub(crate) fn parse_attestations(object: &Value) -> Attestations {
             certificate: get(CERTIFICATE, key).is_some(),
             log_entry: log_entry.clone(),
         });
+    }
+    found
+}
+
+/// The attestations an object carries, accepted as its own only when the
+/// annotation's key is `pipelinerun-<uid>` or `taskrun-<uid>` of the object
+/// they were read from. One that names another uid, or an object that has
+/// none, is [`Malformed::OtherObject`]: Chains' annotations are writable by
+/// whoever can patch a run, and a signed run's can be copied onto another.
+pub(crate) fn parse_own_attestations(object: &Value) -> Attestations {
+    let mut found = parse_attestations(object);
+    let uid = text(object, "/metadata/uid");
+    for attestation in found.read.iter_mut().filter(|a| a.form == Form::Run) {
+        let own = uid.as_deref().is_some_and(|uid| {
+            attestation.key == format!("pipelinerun-{uid}")
+                || attestation.key == format!("taskrun-{uid}")
+        });
+        if !own {
+            attestation.stored = Stored::Malformed(Malformed::OtherObject);
+        }
     }
     found
 }
@@ -408,7 +435,7 @@ impl Attestation {
 /// [`Attestation`]'s object is named in.
 const CHAINS_GROUP: &str = "chains.tekton.dev";
 /// The kind of the object a verified attestation's observations are of.
-pub(crate) const ATTESTATION_KIND: &str = "Attestation";
+const ATTESTATION_KIND: &str = "Attestation";
 
 pub(crate) mod config;
 

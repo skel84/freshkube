@@ -87,7 +87,9 @@ pub(super) fn pull_request_links(
         );
         if merge_is || head_is {
             for build in builds {
-                let run = commit_link(sha, build, &evidence.commit_names, &evidence.trust);
+                // A verified provenance is the commit's own witness; it cannot
+                // raise the pull request's links, so none is passed.
+                let run = commit_link(sha, build, &evidence.commit_names, &Trust::Unset);
                 let numbered = match build.run.pull_request {
                     Some(number) if number != pr.number => {
                         format!("; the run says pull request #{number}, not #{}", pr.number)
@@ -157,7 +159,7 @@ fn head_build_links(
     }
     let mut links = Vec::new();
     for build in builds {
-        let run = commit_link(head, build, &evidence.commit_names, &evidence.trust);
+        let run = commit_link(head, build, &evidence.commit_names, &Trust::Unset);
         let run_confidence = run.confidence;
         let head_run = run_commit(build, &evidence.commit_names, head);
         let digests: Vec<Digest> = build.images().into_iter().map(|i| i.digest).collect();
