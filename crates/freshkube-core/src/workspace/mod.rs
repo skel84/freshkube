@@ -245,7 +245,7 @@ impl Workspace {
             }
         }
         self.sources.validate()?;
-        destinations::validate(&self.destinations)
+        destinations::validate(self)
     }
 
     /// What [`validate`](Self::validate) checks, and that the written file

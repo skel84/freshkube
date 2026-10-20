@@ -153,6 +153,64 @@ async fn each_part_is_read_from_its_entry() {
 }
 
 #[tokio::test]
+async fn in_cluster_aliases_read_workloads_once_on_the_selected_argo_cd_host() {
+    use freshkube_core::setup::{self, Setup};
+    use freshkube_core::workspace::Part;
+    use std::cell::RefCell;
+
+    for pinned in [false, true] {
+        let mut workspace = workspace();
+        let host = if pinned { "env-c" } else { "core-a" };
+        if pinned {
+            workspace.sources.set(Part::ArgoCd, Some(host.into()));
+        }
+        workspace.destinations = vec![
+            Mapped::new(
+                Key::Server("https://Kubernetes.Default.Svc:443/".into()),
+                host,
+            ),
+            Mapped::new(Key::Name("in-cluster".into()), host),
+        ];
+        // Exercise the actual setup-file boundary that used to reject this file.
+        let setup = setup::parse(setup::to_text(&Setup::new(workspace)).as_bytes()).unwrap();
+        let place = place(&setup.workspace);
+        for destination in [
+            json!({"server": IN_CLUSTER_SERVER}),
+            json!({"name": "in-cluster"}),
+        ] {
+            let connections = RefCell::new(Vec::new());
+            let pool = Pool::new(
+                &place.sources,
+                None::<Open<'_, FixtureReader>>,
+                |entry: Entry| {
+                    connections.borrow_mut().push(entry.id);
+                    let mut invented = world(|_| {});
+                    let mut app = application(None);
+                    app["spec"]["destination"] = destination.clone();
+                    invented.argocd =
+                        std::mem::take(&mut invented.argocd).with("applications", vec![app]);
+                    async move { Ok(invented.one_cluster()) }
+                },
+                BUDGET,
+            );
+            let change = read_in(&pool, &place, observed_at()).await.expect("read");
+            assert_eq!(change.stages[0].cluster, Destination::Cluster(host.into()));
+            assert_eq!(hop(&change, "Pods").from, host);
+            assert_eq!(hop(&change, "Pods").link, Some(Confidence::Confirmed));
+            assert!(change.missing.is_empty(), "{:?}", change.missing);
+            let mut connected = connections.into_inner();
+            connected.sort();
+            let mut expected = vec![host.to_owned(), "cicd-b".to_owned()];
+            expected.sort();
+            assert_eq!(
+                connected, expected,
+                "only the selected sources connect, once each"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn kargos_entry_unreachable_is_said_in_its_name() {
     let why = read_across(&workspace(), |_| {}, &["cicd-b"])
         .await

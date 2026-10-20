@@ -597,11 +597,11 @@ fn a_destination_row_that_cannot_be_used_refuses_the_file_and_is_named() {
         ),
         (
             serde_json::json!({"server": "https://Kubernetes.default.svc:443/", "entry": "prod"}),
-            "destinations[1] (server https://Kubernetes.default.svc:443/) names Argo CD's own cluster, which is known already",
+            "destinations[1] (server https://Kubernetes.default.svc:443/) names Argo CD's own cluster but its host entry cannot be determined; set sources.argocd to a usable cluster entry",
         ),
         (
             serde_json::json!({"name": "in-cluster", "entry": "prod"}),
-            "destinations[1] (name in-cluster) names Argo CD's own cluster, which is known already",
+            "destinations[1] (name in-cluster) names Argo CD's own cluster but its host entry cannot be determined; set sources.argocd to a usable cluster entry",
         ),
         (
             serde_json::json!({"name": "a", "entry": " "}),
@@ -632,6 +632,105 @@ fn a_destination_row_that_cannot_be_used_refuses_the_file_and_is_named() {
     for (row, words) in cases {
         assert_eq!(refused(row.clone()).to_string(), words, "{row}");
     }
+}
+
+#[test]
+fn in_cluster_aliases_follow_the_existing_argo_cd_source_selection() {
+    let mut workspace = three();
+    workspace
+        .clusters
+        .push(Entry::new("other-core", Role::Core, "other"));
+    let keys = [
+        Key::Server(IN_CLUSTER_SERVER.into()),
+        Key::Server("https://Kubernetes.Default.Svc:443/".into()),
+        Key::Name(IN_CLUSTER_NAME.into()),
+    ];
+    for (pin, host) in [(None, "mgmt"), (Some("ci"), "ci"), (Some("dev"), "dev")] {
+        workspace.sources.set(Part::ArgoCd, pin.map(str::to_owned));
+        workspace.destinations = keys
+            .iter()
+            .map(|key| Destination::new(key.clone(), host))
+            .collect();
+        assert_eq!(workspace.validate(), Ok(()));
+        assert_eq!(parse(to_text(&workspace).as_bytes()), Ok(workspace.clone()));
+        let sources = Sources::of(&workspace);
+        assert_eq!(sources.get(Part::ArgoCd).entry().unwrap().id, host);
+        assert_eq!(sources.workloads().len(), 1, "the host is listed once");
+        assert_eq!(sources.workloads()[0].entry().unwrap().id, host);
+        for key in &keys {
+            assert_eq!(
+                Destination::new(key.clone(), "other-core").fault_in(&workspace),
+                Some(Fault::ArgoCdOther),
+                "an alias cannot select another host"
+            );
+        }
+    }
+    // Changing the pin changes which target is valid, with no stale alias state.
+    workspace.sources.set(Part::ArgoCd, None);
+    assert!(matches!(
+        workspace.validate(),
+        Err(Invalid::Destination {
+            fault: Fault::ArgoCdOther,
+            ..
+        })
+    ));
+    workspace
+        .destinations
+        .iter_mut()
+        .for_each(|row| row.entry = "mgmt".into());
+    assert_eq!(workspace.validate(), Ok(()));
+    workspace.clusters.swap(1, 3);
+    assert!(matches!(
+        workspace.validate(),
+        Err(Invalid::Destination {
+            fault: Fault::ArgoCdOther,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn in_cluster_aliases_require_a_known_host_and_never_supply_one() {
+    for clusters in [vec![], vec![Entry::new("env", Role::Environment, "env")]] {
+        let mut workspace = Workspace::new(clusters);
+        for pin in [None, Some("missing")] {
+            workspace.sources.set(Part::ArgoCd, pin.map(str::to_owned));
+            for key in [
+                Key::Server(IN_CLUSTER_SERVER.into()),
+                Key::Name(IN_CLUSTER_NAME.into()),
+            ] {
+                workspace.destinations = vec![Destination::new(key, "env")];
+                assert!(matches!(
+                    workspace.validate(),
+                    Err(Invalid::Destination {
+                        fault: Fault::ArgoCdUnknown,
+                        ..
+                    })
+                ));
+            }
+        }
+    }
+    let mut workspace = three();
+    workspace.sources.set(Part::ArgoCd, Some("gone".into()));
+    workspace.destinations = vec![Destination::new(Key::Name(IN_CLUSTER_NAME.into()), "mgmt")];
+    assert!(
+        matches!(
+            workspace.validate(),
+            Err(Invalid::Destination {
+                fault: Fault::ArgoCdUnknown,
+                ..
+            })
+        ),
+        "a dangling pin never falls back to Core"
+    );
+    workspace.destinations[0].entry.clear();
+    assert_eq!(
+        workspace.destinations[0].fault_in(&workspace),
+        Some(Fault::NoEntry)
+    );
+    // Names retain exact matching; an ordinary name still permits a gone target.
+    workspace.destinations = vec![Destination::new(Key::Name("In-cluster".into()), "gone")];
+    assert_eq!(workspace.validate(), Ok(()));
 }
 
 #[test]
