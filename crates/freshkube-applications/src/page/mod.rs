@@ -411,6 +411,7 @@ fn found_by(app: &Application, member: &MemberRef) -> &'static str {
         (Some(Basis::Tracked), _) => "Argo CD, tracked",
         (Some(Basis::ManagedBy), _) => "Argo CD inventory",
         (Some(Basis::NamesProject), _) => "Stage annotation",
+        (Some(Basis::NamedByTemplate), _) => "Naming template",
         (Some(Basis::SameName), _) => "part-of, same name",
         (Some(Basis::Inferred), _) => "Name, across clusters",
         (Some(Basis::Override), _) => "Your override",

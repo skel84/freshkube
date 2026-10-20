@@ -376,6 +376,19 @@ fn link(derived: &Derived, app: &Application, member: &Member) -> Claim {
             .at(&at.session),
             "Only an annotation or a name says so",
         ),
+        Basis::NamedByTemplate => claim(
+            Confidence::Claimed,
+            own(app),
+            Side::read(
+                Fact::Derived,
+                format!(
+                    "Its name is the configured template's for a Stage of Project {}",
+                    app.name
+                ),
+            )
+            .at(&at.session),
+            "Only the configured name template says so",
+        ),
         Basis::SameName => claim(
             Confidence::Claimed,
             own(app),

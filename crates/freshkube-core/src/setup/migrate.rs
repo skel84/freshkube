@@ -49,7 +49,7 @@ const COROOT_MAX: u64 = 64 * 1024;
 const MONITORING_MAX: u64 = 256 * 1024;
 const PREFERENCES_MAX: u64 = 256 * 1024;
 /// The top-level keys the setup writes itself, so an unknown key can't be one.
-const RESERVED: [&str; 8] = [
+const RESERVED: [&str; 9] = [
     "version",
     "kubeconfig",
     "clusters",
@@ -58,6 +58,7 @@ const RESERVED: [&str; 8] = [
     "metrics",
     "coroot",
     "supply_chain",
+    "delivery",
 ];
 
 /// What a launch's migration did.

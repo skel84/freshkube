@@ -48,14 +48,16 @@ impl Pilot {
         if self.settings_page.read(cx).setup_is_pending() {
             return;
         }
-        let Some(setup) = self.setup_file.read(cx).setup.as_ref() else {
+        let file = self.setup_file.read(cx);
+        let setup = file.setup.clone();
+        let problem = file.problem.clone();
+        let revision = file.read_revision();
+        let reconnect = file.coroot_reconnect;
+        self.pages.set_setup(setup.clone(), problem, revision, cx);
+        let Some(setup) = setup else {
             return;
         };
-        let connection = setup.coroot.clone();
-        let setup = setup.clone();
-        let revision = self.setup_file.read(cx).read_revision();
-        let reconnect = self.setup_file.read(cx).coroot_reconnect;
-        self.pages.set_setup(setup, revision, cx);
+        let connection = setup.coroot;
         self.pages.observability.update(cx, |page, cx| {
             page.set_setup_connection(&connection, reconnect, window, cx)
         });

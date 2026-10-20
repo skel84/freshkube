@@ -1,0 +1,1 @@
+- **Transparency log:** the lookup that checks a verified signature against the transparency log is built, with a client of its own; the setting that turns it on is wired in a later change.

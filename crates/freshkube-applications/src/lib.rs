@@ -290,6 +290,7 @@ pub struct ApplicationsPage {
     secrets: Option<freshkube_core::secrets::Secrets>,
     public_key_file: Option<std::path::PathBuf>,
     evidence_result: Option<freshkube_core::setup::Evidence>,
+    stage_naming: Option<freshkube_core::setup::StageNaming>,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
@@ -318,6 +319,8 @@ pub struct ApplicationsPage {
     /// The banner for a refresh that failed over an earlier read, and its
     /// label, derived with the display.
     stale: Option<(SharedString, SharedString)>,
+    /// Sanitized setup-file warning, also handed to changes opened later.
+    setup_problem: Option<SharedString>,
     /// The table's lines, derived when the rows or a filter change.
     lines: Vec<Entry>,
     /// Rows per rule under the filters, for the group headers.
@@ -411,6 +414,7 @@ impl ApplicationsPage {
             secrets,
             public_key_file: None,
             evidence_result: None,
+            stage_naming: None,
             source: None,
             visible: false,
             variant,
@@ -421,6 +425,7 @@ impl ApplicationsPage {
             live_coroot: change::Live::default(),
             display: Display::default(),
             stale: None,
+            setup_problem: None,
             lines: Vec::new(),
             groups: [0; 4],
             counts: [0; 4],
@@ -526,6 +531,21 @@ impl ApplicationsPage {
         }
     }
 
+    /// The setup owner's safe warning text; no setup bytes reach a banner.
+    pub fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
+        freshkube_probe::probe::hit("applications.setup_handoff");
+        let problem = problem.map(SharedString::from);
+        if self.setup_problem == problem {
+            return;
+        }
+        self.setup_problem = problem.clone();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| page.set_setup_problem(problem.clone(), cx));
+        }
+        self.changes
+            .update(cx, |page, cx| page.set_setup_problem(problem, cx));
+    }
+
     /// The setup owner calls this after each reload. Even the same path can
     /// hold a replacement key; old reads must never publish under new trust.
     pub fn set_setup(&mut self, setup: &freshkube_core::setup::Setup, cx: &mut Context<Self>) {
@@ -537,11 +557,18 @@ impl ApplicationsPage {
             .supply_chain
             .as_ref()
             .and_then(|chain| chain.evidence.clone());
+        let naming = setup
+            .delivery
+            .as_ref()
+            .and_then(|delivery| delivery.stage_naming.clone());
+        let naming_changed = naming != self.stage_naming;
+        self.stage_naming = naming;
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| {
                 page.reload_setup(
                     self.public_key_file.clone(),
                     self.evidence_result.clone(),
+                    self.stage_naming.clone(),
                     cx,
                 )
             });
@@ -550,9 +577,21 @@ impl ApplicationsPage {
             page.reload_setup(
                 self.public_key_file.clone(),
                 self.evidence_result.clone(),
+                self.stage_naming.clone(),
                 cx,
             )
         });
+        // The list derives its Applications' projects from the naming.
+        let live = self
+            .source
+            .as_ref()
+            .is_some_and(|source| !matches!(source.access, ClusterAccess::Example(_)));
+        if naming_changed && live {
+            self.loader.expire();
+            if self.visible {
+                self.read(cx);
+            }
+        }
     }
 
     /// Where the change pages get what Coroot found after a deploy: the
@@ -602,6 +641,7 @@ impl ApplicationsPage {
             kubeconfig: self.clusters.kubeconfig.clone(),
             public_key_file: self.public_key_file.clone(),
             evidence_result: self.evidence_result.clone(),
+            stage_naming: self.stage_naming.clone(),
         }
     }
 
@@ -752,6 +792,7 @@ impl ApplicationsPage {
                 let sources = self.clusters.sources.clone();
                 let kubeconfig = self.clusters.kubeconfig.clone();
                 let destinations = self.clusters.mapping.destinations.clone();
+                let stage_naming = self.stage_naming.as_ref().map(Into::into);
                 let unmapped = unmapped(&sources, &destinations, &self.clusters.entries);
                 let entry = self.entry.clone();
                 let (job, receiver) = backend::spawn_job(
@@ -780,7 +821,7 @@ impl ApplicationsPage {
                         .await;
                         let inputs = Inputs {
                             sessions,
-                            stage_naming: None,
+                            stage_naming,
                             destinations,
                         };
                         Ok(Read {
@@ -978,6 +1019,7 @@ impl ApplicationsPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, Some(stage), connections, visible, window, cx);
             page.set_coroot(coroot, cx);
+            page.set_setup_problem(self.setup_problem.clone(), cx);
             page
         });
         let subscription =

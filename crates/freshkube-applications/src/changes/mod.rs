@@ -139,6 +139,8 @@ pub struct ChangesPage {
     display: Display,
     /// A refresh that failed over an earlier read, and its label.
     stale: Option<(SharedString, SharedString)>,
+    /// The setup owner's sanitized problem, independent of cluster reads.
+    setup_problem: Option<SharedString>,
     lines: Vec<Entry>,
     /// Each group's rows, in [`Fold::ALL`]'s order, and the rows the lines
     /// show; derived with the lines.
@@ -202,6 +204,7 @@ impl ChangesPage {
             read_namespace: None,
             display,
             stale: None,
+            setup_problem: None,
             lines: Vec::new(),
             group_rows: [0; 3],
             shown_rows: 0,
@@ -290,20 +293,37 @@ impl ChangesPage {
         }
     }
 
+    pub(crate) fn set_setup_problem(
+        &mut self,
+        problem: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.setup_problem == problem {
+            return;
+        }
+        self.setup_problem = problem.clone();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| page.set_setup_problem(problem, cx));
+        }
+        cx.notify();
+    }
+
     /// A setup reload replaces trust and cancels every delivery read made
     /// with the old setup, including a change opened from this list.
     pub(crate) fn reload_setup(
         &mut self,
         public_key_file: Option<std::path::PathBuf>,
         evidence_result: Option<freshkube_core::setup::Evidence>,
+        stage_naming: Option<freshkube_core::setup::StageNaming>,
         cx: &mut Context<Self>,
     ) {
         self.setup_revision += 1;
         self.across.public_key_file = public_key_file.clone();
         self.across.evidence_result = evidence_result.clone();
+        self.across.stage_naming = stage_naming.clone();
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| {
-                page.reload_setup(public_key_file, evidence_result, cx)
+                page.reload_setup(public_key_file, evidence_result, stage_naming, cx)
             });
         }
         if self.is_live() {
@@ -441,6 +461,7 @@ impl ChangesPage {
                     sources: self.across.sources.clone(),
                     public_key_file: self.across.public_key_file.clone(),
                     evidence_result: self.across.evidence_result.clone(),
+                    stage_naming: self.across.stage_naming.clone(),
                 };
                 let across = self.across.clone();
                 let secrets = self.secrets.clone();
@@ -701,6 +722,7 @@ impl ChangesPage {
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, None, connections, visible, window, cx);
             page.set_parent("Changes");
+            page.set_setup_problem(self.setup_problem.clone(), cx);
             page.set_coroot(coroot, cx);
             page
         });
@@ -747,6 +769,7 @@ impl ChangesPage {
                     sources: self.across.sources.clone(),
                     public_key_file: self.across.public_key_file.clone(),
                     evidence_result: self.across.evidence_result.clone(),
+                    stage_naming: self.across.stage_naming.clone(),
                 }),
                 kubeconfig: self.across.kubeconfig.clone(),
             },

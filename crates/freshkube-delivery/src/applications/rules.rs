@@ -322,6 +322,22 @@ pub(super) fn argo(
     projects: &BTreeSet<String>,
 ) -> HashMap<(SessionKey, String, String), ApplicationId> {
     let mut home = HashMap::new();
+    // The same Stage read through two sessions is one Stage.
+    let stages: Vec<(&str, &str)> = inputs
+        .sessions
+        .iter()
+        .flat_map(|session| session.kargo.read().into_iter().flatten())
+        .flat_map(|project| {
+            project
+                .stages
+                .read()
+                .into_iter()
+                .flatten()
+                .map(|stage| (project.name.as_str(), stage.name.as_str()))
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     for session in &inputs.sessions {
         let sets = session
             .argo_application_sets
@@ -329,18 +345,26 @@ pub(super) fn argo(
             .map_or(&[][..], Vec::as_slice);
         for application in session.argo_applications.read().into_iter().flatten() {
             let naming = inputs.stage_naming.as_ref();
-            let project = projects
+            // A name only one Stage fits puts the Application in its project.
+            let fits = application.name_only_fits(naming, stages.iter().copied());
+            let by_name = match fits[..] {
+                [(project, _)] => Some(project),
+                _ => None,
+            };
+            let by_key = projects
                 .iter()
                 .find(|project| application.is_of_project(project, naming));
+            let project = by_key.or_else(|| projects.iter().find(|p| by_name == Some(p.as_str())));
+            let named_by = match by_key {
+                Some(_) => Basis::NamesProject,
+                None => Basis::NamedByTemplate,
+            };
             let own_name = application
                 .owner_application_set
                 .as_deref()
                 .unwrap_or(&application.name);
             let (id, basis) = match project {
-                Some(project) => (
-                    ApplicationId::new(Rule::Kargo, project),
-                    Basis::NamesProject,
-                ),
+                Some(project) => (ApplicationId::new(Rule::Kargo, project), named_by),
                 None => match &application.owner_application_set {
                     Some(set) => {
                         // An owner reference stays in the owner's namespace.
@@ -387,6 +411,15 @@ pub(super) fn argo(
                 &application.name,
                 basis,
             );
+            if project.is_none() && fits.len() > 1 {
+                builder.note(
+                    &id,
+                    Note::NameFitsSeveralStages {
+                        member: m.at.clone(),
+                        stages: fits.iter().map(|(p, s)| format!("{p}/{s}")).collect(),
+                    },
+                );
+            }
             let place = destination(application);
             if matches!(place, Destination::Other { .. }) {
                 match mapped_entry(inputs, application) {
@@ -761,11 +794,13 @@ pub(super) fn infer_across_sessions(builder: &mut Builder, inputs: &Inputs) {
         }
         let several = own.len() > 1;
         for member in &mut app.members {
-            let named = member.basis == Basis::NamesProject
+            let named = matches!(member.basis, Basis::NamesProject | Basis::NamedByTemplate)
                 && beside_kargo.contains(&member.at.session)
                 && !several;
-            if matches!(member.basis, Basis::Direct | Basis::NamesProject)
-                && (several || !own.contains(&member.at.session))
+            if matches!(
+                member.basis,
+                Basis::Direct | Basis::NamesProject | Basis::NamedByTemplate
+            ) && (several || !own.contains(&member.at.session))
                 && !named
             {
                 member.basis = Basis::Inferred;

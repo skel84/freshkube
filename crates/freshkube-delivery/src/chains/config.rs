@@ -21,6 +21,9 @@ use freshkube_core::resources::Failure;
 /// The ConfigMap Chains reads its configuration from.
 pub(crate) const CONFIG_MAP: &str = "chains-config";
 
+/// The namespace Chains runs in, where [`CONFIG_MAP`] is.
+pub(crate) const CHAINS_NAMESPACE: &str = "tekton-chains";
+
 /// What Chains is set to store, and where, from `chains-config`. A key the
 /// ConfigMap leaves out has Chains' documented default, and says so.
 #[derive(Clone, Debug, PartialEq, Eq)]

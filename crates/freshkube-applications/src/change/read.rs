@@ -147,6 +147,7 @@ impl ChangePage {
                     kubeconfig,
                     public_key_file: place.public_key_file.clone(),
                     evidence_result: place.evidence_result.clone(),
+                    stage_naming: place.stage_naming.clone(),
                 };
                 let (job, receiver) = backend::spawn_job(
                     &runtime,
@@ -301,6 +302,7 @@ impl ChangePage {
         &mut self,
         public_key_file: Option<std::path::PathBuf>,
         evidence_result: Option<freshkube_core::setup::Evidence>,
+        stage_naming: Option<freshkube_core::setup::StageNaming>,
         cx: &mut Context<Self>,
     ) {
         if let Fetch::Live {
@@ -312,6 +314,7 @@ impl ChangePage {
             *setup_revision += 1;
             place.public_key_file = public_key_file;
             place.evidence_result = evidence_result;
+            place.stage_naming = stage_naming;
             self.loader.reset();
             self.stale = None;
             self.hide_outcomes();

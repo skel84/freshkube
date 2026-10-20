@@ -154,6 +154,12 @@ pub trait GraphSource: Sized + 'static {
         None
     }
 
+    /// Keep a highlighted card's selected styling through hover. Ordinary
+    /// maps keep the button's existing hover treatment.
+    fn persistent_highlight(&self) -> bool {
+        false
+    }
+
     /// Cut a card's detail at a whole word; ordinary maps keep their truncation.
     fn word_details(&self) -> bool {
         false
@@ -329,8 +335,12 @@ pub struct GraphState<K> {
     scroll: UniformListScrollHandle,
     /// The graph's sideways scroll inside its card.
     pan: ScrollHandle,
+    /// The canvas's vertical scroll, independent of the sideways pan.
+    vertical: ScrollHandle,
     /// Present once the graph has keys.
     focus: Option<FocusHandle>,
+    /// Only keyboard navigation gives the cursor a thick ring.
+    keyboard: bool,
     focus_watch: std::cell::RefCell<Vec<gpui_kit::Subscription>>,
     ids: Ids,
     display: Display,
@@ -353,7 +363,9 @@ impl<K: Clone + Ord> GraphState<K> {
             text,
             scroll: UniformListScrollHandle::new(),
             pan: ScrollHandle::new(),
+            vertical: ScrollHandle::new(),
             focus: None,
+            keyboard: false,
             focus_watch: Default::default(),
             ids: Ids::new(prefix),
             display: Display::default(),
@@ -368,7 +380,17 @@ impl<K: Clone + Ord> GraphState<K> {
     #[must_use]
     pub fn unpaged(mut self) -> Self {
         self.per_page = usize::MAX;
-        self.metrics = Metrics::labelled(LABELLED_GUTTER);
+        self.metrics.column = self.metrics.node_w + LABELLED_GUTTER;
+        self.metrics.max_rows = usize::MAX;
+        self.prepare();
+        self
+    }
+
+    /// Keep the source's order within columns, even when routes cross.
+    /// Ordinary maps reduce crossings instead.
+    #[must_use]
+    pub fn in_source_order(mut self) -> Self {
+        self.metrics.preserve_order = true;
         self.prepare();
         self
     }
@@ -407,29 +429,47 @@ impl<K: Clone + Ord> GraphState<K> {
         .step(from, step)
     }
 
-    /// Scrolls the graph sideways so the box `key` is in view, with a
-    /// little room beside it. It does nothing while the graph fits or the
-    /// box isn't on this page.
+    /// Scrolls both canvas axes so the box `key` is in view, with a
+    /// little room beside it. An axis without layout bounds stays put.
     pub fn reveal_node(&self, key: &K, window: &Window) {
-        let Some((_, x, _)) = self.placed().find(|(node, ..)| node.key == *key) else {
+        let Some((_, x, y)) = self.placed().find(|(node, ..)| node.key == *key) else {
             return;
         };
         let unit = ui::dp_px(1., window);
-        let view = self.pan.bounds().size.width;
-        // Before the first layout the pan has no width to scroll within.
-        if view <= gpui_kit::px(0.) {
-            return;
+        for (handle, view, start, length, horizontal) in [
+            (
+                &self.pan,
+                self.pan.bounds().size.width,
+                x,
+                self.metrics.node_w,
+                true,
+            ),
+            (
+                &self.vertical,
+                self.vertical.bounds().size.height,
+                y,
+                self.metrics.node_h,
+                false,
+            ),
+        ] {
+            if view <= gpui_kit::px(0.) {
+                continue;
+            }
+            let offset = handle.offset();
+            let at = if horizontal { offset.x } else { offset.y };
+            let shown = keys::scroll_to_show(
+                -at / unit,
+                view / unit,
+                start,
+                start + length,
+                REVEAL_MARGIN,
+            );
+            handle.set_offset(if horizontal {
+                gpui_kit::point(-shown * unit, offset.y)
+            } else {
+                gpui_kit::point(offset.x, -shown * unit)
+            });
         }
-        let offset = self.pan.offset();
-        let shown = keys::scroll_to_show(
-            -offset.x / unit,
-            view / unit,
-            x,
-            x + freshkube_graph::layout::NODE_W,
-            REVEAL_MARGIN,
-        );
-        self.pan
-            .set_offset(gpui_kit::point(-shown * unit, offset.y));
     }
 
     /// New boxes and calls. The selection stays while its call does, and
@@ -641,7 +681,17 @@ impl<K: Clone + Ord> GraphState<K> {
                 let (from, to) = self.ends[edge]?;
                 let link = (*local.get(&from)?, *local.get(&to)?);
                 let route = layout.routes[routed[&link]].clone();
-                let pill_at = freshkube_graph::layout::point_at(route.segments.last()?, 0.75);
+                let last = route.segments.last()?;
+                let pill_at = if last[0].0 < route.tip.0 {
+                    // Keep the pill level with its target, beyond the steep
+                    // part of neighbouring curves, with room before the card.
+                    (
+                        route.tip.0 - canvas::PILL_W / 2. - canvas::PILL_GAP,
+                        route.tip.1,
+                    )
+                } else {
+                    freshkube_graph::layout::point_at(last, 0.75)
+                };
                 Some(Shown {
                     edge,
                     route,
@@ -691,6 +741,63 @@ impl<K: Clone + Ord> GraphState<K> {
             pages,
         };
     }
+}
+
+/// Reveals the highlighted card on both axes until the canvas bounds have
+/// changed and then held, for at most six frames. A stacked Inspector learns
+/// its size during layout and can apply it on a later frame. Stops when the
+/// card is no longer highlighted or `showing` returns false.
+pub fn reveal_when_settled<S: GraphSource>(
+    view: gpui_kit::WeakEntity<S>,
+    key: S::Key,
+    showing: fn(&S) -> bool,
+    window: &Window,
+) {
+    settle_reveal(view, key, showing, None, false, 6, window);
+}
+
+fn settle_reveal<S: GraphSource>(
+    view: gpui_kit::WeakEntity<S>,
+    key: S::Key,
+    showing: fn(&S) -> bool,
+    last: Option<(gpui_kit::Pixels, gpui_kit::Pixels)>,
+    changed: bool,
+    frames: usize,
+    window: &Window,
+) {
+    window.on_next_frame(move |window, cx| {
+        let Some(bounds) = view
+            .update(cx, |source, cx| {
+                if !showing(source) || source.highlighted() != Some(&key) {
+                    return None;
+                }
+                let graph = source.graph();
+                graph.reveal_node(&key, window);
+                let bounds = (
+                    graph.pan.bounds().size.width,
+                    graph.vertical.bounds().size.height,
+                );
+                cx.notify();
+                Some(bounds)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        if frames > 1 && !(changed && Some(bounds) == last) {
+            let changed = changed || last.is_some_and(|last| last != bounds);
+            settle_reveal(
+                view,
+                key,
+                showing,
+                Some(bounds),
+                changed,
+                frames - 1,
+                window,
+            );
+        }
+    });
 }
 
 #[cfg(test)]

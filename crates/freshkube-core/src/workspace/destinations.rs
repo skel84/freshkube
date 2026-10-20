@@ -7,9 +7,11 @@
 //! A row may name an entry the workspace no longer lists: it is kept, so it
 //! can be pointed elsewhere, and resolves to nothing until it is.
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
-use super::Invalid;
+use super::{Chosen, Invalid, Part, Workspace};
 
 /// The name Argo CD gives the cluster it runs in.
 pub const IN_CLUSTER_NAME: &str = "in-cluster";
@@ -120,7 +122,8 @@ impl Destination {
         };
     }
 
-    /// Why the row can't be used, if it can't.
+    /// Why the row can't be read on its own. [`Self::fault_in`] also checks
+    /// that an in-cluster alias names the workspace's Argo CD source.
     pub fn fault(&self) -> Option<Fault> {
         let server = self.server.as_deref().map(str::trim);
         let name = self.name.as_deref().map(str::trim);
@@ -136,9 +139,30 @@ impl Destination {
                 Some(Fault::Spaces)
             }
             (Some(server), None) => server_fault(server),
-            (None, Some(name)) => (name == IN_CLUSTER_NAME).then_some(Fault::ArgoCdOwn),
+            (None, Some(_)) => None,
         };
         key.or_else(|| self.entry.trim().is_empty().then_some(Fault::NoEntry))
+    }
+
+    /// Checks the row against the same source selection delivery uses.
+    /// Neither an alias nor its target selects where Argo CD is read.
+    pub fn fault_in(&self, workspace: &Workspace) -> Option<Fault> {
+        if let Some(fault) = self.fault() {
+            return Some(fault);
+        }
+        let own = match self.key() {
+            Key::Server(server) => normalize_server(&server) == IN_CLUSTER_SERVER,
+            Key::Name(name) => name == IN_CLUSTER_NAME,
+        };
+        if !own {
+            return None;
+        }
+        match super::sources::choose(workspace, Part::ArgoCd) {
+            Chosen::Entry { entry, .. } => {
+                (entry.id != self.entry).then_some(Fault::ArgoCdOther(entry.id))
+            }
+            Chosen::Open | Chosen::NoEntry(_) | Chosen::Gone(_) => Some(Fault::ArgoCdUnknown),
+        }
     }
 
     /// The row as an error names it: `destinations[2] (server https://…)`,
@@ -160,21 +184,18 @@ impl Destination {
     }
 }
 
-/// Why a server can't be mapped: it isn't an http or https address, or it
-/// is Argo CD's own.
+/// Why a server can't be mapped: it isn't an http or https address.
 fn server_fault(server: &str) -> Option<Fault> {
     let lower = server.to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
         Some(Fault::NotHttp)
-    } else if normalize_server(server) == IN_CLUSTER_SERVER {
-        Some(Fault::ArgoCdOwn)
     } else {
         None
     }
 }
 
 /// Why a destination row is refused.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fault {
     ServerAndName,
     Neither,
@@ -183,27 +204,39 @@ pub enum Fault {
     /// A server or name with spaces around it.
     Spaces,
     NotHttp,
-    ArgoCdOwn,
+    /// An in-cluster alias maps to a different entry than this selected
+    /// Argo CD source entry id.
+    ArgoCdOther(String),
+    /// No workspace entry is selected as Argo CD's source.
+    ArgoCdUnknown,
     NoEntry,
     /// Not an object of strings: a number for a server, say.
     Unreadable,
 }
 
 impl Fault {
-    pub fn words(self) -> &'static str {
-        match self {
+    pub fn words(&self) -> Cow<'static, str> {
+        let words = match self {
             Fault::ServerAndName => "names both a server and a name",
             Fault::Neither => "names no server or name",
             Fault::EmptyServer => "names an empty server",
             Fault::EmptyName => "names an empty name",
             Fault::Spaces => "names a server or name with spaces around it",
             Fault::NotHttp => "names a server that isn’t an http or https address",
-            Fault::ArgoCdOwn => "names Argo CD's own cluster, which is known already",
+            Fault::ArgoCdOther(entry) => {
+                return format!(
+                    "names Argo CD's own cluster but maps it to another entry; use {entry}, the selected Argo CD source entry"
+                ).into();
+            }
+            Fault::ArgoCdUnknown => {
+                "names Argo CD's own cluster but its host entry cannot be determined; set sources.argocd to a usable cluster entry"
+            }
             Fault::NoEntry => "names no workspace cluster",
             Fault::Unreadable => {
                 "isn’t a server or name and an entry, each a string, so it can’t be read"
             }
-        }
+        };
+        words.into()
     }
 }
 
@@ -233,12 +266,13 @@ pub(super) fn read(value: serde_json::Value) -> Result<Vec<Destination>, Invalid
 }
 
 /// Checks every row, naming the first one that can't be used.
-pub(super) fn validate(rows: &[Destination]) -> Result<(), Invalid> {
+pub(super) fn validate(workspace: &Workspace) -> Result<(), Invalid> {
+    let rows = &workspace.destinations;
     if rows.len() > MAX_DESTINATIONS {
         return Err(Invalid::TooManyDestinations);
     }
     for (index, row) in rows.iter().enumerate() {
-        if let Some(fault) = row.fault() {
+        if let Some(fault) = row.fault_in(workspace) {
             return Err(Invalid::Destination {
                 row: row.named(index),
                 fault,

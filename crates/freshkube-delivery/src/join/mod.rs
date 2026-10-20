@@ -31,13 +31,16 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use super::argocd::{Application, DestinationMatch, ManagedObject, MapHint, StageNaming};
+use super::argocd::{
+    Application, DestinationMatch, ManagedObject, MapHint, StageClaim, StageNaming,
+};
 use super::deployments::{Deployment, DeploymentSet};
 use super::digest::Digest;
 use super::github::PullRequest;
-use super::kargo::{Freight, KargoRead};
+use super::kargo::{Freight, KargoRead, Stage};
 use super::observation::{Fact, Observation};
 use super::pods::RunningImage;
+use super::rekor::LogRead;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
 use super::tekton::{Build, CommitNames, EvidenceResult};
@@ -181,6 +184,27 @@ impl Link {
     }
 }
 
+/// What a signature is checked against, and what the transparency log said:
+/// the evidence's, handed to the links that can confirm.
+pub(crate) struct Proof<'a> {
+    pub(super) trust: &'a Trust,
+    pub(super) log: &'a LogRead,
+}
+
+impl Proof<'static> {
+    /// No key and no log: nothing verifies. The pull request links use it, so
+    /// a verified provenance, which is the commit's own witness, cannot
+    /// raise them.
+    pub(super) fn none() -> Self {
+        static NO_TRUST: Trust = Trust::Unset;
+        static NO_LOG: LogRead = LogRead::Off;
+        Proof {
+            trust: &NO_TRUST,
+            log: &NO_LOG,
+        }
+    }
+}
+
 /// Everything read for one change, each part with its own outcome.
 pub struct Evidence {
     pub sha: String,
@@ -195,6 +219,8 @@ pub struct Evidence {
     /// What signatures are verified against. [`Trust::Unset`] verifies
     /// nothing.
     pub(crate) trust: Trust,
+    /// What the transparency log said, when the person turned it on.
+    pub(crate) log: LogRead,
     /// Parameter and result names, besides upstream's, that name a build's
     /// commit.
     pub commit_names: CommitNames,
@@ -224,6 +250,34 @@ pub struct Evidence {
 }
 
 impl Evidence {
+    /// How the Application claims the Stage. A claim by name only that more
+    /// than one Application makes for the Stage is no claim: the name can't
+    /// say which is the Stage's.
+    pub(crate) fn claims_stage(&self, app: &Application, stage: &Stage) -> Option<StageClaim> {
+        let claim = app.claims_stage(&stage.project, &stage.name, self.stage_naming.as_ref())?;
+        (claim != StageClaim::NamedOnly || self.name_only_claimants(stage) <= 1).then_some(claim)
+    }
+
+    /// How many Applications read claim the Stage by name only.
+    pub(crate) fn name_only_claimants(&self, stage: &Stage) -> usize {
+        self.applications.read().map_or(0, |apps| {
+            apps.iter()
+                .filter(|app| {
+                    app.claims_stage(&stage.project, &stage.name, self.stage_naming.as_ref())
+                        == Some(StageClaim::NamedOnly)
+                })
+                .count()
+        })
+    }
+
+    /// What signatures are checked against, for the links that can confirm.
+    pub(super) fn proof(&self) -> Proof<'_> {
+        Proof {
+            trust: &self.trust,
+            log: &self.log,
+        }
+    }
+
     /// How a context is named in words: the name given for its key, else
     /// the key itself, which a kubeconfig context or a workspace entry is.
     pub fn name<'a>(&'a self, context: &'a str) -> &'a str {
@@ -606,8 +660,7 @@ fn candidate_workloads(
             .filter(|stage| stage.current_freight.contains(&item.name))
         {
             for app in apps.iter().filter(|app| {
-                app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                    .is_some()
+                evidence.claims_stage(app, stage).is_some()
                     && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
             }) {
                 for managed in app.managed.iter().filter(|m| controller.is(m)) {
@@ -664,8 +717,7 @@ pub(crate) fn candidate_applications(
             .filter(|stage| stage.current_freight.contains(&item.name))
         {
             for app in apps.iter().filter(|app| {
-                app.claims_stage(&stage.project, &stage.name, evidence.stage_naming.as_ref())
-                    .is_some()
+                evidence.claims_stage(app, stage).is_some()
                     && !manages_rollout(app)
                     && !deployment::speaks_for_in(read, item, app)
                     && evidence.destination_of(&id(&app.namespace, &app.name)) == Some(context)
@@ -715,12 +767,12 @@ pub fn join(evidence: &Evidence) -> Trail {
                 ));
             }
             for build in builds {
-                links.push(commit_link(sha, build, names, &evidence.trust));
+                links.push(commit_link(sha, build, names, &evidence.proof()));
                 links.extend(supply_chain_links(
                     build,
                     evidence.evidence_result.as_ref(),
                     names,
-                    &evidence.trust,
+                    &evidence.proof(),
                 ));
             }
             builds

@@ -184,6 +184,50 @@ fn an_empty_workspace_is_a_setup() {
 }
 
 #[test]
+fn in_cluster_aliases_in_yaml_keep_the_setup_and_round_trip() {
+    let text = "\
+version: 1
+clusters:
+  - {id: core-a, role: core, context: core-a}
+  - {id: env-b, role: environment, context: env-b}
+sources: {argocd: env-b}
+metrics: {mode: per-entry}
+destinations:
+  - {server: 'https://Kubernetes.Default.Svc:443/', entry: env-b, note: kept}
+  - {name: in-cluster, entry: env-b}
+  - {name: remote, entry: core-a}
+";
+    let setup = ok(text);
+    assert_eq!(setup.workspace.clusters.len(), 2);
+    assert_eq!(setup.workspace.destinations.len(), 3);
+    assert_eq!(setup.metrics.mode, Mode::PerEntry);
+    assert_eq!(setup.unknown_keys(), vec!["destinations[0].note"]);
+    assert_eq!(ok(&to_text(&setup)), setup);
+    assert!(matches!(
+        refused(&text.replace("sources: {argocd: env-b}", "sources: {argocd: missing}")),
+        Invalid::Workspace(workspace::Invalid::Destination {
+            fault: workspace::Fault::ArgoCdUnknown,
+            ..
+        })
+    ));
+    assert_eq!(
+        refused(&text.replace("sources: {argocd: env-b}", "sources: {argocd: core-a}")).to_string(),
+        "destinations[0] (server https://Kubernetes.Default.Svc:443/) names Argo CD's own cluster but maps it to another entry; use core-a, the selected Argo CD source entry"
+    );
+    assert_eq!(
+        refused(&text.replace("entry: env-b, note: kept", "entry: core-a, note: kept")).to_string(),
+        "destinations[0] (server https://Kubernetes.Default.Svc:443/) names Argo CD's own cluster but maps it to another entry; use env-b, the selected Argo CD source entry"
+    );
+    assert!(
+        matches!(
+            refused(&text.replace("role: core", "role: unknown")),
+            Invalid::WrongShape(_)
+        ),
+        "unrelated refusals remain file-fatal"
+    );
+}
+
+#[test]
 fn unknown_keys_are_kept_at_every_level() {
     let text = "\
 version: 1
@@ -944,5 +988,89 @@ fn results_plain_http_is_only_saved_for_literal_loopback() {
         ok(&with_cluster(&format!(
             "    results: {{address: '{address}'}}\n"
         )));
+    }
+}
+
+#[test]
+fn stage_naming_is_a_template_with_an_optional_project_key() {
+    let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
+    // Off when absent.
+    assert_eq!(ok("version: 1\n").delivery, None);
+    let setup = ok(&text("    name_template: '{stage}-{project}'\n"));
+    let naming = setup.delivery.as_ref().unwrap().stage_naming.as_ref();
+    assert_eq!(naming.unwrap().name_template, "{stage}-{project}");
+    assert_eq!(naming.unwrap().project_key, None);
+    let keyed = ok(&text(
+        "    name_template: 'app-{project}-in-{stage}'\n    project_key: example.test/project\n",
+    ));
+    let naming = keyed.delivery.as_ref().unwrap().stage_naming.as_ref();
+    assert_eq!(
+        naming.unwrap().project_key.as_deref(),
+        Some("example.test/project")
+    );
+    let written = to_text(&keyed);
+    assert!(
+        written.contains("project_key: example.test/project"),
+        "{written}"
+    );
+    assert_eq!(ok(&written), keyed);
+    // A setup without it writes nothing for it.
+    assert!(!to_text(&ok("version: 1\n")).contains("delivery"));
+}
+
+#[test]
+fn a_stage_naming_template_without_stage_is_a_fault_of_its_own() {
+    let text = |lines: &str| format!("version: 1\ndelivery:\n  stage_naming:\n{lines}");
+    assert_eq!(
+        rule(&text("    name_template: 'app-{project}'\n")),
+        "delivery.stage_naming.name_template has no {stage} in it, so it names no Stage"
+    );
+    assert_eq!(
+        rule(&text("    name_template: ''\n")),
+        "delivery.stage_naming.name_template is empty"
+    );
+    assert_eq!(
+        rule(&text("    name_template: '{stage}'\n    project_key: ''\n")),
+        "delivery.stage_naming.project_key is empty"
+    );
+    // The template is required once the block is there.
+    assert!(matches!(
+        refused(&text("    project_key: example.test/project\n")),
+        Invalid::WrongShape(_)
+    ));
+}
+
+#[test]
+fn unknown_keys_under_delivery_are_kept_and_named() {
+    let setup = ok("\
+version: 1
+delivery:
+  delivery_note: 1
+  stage_naming: {name_template: '{stage}', naming_note: 2}
+");
+    assert_eq!(
+        setup.unknown_keys(),
+        [
+            "delivery.delivery_note",
+            "delivery.stage_naming.naming_note"
+        ]
+    );
+    assert_eq!(ok(&to_text(&setup)), setup);
+}
+
+#[test]
+fn a_stage_naming_template_needs_only_a_stage_somewhere_in_it() {
+    let text = |template: &str| {
+        format!("version: 1\ndelivery:\n  stage_naming:\n    name_template: '{template}'\n")
+    };
+    for template in [
+        "{stage}",
+        "{stage}-{stage}",
+        "{stage}-{x}",
+        "app-{project}-{stage}",
+    ] {
+        let setup = ok(&text(template));
+        let naming = setup.delivery.unwrap().stage_naming.unwrap();
+        assert_eq!(naming.name_template, template);
     }
 }

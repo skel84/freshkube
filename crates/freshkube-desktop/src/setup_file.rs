@@ -64,7 +64,7 @@ pub(crate) struct SetupFile {
     pub(crate) coroot_reconnect: bool,
     stat: FileStat,
     write_generation: u64,
-    /// Accepted setup changes and successful explicit reloads, including
+    /// Setup or problem changes and successful explicit reloads, including
     /// identical bytes: referenced key files can change independently.
     read_revision: u64,
     writing: bool,
@@ -219,7 +219,7 @@ impl SetupFile {
 
     /// Invalidates an in-flight read as well as suppressing the next poll.
     fn record_write(&mut self, setup: Setup, seen: Seen, stat: FileStat) {
-        if self.setup.as_ref() != Some(&setup) {
+        if self.setup.as_ref() != Some(&setup) || self.problem.is_some() {
             self.read_revision += 1;
         }
         self.setup = Some(setup);
@@ -392,7 +392,7 @@ impl SetupFile {
             self.receipt = None;
             self.receipt_label.clear();
         }
-        if setup_changed || reloaded {
+        if setup_changed || reloaded || old_problem != self.problem {
             self.read_revision += 1;
         }
         if initial {
@@ -903,6 +903,67 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    async fn problem_changes_and_same_setup_recovery_advance_once(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("freshkube.yaml");
+        std::fs::write(&path, "version: [").unwrap();
+        let (_, reader) = mount(cx, directory.path(), false);
+        let file = model(&reader, cx);
+        let revision = cx.read(|cx| file.read(cx).read_revision());
+        assert_eq!(
+            revision, 1,
+            "an initial problem reaches delivery without a setup"
+        );
+        file.update(cx, |file, cx| file.reload(cx)).await;
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision);
+
+        std::fs::write(&path, "version: 999").unwrap();
+        file.update(cx, |file, cx| file.reload(cx)).await;
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 1);
+        assert!(cx.read(|cx| file.read(cx).setup.is_none()));
+
+        std::fs::write(&path, FIRST).unwrap();
+        file.update(cx, |file, cx| file.reload(cx)).await;
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 2);
+        std::fs::write(&path, "version: [").unwrap();
+        advance(cx, POLL);
+        advance(cx, DEBOUNCE);
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 3);
+
+        // Polling the exact last-good setup clears the problem even though
+        // neither the parsed setup nor its last-good bytes have changed.
+        std::fs::write(&path, FIRST).unwrap();
+        advance(cx, POLL);
+        advance(cx, DEBOUNCE);
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 4);
+        assert!(cx.read(|cx| file.read(cx).problem.is_none()));
+        advance(cx, POLL);
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 4);
+    }
+
+    #[gpui_kit::test]
+    async fn saving_the_same_setup_after_deletion_advances_the_revision(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("freshkube.yaml");
+        std::fs::write(&path, FIRST).unwrap();
+        let (_, reader) = mount(cx, directory.path(), false);
+        let file = model(&reader, cx);
+        std::fs::remove_file(&path).unwrap();
+        file.update(cx, |file, cx| file.reload(cx)).await;
+        let before = cx.read(|cx| file.read(cx).read_revision());
+        assert!(cx.read(|cx| file.read(cx).problem.is_some()));
+        file.update(cx, |file, cx| file.save_with(Seen::Missing, |_| {}, cx))
+            .await
+            .unwrap();
+        cx.read(|cx| {
+            assert_eq!(file.read(cx).read_revision(), before + 1);
+            assert!(file.read(cx).problem.is_none());
+        });
+    }
+
+    #[gpui_kit::test]
     async fn an_identical_explicit_reload_advances_the_read_revision(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let directory = tempfile::tempdir().unwrap();
@@ -919,16 +980,16 @@ mod tests {
             cx.read(|cx| file.read(cx).setup.clone()),
             Some(setup::parse(FIRST.as_bytes()).unwrap())
         );
-        // A quiet poll and an unsuccessful explicit reload accept no new setup.
+        // A quiet poll leaves the revision alone; a new problem advances it.
         advance(cx, POLL * 2);
         assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 1);
         std::fs::write(&path, "version: [broken").unwrap();
         file.update(cx, |file, cx| file.reload(cx)).await;
-        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 1);
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 2);
         // A changed successful reload advances once, rather than once for
         // the changed bytes and again for the explicit action.
         std::fs::write(&path, SECOND).unwrap();
         file.update(cx, |file, cx| file.reload(cx)).await;
-        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 2);
+        assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 3);
     }
 }

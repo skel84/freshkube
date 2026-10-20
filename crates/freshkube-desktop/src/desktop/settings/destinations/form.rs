@@ -203,9 +203,6 @@ impl DestinationForm {
                 Fault::EmptyServer => "Enter the server URL the Application names".into(),
                 Fault::EmptyName => "Enter Argo CD's name for the cluster".into(),
                 Fault::NotHttp => "The server must be an http or https address".into(),
-                Fault::ArgoCdOwn => {
-                    "Argo CD knows its own cluster already; it needs no mapping".into()
-                }
                 fault => super::super::edit::capitalized(&format!("the mapping {}", fault.words()))
                     .into(),
             });
@@ -235,14 +232,21 @@ impl DestinationForm {
 
     fn inspect_entry(&self, cx: &App) -> Option<SharedString> {
         let selected = self.entry.read(cx).selected_value();
-        (!self
-            .page
-            .read(cx)
-            .workspace()
+        let workspace = self.page.read(cx).workspace();
+        if !workspace
             .clusters
             .iter()
-            .any(|cluster| selected.is_some_and(|entry| cluster.id == entry.as_ref())))
-        .then(|| "Pick a workspace cluster".into())
+            .any(|cluster| selected.is_some_and(|entry| cluster.id == entry.as_ref()))
+        {
+            return Some("Pick a workspace cluster".into());
+        }
+        let row = Destination::new(self.key(cx), selected?.to_string());
+        match row.fault_in(workspace) {
+            Some(fault @ (Fault::ArgoCdOther(_) | Fault::ArgoCdUnknown)) => Some(
+                super::super::edit::capitalized(&format!("the mapping {}", fault.words())).into(),
+            ),
+            _ => None,
+        }
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
