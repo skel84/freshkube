@@ -60,7 +60,7 @@ pub enum Fetch {
 
 impl Fetch {
     /// Which change this is: an answer for another is never shown as its.
-    fn identity(&self) -> String {
+    pub(crate) fn identity(&self) -> String {
         match self {
             Self::Example {
                 project, freight, ..
@@ -249,32 +249,15 @@ impl ChangePage {
         self.connections = connections;
         self.detail = self.derive_detail();
         if let Fetch::Live {
-            place,
-            kubeconfig,
-            setup_revision,
-            ..
+            place, kubeconfig, ..
         } = &mut self.fetch
-            && (
-                &place.mapping,
-                &place.sources,
-                &*kubeconfig,
-                &place.public_key_file,
-                &place.evidence_result,
-            ) != (
-                &across.mapping,
-                &across.sources,
-                &across.kubeconfig,
-                &across.public_key_file,
-                &across.evidence_result,
-            )
+            && (&place.mapping, &place.sources, &*kubeconfig)
+                != (&across.mapping, &across.sources, &across.kubeconfig)
         {
-            *setup_revision += 1;
             place.mapping = across.mapping;
             place.sources = across.sources;
             *kubeconfig = across.kubeconfig;
-            place.public_key_file = across.public_key_file;
-            place.evidence_result = across.evidence_result;
-            self.loader.reset();
+            self.loader.expire();
             self.refresh(cx);
         }
         cx.notify();

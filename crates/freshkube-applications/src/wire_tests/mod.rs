@@ -164,7 +164,7 @@ async fn setup_key_and_evidence_reach_both_delivery_reads(cx: &mut TestAppContex
             .find(|hop| hop.name == "Supply chain")
             .unwrap();
         assert_eq!(hop.link, Some("Confirmed"));
-        assert!(hop.why.contains("agrees with"));
+        assert!(hop.why.contains("evidence record agrees with"));
     })
     .unwrap();
     let change = open_change(cx, window, &app);
@@ -173,7 +173,7 @@ async fn setup_key_and_evidence_reach_both_delivery_reads(cx: &mut TestAppContex
     cx.update_window(window, |_, _, cx| {
         let hop = supply(change.read(cx));
         assert_eq!(hop.link, Some(Confidence::Confirmed));
-        assert!(hop.detail.contains("agrees with"));
+        assert!(hop.detail.contains("evidence record agrees with"));
     })
     .unwrap();
 }
@@ -289,6 +289,10 @@ async fn reload_replaces_the_key_and_cancels_the_old_read(cx: &mut TestAppContex
     .unwrap();
     cx.wait_for_io(window, |_, cx| change.read(cx).answered())
         .await;
+    cx.update_window(window, |_, _, cx| {
+        assert_eq!(supply(change.read(cx)).link, Some(Confidence::Claimed));
+    })
+    .unwrap();
     std::fs::write(&key, fake::KEY).unwrap();
     cx.update_window(window, |_, _, cx| {
         app.update(cx, |page, cx| page.set_setup(&configured, cx))
@@ -360,7 +364,11 @@ async fn the_application_stage_hands_its_key_and_store_to_the_change(cx: &mut Te
         .await;
     cx.update_window(window, |_, _, cx| {
         assert_eq!(supply(change.read(cx)).link, Some(Confidence::Confirmed));
-        assert!(supply(change.read(cx)).detail.contains("agrees with"));
+        assert!(
+            supply(change.read(cx))
+                .detail
+                .contains("evidence record agrees with")
+        );
     })
     .unwrap();
     assert!(results.authenticated.load(Ordering::SeqCst) >= 3);
@@ -382,18 +390,49 @@ async fn a_hidden_old_setup_ticket_cannot_publish_after_reload(cx: &mut TestAppC
         // first request generation. Reset alone would reuse that generation.
         let old_request = change.update(cx, |page, _| {
             page.loader.reset();
-            page.loader
-                .start("invented-connection/checkout/freight-a/setup/1".into())
+            page.loader.start(page.fetch.identity())
         });
         app.update(cx, |page, cx| page.set_setup(&configured, cx));
         change.update(cx, |page, cx| {
-            let super::change::Fetch::Live { setup_revision, .. } = &page.fetch else {
-                panic!()
-            };
-            page.loader.start(format!(
-                "invented-connection/checkout/freight-a/setup/{setup_revision}"
-            ));
+            page.loader.start(page.fetch.identity());
             assert!(!page.loader.land(&old_request, Ok(old), cx));
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+async fn a_remap_keeps_the_last_good_change_on_refresh_failure(cx: &mut TestAppContext) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let gate = Arc::new(fake::Gate::default());
+    let configured = setup(None, None, false);
+    let (window, app) = mount(cx, &runtime, &configured, None, true, gate.clone());
+    wait_list(cx, window, &app).await;
+    let change = open_change(cx, window, &app);
+    cx.wait_for_io(window, |_, cx| change.read(cx).answered())
+        .await;
+    gate.hold.store(true, Ordering::SeqCst);
+    cx.update_window(window, |_, window, cx| {
+        let before = change.read(cx).fetch.identity();
+        let connections = app.read(cx).base_connections();
+        let mut across = app.read(cx).across();
+        across.mapping.entries.push("cluster-c".into());
+        change.update(cx, |page, cx| {
+            page.set_clusters(across, connections, cx);
+            assert_eq!(
+                page.fetch.identity(),
+                before,
+                "a remap keeps the setup identity"
+            );
+            assert!(page.is_reading());
+            assert!(
+                page.answered(),
+                "the previous read stays available during refresh"
+            );
+            page.fail_read("invented refresh failure", window, cx);
+            assert!(page.answered());
+            assert!(page.loader.is_stale());
+            assert_eq!(page.loader.error(), Some("invented refresh failure"));
         });
     })
     .unwrap();

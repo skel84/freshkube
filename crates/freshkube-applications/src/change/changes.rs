@@ -115,6 +115,7 @@ impl Changes {
                 runtime: runtime.clone(),
                 access: access.clone(),
                 secrets,
+                // A new page has no earlier setup reads to invalidate.
                 setup_revision: 0,
                 place: Box::new(Place {
                     cluster: live.cluster.clone(),
