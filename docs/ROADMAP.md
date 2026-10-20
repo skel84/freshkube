@@ -18,6 +18,19 @@ One row per step: its commit, its pull requests, and where to read what it did, 
 
 | Step | Commit | Pull requests | Read more |
 |------|--------|---------------|-----------|
+| Settings 4. Clusters and its Inspector ([#697](https://github.com/skel84/freshkube/issues/697)) | `2af002d` | [#756](https://github.com/skel84/freshkube/pull/756) | [settings.md](features/settings.md) |
+| Settings 9. The Monitoring section ([#697](https://github.com/skel84/freshkube/issues/697)) | `2404fac` | [#753](https://github.com/skel84/freshkube/pull/753) | [settings.md](features/settings.md), [monitoring.md](features/monitoring.md) |
+| Settings 6. Delivery sources and their pins ([#697](https://github.com/skel84/freshkube/issues/697)) | `d2f62e4` | [#752](https://github.com/skel84/freshkube/pull/752) | [settings.md](features/settings.md) |
+| Settings 10. The Coroot section ([#697](https://github.com/skel84/freshkube/issues/697)) | `fc73384` | [#750](https://github.com/skel84/freshkube/pull/750) | [settings.md](features/settings.md) |
+| Settings 5. Argo CD destinations ([#697](https://github.com/skel84/freshkube/issues/697)) | `567fa0d` | [#751](https://github.com/skel84/freshkube/pull/751) | [settings.md](features/settings.md) |
+| Setup file 6. The README's annotated example ([#706](https://github.com/skel84/freshkube/issues/706)) | `928496f` | [#740](https://github.com/skel84/freshkube/pull/740) | [README.md](../README.md), [SETUP_FILE.md](SETUP_FILE.md) |
+| Setup file 4. Settings saves to freshkube.yaml ([#706](https://github.com/skel84/freshkube/issues/706)) | `671a0bf` | [#747](https://github.com/skel84/freshkube/pull/747) | [settings.md](features/settings.md), [SETUP_FILE.md](SETUP_FILE.md#reload-on-change) |
+| Setup file 5. Metrics from the setup file ([#706](https://github.com/skel84/freshkube/issues/706)) | `d03ee83` | [#744](https://github.com/skel84/freshkube/pull/744) | [monitoring.md](features/monitoring.md), [SETUP_FILE.md](SETUP_FILE.md#metrics) |
+| Settings 8. The Connection section ([#697](https://github.com/skel84/freshkube/issues/697)) | `664f4a1` | [#724](https://github.com/skel84/freshkube/pull/724) | [settings.md](features/settings.md) |
+| Settings 7. The General section ([#697](https://github.com/skel84/freshkube/issues/697)) | `c713a48` | [#719](https://github.com/skel84/freshkube/pull/719) | [settings.md](features/settings.md) |
+| Settings 3. The area, its column and a page per section ([#697](https://github.com/skel84/freshkube/issues/697)) | `b91e521` | [#710](https://github.com/skel84/freshkube/pull/710) | [settings.md](features/settings.md) |
+| Settings 2. Shared forms (`freshkube_ui::form`) ([#697](https://github.com/skel84/freshkube/issues/697)) | `63e8a95` | [#705](https://github.com/skel84/freshkube/pull/705) | [settings.md](features/settings.md), [DESIGN.md](DESIGN.md#the-settings-page) |
+| Settings 1. The design and its style rules ([#697](https://github.com/skel84/freshkube/issues/697)) | `30372b9` | [#702](https://github.com/skel84/freshkube/pull/702) | [DESIGN.md](DESIGN.md#the-settings-page) |
 | Applications crate ([#583](https://github.com/skel84/freshkube/issues/583), step 4) | `79c8fce` | [#723](https://github.com/skel84/freshkube/pull/723) | [applications.md](features/applications.md), [ARCHITECTURE.md](ARCHITECTURE.md#crates-and-their-direction) |
 | Resources crate ([#583](https://github.com/skel84/freshkube/issues/583), step 3) | `648afcd` | [#717](https://github.com/skel84/freshkube/pull/717) | [resources.md](features/resources.md), [ARCHITECTURE.md](ARCHITECTURE.md#crates-and-their-direction) |
 | The delivery chain 5.6. The chain across the workspace ([#564](https://github.com/skel84/freshkube/issues/564)) | #565 2a561c6, #566 b025b99, #569 76baaac, #567 89a98d6, #570 6e5a6bf, #571 afebc23, #574 2cccdb7, #575 90ab1f9 | [#565](https://github.com/skel84/freshkube/pull/565), [#566](https://github.com/skel84/freshkube/pull/566), [#569](https://github.com/skel84/freshkube/pull/569), [#567](https://github.com/skel84/freshkube/pull/567), [#570](https://github.com/skel84/freshkube/pull/570), [#571](https://github.com/skel84/freshkube/pull/571), [#574](https://github.com/skel84/freshkube/pull/574), [#575](https://github.com/skel84/freshkube/pull/575) | [applications.md](features/applications.md), [0.14.0](../CHANGELOG.md#0140-2026-10-11) |
@@ -372,11 +385,15 @@ The change page (5.4, with [#522](https://github.com/skel84/freshkube/issues/522
 
 5.6, the chain across clusters ([#564](https://github.com/skel84/freshkube/issues/564)), is Done (see the table above): Applications, the change page and the Changes list read each part from its workspace entry.
 
+This step's settings are still open: the Supply chain and Results rows of Delivery sources and the Clusters Inspector's Build history group are [#697](https://github.com/skel84/freshkube/issues/697)'s slices 11 and 12, with [#268](https://github.com/skel84/freshkube/issues/268) ([settings.md](features/settings.md#open-follow-ups)).
+
 ### 6. Coroot completion, then linked to the chain
 
 The rest of [corust #2](https://github.com/skel84/corust/issues/2): chart histories and deployment comparisons through typed APIs. Then link Coroot to the chain: this deploy, and what its metrics did after it.
 
 Deployments has begun: Observability's Deployments lists an application's revisions with Coroot's findings and reads its charts around the selected one's start, split there with the samples counted on each side and nothing compared across it ([COROOT.md](COROOT.md#deployments)); the example preview's invented diff, comparison, rollback and sync are gone. The change page links to it: a Deployment's hop shows its current ReplicaSet's pod-template hash and Compare in Observability opens Deployments on Coroot's revision with that hash, or says why not: no such revision, no such application, or no Coroot cluster linked to the connection; a Rollout's is greyed out, since Coroot keeps Deployments' revisions only ([COROOT.md](COROOT.md#from-the-change-page)).
+
+This step's setting is still open: an entry's Coroot link, the Clusters Inspector's Observability group, is [#697](https://github.com/skel84/freshkube/issues/697)'s slice 12, with [#269](https://github.com/skel84/freshkube/issues/269) ([settings.md](features/settings.md#open-follow-ups)).
 
 ### 7. Small daily wins
 

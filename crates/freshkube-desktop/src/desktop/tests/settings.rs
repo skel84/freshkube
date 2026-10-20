@@ -19,17 +19,29 @@ fn open_connection(cx: &mut TestAppContext, handle: AnyWindowHandle, view: &Enti
 
 #[gpui_kit::test]
 fn settings_shows_the_metrics_source_read_only_for_example_data(cx: &mut TestAppContext) {
-    let (_runtime, handle, _view) = fixture(cx, 1280., 820.);
+    let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
-        window.render_frame(cx);
-        window.click("settings", cx);
-        window.render_frame(cx);
-        assert!(window.try_find("monitoring-source-settings").is_some());
-        // Example data has nothing to choose.
-        assert!(window.try_find("monitoring-source-mode").is_none());
-        assert!(window.try_find("monitoring-source-test").is_none());
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(
+                super::super::settings::SettingsSection::Monitoring,
+                window,
+                cx,
+            )
+        });
     })
     .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("monitoring-metrics").is_some());
+        window.click("metrics-automatic", cx);
+        window.render_frame(cx);
+        window.click("metrics-save", cx);
+        assert!(view.read(cx).setup_file.read(cx).receipt.is_none());
+        window.click("monitoring-folder-choose", cx);
+    })
+    .unwrap();
+    assert!(!cx.did_prompt_for_paths());
 }
 
 /// Example data never reads or writes the saved Coroot connection, even

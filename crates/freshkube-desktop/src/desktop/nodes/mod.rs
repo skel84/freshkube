@@ -490,23 +490,26 @@ impl Pilot {
         self.publish_reading(cx);
         self.navigation.column_changed();
         self.navigation.column_state.prepare(
-            self.registry
+            self.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
                 .map(|s| s.as_ref()),
         );
         let kubernetes = self
+            .switch
             .registry
             .active()
             .kubernetes_summary
             .data()
             .and_then(|summary| summary.nodes.loaded());
         let rows = join::join(
-            &self.nodes,
+            &self.target.nodes,
             kubernetes.map(Vec::as_slice).unwrap_or_default(),
             self.overview.data().is_some(),
-            self.registry
+            self.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -515,13 +518,15 @@ impl Pilot {
         let talos_current = self.overview.data().is_some() && !self.overview.is_stale();
         let loaded = kubernetes.is_some();
         let error: Option<SharedString> = self
+            .switch
             .registry
             .active()
             .kubernetes_summary
             .data()
             .and_then(|summary| summary.nodes.error())
             .or_else(|| {
-                self.registry
+                self.switch
+                    .registry
                     .active()
                     .kubernetes_summary
                     .error()
@@ -560,8 +565,9 @@ impl Pilot {
         let rows = self.pages.node_workspace.read(cx).rows.clone();
         let mut display = crate::presentation::overview::Overview::build(
             &rows,
-            &self.nodes,
-            self.registry
+            &self.target.nodes,
+            self.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()
@@ -583,7 +589,8 @@ impl Pilot {
             crate::desktop::shell::RailMarks::from_cards(&display.cards, self.mode().is_example());
         let attention = Arc::new(crate::presentation::attention::build(
             &rows,
-            self.registry
+            self.switch
+                .registry
                 .active()
                 .kubernetes_summary
                 .data()

@@ -70,7 +70,7 @@ impl Pilot {
     /// The entry's own kubeconfig can't be read or lacks its context: the
     /// source a held link waits for will never be the entry's, so say so.
     fn drop_link_for_unusable_kubeconfig(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pending) = self.pending_link.take() else {
+        let Some(pending) = self.switch.pending_link.take() else {
             return;
         };
         let why = match &self.kubeconfig_draft.inspection {
@@ -219,7 +219,7 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let entry_request = self.entry_locate.ticket();
+        let entry_request = self.switch.entry_locate.ticket();
         let request = self
             .kubeconfig_draft
             .read
@@ -253,7 +253,7 @@ impl Pilot {
                     return;
                 }
                 draft.inspecting = false;
-                if for_entry && entry_request != view.entry_locate.ticket() {
+                if for_entry && entry_request != view.switch.entry_locate.ticket() {
                     return;
                 }
                 draft.inspection = Some(result);

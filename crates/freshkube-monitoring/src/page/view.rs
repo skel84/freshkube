@@ -157,6 +157,7 @@ impl MonitoringPage {
                 Connection::Missing(_) => (Some(ui::Tone::Warn), "No Prometheus".into(), None),
                 Connection::Refused(_) => (Some(ui::Tone::Crit), "Not allowed".into(), None),
                 Connection::Failed(_) => (Some(ui::Tone::Crit), "Unreachable".into(), None),
+                Connection::Unknown(_) => (Some(ui::Tone::Warn), "No metrics source".into(), None),
             };
         h_flex()
             .id("monitoring-source")
@@ -438,6 +439,21 @@ impl MonitoringPage {
                 cx,
             )
             .into_any_element(),
+            Connection::Unknown(why) => div()
+                .id("monitoring-unknown")
+                .size_full()
+                .child(ui::empty_state(
+                    IconName::Unplug,
+                    "No metrics source",
+                    format!(
+                        "{why}. Nothing was asked. Name a store for this entry under metrics in freshkube.yaml."
+                    ),
+                    None,
+                    Vec::new(),
+                    cx,
+                ))
+                .test_support()
+                .into_any_element(),
             _ => self.render_grid(narrow, short, window, cx),
         }
     }

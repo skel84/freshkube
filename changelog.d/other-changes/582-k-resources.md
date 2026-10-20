@@ -1,1 +1,0 @@
-- **Internal:** move custom-resource discovery, namespace reads and the pod-usage poll onto the shared read owners.

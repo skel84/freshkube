@@ -1,6 +1,6 @@
 //! The Settings page: one section at a time, the one its column chose
 //! (`sections.rs`). Clusters lists the clusters of the workspace file
-//! (`workspace.json`, `freshkube_core::workspace`) and edits them: the shell
+//! (`freshkube.yaml`, through `SetupFile`) and edits them: the shell
 //! hands it what the file held at launch, and every change is saved at
 //! once, off the UI thread (`edit.rs`). Argo CD destinations map what an
 //! Application names to one of them (`destinations/`). Delivery sources say
@@ -8,11 +8,18 @@
 //! (`sources/`). Example data and a window without a preferences folder
 //! show the lists and change nothing.
 mod connection;
+mod coroot;
+#[cfg(test)]
+mod coroot_tests;
 pub(super) mod destinations;
 mod edit;
 #[cfg(test)]
 mod edit_tests;
+mod entry;
 mod form;
+mod kubeconfig_row;
+mod metrics_tokens;
+mod monitoring;
 mod sections;
 mod source;
 pub(super) mod sources;
@@ -21,13 +28,10 @@ pub(super) mod tests;
 
 use crate::ui::{self, dp};
 use freshkube_core::workspace::{self, Loaded, Workspace};
+use freshkube_ui::inspector::{self, InspectorSplit};
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{menu, page, table};
-use gpui_kit::component::{
-    Disableable, Sizable, WindowExt,
-    button::{Button, ButtonVariants},
-    h_flex, v_flex,
-};
+use gpui_kit::component::{Disableable, Sizable, WindowExt, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 pub(crate) use sections::{SettingsEvent, SettingsSection};
@@ -39,8 +43,6 @@ const MOST_KEYS_NAMED: usize = 5;
 
 /// The page's id prefix: `settings-title`, `-list`, `-banner`.
 const PREFIX: &str = "settings";
-const HAND_EDITED: &str =
-    "freshkube.yaml is edited by hand for now; Settings saves to it in a later version";
 /// The list's key context, around the table.
 pub(super) const CONTEXT: &str = "SettingsWorkspace";
 
@@ -63,7 +65,7 @@ gpui_kit::actions!(
         MoveClusterUp,
         /// Moves the selected cluster down one place.
         MoveClusterDown,
-        /// Reads workspace.json again.
+        /// Reads freshkube.yaml again.
         ReloadWorkspace
     ]
 );
@@ -80,6 +82,8 @@ pub(crate) struct ClusterRow {
     tooltip: SharedString,
     /// The tooltip without the note.
     plain_tooltip: SharedString,
+    /// How the entry opened when it did not open as defined.
+    note: Option<SharedString>,
 }
 
 /// What the last save did, under the table's banners.
@@ -104,6 +108,10 @@ pub(super) enum Origin {
 
 pub(crate) struct SettingsPage {
     connection: Option<connection::ConnectionForm>,
+    coroot: Option<coroot::CorootForm>,
+    /// Where Observability's connection stands, pushed by the shell.
+    coroot_state: crate::observability::ConnectionState,
+    monitoring: Option<monitoring::MonitoringForm>,
     rows: Vec<ClusterRow>,
     columns: Vec<Column>,
     width: f32,
@@ -113,10 +121,11 @@ pub(crate) struct SettingsPage {
     /// doesn't know; every save writes a changed copy of it.
     workspace: Workspace,
     setup_file: Option<Entity<crate::setup_file::SetupFile>>,
+    metrics_secrets: Option<freshkube_core::secrets::Secrets>,
     setup_refusal: bool,
     pending_setup: bool,
     uses_setup: bool,
-    /// `workspace.json`; none without a preferences folder.
+    /// `freshkube.yaml`; none without a preferences folder.
     file: Option<PathBuf>,
     /// What the file held when it was last read or written, to refuse a
     /// save over a change made since.
@@ -136,9 +145,26 @@ pub(crate) struct SettingsPage {
     revision: u64,
     /// The cluster to select once the save in flight has landed.
     select_on_save: Option<SharedString>,
+    /// Whether the selection clears once the save in flight has landed.
+    deselect_on_save: bool,
+    /// Whether the Add dialog opens once the save in flight has landed.
+    open_form_on_save: bool,
+    /// The window the page was last drawn in, for what follows a save.
+    window: Option<AnyWindowHandle>,
     selected: Option<SharedString>,
+    /// The selected cluster's groups in the Inspector.
+    entry: Option<entry::EntryDraft>,
+    /// The Inspector's scroll, which starts at the top for each cluster.
+    detail_scroll: ScrollHandle,
+    /// The selection and workspace revision the drafts were built for.
+    entry_key: Option<(Option<SharedString>, u64)>,
+    split: InspectorSplit,
+    /// The workspace's own kubeconfig as the header row shows it.
+    kubeconfig_path: Option<SharedString>,
     /// A list section's frame, which scrolls in a short window.
     page_scroll: ScrollHandle,
+    /// Monitoring's form scrolls independently from the workspace lists.
+    monitoring_scroll: ScrollHandle,
     focus: FocusHandle,
     /// The section shown, and shown again when Settings next opens.
     section: SettingsSection,
@@ -150,11 +176,11 @@ pub(crate) struct SettingsPage {
     pub(in crate::desktop) sources: Entity<sources::SourcesList>,
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
+    sources_status: Segment,
 }
 
 impl SettingsPage {
-    /// Keeps the existing JSON path until a parsed setup is available.
-    /// A form already open when YAML arrives keeps its draft behind Reload.
+    /// Takes the last good setup; a draft waits behind Reload when disk changes.
     pub(super) fn sync_setup(
         &mut self,
         file: Entity<crate::setup_file::SetupFile>,
@@ -164,30 +190,49 @@ impl SettingsPage {
         let model = file.read(cx);
         let setup = model.setup.clone();
         let problem = model.problem.clone();
-        if setup.is_none() && problem.is_none() && !self.setup_refusal {
-            self.setup_file = Some(file);
-            return;
-        }
-        self.setup_refusal = setup.is_some() || problem.is_some();
+        let seen = if model.is_missing() {
+            workspace::Seen::Missing
+        } else {
+            model.seen.clone()
+        };
+        let changed_on_disk = self.seen != seen;
+        self.setup_refusal = model.saves_refused();
         self.setup_file = Some(file);
         if let Some(setup) = setup {
-            if defer && (!self.uses_setup || self.workspace != setup.workspace) {
+            if defer && self.seen != seen {
                 self.pending_setup = true;
             } else if !defer {
                 self.pending_setup = false;
+                self.seen = seen;
                 if !self.uses_setup || self.workspace != setup.workspace {
                     self.uses_setup = true;
                     self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);
                 }
+                self.set_unknown_warning(cx);
             }
+        } else if !defer {
+            self.seen = seen;
         }
-        self.banner = if self.pending_setup {
-            Some("freshkube.yaml changed on disk. Reload to drop the unsaved changes.".into())
-        } else {
-            problem
-                .map(Into::into)
-                .or_else(|| self.uses_setup.then(|| HAND_EDITED.into()))
-        };
+        if problem.is_some()
+            || ((changed_on_disk || self.pending_setup)
+                && matches!(self.notice, Some(Notice::Saved(_))))
+        {
+            self.notice = None;
+        }
+        let legacy_banner = (!self.uses_setup && matches!(self.origin, Origin::Refused(_)))
+            .then(|| self.banner.clone())
+            .flatten();
+        self.banner = problem
+            .clone()
+            .map(Into::into)
+            .or_else(|| {
+                self.pending_setup.then(|| {
+                    "freshkube.yaml changed on disk. Reload to drop the unsaved changes.".into()
+                })
+            })
+            .or(legacy_banner);
+        self.sources
+            .update(cx, |sources, cx| sources.set_setup_problem(problem, cx));
         cx.notify();
     }
 
@@ -220,6 +265,7 @@ impl SettingsPage {
             return;
         }
         if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
+            row.note = note.clone().map(Into::into);
             row.tooltip = match &note {
                 Some(note) => format!("{}\nNote: {note}", row.plain_tooltip).into(),
                 None => row.plain_tooltip.clone(),
@@ -244,10 +290,17 @@ impl SettingsPage {
         &self.workspace
     }
 
-    pub(super) fn new(runtime: tokio::runtime::Handle, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        runtime: tokio::runtime::Handle,
+        metrics_secrets: Option<freshkube_core::secrets::Secrets>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (columns, width) = source::columns(&[]);
         Self {
             connection: None,
+            coroot: None,
+            coroot_state: crate::observability::ConnectionState::Disconnected,
+            monitoring: None,
             rows: Vec::new(),
             columns,
             width,
@@ -255,6 +308,7 @@ impl SettingsPage {
             origin: Origin::Alone,
             workspace: Workspace::default(),
             setup_file: None,
+            metrics_secrets,
             setup_refusal: false,
             pending_setup: false,
             uses_setup: false,
@@ -267,8 +321,17 @@ impl SettingsPage {
             notes: Default::default(),
             revision: 0,
             select_on_save: None,
+            deselect_on_save: false,
+            open_form_on_save: false,
+            window: None,
             selected: None,
+            entry: None,
+            detail_scroll: ScrollHandle::new(),
+            entry_key: None,
+            kubeconfig_path: None,
+            split: InspectorSplit::new(PREFIX, cx),
             page_scroll: ScrollHandle::new(),
+            monitoring_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             section: SettingsSection::default(),
             visible: false,
@@ -281,6 +344,7 @@ impl SettingsPage {
                 cx.new(|cx| sources::SourcesList::new(runtime, page, cx))
             },
             status: Segment::default(),
+            sources_status: Segment::default(),
         }
     }
 
@@ -297,31 +361,12 @@ impl SettingsPage {
             ),
         };
         self.workspace = workspace.clone();
+        self.kubeconfig_path = workspace
+            .kubeconfig
+            .as_ref()
+            .map(|path| path.display().to_string().into());
         self.revision = self.revision.wrapping_add(1);
-        self.warning = match workspace.unknown_keys().as_slice() {
-            [] => None,
-            keys => {
-                let shown = keys
-                    .iter()
-                    .take(MOST_KEYS_NAMED)
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let more = keys.len().saturating_sub(MOST_KEYS_NAMED);
-                Some(
-                    format!(
-                        "workspace.json has keys this version doesn’t use: {}{}. They are kept \
-                         when the file is saved; check them for a misspelling.",
-                        shown.join(", "),
-                        if more > 0 {
-                            format!(" and {more} more")
-                        } else {
-                            String::new()
-                        }
-                    )
-                    .into(),
-                )
-            }
-        };
+        self.set_unknown_warning(cx);
         self.rows = workspace
             .clusters
             .iter()
@@ -345,6 +390,7 @@ impl SettingsPage {
                     tooltip.push_str(&format!("\nNote: {note}"));
                 }
                 ClusterRow {
+                    note: self.notes.get(entry.id.as_str()).cloned(),
                     plain_tooltip,
                     id: entry.id.clone().into(),
                     role: entry.role.label().into(),
@@ -357,8 +403,7 @@ impl SettingsPage {
         self.banner = match &origin {
             Origin::Refused(why) => Some(
                 format!(
-                    "workspace.json isn’t used: {why}. Freshkube leaves the file as it is until \
-                     you save a change, which sets it aside first."
+                    "workspace.json isn’t used: {why}. Freshkube leaves it as it is; Settings saves changes in freshkube.yaml."
                 )
                 .into(),
             ),
@@ -414,12 +459,7 @@ impl SettingsPage {
                             Part::new(if self.origin == Origin::Example {
                                 "Example workspace".to_owned()
                             } else {
-                                if self.uses_setup {
-                                    "freshkube.yaml"
-                                } else {
-                                    "workspace.json"
-                                }
-                                .to_owned()
+                                "freshkube.yaml".to_owned()
                             })
                             .minor(),
                         ),
@@ -436,8 +476,45 @@ impl SettingsPage {
             .is_some_and(|key| !self.rows.iter().any(|row| &row.id == key))
         {
             self.selected = None;
+            self.drop_entry();
         }
         cx.notify();
+    }
+
+    fn set_unknown_warning(&mut self, cx: &App) {
+        self.warning = match self
+            .setup_file
+            .as_ref()
+            .and_then(|file| file.read(cx).setup.as_ref())
+            .map_or_else(
+                || self.workspace.unknown_keys(),
+                |setup| setup.unknown_keys(),
+            )
+            .as_slice()
+        {
+            [] => None,
+            keys => {
+                let shown = keys
+                    .iter()
+                    .take(MOST_KEYS_NAMED)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let more = keys.len().saturating_sub(MOST_KEYS_NAMED);
+                Some(
+                    format!(
+                        "freshkube.yaml has keys this version doesn’t use: {}{}. They are kept \
+                         when the file is saved; check them for a misspelling.",
+                        shown.join(", "),
+                        if more > 0 {
+                            format!(" and {more} more")
+                        } else {
+                            String::new()
+                        }
+                    )
+                    .into(),
+                )
+            }
+        };
     }
 
     /// Puts the keyboard on the section's list, where its keys are bound,
@@ -446,6 +523,14 @@ impl SettingsPage {
         if self.section == SettingsSection::Connection && self.connection.is_none() {
             cx.defer_in(window, |page, window, cx| {
                 page.prepare_connection(window, cx)
+            });
+        }
+        if self.section == SettingsSection::Coroot && self.coroot.is_none() {
+            cx.defer_in(window, |page, window, cx| page.prepare_coroot(window, cx));
+        }
+        if self.section == SettingsSection::Monitoring {
+            cx.defer_in(window, |page, window, cx| {
+                page.prepare_monitoring(window, cx)
             });
         }
         let focus = match self.section {
@@ -463,6 +548,9 @@ impl SettingsPage {
     /// Shows `section`; Delivery sources checks only while it shows.
     pub(super) fn show(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         if self.section != section {
+            if matches!(self.notice, Some(Notice::Saved(_))) {
+                self.notice = None;
+            }
             self.section = section;
             self.sync_sources(cx);
             cx.notify();
@@ -477,6 +565,7 @@ impl SettingsPage {
 
     fn sync_sources(&mut self, cx: &mut Context<Self>) {
         self.sync_connection_visibility();
+        self.sync_monitoring_visibility(cx);
         let shown = self.visible && self.section == SettingsSection::Sources;
         self.sources
             .update(cx, |sources, cx| sources.set_visible(shown, cx));
@@ -484,7 +573,13 @@ impl SettingsPage {
 
     /// The status bar's line: the workspace's, on its lists.
     pub(in crate::desktop) fn status(&self) -> Option<Segment> {
-        self.section.is_list().then(|| self.status.clone())
+        self.section.is_list().then(|| {
+            if self.section == SettingsSection::Sources {
+                self.sources_status.clone()
+            } else {
+                self.status.clone()
+            }
+        })
     }
 
     fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
@@ -493,15 +588,16 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(key) = table::step(self, delta, cx) {
-            self.select(key, cx);
+            self.request_select(Some(key), window, cx);
+            table::reveal(self, ScrollStrategy::Nearest);
         }
     }
 
-    fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        if self.selected.take().is_some() {
-            cx.notify();
+    fn clear_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected.is_some() {
+            self.request_select(None, window, cx);
         } else {
             cx.propagate();
         }
@@ -534,8 +630,14 @@ impl SettingsPage {
         if let Some(body) = &self.banner {
             banners.push(banner(
                 "settings-banner",
-                if self.setup_refusal {
+                if self
+                    .setup_file
+                    .as_ref()
+                    .is_some_and(|file| file.read(cx).problem.is_some())
+                {
                     "Setup file"
+                } else if self.pending_setup {
+                    "Unsaved edit is stale"
                 } else {
                     "Workspace file not used"
                 },
@@ -591,14 +693,14 @@ impl SettingsPage {
             editable,
             "Add a cluster to the workspace",
             AddCluster,
-            |this, window, cx| this.open_form(None, window, cx),
+            |this, window, cx| this.request_add(window, cx),
             cx,
         );
         let (edit, edit_fold) = self.render_action(
             "edit",
             "Edit",
             editable && selected,
-            "Change the selected cluster",
+            "Edit the selected cluster in the Inspector",
             EditCluster,
             |this, window, cx| this.edit_selected(window, cx),
             cx,
@@ -636,11 +738,7 @@ impl SettingsPage {
             "reload",
             "Reload",
             reloadable,
-            if self.setup_refusal {
-                "Read freshkube.yaml again"
-            } else {
-                "Read workspace.json again"
-            },
+            "Read freshkube.yaml again",
             ReloadWorkspace,
             |this, _, cx| this.reload(cx),
             cx,
@@ -652,6 +750,7 @@ impl SettingsPage {
             .foldable(up, up_fold)
             .foldable(down, down_fold)
             .foldable(reload, reload_fold)
+            .secondary(self.render_kubeconfig(cx))
             .render(window, cx)
     }
 
@@ -698,6 +797,8 @@ impl Render for SettingsPage {
         match self.section {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
+            SettingsSection::Coroot => self.render_coroot(window, cx),
+            SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self
                 .list_frame(window)
@@ -707,7 +808,6 @@ impl Render for SettingsPage {
                 .list_frame(window)
                 .child(self.sources.clone())
                 .into_any_element(),
-            section => self.render_pointer(section, window, cx),
         }
     }
 }
@@ -724,45 +824,58 @@ impl SettingsPage {
             })
     }
 
-    /// Clusters: the toolbar, the banners and the workspace's clusters.
+    /// Clusters: the toolbar, the banners, and the workspace's clusters edge
+    /// to edge with the selected one's groups in the Inspector, beside the
+    /// table on a wide page and under it on a narrow one.
     fn render_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_entry_after_frame(window, cx);
         let header = self.render_header(window, cx);
-        let short = page::is_short(window);
-        self.list_frame(window)
+        let table = div()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &NextCluster, window, cx| this.step(1, window, cx)))
+            .on_action(
+                cx.listener(|this, _: &PreviousCluster, window, cx| this.step(-1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ClearCluster, window, cx| this.clear_selection(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &AddCluster, window, cx| this.request_add(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &EditCluster, window, cx| this.edit_selected(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &RemoveCluster, window, cx| {
+                this.ask_remove_selected(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &MoveClusterUp, _, cx| this.move_selected(-1, cx)))
+            .on_action(cx.listener(|this, _: &MoveClusterDown, _, cx| this.move_selected(1, cx)))
+            .on_action(cx.listener(|this, _: &ReloadWorkspace, _, cx| this.reload(cx)))
+            .id("settings-table")
+            .test_support()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .child(table::data_table(self, window, cx).flex_1().min_h_0())
+            .into_any_element();
+        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let details = self.render_entry(cx);
+        let split = inspector::split(
+            "settings-split",
+            &self.split,
+            beside,
+            table,
+            details,
+            window,
+        );
+        page::page("settings-page")
+            .track_scroll(&self.page_scroll)
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .child(page::toolbar(cx).child(header))
             .children(self.render_banners(cx))
-            .child(
-                div()
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|this, _: &NextCluster, _, cx| this.step(1, cx)))
-                    .on_action(cx.listener(|this, _: &PreviousCluster, _, cx| this.step(-1, cx)))
-                    .on_action(
-                        cx.listener(|this, _: &ClearCluster, _, cx| this.clear_selection(cx)),
-                    )
-                    .on_action(cx.listener(|this, _: &AddCluster, window, cx| {
-                        this.open_form(None, window, cx)
-                    }))
-                    .on_action(cx.listener(|this, _: &EditCluster, window, cx| {
-                        this.edit_selected(window, cx)
-                    }))
-                    .on_action(cx.listener(|this, _: &RemoveCluster, window, cx| {
-                        this.ask_remove_selected(window, cx)
-                    }))
-                    .on_action(
-                        cx.listener(|this, _: &MoveClusterUp, _, cx| this.move_selected(-1, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|this, _: &MoveClusterDown, _, cx| this.move_selected(1, cx)),
-                    )
-                    .on_action(cx.listener(|this, _: &ReloadWorkspace, _, cx| this.reload(cx)))
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
-                    .child(table::data_table(self, window, cx).flex_1().min_h_0()),
-            )
+            .child(split)
             .into_any_element()
     }
 }
@@ -792,7 +905,7 @@ impl super::Pilot {
         let file = self.workspace_file.clone();
         let setup_file = self.setup_file.clone();
         self.settings_page.update(cx, |page, cx| {
-            page.file = file;
+            page.file = file.map(|file| file.with_file_name("freshkube.yaml"));
             page.seen = seen;
             page.uses_setup = setup.is_some();
             page.set_workspace(&loaded, example, cx);

@@ -1,1 +1,0 @@
-- **Internal:** core can now read and write the setup file `freshkube.yaml` (types, parsing with line and column errors, a fixed-order writer); nothing in the app uses it yet.

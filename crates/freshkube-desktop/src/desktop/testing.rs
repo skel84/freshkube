@@ -202,7 +202,7 @@ pub(crate) fn open_node_tab(
     tab: super::nodes::NodeTab,
 ) {
     let view = root_pilot(window, cx);
-    let name = view.read(cx).selected_node.clone().unwrap();
+    let name = view.read(cx).target.selected_node.clone().unwrap();
     area(window, cx, "nav-nodes");
     if !view.read(cx).pages.node_workspace.read(cx).open {
         expand_healthy_nodes(window, cx);

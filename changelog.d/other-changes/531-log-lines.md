@@ -1,1 +1,0 @@
-- **Log lines:** right-click a line in dock or node logs for Copy, Select all and Find with their keyboard shortcuts; clicks inside a selection keep it, and clicks outside select one line.

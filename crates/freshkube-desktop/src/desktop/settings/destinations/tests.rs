@@ -1,7 +1,7 @@
 //! The destinations list in the real app: mapping, changing and removing a
 //! destination, saved to the file, and the list beside the clusters.
 use super::super::SettingsSection;
-use super::super::edit_tests::{open_section, saved, write};
+use super::super::edit_tests::{open_section, read_workspace, saved, write};
 use super::super::tests::launch;
 use crate::desktop::{layout_check, tests::fixture};
 use freshkube_core::workspace::{self, Destination, Key, Loaded};
@@ -22,10 +22,7 @@ const ONE: &str = r#"{"version":1,"clusters":[
   "destinations":[{"name":"prod-lon","entry":"prod","note":"kept"}]}"#;
 
 fn destinations(directory: &Path) -> Vec<Destination> {
-    match workspace::load(&directory.join("workspace.json")) {
-        Loaded::Workspace(workspace) => workspace.destinations,
-        other => panic!("{other:?}"),
-    }
+    read_workspace(directory).destinations
 }
 
 fn server(server: &str, entry: &str) -> Destination {
@@ -33,33 +30,194 @@ fn server(server: &str, entry: &str) -> Destination {
 }
 
 #[gpui_kit::test]
-fn the_example_lists_its_destinations_on_a_table_page(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    for size in [None, Some(20.)] {
+async fn the_edit_title_stays_left_of_the_close_button_at_text_twenty(cx: &mut TestAppContext) {
+    use crate::GpuiOptions;
+    use crate::desktop::tests::mount;
+    cx.executor().allow_parking();
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let guard = tempfile::tempdir().unwrap();
+        write(
+            guard.path(),
+            &serde_json::json!({
+                "version": 1,
+                "clusters": [{"id": "prod", "role": "environment", "context": "example-prod"}],
+                "destinations": [{
+                    "server": "https://a-very-long-cluster-name.region-one.zone-two.example.test:6443",
+                    "entry": "prod",
+                }],
+            }).to_string(),
+        );
+        let options = GpuiOptions::new(Some(guard.path().join("missing")), None, 100)
+            .with_preferences(Some(guard.path().join("preferences.json")));
+        let (_runtime, handle, view) = mount(cx, options, width, height);
+        open_section(cx, handle, &view, SettingsSection::Destinations).await;
         cx.update_window(handle, |_, window, cx| {
-            if let Some(size) = size {
-                crate::text_size::set(size, cx);
-            }
-            view.update(cx, |pilot, cx| {
-                pilot.show_settings(SettingsSection::Destinations, window, cx)
-            });
+            crate::text_size::set(20., cx);
             window.render_frame(cx);
-            layout_check::assert_table_page(window, cx, &PAGE);
-            for row in 0..3 {
-                assert!(window.find(format!("settings-destination-{row}")).visible());
-            }
-            // The section holds one table: neither other list is drawn.
-            assert!(window.try_find("settings-list").is_none());
-            assert!(window.try_find("settings-sources-list").is_none());
+            window.click("settings-destination-0", cx);
+            window.press("e", cx);
+            window.render_frame(cx);
+            let title = window.find("settings-destination-edit-url").bounds();
+            let close = window.find("close").bounds();
             assert!(
-                window
-                    .find("settings-scope")
-                    .label()
-                    .unwrap_or_default()
-                    .contains("3 destinations mapped")
+                title.right() < close.left(),
+                "{width}×{height}: title {title:?} overlaps close button {close:?}"
             );
+            // Include the text chunks, so the assertion also catches text
+            // overflowing a correctly constrained title box.
+            for ix in 0.. {
+                let Some(chunk) =
+                    window.try_find(format!("settings-destination-edit-url-chunk-{ix}"))
+                else {
+                    break;
+                };
+                assert!(chunk.bounds().right() <= title.right() + gpui_kit::px(1.));
+            }
+            window.click("close", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("settings-destination-form").is_none());
         })
         .unwrap();
+    }
+}
+
+#[gpui_kit::test]
+async fn removing_a_server_flows_inline_and_wraps_only_between_chunks(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    for (url, first_chunk, short) in [
+        ("https://b.example.test", "https://b", true),
+        (
+            "https://a-very-long-cluster-name.region-one.zone-two.example.test:6443/a-long-path",
+            "https://a-very-long-cluster-name",
+            false,
+        ),
+    ] {
+        let guard = tempfile::tempdir().unwrap();
+        write(
+            guard.path(),
+            &serde_json::json!({
+                "version": 1,
+                "clusters": [{"id": "prod", "role": "environment", "context": "example-prod"}],
+                "destinations": [{"server": url, "entry": "prod"}],
+            })
+            .to_string(),
+        );
+        let (_runtime, handle, view) = launch(cx, guard.path());
+        open_section(cx, handle, &view, SettingsSection::Destinations).await;
+        for size in [13., 20.] {
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(size, cx);
+                window.render_frame(cx);
+                window.click("settings-destination-0", cx);
+                window.press("backspace", cx);
+                window.render_frame(cx);
+                let paragraph = window.find("settings-destination-remove-url").bounds();
+                let first_word = window
+                    .find("settings-destination-remove-url-chunk-0")
+                    .bounds();
+                let scheme = window
+                    .find("settings-destination-remove-url-chunk-6")
+                    .bounds();
+                let style = window.text_style();
+                let font_size = crate::ui::dp_px(13., window);
+                let shaped_width = |text: &str| {
+                    window
+                        .text_system()
+                        .shape_line(
+                            text.to_owned().into(),
+                            font_size,
+                            &[style.to_run(text.len())],
+                            None,
+                        )
+                        .width()
+                        .ceil()
+                };
+                // Both slashes and the first host label stay on one line.
+                assert!((scheme.size.width - shaped_width(first_chunk)).abs() <= gpui_kit::px(1.));
+                assert!((first_word.size.width - shaped_width("Argo ")).abs() <= gpui_kit::px(1.));
+                let line_height = first_word.size.height;
+                assert!(line_height < font_size * 2.);
+                let mut previous: Option<gpui_kit::Bounds<gpui_kit::Pixels>> = None;
+                for ix in 0.. {
+                    let Some(chunk) =
+                        window.try_find(format!("settings-destination-remove-url-chunk-{ix}"))
+                    else {
+                        break;
+                    };
+                    let bounds = chunk.bounds();
+                    // No chunk in either URL is oversized: none may split mid-word.
+                    assert!((bounds.size.height - line_height).abs() <= gpui_kit::px(1.));
+                    assert!(bounds.right() <= paragraph.right() + gpui_kit::px(1.));
+                    if let Some(previous) = previous {
+                        if (bounds.top() - previous.top()).abs() <= gpui_kit::px(1.) {
+                            // Spaces belong to words; URL chunks have no added gap.
+                            assert!((bounds.left() - previous.right()).abs() <= gpui_kit::px(1.));
+                        } else {
+                            assert!(
+                                (bounds.top() - previous.top() - line_height).abs()
+                                    <= gpui_kit::px(1.)
+                            );
+                            assert!(previous.right() + bounds.size.width > paragraph.right() - gpui_kit::px(1.));
+                            // Every new line returns to the paragraph edge.
+                            assert!((bounds.left() - paragraph.left()).abs() <= gpui_kit::px(1.));
+                        }
+                    }
+                    previous = Some(bounds);
+                }
+                if short {
+                    // NoopTextSystem uses a wide fixed advance for every glyph.
+                    // Assert natural packing rather than the native font's exact
+                    // line count (which the lead checks in the running app).
+                    let text = format!("Argo CD Applications with destination server {url} show it as Unknown again. Nothing on a cluster is touched.");
+                    let least_lines = (shaped_width(&text) / paragraph.size.width).ceil();
+                    assert!(paragraph.size.height <= line_height * least_lines + gpui_kit::px(1.));
+                } else {
+                    assert!(paragraph.size.height > line_height * 2.);
+                    let last_url_chunk = window
+                        .find("settings-destination-remove-url-chunk-12")
+                        .bounds();
+                    assert!(
+                        last_url_chunk.top() > scheme.top(),
+                        "the long URL must actually wrap"
+                    );
+                }
+                window.click("settings-destination-remove-cancel", cx);
+                window.render_frame(cx);
+            })
+            .unwrap();
+        }
+        assert_eq!(destinations(guard.path()), vec![server(url, "prod")]);
+    }
+}
+
+#[gpui_kit::test]
+fn the_example_lists_its_destinations_on_a_table_page(cx: &mut TestAppContext) {
+    for (width, height) in [(1280., 880.), (760., 560.)] {
+        let (_runtime, handle, view) = fixture(cx, width, height);
+        for text in [13., 20.] {
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(text, cx);
+                view.update(cx, |pilot, cx| {
+                    pilot.show_settings(SettingsSection::Destinations, window, cx)
+                });
+                crate::desktop::tests::settle_header(window, cx);
+                layout_check::assert_table_page(window, cx, &PAGE);
+                for row in 0..3 {
+                    assert!(window.find(format!("settings-destination-{row}")).visible());
+                }
+                // The section holds one table: neither other list is drawn.
+                assert!(window.try_find("settings-list").is_none());
+                assert!(window.try_find("settings-sources-list").is_none());
+                assert!(
+                    window
+                        .find("settings-scope")
+                        .label()
+                        .unwrap_or_default()
+                        .contains("3 destinations mapped")
+                );
+            })
+            .unwrap();
+        }
     }
 }
 
@@ -208,8 +366,7 @@ async fn changing_a_mapping_keeps_its_place_and_unknown_keys(cx: &mut TestAppCon
     })
     .unwrap();
     saved(cx, handle, &view).await;
-    let text = std::fs::read_to_string(guard.path().join("workspace.json")).unwrap();
-    let file: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let file = serde_json::to_value(read_workspace(guard.path())).unwrap();
     assert_eq!(
         file["destinations"],
         serde_json::json!([{"server": "https://lon.example.test", "entry": "prod", "note": "kept"}])
@@ -254,7 +411,7 @@ async fn the_form_refuses_what_wouldnt_map_and_saves_nothing(cx: &mut TestAppCon
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     write(guard.path(), ONE);
-    let before = std::fs::read(guard.path().join("workspace.json")).unwrap();
+    let before = std::fs::read(guard.path().join("freshkube.yaml")).unwrap();
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_section(cx, handle, &view, SettingsSection::Destinations).await;
     for (by, value, why) in [
@@ -285,7 +442,7 @@ async fn the_form_refuses_what_wouldnt_map_and_saves_nothing(cx: &mut TestAppCon
             }
             window.click("settings-destination-save", cx);
             window.render_frame(cx);
-            assert_eq!(window.find("settings-destination-error").label(), Some(why));
+            assert_field_error(window, &view, "value", why, cx);
             window.click("settings-destination-cancel", cx);
             window.render_frame(cx);
         })
@@ -293,7 +450,7 @@ async fn the_form_refuses_what_wouldnt_map_and_saves_nothing(cx: &mut TestAppCon
     }
     cx.run_until_parked();
     assert_eq!(
-        std::fs::read(guard.path().join("workspace.json")).unwrap(),
+        std::fs::read(guard.path().join("freshkube.yaml")).unwrap(),
         before
     );
 }
@@ -318,10 +475,7 @@ async fn with_two_clusters_the_form_asks_which(cx: &mut TestAppContext) {
         window.input("https://prod.example.test", cx);
         window.click("settings-destination-save", cx);
         window.render_frame(cx);
-        assert_eq!(
-            window.find("settings-destination-error").label(),
-            Some("Pick a workspace cluster")
-        );
+        assert_field_error(window, &view, "entry", "Pick a workspace cluster", cx);
     })
     .unwrap();
 }
@@ -469,7 +623,7 @@ async fn a_file_changed_on_disk_refuses_a_mapping(cx: &mut TestAppContext) {
     })
     .unwrap();
     assert_eq!(
-        std::fs::read_to_string(guard.path().join("workspace.json")).unwrap(),
+        std::fs::read_to_string(guard.path().join("freshkube.yaml")).unwrap(),
         edited
     );
 }
@@ -550,7 +704,7 @@ async fn a_duplicate_is_found_as_argo_cd_matches(cx: &mut TestAppContext) {
             window.input(value, cx);
             window.click("settings-destination-save", cx);
             window.render_frame(cx);
-            assert_eq!(window.find("settings-destination-error").label(), Some(why));
+            assert_field_error(window, &view, "value", why, cx);
             window.click("settings-destination-cancel", cx);
             window.render_frame(cx);
         })
@@ -584,6 +738,7 @@ async fn the_selection_follows_the_mapping_not_its_place(cx: &mut TestAppContext
         });
     })
     .unwrap();
+    saved(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(list(&view, cx).selected(), Some(&name("prod-lon")));
         assert_eq!(list(&view, cx).selected_row().map(|(at, _)| at), Some(0));
@@ -707,4 +862,189 @@ fn a_short_window_keeps_each_list_usable(cx: &mut TestAppContext) {
             .unwrap();
         }
     }
+}
+
+/// Every entry point reaches the same mapping, edit and removal flow. In
+/// particular a row menu selects its row before it dispatches an action.
+#[gpui_kit::test]
+async fn toolbar_keys_and_row_menu_run_the_same_actions(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    for route in ["toolbar", "keys", "menu"] {
+        let guard = tempfile::tempdir().unwrap();
+        write(guard.path(), TWO);
+        let (_runtime, handle, view) = launch(cx, guard.path());
+        open_section(cx, handle, &view, SettingsSection::Destinations).await;
+        for (action, key, menu_index, form) in [
+            ("map", "a", 0usize, true),
+            ("edit", "e", 1, true),
+            ("remove", "backspace", 2, false),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                window.click("settings-destination-1", cx);
+                if route == "menu" {
+                    window.right_click("settings-destination-0", cx);
+                } else {
+                    window.click("settings-destination-0", cx);
+                    if route == "toolbar" {
+                        window.click(format!("settings-destinations-{action}"), cx);
+                    } else {
+                        window.press(key, cx);
+                    }
+                }
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                if route == "menu" {
+                    window.render_frame(cx);
+                    assert_eq!(list(&view, cx).selected_row().map(|(at, _)| at), Some(0));
+                    let menu = window.within("popup-menu");
+                    for (ix, label) in ["Map", "Edit", "Remove"].iter().enumerate() {
+                        assert!(menu.find(ix).label().unwrap_or_default().starts_with(label));
+                    }
+                    window.within("popup-menu").click(menu_index, cx);
+                }
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                if form {
+                    assert!(window.find("settings-destination-form").visible());
+                    window.click("settings-destination-value", cx);
+                    window.press("secondary-a", cx);
+                    window.input(
+                        if action == "map" {
+                            "https://new.example.test"
+                        } else {
+                            "https://edited.example.test"
+                        },
+                        cx,
+                    );
+                    let form = list(&view, cx).form().unwrap();
+                    form.update(cx, |form, cx| form.pick("prod", window, cx));
+                    window.click("settings-destination-save", cx);
+                } else {
+                    assert!(window.find("settings-destination-remove-dialog").visible());
+                    window.click("settings-destination-remove-confirm", cx);
+                }
+            })
+            .unwrap();
+            saved(cx, handle, &view).await;
+            let rows = destinations(guard.path());
+            match action {
+                "map" => {
+                    assert_eq!(rows.len(), 3, "{route}");
+                    assert_eq!(rows[2], server("https://new.example.test", "prod"));
+                }
+                "edit" => assert_eq!(rows[0], server("https://edited.example.test", "prod")),
+                _ => {
+                    assert_eq!(rows.len(), 2, "{route}");
+                    assert!(
+                        rows.iter()
+                            .all(|row| row.key()
+                                != Key::Server("https://edited.example.test".into()))
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[gpui_kit::test]
+async fn value_errors_show_on_blur_and_save_focuses_the_first_invalid_field(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    // GPUI emits focus/blur events only for an active window.
+    cx.update_window(handle, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    open_section(cx, handle, &view, SettingsSection::Destinations).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-destinations-map", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-destination-value", cx);
+        window.input("invalid", cx);
+        window.click("settings-destination-entry", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_field_error(
+            window,
+            &view,
+            "value",
+            "The server must be an http or https address",
+            cx,
+        );
+        assert!(window.try_find("settings-destination-error").is_none());
+        // Close the picker and submit with both fields invalid.
+        window.press("escape", cx);
+        window.click("settings-destination-save", cx);
+        window.render_frame(cx);
+        let form = list(&view, cx).form().unwrap();
+        assert_eq!(form.read(cx).focused_field(window, cx), Some("value"));
+        assert!(
+            window
+                .find("settings-destination-entry-field-error")
+                .visible()
+        );
+        window.click("settings-destination-value", cx);
+        window.press("secondary-a", cx);
+        window.input("https://new.example.test", cx);
+        window.click("settings-destination-save", cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find("settings-destination-value-field-error")
+                .is_none()
+        );
+        assert_eq!(form.read(cx).focused_field(window, cx), Some("entry"));
+        let bounds = window
+            .find("settings-destination-entry-control")
+            .bounds()
+            .scale(window.scale_factor());
+        let crit = crate::palette::palette(cx).crit;
+        assert!(
+            window
+                .painted_quads()
+                .iter()
+                .any(|quad| quad.border_color == crit
+                    && quad.bounds == bounds
+                    && quad.border_widths.top.0 > 0.)
+        );
+        assert!(window.try_find("settings-destination-error").is_none());
+        let save = window.find("settings-destination-save").bounds();
+        let cancel = window.find("settings-destination-cancel").bounds();
+        assert_eq!(
+            save.left() < cancel.left(),
+            freshkube_ui::platform::default_button() == freshkube_ui::platform::Side::Leading
+        );
+    })
+    .unwrap();
+    assert_eq!(destinations(guard.path()).len(), 2);
+}
+
+fn assert_field_error(
+    window: &gpui_kit::Window,
+    view: &gpui_kit::Entity<crate::desktop::Pilot>,
+    field: &str,
+    why: &str,
+    cx: &gpui_kit::App,
+) {
+    let form = list(view, cx).form().unwrap();
+    assert_eq!(form.read(cx).field_error(field), Some(why));
+    let error = window.find(format!("settings-destination-{field}-field-error"));
+    assert!(error.visible());
+    assert_eq!(error.role(), Some(gpui_kit::Role::Alert));
+    assert!(window.try_find("settings-destination-error").is_none());
 }

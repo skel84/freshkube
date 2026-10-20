@@ -30,6 +30,7 @@ impl Pilot {
                     let file = this.setup_file.clone();
                     let defer = window.has_active_dialog(cx)
                         || this.settings_page.read(cx).save_in_progress()
+                        || this.settings_page.read(cx).has_unsaved_edits(cx)
                         || this.settings_page.read(cx).setup_is_pending();
                     this.settings_page
                         .update(cx, |page, cx| page.sync_setup(file, defer, cx));
@@ -51,8 +52,11 @@ impl Pilot {
             return;
         };
         let connection = setup.coroot.clone();
+        let setup = setup.clone();
+        let reconnect = self.setup_file.read(cx).coroot_reconnect;
+        self.pages.set_setup(setup, cx);
         self.pages.observability.update(cx, |page, cx| {
-            page.set_setup_connection(&connection, window, cx)
+            page.set_setup_connection(&connection, reconnect, window, cx)
         });
     }
 }

@@ -1,1 +1,0 @@
-- **Shell pages:** The page map and the typed page handles live in one owner, `Pages`, which `Pilot` holds as `pages`, and the shell hears every page from `Pages::subscribe`; nothing the app shows or does changes.

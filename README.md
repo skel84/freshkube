@@ -141,7 +141,7 @@ With one cluster, there is nothing to set up. Open the cluster that runs Kargo a
 
 #### Several clusters
 
-When Kargo, Argo CD and your workloads run on different clusters, list them in **Settings › Workspace**. Each entry has a role, and the role says what is read there:
+When Kargo, Argo CD and your workloads run on different clusters, list them in the [setup file](#the-setup-file). Each entry has a role, and the role says what is read there:
 
 - `cicd`: Kargo and the builds (Pipelines as Code's PipelineRuns).
 - `core`: Argo CD. Kargo and the builds too, when no entry is `cicd`.
@@ -149,23 +149,85 @@ When Kargo, Argo CD and your workloads run on different clusters, list them in *
 
 The first entry with a role wins. Under **Argo CD destinations**, map each destination, by its server URL or its cluster name, to one of the entries. Freshkube never guesses from your kubeconfig. A Stage that deploys to Argo CD's own cluster (`in-cluster`) needs no mapping. **Delivery sources** shows which entry each part is read from and why; **Check sources** reads one item of each to prove it.
 
-The page saves `workspace.json` beside the app's preferences: `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube` on Linux and `%APPDATA%\Freshkube` on Windows. It looks like this:
+#### The setup file
 
-```json
-{
-  "version": 1,
-  "clusters": [
-    { "id": "cicd-fra", "role": "cicd", "context": "admin@cicd-fra" },
-    { "id": "core-fra", "role": "core", "context": "admin@core-fra" },
-    { "id": "dev-fra", "role": "environment", "context": "admin@dev-fra" },
-    { "id": "prod-ams", "role": "environment", "context": "admin@prod-ams" }
-  ],
-  "destinations": [
-    { "name": "dev-fra", "entry": "dev-fra" },
-    { "server": "https://prod-ams.example.com:6443", "entry": "prod-ams" }
-  ]
-}
+The workspace lives in one file, `freshkube.yaml`, beside the app's preferences: `~/Library/Application Support/Freshkube` on macOS, `~/.config/freshkube` on Linux and `%APPDATA%\Freshkube` on Windows. Freshkube reads it at start and again within a couple of seconds of any change on disk, so you can edit it by hand. A file that doesn't parse is not used: the app names the line and the reason, keeps the last good setup (or starts as with no file) and never writes over the broken one. Keys you add that it doesn't know are kept, not dropped.
+
+Settings saves into the same file. A save keeps the keys it doesn't know but not your comments, so a save over a file you edited by hand first copies that file to `freshkube.yaml.bak`. A save is refused, with the reason, when the file changed on disk since it was read or doesn't parse; nothing is written over it, and the status bar shows what each save did.
+
+Upgrading from `workspace.json` and `coroot.json`: at the first start with no `freshkube.yaml`, Freshkube writes it from those two files, and from any metrics source `monitoring.json` chose for one of your clusters, and renames the first two to `workspace.json.bak` and `coroot.json.bak`. It says so once, and never reads the `.bak` files again. `monitoring.json` stays where it is. If `workspace.json` can't be used, nothing is moved and it stays in use.
+
+Everything below is invented. The file is at most 256 KiB, `version` is required and is `1`, and every path is absolute. No key or token goes in it.
+
+```yaml
+version: 1
+
+# The kubeconfig the entries' contexts come from. Optional: without it, the
+# default one (KUBECONFIG, then ~/.kube/config).
+kubeconfig: /home/acme/.kube/config
+
+# The workspace: one entry per cluster, at most 64. Each id is unique and at
+# most 64 bytes; pins and destinations name it.
+clusters:
+  - id: cluster-a
+    role: core                    # core, cicd or environment
+    context: cluster-a            # the kubeconfig context
+    talosconfig: /home/acme/.talos/config   # optional: Talos pages for this entry
+    talos_context: cluster-a                # optional, and needs talosconfig
+  - id: cluster-b
+    role: cicd
+    context: cluster-b
+    metrics:                      # optional
+      value: ci-b                 # its value of the label, instead of its id
+      # source:                   # its own store, under any mode: service: or url:
+  - id: cluster-c
+    role: environment
+    context: cluster-c
+
+# Argo CD destinations, each matched by server or by name (never both), and
+# the entry it is. At most 256. `in-cluster` needs no row.
+destinations:
+  - server: https://cluster-c.example.com:6443
+    entry: cluster-c
+  - name: acme-prod
+    entry: cluster-a
+
+# Pins: a part read from a named entry instead of the one its role picks.
+sources:
+  kargo: cluster-b
+  builds: cluster-b
+  argocd: cluster-a
+
+# Where metrics come from: one choice, `mode`. Optional: without it, `automatic`.
+#   automatic  find Prometheus in the open cluster (the default)
+#   central    one store for every cluster, told apart by a label
+#   per-entry  each cluster names its own `metrics.source`
+metrics:
+  mode: central
+  store:                          # central only: a Service in a cluster, or a URL
+    entry: cluster-a              # the cluster that hosts it, reached through its API server
+    service:
+      namespace: monitoring
+      name: vmselect
+      port: 8481
+      https: false                # true if the port speaks TLS
+      path: /select/0/prometheus  # optional prefix
+    # url: https://metrics.example.com/select/0/prometheus   # instead of entry and service
+    # token: keys.json            # a URL's bearer token, kept in keys.json
+  label: cluster                  # the label that tells clusters apart; "cluster" if unset
+
+# The Coroot connection. Optional: without it, Coroot isn't connected.
+coroot:
+  server: https://coroot.example.com
+  sign_in: api-key                # api-key, session or anonymous
+  key: keys.json                  # the key the app keeps for this server
+  # api_key_file: /home/acme/coroot.key   # instead of key: a file holding only the key
+  project: acme                   # optional
 ```
+
+Under `central`, a cluster's metrics are the store's series where the label equals its `metrics.value` (its id if unset), so Monitoring never shows another cluster's numbers as the open one's. Under `per-entry`, a cluster with no `source` shows "No metrics source" and asks nothing. `store` and `label` are kept, unread, under another mode. Without a `metrics` block, or for a context that isn't a workspace entry, metrics are found in the open cluster as before.
+
+A value that breaks a rule, such as a relative path, a duplicate id, a `talos_context` without a `talosconfig`, a destination that names both a server and a name, a `key` other than `keys.json`, `mode: central` without a `store`, a store that sets both a Service and a URL, or a label that isn't a Prometheus label name, makes the whole file unused with the reason, never a partial read. Check sources and Delivery sources show what each entry answers.
 
 Each part is then read from its own entry, whichever cluster is open. A destination that was read can be Confirmed to its pods. An entry that is refused or can't be reached is named on its hop and in a May be missing banner, never shown as none found. Each read has a deadline, so one slow cluster never holds up the others: the change page has 45 s, and a destination's entry 30 s of it; the Changes list keeps what answered within 90 s. An unmapped destination stays Unknown and says so.
 

@@ -21,6 +21,7 @@ pub(crate) enum ColumnKey {
     RetryGroup(SharedString),
     Dashboard(EntryId),
     ReadFolder,
+    MonitoringFolder,
     /// The header's Settings menu, for a talosconfig or a dashboards folder.
     Settings,
     /// A section of the Settings area.
@@ -377,7 +378,7 @@ impl Pilot {
                 .action(
                     "monitoring-add-folder",
                     "Choose a folder",
-                    ColumnKey::Settings,
+                    ColumnKey::MonitoringFolder,
                 )
                 .into(),
             ),
@@ -720,6 +721,11 @@ impl SourceListHost for Pilot {
                 cx.notify();
             }
             ColumnKey::SettingsSection(section) => self.show_settings(section, window, cx),
+            ColumnKey::MonitoringFolder => {
+                self.show_settings(SettingsSection::Monitoring, window, cx);
+                self.settings_page
+                    .update(cx, |page, cx| page.reveal_monitoring_folder(window, cx));
+            }
             ColumnKey::Destination(item) => {
                 self.pages
                     .observability

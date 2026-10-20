@@ -145,13 +145,19 @@ pub struct Row {
     id: SharedString,
     label: SharedString,
     control: AnyElement,
-    hint: Option<SharedString>,
+    hint: Option<AnyElement>,
     error: Option<SharedString>,
 }
 
 impl Row {
     pub fn hint(mut self, text: impl Into<SharedString>) -> Self {
-        self.hint = Some(text.into());
+        self.hint = Some(text.into().into_any_element());
+        self
+    }
+
+    /// A hint with its own wrapping, such as a paragraph containing a URL.
+    pub fn hint_element(mut self, hint: impl IntoElement) -> Self {
+        self.hint = Some(hint.into_any_element());
         self
     }
 
@@ -185,17 +191,20 @@ impl Row {
                     .min_w_0()
                     .gap(dp(4.))
                     .child(self.control)
-                    .when_some(self.error.or(self.hint), |this, text| {
-                        this.child(
-                            div()
-                                .id(part(&self.id, if error { "error" } else { "hint" }))
-                                .test_support()
-                                .when(error, |this| this.role(Role::Alert))
-                                .text_size(dp(12.))
-                                .text_color(if error { p.crit_ink } else { p.muted })
-                                .child(text),
-                        )
-                    }),
+                    .when_some(
+                        self.error.map(IntoElement::into_any_element).or(self.hint),
+                        |this, text| {
+                            this.child(
+                                div()
+                                    .id(part(&self.id, if error { "error" } else { "hint" }))
+                                    .test_support()
+                                    .when(error, |this| this.role(Role::Alert))
+                                    .text_size(dp(12.))
+                                    .text_color(if error { p.crit_ink } else { p.muted })
+                                    .child(text),
+                            )
+                        },
+                    ),
             )
     }
 }
@@ -239,7 +248,7 @@ pub fn saved_in(id: impl Into<ElementId>, saved: &SavedIn, cx: &App) -> impl Int
         .child(saved.0.clone())
 }
 
-/// A secret is either kept in the system store or being replaced in a
+/// A secret is either kept in a store or being replaced in a
 /// page-owned input. A kept secret's value is never passed to this helper.
 pub enum Secret {
     Kept,
@@ -250,20 +259,35 @@ pub enum Secret {
 pub struct SecretField {
     id: SharedString,
     secret: Secret,
+    store_name: SharedString,
     replace: Option<Button>,
     forget: Option<Button>,
+    disabled: bool,
 }
 
 pub fn secret(id: impl Into<SharedString>, secret: Secret, _: &App) -> SecretField {
     SecretField {
         id: id.into(),
         secret,
+        store_name: platform::credential_store().into(),
         replace: None,
         forget: None,
+        disabled: false,
     }
 }
 
 impl SecretField {
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// Names the secret's store, overriding the platform credential store.
+    pub fn store_name(mut self, name: impl Into<SharedString>) -> Self {
+        self.store_name = name.into();
+        self
+    }
+
     pub fn on_replace(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -292,35 +316,44 @@ impl RenderOnce for SecretField {
                     .small()
                     .id(part(&self.id, "input"))
                     .content_type(InputContentType::Password)
+                    .disabled(self.disabled)
                     .map(|input| gpui_kit::Styled::h(input, dp(CONTROL_HEIGHT)))
                     .into_any_element()
             }
-            Secret::Kept => h_flex()
-                .gap(dp(8.))
-                .h(dp(CONTROL_HEIGHT))
-                .child(
-                    div()
-                        .id(part(&self.id, "kept"))
-                        .test_support()
-                        .text_size(dp(12.))
-                        .text_color(palette(cx).muted)
-                        .child(format!("Kept in {}", platform::credential_store())),
-                )
-                .child(
-                    self.replace
-                        .unwrap_or_else(|| Button::new(part(&self.id, "replace")).disabled(true))
-                        .xsmall()
-                        .outline()
-                        .label("Replace…"),
-                )
-                .child(
-                    self.forget
-                        .unwrap_or_else(|| Button::new(part(&self.id, "forget")).disabled(true))
-                        .xsmall()
-                        .outline()
-                        .label("Forget"),
-                )
-                .into_any_element(),
+            Secret::Kept => {
+                let label = SharedString::from(format!("Kept in {}", self.store_name));
+                h_flex()
+                    .gap(dp(8.))
+                    .h(dp(CONTROL_HEIGHT))
+                    .child(
+                        div()
+                            .id(part(&self.id, "kept"))
+                            .test_support()
+                            .aria_label(label.clone())
+                            .text_size(dp(12.))
+                            .text_color(palette(cx).muted)
+                            .child(label),
+                    )
+                    .child(
+                        self.replace
+                            .map(|button| button.disabled(self.disabled))
+                            .unwrap_or_else(|| {
+                                Button::new(part(&self.id, "replace")).disabled(true)
+                            })
+                            .xsmall()
+                            .outline()
+                            .label("Replace…"),
+                    )
+                    .child(
+                        self.forget
+                            .map(|button| button.disabled(self.disabled))
+                            .unwrap_or_else(|| Button::new(part(&self.id, "forget")).disabled(true))
+                            .xsmall()
+                            .outline()
+                            .label("Forget"),
+                    )
+                    .into_any_element()
+            }
         }
     }
 }
@@ -352,6 +385,12 @@ pub fn path(
 impl Path {
     pub fn chosen_only(mut self) -> Self {
         self.chosen_only = true;
+        self
+    }
+
+    /// Browse… takes no click, as the field beside it takes no typing.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.browse = self.browse.disabled(disabled);
         self
     }
 }
@@ -468,6 +507,7 @@ mod tests {
         side: Option<Side>,
         chosen: bool,
         typing: bool,
+        store_name: Option<SharedString>,
     }
 
     impl Render for Form {
@@ -517,15 +557,21 @@ mod tests {
                         }
                     }),
                 )
-                .child(secret(
-                    "credential",
-                    if self.typing {
-                        Secret::Typing(self.input.clone())
-                    } else {
-                        Secret::Kept
-                    },
-                    cx,
-                ))
+                .child(
+                    secret(
+                        "credential",
+                        if self.typing {
+                            Secret::Typing(self.input.clone())
+                        } else {
+                            Secret::Kept
+                        },
+                        cx,
+                    )
+                    .map(|field| match &self.store_name {
+                        Some(name) => field.store_name(name.clone()),
+                        None => field,
+                    }),
+                )
         }
     }
 
@@ -545,6 +591,7 @@ mod tests {
                 side: None,
                 chosen: false,
                 typing: false,
+                store_name: None,
             });
             view = Some(form.clone());
             Root::new(form, window, cx)
@@ -705,6 +752,37 @@ mod tests {
             );
             assert!(window.find("credential-input").value().is_none());
             assert!(window.try_find("credential-kept").is_none());
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_kept_secret_defaults_to_the_platform_store(cx: &mut TestAppContext) {
+        let (handle, _) = open(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("credential-kept").label(),
+                Some(format!("Kept in {}", platform::credential_store()).as_str())
+            );
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_kept_secret_can_name_its_store(cx: &mut TestAppContext) {
+        let (handle, form) = open(cx);
+        cx.update_window(handle, |_, window, cx| {
+            form.update(cx, |form, cx| {
+                form.store_name = Some("keys.json".into());
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert_eq!(
+                window.find("credential-kept").label(),
+                Some("Kept in keys.json")
+            );
+            assert!(window.try_find("credential-input").is_none());
         })
         .unwrap();
     }

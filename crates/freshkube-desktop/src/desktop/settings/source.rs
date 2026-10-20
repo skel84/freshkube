@@ -4,6 +4,7 @@ use table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource, Table
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
+    Glyph,
     Name,
     Role,
     Context,
@@ -30,7 +31,7 @@ impl TableColumn for Column {
     }
 
     fn pinned(&self) -> bool {
-        self.field == Field::Name
+        matches!(self.field, Field::Glyph | Field::Name)
     }
 }
 
@@ -42,6 +43,7 @@ pub(super) fn columns(rows: &[ClusterRow]) -> (Vec<Column>, f32) {
         width,
     };
     let columns = vec![
+        column(Field::Glyph, "", table::GLYPH_WIDTH),
         column(
             Field::Name,
             "Cluster",
@@ -113,11 +115,26 @@ impl TableSource for SettingsPage {
         line: &TableRow<SharedString, &ClusterRow>,
         style: &RowStyle,
         column: &Column,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let row = line.data;
         let cell = table::cell(column);
         match column.field {
+            Field::Glyph => table::glyph_cell(column)
+                .id(SharedString::from(format!(
+                    "settings-cluster-{}-glyph",
+                    row.id
+                )))
+                .test_support()
+                .when_some(row.note.clone(), |this, note| {
+                    this.child(ui::status_mark(
+                        SharedString::from(format!("settings-cluster-{}-mark", row.id)),
+                        ui::Tone::Warn,
+                        note,
+                        cx,
+                    ))
+                })
+                .into_any_element(),
             Field::Name => cell.child(row.id.clone()).into_any_element(),
             Field::Role => cell.child(row.role.clone()).into_any_element(),
             Field::Context => cell.child(row.context.clone()).into_any_element(),
@@ -147,7 +164,7 @@ impl TableSource for SettingsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select(key.clone(), cx);
+        self.request_select(Some(key.clone()), window, cx);
         self.focus(window, cx);
     }
 
@@ -163,9 +180,11 @@ impl TableSource for SettingsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<menu::MenuAction> {
-        self.select(key.clone(), cx);
+        self.request_select(Some(key.clone()), window, cx);
         self.focus(window, cx);
-        let editable = self.editable();
+        // Unsaved changes hold the selection on its row until the prompt is
+        // answered; the actions are then not for this row.
+        let editable = self.editable() && !self.selection_pending(key);
         let at = self.rows.iter().position(|row| &row.id == key);
         let last = self.rows.len().saturating_sub(1);
         vec![

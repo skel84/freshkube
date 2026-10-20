@@ -1,1 +1,0 @@
-- **Internal:** the Resources code now gets only what it shows of each node (readiness, memory, problems and the kubelet), built by the Nodes page, instead of the Nodes page's own rows, so it can later build apart from the shell; the app behaves as before.

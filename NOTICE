@@ -27,7 +27,8 @@ keyring 4.2 and keyring-core 1.0
   Used unmodified, as libraries.
 
 promql-parser 0.11.0
-  Used by grafaui-prometheus to read PromQL selectors.
+  Used by grafaui-prometheus to read PromQL selectors, and by freshkube-core
+  to scope a shared store's queries to one cluster.
   https://github.com/GreptimeTeam/promql-parser
   Copyright 2023 Greptime Team
   Licensed under the Apache License, Version 2.0; see licenses/Apache-2.0.txt.

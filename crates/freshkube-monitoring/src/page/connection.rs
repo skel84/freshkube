@@ -4,6 +4,7 @@
 //! is a state the page shows on its own: looking, found, none found (with
 //! what was looked for and the candidates to pick from), refused and failed.
 use freshkube_core::cluster_source::ClusterAccess;
+use freshkube_core::monitoring::scope::{self, Place, Resolved};
 use freshkube_core::monitoring::{
     Backend, Candidate, Discovery, Endpoint, ErrorKind, Prometheus, PrometheusService, QueryError,
     Tried, cluster_client, confirm, confirm_url, discover, forget_after,
@@ -51,6 +52,9 @@ pub(super) enum Connection {
     Missing(Missing),
     Refused(SharedString),
     Failed(SharedString),
+    /// The setup file leaves this entry without a store, and says why.
+    /// Nothing was asked, so there is nothing to retry.
+    Unknown(SharedString),
 }
 
 pub(super) struct Missing {
@@ -143,6 +147,7 @@ impl MonitoringPage {
             Connection::Missing(_) => "missing",
             Connection::Refused(_) => "refused",
             Connection::Failed(_) => "failed",
+            Connection::Unknown(_) => "unknown",
         }
     }
 
@@ -167,6 +172,8 @@ impl MonitoringPage {
         let kind = match (&self.connection, &source.access) {
             (_, ClusterAccess::Example(_)) => HistoryKind::Example,
             (Connection::Ready { prometheus, .. }, _) => HistoryKind::Ready(prometheus.clone()),
+            // A scoped source is never guessed from what was remembered.
+            _ if !self.scope.resolved.is_discovery() => return None,
             (Connection::None | Connection::Looking { .. }, access) => {
                 // A URL's token is read only when the page connects.
                 let service = match self.saved.choices.get(&source.context) {
@@ -277,6 +284,10 @@ impl MonitoringPage {
             self.resume(cx);
             return;
         }
+        if !self.scope.resolved.is_discovery() {
+            self.connect_scoped(source.access.clone(), cx);
+            return;
+        }
         let request = match self.saved.choices.get(&source.context).cloned() {
             Some(Choice::Service(service)) => {
                 let access = source.access.clone();
@@ -325,6 +336,78 @@ impl MonitoringPage {
             }
         };
         self.connection = Connection::Looking { _request: request };
+    }
+
+    /// Reads the store the setup file names, and nothing else: no discovery,
+    /// no source chosen in Settings. A Service is reached through the cluster
+    /// that hosts it. A store shared by every entry is scoped to this entry's
+    /// series before anything is asked of it.
+    fn connect_scoped(&mut self, open: ClusterAccess, cx: &mut Context<Self>) {
+        let (place, access, matcher, hosted_by) = match self.scope.resolved.clone() {
+            Resolved::Own(place) => (place, open, None, None),
+            Resolved::Central {
+                place,
+                host,
+                matcher,
+            } => {
+                let access = match (&place, &host) {
+                    (Place::Service(_), Some(_)) => self.scope.host.clone(),
+                    _ => Some(open),
+                };
+                let Some(access) = access else {
+                    self.connection = Connection::Failed(
+                        "The cluster that hosts the metrics store isn't connected".into(),
+                    );
+                    return;
+                };
+                (place, access, Some(matcher), host)
+            }
+            Resolved::Unknown(why) => {
+                self.connection = Connection::Unknown(why.into());
+                return;
+            }
+            Resolved::Discovery => return,
+        };
+        let (endpoint, token) = match &place {
+            Place::Service(service) => (Endpoint::Service(service.clone()), None),
+            Place::Url { url, token } => (
+                Endpoint::Url(url.clone()),
+                Some(self.token_reader(url, *token)),
+            ),
+        };
+        let request = self.run(
+            self.read_identity(ReadKind::Connect {
+                endpoint: Some(endpoint),
+            }),
+            |this| Some(&mut this.connection_reads.looking),
+            async move {
+                let token = match token {
+                    Some(token) => token.await?,
+                    None => None,
+                };
+                scope::connect(&place, &access, token).await
+            },
+            cx,
+            move |this, result, cx| match result {
+                Ok((prometheus, version)) => {
+                    let prometheus = match matcher {
+                        Some(matcher) => prometheus.with_matcher(matcher),
+                        None => prometheus,
+                    };
+                    this.use_prometheus(prometheus, version, cx)
+                }
+                Err(error) => this.discovered(Err(through_host(error, hosted_by.as_deref())), cx),
+            },
+        );
+        self.connection = Connection::Looking { _request: request };
+    }
+
+    /// The cluster a Ready connection's Service is reached through.
+    fn reading_access(&self) -> Option<ClusterAccess> {
+        match (&self.scope.resolved, &self.scope.host) {
+            (Resolved::Central { host: Some(_), .. }, Some(host)) => Some(host.clone()),
+            _ => self.source.as_ref().map(|source| source.access.clone()),
+        }
     }
 
     /// The token for a URL: typed this session, else read from the
@@ -442,7 +525,7 @@ impl MonitoringPage {
         cx.notify();
     }
 
-    fn use_prometheus(
+    pub(super) fn use_prometheus(
         &mut self,
         prometheus: Prometheus,
         version: Option<String>,
@@ -451,6 +534,7 @@ impl MonitoringPage {
         let label = prometheus.endpoint().label().into();
         let version = describe(prometheus.endpoint().backend(), version.as_deref()).into();
         if let Some(context) = self.context()
+            && self.scope.resolved.is_discovery()
             && !self.saved.choices.contains_key(&context)
             && let Some(service) = prometheus.service().cloned()
             && self.saved.services.get(&context) != Some(&service)
@@ -481,7 +565,7 @@ impl MonitoringPage {
     /// the variables and every panel are read again. A URL doesn't use the
     /// client, and a 403 keeps it.
     pub(super) fn read_failed(&mut self, error: &QueryError, cx: &mut Context<Self>) {
-        let Some(access) = self.source.as_ref().map(|source| source.access.clone()) else {
+        let Some(access) = self.reading_access() else {
             return;
         };
         let Connection::Ready {
@@ -582,5 +666,20 @@ pub(super) fn describe(backend: Backend, version: Option<&str>) -> String {
         }
         (Some(version), Backend::Compatible) => format!("Prometheus API {version}"),
         _ => backend.label().to_owned(),
+    }
+}
+
+/// A failure reading a store that another entry's cluster hosts says so, or
+/// it reads as this entry's own cluster failing.
+fn through_host(error: QueryError, host: Option<&str>) -> QueryError {
+    match host {
+        Some(host) => QueryError::new(
+            error.kind,
+            format!(
+                "Couldn't reach the metrics store through {host}: {}",
+                error.message
+            ),
+        ),
+        None => error,
     }
 }

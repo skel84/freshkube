@@ -242,7 +242,7 @@ impl super::Pilot {
     /// Where the Talos overview, the summary and the connection stand, for
     /// Overview.
     pub(super) fn overview_state(&self) -> OverviewState {
-        let summary = &self.registry.active().kubernetes_summary;
+        let summary = &self.switch.registry.active().kubernetes_summary;
         let unreachable = (self.mode().has_talos()
             && self.overview.data().is_none()
             && !self.overview.is_loading())
@@ -257,14 +257,14 @@ impl super::Pilot {
             stale: self.overview.is_stale() || summary.is_stale(),
             attention_stale: self.attention_stale(),
             connection: self.context_display.state,
-            last_known: self.last_known_since().is_some(),
+            last_known: self.switch.last_known_since().is_some(),
         }
     }
 
     /// Why the attention list may be out of date: the Talos overview's or
     /// the summary's failed refresh. Overview and the node pane show it.
     pub(super) fn attention_stale(&self) -> Option<SharedString> {
-        let summary = &self.registry.active().kubernetes_summary;
+        let summary = &self.switch.registry.active().kubernetes_summary;
         let error = if self.overview.is_stale() {
             self.overview.error()
         } else if summary.is_stale() {

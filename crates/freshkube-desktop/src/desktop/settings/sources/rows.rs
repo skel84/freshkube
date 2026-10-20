@@ -9,6 +9,8 @@ pub(crate) struct SourceRow {
     pub(super) label: SharedString,
     pub(super) entry: SharedString,
     pub(super) why: SharedString,
+    pub(super) explanation: SharedString,
+    pub(super) detail: SharedString,
     pub(super) state: SharedString,
     pub(super) reads: SharedString,
     /// The state's glyph, once there is one to show.
@@ -60,6 +62,17 @@ impl SourcesList {
             .map(|(part, chosen)| self.part_row(part, chosen))
             .collect();
         rows.push(self.workloads_row());
+        if let Some(problem) = &self.setup_problem {
+            rows.push(self.row(
+                Read::SetupFile,
+                "freshkube.yaml".into(),
+                "Setup file".into(),
+                false,
+                ("Not used".into(), Some(ui::Tone::Warn)),
+                problem.clone(),
+                problem.clone(),
+            ));
+        }
         self.rows = rows;
         (self.columns, self.width) = source::columns(&self.rows);
     }
@@ -75,7 +88,7 @@ impl SourcesList {
     fn unanswered(&self, what: &str, entry: &str) -> (String, Option<ui::Tone>, String) {
         match &self.check {
             Check::Running => (
-                "Checking…".to_owned(),
+                "Reading".to_owned(),
                 None,
                 format!("Reading one item of {what} from {entry}"),
             ),
@@ -145,11 +158,14 @@ impl SourcesList {
         let chosen_by = match chosen {
             Chosen::Entry {
                 why: Why::Pinned, ..
-            } => format!("{entry}, pinned in workspace.json"),
+            } => format!("{entry}, pinned in freshkube.yaml"),
             Chosen::Entry { why, .. } => {
                 format!("{entry}, the first entry with the {}", why.words())
             }
             Chosen::Open => "the open cluster: the workspace has no entries".to_owned(),
+            Chosen::Gone(id) => {
+                format!("pinned to {id} in freshkube.yaml, but the entry is no longer listed")
+            }
             _ => chosen.missing().unwrap_or_default(),
         };
         // Argo CD is read where it runs, which only a check finds.
@@ -268,6 +284,14 @@ impl SourcesList {
             reads: reads.into(),
             tone,
             listed,
+            explanation: tooltip.lines().next().unwrap_or_default().to_owned().into(),
+            detail: tooltip
+                .lines()
+                .skip(1)
+                .take_while(|line| !line.starts_with("Reads "))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into(),
             tooltip: tooltip.into(),
             id: format!("settings-source-{key}").into(),
             mark_id: format!("settings-source-{key}-mark").into(),

@@ -2,9 +2,8 @@
 //! end in. A change is a changed copy of the workspace, checked with
 //! `Workspace::validate`, written whole off the UI thread, and shown once the
 //! write has happened; a failed write leaves the page and the file as they
-//! were. The first save after a refused file sets that file aside.
+//! were. SetupFile protects hand edits and never writes over a broken file.
 use super::*;
-use chrono::Utc;
 use freshkube_core::workspace::{Destination, Entry, Fault, Key};
 
 impl SettingsPage {
@@ -15,16 +14,15 @@ impl SettingsPage {
             && self.origin != Origin::Example
             && self.saving.is_none()
             && !self.setup_refusal
+            && !self.pending_setup
     }
 
     /// Why the changing actions are off, for their tooltips.
     pub(super) fn why_not_editable(&self) -> &'static str {
-        if self.setup_refusal {
-            if self.pending_setup {
-                "freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is."
-            } else {
-                HAND_EDITED
-            }
+        if self.pending_setup {
+            "freshkube.yaml changed on disk since it was read. Nothing was written; reload to see the file as it is."
+        } else if self.setup_refusal {
+            "freshkube.yaml isn't usable. Nothing was written; fix the file and reload."
         } else if self.origin == Origin::Example {
             "Example data isn’t saved"
         } else if self.file.is_none() {
@@ -42,79 +40,39 @@ impl SettingsPage {
             .find(|entry| entry.id.as_str() == key.as_ref())
     }
 
-    pub(super) fn open_form(
-        &mut self,
-        editing: Option<Entry>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn open_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.editable() || window.has_active_dialog(cx) {
             return;
         }
-        form::open(cx.entity(), editing, window, cx);
+        form::open(cx.entity(), window, cx);
     }
 
-    pub(super) fn edit_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.selected_entry().cloned() {
-            self.open_form(Some(entry), window, cx);
-        }
-    }
-
-    /// Applies the form: adds a cluster, or changes the one being edited.
-    /// Returns why not, for the form to show; the file is untouched then.
-    pub(super) fn upsert(
+    /// Adds a cluster to the workspace, its id derived from the context.
+    /// Everything else about it is edited in the Inspector. Returns why not,
+    /// for the dialog to show; the file is untouched then.
+    pub(super) fn add_cluster(
         &mut self,
-        editing: Option<&str>,
         role: workspace::Role,
         context: &str,
-        talosconfig: &str,
-        talos_context: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), SharedString> {
         if !self.editable() {
             return Err(self.why_not_editable().into());
         }
         let context = context.trim();
-        let talosconfig = talosconfig.trim();
-        let talos_context = Some(talos_context.trim().to_owned()).filter(|name| !name.is_empty());
-        if talos_context.is_some() && talosconfig.is_empty() {
-            return Err("A Talos context needs a talosconfig".into());
-        }
         if context.is_empty() {
             return Err("Enter the kubeconfig context this cluster opens".into());
         }
         let mut next = self.workspace.clone();
-        let talosconfig = (!talosconfig.is_empty()).then(|| PathBuf::from(talosconfig));
-        if talosconfig.as_ref().is_some_and(|path| !path.is_absolute()) {
-            return Err("Talosconfig must be an absolute path".into());
+        let id = next.fresh_id(context);
+        next.clusters.push(Entry::new(id.clone(), role, context));
+        // The new row is the selected one once it is saved.
+        self.select_on_save = Some(id.clone().into());
+        if let Err(why) = next.check_saveable() {
+            self.select_on_save = None;
+            return Err(capitalized(&why.to_string()).into());
         }
-        let what = match editing {
-            Some(id) => {
-                let entry = next
-                    .clusters
-                    .iter_mut()
-                    .find(|entry| entry.id == id)
-                    .ok_or_else(|| SharedString::from("That cluster is no longer listed"))?;
-                entry.role = role;
-                entry.context = context.to_owned();
-                entry.talosconfig = talosconfig;
-                entry.talos_context = talos_context;
-                format!("Changed {id}.")
-            }
-            None => {
-                let id = next.fresh_id(context);
-                let mut entry = Entry::new(id.clone(), role, context);
-                entry.talosconfig = talosconfig;
-                entry.talos_context = talos_context;
-                next.clusters.push(entry);
-                // The new row is the selected one once it is saved.
-                self.select_on_save = Some(id.clone().into());
-                format!("Added {id}.")
-            }
-        };
-        next.check_saveable()
-            .map_err(|why| SharedString::from(capitalized(&why.to_string())))?;
-        self.commit(next, what, cx);
+        self.commit(next, format!("Added {id}."), cx);
         Ok(())
     }
 
@@ -144,7 +102,7 @@ impl SettingsPage {
             ),
         };
         let body = format!(
-            "This takes the cluster out of the workspace file. Nothing on the cluster, and \
+            "This takes the cluster out of freshkube.yaml. Nothing on the cluster, and \
              no kubeconfig or talosconfig, is touched.{body}"
         );
         window.open_dialog(cx, move |dialog, window, _| {
@@ -162,28 +120,19 @@ impl SettingsPage {
                         .gap_3()
                         .text_size(dp(13.))
                         .child(body.clone())
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .justify_end()
-                                .child(
-                                    Button::new("settings-remove-cancel")
-                                        .outline()
-                                        .label("Cancel")
-                                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                                )
-                                .child(
-                                    Button::new("settings-remove-confirm")
-                                        .danger()
-                                        .label("Remove")
-                                        .on_click(move |_, window, cx| {
-                                            window.close_dialog(cx);
-                                            _ = confirm_page.update(cx, |page, cx| {
-                                                page.remove(&confirm_id, cx)
-                                            });
-                                        }),
-                                ),
-                        ),
+                        .child(freshkube_ui::form::actions(
+                            freshkube_ui::form::Action::new(
+                                "settings-remove-confirm",
+                                "Remove",
+                                move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = confirm_page
+                                        .update(cx, |page, cx| page.remove(&confirm_id, cx));
+                                },
+                            )
+                            .danger(),
+                            freshkube_ui::form::Action::cancel("settings-remove-cancel"),
+                        )),
                 )
         });
     }
@@ -300,6 +249,26 @@ impl SettingsPage {
         );
     }
 
+    /// Chooses the workspace's own kubeconfig, or `None` for automatic. It
+    /// stands alone, so it saves at once.
+    pub(super) fn set_kubeconfig(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        if !self.editable() {
+            return;
+        }
+        let mut next = self.workspace.clone();
+        let what = match &path {
+            Some(_) => "Chose the kubeconfig.",
+            None => "The kubeconfig is automatic again.",
+        };
+        next.kubeconfig = path;
+        if let Err(why) = next.check_saveable() {
+            self.notice = Some(Notice::Failed(capitalized(&why.to_string()).into()));
+            cx.notify();
+            return;
+        }
+        self.commit(next, what.to_owned(), cx);
+    }
+
     /// Moves the selected cluster one place; the first and last stay put.
     pub(super) fn move_selected(&mut self, delta: isize, cx: &mut Context<Self>) {
         if !self.editable() {
@@ -331,126 +300,106 @@ impl SettingsPage {
     /// was last read or written: a hand edit, or a file another window made,
     /// is never replaced.
     pub(super) fn commit(&mut self, next: Workspace, what: String, cx: &mut Context<Self>) {
-        if self.setup_refusal {
-            if self.banner.is_none() {
-                self.banner = Some(self.why_not_editable().into());
-            }
-            cx.notify();
+        if !self.editable() {
             return;
         }
-        let Some(file) = self.file.clone() else {
+        let Some(file) = self.setup_file.clone() else {
             return;
         };
-        let refused = matches!(self.origin, Origin::Refused(_));
-        let expected = self.seen.clone();
+        let before = file.read(cx).setup.clone();
+        let secrets = self.metrics_secrets.clone();
+        let preferences = self
+            .file
+            .as_ref()
+            .map(|file| file.with_file_name("preferences.json"));
+        let save = file.update(cx, |file, cx| {
+            file.save_workspace(next, self.seen.clone(), cx)
+        });
         self.notice = None;
-        let shown = next.clone();
         self.saving = Some(cx.spawn(async move |this, cx| {
-            let outcome = cx
-                .background_spawn(async move {
-                    workspace::commit(&file, &expected, refused, &next, Utc::now())
+            let outcome = save.await;
+            let cleanup = if outcome.is_ok() {
+                let after = file.read_with(cx, |file, _| file.setup.clone());
+                cx.background_spawn(async move {
+                    super::metrics_tokens::forget_replaced(secrets, before, after, preferences)
                 })
-                .await;
-            _ = this.update(cx, |this, cx| this.saved(shown, what, outcome, cx));
+                .await
+            } else {
+                Ok(())
+            };
+            _ = this.update(cx, |this, cx| {
+                this.saved(what, outcome, cx);
+                if let Err(why) = cleanup {
+                    this.notice = Some(Notice::Failed(why.into()));
+                    cx.notify();
+                }
+            });
         }));
         cx.notify();
     }
 
     fn saved(
         &mut self,
-        saved: Workspace,
         what: String,
-        outcome: Result<(Option<PathBuf>, workspace::Seen), workspace::SaveError>,
+        outcome: Result<(), crate::setup_file::SaveError>,
         cx: &mut Context<Self>,
     ) {
-        use workspace::SaveError;
         self.saving = None;
-        if outcome.is_err() {
-            self.select_on_save = None;
-        }
+        let Some(file) = self.setup_file.clone() else {
+            return;
+        };
         match outcome {
-            Ok((aside, seen)) => {
-                self.set_workspace(&Loaded::Workspace(saved), false, cx);
-                self.seen = seen;
+            Ok(()) => {
+                self.sync_setup(file.clone(), false, cx);
                 if let Some(id) = self.select_on_save.take() {
                     self.select(id, cx);
                 }
-                self.notice = Some(Notice::Saved(
-                    match aside {
-                        Some(path) => format!(
-                            "{what} The earlier file was set aside as {}, beside it.",
-                            path.file_name().map_or_else(
-                                || path.display().to_string(),
-                                |name| name.to_string_lossy().into_owned()
-                            )
-                        ),
-                        None => what,
-                    }
-                    .into(),
-                ));
-            }
-            Err(SaveError::Changed) => {
-                self.notice = Some(Notice::Failed(
-                    "workspace.json changed on disk since it was read. Nothing was written; \
-                     reload to see the file as it is."
-                        .into(),
-                ));
-            }
-            Err(SaveError::Invalid(why)) => {
-                self.notice = Some(Notice::Failed(capitalized(&why.to_string()).into()));
-            }
-            Err(SaveError::Aside(error)) => {
-                self.notice = Some(Notice::Failed(
-                    format!(
-                        "Couldn’t set the unused workspace.json aside: {error}. Nothing was \
-                         written."
-                    )
-                    .into(),
-                ));
-            }
-            Err(SaveError::Write { aside, error }) => {
-                // An unused file moved before the write failed: the page now
-                // has no file to protect.
-                let moved = aside
-                    .map(|path| format!(" The earlier file was set aside as {}.", path.display()));
-                if moved.is_some() {
-                    self.set_workspace(&Loaded::Missing, false, cx);
-                    self.seen = workspace::Seen::Missing;
+                if std::mem::take(&mut self.deselect_on_save) {
+                    self.selected = None;
                 }
-                let rest = moved.unwrap_or_else(|| " The file is as it was.".into());
-                self.notice = Some(Notice::Failed(format!("{error}.{rest}").into()));
+                if std::mem::take(&mut self.open_form_on_save) {
+                    self.open_form_after_save(cx);
+                }
+                if let Some(receipt) = &file.read(cx).receipt {
+                    self.notice = Some(Notice::Saved(format!("{what} {receipt}").into()));
+                }
             }
-        }
-        // A YAML edit may have arrived while this already-submitted JSON
-        // save was running. Keep its refusal and Reload banner in place.
-        if self.setup_refusal
-            && let Some(file) = self.setup_file.clone()
-        {
-            self.sync_setup(file, self.pending_setup, cx);
+            Err(error) => {
+                self.select_on_save = None;
+                self.deselect_on_save = false;
+                self.open_form_on_save = false;
+                self.pending_setup |= matches!(error, crate::setup_file::SaveError::Changed);
+                self.sync_setup(file, self.pending_setup, cx);
+                self.notice = Some(Notice::Failed(error.to_string().into()));
+            }
         }
         cx.notify();
     }
 
-    /// Reads the file again, as the person asked: after a change made by
-    /// hand, or by another window. The read is the bounded one the launch
-    /// makes, on the UI thread, and happens only on this action.
+    /// Reads immediately through the owner, dropping a draft only on Reload.
     pub(super) fn reload(&mut self, cx: &mut Context<Self>) {
-        if self.setup_refusal {
-            if let Some(file) = self.setup_file.clone() {
-                self.sync_setup(file, false, cx);
-            }
-            return;
-        }
-        let Some(file) = self.file.clone() else {
-            return;
-        };
         if self.origin == Origin::Example || self.saving.is_some() {
             return;
         }
-        let (loaded, seen) = workspace::load_seen(&file);
-        self.set_workspace(&loaded, false, cx);
-        self.seen = seen;
-        self.notice = None;
+        let Some(file) = self.setup_file.clone() else {
+            return;
+        };
+        let read = file.update(cx, |file, cx| file.reload(cx));
+        // Reload drops unsaved changes only to take a change made on disk,
+        // as the banner says; otherwise they are rebased on the new file.
+        let drops = self.pending_setup;
+        self.saving = Some(cx.spawn(async move |this, cx| {
+            read.await;
+            _ = this.update(cx, |this, cx| {
+                this.saving = None;
+                this.notice = None;
+                this.pending_setup = false;
+                if drops {
+                    this.drop_entry();
+                }
+                this.sync_setup(file, false, cx);
+            });
+        }));
         cx.notify();
     }
 }

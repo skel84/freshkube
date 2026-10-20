@@ -150,7 +150,7 @@ impl Pilot {
                         .unwrap_or_else(|| "Default talosconfig".into())
                 },
                 self.applied.context.as_deref().unwrap_or("Current context"),
-                self.selected_node.as_deref().unwrap_or("None")
+                self.target.selected_node.as_deref().unwrap_or("None")
             )
         };
         let applied = format!("{applied} · Page: {}", self.navigation.page_title());
@@ -285,11 +285,13 @@ impl Pilot {
                                     .overflow_y_scroll()
                                     .restrict_scroll_to_axis()
                                     .gap_1()
-                                    .when(!view.switcher.is_empty(), |this| {
+                                    .when(!view.switch.switcher.is_empty(), |this| {
                                         this.child(ui::caption("Clusters", cx)).children(
-                                            view.switcher.iter().enumerate().map(|(ix, item)| {
-                                                view.cluster_item(ix, item, popover.clone(), cx)
-                                            }),
+                                            view.switch.switcher.iter().enumerate().map(
+                                                |(ix, item)| {
+                                                    view.cluster_item(ix, item, popover.clone(), cx)
+                                                },
+                                            ),
                                         )
                                     })
                                     .child(ui::caption("Change context · ⌥↑ ⌥↓", cx))
