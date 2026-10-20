@@ -1864,7 +1864,7 @@ async fn a_look_that_hears_nothing_ends_in_a_timeout_on_the_test_clock() {
     held.abort();
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn dropping_the_future_cancels_the_look() {
     use std::sync::atomic::{AtomicBool, Ordering};
     // A server that notes when the connection it holds is closed.
@@ -1872,23 +1872,29 @@ async fn dropping_the_future_cancels_the_look() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let closed = Arc::new(AtomicBool::new(false));
     let flag = closed.clone();
+    let (arrived, request) = tokio::sync::oneshot::channel();
     let held = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut bytes = vec![0; 16384];
+        let mut arrived = Some(arrived);
         // The request, then nothing until the client goes away.
-        while socket.read(&mut bytes).await.is_ok_and(|n| n > 0) {}
+        while socket.read(&mut bytes).await.is_ok_and(|n| n > 0) {
+            if let Some(arrived) = arrived.take() {
+                let _ = arrived.send(());
+            }
+        }
         flag.store(true, Ordering::SeqCst);
     });
     let provider = Provider::new(&url, Credentials::None).unwrap();
     let q = query(link_of("cluster-a", "shop-api", "c"));
     {
         let look = provider.outcome(&q, None, window(), now());
-        // Below the client's 5 s connect timeout, as in the timeout test:
-        // the paused clock can jump while the connect is in flight, and a
-        // 5 s sleep tied with that timeout.
+        // Drop the look once the server holds its request, not after a
+        // timer: a timer could fire before the client had connected, and
+        // then nothing would ever close.
         tokio::select! {
             _ = look => panic!("the server never answers"),
-            _ = tokio::time::sleep(Duration::from_secs(3)) => {}
+            _ = request => {}
         }
     }
     for _ in 0..400 {
