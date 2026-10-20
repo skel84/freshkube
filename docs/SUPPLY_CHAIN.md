@@ -1,6 +1,6 @@
 # Signed attestations and Tekton Results
 
-This is the design step of [#268](https://github.com/skel84/freshkube/issues/268), written on 19 October 2026 at main `8766bf1`. It decides how the build side of the delivery chain gets its two missing pieces: a signature check that can make build → supply chain Confirmed, and history for runs the cluster no longer holds. Nothing here is built; the [slices](#slices) say what lands where, and the [questions](#questions-for-the-owner) are the owner's to answer before slice 1 starts. Every name is invented: acme, `checkout`, `cluster-a`, `cluster-b`, `cluster-c`, `example.com`, `registry.example.com`.
+This is the design step of [#268](https://github.com/skel84/freshkube/issues/268), written on 19 October 2026 at main `8766bf1`. It decides how the build side of the delivery chain gets its two missing pieces: a signature check that can make build → supply chain Confirmed, and history for runs the cluster no longer holds. Nothing here is built; the [slices](#slices) say what lands where, and the owner's [decisions](#decisions) settle the open questions. Every name is invented: acme, `checkout`, `cluster-a`, `cluster-b`, `cluster-c`, `example.com`, `registry.example.com`.
 
 It follows the owner's decisions on #268 (16 October): trust is a public key file the person names, never read from the cluster; the transparency log is off until turned on; Tekton Results is reached by an address or by a port forward, per workspace entry; a signature that fails to verify is Claimed with the hop marked failing; the drawn chain is [#698](https://github.com/skel84/freshkube/issues/698)'s. Where the settings live is already settled by [SETUP_FILE.md](SETUP_FILE.md) (`results`, `supply_chain` and `evidence`, typed in `crates/freshkube-core/src/setup/types.rs`) and by [DESIGN.md](DESIGN.md#the-settings-page); this page adds only what those leave open.
 
@@ -58,7 +58,7 @@ Off by default, and the only network a verification can use. It never changes a 
 
 - **Off:** nothing is fetched. The Signature row says `transparency log not read (off)`. Confirmed does not wait for it.
 - **On:** for a signature that verified, the entry is looked up in the log and compared with what was verified: the entry's recorded signature and key must be the ones just checked. A matching entry is shown with its index. A log that can't be reached, or answers an error, is its own state (`log unreachable`, `log refused`), and a missing or non-matching entry is `not in the log` / `log entry differs`.
-- **What on means for the link:** recommended in [Q3](#questions-for-the-owner): with the switch on, the log is required, so a link whose signature verified but whose entry is missing, differs or couldn't be read is **Claimed** with the reason, not Confirmed. A person who turns the log on is asking for it.
+- **What on means for the link:** decided ([Decisions](#decisions), 3): with the switch on, the log is required, so a link whose signature verified but whose entry is missing, differs or couldn't be read is **Claimed** with the reason, not Confirmed. A person who turns the log on is asking for it.
 - **Where the log is:** from the Chains config (`transparency.url`, read from `chains-config`), or a `supply_chain.transparency_url` the person sets, never from an annotation on a run: an annotation is writable by whoever can patch a TaskRun, and a read must not be steerable to a host they choose.
 - **What is not checked:** the log's own signature over its checkpoint and the inclusion proof need the log's public key, which is the Sigstore trust root and comes with keyless (later). Until then the entry is evidence that the log *has* the signature, and the doc and the screen say so: `log entry matches; the log's own signature was not checked`.
 
@@ -83,18 +83,18 @@ Constants in `chains.rs`, next to `MOST_TASK_READS`, each with a reason in its c
 
 ### The crates
 
-[REFERENCES.md](REFERENCES.md#reuse-policy) asks that a dependency be MIT- or Apache-2.0-compatible and listed in `NOTICE`. Surveyed on crates.io on 19 October 2026; re-check the versions and `cargo tree` when slice 2 starts.
+[REFERENCES.md](REFERENCES.md#reuse-policy) asks that a dependency be MIT- or Apache-2.0-compatible and listed in `NOTICE`. Surveyed on crates.io on 19 October 2026; slice 2 re-checks the versions and `cargo tree` when slice 2 starts.
 
 | Option | Licence | Notes |
 | --- | --- | --- |
-| **`p256` and `ecdsa`** (RustCrypto) | Apache-2.0 OR MIT | `p256` 0.14.0, `ecdsa` 0.17.0, Rust 1.85. Small, no network, no async. Verifying a P-256 signature over a SHA-256 digest is what is needed. `sha2` (0.10 is already in the build) and `base64` are in the workspace; the PKIX key is parsed by `x509-parser` (already a direct core dependency) or `spki`. |
+| **`p256` and `ecdsa`** (RustCrypto), the fallback | Apache-2.0 OR MIT | `p256` 0.14.0, `ecdsa` 0.17.0, Rust 1.85. Small, no network, no async. Verifying a P-256 signature over a SHA-256 digest is what is needed. `sha2` (0.10 is already in the build) and `base64` are in the workspace; the PKIX key is parsed by `x509-parser` (already a direct core dependency) or `spki`. |
 | `sigstore` | Apache-2.0 | 0.14.0, described upstream as experimental; a large tree (`aws-lc-rs`, `oci-client`, `tough`, `openidconnect` behind features) for a feature that needs a few functions. |
-| `sigstore-verify` | Apache-2.0 | 0.15.0, Rust 1.86; verification-only and more modest, but built around bundles and the trust root, which is the later keyless step. |
+| **`sigstore-verify`**, the first choice | Apache-2.0 | 0.15.0, Rust 1.86; verification-only and more modest than `sigstore`. Built around bundles and the trust root, so slice 2 must show a bare public key and a DSSE envelope can be checked without them. |
 | `ed25519-dalek` | BSD-3-Clause | 3.0.0. Compatible with MIT; wanted only if Ed25519 keys are asked for. |
 | `rsa` | MIT OR Apache-2.0 | 0.9.10. Wanted only if RSA keys are asked for; check the open advisory about its private-key timing before adding it, even though verification touches no private key. |
-| Our own DSSE | | The pre-authentication encoding is a few lines (`"DSSEv1" SP len(type) SP type SP len(body) SP body`), written and tested here, not a dependency. |
+| Our own DSSE | | Only on the fallback. The pre-authentication encoding is a few lines (`"DSSEv1" SP len(type) SP type SP len(body) SP body`), written and tested here, not a dependency. |
 
-**Recommendation: a small check of our own on `p256` and `ecdsa`, with DSSE written here.** It is the owner's "small key-based check", it keeps the build small, and it keeps the verifier readable end to end, which matters for the one piece of code that can say Confirmed. `sigstore-verify` is revisited when keyless identity is designed. The same crate goes in `NOTICE` with its licence text, as `alacritty_terminal` is.
+**Decision: `sigstore-verify` first, `p256` and `ecdsa` as the fallback** ([Decisions](#decisions), 1). `sigstore-verify` is the owner's choice if it passes the reuse policy, and it is verification-only, so it would also serve the later keyless step. Slice 2 checks it and records here, with the date: its licence and `NOTICE` text, the `cargo tree -e normal` crates it adds to the workspace, its MSRV against ours, and whether the key-based verify path is free of network and async. If any fails, the fallback is a small check of our own on `p256` and `ecdsa` with DSSE written here, which keeps the build small and the verifier readable end to end. The same crate goes in `NOTICE` with its licence text, as `alacritty_terminal` is.
 
 ## Tekton Results
 
@@ -228,7 +228,7 @@ The Inspector of each holds its form group (`Save`/`Revert`, `Saved in freshkube
 
 ### Proposed additions to the setup file
 
-[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), `supply_chain.public_key_file`, `transparency_log` and `evidence`. This design adds, if the owner agrees ([Q2](#questions-for-the-owner), [Q3](#questions-for-the-owner), [Q4](#questions-for-the-owner)), three optional keys, each backward compatible and ignored by an older build as an unknown key:
+[SETUP_FILE.md](SETUP_FILE.md#the-file) types `results` (`address` or `forward`), `supply_chain.public_key_file`, `transparency_log` and `evidence`. This design adds, as the owner decided ([Decisions](#decisions), 2 to 4), three optional keys, each backward compatible and ignored by an older build as an unknown key:
 
 ```yaml
 clusters:
@@ -251,9 +251,9 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | --- | --- | --- | --- | --- |
 | 0 | This design | Claude | `docs/SUPPLY_CHAIN.md` | none |
 | 1 | **Spike and attestations as read evidence.** The spike: Chains' stored formats, `chains-config` and Results' list API read from upstream, against invented fixtures, and this page corrected. Then a typed `Attestation` from a TaskRun's and PipelineRun's annotations (payload, signature, certificate, log URL, storage), the `chains-config` GET (what is stored, where), the bounds, the `Attestation` observation kind. Nothing verified yet. | Claude | `freshkube-delivery`: `tekton.rs`, new `chains.rs` | 0, owner's answers |
-| 2 | **The verifier.** A pure module: key file (PEM, P-256, fingerprint), DSSE encoding, ECDSA check, statement parse, subject match, `Verification` with its variants. Keys generated inside the tests; a negative test for each variant. `p256` and `ecdsa` added, with `NOTICE`. | Claude | new `freshkube-delivery/src/verify/`, `Cargo.toml`, `NOTICE` | 1 |
+| 2 | **The verifier.** A pure module: key file (PEM, P-256, fingerprint), DSSE check, statement parse, subject match, `Verification` with its variants. First the dependency check ([The crates](#the-crates)); then `sigstore-verify`, or `p256` and `ecdsa` with DSSE written here if it fails the reuse policy. Tested against `cosign`-made fixtures, committed as invented test data with a README, and not only keys generated in the tests; a negative test for each variant. The chosen crates added, with `NOTICE`. | Claude | new `freshkube-delivery/src/verify/`, `Cargo.toml`, `NOTICE` | 1 |
 | 3 | **Verification in the join.** `supply_chain_links` matches `Verification` exhaustively; the `Attestation` kind and reported observation in `provenance.rs`; a verified provenance adds a reported witness to commit → PipelineRun; the setup's key is handed to `change::live` and the Changes list's read; `KNOWN_GAPS` empty. The tests of the [rule](#the-rule). | Claude | `join/build.rs`, `join/observe.rs`, `provenance.rs`, `change/live` | 2, `setup` types |
-| 4 | **The transparency log.** The entry lookup, the match, the `required when on` rule, the URL from Chains' config or the setting. Off does nothing. | Claude | new `freshkube-delivery/src/rekor.rs`, `join/build.rs` | 3, Q3 |
+| 4 | **The transparency log.** The entry lookup, the match, the `required when on` rule, the URL from Chains' config or the setting. Off does nothing. | Claude | new `freshkube-delivery/src/rekor.rs`, `join/build.rs` | 3 |
 | 5 | **A Results client.** Address route: GET, TLS and CA, token from the key store, deadline and caps; the record shapes parsed with the existing run parsers; the states of the table. Against a fake server (`RealIo`), never a real address. | Claude | new `freshkube-delivery/src/results.rs`, `Cargo.toml` | 1 |
 | 6 | **Results in the build read.** `Origin`, dedupe by UID with the live copy winning, the join, `Read from`, logs on demand, `Run pruned` with its why. | Claude | `collect.rs`, `tekton.rs`, `change/live`, `join/` | 5 |
 | 7 | **The Results forward.** The shell turns an explicit Forward into the address the client reads; Stop; the entry's state. | Claude | `freshkube-resources` `forwards/`, desktop shell wiring | 5, #697 slice 12 for its button |
@@ -264,12 +264,14 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 
 Slices 1 to 3 are the Confirmed path and can ship without Results; 5 and 6 are independent of them and can run beside. Only slice 10 needs #697's slice 12; slice 7's button and slice 10 land together.
 
-## Questions for the owner
+## Decisions
 
-1. **Verify with our own small check, or a Sigstore library?** Recommend our own on `p256` and `ecdsa`, DSSE written here, P-256 keys only; `sigstore-verify` is looked at again for keyless. Also: are Ed25519 or RSA keys wanted now? Recommend not until someone has one.
-2. **How does the address route authenticate?** Results normally wants a bearer token. Recommend `results.token: keys.json`, kept by #707's store, never the cluster's own credentials, and a `ca_file` for a private certificate with no insecure switch.
-3. **Is the transparency log required when it is on?** Recommend yes: on means a verified signature without a matching entry is Claimed with the reason, and the log is read from Chains' `transparency.url` or a `transparency_url` setting, never from an annotation. The alternative, a log that only adds a line, means turning it on changes nothing the person can see go wrong.
-4. **Should the forward route use the service proxy instead?** Reading through the API server's service proxy (a GET, as Monitoring's store does) needs no forward and no new `pods/portforward`, and carries the entry's credentials by itself. The decision names a port forward; recommend keeping it as decided and offering the proxy as a third route if forwarding proves awkward, since a forward is the more familiar thing for people to reason about and permit.
-5. **Is a failing signature visible enough as Claimed with a Warn status?** Recommend yes, as decided, plus the Changes list's footer line `1 signature didn't verify`, so it isn't found only by opening the change.
-6. **May a run's Results copy be older than its signing?** The record may predate Chains' annotation. Recommend showing `no attestation in the record (it may predate signing)` as Unknown, never a failure, and not re-reading Results to look for a newer one beyond the normal refresh.
-7. **Order against #697.** Slices 1 to 9 need no new Settings and read a hand-edited `freshkube.yaml`. Recommend starting them as soon as the questions are answered, and landing slice 10 with #697's slice 12; the alternative is holding everything for the Settings, which delays the Confirmed path for a form.
+The owner answered the open questions on 20 October 2026: all as recommended, with one change to the first.
+
+1. **Verification.** Use a Sigstore library, the verification-only `sigstore-verify` first, if it passes [REFERENCES.md](REFERENCES.md#reuse-policy)'s reuse policy: licence, `NOTICE`, the `cargo tree` size, the MSRV, and no network or async in the verify path. Slice 2 runs that check and writes the result into [The crates](#the-crates). If the library fails it, fall back to our own small P-256 check on `p256` and `ecdsa`, with DSSE written here. Either way the verifier is tested against fixtures made by `cosign` (`cosign generate-key-pair`, `cosign attest`), committed as invented test data, and not only against keys generated inside the tests. Ed25519 and RSA keys wait until someone has one.
+2. **The address route.** `results.token: keys.json`, kept by #707's store, plus an optional `ca_file`. There is no insecure switch, and the cluster's own credentials never go to a typed address.
+3. **The transparency log.** When it is on, it is required: a verified signature with no matching entry is Claimed, with the reason. The log's URL comes from Chains' config or the setting, never from an annotation.
+4. **The route.** Keep the two decided routes, an address and a port forward. The API server's service proxy can come later.
+5. **A failing signature** is Claimed with a Warn status, plus the Changes list's footer line `1 signature didn't verify`.
+6. **A Results record older than signing** is Unknown: `no attestation in the record (it may predate signing)`.
+7. **Order.** Slices 1 to 9 start now and read a hand-edited `freshkube.yaml`. Slice 10 lands with #697's slice 12.
