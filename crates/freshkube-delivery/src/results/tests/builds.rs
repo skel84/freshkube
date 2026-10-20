@@ -267,32 +267,34 @@ async fn unread_live_builds_never_request_results_or_publish_archive_builds() {
 async fn capped_live_builds_cannot_establish_that_an_archived_run_was_pruned() {
     let server = Server::new(false, vec![]);
     let client = client(&server).await;
-    let answer = evidence(
-        &reader(vec![pipeline("live-uid")], vec![]).capped("pipelineruns"),
-        Ok(&client),
-    )
-    .await;
-    assert!(matches!(answer.builds, Source::Capped(..)));
-    assert_eq!(answer.builds.read().unwrap().len(), 1);
-    assert_eq!(
-        answer.builds.read().unwrap()[0].origin,
-        tekton::Origin::Cluster
-    );
-    assert!(server.requests.lock().unwrap().is_empty());
-    assert!(
-        answer
-            .build_history
-            .as_ref()
-            .unwrap_err()
-            .to_string()
-            .contains("absence could not be established")
-    );
-    assert!(
-        change(&answer)
-            .missing
-            .iter()
-            .any(|line| line.text.contains("cap"))
-    );
+    for capped_kind in ["pipelineruns", "taskruns"] {
+        let answer = evidence(
+            &reader(vec![pipeline("live-uid")], vec![]).capped(capped_kind),
+            Ok(&client),
+        )
+        .await;
+        assert!(matches!(answer.builds, Source::Capped(..)));
+        assert_eq!(answer.builds.read().unwrap().len(), 1);
+        assert_eq!(
+            answer.builds.read().unwrap()[0].origin,
+            tekton::Origin::Cluster
+        );
+        assert!(server.requests.lock().unwrap().is_empty());
+        assert!(
+            answer
+                .build_history
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("absence could not be established")
+        );
+        assert!(
+            change(&answer)
+                .missing
+                .iter()
+                .any(|line| line.text.contains("cap"))
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -361,10 +363,16 @@ async fn reused_run_names_keep_their_own_source_status_and_actions() {
 async fn missing_runs_keep_the_no_run_statement_with_results_why() {
     let server = Server::new(false, vec![page(vec![])]);
     let client = client(&server).await;
-    for history in [
-        Err(Error::Off),
-        Ok(client.as_ref()),
-        Err(Error::Unreachable(Cause::Certificate)),
+    for (history, expected) in [
+        (Err(Error::Off), "Tekton Results isn't set up for cluster-b"),
+        (
+            Ok(client.as_ref()),
+            "Tekton Results has no run for this commit",
+        ),
+        (
+            Err(Error::Unreachable(Cause::Certificate)),
+            "didn't answer: certificate not trusted",
+        ),
     ] {
         let answer = evidence(&reader(vec![], vec![]), history).await;
         let change = change(&answer);
@@ -373,7 +381,7 @@ async fn missing_runs_keep_the_no_run_statement_with_results_why() {
             .iter()
             .find(|row| row.name == "PipelineRun")
             .unwrap();
-        assert!(row.detail.contains("Tekton Results"));
+        assert!(row.detail.contains(expected), "{}", row.detail);
         assert!(!row.detail.contains("Run pruned"));
         assert_eq!(row.link, Some(Confidence::Unknown));
     }
