@@ -299,6 +299,7 @@ pub struct ChangePage {
     selected: Option<SharedString>,
     /// What the Inspector says of the selection.
     detail: Option<detail::Detail>,
+    detail_scroll: ScrollHandle,
     /// What Coroot found after each Deployment's deploy, read for the
     /// selected hop while the page shows.
     outcomes: outcome::Outcomes,
@@ -357,6 +358,7 @@ impl ChangePage {
             link_selected: false,
             selected: None,
             detail: None,
+            detail_scroll: ScrollHandle::new(),
             outcomes: outcome::Outcomes::default(),
             parent: None,
         };
@@ -564,6 +566,7 @@ impl ChangePage {
             {
                 self.graph.reveal_node(key, window);
             }
+            self.reveal_chain_when_drawn(window, cx);
         } else {
             kit::reveal(self, ScrollStrategy::Nearest);
         }

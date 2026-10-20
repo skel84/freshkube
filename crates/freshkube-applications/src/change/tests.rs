@@ -12,7 +12,8 @@ use freshkube_ui::{
 use gpui_kit::component::Root;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Entity, SharedString, TestAppContext, Window, px, size,
+    AnyWindowHandle, App, AppContext, Entity, ScrollDelta, SharedString, TestAppContext, Window,
+    point, px, size,
 };
 use std::time::Duration;
 
@@ -23,6 +24,18 @@ fn open(
     shape: Shape,
     delay: Duration,
     text: f32,
+) -> (AnyWindowHandle, Entity<ChangePage>) {
+    open_stage(cx, width, height, shape, delay, text, None)
+}
+
+fn open_stage(
+    cx: &mut TestAppContext,
+    width: f32,
+    height: f32,
+    shape: Shape,
+    delay: Duration,
+    text: f32,
+    stage: Option<&str>,
 ) -> (AnyWindowHandle, Entity<ChangePage>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -43,7 +56,7 @@ fn open(
                     shape,
                     delay,
                 },
-                None,
+                stage,
                 Connections::new("example", [(SessionKey::new("core-fra"), "example".into())]),
                 true,
                 window,
@@ -549,9 +562,6 @@ fn narrow_chain_at_text_20_reveals_a_far_card_and_stacks_the_inspector(cx: &mut 
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        page.read(cx)
-            .graph
-            .reveal_node(&"prod-lon-pods".into(), window);
         window.render_frame(cx);
         layout_check::settle_header(window, cx);
         layout_check::assert_inspector(
@@ -630,4 +640,60 @@ fn two_windows_keep_their_own_view_when_another_change_opens(cx: &mut TestAppCon
         })
         .unwrap();
     }
+}
+
+#[gpui_kit::test]
+fn selecting_a_link_reveals_its_comparison_after_reading_a_long_stage(cx: &mut TestAppContext) {
+    let (handle, page) = open(cx, 760., 700., Shape::Whole, Duration::ZERO, 13.);
+    cx.update_window(handle, |_, window, cx| {
+        chain(&page, window, cx);
+        page.update(cx, |page, cx| page.select("dev-eligible", window, cx));
+        window.render_frame(cx);
+        window.scroll(
+            "change-detail-body",
+            ScrollDelta::Pixels(point(px(0.), px(-300.))),
+            cx,
+        );
+        window.render_frame(cx);
+        assert!(page.read(cx).detail_scroll.offset().y < px(0.));
+        window.press("left", cx);
+        window.render_frame(cx);
+        assert!(page.read(cx).link_selected);
+        for view in [ChangeView::Chain, ChangeView::List] {
+            page.update(cx, |page, cx| page.set_view(view, window, cx));
+            window.render_frame(cx);
+            let body = window.find("change-detail-body").bounds();
+            let link = window.find("change-detail-link").bounds();
+            assert!(link.top() >= body.top());
+            assert!(link.bottom() <= body.bottom());
+        }
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_change_opened_in_remembered_chain_reveals_its_initial_stage(cx: &mut TestAppContext) {
+    let (first, a) = fixture(cx);
+    cx.update_window(first, |_, window, cx| chain(&a, window, cx))
+        .unwrap();
+    let (handle, page) = open_stage(
+        cx,
+        760.,
+        560.,
+        Shape::Whole,
+        Duration::ZERO,
+        20.,
+        Some("prod-lon"),
+    );
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(page.read(cx).view, ChangeView::Chain);
+        window.render_frame(cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        let pane = window.find("change-chain-scroll").bounds();
+        let card = window.find("change-card-prod-lon-eligible").bounds();
+        assert!(card.left() >= pane.left() - px(1.));
+        assert!(card.right() <= pane.right() + px(1.));
+    })
+    .unwrap();
 }

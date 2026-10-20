@@ -349,6 +349,7 @@ impl ChangePage {
         let detail = self.detail.as_ref()?;
         let after = detail.after.as_ref().map(|section| section.render(cx));
         let inspector = Inspector::new("change-detail")
+            .track_scroll(&self.detail_scroll)
             .heading(heading(detail, cx))
             .banner(detail.banner.as_ref().map(|(tone, lead, body)| {
                 ui::banner(*tone, Some(lead.clone()), body.clone(), None, cx)
