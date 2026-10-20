@@ -7,6 +7,13 @@ use freshkube_reads::Loader;
 use std::{cell::RefCell, future::Future, time::Duration};
 use tokio::runtime::Handle;
 
+/// Only an explicit Connect in Settings may connect a hidden page.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConnectOrigin {
+    Page,
+    Settings,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Subject {
     Applications,
@@ -283,12 +290,13 @@ impl ObservabilityPage {
         self.live.visible = visible;
         if visible {
             self.refresh_current(cx);
-            self.restore(cx);
+            self.restore(ConnectOrigin::Page, cx);
         } else {
             self.live.cancel();
         }
     }
     pub(super) fn clear_observations(&mut self) {
+        self.focused_revision = None;
         self.live.clear();
         self.incident_observations = self.incident_observations.cleared();
         self.revision_observations = self.revision_observations.cleared();
@@ -371,6 +379,7 @@ impl ObservabilityPage {
         let (Some(access), Some(source)) = (&self.live.access, &self.live.source) else {
             return;
         };
+        self.focused_revision = None;
         self.live.source = Some(source.clone().with_association(
             cluster.map(|cluster| api::Association::new(access.clone(), cluster)),
         ));
@@ -452,9 +461,9 @@ impl ObservabilityPage {
             if let Some(memory) = &mut self.memory {
                 memory.restore = true;
             }
-            self.restore(cx);
+            self.restore(ConnectOrigin::Settings, cx);
         } else {
-            self.connect(cx);
+            self.connect(ConnectOrigin::Settings, cx);
         }
         cx.emit(ObservabilityEvent::Connection);
         cx.notify();
@@ -463,8 +472,8 @@ impl ObservabilityPage {
     pub fn forget_key_from_settings(&mut self, server: &str, cx: &mut Context<Self>) {
         self.forget_stored_key(server, cx);
     }
-    pub(super) fn connect(&mut self, cx: &mut Context<Self>) {
-        if self.fixture {
+    pub(super) fn connect(&mut self, origin: ConnectOrigin, cx: &mut Context<Self>) {
+        if self.fixture || (!self.live.visible && origin != ConnectOrigin::Settings) {
             return;
         }
         // A pasted URL or key often brings a space or line break with it.

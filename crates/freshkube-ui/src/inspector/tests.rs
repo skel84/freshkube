@@ -340,6 +340,41 @@ fn a_drag_stops_at_the_kept_table(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_body_keeps_its_padding_outside_the_scroll(cx: &mut TestAppContext) {
+    let (handle, page, _) = open(cx, None, true, true);
+    for text in [13., 20.] {
+        for beside in [true, false] {
+            cx.update_window(handle, |_, window, cx| {
+                crate::text_size::set(text, cx);
+                page.update(cx, |page, cx| {
+                    page.beside = beside;
+                    cx.notify();
+                });
+                settle(window, cx);
+                let inspector = window.find("inspector").bounds();
+                let heading = window.find("inspector-heading").bounds();
+                let body = window.find("inspector-body").bounds();
+                let pad = dp_px(PANE_PADDING, window);
+                close("above the scroll", body.top(), heading.bottom() + pad);
+                close("below the scroll", body.bottom(), inspector.bottom() - pad);
+                close("left inset", body.left(), inspector.left() + pad);
+                close("right inset", body.right(), inspector.right() - pad);
+                window.scroll(
+                    "inspector-body",
+                    ScrollDelta::Pixels(point(px(0.), px(-100.))),
+                    cx,
+                );
+                window.render_frame(cx);
+                assert_eq!(window.find("inspector-body").bounds(), body);
+                assert_eq!(window.find("inspector-heading").bounds(), heading);
+                assert!(window.find("inspector-tall").bounds().top() < body.top());
+            })
+            .unwrap();
+        }
+    }
+}
+
+#[gpui_kit::test]
 fn the_body_scrolls_under_a_heading_that_stays(cx: &mut TestAppContext) {
     let (handle, _, _) = open(cx, None, true, true);
     cx.update_window(handle, |_, window, cx| {

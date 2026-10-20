@@ -457,6 +457,12 @@ impl Pilot {
                     page.connect_from_settings(&server, auth, key, window, cx)
                 });
             }
+            PageEvent::Settings(SettingsEvent::OpenClusters) => {
+                self.show_settings(SettingsSection::Clusters, window, cx);
+                self.settings_page.update(cx, |page, cx| {
+                    page.select_first_entry(window, cx);
+                });
+            }
             PageEvent::Settings(SettingsEvent::Disconnect) => {
                 self.pages
                     .observability
