@@ -1859,9 +1859,12 @@ async fn dropping_the_future_cancels_the_look() {
     let q = query(link_of("cluster-a", "shop-api", "c"));
     {
         let look = provider.outcome(&q, None, window(), now());
+        // Below the client's 5 s connect timeout, as in the timeout test:
+        // the paused clock can jump while the connect is in flight, and a
+        // 5 s sleep tied with that timeout.
         tokio::select! {
             _ = look => panic!("the server never answers"),
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+            _ = tokio::time::sleep(Duration::from_secs(3)) => {}
         }
     }
     for _ in 0..400 {
