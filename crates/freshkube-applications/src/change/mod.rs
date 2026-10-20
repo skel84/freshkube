@@ -324,7 +324,7 @@ impl ChangePage {
         let change = fetch.unread();
         let mut loader = Loader::default();
         loader.set_visible(visible, read::ON_SHOW, cx);
-        let view_store = crate::change_view::store(cx);
+        let view_store = crate::change_view::store(window, cx);
         let mut page = Self {
             page_link: page_link(&change),
             copied: false,

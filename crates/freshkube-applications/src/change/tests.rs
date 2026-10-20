@@ -573,3 +573,61 @@ fn narrow_chain_at_text_20_reveals_a_far_card_and_stacks_the_inspector(cx: &mut 
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn a_stages_card_uses_its_gates_while_downstream_health_stays_on_its_card(cx: &mut TestAppContext) {
+    let (handle, page) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        let mut change = page.read(cx).change.clone();
+        let words = change.stages[0].words.clone();
+        change
+            .hops
+            .iter_mut()
+            .find(|hop| hop.key == "dev-pods")
+            .unwrap()
+            .state = HealthIndicator::Error;
+        page.update(cx, |page, cx| page.read_answer(change, window, cx));
+        chain(&page, window, cx);
+        let p = page.read(cx);
+        let stage = p
+            .graph
+            .nodes()
+            .iter()
+            .find(|node| node.key == "dev-eligible")
+            .unwrap();
+        assert_eq!(stage.tone, Some(Tone::Good));
+        assert!(stage.detail.starts_with(&words));
+        assert_eq!(
+            p.graph
+                .nodes()
+                .iter()
+                .find(|node| node.key == "dev-pods")
+                .unwrap()
+                .tone,
+            Some(Tone::Crit)
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn two_windows_keep_their_own_view_when_another_change_opens(cx: &mut TestAppContext) {
+    let (first, a) = fixture(cx);
+    let (second, b) = fixture(cx);
+    cx.update_window(first, |_, window, cx| chain(&a, window, cx))
+        .unwrap();
+    cx.update_window(second, |_, window, cx| {
+        chain(&b, window, cx);
+        b.update(cx, |page, cx| page.set_view(ChangeView::List, window, cx));
+    })
+    .unwrap();
+    for (handle, page, expected) in [(first, a, ChangeView::Chain), (second, b, ChangeView::List)] {
+        cx.update_window(handle, |_, window, cx| {
+            let fetch = page.read(cx).fetch.clone();
+            let reopened =
+                cx.new(|cx| ChangePage::new(fetch, None, Connections::default(), true, window, cx));
+            assert_eq!(reopened.read(cx).view, expected);
+        })
+        .unwrap();
+    }
+}

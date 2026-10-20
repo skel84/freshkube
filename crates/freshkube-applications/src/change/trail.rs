@@ -36,8 +36,12 @@ impl Trail {
                     let group = &groups[row.group];
                     (
                         change.stages[stage].name.clone().into(),
-                        group.detail.join(" · ").into(),
-                        group.tone,
+                        std::iter::once(change.stages[stage].words.as_str())
+                            .chain(group.detail.iter().skip(2).map(String::as_str))
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                            .into(),
+                        gate_tone(change, rows, stage),
                     )
                 }
                 _ => (row.name.clone(), row.detail.clone(), row.tone),
@@ -119,4 +123,17 @@ fn short_key(key: &str) -> String {
     } else {
         key.to_owned()
     }
+}
+
+// The Stage box represents its gates. Downstream health stays on its own
+// card, even when it makes the List group's overall glyph weaker.
+fn gate_tone(change: &Change, rows: &[HopRow], stage: usize) -> Tone {
+    change
+        .hops
+        .iter()
+        .zip(rows)
+        .filter(|(hop, _)| hop.shows == Shows::Stage(stage))
+        .map(|(_, row)| row.tone)
+        .max_by_key(|tone| (rank(*tone), *tone == Tone::Info))
+        .unwrap_or(Tone::Unknown)
 }

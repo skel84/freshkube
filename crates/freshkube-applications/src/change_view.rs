@@ -2,8 +2,9 @@
 //! knows the choice; desktop owns the file, as it does for split sizes.
 use std::rc::Rc;
 
-use gpui_kit::{App, Global};
+use gpui_kit::{App, BorrowAppContext, Global, Window, WindowId};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -18,22 +19,43 @@ pub trait ViewStore {
     fn save(&self, view: ChangeView, cx: &App);
 }
 
-struct Store(Rc<dyn ViewStore>);
+struct Store {
+    backend: Rc<dyn ViewStore>,
+    windows: HashMap<WindowId, Rc<dyn ViewStore>>,
+}
 impl Global for Store {}
 
-pub fn set_store(store: Rc<dyn ViewStore>, cx: &mut App) {
-    let current = store.view();
-    cx.set_global(Store(Rc::new(Kept {
-        current: std::cell::Cell::new(current),
-        backend: store,
-    })));
+pub fn set_store(backend: Rc<dyn ViewStore>, cx: &mut App) {
+    if cx.has_global::<Store>() {
+        // Installing another window's file leaves open windows on their
+        // own store. A newly opened window starts from the installed file.
+        cx.update_global::<Store, _>(|store, _| store.backend = backend);
+    } else {
+        cx.set_global(Store {
+            backend,
+            windows: HashMap::new(),
+        });
+    }
 }
 
-pub(crate) fn store(cx: &mut App) -> Rc<dyn ViewStore> {
+pub(crate) fn store(window: &Window, cx: &mut App) -> Rc<dyn ViewStore> {
     if !cx.has_global::<Store>() {
         set_store(Rc::new(Session(std::cell::Cell::default())), cx);
     }
-    cx.global::<Store>().0.clone()
+    let id = window.window_handle().window_id();
+    cx.update_global::<Store, _>(|store, _| {
+        let backend = store.backend.clone();
+        store
+            .windows
+            .entry(id)
+            .or_insert_with(|| {
+                Rc::new(Kept {
+                    current: std::cell::Cell::new(backend.view()),
+                    backend,
+                })
+            })
+            .clone()
+    })
 }
 
 struct Session(std::cell::Cell<ChangeView>);
