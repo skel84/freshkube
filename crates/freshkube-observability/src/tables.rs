@@ -209,6 +209,27 @@ impl TableSource for ObservabilityPage {
             TableKey::Application(_) => {}
         }
     }
+    fn menu_focus(&self, _: &App) -> Option<FocusHandle> {
+        matches!(self.shown_table(), Shown::Deployments).then(|| self.focus.clone())
+    }
+    fn row_menu(
+        &mut self,
+        key: &TableKey,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<freshkube_ui::menu::MenuAction> {
+        if self.destination != Destination::Deployments {
+            return Vec::new();
+        }
+        let TableKey::Revision(id) = key else {
+            return Vec::new();
+        };
+        self.select_revision(id.clone(), cx);
+        vec![freshkube_ui::menu::MenuAction::new(
+            "Show on charts",
+            deployments::ShowOnCharts,
+        )]
+    }
     fn line_count(&self) -> usize {
         match self.shown_table() {
             Shown::Applications => self.matrix.len(),

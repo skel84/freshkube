@@ -220,6 +220,7 @@ impl ObservabilityPage {
         if self.selected_app.as_ref() == Some(&id) {
             return;
         }
+        self.focused_revision = None;
         self.selected_app = Some(id);
         self.report_snapshot = None;
         self.app_page = None;

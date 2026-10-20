@@ -47,6 +47,30 @@ fn coroot_of(coroot: &EntryCoroot, at: &dyn Fn(&str) -> String) -> Result<(), Fa
     Ok(())
 }
 
+/// Each linked entry's project is its own, else the connection's. Two entries
+/// may not link one (project, Coroot cluster): a Coroot application would
+/// belong to both, and no answer could say whose it is.
+pub(super) fn coroot_links(entries: &[Entry], connection: Option<&str>) -> Result<(), Fault> {
+    let mut seen: Vec<(&str, &str, &str)> = Vec::new();
+    for entry in entries {
+        let Some(link) = &entry.coroot else { continue };
+        let Some(project) = link.project.as_deref().or(connection) else {
+            return Err(Fault::CorootWithoutProject(entry.id.clone()));
+        };
+        let cluster = link.cluster.as_str();
+        if let Some((first, ..)) = seen.iter().find(|(_, p, c)| *p == project && *c == cluster) {
+            return Err(Fault::CorootTwice {
+                first: (*first).to_owned(),
+                second: entry.id.clone(),
+                project: project.to_owned(),
+                cluster: cluster.to_owned(),
+            });
+        }
+        seen.push((&entry.id, project, cluster));
+    }
+    Ok(())
+}
+
 fn entry_metrics(metrics: &EntryMetrics, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
     if let Some(value) = &metrics.value {
         non_empty(value, at("metrics.value"))?;

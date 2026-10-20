@@ -42,6 +42,8 @@ pub(super) struct KubernetesOnly {
     /// revision check can tell whether another connection attempt began.
     connection_request: Option<Rc<Request<Option<String>>>>,
     revision_check: Option<(OwnedJob, Task<()>)>,
+    /// A manual refresh waits for inspection, including one already running.
+    refresh_requested: bool,
     /// Remember the file and context chosen here for the next launch: set
     /// when the window was switched to this mode in the app, or opened from
     /// the remembered choice, never for a terminal's options.
@@ -63,6 +65,7 @@ impl KubernetesOnly {
             connection_read: Loader::default(),
             connection_request: None,
             revision_check: None,
+            refresh_requested: false,
             remember: false,
             choosing: false,
         }
@@ -274,6 +277,7 @@ impl Pilot {
         kube.choosing &= context.is_none();
         kube.connection_read.resolve(None, Ok(()));
         kube.revision_check = None;
+        kube.refresh_requested = false;
         kube.connection = KubeConnection::Idle;
         kube.access = context
             .clone()
@@ -373,7 +377,12 @@ impl Pilot {
 
     /// Reinspect local files at the refresh boundary. Unchanged access keeps
     /// its watch and selection, including while a failed transport retries.
-    pub(super) fn refresh_kubernetes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn refresh_kubernetes(
+        &mut self,
+        manual: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.chrome.elapsed = Duration::ZERO;
         if self.config_loading {
             return;
@@ -382,10 +391,16 @@ impl Pilot {
             self.load_kube_contexts(window, cx);
             return;
         }
-        let Some(kube) = self.mode().kubernetes_only() else {
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
             return;
         };
+        kube.refresh_requested |= manual;
         let Some(access) = kube.access.clone() else {
+            // Coroot can still refresh without a selected Kubernetes context.
+            if manual {
+                kube.refresh_requested = false;
+                self.refresh_page(window, cx);
+            }
             return;
         };
         if kube.revision_check.is_some() {
@@ -431,6 +446,7 @@ impl Pilot {
                 match result {
                     Ok(report) => view.kubeconfig_checked(access, report, window, cx),
                     Err(error) => {
+                        kube.refresh_requested = false;
                         kube.connection = KubeConnection::Failed(error);
                     }
                 }
@@ -456,15 +472,21 @@ impl Pilot {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(kube) = self.mode().kubernetes_only() else {
+        let Some(kube) = self.mode.kubernetes_only_mut() else {
             return;
         };
         if kube.access.as_ref().map(DirectAccess::id) != Some(access.id()) {
             return;
         }
+        let manual = std::mem::take(&mut kube.refresh_requested);
         if report.revision == access.revision() {
             if matches!(kube.connection, KubeConnection::Failed(_)) {
                 self.check_kube_connection(window, cx);
+            }
+            if manual {
+                self.refresh_summary(window, cx);
+                self.refresh_screen(window, cx);
+                self.refresh_page(window, cx);
             }
             return;
         }
@@ -495,6 +517,7 @@ impl Pilot {
             // Retain the explicitly selected context even if the new file's
             // current context differs or the selected context disappeared.
             view.use_kube_context(Some(access.context().to_owned()), window, cx);
+            view.ensure_summary(window, cx);
         });
     }
 
