@@ -138,13 +138,16 @@ Everything is a `GET` or a list under the existing 5 s per-request and the read'
 
 1. **Find the runs.** List records across namespaces (`parents/-/results/-/records`, or the one namespace the build side is read from) filtered to PipelineRuns whose `pipelinesascode.tekton.dev/sha` label equals the commit. The record's `data` is the PipelineRun as the cluster served it, so it goes through the same `parse_pipeline_run` as a live run. At most `MOST_RESULT_RUNS` (10, as `MOST_TASK_READS`) per commit; the rest are counted and named.
 2. **Find their tasks.** A PipelineRun's record sits in a *result* that also holds its TaskRuns' records. One list of that result gives them all, so a pruned build costs one request for tasks, not one per build. Parsed with `parse_task_run`; capped.
-3. **Logs.** A step's log is a log record of the same result, read on demand when the person opens Logs for a pruned run, in pages, to at most 1 MiB, with a `Showing the first 1 MiB` note beyond. A step whose log Results didn't keep says so and disables Logs with why.
+3. **Logs.** A TaskRun's log is a Log record of the same result. Log metadata is listed in pages and matched by `spec.resource.uid`; the whole task log is read on demand up to 1 MiB, with a `Showing the first 1 MiB` note beyond. It is not split by step prefixes. A 404 on the content read says `Tekton Results kept no log for this task`; a 404 or 501 on the metadata listing says `this Tekton Results doesn't serve logs`. Refusals and caps keep their own reason. Until slice 9 adds the log target and dock source, the pod-only Logs action stays disabled: `Tekton Results keeps this log; opening it here comes in a later update` when metadata confirms it was stored.
 4. **Attestations come with the record.** A record's `data` carries the run's annotations as they were when it was stored, Chains' among them, so a pruned run is verified the same way a live one is. A record stored before Chains signed has no attestation: that is `no attestation in the record (it may predate signing)`, which is not `unsigned`.
 
 The spike settled the REST shape and the filter (see [What the spike found](#what-the-spike-found)); what it could not confirm is listed there. Slice 5 tests the address client against loopback fake servers only; a real Results install remains unchecked.
 
-Slice 5's crate-private client lives in `freshkube-delivery/src/results/` and
-is not connected to the build read yet. It keeps up to 10 PipelineRuns or
+The crate-private client lives in `freshkube-delivery/src/results/` and
+supplements the build read after the live listing succeeds. One client is
+opened per pool and every request ends by the refresh's deadline. The pool
+accepts the app's optional address key store; handing it from the application
+pages to their read jobs is a follow-up after pull request 791. It keeps up to 10 PipelineRuns or
 1,000 TaskRuns, reads at most five pages of up to 200 records, and bounds
 each response to 32 MiB and each decoded manifest to 4 MiB. Its listing keeps
 the stopping reason (run, task, page or byte cap) and an exact total only if
@@ -168,8 +171,8 @@ A Results record joins as the run it records. `Build` gains where it was read fr
 
 - **Deduplicated by UID.** A run read both ways (still on the cluster, still in Results) is one build: the live copy wins, and the record only adds `also in Tekton Results` to Read from. The key is `metadata.uid`, never name and namespace, which a recreated run reuses.
 - **Same links, same rules.** Commit → PipelineRun on the SHA label and witnesses, PipelineRun → supply chain on the digest. A run from Results has the observations of the object it records, and its `Read from` says `Tekton Results · cluster-b` instead of `Tekton · cluster-b`.
-- **Never fresher than the cluster.** Results is read only for what the cluster did not return: the live read goes first; a SHA with no live run, or fewer than the Results copy knows of, adds the rest. A failed or unreachable Results never hides a live run.
-- **A pruned run with no record keeps "Run pruned".** It is still `Run pruned, logs gone`, and the banner adds why Results didn't help (not configured, not reachable, no record). It never reads as a clean history.
+- **Never fresher than the cluster.** Results is read only for what the cluster did not return: the live read goes first; a SHA with no live run, or fewer than the Results copy knows of, adds the rest. A failed or unreachable Results never hides a live run. A failed or capped live build read is not supplemented (including a TaskRun cap, which the current reader folds into the same outcome): a partial listing cannot establish that an unmatched Results run is absent from the cluster; the live builds, cap and reason stay.
+- **A positively named pruned run with no record keeps "Run pruned".** It is still `Run pruned, logs gone`, with why Results didn't help (not configured, not reachable, no record). The live read currently knows only the commit when no run is returned, so it keeps the existing no-run statement and adds a configured Results' reason; it cannot claim pruning without a run identity. The pruned wording stays in example data until such a read exists. It never reads as a clean history.
 
 ### Not reachable, and the other states
 
@@ -177,7 +180,8 @@ Each is its own state with why, on the Changes list's footer, the change page's 
 
 | State | When | Says |
 | --- | --- | --- |
-| Off | The entry has no `results` | `Tekton Results isn't set up for cluster-b`; the change page doesn't offer it. |
+| Off | The entry has no `results` | No Results text on the change page; Read from and no-run wording stay as for the live read alone. |
+| Skipped | The live build read failed or was capped, so Results wasn't asked | A failed live read adds no Results text. A cap says `Tekton Results on cluster-b wasn't read: the live build read stopped at the cap, so absence could not be established.` |
 | Loading | A Results read is in flight | `Reading Tekton Results`; a configured source never reads as off during its first read. |
 | Not forwarded | `forward` is set and no Forward is running | `Not forwarded yet · Forward` (a button on the entry, never started by a read). |
 | Not installed | The forward's Service isn't found | `The Service tekton-results-api-service isn't in tekton-pipelines on cluster-b`. |
