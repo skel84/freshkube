@@ -180,8 +180,11 @@ impl TableSource for SettingsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<menu::MenuAction> {
+        let inspecting = self.entry.is_some() && !self.menu_holds_inspector;
         self.request_select(Some(key.clone()), window, cx);
         self.focus(window, cx);
+        self.menu_holds_inspector = !inspecting;
+        self.menu_had_focus = false;
         // Unsaved changes hold the selection on its row until the prompt is
         // answered; the actions are then not for this row.
         let editable = self.editable() && !self.selection_pending(key);
