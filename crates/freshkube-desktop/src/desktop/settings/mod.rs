@@ -146,6 +146,8 @@ pub(crate) struct SettingsPage {
     selected: Option<SharedString>,
     /// The selected cluster's groups in the Inspector.
     entry: Option<entry::EntryDraft>,
+    /// The Inspector's scroll, which starts at the top for each cluster.
+    detail_scroll: ScrollHandle,
     /// The selection and workspace revision the drafts were built for.
     entry_key: Option<(Option<SharedString>, u64)>,
     split: InspectorSplit,
@@ -307,6 +309,7 @@ impl SettingsPage {
             window: None,
             selected: None,
             entry: None,
+            detail_scroll: ScrollHandle::new(),
             entry_key: None,
             kubeconfig_path: None,
             split: InspectorSplit::new(PREFIX, cx),

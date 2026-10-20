@@ -1042,6 +1042,173 @@ async fn text_a_save_trims_leaves_the_group_clean_afterwards(cx: &mut TestAppCon
     );
 }
 
+#[gpui_kit::test]
+async fn a_failing_metrics_save_puts_the_keyboard_in_the_first_failing_field(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    select(cx, handle, "prod");
+    to_metrics(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-source-service", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    to_metrics(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-save", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    // The very first Save puts the keyboard in Namespace, so a typed letter
+    // lands there.
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("settings-metrics-namespace").focused(),
+            Some(true)
+        );
+        window.input("m", cx);
+    })
+    .unwrap();
+    assert_eq!(values(cx, handle, &view).1.namespace, "m");
+}
+
+#[gpui_kit::test]
+fn locked_fields_take_no_choices_either(cx: &mut TestAppContext) {
+    let (_runtime, handle, view) = crate::desktop::tests::fixture(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(
+                crate::desktop::settings::SettingsSection::Clusters,
+                window,
+                cx,
+            )
+        });
+        window.render_frame(cx);
+        window.click("settings-cluster-core-fra", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    // Example data is read-only: the segments don't mark the group.
+    cx.update_window(handle, |_, window, cx| {
+        window.click(("settings-identity-role", 1usize), cx);
+    })
+    .unwrap();
+    to_metrics(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-source-service", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = view.read(cx).settings_page.read(cx);
+        assert!(!page.has_unsaved_edits(cx));
+        assert!(window.try_find("settings-identity-dirty").is_none());
+        assert!(window.try_find("settings-metrics-dirty").is_none());
+        // And a change of row asks nothing.
+        window.click("settings-cluster-cicd-fra", cx);
+    })
+    .unwrap();
+    assert!(cx.pending_prompt().is_none());
+}
+
+#[gpui_kit::test]
+async fn the_body_scrolls_below_the_heading_and_opens_at_the_top(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    select(cx, handle, "prod");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // A scrolled line is cut at the gap under the heading, not shown in it.
+        let heading = window.find("settings-detail-heading").bounds();
+        let body = window.find("settings-detail-body").bounds();
+        let gap = crate::ui::dp_px(freshkube_ui::page::PANE_PADDING, window);
+        assert!(
+            body.top() - heading.bottom() >= gap - gpui_kit::px(1.),
+            "{heading:?} over {body:?}"
+        );
+    })
+    .unwrap();
+    to_metrics(cx, handle);
+    let scrolled = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, _, cx| {
+            view.read(cx)
+                .settings_page
+                .read(cx)
+                .detail_scroll
+                .offset()
+                .y
+        })
+        .unwrap()
+    };
+    assert!(scrolled(cx) < gpui_kit::px(0.), "the body scrolled");
+    // Another cluster opens at the top.
+    select(cx, handle, "mgmt");
+    assert_eq!(scrolled(cx), gpui_kit::px(0.));
+}
+
+#[gpui_kit::test]
+async fn an_error_under_a_field_moves_nothing_below_it(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let guard = tempfile::tempdir().unwrap();
+    write(guard.path(), TWO);
+    let (_runtime, handle, view) = launch(cx, guard.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    select(cx, handle, "prod");
+    to_metrics(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-source-service", cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    to_metrics(cx, handle);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-port", cx);
+        window.input("70000", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    to_metrics(cx, handle);
+    let save = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, _| {
+            window.find("settings-metrics-save").bounds().top()
+        })
+        .unwrap()
+    };
+    let before = save(cx);
+    // The port loses the keyboard, and its error appears under it: a
+    // button below it must not move between a press and its release.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("settings-metrics-namespace", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-metrics-port-row-error").visible());
+    })
+    .unwrap();
+    assert_eq!(save(cx), before);
+}
+
 /// The table page is the shared one with nothing selected; with a cluster
 /// selected the Inspector sits beside the table or under it as the shared
 /// one does, at both window sizes and the smallest and largest text.

@@ -328,7 +328,8 @@ impl Metrics {
         let kinds = Kind::ALL.iter().fold(
             ButtonGroup::new("settings-metrics-source")
                 .outline()
-                .small(),
+                .small()
+                .disabled(!editable),
             |group, kind| {
                 group.child(ui::choice(
                     Button::new(kind.id())
@@ -380,6 +381,9 @@ impl Metrics {
                                 self.errors.namespace.is_some(),
                             ),
                         )
+                        // A row always has a line under it, so an error
+                        // replaces it and nothing below moves.
+                        .hint("The namespace the Service runs in.")
                         .error(self.errors.namespace.clone()),
                     )
                     .row(
@@ -407,6 +411,7 @@ impl Metrics {
                                 self.errors.port.is_some(),
                             ),
                         )
+                        .hint("A port from 1 to 65535.")
                         .error(self.errors.port.clone()),
                     );
             }
@@ -444,7 +449,9 @@ impl Metrics {
                     "settings-metrics-revert",
                     "Revert",
                     cx.listener(|page, _, window, cx| {
-                        page.revert_group(Group::Metrics, window, cx)
+                        page.revert_group(Group::Metrics, window, cx);
+                        // The button is spent: the ring leaves with it.
+                        window.focus(&page.focus, cx);
                     }),
                 )
                 .disabled(!dirty),

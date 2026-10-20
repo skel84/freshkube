@@ -219,6 +219,7 @@ impl SettingsPage {
             .cloned();
         let Some(entry) = entry else {
             self.entry = None;
+            self.detail_scroll.set_offset(point(px(0.), px(0.)));
             cx.notify();
             return;
         };
@@ -227,7 +228,12 @@ impl SettingsPage {
             Some(draft) if draft.id.as_ref() == entry.id.as_str() => {
                 draft.refresh(&entry, revision, window, cx);
             }
-            _ => self.entry = Some(EntryDraft::new(&entry, revision, window, cx)),
+            _ => {
+                // Another cluster opens at the top, not where the last one
+                // was scrolled to.
+                self.detail_scroll.set_offset(point(px(0.), px(0.)));
+                self.entry = Some(EntryDraft::new(&entry, revision, window, cx));
+            }
         }
         cx.notify();
     }
@@ -365,6 +371,10 @@ impl SettingsPage {
     }
 
     pub(super) fn set_entry_role(&mut self, role: workspace::Role, cx: &mut Context<Self>) {
+        // Locked fields take no choices either.
+        if !self.editable() {
+            return;
+        }
         if let Some(draft) = self.entry.as_mut() {
             draft.identity.role = role;
             draft.error = None;
@@ -374,6 +384,9 @@ impl SettingsPage {
     }
 
     pub(super) fn set_entry_store(&mut self, kind: metrics::Kind, cx: &mut Context<Self>) {
+        if !self.editable() {
+            return;
+        }
         if let Some(draft) = self.entry.as_mut() {
             draft.metrics.kind = kind;
             draft.metrics.errors = metrics::Errors::default();
@@ -632,6 +645,7 @@ impl SettingsPage {
             .id("settings-detail-groups")
             .test_support()
             .gap(dp(20.))
+            .pb(dp(page::PANE_PADDING))
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && page.leave_inspector(window, cx) {
                     cx.stop_propagation();
@@ -663,10 +677,29 @@ impl SettingsPage {
                     .metrics
                     .render(editable, draft.dirty(Group::Metrics), cx),
             );
+        // The body scrolls inside a padded frame, not padded itself, so a
+        // scrolled line is cut at the gap under the heading instead of
+        // showing in it (the shared body pads inside its scroll).
+        let body = div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .px(dp(page::PANE_PADDING))
+            .pt(dp(page::PANE_PADDING))
+            .child(
+                div()
+                    .id("settings-detail-body")
+                    .test_support()
+                    .size_full()
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .track_scroll(&self.detail_scroll)
+                    .child(groups),
+            );
         Some(
             Inspector::new("settings-detail")
                 .heading(title)
-                .child(groups)
+                .content(body)
                 .render(cx)
                 .into_any_element(),
         )

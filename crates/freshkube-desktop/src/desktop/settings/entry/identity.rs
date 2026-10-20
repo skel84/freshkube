@@ -206,7 +206,10 @@ impl Identity {
                 }
             };
         let roles = Role::ALL.iter().enumerate().fold(
-            ButtonGroup::new("settings-identity-role").outline().small(),
+            ButtonGroup::new("settings-identity-role")
+                .outline()
+                .small()
+                .disabled(!editable),
             |group, (ix, role)| {
                 group.child(ui::choice(
                     Button::new(("settings-identity-role", ix))
@@ -232,7 +235,8 @@ impl Identity {
                 self.errors.talosconfig.is_some(),
             ),
             browse,
-        );
+        )
+        .disabled(!editable);
         form::group("settings-identity", "Identity")
             .narrow(true)
             .dirty(dirty)
@@ -299,7 +303,9 @@ impl Identity {
                     "settings-identity-revert",
                     "Revert",
                     cx.listener(|page, _, window, cx| {
-                        page.revert_group(Group::Identity, window, cx)
+                        page.revert_group(Group::Identity, window, cx);
+                        // The button is spent: the ring leaves with it.
+                        window.focus(&page.focus, cx);
                     }),
                 )
                 .disabled(!dirty),
