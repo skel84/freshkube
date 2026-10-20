@@ -22,10 +22,15 @@ rustls.workspace = true
 serde.workspace = true
 base64.workspace = true
 chrono.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [features]
 testing = []
 
 [dev-dependencies]
+freshkube-core = { workspace = true, features = ["testing"] }
+freshkube-ui = { workspace = true, features = ["testing"] }
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }

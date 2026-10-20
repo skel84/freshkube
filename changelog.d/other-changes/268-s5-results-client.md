@@ -1,0 +1,1 @@
+- **Tekton Results client:** add the bounded, read-only address client for archived build records, with TLS, an optional CA file, an address-specific key-store token, and distinct unavailable and capped states. Fake-server tests cover its reads and failures; connecting it to build history follows separately.

@@ -31,6 +31,7 @@ pub mod kargo;
 pub(crate) mod observation;
 pub(crate) mod pods;
 pub mod read;
+pub(crate) mod results;
 pub(crate) mod rollouts;
 pub(crate) mod shared;
 pub mod source;

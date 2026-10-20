@@ -25,6 +25,20 @@ pub(super) fn entry(entry: &Entry) -> Result<(), Fault> {
 }
 
 fn results_of(results: &Results, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
+    token_of(
+        results.token.is_some(),
+        results.address.is_some(),
+        &at("results"),
+    )?;
+    if let Some(path) = &results.ca_file {
+        if results.address.is_none() {
+            return Err(Fault::OneOf {
+                at: at("results.ca_file"),
+                of: "an address with a CA file, or a forward",
+            });
+        }
+        absolute(path, at("results.ca_file"))?;
+    }
     match (&results.address, &results.forward) {
         (Some(address), None) => url(address, at("results.address")),
         (None, Some(forward)) => {

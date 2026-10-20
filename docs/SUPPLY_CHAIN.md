@@ -126,7 +126,26 @@ Everything is a `GET` or a list under the existing 5 s per-request and the read'
 3. **Logs.** A step's log is a log record of the same result, read on demand when the person opens Logs for a pruned run, in pages, to at most 1 MiB, with a `Showing the first 1 MiB` note beyond. A step whose log Results didn't keep says so and disables Logs with why.
 4. **Attestations come with the record.** A record's `data` carries the run's annotations as they were when it was stored, Chains' among them, so a pruned run is verified the same way a live one is. A record stored before Chains signed has no attestation: that is `no attestation in the record (it may predate signing)`, which is not `unsigned`.
 
-The spike settled the REST shape and the filter (see [What the spike found](#what-the-spike-found)); what it could not confirm is listed there, and slice 5 settles it against a real Results install.
+The spike settled the REST shape and the filter (see [What the spike found](#what-the-spike-found)); what it could not confirm is listed there. Slice 5 tests the address client against loopback fake servers only; a real Results install remains unchecked.
+
+Slice 5's crate-private client lives in `freshkube-delivery/src/results/` and
+is not connected to the build read yet. It keeps up to 10 PipelineRuns or
+1,000 TaskRuns, reads at most five pages of up to 200 records, and bounds
+each response to 32 MiB and each decoded manifest to 4 MiB. Its listing keeps
+the stopping reason (run, task, page or byte cap) and an exact total only if
+the final page was read. A response-byte cap retains records from earlier
+pages and leaves the total unknown. Malformed or out-of-scope records are
+unreadable, never empty history. Record manifests use the existing run
+parsers, including their annotations. The owner's `Snapshot` retains a
+same-identity refresh failure as stale, with its last successful timestamp;
+the identity includes the client's revision and the full query.
+
+The address token account is `Tekton Results <normalized base URL>` in the
+key store. With no `token: keys.json`, the store is not read. A missing key
+allows an anonymous request; an unreadable store or malformed key is named
+and never silently ignored. Redirects are not followed. Plain HTTP requires
+a literal loopback IP, so DNS cannot steer plaintext credentials elsewhere.
+No cluster credential or forward is read or started by this client.
 
 ### Joining a Results record
 
@@ -148,7 +167,7 @@ Each is its own state with why, on the Changes list's footer, the change page's 
 | Not installed | The forward's Service isn't found | `The Service tekton-results-api-service isn't in tekton-pipelines on cluster-b`. |
 | Unreachable | Connect, TLS or timeout | `Tekton Results at results.example.com didn't answer: …` with the cause (certificate not trusted, timed out, refused). |
 | Refused | 401 or 403 | `Tekton Results refused the request (403)` and, for the address route with no token, `no token is set for this address`. |
-| Capped | More runs than `MOST_RESULT_RUNS` | `Showing 10 of 14 runs in Tekton Results`. |
+| Capped | The run, task, page or response-byte cap stopped the read | `Showing 10 runs; more weren't read`, with the stopping cap. An exact total is shown only when paging finished; it is never estimated. |
 | Stale | A refresh failed | The last answer stays, marked stale with its time, as every read does. |
 | Empty | Read, no record | `Tekton Results has no run for this commit`. Only this one reads as none. |
 
