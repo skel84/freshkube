@@ -151,6 +151,12 @@ impl Memory {
         }
     }
 
+    /// The connection's `coroot.project`, which an entry's link uses when it
+    /// names none.
+    pub(super) fn connection_project(&self) -> Option<&str> {
+        self.setup.as_ref()?.as_ref()?.project.as_deref()
+    }
+
     pub(super) fn can_remember(&self) -> bool {
         self.secrets.is_some()
     }

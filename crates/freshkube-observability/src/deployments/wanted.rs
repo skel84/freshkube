@@ -254,7 +254,10 @@ impl ObservabilityPage {
                 Tone::Warn,
                 format!("No Coroot cluster is linked to {}.", link.cluster),
                 format!(
-                    "Link one in Coroot's settings to find revision {} of {app}.",
+                    "{} Without it revision {} of {app} can't be found.",
+                    self.link_note().unwrap_or_else(|| {
+                        "Set clusters[].coroot.cluster in the setup file (freshkube.yaml).".into()
+                    }),
                     link.hash
                 ),
             ),

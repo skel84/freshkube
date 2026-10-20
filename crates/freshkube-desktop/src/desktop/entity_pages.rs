@@ -241,7 +241,7 @@ impl ScreenPanel for ObservabilityPage {
     /// The connection, whose id it keys Coroot's access by; example access
     /// answers from its examples.
     fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
-        ObservabilityPage::set_source(self, source.kube.as_ref(), cx)
+        ObservabilityPage::set_source(self, source.kube.as_ref(), source.entry.as_deref(), cx)
     }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {

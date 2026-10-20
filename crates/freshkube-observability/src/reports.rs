@@ -93,11 +93,23 @@ impl ObservabilityPage {
         content = content
             .child(line().flex_wrap().justify_end().child(actions))
             .child(self.render_app_view(window, cx));
-        if snapshot.subject.is_none() && !self.fixture {
-            content = content.child(muted(
-                "No Kubernetes link: the application is external, of an unsupported kind, or its cluster isn't associated.",
-                cx,
-            ));
+        if snapshot.subject.is_none() {
+            // The setup file's key is the first thing to look at; the
+            // application's own kind and cluster come after it.
+            let note = self.link_note().or_else(|| {
+                (!self.fixture).then(|| {
+                    "No Kubernetes link: the application is external, of an unsupported kind, or not in the linked Coroot cluster."
+                        .into()
+                })
+            });
+            if let Some(note) = note {
+                content = content.child(
+                    div()
+                        .id("obs-no-kubernetes-link")
+                        .test_support()
+                        .child(muted(note, cx)),
+                );
+            }
         }
         content.into_any_element()
     }

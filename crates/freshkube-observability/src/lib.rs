@@ -31,6 +31,7 @@ mod applications;
 use applications::{columns as application_columns, header as applications_header};
 mod connection;
 mod deployments;
+mod entry;
 mod example;
 #[cfg(test)]
 mod fake_tests;
@@ -58,6 +59,8 @@ struct ThresholdDialog {
     value: String,
 }
 
+#[cfg(test)]
+mod entry_tests;
 #[cfg(any(test, feature = "testing"))]
 mod testing;
 #[cfg(test)]
@@ -134,7 +137,11 @@ pub struct ObservabilityPage {
     memory: Option<remember::Memory>,
     categories: std::rc::Rc<Vec<CategoryChoice>>,
     namespaces: std::rc::Rc<Vec<String>>,
-    cluster_ids: Vec<String>,
+    /// The workspace entries and the open one, whose `coroot` key says which
+    /// Coroot cluster the Kubernetes links read ([`entry`]).
+    entries: Vec<freshkube_core::workspace::Entry>,
+    open_entry: Option<String>,
+    entry_link: entry::EntryLink,
     destination: Destination,
     applications: Vec<Application>,
     matrix: Vec<MatrixRow>,
@@ -359,7 +366,9 @@ impl ObservabilityPage {
             memory: preferences.map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),
-            cluster_ids: vec![],
+            entries: vec![],
+            open_entry: None,
+            entry_link: entry::EntryLink::Closed,
             destination: Destination::Applications,
             applications: vec![],
             matrix: vec![],
