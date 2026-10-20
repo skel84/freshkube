@@ -193,7 +193,6 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
                     "monitoring-context-token",
                     "Token",
                     form::secret("monitoring-source-token", secret, cx)
-                        .store_name(STORE_NAME)
                         .on_replace(move |_, _, cx| {
                             _ = replace.update(cx, |page, cx| {
                                 if let Some(form) = &mut page.form {
