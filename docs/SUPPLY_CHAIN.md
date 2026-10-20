@@ -37,7 +37,7 @@ Everything else is Claimed at most: Chains' annotation, a Conforma pass, a match
 
 Which key types: **ECDSA over P-256 with SHA-256**, in PKIX (`SubjectPublicKeyInfo`) PEM, which is what `cosign generate-key-pair` writes and what Chains signs with by default. Ed25519 and RSA keys are read, named, and refused with `key type not supported yet`, never accepted without checking. See [the crates](#the-crates).
 
-> The exact bytes Chains stores, and which of them the signature covers, differ between its payload formats. The slice 1 spike settles them from upstream's documentation and source, against fixtures generated inside the tests (study only; nothing is copied), and changes this section if it finds the above wrong. Until then the design commits only to the order: **find the bytes the signature covers, verify them, and only then parse what they say**.
+> **Settled by the slice 1 spike** (read from upstream's documentation and source on 20 October 2026; study only, nothing copied). See [What the spike found](#what-the-spike-found). The order the design commits to stands: **find the bytes the signature covers, verify them, and only then parse what they say**. Slice 1 parses the statement early only to show what it claims, as a declared fact that can never confirm a link.
 
 ### The checks, in order
 
@@ -126,7 +126,7 @@ Everything is a `GET` or a list under the existing 5 s per-request and the read'
 3. **Logs.** A step's log is a log record of the same result, read on demand when the person opens Logs for a pruned run, in pages, to at most 1 MiB, with a `Showing the first 1 MiB` note beyond. A step whose log Results didn't keep says so and disables Logs with why.
 4. **Attestations come with the record.** A record's `data` carries the run's annotations as they were when it was stored, Chains' among them, so a pruned run is verified the same way a live one is. A record stored before Chains signed has no attestation: that is `no attestation in the record (it may predate signing)`, which is not `unsigned`.
 
-Open for the spike (slice 5), because upstream's filter syntax and result layout vary by version: the exact filter expression for a label, whether the gateway is on by default, and the field that links a TaskRun record to its result. The design needs only that a list can be filtered by the data's SHA label and that one result lists its records.
+The spike settled the REST shape and the filter (see [What the spike found](#what-the-spike-found)); what it could not confirm is listed there, and slice 5 settles it against a real Results install.
 
 ### Joining a Results record
 
@@ -263,6 +263,31 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | 11 | **Docs and close.** ROADMAP step 5 to Done, `features/applications.md`, the change page rules in DESIGN.md (the replaced sentence), README's "Following a change", PLATFORM.md's pruned-runs line (it says Results is read through the Kubernetes API; this design reads it by address or forward). A read-only live check on a test cluster that runs Chains or Results, if one is available; otherwise it says it wasn't checked. | Claude | docs | 9, 10 |
 
 Slices 1 to 3 are the Confirmed path and can ship without Results; 5 and 6 are independent of them and can run beside. Only slice 10 needs #697's slice 12; slice 7's button and slice 10 land together.
+
+## What the spike found
+
+Read from `tektoncd/chains` and `tektoncd/results` on 20 October 2026. **Confirmed** is read in the source or the docs; **not confirmed** is what a real install must still show.
+
+### Chains' stored formats (confirmed)
+
+- **Annotations.** The `tekton` storage backend adds four annotations per stored artifact: `chains.tekton.dev/payload-<key>`, `signature-<key>`, `cert-<key>` and `chain-<key>`, each the standard base64 of its bytes. Beside them, `chains.tekton.dev/signed` is `true` or `failed`, and when a transparency upload happened `chains.tekton.dev/transparency` holds `<log url>/api/v1/log/entries?logIndex=<n>`.
+- **Keys.** For a run the key is `taskrun-<uid>` or `pipelinerun-<uid>`. For an image Chains signed it is the first 12 digits of the image digest, and that payload is cosign's simple signing, not an attestation of the run. A TaskRun can carry both, so the key decides what is read.
+- **What is wrapped.** The in-toto formats (`in-toto`, `slsa/v1`, `slsa/v2alpha3`, `slsa/v2alpha4`) are wrapped in a DSSE envelope; simple signing is not. For a wrapped format the **`signature-<key>` annotation holds the whole envelope** as JSON (`payloadType`, `payload`, `signatures[{keyid, sig}]`; `keyid` is the signer's SSH-style SHA-256 fingerprint) and the **`payload-<key>` annotation holds the statement** the envelope carries. The signature covers the DSSE pre-authentication encoding of the envelope's own `payload`, so verification reads the envelope and treats the `payload` annotation as a cross-check: a difference is marked, not trusted.
+- **Predicate types.** `slsa/v1` writes `https://slsa.dev/provenance/v0.2` (as `InTotoIte6`); the `v2alpha` formats write `https://slsa.dev/provenance/v1`.
+- **Signers.** `x509` (an ed25519 or ECDSA PKCS8 key), `kms`, or `none`; cosign-format keys in the `signing-secrets` Secret. The Secret is never read here.
+- **Configuration.** One ConfigMap, `chains-config`, with `artifacts.{taskrun,pipelinerun,oci}.{format,storage,signer}` (`storage` is a comma-separated list of `tekton`, `oci`, `gcs`, `docdb`, `grafeas`, `archivista`; the empty string turns it off; the default is `tekton` for runs and `oci` for images), `transparency.enabled` (`true`, `false`, `manual`), `transparency.url` (default `https://rekor.sigstore.dev`) and `storage.oci.*`. A key the ConfigMap leaves out has the default, and the reader says so.
+
+### Tekton Results (confirmed in the docs)
+
+- **REST.** `GET /apis/results.tekton.dev/v1alpha2/parents/{namespace}/results/{result}/records`, with `-` for any namespace or result. A record's `data` is `{type, value}`, `value` the base64 of the object's manifest as the cluster served it. Pagination is `page_size` (default 50, at most 10000) and `page_token`; the response carries a next-page token. Health is `/healthz`.
+- **Filter.** CEL, as `filter=`. The PaC label is reachable as `data.metadata.labels['pipelinesascode.tekton.dev/sha'] == '<sha>'`, and a record kind as `data_type == 'tekton.dev/v1.PipelineRun'` (or `PIPELINE_RUN`). Older records may be `tekton.dev/v1beta1`.
+- **Records.** A run's manifest carries `results.tekton.dev/record` and `results.tekton.dev/result` annotations naming its record and result, so a pruned run's tasks are found by listing that result. RBAC is `get` and `list` on `results` and `records`, per namespace.
+
+### Not confirmed
+
+- **The exact bytes of a live install.** The layout above is the code's; no real Chains output was read, so slice 2's `cosign` fixtures are the first check of the envelope against a real signer.
+- **The commit a provenance names.** Slice 1 reads `predicate.materials[*]` (`digest.sha1`, v0.2) and `predicate.buildDefinition.resolvedDependencies[*]` (`digest.gitCommit`, v1), where the `uri` starts with `git+`, and only when exactly one commit results. The field names are from memory of the SLSA specs, not read from a Chains payload. The run the provenance names is not read at all yet.
+- **Results' gateway.** Whether the REST gateway is on by default in the version a person runs, and whether a TaskRun's record always sits in its PipelineRun's result, need a real install. Slice 5 handles both as states (`not installed`, `empty`), not as errors.
 
 ## Decisions
 

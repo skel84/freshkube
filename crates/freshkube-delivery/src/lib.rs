@@ -18,6 +18,7 @@
 pub(crate) mod address;
 pub mod applications;
 pub mod argocd;
+pub(crate) mod chains;
 pub mod change;
 pub mod changes;
 pub(crate) mod collect;
