@@ -1,1 +1,1 @@
-- **Delivery chain:** a signature check for Tekton Chains' attestations: ECDSA over P-256 against a public key the person names, with a DSSE envelope and an in-toto subject digest. It has no way to confirm by default. Nothing uses it yet and nothing in the app changes.
+- **Delivery chain:** a signature check for Tekton Chains' attestations: ECDSA over P-256 (through `ring`, already in the build) against a public key the person names, with a DSSE envelope and an in-toto subject digest. It has no way to confirm by default. Nothing uses it yet and nothing in the app changes.

@@ -5,10 +5,10 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use p256::ecdsa::signature::Signer;
-use p256::ecdsa::{Signature, SigningKey};
+use ring::digest::{SHA256, digest};
+use ring::rand::SystemRandom;
+use ring::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair};
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 
 use super::dsse::pre_authentication_encoding;
 use super::*;
@@ -66,27 +66,34 @@ fn outcome(trust: &Trust, attestation: &Attestation) -> Verification {
     verify(trust, attestation, &built())
 }
 
-/// A statement for `checkout` signed with the throwaway key, over the DSSE
-/// encoding of `payload_type` and the statement. The fingerprint of the key
-/// is `signing_key().1`.
-fn signing_key() -> (SigningKey, TrustedKey) {
-    use p256::pkcs8::EncodePublicKey;
-    let secret = SigningKey::from_bytes(&[7u8; 32].into()).unwrap();
-    let pem = p256::PublicKey::from(secret.verifying_key())
-        .to_public_key_pem(Default::default())
-        .unwrap();
-    (secret, TrustedKey::from_pem(&pem).unwrap())
+/// A throwaway key pair for the envelopes the tests sign themselves,
+/// generated fresh on each run.
+fn signing_key() -> &'static (EcdsaKeyPair, TrustedKey) {
+    static KEY: std::sync::OnceLock<(EcdsaKeyPair, TrustedKey)> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| {
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, &rng).unwrap();
+        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_ASN1_SIGNING, pkcs8.as_ref(), &rng)
+            .unwrap();
+        let trusted =
+            TrustedKey::from_pem(&TrustedKey::pem_of_point(pair.public_key().as_ref())).unwrap();
+        (pair, trusted)
+    })
 }
 
 fn signed_envelope(payload_type: &str, statement: &Value) -> String {
-    let (secret, _) = signing_key();
+    let (pair, _) = signing_key();
     let body = statement.to_string();
-    let signature: Signature =
-        secret.sign(&pre_authentication_encoding(payload_type, body.as_bytes()));
+    let signature = pair
+        .sign(
+            &SystemRandom::new(),
+            &pre_authentication_encoding(payload_type, body.as_bytes()),
+        )
+        .unwrap();
     json!({
         "payloadType": payload_type,
         "payload": b64(body),
-        "signatures": [{"keyid": "", "sig": b64(signature.to_der())}]
+        "signatures": [{"keyid": "", "sig": b64(signature.as_ref())}]
     })
     .to_string()
 }
@@ -111,7 +118,7 @@ fn short_hex() -> &'static str {
 #[test]
 fn the_fixture_is_what_its_readme_says() {
     assert_eq!(
-        format!("sha256:{}", hex(&Sha256::digest(BLOB))),
+        format!("sha256:{}", hex(digest(&SHA256, BLOB).as_ref())),
         BUILT,
         "the digest of checkout.blob"
     );
@@ -162,7 +169,7 @@ fn the_fingerprint_is_the_sha256_of_the_der_key_and_differs_per_key() {
         one.fingerprint(),
         format!(
             "SHA256:{}",
-            base64::engine::general_purpose::STANDARD_NO_PAD.encode(Sha256::digest(&der))
+            base64::engine::general_purpose::STANDARD_NO_PAD.encode(digest(&SHA256, &der))
         )
     );
 }
@@ -295,7 +302,7 @@ fn a_signature_over_another_payload_type_does_not_verify() {
     let mut envelope: Value =
         serde_json::from_str(&signed_envelope("text/plain", &statement)).unwrap();
     envelope["payloadType"] = json!(IN_TOTO_PAYLOAD_TYPE);
-    let (_, key) = signing_key();
+    let key = signing_key().1.clone();
     let outcome = outcome(
         &Trust::Key(key),
         &attestation_of(&task_run_with(&envelope.to_string())),
@@ -345,13 +352,22 @@ fn an_image_signature_is_not_read_and_never_confirms() {
 }
 
 #[test]
+fn a_run_attestation_left_unread_is_not_a_verification() {
+    let mut attestation = cosign_made();
+    attestation.stored = Stored::Unread;
+    let outcome = outcome(&trusted(), &attestation);
+    assert_eq!(outcome, Verification::NotRead(NotRead::Unread));
+    assert!(!outcome.confirms());
+}
+
+#[test]
 fn subjects_past_the_cap_are_not_read_so_no_difference_is_claimed() {
     // 70 subjects, none the build's, correctly signed: only 64 are kept.
     let subjects = (0..70)
         .map(|index| subject(&format!("{index:064x}")))
         .collect();
     let envelope = signed_envelope(IN_TOTO_PAYLOAD_TYPE, &statement_with(subjects));
-    let (_, key) = signing_key();
+    let key = signing_key().1.clone();
     let outcome = outcome(&Trust::Key(key), &attestation_of(&task_run_with(&envelope)));
     assert_eq!(outcome, Verification::NotRead(NotRead::SubjectsCutAtCap));
     assert!(!outcome.confirms());
@@ -364,7 +380,7 @@ fn the_build_digest_among_the_kept_subjects_confirms_even_with_more_past_the_cap
         .collect();
     subjects[3] = subject(short_hex());
     let envelope = signed_envelope(IN_TOTO_PAYLOAD_TYPE, &statement_with(subjects));
-    let (_, key) = signing_key();
+    let key = signing_key().1.clone();
     assert!(outcome(&Trust::Key(key), &attestation_of(&task_run_with(&envelope))).confirms());
 }
 
@@ -373,7 +389,7 @@ fn a_payload_that_is_not_an_in_toto_statement_does_not_confirm_even_when_signed(
     let mut statement = statement_with(vec![subject(short_hex())]);
     statement["_type"] = json!("https://example.com/not-in-toto");
     let envelope = signed_envelope(IN_TOTO_PAYLOAD_TYPE, &statement);
-    let (_, key) = signing_key();
+    let key = signing_key().1.clone();
     let outcome = outcome(&Trust::Key(key), &attestation_of(&task_run_with(&envelope)));
     assert!(
         matches!(
@@ -390,7 +406,7 @@ fn a_signed_statement_the_tests_make_confirms_so_the_negatives_are_not_vacuous()
         IN_TOTO_PAYLOAD_TYPE,
         &statement_with(vec![subject(short_hex())]),
     );
-    let (_, key) = signing_key();
+    let key = signing_key().1.clone();
     assert!(outcome(&Trust::Key(key), &attestation_of(&task_run_with(&envelope))).confirms());
 }
 
@@ -492,6 +508,42 @@ fn a_public_key_block_that_does_not_decode_is_malformed() {
 }
 
 #[test]
+fn a_p256_key_of_another_shape_is_malformed_and_a_point_off_the_curve_verifies_nothing() {
+    // A compressed point (0x02 prefix) is not the shape that is checked.
+    let mut compressed = vec![
+        0x30, 0x39, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08,
+        0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x22, 0x00, 0x02,
+    ];
+    compressed.extend_from_slice(&[7u8; 32]);
+    let pem = format!(
+        "-----BEGIN PUBLIC KEY-----\n{}\n-----END PUBLIC KEY-----\n",
+        STANDARD.encode(compressed)
+    );
+    assert_eq!(TrustedKey::from_pem(&pem), Err(KeyProblem::Malformed));
+    // 0x04 followed by 64 bytes that are no point on P-256: accepted as a
+    // key (ring checks the point when it verifies) and verifies nothing.
+    let mut off_curve = vec![0x04];
+    off_curve.extend_from_slice(&[1u8; 64]);
+    let key = TrustedKey::from_pem(&TrustedKey::pem_of_point(&off_curve)).unwrap();
+    let statement = statement_with(vec![subject(short_hex())]);
+    let envelope = signed_envelope(IN_TOTO_PAYLOAD_TYPE, &statement);
+    let outcome = outcome(&Trust::Key(key), &attestation_of(&task_run_with(&envelope)));
+    assert!(
+        matches!(outcome, Verification::SignatureFailed { .. }),
+        "{outcome}"
+    );
+}
+
+#[test]
+fn text_after_the_key_block_is_refused() {
+    assert_eq!(
+        TrustedKey::from_pem(&format!("{KEY}trailing")),
+        Err(KeyProblem::NotOnePublicKey)
+    );
+    assert!(TrustedKey::from_pem(&format!("{KEY}\n\n")).is_ok());
+}
+
+#[test]
 fn other_key_types_are_named_and_refused() {
     assert_eq!(
         TrustedKey::from_pem(ED25519),
@@ -572,6 +624,7 @@ fn only_verified_confirms_across_every_variant() {
         },
         Verification::not_stored_here(&[Backend::Oci]),
         Verification::NotRead(NotRead::ImageSignature),
+        Verification::NotRead(NotRead::Unread),
         Verification::NotRead(NotRead::SubjectsCutAtCap),
     ];
     assert!(verified.confirms());

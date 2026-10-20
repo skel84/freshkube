@@ -86,6 +86,8 @@ pub(crate) enum Verification {
 pub(crate) enum NotRead {
     /// An image's signature, not an attestation of the run.
     ImageSignature,
+    /// A run's attestation that was left unread.
+    Unread,
     /// Subjects past the cap were not kept, and none that was kept matches,
     /// so a difference cannot be claimed.
     SubjectsCutAtCap,
@@ -142,6 +144,7 @@ impl fmt::Display for Verification {
             Self::NotRead(NotRead::ImageSignature) => f.write_str(
                 "an image signature, not an attestation of the run; not read in this step",
             ),
+            Self::NotRead(NotRead::Unread) => f.write_str("the attestation was not read"),
             Self::NotRead(NotRead::SubjectsCutAtCap) => {
                 f.write_str("subjects past the cap were not read, so no difference is claimed")
             }
@@ -158,10 +161,11 @@ pub(crate) fn verify(trust: &Trust, attestation: &Attestation, built: &Digest) -
         Trust::Key(key) => key,
     };
     let envelope = match (&attestation.form, &attestation.stored) {
-        (Form::Image, _) | (_, Stored::Unread) => {
-            return Verification::NotRead(NotRead::ImageSignature);
-        }
-        (_, Stored::Malformed(problem)) => return Verification::Malformed(problem.clone()),
+        (Form::Image, _) => return Verification::NotRead(NotRead::ImageSignature),
+        (Form::Run, Stored::Malformed(problem)) => return Verification::Malformed(problem.clone()),
+        // A run's attestation is always read or malformed; `Unread` is only
+        // ever an image's. Were that to change, nothing here would confirm.
+        (Form::Run, Stored::Unread) => return Verification::NotRead(NotRead::Unread),
         (Form::Run, Stored::Envelope(envelope)) => envelope,
     };
     check(key, envelope, built)
