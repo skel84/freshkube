@@ -1,0 +1,1 @@
+- **Kubeconfig retries:** Monitoring's Try again and Resources' Retry pick up edited kubeconfig files on the first press; Refresh waits for configuration inspection before retrying page reads.

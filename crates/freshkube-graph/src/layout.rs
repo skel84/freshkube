@@ -15,8 +15,46 @@ pub const MAX_ROWS: usize = 8;
 
 /// Space between two lines that share a gutter.
 pub const LANE: f32 = 6.;
-/// The gap between two boxes in a column.
-const GUTTER: f32 = ROW - NODE_H;
+
+/// The sizes [`route_with`] lays a graph out by, in dp at the default text
+/// size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Metrics {
+    pub node_w: f32,
+    pub node_h: f32,
+    /// From a box's left edge to the next column's.
+    pub column: f32,
+    /// From a box's top to the next box's in a column.
+    pub row: f32,
+    /// A column taller than this wraps into another beside it.
+    pub max_rows: usize,
+}
+
+impl Metrics {
+    /// The service map's: what [`route`] uses.
+    pub const MAP: Self = Self {
+        node_w: NODE_W,
+        node_h: NODE_H,
+        column: COLUMN,
+        row: ROW,
+        max_rows: MAX_ROWS,
+    };
+
+    /// The map's boxes with a wider gutter between columns, for lines that
+    /// carry a label, and columns that never wrap.
+    pub const fn labelled(gutter: f32) -> Self {
+        Self {
+            column: NODE_W + gutter,
+            max_rows: usize::MAX,
+            ..Self::MAP
+        }
+    }
+
+    /// The gap between two boxes in a column.
+    fn gutter(&self) -> f32 {
+        self.row - self.node_h
+    }
+}
 
 /// Where [`route`] put the boxes, and the line each call follows.
 #[derive(Clone, Debug, PartialEq)]
@@ -69,6 +107,11 @@ impl Route {
 /// The same input always gives the same layout. It is not free: run it
 /// when the graph changes, never while drawing.
 pub fn route(nodes: &mut [(f32, f32)], links: &[(usize, usize)]) -> Layout {
+    route_with(&Metrics::MAP, nodes, links)
+}
+
+/// [`route`] with other sizes: `route(..)` is `route_with(&Metrics::MAP, ..)`.
+pub fn route_with(m: &Metrics, nodes: &mut [(f32, f32)], links: &[(usize, usize)]) -> Layout {
     let n = nodes.len();
     if n == 0 {
         return Layout {
@@ -89,7 +132,7 @@ pub fn route(nodes: &mut [(f32, f32)], links: &[(usize, usize)]) -> Layout {
         })
         .collect();
     let layer = longest_path(n, &forward);
-    let mut grid = Grid::columns(n, links, &forward, &layer);
+    let mut grid = Grid::columns(*m, n, links, &forward, &layer);
     grid.order();
     grid.add_ports(n, links, &back);
     let height = grid.place(nodes);
@@ -107,20 +150,23 @@ pub fn route(nodes: &mut [(f32, f32)], links: &[(usize, usize)]) -> Layout {
         .collect();
     // Boxes with no calls share the last columns.
     let mut rows = 0;
-    for (c, chunk) in grid.loose.chunks(MAX_ROWS).enumerate() {
+    for (c, chunk) in grid.loose.chunks(m.max_rows).enumerate() {
         for (r, &ix) in chunk.iter().enumerate() {
-            nodes[ix] = (PAD + (columns + c) as f32 * COLUMN, PAD + r as f32 * ROW);
+            nodes[ix] = (
+                PAD + (columns + c) as f32 * m.column,
+                PAD + r as f32 * m.row,
+            );
         }
         rows = rows.max(chunk.len());
     }
-    let loose = grid.loose.len().div_ceil(MAX_ROWS);
+    let loose = grid.loose.len().div_ceil(m.max_rows);
     let bottom = if rows > 0 {
-        PAD + rows as f32 * ROW - GUTTER
+        PAD + rows as f32 * m.row - m.gutter()
     } else {
         0.
     };
     Layout {
-        width: 2. * PAD + (columns + loose) as f32 * COLUMN - (COLUMN - NODE_W),
+        width: 2. * PAD + (columns + loose) as f32 * m.column - (m.column - m.node_w),
         height: height.max(bottom) + PAD,
         routes,
     }
@@ -198,6 +244,7 @@ fn longest_path(n: usize, forward: &[Option<(usize, usize)>]) -> Vec<usize> {
 /// node count), a waypoint where a long call crosses a column, or a port
 /// where a call that closes a cycle leaves or enters a box.
 struct Grid {
+    m: Metrics,
     /// Items top to bottom, column by column.
     columns: Vec<Vec<usize>>,
     /// Each item's neighbours in the column to its left and to its right.
@@ -220,6 +267,7 @@ impl Grid {
     /// Boxes in layers, tall layers wrapped into columns, and a waypoint
     /// in every column a call crosses.
     fn columns(
+        m: Metrics,
         n: usize,
         links: &[(usize, usize)],
         forward: &[Option<(usize, usize)>],
@@ -265,7 +313,7 @@ impl Grid {
                 row[ix] = r as f32;
             }
             // A tall layer wraps into ordinary columns.
-            for chunk in keyed.chunks(MAX_ROWS) {
+            for chunk in keyed.chunks(m.max_rows) {
                 for &(_, ix) in chunk {
                     column_of[ix] = columns.len();
                 }
@@ -273,6 +321,7 @@ impl Grid {
             }
         }
         let mut grid = Self {
+            m,
             columns,
             left: vec![vec![]; n],
             right: vec![vec![]; n],
@@ -364,22 +413,22 @@ impl Grid {
         self.y = vec![0.; self.left.len()];
         let mut bottom = 0f32;
         for (c, column) in self.columns.iter().enumerate() {
-            let x = PAD + c as f32 * COLUMN;
+            let x = PAD + c as f32 * self.m.column;
             let (mut y, mut lanes, mut first) = (PAD, vec![], true);
             for &item in column {
                 self.x[item] = x;
                 if item < n {
-                    y += lanes_in(&lanes, y, first, &mut self.y);
+                    y += lanes_in(&lanes, y, first, self.m.gutter(), &mut self.y);
                     lanes.clear();
                     nodes[item] = (x, y);
                     self.y[item] = y;
-                    y += NODE_H;
+                    y += self.m.node_h;
                     first = false;
                 } else {
                     lanes.push(item);
                 }
             }
-            y += lanes_in(&lanes, y, true, &mut self.y);
+            y += lanes_in(&lanes, y, true, self.m.gutter(), &mut self.y);
             bottom = bottom.max(y);
         }
         bottom
@@ -389,18 +438,18 @@ impl Grid {
     /// crosses, to the arrowhead at the callee's left edge.
     fn forward_route(&self, nodes: &[(f32, f32)], ix: usize, from: usize, to: usize) -> Route {
         let (from_x, from_y) = nodes[from];
-        let mut at = (from_x + NODE_W, from_y + NODE_H / 2.);
+        let mut at = (from_x + self.m.node_w, from_y + self.m.node_h / 2.);
         let mut segments = vec![];
         for &waypoint in &self.chains[ix] {
             // A lane starts where an arrowhead would, so the curves into a
             // column all span the same width and keep out of each other's way.
             let (x, y) = (self.x[waypoint], self.y[waypoint]);
             segments.push(bend(at, (x - ARROW, y)));
-            segments.push(straight((x - ARROW, y), (x + NODE_W, y)));
-            at = (x + NODE_W, y);
+            segments.push(straight((x - ARROW, y), (x + self.m.node_w, y)));
+            at = (x + self.m.node_w, y);
         }
         let (to_x, to_y) = nodes[to];
-        let end = (to_x - ARROW, to_y + NODE_H / 2.);
+        let end = (to_x - ARROW, to_y + self.m.node_h / 2.);
         segments.push(bend(at, end));
         Route::new(segments, (to_x, end.1))
     }
@@ -414,27 +463,28 @@ impl Grid {
         let rank = |port: usize, of: usize| {
             self.below[of].iter().position(|&p| p == port).unwrap_or(0) as f32
         };
-        let out_x = from_x + (NODE_W * 0.6 + rank(leave, from) * LANE).min(NODE_W - 8.);
-        let in_x = to_x + (NODE_W * 0.4 - rank(enter, to) * LANE).max(8.);
+        let out_x =
+            from_x + (self.m.node_w * 0.6 + rank(leave, from) * LANE).min(self.m.node_w - 8.);
+        let in_x = to_x + (self.m.node_w * 0.4 - rank(enter, to) * LANE).max(8.);
         let mut at = (out_x, self.y[leave]);
-        let mut segments = vec![straight((out_x, from_y + NODE_H), at)];
+        let mut segments = vec![straight((out_x, from_y + self.m.node_h), at)];
         if from != to {
             segments.push(straight(at, (from_x, at.1)));
             at = (from_x, at.1);
             for &waypoint in self.chains[ix].iter().rev() {
                 let (x, y) = (self.x[waypoint], self.y[waypoint]);
-                segments.push(bend(at, (x + NODE_W, y)));
-                segments.push(straight((x + NODE_W, y), (x, y)));
+                segments.push(bend(at, (x + self.m.node_w, y)));
+                segments.push(straight((x + self.m.node_w, y), (x, y)));
                 at = (x, y);
             }
-            let lane = (to_x + NODE_W, self.y[enter]);
+            let lane = (to_x + self.m.node_w, self.y[enter]);
             segments.push(bend(at, lane));
             at = lane;
         }
         let under = (in_x, self.y[enter]);
         segments.push(straight(at, under));
-        segments.push(straight(under, (in_x, to_y + NODE_H + ARROW)));
-        Route::new(segments, (in_x, to_y + NODE_H))
+        segments.push(straight(under, (in_x, to_y + self.m.node_h + ARROW)));
+        Route::new(segments, (in_x, to_y + self.m.node_h))
     }
 }
 
@@ -463,12 +513,12 @@ fn sort_column(column: &mut Vec<usize>, neighbours: &[Vec<usize>], place: &mut [
 /// Spreads a gutter's lanes evenly from `top` and returns its height: a
 /// box's usual gutter, or more when its lanes need it. Above a column's
 /// first box and below its last, an empty gutter takes no room.
-fn lanes_in(lanes: &[usize], top: f32, edge: bool, y: &mut [f32]) -> f32 {
+fn lanes_in(lanes: &[usize], top: f32, edge: bool, gutter: f32, y: &mut [f32]) -> f32 {
     if lanes.is_empty() {
-        return if edge { 0. } else { GUTTER };
+        return if edge { 0. } else { gutter };
     }
     let slots = (lanes.len() + 1) as f32;
-    let height = GUTTER.max(slots * LANE);
+    let height = gutter.max(slots * LANE);
     for (i, &lane) in lanes.iter().enumerate() {
         y[lane] = top + (i + 1) as f32 * height / slots;
     }
@@ -846,4 +896,98 @@ mod tests {
                 .all(|route| through_a_box(&nodes, route).is_none())
         );
     }
+
+    /// A fingerprint of a layout: its boxes, size and every route's numbers.
+    fn fingerprint(count: usize, links: &[(usize, usize)]) -> u64 {
+        let (nodes, layout) = routed(count, links);
+        format!("{nodes:?}{layout:?}")
+            .bytes()
+            .fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            })
+    }
+
+    /// Pins the service map's layout: these were taken from `route` before
+    /// `Metrics` existed, so a change that moves a box or a line fails here.
+    #[test]
+    fn the_maps_layout_is_pinned() {
+        let mut graphs = shapes();
+        graphs.push(("generated", 120, generated(120, 300)));
+        graphs.push(("wrapped", 11, (1..=10).map(|to| (0, to)).collect()));
+        let got: Vec<_> = graphs
+            .iter()
+            .map(|(name, count, links)| (*name, fingerprint(*count, links)))
+            .collect();
+        assert_eq!(got, PINNED, "{got:#x?}");
+    }
+
+    #[test]
+    fn route_is_route_with_the_map_metrics() {
+        let mut graphs = shapes();
+        graphs.push(("generated", 120, generated(120, 300)));
+        for (name, count, links) in graphs {
+            let mut a = vec![Box::default(); count];
+            let mut b = a.clone();
+            let one = route(&mut a, &links);
+            let two = route_with(&Metrics::MAP, &mut b, &links);
+            assert_eq!((a, one), (b, two), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_wider_gutter_moves_columns_apart_and_routes_still_avoid_boxes() {
+        let wide = Metrics::labelled(84.);
+        for (name, count, links) in shapes() {
+            let mut nodes = vec![Box::default(); count];
+            let layout = route_with(&wide, &mut nodes, &links);
+            for node in &nodes {
+                let columns = (node.0 - PAD) / wide.column;
+                assert!((columns - columns.round()).abs() < 1e-3, "{name}");
+            }
+            let widest = nodes.iter().map(|n| n.0).fold(0., f32::max);
+            assert_eq!(layout.width, widest + wide.node_w + PAD, "{name}");
+            for (route, link) in layout.routes.iter().zip(&links) {
+                let inside = route.segments.iter().find_map(|segment| {
+                    (0..=16)
+                        .map(|s| point_at(segment, s as f32 / 16.))
+                        .find(|&(x, y)| {
+                            nodes.iter().any(|b| {
+                                x > b.0 + 0.5
+                                    && x < b.0 + wide.node_w - 0.5
+                                    && y > b.1 + 0.5
+                                    && y < b.1 + wide.node_h - 0.5
+                            })
+                        })
+                });
+                assert_eq!(inside, None, "{name}: {link:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_labelled_chain_never_wraps() {
+        // One caller of forty: the map wraps them at eight; a chain doesn't.
+        let links: Vec<_> = (1..=40).map(|to| (0, to)).collect();
+        let mut nodes = vec![Box::default(); 41];
+        let layout = route_with(&Metrics::labelled(84.), &mut nodes, &links);
+        assert!(nodes[1..].iter().all(|n| n.0 == nodes[1].0));
+        let mut rows: Vec<_> = nodes[1..].iter().map(|n| n.1).collect();
+        rows.dedup();
+        assert_eq!(rows.len(), 40);
+        assert!(layout.height > 40. * NODE_H);
+        // Loose boxes stay in one column too.
+        let mut loose = vec![Box::default(); 20];
+        route_with(&Metrics::labelled(84.), &mut loose, &[]);
+        assert!(loose.iter().all(|n| n.0 == PAD));
+    }
+
+    const PINNED: &[(&str, u64)] = &[
+        ("shop", 3937795867122466415),
+        ("fan-out", 17303332123121938718),
+        ("cycle", 18168086660578549213),
+        ("loose", 14455150901419364279),
+        ("self-call", 2664253225597394985),
+        ("generated", 10038829460731074263),
+        ("wrapped", 18324783326817147324),
+    ];
 }

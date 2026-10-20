@@ -87,6 +87,81 @@ fn boxes(state: &GraphState<usize>) -> Vec<(usize, f32, f32)> {
         .collect()
 }
 
+/// A fingerprint of every page of a graph: its boxes, size and the routes
+/// of the calls it draws.
+fn fingerprint(state: &mut GraphState<usize>) -> u64 {
+    let mut text = String::new();
+    for page in 0..state.pages() {
+        state.set_page(page);
+        text += &format!("{:?}{:?}", boxes(state), state.size());
+        for (edge, route) in state.shown() {
+            text += &format!("{}{:?}", edge.marker_id, route);
+        }
+    }
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// Pins the service map's pages: these were taken before `unpaged` and
+/// `Metrics` existed, so a change to its paging, wrap or spacing fails here.
+#[test]
+fn the_service_map_s_pages_are_pinned() {
+    let got = [
+        fingerprint(&mut state(8, 12)),
+        fingerprint(&mut state(30, 60)),
+        fingerprint(&mut state(120, 300)),
+    ];
+    assert_eq!(got, PINNED, "{got:#x?}");
+}
+
+#[test]
+fn an_unpaged_graph_draws_every_box_in_columns_that_never_wrap() {
+    let (nodes, edges) = invented(120, 300);
+    let mut state = GraphState::new("map", text()).unpaged();
+    state.set(nodes, edges);
+    assert_eq!(state.pages(), 1);
+    assert_eq!(state.placed().count(), 120);
+    assert_eq!(state.shown().count(), 300);
+    assert!(state.summary().starts_with("120 of 120 services · "));
+    assert_eq!(state.display.page_label.as_ref(), "Page 1 of 1");
+    // Columns sit a labelled gutter apart.
+    let pitch = NODE_W + LABELLED_GUTTER;
+    for (_, x, _) in state.placed() {
+        let columns = (x - 16.) / pitch;
+        assert!((columns - columns.round()).abs() < 1e-3);
+    }
+    // Selecting a call keeps the page and both ends drawn.
+    let (from, to) = (state.edges()[0].from, state.edges()[0].to);
+    assert!(state.select(&from, &to));
+    assert_eq!(state.page(), 0);
+    assert_eq!(state.placed().count(), 120);
+}
+
+#[test]
+fn an_unpaged_graph_with_one_caller_of_forty_keeps_them_in_one_column() {
+    let (nodes, _) = invented(41, 0);
+    let edges = (1..41)
+        .map(|to| GraphEdge {
+            from: 0,
+            to,
+            marker_id: format!("map-edge-0--{to}").into(),
+            row_id: format!("map-link-0--{to}").into(),
+            tone: Some(Tone::Good),
+            width: 1.1,
+            label: SharedString::default(),
+            tooltip: SharedString::default(),
+        })
+        .collect();
+    let mut state = GraphState::new("map", text()).unpaged();
+    state.set(nodes, edges);
+    let column: Vec<_> = boxes(&state).into_iter().filter(|b| b.0 > 0).collect();
+    assert_eq!(column.len(), 40);
+    assert!(column.iter().all(|b| b.1 == column[0].1));
+}
+
+const PINNED: [u64; 3] = [0x4cb1ffc4ce2485e6, 0x5a36a5ac4317f9a6, 0x0b3bd8c5e6daeac5];
+
 #[test]
 fn pages_hold_twenty_four_boxes_and_count_what_they_draw() {
     let state = state(120, 300);

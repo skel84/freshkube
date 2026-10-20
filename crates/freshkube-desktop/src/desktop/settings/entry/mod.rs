@@ -316,6 +316,8 @@ impl SettingsPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.menu_holds_inspector = false;
+        self.menu_had_focus = false;
         self.settle_edits(Next::Select(target), window, cx);
     }
 
@@ -360,6 +362,8 @@ impl SettingsPage {
 
     /// Edit: the keyboard goes to the Inspector's first field.
     pub(super) fn edit_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_holds_inspector = false;
+        self.menu_had_focus = false;
         self.sync_entry(window, cx);
         if let Some(input) = self
             .entry

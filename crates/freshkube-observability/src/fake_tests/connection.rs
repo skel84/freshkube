@@ -64,7 +64,7 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
             });
             page.secret
                 .update(cx, |input, cx| input.set_value("sanitized-key", window, cx));
-            page.connect(cx);
+            page.connect(ConnectOrigin::Page, cx);
         });
     })
     .unwrap();
@@ -174,10 +174,21 @@ async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAp
     cx.update(|cx| {
         page.update(cx, |page, cx| {
             page.refresh(cx);
-            page.connect(cx);
+            page.connect(ConnectOrigin::Page, cx);
+            // A server count alone can pass before a newly spawned Tokio
+            // request arrives. Neither call may even start work while hidden.
+            assert!(page.live.jobs.is_empty(), "a hidden page started a read");
+            assert!(!page.live.connecting);
+            assert!(page.live.provider.is_some());
+            assert!(page.live.source.is_some());
         })
     });
-    assert_eq!(server.requests.load(Ordering::SeqCst), reads);
+    assert_eq!(
+        server.requests.load(Ordering::SeqCst),
+        reads,
+        "paths after hidden refresh/connect: {:?}",
+        server.paths.lock().unwrap()
+    );
 }
 
 #[gpui_kit::test]
@@ -337,6 +348,71 @@ async fn a_connect_from_settings_reads_while_the_page_is_hidden(cx: &mut TestApp
 }
 
 #[gpui_kit::test]
+async fn a_late_key_waits_for_the_page_unless_settings_requested_the_connection(
+    cx: &mut TestAppContext,
+) {
+    use crate::remember::account;
+    use freshkube_core::setup::{Coroot, KeysJson, SignIn};
+    cx.executor().allow_parking();
+    for origin in [ConnectOrigin::Page, ConnectOrigin::Settings] {
+        let directory = tempfile::tempdir().unwrap();
+        let preferences = directory.path().join("preferences.json");
+        let store = Arc::new(freshkube_core::secrets::MemoryStore::default());
+        let (runtime, handle, page) =
+            crate::tests::mount_remembering(cx, &preferences, store.clone());
+        let server = Server::new(&runtime);
+        {
+            // Hold the worker's key read until the page is hidden.
+            let mut keys = store.keys.lock().unwrap();
+            keys.insert(account(&server.url), "sanitized-key".into());
+            let mut connection = Coroot::new(server.url.clone(), SignIn::ApiKey);
+            connection.key = Some(KeysJson);
+            connection.project = Some("p2".into());
+            cx.update_window(handle, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.set_visible(false, cx);
+                    page.set_setup_connection(&Some(connection), true, window, cx);
+                    if origin == ConnectOrigin::Page {
+                        page.set_visible(true, cx);
+                        page.set_visible(false, cx);
+                    } else {
+                        page.connect_from_settings(&server.url, 0, String::new(), window, cx);
+                    }
+                    assert!(page.memory.as_ref().unwrap().reading);
+                });
+            })
+            .unwrap();
+        }
+        cx.wait_for_io(handle, |_, cx| {
+            !page.read(cx).memory.as_ref().unwrap().reading
+        })
+        .await;
+        if origin == ConnectOrigin::Page {
+            cx.update(|cx| {
+                page.update(cx, |page, cx| {
+                    assert!(page.live.provider.is_none());
+                    assert!(page.live.jobs.is_empty());
+                    assert!(page.memory.as_ref().unwrap().restore);
+                    assert!(server.paths.lock().unwrap().is_empty());
+                    page.set_visible(true, cx);
+                });
+            });
+        }
+        cx.wait_for_io(handle, |_, cx| page.read(cx).live.source.is_some())
+            .await;
+        cx.update(|cx| {
+            let page = page.read(cx);
+            assert_eq!(page.live.visible, origin == ConnectOrigin::Page);
+            assert_eq!(page.live.source.as_ref().unwrap().project(), "p2");
+            if origin == ConnectOrigin::Settings {
+                assert!(page.applications.is_empty());
+                assert_eq!(server.paths.lock().unwrap().as_slice(), ["/api/user"]);
+            }
+        });
+    }
+}
+
+#[gpui_kit::test]
 async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_store(
     cx: &mut TestAppContext,
 ) {
@@ -360,7 +436,7 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
             });
             page.secret
                 .update(cx, |input, cx| input.set_value("sanitized-key", window, cx));
-            page.connect(cx);
+            page.connect(ConnectOrigin::Page, cx);
         });
     })
     .unwrap();
@@ -440,7 +516,7 @@ async fn a_remembered_connection_returns_on_the_next_launch_with_its_key_in_the_
         reopened.update(cx, |page, cx| {
             page.secret
                 .update(cx, |input, cx| input.set_value("sanitized-key", window, cx));
-            page.connect(cx);
+            page.connect(ConnectOrigin::Page, cx);
         })
     })
     .unwrap();
@@ -481,7 +557,7 @@ async fn a_pasted_key_is_trimmed_and_a_refused_one_says_which_key_coroot_wants(
                     .update(cx, |input, cx| input.set_value(url, window, cx));
                 page.secret
                     .update(cx, |input, cx| input.set_value(key, window, cx));
-                page.connect(cx);
+                page.connect(ConnectOrigin::Page, cx);
             })
         })
         .unwrap();
