@@ -44,6 +44,7 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
   group says which file it is saved in, checks a field as you leave it, shows
   errors at the field, puts the keyboard in the first failing field on Save,
   and saves and reverts on its own, with its buttons in the platform's order.
+  With example data, every control and row-menu item that would save is off.
   See [docs/features/settings.md](docs/features/settings.md).
 - **General and Connection:** General holds appearance, text size and Talos
   auto-refresh, remembered between launches. Connection holds the talosconfig
