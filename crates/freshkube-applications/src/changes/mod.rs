@@ -33,7 +33,7 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 
 use super::across::{Across, Alone};
-use super::change::{ChangeEvent, ChangePage, Fetch};
+use super::change::{ChangeEvent, ChangePage, Coroot, Fetch};
 use super::links::Connections;
 use crate::backend;
 use crate::resources::{ClusterAccess, ClusterSource, ResourceLink};
@@ -114,6 +114,8 @@ pub struct ChangesPage {
     /// Where a live read reads each part, and how the workspace maps Argo
     /// CD's destinations.
     across: Across,
+    /// Where an opened change gets what Coroot found after a deploy.
+    coroot: Coroot,
     /// Where Argo CD's Applications are read, as the Applications read
     /// found it.
     #[cfg(any(test, feature = "testing"))]
@@ -181,6 +183,7 @@ impl ChangesPage {
             loader,
             connections: Connections::default(),
             across: Across::default(),
+            coroot: Coroot::None,
             argocd_namespace: "argocd".into(),
             read_namespace: None,
             display,
@@ -269,6 +272,18 @@ impl ChangesPage {
         // else when next shown. The change shown read itself again above.
         if remapped && self.is_live() {
             self.read_again(cx);
+        }
+    }
+
+    /// Where the change opened from the list gets what Coroot found after
+    /// a deploy; the change shown follows.
+    pub fn set_coroot(&mut self, coroot: Coroot, cx: &mut Context<Self>) {
+        if coroot == self.coroot {
+            return;
+        }
+        self.coroot = coroot.clone();
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| page.set_coroot(coroot, cx));
         }
     }
 
@@ -627,9 +642,11 @@ impl ChangesPage {
         };
         let connections = self.connections.clone();
         let visible = self.visible;
+        let coroot = self.coroot.clone();
         let page = cx.new(|cx| {
             let mut page = ChangePage::new(fetch, None, connections, visible, window, cx);
             page.set_parent("Changes");
+            page.set_coroot(coroot, cx);
             page
         });
         let subscription =

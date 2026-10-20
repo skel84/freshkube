@@ -27,6 +27,16 @@ pub(super) fn local_time(value: chrono::DateTime<chrono::Utc>) -> String {
         .format("%d %b %H:%M")
         .to_string()
 }
+/// How long ago something was, to the largest unit that fits: `just now`,
+/// `12 min ago`, `3 h ago`, `2 d ago`. A moment ahead of now reads `just now`.
+pub(super) fn ago(since: chrono::Duration) -> String {
+    match since.num_minutes() {
+        m if m < 1 => "just now".into(),
+        m if m < 60 => format!("{m} min ago"),
+        m if m < 24 * 60 => format!("{} h ago", m / 60),
+        m => format!("{} d ago", m / (24 * 60)),
+    }
+}
 /// Requests a second, as Coroot writes them: `12 rps`, `0.25 rps`.
 pub(super) fn requests(value: Option<f64>) -> String {
     reported(value, |v| format!("{} rps", significant(v)))
@@ -80,7 +90,23 @@ fn significant(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes_per_second, requests, seconds};
+    use super::{ago, bytes_per_second, requests, seconds};
+
+    #[test]
+    fn how_long_ago_takes_the_largest_unit_that_fits() {
+        for (minutes, expected) in [
+            (-5, "just now"),
+            (0, "just now"),
+            (1, "1 min ago"),
+            (59, "59 min ago"),
+            (60, "1 h ago"),
+            (23 * 60 + 59, "23 h ago"),
+            (24 * 60, "1 d ago"),
+            (10 * 24 * 60, "10 d ago"),
+        ] {
+            assert_eq!(ago(chrono::Duration::minutes(minutes)), expected);
+        }
+    }
 
     #[test]
     fn rates_drop_trailing_zeros() {
