@@ -1,1 +1,0 @@
-- **Setup reload:** Freshkube reloads hand-edited `freshkube.yaml` files, keeps the last good setup when a file is broken or deleted, and explains file problems in Settings.

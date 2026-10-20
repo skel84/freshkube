@@ -1,1 +1,0 @@
-- **Internal:** a few helpers the Resources code shares with the rest of the app moved to the crates they belong in (the stream status and labelled field to the UI crate, the screen request deadline to the core crate), and the container labels and drawer width now live with Resources; the app behaves as before.

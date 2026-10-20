@@ -1,1 +1,0 @@
-- Preserve cluster connection failure messages and states while carrying typed failures through shared access.

@@ -1,1 +1,0 @@
-- **Argo CD destinations:** keep selection and keys within their Settings section, offer mapping actions from the table and row menu, and show validation beside the dialog fields.

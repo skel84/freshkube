@@ -1,1 +1,0 @@
-- **Internal:** the Applications pages (the list, an application's page, the Changes list and the change page) moved out of the desktop crate into a new `freshkube-applications` crate, so they build apart from the shell; the app behaves as before.

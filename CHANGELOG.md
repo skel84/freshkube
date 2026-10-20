@@ -4,6 +4,113 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.16.0 (2026-10-20)
+
+### Settings and the setup file
+
+- **One setup file:** `freshkube.yaml`, beside the preferences, holds the
+  workspace, Argo CD destinations, delivery pins, the metrics mode and the
+  Coroot connection ([#706](https://github.com/skel84/freshkube/issues/706)).
+  At the first launch of this version, `workspace.json` and `coroot.json` move
+  into it once and are kept as `workspace.json.bak` and `coroot.json.bak`; an
+  existing backup is never replaced, and nothing moves if `workspace.json`
+  can't be used. Coroot's reconnect flag moves to `preferences.json`, and a
+  metrics source chosen for a workspace cluster is copied into that cluster's
+  entry. The README shows an annotated example, and
+  [docs/SETUP_FILE.md](docs/SETUP_FILE.md) describes the format.
+- **Hand edits and saves:** a hand-edited `freshkube.yaml` is reloaded within
+  seconds, and a broken or deleted one keeps the last good setup while Settings
+  says what is wrong. A save from Settings keeps every part it didn't change,
+  unknown keys included, and the first save over a hand-edited file copies it
+  to `freshkube.yaml.bak`. A file changed on disk since it was read, or one
+  that doesn't parse, is never written over. The status bar shows each save's
+  receipt on every page. Coroot, Monitoring and connection preferences keep
+  unknown keys too ([#699](https://github.com/skel84/freshkube/issues/699)).
+- **Metrics from the setup file:** with `metrics.mode: central`, Monitoring and
+  the pod and node history read one shared store and show only the open
+  cluster's series; an entry's own `source` and the `per-entry` mode are read
+  too, and `automatic` is unchanged
+  ([#706](https://github.com/skel84/freshkube/issues/706)).
+- **Remembered keys:** Coroot keys and metrics tokens are kept in a private
+  `keys.json` file beside the preferences, moved once per account from the
+  system credential store; a forgotten key stays forgotten
+  ([#707](https://github.com/skel84/freshkube/issues/707)).
+- **Settings is an area of its own**
+  ([#697](https://github.com/skel84/freshkube/issues/697)): a rail button and a
+  column of its sections, *App* (General, Connection, Monitoring, Coroot) and
+  *Workspace* (Clusters, Argo CD destinations, Delivery sources), each a page.
+  ⌘, and the gear's All settings… open the section shown last, and the gear
+  keeps quick controls for appearance, text size and Talos auto-refresh. Every
+  group says which file it is saved in, checks a field as you leave it, shows
+  errors at the field, puts the keyboard in the first failing field on Save,
+  and saves and reverts on its own, with its buttons in the platform's order.
+  See [docs/features/settings.md](docs/features/settings.md).
+- **General and Connection:** General holds appearance, text size and Talos
+  auto-refresh, remembered between launches. Connection holds the talosconfig
+  and its context, moved from the gear, with Save and Revert, and the
+  Kubernetes API's mode.
+- **Clusters:** edit a workspace cluster in the Inspector beside the table, in
+  an Identity group and a Metrics group that each save on their own; choose the
+  workspace's kubeconfig from the header; Add asks only for a role and a
+  context. Leaving an entry with unsaved changes asks whether to save, discard
+  or stay.
+- **Monitoring:** choose the workspace's metrics source (automatic, central or
+  per entry) and test unsaved values before saving; this context's own source
+  and the Dashboards folder moved here from the gear. A token that a save
+  replaces is removed unless another source still uses it
+  ([#758](https://github.com/skel84/freshkube/issues/758)).
+- **Coroot:** the connection (server, sign-in, key and project) lives here and
+  is saved in `freshkube.yaml` with Connect; Observability's connection card is
+  now one line that opens it.
+- **Argo CD destinations and Delivery sources:** table pages with their actions
+  in the toolbar, keys and row menu. A destination's dialog checks its fields
+  in place and keeps a URL whole as its text wraps
+  ([#755](https://github.com/skel84/freshkube/issues/755)). Delivery sources
+  explains each part's choice in the Inspector, pins a part to a workspace
+  entry or follows roles, and shows loading rows and the last check time
+  ([#714](https://github.com/skel84/freshkube/issues/714)).
+
+### Other changes
+
+- **Log lines and YAML:** right-click a line in dock or node logs, or in a YAML
+  document in Resources or the node pane, for Copy, Select all and Find with
+  their shortcuts; a click inside a selection keeps it, and one outside selects
+  that line ([#531](https://github.com/skel84/freshkube/issues/531)).
+- **Navigation rail:** all four groups fit without scrolling at the default
+  window and text size, and a selected button's highlight stays clear of the
+  scrollbar ([#711](https://github.com/skel84/freshkube/issues/711),
+  [#721](https://github.com/skel84/freshkube/issues/721)).
+- **Node pods:** in the example data, a node's Pods badge, the Nodes table's
+  Pods column and the node's Pods list agree
+  ([#730](https://github.com/skel84/freshkube/issues/730)).
+- **Packet captures:** a capture is written to a temporary file and renamed
+  into place, so a failed save never leaves a partial file under the chosen
+  name ([#586](https://github.com/skel84/freshkube/issues/586)).
+- **Connection errors:** a cluster connection's failure keeps its message and
+  state through the shared access code
+  ([#584](https://github.com/skel84/freshkube/issues/584)).
+- **Internal:** the Resources page, the Applications pages and link targets
+  moved into crates of their own, `freshkube-resources`,
+  `freshkube-applications` and `freshkube-nav`
+  ([#583](https://github.com/skel84/freshkube/issues/583)). The shell's pages,
+  switcher and selected target each have one owner
+  ([#580](https://github.com/skel84/freshkube/issues/580)), and the remaining
+  reads (Operations previews, kubeconfig inspection, the shell's discovery,
+  Resources' discovery and namespaces, Observability, Monitoring's requests and
+  the Kubernetes summary) go through the shared `Loader` and `Watch`
+  ([#582](https://github.com/skel84/freshkube/issues/582)). `talos-rs` no
+  longer reads `TALOSCONFIG` itself
+  ([#585](https://github.com/skel84/freshkube/issues/585)). The change trail
+  records what a drawn chain needs, and DESIGN.md designs a List / Chain change
+  page; neither shows in the app yet
+  ([#698](https://github.com/skel84/freshkube/issues/698)). AGENTS.md holds the
+  rules and a map, with each feature's behaviour in its own document
+  ([#587](https://github.com/skel84/freshkube/issues/587)), and large test
+  files are split by scenario
+  ([#588](https://github.com/skel84/freshkube/issues/588)). The required Linux
+  check now builds the release target too, after a module only debug builds
+  included broke release builds; that is fixed in this release.
+
 ## 0.15.0 (2026-10-14)
 
 ### Coroot

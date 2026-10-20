@@ -1,1 +1,0 @@
-- **Delivery sources:** delivery sources now explains each selected source in an Inspector, lets you pin a part to a workspace entry or follow roles, and shows loading rows and the last check time.
