@@ -1,5 +1,5 @@
 //! Chain's canvas and view switch. The page owns selection and Inspector;
-//! the graph owns only layout, focus and sideways scrolling.
+//! the graph owns only layout, focus and scrolling.
 use freshkube_ui::graph::{
     self, Cursor, GraphCanvas, GraphEdge, GraphSource, GraphState, GraphText,
 };
@@ -22,6 +22,7 @@ pub(super) fn state(cx: &mut App) -> GraphState<SharedString> {
         },
     )
     .unpaged()
+    .in_source_order()
     .with_keys(cx)
 }
 
@@ -29,23 +30,14 @@ impl ChangePage {
     // A first answer, or opening the Inspector, changes the pan's bounds.
     // Reveal again after layout, only while this is still the selection.
     pub(super) fn reveal_chain_when_drawn(&self, window: &Window, cx: &mut Context<Self>) {
-        let selected = self.selected.clone();
-        let this = cx.entity().downgrade();
-        window.on_next_frame(move |window, cx| {
-            _ = this.update(cx, |page, cx| {
-                if page.visible
-                    && page.view == ChangeView::Chain
-                    && page.selected == selected
-                    && let Some(key) = page
-                        .selected
-                        .as_ref()
-                        .and_then(|key| page.trail.cards.get(key))
-                {
-                    page.graph.reveal_node(key, window);
-                    cx.notify();
-                }
-            });
-        });
+        if let Some(key) = self.highlighted() {
+            graph::reveal_when_settled(
+                cx.entity().downgrade(),
+                key.clone(),
+                |page| page.visible && page.view == ChangeView::Chain,
+                window,
+            );
+        }
     }
 
     pub(super) fn derive_chain(&mut self) {
@@ -200,6 +192,9 @@ impl ChangePage {
 }
 
 impl GraphSource for ChangePage {
+    fn persistent_highlight(&self) -> bool {
+        true
+    }
     fn word_details(&self) -> bool {
         true
     }
