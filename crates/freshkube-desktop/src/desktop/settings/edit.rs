@@ -306,13 +306,34 @@ impl SettingsPage {
         let Some(file) = self.setup_file.clone() else {
             return;
         };
+        let before = file.read(cx).setup.clone();
+        let secrets = self.metrics_secrets.clone();
+        let preferences = self
+            .file
+            .as_ref()
+            .map(|file| file.with_file_name("preferences.json"));
         let save = file.update(cx, |file, cx| {
             file.save_workspace(next, self.seen.clone(), cx)
         });
         self.notice = None;
         self.saving = Some(cx.spawn(async move |this, cx| {
             let outcome = save.await;
-            _ = this.update(cx, |this, cx| this.saved(what, outcome, cx));
+            let cleanup = if outcome.is_ok() {
+                let after = file.read_with(cx, |file, _| file.setup.clone());
+                cx.background_spawn(async move {
+                    super::metrics_tokens::forget_replaced(secrets, before, after, preferences)
+                })
+                .await
+            } else {
+                Ok(())
+            };
+            _ = this.update(cx, |this, cx| {
+                this.saved(what, outcome, cx);
+                if let Err(why) = cleanup {
+                    this.notice = Some(Notice::Failed(why.into()));
+                    cx.notify();
+                }
+            });
         }));
         cx.notify();
     }

@@ -139,7 +139,7 @@ impl Pages {
                     .preferences
                     .as_deref()
                     .filter(|_| !options.starts_with_examples()),
-                secrets,
+                secrets.clone(),
                 window,
                 cx,
             )
@@ -152,7 +152,7 @@ impl Pages {
                 cx,
             )
         });
-        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
+        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(

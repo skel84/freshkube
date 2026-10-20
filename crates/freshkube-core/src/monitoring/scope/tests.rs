@@ -21,6 +21,29 @@ fn file(rest: &str, b_metrics: &str) -> String {
 
 const CENTRAL: &str = "metrics:\n  mode: central\n  store:\n    entry: cluster-a\n    service:\n      namespace: monitoring\n      name: central\n      port: 9090\n";
 
+#[test]
+fn token_urls_include_inactive_and_shared_stores_but_only_with_a_token() {
+    let mut setup = setup(&file(
+        "metrics:\n  mode: automatic\n  store: {url: 'https://metrics.example.test', token: keys.json}\n",
+        "    metrics:\n      source: {url: 'https://metrics.example.test/', token: keys.json}\n",
+    ));
+    assert_eq!(
+        token_urls(&setup),
+        ["https://metrics.example.test/".to_owned()].into()
+    );
+    setup.metrics.store.as_mut().unwrap().token = None;
+    assert_eq!(token_urls(&setup).len(), 1);
+    setup.workspace.clusters[1]
+        .metrics
+        .as_mut()
+        .unwrap()
+        .source
+        .as_mut()
+        .unwrap()
+        .token = None;
+    assert!(token_urls(&setup).is_empty());
+}
+
 fn service(namespace: &str, name: &str) -> Place {
     Place::Service(PrometheusService::new(namespace, name, 9090))
 }

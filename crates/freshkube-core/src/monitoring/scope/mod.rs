@@ -17,6 +17,24 @@ use super::{
 use crate::cluster_source::ClusterAccess;
 use crate::setup::{self, Mode, Setup};
 
+/// URLs whose tokens the setup names, including stores retained under an
+/// inactive mode. Equivalent URL spellings name the same token account.
+pub fn token_urls(setup: &Setup) -> std::collections::BTreeSet<String> {
+    let central = setup.metrics.store.iter().filter_map(|store| {
+        store.token.as_ref()?;
+        store.url.as_deref()
+    });
+    let entries = setup.workspace.clusters.iter().filter_map(|entry| {
+        let source = entry.metrics.as_ref()?.source.as_ref()?;
+        source.token.as_ref()?;
+        source.url.as_deref()
+    });
+    central
+        .chain(entries)
+        .filter_map(|url| normalise_url(url).ok())
+        .collect()
+}
+
 /// Where a store is: a Service in a cluster, or a URL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Place {
