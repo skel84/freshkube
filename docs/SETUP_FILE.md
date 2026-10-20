@@ -201,6 +201,60 @@ When the parser gives no place, the words say which pass failed without one.
 
 Then `Workspace::validate` and the new rules run, and their errors name an entry by id (`the id “cluster-b” is used twice`), as today. The log gets the same words.
 
+### Row recovery on disk reads
+
+YAML disk reads use `setup::read`, returning an effective `Setup`, structured
+warnings and a separate `all_clusters_skipped` flag. `setup::parse`, Settings
+writes and legacy JSON migration input stay strict. Reading never rewrites YAML.
+
+A bad `clusters[i]` or `destinations[i]` row is skipped as a whole, including a
+cluster whose optional Results, metrics or Coroot block is invalid. Healthy
+neighbors and unrelated sections remain usable. Warnings keep the original
+zero-based index, a readable bounded id (the target entry for a destination),
+the field and a typed reason. They never include endpoints, path values,
+rejected YAML or parser messages. A later duplicate Coroot link is skipped;
+the first otherwise-valid link wins, comparing projects after inheritance.
+
+File-fatal faults still refuse the entire file: unreadable/non-regular or
+oversized files; invalid YAML and duplicate mapping keys; non-map documents;
+missing, unreadable or unknown versions; wrong top-level shapes/types;
+more than 64 input clusters or 256 input destinations; duplicate readable
+cluster ids; a relative workspace kubeconfig; and invalid source pins.
+Shared metrics, top-level Coroot and supply-chain semantic faults stay fatal.
+As before, dormant central-store semantic settings are retained but unread.
+
+Before decoding any row, a credential preflight checks recognized key/token
+positions and endpoint URL userinfo across the raw document, including dormant
+metrics blocks and rows that could not otherwise decode. A literal credential
+or embedded URL credential refuses the file without quoting it. A row fault
+cannot hide a later fatal fault.
+
+An accepted read publishes one complete sentence in input order:
+`freshkube.yaml is used with warnings: skipped clusters[1] (cluster-b): results.address: plain HTTP is allowed only on loopback. The rest of the file stays in use.`
+Settings and both delivery change views use the existing Warn banners. Delivery
+sources keeps the file row as **Used with warnings**, with the same details.
+Unknown-key and changed-on-disk notices remain available. A later fatal refusal
+shows only the existing `problem_words` sentence; item warnings return on the
+next accepted read and disappear when repaired.
+
+All-skipped arrays still yield an accepted setup and retain their original
+bytes for conflict detection. An all-skipped cluster list resolves sources as
+unavailable, preserving dangling pins and mappings; it never reads from the
+open connection. An intentionally empty valid setup retains its existing
+workspace-of-one behavior. Switching between those states changes effective
+source availability even when the two `Setup` values compare equal.
+
+While skipped rows remain, Settings writes nothing and says:
+`Fix the skipped items in freshkube.yaml and Reload before saving from Settings.`
+A partly accepted YAML wins over legacy JSON without merging, rewriting, or
+setting the legacy files aside. Once repaired, ordinary strict save, backup,
+conflict and migration-adoption rules resume.
+
+Warning-only edits and changed fatal reasons update diagnostics without
+restarting delivery reads. Effective setup or source-availability changes do
+invalidate them. A successful explicit Reload always invalidates reads, even
+for identical configuration, since referenced key files can change.
+
 ## Reload on change
 
 No dependency is needed. The app has no file watcher today (it reads `workspace.json` at start and on Reload, `settings/mod.rs` and `settings/edit.rs`); `notify` is in the build only inside GPUI Kit's theme registry. A watcher would also have to watch the directory, since editors save by renaming a new file over the old one. A poll is simpler and costs nothing that matters:
@@ -236,7 +290,7 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | 0 | This design | Claude | docs | none |
 | 1 | **Core types and parse.** A `setup` module in core: `Setup` (the workspace, `metrics`, `coroot`, `supply_chain`, unknown keys), `parse` with the two-pass errors and their line and column, `to_text` with the header and fixed order, `commit` on `Seen`, the `key` rule. The per-entry `results`, `coroot` and `metrics` and the `supply_chain` block are typed here, which takes over #697's slice 11. Round-trip tests on the example above, kept as `crates/freshkube-prefs/src/examples/freshkube.yaml`. | Claude | `freshkube-core/src/setup/`, `workspace/` | #697 slice 3 |
 | 2 | **Migration.** Steps 1 to 6, at startup, with tests for each stopping point, both files present, an unusable `workspace.json` and two launches at once. | Claude | core `setup/migrate.rs`, `desktop/startup/` | 1, #707 |
-| 3 | **Reload.** The `SetupFile` owner, its poll and debounce, its own-write rule and the broken-file state, handed to Settings, the switcher, delivery and Coroot. UI tests on the test clock. | Codex | `freshkube-desktop/src/setup_file.rs`, shell wiring | 1 |
+| 3 | **Reload.** The `SetupFile` owner, its poll and debounce, its own-write rule and the broken-file state, handed to Settings, the switcher, delivery and Coroot. UI tests on the test clock. | Codex | `freshkube-desktop/src/setup_file/mod.rs`, shell wiring | 1 |
 | 4 | **The Settings write path.** Settings saves into `freshkube.yaml` through `SetupFile`: the `.bak` of a hand-edited file, the receipts, the changed-on-disk and broken-file banners, the Check sources row. Today's three lists move from `workspace.json` to it unchanged. | Codex | `desktop/settings/` | 2, 3 |
 | 5 | **Metrics from the setup.** The modes, and central mode's matcher injected in core's transport, with tests on dashboards' queries, variable queries, the history panels, a matcher on the same label and an unparsable query; the source an entry reads, and the hosting entry's client handed to Monitoring; the two Check sources checks. A join: a wrong scope draws another cluster's numbers as this one's. | Claude | core `monitoring/transport.rs`, `freshkube-monitoring`'s `page/` and `history/`, shell wiring | 1, 3 |
 | 6 | **The README example.** The setup section becomes the annotated example above. | Codex | `README.md` | 4, 5 |

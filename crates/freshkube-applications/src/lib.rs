@@ -529,6 +529,10 @@ impl ApplicationsPage {
         }
     }
 
+    pub fn setup_problem_words(&self) -> Option<&str> {
+        self.setup_problem.as_deref()
+    }
+
     /// The setup owner's safe warning text; no setup bytes reach a banner.
     pub fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
         freshkube_probe::probe::hit("applications.setup_handoff");

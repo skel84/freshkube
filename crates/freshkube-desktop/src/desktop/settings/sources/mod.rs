@@ -118,6 +118,7 @@ pub(crate) struct SourcesList {
     loading: table::LoadingRows,
     checked_at: Option<SharedString>,
     setup_problem: Option<String>,
+    setup_skips: bool,
     columns: Vec<Column>,
     width: f32,
     table: table::TableState,
@@ -157,6 +158,7 @@ impl SourcesList {
             loading: table::LoadingRows::new(PREFIX),
             checked_at: None,
             setup_problem: None,
+            setup_skips: false,
             columns: Vec::new(),
             width: 0.,
             table: table::TableState::new(PREFIX),
@@ -177,8 +179,19 @@ impl SourcesList {
         list
     }
 
+    #[cfg(test)]
     pub(super) fn set_setup_problem(&mut self, problem: Option<String>, cx: &mut Context<Self>) {
-        if self.setup_problem != problem {
+        self.set_setup_notice(problem, false, cx);
+    }
+
+    pub(super) fn set_setup_notice(
+        &mut self,
+        problem: Option<String>,
+        skips: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.setup_problem != problem || self.setup_skips != skips {
+            self.setup_skips = skips;
             self.setup_problem = problem;
             self.derive_rows();
             self.publish_status(cx);
@@ -188,13 +201,14 @@ impl SourcesList {
 
     /// Takes a new workspace from the page: resolves where each part is
     /// read, and forgets a check of the old one.
-    pub(super) fn set_workspace(
+    pub(super) fn set_recovered_workspace(
         &mut self,
         workspace: &freshkube_core::workspace::Workspace,
+        all_clusters_skipped: bool,
         example: bool,
         cx: &mut Context<Self>,
     ) {
-        self.sources = Sources::of(workspace);
+        self.sources = Sources::of_recovered(workspace, all_clusters_skipped);
         self.checked_at = None;
         self.kubeconfig = workspace.kubeconfig.clone();
         self.example = example;

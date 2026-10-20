@@ -63,15 +63,25 @@ impl SourcesList {
             .collect();
         rows.push(self.workloads_row());
         if let Some(problem) = &self.setup_problem {
-            rows.push(self.row(
-                Read::SetupFile,
-                "freshkube.yaml".into(),
-                "Setup file".into(),
-                false,
-                ("Not used".into(), Some(ui::Tone::Warn)),
-                problem.clone(),
-                problem.clone(),
-            ));
+            rows.push(
+                self.row(
+                    Read::SetupFile,
+                    "freshkube.yaml".into(),
+                    "Setup file".into(),
+                    false,
+                    (
+                        (if self.setup_skips {
+                            "Used with warnings"
+                        } else {
+                            "Not used"
+                        })
+                        .into(),
+                        Some(ui::Tone::Warn),
+                    ),
+                    problem.clone(),
+                    problem.clone(),
+                ),
+            );
         }
         self.rows = rows;
         (self.columns, self.width) = source::columns(&self.rows);

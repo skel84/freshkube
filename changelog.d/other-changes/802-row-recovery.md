@@ -1,0 +1,1 @@
+- **Setup file:** skip invalid cluster and destination rows with indexed warnings while keeping healthy entries in use; shared configuration and credential faults still refuse the file, and Settings preserves skipped rows until they are repaired.

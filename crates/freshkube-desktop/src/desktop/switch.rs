@@ -394,7 +394,10 @@ impl Pilot {
                 workspace,
                 self.switch.active_cluster(),
             ),
-            sources: freshkube_core::workspace::Sources::of(workspace),
+            sources: freshkube_core::workspace::Sources::of_recovered(
+                workspace,
+                self.settings_page.read(cx).all_clusters_skipped,
+            ),
             kubeconfig: workspace.kubeconfig.clone(),
         };
         self.pages

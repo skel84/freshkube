@@ -1001,3 +1001,41 @@ async fn a_save_over_a_previous_launchs_output_needs_no_backup(cx: &mut TestAppC
         assert!(receipt.starts_with("Saved freshkube.yaml · "));
     });
 }
+
+#[gpui_kit::test]
+async fn recovered_setup_warns_keeps_unknown_keys_and_blocks_settings_writes(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let text = "version: 1\nclusters: [{id: retained, role: core, context: retained, future: true}, []]\ndestinations: [{name: '', entry: retained}]\n";
+    write(directory.path(), text);
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    open_settings(cx, handle, &view).await;
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let page = view.read(cx).settings_page.clone();
+        let words = window.find("settings-banner").label().unwrap().to_owned();
+        assert!(words.contains("skipped clusters[1]"));
+        assert!(words.contains("skipped destinations[0] (retained)"));
+        assert!(
+            window
+                .find("settings-unknown-keys")
+                .label()
+                .unwrap()
+                .contains("retained.future")
+        );
+        assert_eq!(
+            page.read(cx).why_not_editable(),
+            crate::setup_file::SKIPPED_SAVE
+        );
+        window.click("settings-add", cx);
+        assert!(window.try_find("settings-cluster-form").is_none());
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap(),
+        text
+    );
+    assert!(!directory.path().join("freshkube.yaml.bak").exists());
+}

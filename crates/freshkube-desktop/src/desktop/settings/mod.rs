@@ -128,6 +128,8 @@ pub(crate) struct SettingsPage {
     setup_file: Option<Entity<crate::setup_file::SetupFile>>,
     metrics_secrets: Option<freshkube_core::secrets::Secrets>,
     setup_refusal: bool,
+    setup_skips: bool,
+    pub(in crate::desktop) all_clusters_skipped: bool,
     pending_setup: bool,
     uses_setup: bool,
     /// `freshkube.yaml`; none without a preferences folder.
@@ -197,7 +199,9 @@ impl SettingsPage {
     ) {
         let model = file.read(cx);
         let setup = model.setup.clone();
-        let problem = model.problem.clone();
+        let problem = model.notice();
+        let all_clusters_skipped = model.all_clusters_skipped;
+        self.setup_skips = !model.warnings.is_empty();
         let seen = if model.is_missing() {
             workspace::Seen::Missing
         } else {
@@ -212,7 +216,11 @@ impl SettingsPage {
             } else if !defer {
                 self.pending_setup = false;
                 self.seen = seen;
-                if !self.uses_setup || self.workspace != setup.workspace {
+                if !self.uses_setup
+                    || self.workspace != setup.workspace
+                    || self.all_clusters_skipped != all_clusters_skipped
+                {
+                    self.all_clusters_skipped = all_clusters_skipped;
                     self.uses_setup = true;
                     self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);
                 }
@@ -230,17 +238,18 @@ impl SettingsPage {
         let legacy_banner = (!self.uses_setup && matches!(self.origin, Origin::Refused(_)))
             .then(|| self.banner.clone())
             .flatten();
-        self.banner = problem
-            .clone()
-            .map(Into::into)
-            .or_else(|| {
-                self.pending_setup.then(|| {
-                    "freshkube.yaml changed on disk. Reload to drop the unsaved changes.".into()
-                })
-            })
-            .or(legacy_banner);
-        self.sources
-            .update(cx, |sources, cx| sources.set_setup_problem(problem, cx));
+        let pending = self
+            .pending_setup
+            .then_some("freshkube.yaml changed on disk. Reload to drop the unsaved changes.");
+        self.banner = match (problem.as_deref(), pending) {
+            (Some(problem), Some(pending)) => Some(format!("{problem} {pending}").into()),
+            (Some(problem), None) => Some(problem.to_owned().into()),
+            (None, Some(pending)) => Some(pending.into()),
+            (None, None) => legacy_banner,
+        };
+        self.sources.update(cx, |sources, cx| {
+            sources.set_setup_notice(problem, self.setup_skips, cx)
+        });
         cx.notify();
     }
 
@@ -318,6 +327,8 @@ impl SettingsPage {
             setup_file: None,
             metrics_secrets,
             setup_refusal: false,
+            setup_skips: false,
+            all_clusters_skipped: false,
             pending_setup: false,
             uses_setup: false,
             file: None,
@@ -427,8 +438,9 @@ impl SettingsPage {
         };
         (self.columns, self.width) = source::columns(&self.rows);
         let example = origin == Origin::Example;
-        self.sources
-            .update(cx, |list, cx| list.set_workspace(&workspace, example, cx));
+        self.sources.update(cx, |list, cx| {
+            list.set_recovered_workspace(&workspace, self.all_clusters_skipped, example, cx)
+        });
         self.origin = origin;
         let kubeconfig = match &workspace.kubeconfig {
             Some(path) => format!("Kubeconfig: {}", path.display()),

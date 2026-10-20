@@ -201,3 +201,73 @@ async fn unused_setup_warns_on_both_pages_and_clears_on_reload(cx: &mut TestAppC
         }
     }
 }
+
+#[gpui_kit::test]
+async fn recovered_setup_warns_on_both_delivery_routes_and_refusal_then_repair_replaces_it(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    for all_skipped in [false, true] {
+        for from_list in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("freshkube.yaml");
+            let partial = if all_skipped {
+                "version: 1\nclusters: [[]]\n"
+            } else {
+                "version: 1\nclusters: []\ndestinations: [[]]\n"
+            };
+            std::fs::write(&path, partial).unwrap();
+            let options =
+                crate::GpuiOptions::new(Some(directory.path().join("missing-talos")), None, 100)
+                    .with_kubeconfig(directory.path().join("missing-kubeconfig"))
+                    .with_preferences(Some(directory.path().join("preferences.json")));
+            let (_runtime, handle, view) = crate::desktop::testing::mount(cx, options, 1280., 880.);
+            let words = cx.read(|cx| view.read(cx).setup_file.read(cx).notice().unwrap());
+            assert!(words.starts_with("freshkube.yaml is used with warnings:"));
+            cx.update_window(handle, |_, window, cx| {
+                applications(&view, cx).update(cx, |page, cx| {
+                    page.set_source(
+                        Some(ClusterSource {
+                            id: "example-session".into(),
+                            context: "example-cluster".into(),
+                            access: ClusterAccess::EXAMPLE,
+                        }),
+                        None,
+                        cx,
+                    )
+                });
+                open_changes(&view, window, cx);
+                assert_banner(window, cx, "changes-setup-problem", Some(&words));
+            })
+            .unwrap();
+            notify_settings(&view, handle, "changes-setup-problem", &words, cx);
+            cx.update_window(handle, |_, window, cx| follow(&view, from_list, window, cx))
+                .unwrap();
+            cx.run_until_parked();
+            notify_settings(&view, handle, "change-missing", &words, cx);
+            std::fs::write(&path, BROKEN).unwrap();
+            reload(&view, cx).await;
+            let refused = cx.read(|cx| view.read(cx).setup_file.read(cx).notice().unwrap());
+            assert!(refused.ends_with("The last good setup stays in use."));
+            assert!(!refused.contains("skipped"));
+            cx.update_window(handle, |_, window, cx| {
+                assert_banner(window, cx, "change-missing", Some(&refused))
+            })
+            .unwrap();
+            std::fs::write(&path, partial).unwrap();
+            reload(&view, cx).await;
+            cx.update_window(handle, |_, window, cx| {
+                assert_banner(window, cx, "change-missing", Some(&words))
+            })
+            .unwrap();
+            std::fs::write(&path, GOOD).unwrap();
+            reload(&view, cx).await;
+            cx.update_window(handle, |_, window, cx| {
+                assert_banner(window, cx, "change-missing", None);
+                open_changes(&view, window, cx);
+                assert_banner(window, cx, "changes-setup-problem", None);
+            })
+            .unwrap();
+        }
+    }
+}

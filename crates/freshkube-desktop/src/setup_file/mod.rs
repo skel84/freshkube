@@ -9,6 +9,9 @@ use freshkube_core::{
 };
 use gpui_kit::{AppContext, Context, EventEmitter, Task};
 
+pub(crate) const SKIPPED_SAVE: &str =
+    "Fix the skipped items in freshkube.yaml and Reload before saving from Settings.";
+
 const POLL: Duration = Duration::from_secs(2);
 const DEBOUNCE: Duration = Duration::from_millis(300);
 
@@ -57,6 +60,9 @@ pub(crate) struct SetupFile {
     /// Bytes of the last good setup, never the broken edit on disk.
     pub(crate) seen: Seen,
     pub(crate) problem: Option<String>,
+    pub(crate) warnings: Vec<setup::Warning>,
+    pub(crate) all_clusters_skipped: bool,
+    setup_revision: u64,
     pub(crate) receipt: Option<String>,
     receipt_label: String,
     file: Option<PathBuf>,
@@ -84,6 +90,9 @@ impl SetupFile {
             setup: None,
             seen: Seen::Missing,
             problem: None,
+            warnings: Vec::new(),
+            all_clusters_skipped: false,
+            setup_revision: 0,
             receipt: None,
             receipt_label: String::new(),
             file: preferences
@@ -178,7 +187,7 @@ impl SetupFile {
                             let read = read_bounded_regular_file(&path, MAX_BYTES);
                             let outcome = match read {
                                 Ok(bytes) => {
-                                    Outcome::Parsed(setup::parse(&bytes).map(Box::new), bytes)
+                                    Outcome::Parsed(setup::read(&bytes).map(Box::new), bytes)
                                 }
                                 Err(BoundedReadError::NotFound) => Outcome::Missing,
                                 Err(BoundedReadError::TooLarge) => {
@@ -219,11 +228,19 @@ impl SetupFile {
 
     /// Invalidates an in-flight read as well as suppressing the next poll.
     fn record_write(&mut self, setup: Setup, seen: Seen, stat: FileStat) {
-        if self.setup.as_ref() != Some(&setup) || self.problem.is_some() {
+        if self.setup.as_ref() != Some(&setup) || self.all_clusters_skipped {
+            self.setup_revision += 1;
+        }
+        if self.setup.as_ref() != Some(&setup)
+            || self.problem.is_some()
+            || !self.warnings.is_empty()
+        {
             self.read_revision += 1;
         }
         self.setup = Some(setup);
         self.problem = None;
+        self.warnings.clear();
+        self.all_clusters_skipped = false;
         self.last_written = Some(seen.clone());
         self.seen = seen;
         self.stat = stat;
@@ -235,7 +252,17 @@ impl SetupFile {
     }
 
     pub(crate) fn saves_refused(&self) -> bool {
-        self.problem.is_some() && !self.is_missing()
+        !self.warnings.is_empty() || (self.problem.is_some() && !self.is_missing())
+    }
+
+    pub(crate) fn notice(&self) -> Option<String> {
+        self.problem
+            .clone()
+            .or_else(|| setup::warning_words(&self.warnings))
+    }
+
+    pub(crate) fn setup_revision(&self) -> u64 {
+        self.setup_revision
     }
 
     /// The compact status text; the full receipt stays in its tooltip.
@@ -288,6 +315,9 @@ impl SetupFile {
         let Some(file) = self.file.clone() else {
             return Task::ready(Err(SaveError::Failed("There is nowhere to save".into())));
         };
+        if !self.warnings.is_empty() {
+            return Task::ready(Err(SaveError::Failed(SKIPPED_SAVE.into())));
+        }
         self.writing = true;
         self.write_generation = self.write_generation.wrapping_add(1);
         let mut setup = self
@@ -351,6 +381,7 @@ impl SetupFile {
     }
 
     /// The delivery hand-off consumes each accepted read only once.
+    #[cfg(test)]
     pub(crate) fn read_revision(&self) -> u64 {
         self.read_revision
     }
@@ -365,17 +396,21 @@ impl SetupFile {
     ) {
         let reloaded = explicit && matches!(&outcome, Outcome::Parsed(Ok(_), _));
         self.stat = stat;
-        let old_problem = self.problem.clone();
+        let old_notice = self.notice();
         let mut setup_changed = false;
         self.problem = match outcome {
             Outcome::Parsed(Ok(setup), bytes) => {
-                let setup = *setup;
+                let read = *setup;
+                let setup = read.setup;
+                setup_changed = self.setup.as_ref() != Some(&setup)
+                    || self.all_clusters_skipped != read.all_clusters_skipped;
+                self.warnings = read.warnings;
+                self.all_clusters_skipped = read.all_clusters_skipped;
                 // Recognize canonical output from a prior save or migration.
                 if initial && setup::to_text(&setup).as_bytes() == bytes {
                     self.last_written = Some(Seen::Bytes(bytes.clone()));
                 }
                 if self.seen != Seen::Bytes(bytes.clone()) {
-                    setup_changed = self.setup.as_ref() != Some(&setup);
                     self.setup = Some(setup);
                     self.seen = Seen::Bytes(bytes);
                 }
@@ -388,16 +423,22 @@ impl SetupFile {
             }
             Outcome::Missing => None,
         };
+        if self.problem.is_some() {
+            self.warnings.clear();
+        }
         if self.problem.is_some() || matches!(self.stat, FileStat::Missing) {
             self.receipt = None;
             self.receipt_label.clear();
         }
-        if setup_changed || reloaded || old_problem != self.problem {
+        if setup_changed || reloaded {
+            self.setup_revision += 1;
+        }
+        if setup_changed || reloaded || old_notice != self.notice() {
             self.read_revision += 1;
         }
         if initial {
             cx.emit(Event::Ready);
-        } else if setup_changed || reloaded || old_problem != self.problem {
+        } else if setup_changed || reloaded || old_notice != self.notice() {
             if setup_changed || reloaded {
                 self.set_receipt("Reloaded", false);
             }
@@ -449,6 +490,12 @@ fn save_on_disk(
     setup: Setup,
 ) -> Result<Write, Refused> {
     let (stat, disk) = read_now(file);
+    if matches!(&disk, Outcome::Parsed(Ok(read), _) if !read.warnings.is_empty()) {
+        return Err(Refused {
+            error: SaveError::Failed(SKIPPED_SAVE.into()),
+            disk: Some(Box::new((stat, disk))),
+        });
+    }
     let current = match &disk {
         Outcome::Parsed(Ok(_), bytes) => Seen::Bytes(bytes.clone()),
         Outcome::Missing => Seen::Missing,
@@ -508,7 +555,7 @@ fn save_on_disk(
 fn read_now(file: &std::path::Path) -> (FileStat, Outcome) {
     let stat = FileStat::read(file);
     let outcome = match read_bounded_regular_file(file, MAX_BYTES) {
-        Ok(bytes) => Outcome::Parsed(setup::parse(&bytes).map(Box::new), bytes),
+        Ok(bytes) => Outcome::Parsed(setup::read(&bytes).map(Box::new), bytes),
         Err(BoundedReadError::NotFound) => Outcome::Missing,
         Err(BoundedReadError::TooLarge) => Outcome::Problem("it is larger than 256 KiB".into()),
         Err(_) => Outcome::Problem("it could not be read as a regular file".into()),
@@ -517,7 +564,7 @@ fn read_now(file: &std::path::Path) -> (FileStat, Outcome) {
 }
 
 enum Outcome {
-    Parsed(Result<Box<Setup>, setup::Invalid>, Vec<u8>),
+    Parsed(Result<Box<setup::Recovered>, setup::Invalid>, Vec<u8>),
     Missing,
     Problem(String),
 }

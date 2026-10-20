@@ -146,12 +146,18 @@ impl Default for Sources {
 
 impl Sources {
     pub fn of(workspace: &Workspace) -> Self {
-        let choose = |part| choose(workspace, part);
+        Self::of_recovered(workspace, false)
+    }
+
+    /// A configured list whose rows were all skipped is unavailable, even
+    /// though its effective cluster list is empty.
+    pub fn of_recovered(workspace: &Workspace, all_clusters_skipped: bool) -> Self {
+        let choose = |part| choose_recovered(workspace, part, all_clusters_skipped);
         Self {
             kargo: choose(Part::Kargo),
             builds: choose(Part::Builds),
             argocd: choose(Part::ArgoCd),
-            workloads: workloads(workspace),
+            workloads: workloads(workspace, all_clusters_skipped),
         }
     }
 
@@ -187,8 +193,8 @@ impl Sources {
     }
 }
 
-fn workloads(workspace: &Workspace) -> Vec<Chosen> {
-    if workspace.clusters.is_empty() {
+fn workloads(workspace: &Workspace, all_clusters_skipped: bool) -> Vec<Chosen> {
+    if workspace.clusters.is_empty() && !all_clusters_skipped {
         return vec![Chosen::Open];
     }
     let mut chosen: Vec<Chosen> = Vec::new();
@@ -216,7 +222,11 @@ fn workloads(workspace: &Workspace) -> Vec<Chosen> {
 }
 
 pub(super) fn choose(workspace: &Workspace, part: Part) -> Chosen {
-    if workspace.clusters.is_empty() {
+    choose_recovered(workspace, part, false)
+}
+
+fn choose_recovered(workspace: &Workspace, part: Part, all_clusters_skipped: bool) -> Chosen {
+    if workspace.clusters.is_empty() && !all_clusters_skipped {
         return Chosen::Open;
     }
     if let Some(pinned) = workspace.sources.pin(part) {

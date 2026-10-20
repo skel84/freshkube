@@ -12,14 +12,22 @@ use crate::{base_url::parse_base_url, workspace::Entry};
 
 pub(super) fn entry(entry: &Entry) -> Result<(), Fault> {
     let at = |field: &str| format!("the cluster “{}” {field}", entry.id);
+    entry_at(entry, &at)
+}
+
+pub(super) fn entry_fields(entry: &Entry) -> Result<(), Fault> {
+    entry_at(entry, &str::to_owned)
+}
+
+fn entry_at(entry: &Entry, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
     if let Some(results) = &entry.results {
-        results_of(results, &at)?;
+        results_of(results, at)?;
     }
     if let Some(coroot) = &entry.coroot {
-        coroot_of(coroot, &at)?;
+        coroot_of(coroot, at)?;
     }
     if let Some(metrics) = &entry.metrics {
-        entry_metrics(metrics, &at)?;
+        entry_metrics(metrics, at)?;
     }
     Ok(())
 }

@@ -2,14 +2,12 @@ use super::*;
 use freshkube_probe::probe;
 use gpui_kit::test::TestWindowExt;
 use gpui_kit::{
-    AnyWindowHandle, Entity, IntoElement, Render, Subscription, TestAppContext, Window, div,
-    px, size,
+    AnyWindowHandle, Entity, IntoElement, Render, Subscription, TestAppContext, Window, div, px,
+    size,
 };
 
-const FIRST: &str =
-    "version: 1\nclusters:\n- {id: cluster-a, role: core, context: cluster-a}\n";
-const SECOND: &str =
-    "version: 1\nclusters:\n- {id: cluster-b, role: core, context: cluster-b}\n";
+const FIRST: &str = "version: 1\nclusters:\n- {id: cluster-a, role: core, context: cluster-a}\n";
+const SECOND: &str = "version: 1\nclusters:\n- {id: cluster-b, role: core, context: cluster-b}\n";
 
 struct Reader {
     file: Entity<SetupFile>,
@@ -325,9 +323,7 @@ fn legacy_workspace() -> freshkube_core::workspace::Workspace {
 }
 
 #[gpui_kit::test]
-async fn the_first_workspace_save_moves_unknown_keys_beside_the_workspace(
-    cx: &mut TestAppContext,
-) {
+async fn the_first_workspace_save_moves_unknown_keys_beside_the_workspace(cx: &mut TestAppContext) {
     use freshkube_core::setup::{self, Setup};
     cx.executor().allow_parking();
     let directory = tempfile::tempdir().unwrap();
@@ -465,4 +461,92 @@ async fn an_identical_explicit_reload_advances_the_read_revision(cx: &mut TestAp
     std::fs::write(&path, SECOND).unwrap();
     file.update(cx, |file, cx| file.reload(cx)).await;
     assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 3);
+}
+#[gpui_kit::test]
+async fn recovery_keeps_bytes_refuses_saves_and_updates_notices_without_read_invalidation(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("freshkube.yaml");
+    let partial = format!("{FIRST}destinations: [{{name: '', entry: cluster-a}}]\n");
+    std::fs::write(&path, &partial).unwrap();
+    let (_, reader) = mount(cx, directory.path(), false);
+    let file = model(&reader, cx);
+    let before = cx.read(|cx| {
+        let file = file.read(cx);
+        assert!(file.setup.is_some());
+        assert_eq!(file.seen, Seen::Bytes(partial.as_bytes().to_vec()));
+        assert!(file.notice().unwrap().contains("skipped destinations[0]"));
+        assert!(file.saves_refused());
+        file.setup_revision()
+    });
+    let expected = cx.read(|cx| file.read(cx).seen.clone());
+    let error = file
+        .update(cx, |file, cx| file.save_with(expected, |_| {}, cx))
+        .await
+        .unwrap_err();
+    assert_eq!(error.to_string(), SKIPPED_SAVE);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), partial);
+    assert!(!path.with_extension("yaml.bak").exists());
+    // A warning-only poll keeps effective reads alive.
+    std::fs::write(
+        &path,
+        format!("{FIRST}destinations: [{{server: invalid-endpoint, entry: cluster-a}}]\n"),
+    )
+    .unwrap();
+    advance(cx, POLL);
+    advance(cx, DEBOUNCE);
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before);
+    assert!(cx.read(|cx| file.read(cx).notice().unwrap().contains("http or https")));
+    // A later fatal edit only shows today's refusal sentence.
+    std::fs::write(&path, "version: 999").unwrap();
+    advance(cx, POLL);
+    advance(cx, DEBOUNCE);
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before);
+    cx.read(|cx| {
+        let file = file.read(cx);
+        assert!(file.warnings.is_empty());
+        assert!(
+            file.notice()
+                .unwrap()
+                .starts_with("freshkube.yaml isn't used:")
+        );
+        assert!(file.setup.is_some());
+    });
+    std::fs::write(&path, FIRST).unwrap();
+    advance(cx, POLL);
+    advance(cx, DEBOUNCE);
+    assert!(cx.read(|cx| file.read(cx).notice().is_none()));
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before);
+    file.update(cx, |file, cx| file.reload(cx)).await;
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before + 1);
+}
+
+#[gpui_kit::test]
+async fn all_skipped_and_deliberately_empty_have_distinct_effective_revisions(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("freshkube.yaml");
+    std::fs::write(&path, "version: 1\nclusters: [[]]").unwrap();
+    let (_, reader) = mount(cx, directory.path(), false);
+    let file = model(&reader, cx);
+    let before = cx.read(|cx| {
+        let file = file.read(cx);
+        assert_eq!(file.setup, Some(Setup::default()));
+        assert!(file.all_clusters_skipped);
+        file.setup_revision()
+    });
+    std::fs::write(&path, "version: 1\nclusters: []").unwrap();
+    advance(cx, POLL);
+    advance(cx, DEBOUNCE);
+    cx.read(|cx| {
+        let file = file.read(cx);
+        assert_eq!(file.setup, Some(Setup::default()));
+        assert!(!file.all_clusters_skipped);
+        assert!(file.warnings.is_empty());
+        assert_eq!(file.setup_revision(), before + 1);
+    });
 }
