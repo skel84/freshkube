@@ -25,6 +25,7 @@ mod canvas;
 mod keys;
 mod view;
 
+pub use canvas::GraphCanvas;
 pub use keys::{Cursor, Step};
 pub use view::GraphView;
 
@@ -32,7 +33,7 @@ pub use view::GraphView;
 pub const PER_PAGE: usize = 24;
 /// The gutter between columns of a graph drawn with [`GraphState::unpaged`],
 /// wide enough for a label on each line.
-pub const LABELLED_GUTTER: f32 = 112.;
+pub const LABELLED_GUTTER: f32 = 176.;
 /// The room `reveal_node` leaves beside a box it scrolls to, in dp.
 const REVEAL_MARGIN: f32 = 24.;
 /// Calls on a page that carry a marker; the selected call always does.
@@ -119,9 +120,11 @@ pub struct GraphEdge<K> {
     pub tooltip: SharedString,
     /// How the line is drawn.
     pub style: EdgeStyle,
-    /// A label in a pill at the line's middle, which selects the call when
+    /// A label in a pill near the line's target, which selects the call when
     /// clicked; the call then carries no marker. `None` draws the marker.
     pub pill: Option<SharedString>,
+    /// Optional glyph beside the pill's label, supplied by the caller.
+    pub pill_tone: Option<Tone>,
 }
 
 impl<K: PartialEq> GraphEdge<K> {
@@ -149,6 +152,17 @@ pub trait GraphSource: Sized + 'static {
     /// A box drawn with the accent border, such as the page's selection.
     fn highlighted(&self) -> Option<&Self::Key> {
         None
+    }
+
+    /// Keep a highlighted card's selected styling through hover. Ordinary
+    /// maps keep the button's existing hover treatment.
+    fn persistent_highlight(&self) -> bool {
+        false
+    }
+
+    /// Cut a card's detail at a whole word; ordinary maps keep their truncation.
+    fn word_details(&self) -> bool {
+        false
     }
 
     /// A box click.
@@ -189,6 +203,21 @@ pub trait GraphSource: Sized + 'static {
     ) {
     }
 
+    /// A call click. Keyed sources can publish the same selection as an arrow.
+    fn select_link(
+        &mut self,
+        from: &Self::Key,
+        to: &Self::Key,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.graph().focus_handle().is_some() {
+            self.step_to(Cursor::Link(from.clone(), to.clone()), window, cx);
+        } else {
+            self.graph_mut().select(from, to);
+        }
+    }
+
     /// What the graph shows when it has no boxes.
     fn empty(&self, cx: &mut Context<Self>) -> AnyElement;
 }
@@ -206,6 +235,8 @@ struct Placed {
 struct Shown {
     edge: usize,
     route: Route,
+    /// Beside the target, away from crossings in the middle of the route.
+    pill_at: (f32, f32),
 }
 
 /// The current page, derived when anything it shows changes.
@@ -287,6 +318,7 @@ impl Ids {
 /// What a graph keeps between frames, owned by the page's entity.
 pub struct GraphState<K> {
     nodes: Rc<Vec<GraphNode<K>>>,
+    dimmed: std::collections::BTreeSet<K>,
     edges: Rc<Vec<GraphEdge<K>>>,
     /// Each edge's ends as node indexes; `None` when an end isn't a box.
     ends: Vec<Option<(usize, usize)>>,
@@ -303,8 +335,13 @@ pub struct GraphState<K> {
     scroll: UniformListScrollHandle,
     /// The graph's sideways scroll inside its card.
     pan: ScrollHandle,
+    /// The canvas's vertical scroll, independent of the sideways pan.
+    vertical: ScrollHandle,
     /// Present once the graph has keys.
     focus: Option<FocusHandle>,
+    /// Only keyboard navigation gives the cursor a thick ring.
+    keyboard: bool,
+    focus_watch: std::cell::RefCell<Vec<gpui_kit::Subscription>>,
     ids: Ids,
     display: Display,
 }
@@ -314,6 +351,7 @@ impl<K: Clone + Ord> GraphState<K> {
     pub fn new(prefix: &str, text: GraphText) -> Self {
         let mut state = Self {
             nodes: Rc::default(),
+            dimmed: Default::default(),
             edges: Rc::default(),
             ends: vec![],
             visible: vec![],
@@ -325,7 +363,10 @@ impl<K: Clone + Ord> GraphState<K> {
             text,
             scroll: UniformListScrollHandle::new(),
             pan: ScrollHandle::new(),
+            vertical: ScrollHandle::new(),
             focus: None,
+            keyboard: false,
+            focus_watch: Default::default(),
             ids: Ids::new(prefix),
             display: Display::default(),
         };
@@ -339,7 +380,17 @@ impl<K: Clone + Ord> GraphState<K> {
     #[must_use]
     pub fn unpaged(mut self) -> Self {
         self.per_page = usize::MAX;
-        self.metrics = Metrics::labelled(LABELLED_GUTTER);
+        self.metrics.column = self.metrics.node_w + LABELLED_GUTTER;
+        self.metrics.max_rows = usize::MAX;
+        self.prepare();
+        self
+    }
+
+    /// Keep the source's order within columns, even when routes cross.
+    /// Ordinary maps reduce crossings instead.
+    #[must_use]
+    pub fn in_source_order(mut self) -> Self {
+        self.metrics.preserve_order = true;
         self.prepare();
         self
     }
@@ -378,29 +429,47 @@ impl<K: Clone + Ord> GraphState<K> {
         .step(from, step)
     }
 
-    /// Scrolls the graph sideways so the box `key` is in view, with a
-    /// little room beside it. It does nothing while the graph fits or the
-    /// box isn't on this page.
-    pub(super) fn reveal_node(&self, key: &K, window: &Window) {
-        let Some((_, x, _)) = self.placed().find(|(node, ..)| node.key == *key) else {
+    /// Scrolls both canvas axes so the box `key` is in view, with a
+    /// little room beside it. An axis without layout bounds stays put.
+    pub fn reveal_node(&self, key: &K, window: &Window) {
+        let Some((_, x, y)) = self.placed().find(|(node, ..)| node.key == *key) else {
             return;
         };
         let unit = ui::dp_px(1., window);
-        let view = self.pan.bounds().size.width;
-        // Before the first layout the pan has no width to scroll within.
-        if view <= gpui_kit::px(0.) {
-            return;
+        for (handle, view, start, length, horizontal) in [
+            (
+                &self.pan,
+                self.pan.bounds().size.width,
+                x,
+                self.metrics.node_w,
+                true,
+            ),
+            (
+                &self.vertical,
+                self.vertical.bounds().size.height,
+                y,
+                self.metrics.node_h,
+                false,
+            ),
+        ] {
+            if view <= gpui_kit::px(0.) {
+                continue;
+            }
+            let offset = handle.offset();
+            let at = if horizontal { offset.x } else { offset.y };
+            let shown = keys::scroll_to_show(
+                -at / unit,
+                view / unit,
+                start,
+                start + length,
+                REVEAL_MARGIN,
+            );
+            handle.set_offset(if horizontal {
+                gpui_kit::point(-shown * unit, offset.y)
+            } else {
+                gpui_kit::point(offset.x, -shown * unit)
+            });
         }
-        let offset = self.pan.offset();
-        let shown = keys::scroll_to_show(
-            -offset.x / unit,
-            view / unit,
-            x,
-            x + freshkube_graph::layout::NODE_W,
-            REVEAL_MARGIN,
-        );
-        self.pan
-            .set_offset(gpui_kit::point(-shown * unit, offset.y));
     }
 
     /// New boxes and calls. The selection stays while its call does, and
@@ -468,6 +537,12 @@ impl<K: Clone + Ord> GraphState<K> {
         self.scroll.scroll_to_item(row, strategy);
     }
 
+    /// Clears the selected call when the page selects a card.
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+        self.display.selected = None;
+    }
+
     pub fn selected(&self) -> Option<&(K, K)> {
         self.selected.as_ref()
     }
@@ -487,6 +562,11 @@ impl<K: Clone + Ord> GraphState<K> {
 
     pub fn problems(&self) -> bool {
         self.problems
+    }
+
+    /// Cards outside a page's status filter stay in place, dimmed.
+    pub fn set_dimmed(&mut self, keys: impl IntoIterator<Item = K>) {
+        self.dimmed = keys.into_iter().collect();
     }
 
     pub fn nodes(&self) -> &[GraphNode<K>] {
@@ -600,9 +680,22 @@ impl<K: Clone + Ord> GraphState<K> {
             .filter_map(|&edge| {
                 let (from, to) = self.ends[edge]?;
                 let link = (*local.get(&from)?, *local.get(&to)?);
+                let route = layout.routes[routed[&link]].clone();
+                let last = route.segments.last()?;
+                let pill_at = if last[0].0 < route.tip.0 {
+                    // Keep the pill level with its target, beyond the steep
+                    // part of neighbouring curves, with room before the card.
+                    (
+                        route.tip.0 - canvas::PILL_W / 2. - canvas::PILL_GAP,
+                        route.tip.1,
+                    )
+                } else {
+                    freshkube_graph::layout::point_at(last, 0.75)
+                };
                 Some(Shown {
                     edge,
-                    route: layout.routes[routed[&link]].clone(),
+                    route,
+                    pill_at,
                 })
             })
             .collect();
@@ -648,6 +741,63 @@ impl<K: Clone + Ord> GraphState<K> {
             pages,
         };
     }
+}
+
+/// Reveals the highlighted card on both axes until the canvas bounds have
+/// changed and then held, for at most six frames. A stacked Inspector learns
+/// its size during layout and can apply it on a later frame. Stops when the
+/// card is no longer highlighted or `showing` returns false.
+pub fn reveal_when_settled<S: GraphSource>(
+    view: gpui_kit::WeakEntity<S>,
+    key: S::Key,
+    showing: fn(&S) -> bool,
+    window: &Window,
+) {
+    settle_reveal(view, key, showing, None, false, 6, window);
+}
+
+fn settle_reveal<S: GraphSource>(
+    view: gpui_kit::WeakEntity<S>,
+    key: S::Key,
+    showing: fn(&S) -> bool,
+    last: Option<(gpui_kit::Pixels, gpui_kit::Pixels)>,
+    changed: bool,
+    frames: usize,
+    window: &Window,
+) {
+    window.on_next_frame(move |window, cx| {
+        let Some(bounds) = view
+            .update(cx, |source, cx| {
+                if !showing(source) || source.highlighted() != Some(&key) {
+                    return None;
+                }
+                let graph = source.graph();
+                graph.reveal_node(&key, window);
+                let bounds = (
+                    graph.pan.bounds().size.width,
+                    graph.vertical.bounds().size.height,
+                );
+                cx.notify();
+                Some(bounds)
+            })
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        if frames > 1 && !(changed && Some(bounds) == last) {
+            let changed = changed || last.is_some_and(|last| last != bounds);
+            settle_reveal(
+                view,
+                key,
+                showing,
+                Some(bounds),
+                changed,
+                frames - 1,
+                window,
+            );
+        }
+    });
 }
 
 #[cfg(test)]

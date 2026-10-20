@@ -55,7 +55,7 @@ impl GraphView {
     pub fn render<S: GraphSource>(
         self,
         source: &S,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<S>,
     ) -> AnyElement {
         let state = source.graph();
@@ -94,7 +94,7 @@ impl GraphView {
             split.lead_start(lead, cx);
             lead + STACKED.trail.start
         };
-        let graph = render_lead(source, scrolls, cx).into_any_element();
+        let graph = render_lead(source, scrolls, window, cx).into_any_element();
         let inspector = render_inspector(source, cx);
         let p = palette(cx);
         v_flex()
@@ -215,10 +215,11 @@ fn render_toolbar<S: GraphSource>(source: &S, cx: &mut Context<S>) -> Div {
 fn render_lead<S: GraphSource>(
     source: &S,
     scrolls: bool,
+    window: &mut Window,
     cx: &mut Context<S>,
 ) -> impl IntoElement + use<S> {
     let state = source.graph();
-    let graph = render_graph(source, cx);
+    let graph = render_graph(source, window, cx);
     v_flex()
         .id(state.ids.lead.clone())
         .test_support()

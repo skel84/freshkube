@@ -95,8 +95,8 @@ impl<K: Clone + Ord> Walk<'_, K> {
     }
 }
 
-/// The left edge a sideways scroll should have so the span `left..right`
-/// is in view, given the current left edge `at` and the view's `width`,
+/// The start a scroll axis should have so the span `left..right`
+/// is in view, given the current start `at` and the view's extent `width`,
 /// all in dp, with `margin` beside the span. It never scrolls before the
 /// start, and leaves the scroll alone when the span is already in view.
 pub(super) fn scroll_to_show(at: f32, width: f32, left: f32, right: f32, margin: f32) -> f32 {

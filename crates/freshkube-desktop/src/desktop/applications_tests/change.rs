@@ -1862,3 +1862,31 @@ fn the_spread_fixture_follows_applications_and_names_the_skipped_namespaces(
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn the_change_toggle_is_remembered_when_the_change_opens_again(cx: &mut TestAppContext) {
+    let (_runtime, handle, _view) = open(cx, 1280., 880.);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("change-view-chain", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("change-chain").is_some());
+        // Escape with no selection returns to the owning application page.
+        window.press("escape", cx);
+        window.press("escape", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click(PROD_AMS, cx);
+        window.press("f", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("change-chain").is_some());
+    })
+    .unwrap();
+}

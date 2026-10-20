@@ -3,7 +3,7 @@
 //! inside its card.
 
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::v_flex;
+use gpui_kit::component::{Selectable, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, PathBuilder, TestSupportExt, Window, canvas, div, point};
 
@@ -59,8 +59,50 @@ mod tests {
 
 /// Calls under the boxes, the selected one last and in the accent; a
 /// marker on each call that has one; then the boxes.
-pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyElement {
+pub(super) fn render_graph<S: GraphSource>(
+    source: &S,
+    window: &mut Window,
+    cx: &mut Context<S>,
+) -> AnyElement {
     let state = source.graph();
+    if let Some(focus) = state.focus.as_ref() {
+        let mut watch = state.focus_watch.borrow_mut();
+        if watch.is_empty() {
+            watch.push(cx.on_focus(focus, window, |this, window, cx| {
+                this.graph_mut().keyboard = window.last_input_was_keyboard();
+                if this.graph().keyboard {
+                    let key = this
+                        .cursor()
+                        .map(|cursor| match cursor {
+                            Cursor::Node(key) | Cursor::Link(_, key) => key,
+                        })
+                        .or_else(|| {
+                            this.graph()
+                                .placed()
+                                .next()
+                                .map(|(node, ..)| node.key.clone())
+                        });
+                    if let Some(key) = key {
+                        this.graph().reveal_node(&key, window);
+                    }
+                }
+                let entity = cx.entity().downgrade();
+                // Focus listeners run after drawing; request a frame for the ring.
+                window.on_next_frame(move |_, cx| {
+                    _ = entity.update(cx, |_, cx| cx.notify());
+                });
+                cx.notify();
+            }));
+            watch.push(cx.on_blur(focus, window, |this, _, cx| {
+                this.graph_mut().keyboard = false;
+                cx.notify();
+            }));
+        }
+    }
+    let focused = state
+        .focus
+        .as_ref()
+        .is_some_and(|focus| focus.is_focused(window));
     let p = palette(cx);
     let display = &state.display;
     let edges = state.edges.clone();
@@ -113,7 +155,16 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
     )
     .size_full();
     let highlighted = source.highlighted();
-    let cursor = source.cursor();
+    let cursor = if focused && state.keyboard {
+        source.cursor().or_else(|| {
+            state
+                .placed()
+                .next()
+                .map(|(node, ..)| Cursor::Node(node.key.clone()))
+        })
+    } else {
+        None
+    };
     // With keys the graph is one Tab stop; its boxes and calls are not.
     let keyed = state.focus.is_some();
     // A labelled graph leaves room under its last row for the scrollbar.
@@ -133,7 +184,15 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 .on_action(walk::<S, WalkPrevious>(Step::Previous, cx))
                 .on_action(walk::<S, WalkNext>(Step::Next, cx))
         })
-        .focus_visible(|style| style.bg(p.accent_soft))
+        .when(keyed, |this| {
+            this.on_click(cx.listener(|this: &mut S, _, window, cx| {
+                this.graph_mut().keyboard = false;
+                if let Some(focus) = this.graph().focus_handle() {
+                    window.focus(focus, cx);
+                }
+                cx.notify();
+            }))
+        })
         .relative()
         .flex_none()
         .w(dp(display.width))
@@ -158,17 +217,17 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 .when(!edge.tooltip.is_empty(), |this| {
                     this.tooltip(edge.tooltip.clone())
                 })
-                .on_click(cx.listener(move |this: &mut S, _, _, cx| {
-                    this.graph_mut().select(&from, &to);
+                .on_click(cx.listener(move |this: &mut S, _, window, cx| {
+                    this.graph_mut().keyboard = false;
+                    this.select_link(&from, &to, window, cx);
                     cx.notify();
                 }))
         }))
         .children(display.pills.iter().map(|&ix| {
             let edge = &state.edges[display.shown[ix].edge];
-            let (x, y) = display.shown[ix].route.mid;
+            let (x, y) = display.shown[ix].pill_at;
             let (from, to) = (edge.from.clone(), edge.to.clone());
-            // A fixed-width box centred on the line's middle, so the pill
-            // sits on the line whatever its label.
+            // A fixed-width box beside the route's target.
             div()
                 .absolute()
                 .left(dp(x - PILL_W / 2.))
@@ -176,14 +235,15 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 .w(dp(PILL_W))
                 .h(dp(PILL_H))
                 .flex()
-                .justify_center()
+                .justify_end()
                 .child(
                     div().rounded_full().bg(p.surface).child(
                         Button::new(edge.marker_id.clone())
                             .outline()
                             .group("fog-control")
                             .h(dp(PILL_H))
-                            .px(dp(8.))
+                            .px(dp(6.))
+                            .gap(dp(4.))
                             .rounded_full()
                             .bg(if display.selected == Some(ix) {
                                 p.accent_soft
@@ -197,6 +257,8 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                             })
                             .max_w(dp(PILL_W))
                             .tab_stop(!keyed)
+                            .when(matches!(&cursor, Some(Cursor::Link(from, to)) if from == &edge.from && to == &edge.to), |this| this.border_2())
+                            .children(edge.pill_tone.and_then(|tone| ui::status_glyph(tone, cx)))
                             .child(
                                 mono(edge.pill.clone().unwrap_or_default())
                                     .text_size(dp(11.))
@@ -208,8 +270,9 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                             .when(!edge.tooltip.is_empty(), |this| {
                                 this.tooltip(edge.tooltip.clone())
                             })
-                            .on_click(cx.listener(move |this: &mut S, _, _, cx| {
-                                this.graph_mut().select(&from, &to);
+                            .on_click(cx.listener(move |this: &mut S, _, window, cx| {
+                                this.graph_mut().keyboard = false;
+                                this.select_link(&from, &to, window, cx);
                                 cx.notify();
                             })),
                     ),
@@ -219,6 +282,8 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
             let node = &state.nodes[placed.node];
             let key = node.key.clone();
             Button::new(node.id.clone())
+                .selected(source.persistent_highlight() && highlighted == Some(&node.key))
+                .when(state.dimmed.contains(&node.key), |this| this.opacity(0.35))
                 .tab_stop(!keyed)
                 .outline()
                 .group("fog-control")
@@ -253,14 +318,33 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                                 .truncate()
                                 .font_weight(ui::HEADING_WEIGHT),
                         )
-                        .child(muted(node.detail.clone(), cx).w_full().truncate()),
+                        .child(if source.word_details() {
+                            div()
+                                .w_full()
+                                .text_size(dp(12.))
+                                .text_color(p.muted)
+                                .child(crate::table::word_cut(
+                                    gpui_kit::SharedString::from(format!("{}-detail", node.id)),
+                                    node.detail.clone(),
+                                ))
+                                .into_any_element()
+                        } else {
+                            muted(node.detail.clone(), cx)
+                                .w_full()
+                                .truncate()
+                                .into_any_element()
+                        }),
                 )
                 .when(!node.tooltip.is_empty(), |this| {
                     this.tooltip(node.tooltip.clone())
                 })
-                .on_click(
-                    cx.listener(move |this: &mut S, _, window, cx| this.open(&key, window, cx)),
-                )
+                .on_click(cx.listener(move |this: &mut S, _, window, cx| {
+                    this.graph_mut().keyboard = false;
+                    if this.graph().focus_handle().is_some() {
+                        this.step_to(Cursor::Node(key.clone()), window, cx);
+                    }
+                    this.open(&key, window, cx);
+                }))
         }))
         .into_any_element()
 }
@@ -299,8 +383,10 @@ fn at_cursor<K: PartialEq>(cursor: &Option<Cursor<K>>, key: &K) -> bool {
 }
 
 /// The size of a pill on a line, in dp: wide enough for a short key in
-/// monospace, and the box that centres it.
-const PILL_W: f32 = 76.;
+/// monospace, and the box that aligns it beside its target.
+pub(super) const PILL_W: f32 = 100.;
+/// Space between a forward link's pill and its target card.
+pub(super) const PILL_GAP: f32 = 8.;
 const PILL_H: f32 = 22.;
 
 /// The listener for one arrow key: ask the graph where it goes from the
@@ -318,9 +404,90 @@ fn walk<S: GraphSource, A: 'static>(
             let end = match &cursor {
                 Cursor::Node(key) | Cursor::Link(_, key) => key.clone(),
             };
+            this.graph_mut().keyboard = true;
             this.step_to(cursor, window, cx);
             this.graph().reveal_node(&end, window);
             cx.notify();
         });
+    }
+}
+
+/// The shared canvas inside a page's own frame and Inspector. It scrolls
+/// on both axes, with an always visible sideways scrollbar, and keeps
+/// its graph's focus.
+pub struct GraphCanvas;
+
+impl GraphCanvas {
+    /// A canvas legend with the table footer's geometry and colours.
+    pub fn legend(
+        id: impl Into<gpui_kit::ElementId>,
+        legend: impl IntoElement,
+        cx: &gpui_kit::App,
+    ) -> AnyElement {
+        crate::table::footer(
+            id,
+            vec![],
+            Some(legend.into_any_element()),
+            palette(cx).surface,
+            cx,
+        )
+        .into_any_element()
+    }
+
+    pub fn render<S: GraphSource>(
+        source: &S,
+        window: &mut Window,
+        cx: &mut Context<S>,
+    ) -> AnyElement {
+        use gpui_kit::component::scroll::{Scrollbar, ScrollbarMode};
+        let state = source.graph();
+        let graph = render_graph(source, window, cx);
+        div()
+            .id(state.id("canvas"))
+            .test_support()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .track_scroll(&state.vertical)
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
+            .child(
+                div()
+                    .relative()
+                    .min_w_0()
+                    .pb(dp(12.))
+                    .child(
+                        div()
+                            .id(state.ids.scroll.clone())
+                            .test_support()
+                            .track_scroll(&state.pan)
+                            .when(state.focus.is_some(), |this| {
+                                this.on_mouse_down_out(cx.listener(
+                                    |this: &mut S, _, window, cx| {
+                                        if this
+                                            .graph()
+                                            .focus_handle()
+                                            .is_some_and(|focus| focus.is_focused(window))
+                                        {
+                                            window.blur(cx);
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                            })
+                            .w_full()
+                            .min_w_0()
+                            .overflow_x_scroll()
+                            .child(graph),
+                    )
+                    .child(
+                        Scrollbar::horizontal(&state.pan)
+                            .id(state.ids.scrollbar.clone())
+                            .mode(ScrollbarMode::Always),
+                    ),
+            )
+            .into_any_element()
     }
 }

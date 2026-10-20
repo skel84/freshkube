@@ -61,6 +61,7 @@ fn invented(nodes: usize, edges: usize) -> (Vec<GraphNode<usize>>, Vec<GraphEdge
             tooltip: SharedString::default(),
             style: EdgeStyle::Auto,
             pill: None,
+            pill_tone: None,
         });
     }
     (boxes, calls)
@@ -119,6 +120,26 @@ fn the_service_map_s_pages_are_pinned() {
 }
 
 #[test]
+fn source_order_survives_unpaged_in_either_builder_order() {
+    let (nodes, edges) = invented(30, 60);
+    let mut a = GraphState::new("map", text()).in_source_order().unpaged();
+    let mut b = GraphState::new("map", text()).unpaged().in_source_order();
+    a.set(nodes.clone(), edges.clone());
+    b.set(nodes, edges);
+    assert!(a.metrics.preserve_order);
+    assert_eq!(a.metrics, b.metrics);
+    assert_eq!(fingerprint(&mut a), fingerprint(&mut b));
+    for (ix, (_, x, y)) in boxes(&a).iter().enumerate() {
+        for (_, next_x, next_y) in &boxes(&a)[ix + 1..] {
+            if x == next_x {
+                assert!(y < next_y, "the graph keeps source order in each column");
+            }
+        }
+    }
+    assert!(!state(8, 12).metrics.preserve_order);
+}
+
+#[test]
 fn an_unpaged_graph_draws_every_box_in_columns_that_never_wrap() {
     let (nodes, edges) = invented(120, 300);
     let mut state = GraphState::new("map", text()).unpaged();
@@ -156,6 +177,7 @@ fn an_unpaged_graph_with_one_caller_of_forty_keeps_them_in_one_column() {
             tooltip: SharedString::default(),
             style: EdgeStyle::Auto,
             pill: None,
+            pill_tone: None,
         })
         .collect();
     let mut state = GraphState::new("map", text()).unpaged();
@@ -272,6 +294,7 @@ struct Map {
     opened: Vec<usize>,
     /// Where the keyboard is, for a graph with keys.
     cursor: Option<Cursor<usize>>,
+    highlighted: Option<usize>,
     /// Where the split saves its width, as the app's file would.
     sizes: Rc<MemorySizes>,
 }
@@ -289,6 +312,10 @@ impl GraphSource for Map {
 
     fn graph_split(&self) -> &InspectorSplit {
         &self.split
+    }
+
+    fn highlighted(&self) -> Option<&usize> {
+        self.highlighted.as_ref()
     }
 
     fn open(&mut self, node: &usize, _: &mut Window, cx: &mut Context<Self>) {
@@ -395,6 +422,7 @@ fn open_saved(
             split: inspector_split(MAP, cx),
             opened: vec![],
             cursor: None,
+            highlighted: None,
             sizes,
         });
         view = Some(map.clone());
@@ -402,6 +430,53 @@ fn open_saved(
     });
     cx.run_until_parked();
     (handle.into(), view.unwrap())
+}
+
+#[gpui_kit::test]
+fn the_service_map_keeps_its_highlighted_box_and_hover_paint(cx: &mut TestAppContext) {
+    let (handle, map) = open(cx, state(8, 12), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let bounds = window
+            .find("map-node-0")
+            .bounds()
+            .scale(window.scale_factor());
+        let paint = |window: &Window| {
+            window
+                .painted_quads()
+                .iter()
+                .filter(|quad| quad.bounds == bounds)
+                .map(|quad| (quad.background, quad.border_color, quad.border_widths))
+                .collect::<Vec<_>>()
+        };
+        window.hover("map-node-0", cx);
+        let ordinary_hover = paint(window);
+        assert!(!ordinary_hover.is_empty());
+        map.update(cx, |map, cx| {
+            map.highlighted = Some(0);
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert_eq!(
+            paint(window),
+            ordinary_hover,
+            "highlighted map boxes retain the original hover treatment"
+        );
+        hover(window, point(px(2.), px(2.)), cx);
+        let p = crate::palette::palette(cx);
+        assert!(
+            paint(window)
+                .iter()
+                .any(|(_, color, widths)| *color == p.accent_line
+                    && widths.left.0 == window.scale_factor())
+        );
+        assert!(
+            paint(window)
+                .iter()
+                .any(|(background, _, _)| *background == p.surface_2.into())
+        );
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
@@ -963,6 +1038,7 @@ fn chain() -> GraphState<usize> {
         tooltip: SharedString::default(),
         style,
         pill: pill.map(Into::into),
+        pill_tone: None,
     };
     let edges = vec![
         call(0, 1, EdgeStyle::Solid, Some("3f9a1c2")),
@@ -1164,6 +1240,110 @@ fn a_graph_with_keys_is_one_tab_stop_and_boxes_and_pills_are_not(cx: &mut TestAp
     .unwrap();
 }
 
+fn cursor_ring(window: &Window, key: usize) -> bool {
+    let bounds = window
+        .find(format!("map-node-{key}"))
+        .bounds()
+        .scale(window.scale_factor());
+    window.painted_quads().iter().any(|quad| {
+        quad.bounds == bounds && quad.border_widths.left.0 >= 2. * window.scale_factor()
+    })
+}
+
+fn press_tab(handle: AnyWindowHandle, key: &str, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| window.press(key, cx))
+        .unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn tab_entry_rings_a_card_without_selecting_and_mouse_entry_does_not(cx: &mut TestAppContext) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.activate_window();
+        window.blur(cx);
+        window.render_frame(cx);
+        // Start at the toolbar, as an already-focused window does.
+        window.focus_next(cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for _ in 0..8 {
+        press_tab(handle, "tab", cx);
+        let focused = cx
+            .update_window(handle, |_, window, cx| {
+                map.read(cx)
+                    .graph
+                    .focus_handle()
+                    .unwrap()
+                    .is_focused(window)
+            })
+            .unwrap();
+        if focused {
+            break;
+        }
+    }
+    cx.update_window(handle, |_, window, cx| {
+        assert!(
+            map.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+        assert!(
+            window.simulate_next_frame(cx) > 0,
+            "keyboard focus requests the ring's frame"
+        );
+        window.render_frame(cx);
+        assert!(
+            cursor_ring(window, 0),
+            "Tab shows focus even without a selection"
+        );
+        assert_eq!(map.read(cx).cursor, None);
+        assert!(map.read(cx).opened.is_empty());
+        window.click("map-node-0", cx);
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            !cursor_ring(window, 0),
+            "mouse entry clears the keyboard ring"
+        );
+    })
+    .unwrap();
+    press_tab(handle, "shift-tab", cx);
+    press_tab(handle, "tab", cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            cursor_ring(window, 0),
+            "Tab restores the ring on the selected card"
+        );
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Node(0)));
+        window.click("map-edge-0--1", cx);
+    })
+    .unwrap();
+    press_tab(handle, "shift-tab", cx);
+    press_tab(handle, "tab", cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.simulate_next_frame(cx);
+        window.render_frame(cx);
+        let pill = window
+            .find("map-edge-0--1")
+            .bounds()
+            .scale(window.scale_factor());
+        assert!(
+            window.painted_quads().iter().any(|quad| quad.bounds == pill
+                && quad.border_widths.left.0 >= 2. * window.scale_factor()),
+            "Tab also rings a selected link"
+        );
+        assert_eq!(map.read(cx).cursor, Some(Cursor::Link(0, 1)));
+    })
+    .unwrap();
+}
+
 #[gpui_kit::test]
 fn a_graph_without_keys_keeps_its_boxes_and_markers_as_tab_stops(cx: &mut TestAppContext) {
     let (handle, map) = open(cx, chain(), 1280., None);
@@ -1210,10 +1390,87 @@ fn each_pill_sits_in_its_gutter_and_a_long_key_is_cut_to_fit_at_text_20(cx: &mut
             assert!(pill.left() >= a.right(), "{from}->{to} clear of its caller");
             assert!(pill.right() <= b.left(), "{from}->{to} clear of its callee");
             assert!(
-                pill.size.width <= unit * 76. + px(1.),
-                "{from}->{to} fits 76 dp"
+                pill.size.width <= unit * 100. + px(1.),
+                "{from}->{to} fits 100 dp"
             );
         }
+    })
+    .unwrap();
+}
+
+/// The keyboard ring is painted only while the canvas has focus. These
+/// inspect paint output, so the assertion covers the visible border.
+#[gpui_kit::test]
+fn a_background_click_only_focuses_and_keyboard_rings_the_cursor_until_blur(
+    cx: &mut TestAppContext,
+) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = map.read(cx).graph.pan.offset();
+        window.click_at("map-graph", point(px(4.), px(4.)), cx);
+        window.simulate_next_frame(cx);
+        assert_eq!(map.read(cx).cursor, None);
+        assert_eq!(map.read(cx).graph.pan.offset(), before);
+        let graph = window
+            .find("map-graph")
+            .bounds()
+            .scale(window.scale_factor());
+        let tint = crate::palette::palette(cx).accent_soft;
+        assert!(
+            !window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == graph && q.background == tint.into())
+        );
+        window.press("down", cx);
+        window.simulate_next_frame(cx);
+        assert!(
+            map.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+        let Some(Cursor::Node(key)) = map.read(cx).cursor else {
+            panic!("an arrow key shows a cursor");
+        };
+        let ring = |window: &Window| {
+            let bounds = window
+                .find(format!("map-node-{key}"))
+                .bounds()
+                .scale(window.scale_factor());
+            window
+                .painted_quads()
+                .iter()
+                .any(|q| q.bounds == bounds && q.border_widths.left.0 >= 2. * window.scale_factor())
+        };
+        assert!(ring(window), "cursor has a visible border immediately");
+        window.focus_next(cx);
+        assert!(
+            !map.read(cx)
+                .graph
+                .focus_handle()
+                .unwrap()
+                .is_focused(window)
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.simulate_next_frame(cx);
+        let Some(Cursor::Node(key)) = map.read(cx).cursor else {
+            panic!("cursor is retained");
+        };
+        let bounds = window
+            .find(format!("map-node-{key}"))
+            .bounds()
+            .scale(window.scale_factor());
+        assert!(
+            !window.painted_quads().iter().any(|q| q.bounds == bounds
+                && q.border_widths.left.0 >= 2. * window.scale_factor()),
+            "the cursor's border clears when focus leaves"
+        );
     })
     .unwrap();
 }

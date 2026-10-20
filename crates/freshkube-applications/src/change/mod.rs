@@ -15,15 +15,19 @@
 //! application's page.
 //! An action that leads into Resources goes through the shell, as every
 //! object link does; the page never approves, promotes or syncs.
+mod chain;
 mod changes;
 mod detail;
 mod outcome;
 pub(crate) mod read;
 pub(crate) mod table;
 #[cfg(test)]
-mod unread_tests;
+mod tests;
+mod trail;
 mod view;
 
+use crate::change_view::{ChangeView, ViewStore};
+use freshkube_ui::graph::GraphState;
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Local, Utc};
@@ -65,16 +69,20 @@ gpui_kit::actions!(
         /// Clears the selection; with none, goes back.
         Back,
         /// Opens the selected hop's object in Resources.
-        OpenHop
+        OpenHop,
+        /// Switches between List and Chain.
+        ToggleView
     ]
 );
 
-pub(crate) fn key_bindings() -> [KeyBinding; 4] {
+pub(crate) fn key_bindings() -> [KeyBinding; 6] {
     [
         KeyBinding::new("down", NextHop, Some(CONTEXT)),
         KeyBinding::new("up", PreviousHop, Some(CONTEXT)),
         KeyBinding::new("escape", Back, Some(CONTEXT)),
         KeyBinding::new("o", OpenHop, Some(CONTEXT)),
+        KeyBinding::new("enter", OpenHop, Some(CONTEXT)),
+        KeyBinding::new("v", ToggleView, Some(CONTEXT)),
     ]
 }
 
@@ -145,17 +153,8 @@ fn rank(tone: Tone) -> u8 {
 /// that. A Stage that runs other Freight keeps its rows' words and glyph.
 pub fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone) {
     let mut words = vec![detail.to_owned(), stage.words.to_lowercase()];
-    let on = stage
-        .cluster
-        .cluster()
-        .map(|cluster| format!(" on {cluster}"))
-        .unwrap_or_default();
-    let reach = match &stage.reach {
-        Reach::NotReached | Reach::Linked(Confidence::Confirmed) => return (words, rows),
-        Reach::Linked(confidence) => {
-            format!("pods{on} {}", link_word(*confidence).to_lowercase())
-        }
-        Reach::Refused(kinds) => format!("{kinds} refused"),
+    let Some(reach) = reach_words(stage) else {
+        return (words, rows);
     };
     words.push(reach);
     let tone = reach_tone(&stage.reach);
@@ -166,6 +165,23 @@ pub fn stage_line(detail: &str, stage: &Stage, rows: Tone) -> (Vec<String>, Tone
         _ => rows,
     };
     (words, tone)
+}
+
+/// A Stage's downstream reach, independent of the group's word order.
+fn reach_words(stage: &Stage) -> Option<String> {
+    let on = stage
+        .cluster
+        .cluster()
+        .map(|cluster| format!(" on {cluster}"))
+        .unwrap_or_default();
+    let reach = match &stage.reach {
+        Reach::NotReached | Reach::Linked(Confidence::Confirmed) => return None,
+        Reach::Linked(confidence) => {
+            format!("pods{on} {}", link_word(*confidence).to_lowercase())
+        }
+        Reach::Refused(kinds) => format!("{kinds} refused"),
+    };
+    Some(reach)
 }
 
 /// How sure it is that a Stage's pods run the change, as a glyph's tone:
@@ -209,6 +225,8 @@ pub struct HopRow {
     pub from: SharedString,
     pub time: SharedString,
     pub link: Option<Confidence>,
+    /// An unread or missing hop, derived from state and confidence.
+    pub ghost: bool,
     /// Coroot's verdict on the revision, once the outcome was read. It is
     /// not the hop's state and not its link, and no chip counts it.
     pub coroot: Option<Mark>,
@@ -258,6 +276,8 @@ pub struct ChangePage {
     /// entry, and its words for assistive technology, derived with the
     /// change.
     missing: Option<(SharedString, SharedString)>,
+    /// The setup owner's sanitized warning; composed with source notices.
+    setup_problem: Option<SharedString>,
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
@@ -284,9 +304,16 @@ pub struct ChangePage {
     split: InspectorSplit,
     /// The frame's scroll, used while the window is short.
     page_scroll: ScrollHandle,
+    view: ChangeView,
+    view_store: std::rc::Rc<dyn ViewStore>,
+    trail: trail::Trail,
+    graph: GraphState<SharedString>,
+    link_selected: bool,
+    chain_reveal_pending: bool,
     selected: Option<SharedString>,
     /// What the Inspector says of the selection.
     detail: Option<detail::Detail>,
+    detail_scroll: ScrollHandle,
     /// What Coroot found after each Deployment's deploy, read for the
     /// selected hop while the page shows.
     outcomes: outcome::Outcomes,
@@ -312,6 +339,7 @@ impl ChangePage {
         let change = fetch.unread();
         let mut loader = Loader::default();
         loader.set_visible(visible, read::ON_SHOW, cx);
+        let view_store = crate::change_view::store(window, cx);
         let mut page = Self {
             page_link: page_link(&change),
             copied: false,
@@ -323,6 +351,7 @@ impl ChangePage {
             stage: stage.map(str::to_owned),
             stale: None,
             missing: None,
+            setup_problem: None,
             loading,
             loading_motion,
             connections,
@@ -337,8 +366,15 @@ impl ChangePage {
             focus: cx.focus_handle(),
             split: InspectorSplit::new(PREFIX, cx).stacked(STACKED),
             page_scroll: ScrollHandle::new(),
+            view: view_store.view(),
+            view_store,
+            trail: Default::default(),
+            graph: chain::state(cx),
+            link_selected: false,
+            chain_reveal_pending: false,
             selected: None,
             detail: None,
+            detail_scroll: ScrollHandle::new(),
             outcomes: outcome::Outcomes::default(),
             parent: None,
         };
@@ -348,21 +384,46 @@ impl ChangePage {
         page
     }
 
+    pub(crate) fn set_setup_problem(
+        &mut self,
+        problem: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.setup_problem == problem {
+            return;
+        }
+        self.setup_problem = problem;
+        self.update_missing();
+        cx.notify();
+    }
+
+    /// Keep the file's warning beside source warnings, including before a
+    /// first answer and after a refresh. Only pre-sanitized text comes here.
+    fn update_missing(&mut self) {
+        let text = self
+            .setup_problem
+            .iter()
+            .map(|text| text.as_ref())
+            .chain(self.change.missing.iter().map(|line| line.text.as_str()))
+            .map(|line| line.trim_end_matches('.'))
+            .collect::<Vec<_>>()
+            .join(". ");
+        self.missing = (!text.is_empty()).then(|| {
+            let text = if self.setup_problem.is_some() {
+                format!("{text}.")
+            } else {
+                text
+            };
+            let label = format!("May be missing: {text}");
+            (text.into(), label.into())
+        });
+    }
+
     /// Derives the rows, groups and chips from a change. The first answer
     /// folds the Stages that are fine; a later one keeps the folds, the
     /// filter and the selection where their rows still are.
     pub fn show(&mut self, change: Change) {
         let first = self.rows.is_empty();
-        self.missing = (!change.missing.is_empty()).then(|| {
-            let text = change
-                .missing
-                .iter()
-                .map(|line| line.text.trim_end_matches('.'))
-                .collect::<Vec<_>>()
-                .join(". ");
-            let label = format!("May be missing: {text}");
-            (text.into(), label.into())
-        });
         let rows: Vec<HopRow> = change
             .hops
             .iter()
@@ -382,6 +443,8 @@ impl ChangePage {
                     label: format!("{}: {}{link}", hop.name, hop.detail).into(),
                     time: time.into(),
                     link: hop.link,
+                    ghost: hop.state == HealthIndicator::Unknown
+                        && hop.link == Some(Confidence::Unknown),
                     coroot: None,
                 }
             })
@@ -464,6 +527,7 @@ impl ChangePage {
         self.copied &= link == self.page_link;
         self.page_link = link;
         self.change = change;
+        self.update_missing();
         self.rows = rows;
         self.groups = groups;
         self.counts = counts;
@@ -474,6 +538,7 @@ impl ChangePage {
         {
             self.selected = None;
         }
+        self.derive_chain();
         self.prune_outcomes();
         self.sync_marks();
         self.detail = self.derive_detail();
@@ -509,13 +574,18 @@ impl ChangePage {
         self.parent = Some(parent.into());
     }
 
-    /// Puts the keyboard on the table, where its keys are bound.
+    /// Puts the keyboard on the shown trail view, where its keys are bound.
     pub(crate) fn focus(&self, window: &mut Window, cx: &mut App) {
-        window.focus(&self.focus, cx);
+        window.focus(&self.focus_handle(), cx);
     }
 
     pub fn focus_handle(&self) -> FocusHandle {
-        self.focus.clone()
+        if self.view == ChangeView::Chain && !self.rows.is_empty() && self.loading_rows().is_none()
+        {
+            self.graph.focus_handle().expect("Chain has keys").clone()
+        } else {
+            self.focus.clone()
+        }
     }
 
     /// Selects a hop, unfolding its group so its row shows.
@@ -525,18 +595,33 @@ impl ChangePage {
         };
         let group = row.group;
         self.selected = Some(row.key.clone());
+        self.link_selected = false;
+        self.graph.clear_selection();
         self.detail = self.derive_detail();
         self.read_outcome(false, cx);
         if self.folded.remove(&group) {
             self.derive();
         }
-        kit::reveal(self, ScrollStrategy::Nearest);
+        if self.view == ChangeView::Chain {
+            if let Some(key) = self
+                .selected
+                .as_ref()
+                .and_then(|key| self.trail.cards.get(key))
+            {
+                self.graph.reveal_node(key, window);
+            }
+            self.chain_reveal_pending = true;
+        } else {
+            kit::reveal(self, ScrollStrategy::Nearest);
+        }
         // Stacked, the Inspector shrinks the table over a few frames: the
         // selection is revealed again until its height holds.
-        if freshkube_ui::page::page_width(window) < inspector::SPLIT_WIDTH {
+        if self.view == ChangeView::List
+            && freshkube_ui::page::page_width(window) < inspector::SPLIT_WIDTH
+        {
             kit::reveal_when_settled(
                 cx.entity().downgrade(),
-                |page| page.selected.is_some(),
+                |page| page.view == ChangeView::List && page.selected.is_some(),
                 window,
             );
         }
@@ -582,12 +667,15 @@ impl ChangePage {
     fn toggle_filter(&mut self, tone: Tone, cx: &mut Context<Self>) {
         self.filter = (self.filter != Some(tone)).then_some(tone);
         self.derive();
+        self.dim_chain();
         cx.notify();
     }
 
     /// Escape: the selection first, then back.
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.selected.take().is_some() {
+            self.link_selected = false;
+            self.graph.clear_selection();
             self.detail = None;
             self.hide_outcomes();
             cx.notify();

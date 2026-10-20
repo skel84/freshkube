@@ -281,7 +281,7 @@ struct Linked<'a> {
 }
 
 impl Linked<'_> {
-    fn hop(self) -> Hop {
+    fn hop(self, after: Option<String>) -> Hop {
         Hop {
             key: self.key,
             group: self.group,
@@ -291,7 +291,7 @@ impl Linked<'_> {
             from: self.from.into(),
             at: None,
             link: Some(self.confidence),
-            after: None,
+            after,
             shows: Shows::Hop(Box::new(HopDetail {
                 kind: self.kind.into(),
                 title: self.name,
@@ -352,7 +352,7 @@ fn deployed(project: &str, freight: &str, stage: &str, group: usize, reach: &Rea
             why,
             action: None,
         }
-        .hop()
+        .hop(Some(format!("{stage}-eligible")))
     };
     let workload = |confidence, detail, why| {
         Linked {
@@ -383,7 +383,7 @@ fn deployed(project: &str, freight: &str, stage: &str, group: usize, reach: &Rea
             why,
             action: Some(deployment.clone()),
         }
-        .hop()
+        .hop(Some(format!("{stage}-argocd")))
     };
     let pods = |confidence, detail, here_says, why| {
         Linked {
@@ -406,7 +406,7 @@ fn deployed(project: &str, freight: &str, stage: &str, group: usize, reach: &Rea
             why,
             action: Some(deployment.clone()),
         }
-        .hop()
+        .hop(Some(format!("{stage}-deployment")))
     };
     let synced = "The revision matches on both sides.";
     let pinned = "Managed by the Application, and its pod template pins the Freight's digest.";
@@ -486,7 +486,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             why: "The build ran on this commit.",
             action: None,
         }
-        .hop(),
+        .hop(None),
         Linked {
             key: "freight".into(),
             group: 1,
@@ -503,7 +503,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
             why: "The Freight names the build's commit.",
             action: None,
         }
-        .hop(),
+        .hop(Some("commit".into())),
     ];
     let mut stages = Vec::new();
     for (ix, (name, reach)) in reaches.iter().enumerate() {
@@ -548,7 +548,7 @@ fn short(invented: &Invented, reaches: &[(&str, Reach)], now: DateTime<Utc>) -> 
                 from: CICD.into(),
                 at: None,
                 link: None,
-                after: None,
+                after: Some("freight".into()),
                 shows: Shows::Stage(ix),
             });
         }
