@@ -1,0 +1,1 @@
+- **Settings:** the save status names a hand-edited file's `.bak` backup, and Monitoring's Per entry hint opens Clusters with its first entry selected for editing metrics sources.
