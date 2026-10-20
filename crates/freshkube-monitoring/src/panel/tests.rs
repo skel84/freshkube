@@ -1624,3 +1624,69 @@ fn a_failed_first_read_replaces_a_tables_loading_rows(cx: &mut TestAppContext) {
     ));
     assert!(cx.read(|cx| panels[alerts].read(cx).loading_motion(cx).is_none()));
 }
+
+#[gpui_kit::test]
+fn marker_focus_draws_heavier_and_keeps_its_labels_until_cleared(cx: &mut TestAppContext) {
+    use freshkube_core::monitoring::markers::{Marker, MarkerKind};
+    let (dashboard, specs) = cluster();
+    let cpu = index_of(&specs, "CPU usage by node");
+    let (handle, panels) = mount(cx, specs);
+    answer(cx, &dashboard, &panels);
+    let panel = &panels[cpu];
+    let at = END - 3 * 3600;
+    let marker = |at, label: &str| Marker {
+        kind: MarkerKind::Deploy,
+        at,
+        label: label.into(),
+        namespace: None,
+        node: None,
+    };
+    cx.update(|cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_markers(
+                Rc::from([
+                    marker(at, "checkout · 1.2.0"),
+                    marker(at, "worker · 1.2.0"),
+                    marker(at + 600, "api · 1.3.0"),
+                    marker(END - 7 * 3600, "old · 1.1.0"),
+                ]),
+                cx,
+            );
+        })
+    });
+    let label_id = format!("monitoring-panel-{cpu}-focused-marker-0");
+    let draw = |cx: &mut TestAppContext, labels: usize| {
+        let before = probe::count("monitoring-focused-marker");
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(window.try_find(label_id.clone()).is_some(), labels > 0);
+        })
+        .unwrap();
+        assert_eq!(probe::count("monitoring-focused-marker") - before, labels);
+    };
+    let chart = cx.read(|cx| panel.read(cx).chart().unwrap());
+    draw(cx, 0);
+    cx.update(|cx| panel.update(cx, |panel, cx| panel.set_focused_marker(Some(at), cx)));
+    draw(cx, 2);
+    cx.read(|cx| {
+        let panel = panel.read(cx);
+        assert_eq!(
+            panel.focused_marker_labels(),
+            ["checkout · 1.2.0", "worker · 1.2.0"]
+        );
+        assert!(
+            Rc::ptr_eq(&chart, &panel.chart().unwrap()),
+            "focus never changes the chart"
+        );
+        assert!(panel.cursor.is_none(), "no hover is needed for the label");
+    });
+    cx.update(|cx| panel.update(cx, |panel, cx| panel.set_focused_marker(None, cx)));
+    draw(cx, 0);
+    cx.update(|cx| {
+        panel.update(cx, |panel, cx| {
+            panel.set_focused_marker(Some(END - 7 * 3600), cx)
+        })
+    });
+    draw(cx, 0);
+    assert!(cx.read(|cx| Rc::ptr_eq(&chart, &panel.read(cx).chart().unwrap())));
+}

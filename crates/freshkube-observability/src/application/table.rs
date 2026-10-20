@@ -16,6 +16,7 @@ pub(crate) struct Prepared {
     columns: Vec<Column>,
     width: f32,
     rows: Vec<Row>,
+    app: Option<api::AppId>,
 }
 
 #[derive(Clone)]
@@ -42,6 +43,7 @@ impl TableColumn for Column {
 pub(crate) struct Row {
     label: SharedString,
     cells: Vec<Cell>,
+    revision: Option<api::DeploymentRevision>,
 }
 
 struct Cell {
@@ -139,6 +141,7 @@ impl Prepared {
                 Row {
                     label: cells.first().map(|c| c.text.clone()).unwrap_or_default(),
                     cells,
+                    revision: None,
                 }
             })
             .collect();
@@ -180,7 +183,56 @@ impl Prepared {
             width: columns.iter().map(|c| c.width).sum(),
             columns,
             rows,
+            app: None,
         }
+    }
+
+    /// Typed revisions give each report button its exact start and findings.
+    pub(super) fn revisions(app: &api::AppId, revisions: &[api::DeploymentRevision]) -> Self {
+        let value = |value: String| api::Cell {
+            value,
+            ..Default::default()
+        };
+        let table = api::Table {
+            header: vec![
+                "Revision".into(),
+                "Started".into(),
+                "Coroot's finding".into(),
+            ],
+            rows: revisions
+                .iter()
+                .map(|revision| {
+                    vec![
+                        value(revision.version.clone()),
+                        value(crate::format::local_time(revision.started_at)),
+                        value(if revision.findings.is_empty() {
+                            revision.note.clone().unwrap_or_else(|| "—".into())
+                        } else {
+                            revision
+                                .findings
+                                .iter()
+                                .map(|f| f.message.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" · ")
+                        }),
+                    ]
+                })
+                .collect(),
+        };
+        let mut prepared = Self::new(&table);
+        for (row, revision) in prepared.rows.iter_mut().zip(revisions) {
+            row.revision = Some(revision.clone());
+            row.cells[0].status = Some(Status::from(revision.status));
+        }
+        prepared.columns.push(Column {
+            index: 3,
+            label: "".into(),
+            width: 136.,
+            flexible: false,
+        });
+        prepared.width += 136.;
+        prepared.app = Some(app.clone());
+        prepared
     }
 }
 
@@ -278,6 +330,25 @@ impl TableSource for ReportTable {
             .flex()
             .items_center()
             .gap(dp(6.));
+        if ix == 3
+            && let (Some(app), Some(revision)) = (&self.table.app, &row.data.revision)
+        {
+            let (app, revision, page) = (app.clone(), revision.clone(), self.page.clone());
+            return frame
+                .child(
+                    action(
+                        SharedString::from(format!("obs-show-on-charts-{}", revision.id)),
+                        "Show on charts",
+                    )
+                    .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        _ = page.update(cx, |page, cx| {
+                            page.show_revision_on_charts(&app, &revision, cx)
+                        });
+                    })),
+                )
+                .into_any_element();
+        }
         let Some(cell) = row.data.cells.get(ix) else {
             return frame.into_any_element();
         };
