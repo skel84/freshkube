@@ -3,7 +3,7 @@
 //! whether to reconnect and whether to keep the key. The key itself goes only
 //! to `keys.json` ([`crate::secrets`]), named by the server.
 use super::*;
-use crate::secrets::{STORE_NAME, SecretStore, Secrets};
+use crate::secrets::{SecretStore, Secrets};
 use freshkube_core::workspace::MAX_BYTES;
 use freshkube_prefs::{Document, Layout};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -122,7 +122,7 @@ pub(super) struct Memory {
     secrets: Option<Secrets>,
     pub(super) saved: Saved,
     /// Reconnect on the first show, once.
-    restore: bool,
+    pub(super) restore: bool,
     /// The key the store returned, with the server it belongs to. It is only
     /// ever sent to that server.
     pub(super) key: Option<(String, String)>,
@@ -397,8 +397,22 @@ impl ObservabilityPage {
         };
         if memory.setup.is_some() {
             memory.saved.reconnect = true;
-            memory.key = (auth != 2).then_some((url, key));
+            // The configured block names `keys.json` when the key is kept;
+            // a key typed in Settings goes there once it has worked.
+            let keep = auth != 2
+                && !key.is_empty()
+                && memory.can_remember()
+                && memory.saved.remember
+                && memory.key_for(&url) != Some(key.as_str());
+            memory.key = (auth != 2).then_some((url.clone(), key.clone()));
             let project = memory.saved.project.clone();
+            if keep {
+                self.run_key_step(
+                    move |_, store| store.map_or(Ok(()), |store| store.write(&account(&url), &key)),
+                    true,
+                    cx,
+                );
+            }
             if let Some(project) = project
                 && let Some(project) = self.live.projects.iter().find(|p| p.id == project).cloned()
             {
@@ -453,11 +467,25 @@ impl ObservabilityPage {
         saving: bool,
         cx: &mut Context<Self>,
     ) {
+        self.run_key_step_then(step, saving, None, cx);
+    }
+
+    /// [`Self::run_key_step`], and `kept` is announced once the store has it.
+    fn run_key_step_then(
+        &mut self,
+        step: impl FnOnce(&Path, Option<&dyn SecretStore>) -> Result<(), String> + Send + 'static,
+        saving: bool,
+        kept: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(task) = self.queue(step, cx) else {
             return;
         };
         cx.spawn(async move |this, cx| {
             let Err(error) = task.await else {
+                if let Some(server) = kept {
+                    _ = this.update(cx, |_, cx| cx.emit(ObservabilityEvent::KeyKept(server)));
+                }
                 return;
             };
             _ = this.update(cx, |this, cx| {
@@ -467,12 +495,13 @@ impl ObservabilityPage {
                 if saving {
                     memory.saved.remember = false;
                     memory.key = None;
-                    memory.error = Some(
-                        format!(
-                            "Couldn't save the key: {error}. It stays in memory until you quit."
-                        )
-                        .into(),
+                    let words = format!(
+                        "Couldn't save the key: {error}. It stays in memory until you quit."
                     );
+                    memory.error = Some(words.clone().into());
+                    if this.live.provider.is_none() {
+                        this.live.error = Some(words);
+                    }
                     this.save_memory(cx);
                 } else {
                     memory.error = Some(error.into());
@@ -492,57 +521,6 @@ impl ObservabilityPage {
         }
         memory.saved.project = Some(project.to_owned());
         self.save_memory(cx);
-    }
-
-    /// Remember on saves the key in use at once; off forgets the saved key.
-    pub(super) fn set_remember(&mut self, remember: bool, cx: &mut Context<Self>) {
-        if self
-            .memory
-            .as_ref()
-            .is_some_and(|memory| memory.setup.is_some())
-        {
-            return;
-        }
-        let typed = self.secret.read(cx).value().to_string();
-        let connected = self.live.provider.is_some();
-        let Some(memory) = &mut self.memory else {
-            return;
-        };
-        memory.saved.remember = remember;
-        memory.error = None;
-        let url = memory.saved.url.clone();
-        let key = if !typed.is_empty() {
-            Some(typed)
-        } else {
-            memory.key_for(&url).map(str::to_owned)
-        };
-        if !remember {
-            memory.key = None;
-        }
-        self.save_memory(cx);
-        if url.is_empty() {
-            cx.notify();
-            return;
-        }
-        if remember {
-            if let Some(key) = key.filter(|_| connected && self.auth != 2) {
-                if let Some(memory) = &mut self.memory {
-                    memory.key = Some((url.clone(), key.clone()));
-                }
-                self.run_key_step(
-                    move |_, store| store.map_or(Ok(()), |store| store.write(&account(&url), &key)),
-                    true,
-                    cx,
-                );
-            }
-        } else {
-            self.run_key_step(
-                move |_, store| store.map_or(Ok(()), |store| store.forget(&account(&url))),
-                false,
-                cx,
-            );
-        }
-        cx.notify();
     }
 
     /// Setup is shared configuration; the launch choice stays machine-local.
@@ -589,67 +567,40 @@ impl ObservabilityPage {
         }
     }
 
-    /// The Remember checkbox and what the store holds, under the key field.
-    pub(super) fn render_memory(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let memory = self.memory.as_ref()?;
-        let url = self.url.read(cx).value().to_string();
-        let typed = !self.secret.read(cx).value().is_empty();
-        let key_file = memory
-            .setup
-            .as_ref()
-            .and_then(|setup| setup.as_ref())
-            .is_some_and(|setup| setup.api_key_file.is_some());
-        let note = if memory.reading {
-            Some(if key_file {
-                "Reading the configured Coroot key file…".into()
-            } else {
-                format!("Reading the key from {STORE_NAME}…")
-            })
-        } else if !typed && self.auth != 2 && memory.key_for(&url).is_some() {
-            Some(if key_file {
-                "Using the configured Coroot key file.".into()
-            } else {
-                format!("Using the key saved in {STORE_NAME}.")
-            })
-        } else {
-            None
+    /// The store keeps `key` for `server`; a store that can't says why in the
+    /// connection's state.
+    pub(super) fn keep_key(&mut self, server: &str, key: &str, cx: &mut Context<Self>) {
+        let Some(memory) = &mut self.memory else {
+            return;
         };
-        Some(
-            v_flex()
-                .gap(dp(6.))
-                .when(
-                    memory.setup.is_none() && memory.can_remember() && self.auth != 2,
-                    |this| {
-                        this.child(
-                            gpui_kit::component::checkbox::Checkbox::new("obs-remember")
-                                .small()
-                                .label(format!("Remember key in {STORE_NAME}"))
-                                .checked(memory.saved.remember)
-                                .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                    this.set_remember(*checked, cx)
-                                })),
-                        )
-                    },
-                )
-                .when_some(note, |this, note| this.child(muted(note, cx)))
-                .when_some(memory.error.clone(), |this, error| {
-                    this.child(text(error).text_color(palette(cx).crit_ink))
-                })
-                .into_any_element(),
-        )
+        if !memory.can_remember() {
+            return;
+        }
+        memory.key = Some((server.to_owned(), key.to_owned()));
+        let (account, key) = (account(server), key.to_owned());
+        let server = server.to_owned();
+        self.run_key_step_then(
+            move |_, store| store.map_or(Ok(()), |store| store.write(&account, &key)),
+            true,
+            Some(server),
+            cx,
+        );
     }
 
-    /// Where the credential lives, for the line beside Connect.
-    pub(super) fn credential_note(&self) -> String {
-        match &self.memory {
-            Some(memory) if memory.setup.is_some() => {
-                "The connection is configured in freshkube.yaml.".into()
-            }
-            Some(memory) if memory.saved.remember && memory.can_remember() && self.auth != 2 => {
-                format!("The key is kept in {STORE_NAME} until Disconnect.")
-            }
-            _ => "Credentials stay in memory until Disconnect or the window closes.".into(),
+    /// The store no longer keeps the key for `server`.
+    pub(super) fn forget_stored_key(&mut self, server: &str, cx: &mut Context<Self>) {
+        let Some(memory) = &mut self.memory else {
+            return;
+        };
+        if memory.key_for(server).is_some() {
+            memory.key = None;
         }
+        let account = account(server);
+        self.run_key_step(
+            move |_, store| store.map_or(Ok(()), |store| store.forget(&account)),
+            false,
+            cx,
+        );
     }
 }
 
