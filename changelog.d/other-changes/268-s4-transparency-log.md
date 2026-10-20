@@ -1,0 +1,1 @@
+- **Transparency log:** with `transparency_log` on, a verified signature confirms only when the log holds an entry with that signature and key; the address comes from the setting or Chains' configuration.

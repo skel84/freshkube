@@ -59,8 +59,8 @@ Only after all seven is the attestation `Verified`. A verified provenance that n
 Off by default, and the only network a verification can use. It never changes a signature check; it adds what the log says.
 
 - **Off:** nothing is fetched. The Signature row says `transparency log not read (off)`. Confirmed does not wait for it.
-- **On:** for a signature that verified, the entry is looked up in the log and compared with what was verified: the entry's recorded signature and key must be the ones just checked. A matching entry is shown with its index. A log that can't be reached, or answers an error, is its own state (`log unreachable`, `log refused`), and a missing or non-matching entry is `not in the log` / `log entry differs`.
-- **What on means for the link:** decided ([Decisions](#decisions), 3): with the switch on, the log is required, so a link whose signature verified but whose entry is missing, differs or couldn't be read is **Claimed** with the reason, not Confirmed. A person who turns the log on is asking for it.
+- **On:** for a signature that verified, the entry is looked up in the log and compared with what was verified: the entry's recorded signature and key must be the ones just checked. A matching entry is shown with its index. A log that can't be reached, or answers an error, is its own state (`log unreachable`, `log refused`), and a missing or non-matching entry is `not in the log` / `log entry differs`. An entry of a kind this version doesn't read (it reads `hashedrekord` 0.0.1 and `intoto` 0.0.2, from Rekor's documentation, not yet checked against a live log) is not a difference: it is `the log entry is a <kind> entry, which this version doesn't read`. The index is the digits after `logIndex=` in `chains.tekton.dev/transparency`; the annotation's host is never used.
+- **What on means for the link:** decided ([Decisions](#decisions), 3): with the switch on, the log is required, so a link whose signature verified but whose entry is missing, differs, is of a kind not read or couldn't be read is **Claimed** with the reason, not Confirmed. A person who turns the log on is asking for it.
 - **Where the log is:** from the Chains config (`transparency.url`, read from `chains-config`), or a `supply_chain.transparency_url` the person sets, never from an annotation on a run: an annotation is writable by whoever can patch a TaskRun, and a read must not be steerable to a host they choose.
 - **What is not checked:** the log's own signature over its checkpoint and the inclusion proof need the log's public key, which is the Sigstore trust root and comes with keyless (later). Until then the entry is evidence that the log *has* the signature, and the doc and the screen say so: `log entry matches; the log's own signature was not checked`.
 
@@ -70,7 +70,7 @@ Off by default, and the only network a verification can use. It never changes a 
 | --- | --- |
 | Key file, envelope, signature, subject digest, provenance facts | The TaskRun or PipelineRun already read, and the local key file. **No network, no extra permission.** |
 | Chains' configuration (what it stores, where) | One ConfigMap GET, `chains-config` in Chains' namespace, on the CI/CD entry. |
-| Transparency log entry | One GET per verified signature, to the log, only when switched on, under the same deadline and cap as every read. |
+| Transparency log entry | One GET per verified signature, to the log, only when switched on, from a client of its own: https only, no redirects, no header (never a token), no CA from the Results setting, a per-request deadline and a streamed body cap. |
 | Tekton Results | Its own route; see below. |
 
 No Secret is read, not even the Chains signing Secret's public half. The public key is a file the person gives.
