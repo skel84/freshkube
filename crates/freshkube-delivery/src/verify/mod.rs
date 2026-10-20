@@ -101,6 +101,9 @@ pub(crate) enum NotRead {
 pub(crate) struct Verified {
     /// The key's fingerprint.
     pub(crate) key: String,
+    /// The signature that verified, as the envelope holds it: what a
+    /// transparency log's entry must also hold.
+    pub(crate) signature: Vec<u8>,
     /// The subject digest that matched the build's.
     pub(crate) subject: Digest,
     pub(crate) subject_name: Option<String>,
@@ -192,15 +195,15 @@ fn check(key: &TrustedKey, envelope: &Envelope, built: &Digest) -> Verification 
         ));
     }
     let signed = dsse::pre_authentication_encoding(&envelope.payload_type, &envelope.payload);
-    if !envelope
+    let Some(signature) = envelope
         .signatures
         .iter()
-        .any(|signature| key.verifies(&signed, &signature.bytes))
-    {
+        .find(|signature| key.verifies(&signed, &signature.bytes))
+    else {
         return Verification::SignatureFailed {
             key: key.fingerprint().to_owned(),
         };
-    }
+    };
     // The signature covers these bytes, and the claims were read from them.
     let claims = &envelope.claims;
     if !claims
@@ -219,6 +222,7 @@ fn check(key: &TrustedKey, envelope: &Envelope, built: &Digest) -> Verification 
     {
         Some(subject) => Verification::Verified(Verified {
             key: key.fingerprint().to_owned(),
+            signature: signature.bytes.clone(),
             subject: built.clone(),
             subject_name: subject.name.clone(),
             predicate_type: claims.predicate_type.clone(),

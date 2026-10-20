@@ -184,6 +184,50 @@ fn an_empty_workspace_is_a_setup() {
 }
 
 #[test]
+fn in_cluster_aliases_in_yaml_keep_the_setup_and_round_trip() {
+    let text = "\
+version: 1
+clusters:
+  - {id: core-a, role: core, context: core-a}
+  - {id: env-b, role: environment, context: env-b}
+sources: {argocd: env-b}
+metrics: {mode: per-entry}
+destinations:
+  - {server: 'https://Kubernetes.Default.Svc:443/', entry: env-b, note: kept}
+  - {name: in-cluster, entry: env-b}
+  - {name: remote, entry: core-a}
+";
+    let setup = ok(text);
+    assert_eq!(setup.workspace.clusters.len(), 2);
+    assert_eq!(setup.workspace.destinations.len(), 3);
+    assert_eq!(setup.metrics.mode, Mode::PerEntry);
+    assert_eq!(setup.unknown_keys(), vec!["destinations[0].note"]);
+    assert_eq!(ok(&to_text(&setup)), setup);
+    assert!(matches!(
+        refused(&text.replace("sources: {argocd: env-b}", "sources: {argocd: missing}")),
+        Invalid::Workspace(workspace::Invalid::Destination {
+            fault: workspace::Fault::ArgoCdUnknown,
+            ..
+        })
+    ));
+    assert_eq!(
+        refused(&text.replace("sources: {argocd: env-b}", "sources: {argocd: core-a}")).to_string(),
+        "destinations[0] (server https://Kubernetes.Default.Svc:443/) names Argo CD's own cluster but maps it to another entry; use core-a, the selected Argo CD source entry"
+    );
+    assert_eq!(
+        refused(&text.replace("entry: env-b, note: kept", "entry: core-a, note: kept")).to_string(),
+        "destinations[0] (server https://Kubernetes.Default.Svc:443/) names Argo CD's own cluster but maps it to another entry; use env-b, the selected Argo CD source entry"
+    );
+    assert!(
+        matches!(
+            refused(&text.replace("role: core", "role: unknown")),
+            Invalid::WrongShape(_)
+        ),
+        "unrelated refusals remain file-fatal"
+    );
+}
+
+#[test]
 fn unknown_keys_are_kept_at_every_level() {
     let text = "\
 version: 1

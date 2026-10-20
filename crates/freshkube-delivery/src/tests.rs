@@ -26,6 +26,8 @@ pub(super) fn plan(contexts: &[(&str, &str)]) -> Plan {
         cluster_names: Vec::new(),
         evidence_result: None,
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         stage_naming: None,
         map_hint: Default::default(),
         names: Default::default(),

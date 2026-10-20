@@ -531,10 +531,10 @@ fn the_gear_panels_dividers_keep_their_pixel_in_a_short_window(cx: &mut TestAppC
     .unwrap();
 }
 
-/// A `destinations` row for Argo CD's own cluster refuses the file, and
-/// Settings › Workspace names the row and why, over the workspace of one.
+/// A legacy workspace with a consistent in-cluster alias migrates and stays
+/// in use, rather than falling back to the workspace of one.
 #[gpui_kit::test]
-fn a_destination_for_argo_cds_own_cluster_says_why_the_file_isnt_used(cx: &mut TestAppContext) {
+fn in_cluster_aliases_in_a_legacy_workspace_migrate_and_stay_in_use(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -544,28 +544,33 @@ fn a_destination_for_argo_cds_own_cluster_says_why_the_file_isnt_used(cx: &mut T
             "destinations":[{"server":"https://kubernetes.default.svc","entry":"core-fra"}]}"#,
     )
     .unwrap();
+    // Migration runs before the production shell is mounted, outside this
+    // UI harness. Run that startup step explicitly on the invented files.
+    assert!(matches!(
+        freshkube_core::setup::migrate(
+            &guard.path().join("preferences.json"),
+            chrono::DateTime::UNIX_EPOCH,
+        ),
+        freshkube_core::setup::Outcome::Done { .. }
+    ));
     let (_runtime, handle, view) = launch(cx, guard.path());
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |pilot, cx| {
             pilot.navigate_from_keyboard(Page::Settings, window, cx)
         });
         window.render_frame(cx);
-        assert!(matches!(
-            view.read(cx).settings_page.read(cx).origin(),
-            Origin::Refused(_)
-        ));
-        let banner = window.find("settings-banner");
-        assert!(banner.visible());
-        let words = banner.label().unwrap().to_owned();
-        assert!(
-            words.contains(
-                "workspace.json isn’t used: destinations[0] (server https://kubernetes.default.svc) \
-                 names Argo CD's own cluster, which is known already"
-            ),
-            "{words}"
-        );
+        let page = view.read(cx).settings_page.read(cx);
+        assert_eq!(page.origin(), &Origin::File);
+        assert!(page.uses_setup);
+        assert_eq!(page.workspace.destinations.len(), 1);
+        assert_eq!(page.workspace.destinations[0].entry, "core-fra");
+        assert!(window.try_find("settings-banner").is_none());
+        assert!(window.find("settings-cluster-core-fra").visible());
     })
     .unwrap();
+    assert!(guard.path().join("freshkube.yaml").exists());
+    assert!(guard.path().join("workspace.json.bak").exists());
+    assert!(!guard.path().join("workspace.json").exists());
 }
 
 /// The sections in the column, App's then Workspace's, by their ids.

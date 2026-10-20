@@ -414,6 +414,8 @@ async fn main() {
         map_hint: Default::default(),
         names: Default::default(),
         public_key_file: None,
+        transparency_log: false,
+        transparency_url: None,
         evidence_result: match (
             &args.evidence_result,
             &args.evidence_commit,
