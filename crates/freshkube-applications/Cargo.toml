@@ -36,6 +36,7 @@ tracing.workspace = true
 testing = ["gpui-kit/test-support", "freshkube-core/testing", "freshkube-ui/testing", "freshkube-observability/testing"]
 
 [dev-dependencies]
+freshkube-observability = { workspace = true, features = ["testing"] }
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 freshkube-probe = { workspace = true, features = ["counting"] }
 freshkube-core = { workspace = true, features = ["testing"] }

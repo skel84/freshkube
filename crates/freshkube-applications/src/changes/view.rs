@@ -250,7 +250,7 @@ fn section(title: &str, cx: &App) -> Div {
 }
 
 /// A Stage, its glyph and word, and why under them.
-fn stage_line(ix: usize, cell: &Cell, cx: &App) -> AnyElement {
+fn stage_line(ix: usize, cell: &Cell, cx: &mut Context<ChangesPage>) -> AnyElement {
     let p = palette(cx);
     v_flex()
         .id(SharedString::from(format!("changes-detail-stage-{ix}")))
@@ -275,6 +275,77 @@ fn stage_line(ix: usize, cell: &Cell, cx: &App) -> AnyElement {
                 .whitespace_normal()
                 .child(cell.why.clone()),
         )
+        .children(cell.after.as_ref().map(|line| outcome_line(line, cx)))
+        .into_any_element()
+}
+
+/// A text link before a read, then the change page's exact summary.
+fn outcome_line(line: &super::outcome::Line, cx: &mut Context<ChangesPage>) -> AnyElement {
+    let id = SharedString::from(format!("changes-after-{}", line.stage));
+    let Some(summary) = &line.summary else {
+        return Button::new(id)
+            .link()
+            .xsmall()
+            .h_auto()
+            .p_0()
+            .whitespace_normal()
+            .w_full()
+            .min_w_0()
+            .accessibility_label("After the deploy: open the change to read it")
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .text_size(dp(12.))
+                    .child("After the deploy: open the change to read it"),
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.open_selected(window, cx)))
+            .into_any_element();
+    };
+    let mut label = format!("After the deploy: {}", summary.words);
+    if summary.stale.is_some() {
+        label.push_str(" · last read");
+    }
+    h_flex()
+        .id(id)
+        .test_support()
+        .aria_label(label)
+        .gap(dp(4.))
+        .flex_wrap()
+        .items_center()
+        .child("After the deploy:")
+        .children(summary.mark.as_ref().and_then(|mark| {
+            ui::status_glyph(mark.tone, cx).map(|glyph| {
+                div()
+                    .id(SharedString::from(format!(
+                        "changes-after-{}-mark",
+                        line.stage
+                    )))
+                    .test_support()
+                    .aria_label(mark.tooltip.clone())
+                    .follow_tooltip(mark.tooltip.clone())
+                    .child(glyph)
+            })
+        }))
+        .child(
+            div()
+                .min_w_0()
+                .whitespace_normal()
+                .child(summary.words.clone()),
+        )
+        .children(summary.stale.as_ref().map(|why| {
+            div()
+                .id(SharedString::from(format!(
+                    "changes-after-{}-stale",
+                    line.stage
+                )))
+                .test_support()
+                .aria_label(why.clone())
+                .text_color(palette(cx).muted)
+                .follow_tooltip(why.clone())
+                .child("· last read")
+        }))
         .into_any_element()
 }
 

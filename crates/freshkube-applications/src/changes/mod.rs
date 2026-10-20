@@ -12,6 +12,7 @@
 //! older than [`FRESH_FOR`], on Refresh, and never while hidden, which
 //! drops the read in flight. Another connection drops what was read.
 pub(crate) mod display;
+pub(crate) mod outcome;
 mod table;
 mod view;
 
@@ -116,6 +117,9 @@ pub struct ChangesPage {
     across: Across,
     /// Where an opened change gets what Coroot found after a deploy.
     coroot: Coroot,
+    outcome_memo: Entity<outcome::Memo>,
+    _outcomes: Subscription,
+    _connection: Option<Subscription>,
     /// Where Argo CD's Applications are read, as the Applications read
     /// found it.
     #[cfg(any(test, feature = "testing"))]
@@ -174,6 +178,8 @@ impl ChangesPage {
         // The list starts hidden, and so does its read.
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
+        let outcome_memo = outcome::session(cx);
+        let outcomes = cx.observe(&outcome_memo, |page, _, cx| page.sync_outcomes(cx));
         Self {
             runtime,
             source: None,
@@ -184,6 +190,9 @@ impl ChangesPage {
             connections: Connections::default(),
             across: Across::default(),
             coroot: Coroot::None,
+            outcome_memo,
+            _outcomes: outcomes,
+            _connection: None,
             argocd_namespace: "argocd".into(),
             read_namespace: None,
             display,
@@ -264,6 +273,7 @@ impl ChangesPage {
         let remapped = across != self.across;
         self.connections = connections.clone();
         self.across = across.clone();
+        self.sync_outcomes(cx);
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_clusters(across, connections, cx));
         }
@@ -281,10 +291,19 @@ impl ChangesPage {
         if coroot == self.coroot {
             return;
         }
+        self._connection = match &coroot {
+            Coroot::Live(live) => live
+                .reader
+                .as_ref()
+                .and_then(|reader| reader.on_connection(cx, |page, cx| page.sync_outcomes(cx))),
+            _ => None,
+        };
         self.coroot = coroot.clone();
+        self.sync_outcomes(cx);
         if let Some((change, _)) = &self.change {
             change.update(cx, |page, cx| page.set_coroot(coroot, cx));
         }
+        cx.notify();
     }
 
     /// Where the Applications read found Argo CD's Applications. A live
@@ -459,6 +478,7 @@ impl ChangesPage {
             cluster.as_deref().unwrap_or_default(),
             Utc::now(),
         );
+        self.sync_outcomes(cx);
         self.stale = self.loader.data().and(self.loader.error()).map(|why| {
             let text = format!("Showing the last read. {why}");
             let label = format!("Couldn't read again: {text}");
@@ -593,6 +613,7 @@ impl ChangesPage {
         if self.folded.remove(&fold) {
             self.rebuild(cx);
         }
+        self.sync_outcomes(cx);
         kit::reveal(self, ScrollStrategy::Nearest);
         if freshkube_ui::page::page_width(window) < freshkube_ui::inspector::SPLIT_WIDTH {
             kit::reveal_when_settled(

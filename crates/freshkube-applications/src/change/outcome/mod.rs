@@ -32,6 +32,7 @@ use freshkube_ui::ui::Tone;
 use gpui_kit::*;
 
 use super::{ChangePage, Fetch};
+use crate::changes::outcome::{self as session, Identity, Key, Summary};
 
 pub use example::Kind;
 #[cfg(any(test, feature = "testing"))]
@@ -73,7 +74,7 @@ impl Links {
         )
     }
 
-    fn of_entry(&self, entry: &str) -> Result<&api::Link, Unlinked> {
+    pub(crate) fn of_entry(&self, entry: &str) -> Result<&api::Link, Unlinked> {
         match self.0.get(entry) {
             Some(Ok(link)) => Ok(link),
             Some(Err(why)) => Err(*why),
@@ -99,15 +100,6 @@ pub enum Coroot {
     /// Example data's answers, or the one outcome every hop shows.
     Example(Option<Kind>),
     Live(Live),
-}
-
-/// What a read is for.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Key {
-    hop: String,
-    query: api::Query,
-    window: api::RevisionWindow,
-    provider: Option<api::ProviderId>,
 }
 
 /// An outcome kept for a hop while its question stays the same.
@@ -429,6 +421,7 @@ impl ChangePage {
             Err(_) => api::Outcome::Failed(api::ReadError::Failed),
         };
         self.keep(&key, outcome, cx);
+        self.publish_outcome(Identity::Live(key.clone()), &key.hop, cx);
         self.detail = self.derive_detail();
         self.sync_marks();
         cx.notify();
@@ -467,6 +460,33 @@ impl ChangePage {
                 stale: None,
             },
         );
+    }
+
+    /// Hand off only a completed read, already checked against the request
+    /// and current provider. No charts or live work enter the session memo.
+    fn publish_outcome(&self, identity: Identity, hop: &str, cx: &mut Context<Self>) {
+        let Some(memo) = self.outcomes.memo.get(hop) else {
+            return;
+        };
+        let words = match memo.after.as_deref() {
+            Some(after) => after.status_word().into(),
+            None => match self.section(hop) {
+                Some(section) => section.words().into(),
+                None => return,
+            },
+        };
+        let summary = Summary {
+            mark: memo.after.as_deref().map(Mark::of),
+            words,
+            stale: memo.stale.as_ref().map(|why| {
+                format!(
+                    "Showing the last read at {}. {why}",
+                    super::clock(memo.read)
+                )
+                .into()
+            }),
+        };
+        session::session(cx).update(cx, |memo, cx| memo.keep(identity, summary, cx));
     }
 
     /// Drops what was read for a question the change no longer asks: a
