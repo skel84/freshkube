@@ -86,6 +86,23 @@ pub enum ObservabilityEvent {
         logs: bool,
     },
     Dashboards,
+    /// The Coroot section of Settings, where the connection is edited.
+    OpenSettings,
+    /// The connection started, finished, failed or was dropped; read it with
+    /// [`ObservabilityPage::connection_state`].
+    Connection,
+    /// The credential store holds the key typed in Settings for this server.
+    KeyKept(String),
+}
+
+/// Where the Coroot connection stands, for Settings' Coroot section.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ConnectionState {
+    Disconnected,
+    Connecting,
+    Connected,
+    /// The last Connect failed, in Observability's words.
+    Failed(String),
 }
 impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 

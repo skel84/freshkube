@@ -447,15 +447,25 @@ impl Pilot {
             }
             PageEvent::Service(event) => self.service_event(event, window, cx),
             PageEvent::Overview(event) => self.overview_event(event, window, cx),
-            PageEvent::Settings(SettingsEvent::OpenMenu) => {
-                self.navigation.settings_open = true;
-                cx.notify();
+            PageEvent::Settings(SettingsEvent::Connect(request)) => {
+                let (server, auth, key) = (
+                    request.server.clone(),
+                    request.auth,
+                    request.key.clone().into_string(),
+                );
+                self.pages.observability.update(cx, |page, cx| {
+                    page.connect_from_settings(&server, auth, key, window, cx)
+                });
             }
-            PageEvent::Settings(SettingsEvent::Coroot) => {
+            PageEvent::Settings(SettingsEvent::Disconnect) => {
                 self.pages
                     .observability
-                    .update(cx, |page, cx| page.show_connection(cx));
-                self.navigate_from_keyboard(Page::Observability, window, cx);
+                    .update(cx, |page, cx| page.disconnect_from_settings(window, cx));
+            }
+            PageEvent::Settings(SettingsEvent::Forget(server)) => {
+                self.pages
+                    .observability
+                    .update(cx, |page, cx| page.forget_key_from_settings(server, cx));
             }
         }
     }
@@ -495,6 +505,18 @@ impl Pilot {
     ) {
         match event {
             ObservabilityEvent::Navigation => cx.notify(),
+            ObservabilityEvent::OpenSettings => {
+                self.show_settings(SettingsSection::Coroot, window, cx)
+            }
+            ObservabilityEvent::Connection => {
+                let state = self.pages.observability.read(cx).connection_state();
+                self.settings_page
+                    .update(cx, |page, cx| page.set_coroot_state(state, cx));
+            }
+            ObservabilityEvent::KeyKept(server) => {
+                self.settings_page
+                    .update(cx, |page, cx| page.coroot_key_kept(server, window, cx));
+            }
             ObservabilityEvent::Dashboards => {
                 self.navigate_from_keyboard(Page::Monitoring, window, cx)
             }

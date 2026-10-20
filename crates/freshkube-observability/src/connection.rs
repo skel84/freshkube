@@ -396,11 +396,75 @@ impl ObservabilityPage {
         self.forget_connection(cx);
         self.secret
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.settings_open = true;
+        cx.emit(ObservabilityEvent::Connection);
         cx.notify();
     }
+    /// Settings' Disconnect: drops the connection and the session's
+    /// reconnect choice, and keeps the configured block.
+    pub fn disconnect_from_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.fixture {
+            return;
+        }
+        self.disconnect(window, cx);
+    }
+    /// Where the connection stands.
+    pub fn connection_state(&self) -> ConnectionState {
+        if self.live.connecting {
+            ConnectionState::Connecting
+        } else if self.live.provider.is_some() {
+            ConnectionState::Connected
+        } else if let Some(error) = &self.live.error {
+            ConnectionState::Failed(error.clone())
+        } else {
+            ConnectionState::Disconnected
+        }
+    }
+    /// Settings' Connect, after it saved the block: connects to `server` as
+    /// `auth` (0 API key, 1 session, 2 anonymous) with the key just typed,
+    /// or else the one the store keeps. A connect runs while the page is
+    /// hidden, so Settings can say how it went.
+    pub fn connect_from_settings(
+        &mut self,
+        server: &str,
+        auth: usize,
+        typed: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.fixture {
+            return;
+        }
+        self.invalidate_connection();
+        self.auth = auth.min(2);
+        self.url.update(cx, |input, cx| {
+            input.set_value(server.to_owned(), window, cx)
+        });
+        let typed = typed.trim().to_owned();
+        self.secret
+            .update(cx, |input, cx| input.set_value(typed.clone(), window, cx));
+        // The block names `keys.json`, so the key is kept now, whether or not
+        // this connect works.
+        if auth != 2 && !typed.is_empty() {
+            self.keep_key(server, &typed, cx);
+        }
+        if typed.is_empty() && auth != 2 {
+            // The key is in the store: read it, then connect.
+            if let Some(memory) = &mut self.memory {
+                memory.restore = true;
+            }
+            self.restore(cx);
+        } else {
+            self.connect(cx);
+        }
+        cx.emit(ObservabilityEvent::Connection);
+        cx.notify();
+    }
+    /// Settings' Forget: the store no longer keeps the key for `server`.
+    pub fn forget_key_from_settings(&mut self, server: &str, cx: &mut Context<Self>) {
+        self.forget_stored_key(server, cx);
+    }
     pub(super) fn connect(&mut self, cx: &mut Context<Self>) {
-        if self.fixture || !self.live.visible {
+        if self.fixture {
             return;
         }
         // A pasted URL or key often brings a space or line break with it.
@@ -417,6 +481,7 @@ impl ObservabilityPage {
         // even if construction/authentication later fails.
         self.invalidate_connection();
         self.live.connecting = true;
+        cx.emit(ObservabilityEvent::Connection);
         self.spawn_read(
             async move {
                 let provider = api::Provider::new(&url, credentials)?;
@@ -438,6 +503,7 @@ impl ObservabilityPage {
                     }
                     Err(error) => this.live.error = Some(connect_error(error, auth)),
                 }
+                cx.emit(ObservabilityEvent::Connection);
                 cx.notify();
             },
             cx,
@@ -484,7 +550,9 @@ impl ObservabilityPage {
                 let Some(read) = weak.upgrade() else {
                     return;
                 };
-                if !this.live.visible || !read.borrow_mut().land(&request, Ok(()), cx) {
+                if !(this.live.visible || this.live.connecting)
+                    || !read.borrow_mut().land(&request, Ok(()), cx)
+                {
                     return;
                 }
                 apply(this, result, cx);
