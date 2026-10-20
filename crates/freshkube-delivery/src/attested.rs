@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 
 use super::collect::{Clusters, collect};
 use super::fixtures::*;
-use super::join::join;
 use super::join::{Confidence, Hop, Link, Trail};
+use super::join::{Evidence, join};
 use super::observation::Fact;
 use super::provenance::stands_on;
 use super::rekor::{LogRead, Outcome};
@@ -379,6 +379,13 @@ async fn with_the_log_on_anything_but_a_matching_entry_is_a_claim() {
             },
             "differs",
         ),
+        (
+            Outcome::Unread {
+                index: 42,
+                kind: "rfc3161".into(),
+            },
+            "rfc3161 entry, which this version doesn't read",
+        ),
         (Outcome::NoIndex, "names no transparency log entry"),
         (Outcome::Unreachable("timed out".into()), "didn't answer"),
         (Outcome::Refused("it answered 403".into()), "refused"),
@@ -407,6 +414,56 @@ async fn with_the_log_on_but_unknown_or_unasked_nothing_confirms() {
         let trail = trail_with_log(move |_| log).await;
         assert_eq!(never_confirmed(&trail, "no log read"), Confidence::Claimed);
     }
+}
+
+/// The evidence of the verified world, collected with the log's switch and
+/// address as given.
+async fn collected_with_log(switch: bool, url: Option<&str>) -> Evidence {
+    let world = signed(&provenance(NEW, SHA));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("cosign.pub");
+    std::fs::write(&path, signing_key_pem()).unwrap();
+    let github = FixtureGitHub::default();
+    let clusters = Clusters {
+        kargo: &world.kargo,
+        argocd: &world.argocd,
+        tekton: &world.tekton,
+        environment: &world.environment,
+        github: &github,
+    };
+    let mut plan = plan(&ENV);
+    plan.public_key_file = Some(path);
+    plan.transparency_log = switch;
+    plan.transparency_url = url.map(str::to_owned);
+    collect(&clusters, &plan, observed_at()).await
+}
+
+#[tokio::test]
+async fn the_log_is_not_read_unless_it_is_on() {
+    let evidence = collected_with_log(false, Some("https://rekor.example.com")).await;
+    assert_eq!(evidence.log, LogRead::Off);
+}
+
+#[tokio::test]
+async fn on_with_no_address_and_no_chains_config_the_log_is_unknown_not_public() {
+    let evidence = collected_with_log(true, None).await;
+    let LogRead::NoUrl(why) = &evidence.log else {
+        panic!("{:?}", evidence.log);
+    };
+    assert!(why.starts_with("chains-config"), "{why}");
+    assert!(!why.contains("sigstore"), "{why}");
+}
+
+#[tokio::test]
+async fn on_with_an_address_each_verified_attestation_gets_its_own_outcome() {
+    // The run carries no entry index, so nothing is fetched: the one
+    // verified attestation has an outcome, and it is not a match.
+    let evidence = collected_with_log(true, Some("https://rekor.example.com")).await;
+    let LogRead::Read(entries) = &evidence.log else {
+        panic!("{:?}", evidence.log);
+    };
+    assert_eq!(entries.len(), 1);
+    assert!(entries.values().all(|outcome| *outcome == Outcome::NoIndex));
 }
 
 #[tokio::test]
