@@ -337,8 +337,6 @@ pub(super) fn settings_content(
     let Some(view) = pilot.upgrade() else {
         return div().into_any_element();
     };
-    let monitoring = view.read(cx).pages.monitoring.clone();
-    monitoring.update(cx, |page, cx| page.source_form(window, cx));
     let (kubernetes_only, automatic, appearance) = {
         let view = view.read(cx);
         (
@@ -436,14 +434,6 @@ pub(super) fn settings_content(
                         }),
             ))
             .render(cx))
-        .child(divider(4))
-        .child(crate::monitoring::page::source_section(&monitoring, cx))
-        .child(divider(5))
-        .child(crate::monitoring::page::settings_section(
-            &monitoring,
-            popover.clone(),
-            cx,
-        ))
         .child(divider(6))
         .child(
             // The Settings area, on the section shown last.

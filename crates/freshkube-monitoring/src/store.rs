@@ -56,7 +56,7 @@ pub(crate) enum Choice {
 }
 
 /// The credential store account that holds a URL's token.
-pub(crate) fn token_account(url: &str) -> String {
+pub fn token_account(url: &str) -> String {
     format!("Prometheus {url}")
 }
 
@@ -261,6 +261,33 @@ impl MonitoringStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_folder_edit_keeps_unknown_keys_in_monitoring_json() {
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-monitoring-folder-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        let mut value = json!({
+            "dashboards": null,
+            "prometheus": {"cluster-a": {"namespace": "metrics", "name": "prometheus", "port": 9090, "https": false, "path": "", "future": [false, null, 7]}},
+            "sources": {"cluster-b": {"kind": "url", "url": "https://metrics.example.test/", "token": false, "future": {"label": "example"}}},
+            "future": {"options": [true, null, "example"]}
+        });
+        std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
+        let store = MonitoringStore::new(&preferences, load(&preferences));
+        let folder = directory.join("dashboards");
+        store.update(|saved| saved.folder = Some(folder.clone()));
+        store.save_latest().unwrap();
+        value["dashboards"] = serde_json::to_value(folder).unwrap();
+        let written: Value =
+            serde_json::from_slice(&std::fs::read(file(&preferences)).unwrap()).unwrap();
+        assert_eq!(written, value);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn unknown_keys_round_trip_unchanged() {

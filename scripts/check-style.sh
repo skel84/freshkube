@@ -265,8 +265,6 @@ pending_list() {
     return
   fi
   cat <<'EOF'
-label crates/freshkube-monitoring/src/page/settings.rs 9
-label crates/freshkube-monitoring/src/page/source.rs 9
 EOF
 }
 

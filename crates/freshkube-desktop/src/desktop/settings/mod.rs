@@ -15,6 +15,7 @@ mod edit_tests;
 mod entry;
 mod form;
 mod kubeconfig_row;
+mod monitoring;
 mod sections;
 mod source;
 pub(super) mod sources;
@@ -103,6 +104,7 @@ pub(super) enum Origin {
 
 pub(crate) struct SettingsPage {
     connection: Option<connection::ConnectionForm>,
+    monitoring: Option<monitoring::MonitoringForm>,
     rows: Vec<ClusterRow>,
     columns: Vec<Column>,
     width: f32,
@@ -162,6 +164,7 @@ pub(crate) struct SettingsPage {
     pub(in crate::desktop) sources: Entity<sources::SourcesList>,
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
+    sources_status: Segment,
 }
 
 impl SettingsPage {
@@ -279,6 +282,7 @@ impl SettingsPage {
         let (columns, width) = source::columns(&[]);
         Self {
             connection: None,
+            monitoring: None,
             rows: Vec::new(),
             columns,
             width,
@@ -319,6 +323,7 @@ impl SettingsPage {
                 cx.new(|cx| sources::SourcesList::new(runtime, page, cx))
             },
             status: Segment::default(),
+            sources_status: Segment::default(),
         }
     }
 
@@ -499,6 +504,11 @@ impl SettingsPage {
                 page.prepare_connection(window, cx)
             });
         }
+        if self.section == SettingsSection::Monitoring {
+            cx.defer_in(window, |page, window, cx| {
+                page.prepare_monitoring(window, cx)
+            });
+        }
         let focus = match self.section {
             SettingsSection::Destinations => self.destinations.read(cx).focus_handle(),
             SettingsSection::Sources => self.sources.read(cx).focus_handle(),
@@ -531,6 +541,7 @@ impl SettingsPage {
 
     fn sync_sources(&mut self, cx: &mut Context<Self>) {
         self.sync_connection_visibility();
+        self.sync_monitoring_visibility(cx);
         let shown = self.visible && self.section == SettingsSection::Sources;
         self.sources
             .update(cx, |sources, cx| sources.set_visible(shown, cx));
@@ -538,7 +549,13 @@ impl SettingsPage {
 
     /// The status bar's line: the workspace's, on its lists.
     pub(in crate::desktop) fn status(&self) -> Option<Segment> {
-        self.section.is_list().then(|| self.status.clone())
+        self.section.is_list().then(|| {
+            if self.section == SettingsSection::Sources {
+                self.sources_status.clone()
+            } else {
+                self.status.clone()
+            }
+        })
     }
 
     fn select(&mut self, key: SharedString, cx: &mut Context<Self>) {
@@ -756,6 +773,7 @@ impl Render for SettingsPage {
         match self.section {
             SettingsSection::General => self.render_general(window, cx),
             SettingsSection::Connection => self.render_connection(window, cx),
+            SettingsSection::Monitoring => self.render_monitoring(window, cx),
             SettingsSection::Clusters => self.render_clusters(window, cx),
             SettingsSection::Destinations => self
                 .list_frame(window)
