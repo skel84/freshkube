@@ -28,6 +28,8 @@ pub struct Metrics {
     pub row: f32,
     /// A column taller than this wraps into another beside it.
     pub max_rows: usize,
+    /// Keep input order within each column instead of reducing crossings.
+    pub preserve_order: bool,
 }
 
 impl Metrics {
@@ -38,6 +40,7 @@ impl Metrics {
         column: COLUMN,
         row: ROW,
         max_rows: MAX_ROWS,
+        preserve_order: false,
     };
 
     /// The map's boxes with a wider gutter between columns, for lines that
@@ -111,6 +114,8 @@ pub fn route(nodes: &mut [(f32, f32)], links: &[(usize, usize)]) -> Layout {
 }
 
 /// [`route`] with other sizes: `route(..)` is `route_with(&Metrics::MAP, ..)`.
+/// With `preserve_order`, boxes keep input order within each column;
+/// waypoints use the lanes below them, and routes may cross.
 pub fn route_with(m: &Metrics, nodes: &mut [(f32, f32)], links: &[(usize, usize)]) -> Layout {
     let n = nodes.len();
     if n == 0 {
@@ -133,7 +138,9 @@ pub fn route_with(m: &Metrics, nodes: &mut [(f32, f32)], links: &[(usize, usize)
         .collect();
     let layer = longest_path(n, &forward);
     let mut grid = Grid::columns(*m, n, links, &forward, &layer);
-    grid.order();
+    if !m.preserve_order {
+        grid.order();
+    }
     grid.add_ports(n, links, &back);
     let height = grid.place(nodes);
     let columns = grid.columns.len();
@@ -308,7 +315,9 @@ impl Grid {
                     (key, ix)
                 })
                 .collect();
-            keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            if !m.preserve_order {
+                keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+            }
             for (r, &(_, ix)) in keyed.iter().enumerate() {
                 row[ix] = r as f32;
             }
@@ -979,6 +988,30 @@ mod tests {
         let mut loose = vec![Box::default(); 20];
         route_with(&Metrics::labelled(84.), &mut loose, &[]);
         assert!(loose.iter().all(|n| n.0 == PAD));
+    }
+
+    #[test]
+    fn source_order_keeps_boxes_in_order_and_routes_clear_of_them() {
+        let m = Metrics {
+            preserve_order: true,
+            ..Metrics::labelled(176.)
+        };
+        let mut graphs = shapes();
+        graphs.push(("generated", 120, generated(120, 300)));
+        for (name, count, links) in graphs {
+            let mut nodes = vec![Box::default(); count];
+            let layout = route_with(&m, &mut nodes, &links);
+            for (ix, a) in nodes.iter().enumerate() {
+                for b in &nodes[ix + 1..] {
+                    if a.0 == b.0 {
+                        assert!(a.1 < b.1, "{name}: source order");
+                    }
+                }
+            }
+            for route in layout.routes {
+                assert_eq!(through_a_box(&nodes, &route), None, "{name}");
+            }
+        }
     }
 
     const PINNED: &[(&str, u64)] = &[

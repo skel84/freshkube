@@ -1,5 +1,5 @@
 //! Chain's canvas and view switch. The page owns selection and Inspector;
-//! the graph owns only layout, focus and sideways scrolling.
+//! the graph owns only layout, focus and scrolling.
 use freshkube_ui::graph::{
     self, Cursor, GraphCanvas, GraphEdge, GraphSource, GraphState, GraphText,
 };
@@ -22,6 +22,7 @@ pub(super) fn state(cx: &mut App) -> GraphState<SharedString> {
         },
     )
     .unpaged()
+    .in_source_order()
     .with_keys(cx)
 }
 
