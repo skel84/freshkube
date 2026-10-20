@@ -1,1 +1,0 @@
-- **Graph layout:** `freshkube-graph` lays out by a set of sizes, and a graph can opt in to one page with columns that never wrap, for the change page's coming Chain view. The service map is unchanged.

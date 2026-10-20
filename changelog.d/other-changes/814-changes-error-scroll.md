@@ -1,1 +1,0 @@
-- **Changes:** error and empty states scroll beneath the toolbar so Retry and the full read error remain reachable in short windows with larger text.

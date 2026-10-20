@@ -1,1 +1,0 @@
-- **Change trail:** keep known unread Applications and Pods as Unknown hops, with their parent and the reason their source could not be read.

@@ -1,1 +1,0 @@
-- **Supply chain design:** [docs/SUPPLY_CHAIN.md](docs/SUPPLY_CHAIN.md) designs signature verification for build → supply chain (a key the person names, never Confirmed by default) and Tekton Results for runs the cluster no longer holds, with the screens, slices and questions for the owner. Nothing is built yet.

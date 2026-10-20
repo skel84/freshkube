@@ -1,1 +1,0 @@
-- **Change trail:** switch between List and Chain, with the view remembered, shared selection and Inspector, labelled links and keyboard navigation.
