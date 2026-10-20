@@ -1,0 +1,1 @@
+- **Settings:** keep Coroot's key actions and workspace row menus disabled in example data, keep Coroot's example URL scheme together at large text sizes, align its title gap, and leave room for Delivery sources' State.
