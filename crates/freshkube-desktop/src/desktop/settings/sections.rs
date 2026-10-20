@@ -30,6 +30,8 @@ pub(crate) enum SettingsSection {
 /// What a section that points elsewhere asks of the shell.
 #[derive(Clone, Debug)]
 pub(crate) enum SettingsEvent {
+    /// Open Clusters and select the first entry for its Metrics group.
+    OpenClusters,
     /// Connect to Coroot: the block is saved, and Observability reads.
     Connect(super::coroot::CorootRequest),
     /// Drop the Coroot connection and stop reconnecting; the block stays.

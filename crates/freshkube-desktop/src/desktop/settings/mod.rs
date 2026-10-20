@@ -588,6 +588,15 @@ impl SettingsPage {
         cx.notify();
     }
 
+    pub(super) fn select_first_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let first = self
+            .workspace
+            .clusters
+            .first()
+            .map(|entry| entry.id.clone().into());
+        self.request_select(first, window, cx);
+    }
+
     fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(key) = table::step(self, delta, cx) {
             self.request_select(Some(key), window, cx);
