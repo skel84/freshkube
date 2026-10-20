@@ -401,13 +401,13 @@ expect 1 "a pending file that is gone fails until its line goes" "label crates/f
 
 tree
 rm "$work/pending.txt"
-mkdir -p "$work/tree/crates/freshkube-desktop/src/desktop/settings"
-page desktop/settings/edit.rs <<'EOF'
-fn cancel() -> Button { Button::new("x").label("Cancel").on_click(|_, w, cx| w.close_dialog(cx)) }
+mkdir -p "$work/tree/crates/freshkube-monitoring/src/page"
+cat >"$work/tree/crates/freshkube-monitoring/src/page/settings.rs" <<'EOF'
+fn label() -> Div { div().text_size(dp(12.5)).font_weight(FontWeight::SEMIBOLD).child("Role") }
 EOF
 out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" 2>&1)" || true
 if grep -qF "label crates/freshkube-monitoring/src/page/source.rs (#697 slice 9)" <<<"$out" &&
-  ! grep -qF "buttons crates/freshkube-desktop/src/desktop/settings/edit.rs:" <<<"$out"; then
+  ! grep -qF "label crates/freshkube-monitoring/src/page/settings.rs:" <<<"$out"; then
   echo "ok: the script's own pending list names #697's files and their slices"
 else
   echo "FAIL: the script's own pending list names #697's files and their slices"
