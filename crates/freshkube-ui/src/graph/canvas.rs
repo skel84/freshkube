@@ -5,14 +5,57 @@
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Context, PathBuilder, TestSupportExt, canvas, div, point};
+use gpui_kit::{AnyElement, Context, PathBuilder, TestSupportExt, Window, canvas, div, point};
 
-use freshkube_graph::layout::{NODE_H, NODE_W};
+use freshkube_graph::layout::{Metrics, NODE_H, NODE_W};
 
-use super::GraphSource;
 use super::view::{glyph, mono, muted};
+use super::{
+    CONTEXT, Cursor, EdgeStyle, GraphSource, Step, WalkBack, WalkForward, WalkNext, WalkPrevious,
+};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_calls_list_marks_dashed_and_dotted_lines_only() {
+        assert_eq!(style_mark(EdgeStyle::Dashed), Some("╌"));
+        assert_eq!(style_mark(EdgeStyle::Dotted), Some("┄"));
+        assert_eq!(style_mark(EdgeStyle::Solid), None);
+        assert_eq!(style_mark(EdgeStyle::Auto), None);
+    }
+
+    #[test]
+    fn only_a_box_cursor_on_that_key_rings_a_box() {
+        assert!(at_cursor(&Some(Cursor::Node(1)), &1));
+        assert!(!at_cursor(&Some(Cursor::Node(1)), &2));
+        assert!(!at_cursor(&Some(Cursor::Link(1, 2)), &1));
+        assert!(!at_cursor(&None, &1));
+    }
+
+    #[test]
+    fn claimed_and_unknown_lines_are_stroked_differently_and_auto_is_the_maps_rule() {
+        assert_eq!(dash(EdgeStyle::Solid, None), Dash::Solid);
+        assert_eq!(dash(EdgeStyle::Dashed, None), Dash::Dashed);
+        assert_eq!(dash(EdgeStyle::Dotted, None), Dash::Dotted);
+        // Whatever the tone, an explicit style wins.
+        assert_eq!(dash(EdgeStyle::Solid, Some(Tone::Crit)), Dash::Solid);
+        assert_eq!(dash(EdgeStyle::Dotted, Some(Tone::Good)), Dash::Dotted);
+        // Auto is solid only for a healthy call, as the service map draws.
+        assert_eq!(dash(EdgeStyle::Auto, Some(Tone::Good)), Dash::Solid);
+        for tone in [
+            None,
+            Some(Tone::Warn),
+            Some(Tone::Crit),
+            Some(Tone::Unknown),
+        ] {
+            assert_eq!(dash(EdgeStyle::Auto, tone), Dash::Dashed);
+        }
+    }
+}
 
 /// Calls under the boxes, the selected one last and in the accent; a
 /// marker on each call that has one; then the boxes.
@@ -44,9 +87,10 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                     }
                 };
                 let mut path = PathBuilder::stroke(unit * edge.width);
-                if edge.tone != Some(Tone::Good) {
-                    let dash = unit * 5.;
-                    path = path.dash_array(&[dash, dash * 0.6]);
+                match dash(edge.style, edge.tone) {
+                    Dash::Solid => {}
+                    Dash::Dotted => path = path.dash_array(&[unit * 1.5, unit * 3.5]),
+                    Dash::Dashed => path = path.dash_array(&[unit * 5., unit * 3.]),
                 }
                 path.move_to(at(route.segments[0][0]));
                 for &[_, b, c, d] in &route.segments {
@@ -69,19 +113,38 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
     )
     .size_full();
     let highlighted = source.highlighted();
+    let cursor = source.cursor();
+    // With keys the graph is one Tab stop; its boxes and calls are not.
+    let keyed = state.focus.is_some();
+    // A labelled graph leaves room under its last row for the scrollbar.
+    let room = if state.metrics == Metrics::MAP {
+        0.
+    } else {
+        12.
+    };
     div()
         .id(state.ids.graph.clone())
         .test_support()
+        .when_some(state.focus.as_ref(), |this, focus| {
+            this.track_focus(focus)
+                .key_context(CONTEXT)
+                .on_action(walk::<S, WalkBack>(Step::Back, cx))
+                .on_action(walk::<S, WalkForward>(Step::Forward, cx))
+                .on_action(walk::<S, WalkPrevious>(Step::Previous, cx))
+                .on_action(walk::<S, WalkNext>(Step::Next, cx))
+        })
+        .focus_visible(|style| style.bg(p.accent_soft))
         .relative()
         .flex_none()
         .w(dp(display.width))
-        .h(dp(display.height))
+        .h(dp(display.height + room))
         .child(calls)
         .children(display.markers.iter().map(|&ix| {
             let edge = &state.edges[display.shown[ix].edge];
             let (x, y) = display.shown[ix].route.mid;
             let (from, to) = (edge.from.clone(), edge.to.clone());
             Button::new(edge.marker_id.clone())
+                .tab_stop(!keyed)
                 .ghost()
                 .group("fog-control")
                 .absolute()
@@ -100,10 +163,63 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                     cx.notify();
                 }))
         }))
+        .children(display.pills.iter().map(|&ix| {
+            let edge = &state.edges[display.shown[ix].edge];
+            let (x, y) = display.shown[ix].route.mid;
+            let (from, to) = (edge.from.clone(), edge.to.clone());
+            // A fixed-width box centred on the line's middle, so the pill
+            // sits on the line whatever its label.
+            div()
+                .absolute()
+                .left(dp(x - PILL_W / 2.))
+                .top(dp(y - PILL_H / 2.))
+                .w(dp(PILL_W))
+                .h(dp(PILL_H))
+                .flex()
+                .justify_center()
+                .child(
+                    div().rounded_full().bg(p.surface).child(
+                        Button::new(edge.marker_id.clone())
+                            .outline()
+                            .group("fog-control")
+                            .h(dp(PILL_H))
+                            .px(dp(8.))
+                            .rounded_full()
+                            .bg(if display.selected == Some(ix) {
+                                p.accent_soft
+                            } else {
+                                p.surface
+                            })
+                            .border_color(if display.selected == Some(ix) {
+                                p.accent_line
+                            } else {
+                                p.line_strong
+                            })
+                            .max_w(dp(PILL_W))
+                            .tab_stop(!keyed)
+                            .child(
+                                mono(edge.pill.clone().unwrap_or_default())
+                                    .text_size(dp(11.))
+                                    .truncate(),
+                            )
+                            .when(edge.tooltip.is_empty(), |this| {
+                                this.tooltip(edge.pill.clone().unwrap_or_default())
+                            })
+                            .when(!edge.tooltip.is_empty(), |this| {
+                                this.tooltip(edge.tooltip.clone())
+                            })
+                            .on_click(cx.listener(move |this: &mut S, _, _, cx| {
+                                this.graph_mut().select(&from, &to);
+                                cx.notify();
+                            })),
+                    ),
+                )
+        }))
         .children(display.placed.iter().map(|placed| {
             let node = &state.nodes[placed.node];
             let key = node.key.clone();
             Button::new(node.id.clone())
+                .tab_stop(!keyed)
                 .outline()
                 .group("fog-control")
                 .absolute()
@@ -114,11 +230,16 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 .px(dp(10.))
                 .gap(dp(8.))
                 .bg(p.surface_2)
-                .border_color(if highlighted == Some(&node.key) {
-                    p.accent_line
-                } else {
-                    p.line_strong
-                })
+                .border_color(
+                    if highlighted == Some(&node.key) || at_cursor(&cursor, &node.key) {
+                        p.accent_line
+                    } else {
+                        p.line_strong
+                    },
+                )
+                // The keyboard's box carries a thicker ring.
+                .when(at_cursor(&cursor, &node.key), |this| this.border_2())
+                .when(node.ghost, |this| this.border_dashed())
                 .justify_start()
                 .child(glyph(node.tone, cx))
                 .child(
@@ -142,4 +263,64 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 )
         }))
         .into_any_element()
+}
+
+/// How a line is stroked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Dash {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+/// The stroke for a call's style: `Auto` is solid only when the call is
+/// `Good`, and dashed otherwise.
+pub(super) fn dash(style: EdgeStyle, tone: Option<Tone>) -> Dash {
+    match (style, tone) {
+        (EdgeStyle::Solid, _) | (EdgeStyle::Auto, Some(Tone::Good)) => Dash::Solid,
+        (EdgeStyle::Dotted, _) => Dash::Dotted,
+        (EdgeStyle::Dashed | EdgeStyle::Auto, _) => Dash::Dashed,
+    }
+}
+
+/// The mark the Calls list shows for a call's line, so its style reads
+/// there too; the service map's `Auto` and a solid line show none.
+pub(super) fn style_mark(style: EdgeStyle) -> Option<&'static str> {
+    match style {
+        EdgeStyle::Dashed => Some("╌"),
+        EdgeStyle::Dotted => Some("┄"),
+        EdgeStyle::Solid | EdgeStyle::Auto => None,
+    }
+}
+
+/// Whether the keyboard's cursor is on the box `key`.
+fn at_cursor<K: PartialEq>(cursor: &Option<Cursor<K>>, key: &K) -> bool {
+    matches!(cursor, Some(Cursor::Node(at)) if at == key)
+}
+
+/// The size of a pill on a line, in dp: wide enough for a short key in
+/// monospace, and the box that centres it.
+const PILL_W: f32 = 76.;
+const PILL_H: f32 = 22.;
+
+/// The listener for one arrow key: ask the graph where it goes from the
+/// source's cursor, hand the answer to the source and scroll to it.
+fn walk<S: GraphSource, A: 'static>(
+    step: Step,
+    cx: &mut Context<S>,
+) -> impl Fn(&A, &mut Window, &mut gpui_kit::App) + 'static {
+    let this = cx.entity().downgrade();
+    move |_, window, cx| {
+        let _ = this.update(cx, |this: &mut S, cx| {
+            let Some(cursor) = this.graph().step(this.cursor().as_ref(), step) else {
+                return;
+            };
+            let end = match &cursor {
+                Cursor::Node(key) | Cursor::Link(_, key) => key.clone(),
+            };
+            this.step_to(cursor, window, cx);
+            this.graph().reveal_node(&end, window);
+            cx.notify();
+        });
+    }
 }

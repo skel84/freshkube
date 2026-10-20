@@ -1,0 +1,1 @@
+- **Show on charts:** open a deployment revision's first finding report from Deployments or the Application page, with its marker emphasized and its label visible; older revisions state when they started without widening the chart window.

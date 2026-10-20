@@ -414,6 +414,14 @@ impl ObservabilityPage {
                     .map(|_| (charts, shown))
             })
         };
+        let focus = if deployments {
+            self.selected_revision_start()
+        } else {
+            self.focused_revision
+                .as_ref()
+                .filter(|focus| self.selected_app.as_ref() == Some(&focus.app))
+                .map(|focus| focus.started_at.timestamp())
+        };
         let same = wanted().count() == self.app_charts.len()
             && wanted()
                 .zip(&self.app_charts)
@@ -421,6 +429,11 @@ impl ObservabilityPage {
                     Rc::ptr_eq(charts, &kept.charts) && shown == kept.shown
                 });
         if same {
+            for chart in &self.app_charts {
+                chart
+                    .view
+                    .update(cx, |view, cx| view.set_focused_marker(focus, cx));
+            }
             return;
         }
         let mut kept = std::mem::take(&mut self.app_charts);
@@ -430,7 +443,11 @@ impl ObservabilityPage {
                 .iter()
                 .position(|k| Rc::ptr_eq(&k.charts, charts) && k.shown == shown)
             {
-                next.push(kept.swap_remove(ix));
+                let chart = kept.swap_remove(ix);
+                chart
+                    .view
+                    .update(cx, |view, cx| view.set_focused_marker(focus, cx));
+                next.push(chart);
                 continue;
             }
             let Some(panel) = charts.choices[shown].panel.clone() else {
@@ -441,6 +458,7 @@ impl ObservabilityPage {
                 let mut view = PanelView::new(id, Rc::new(panel.spec.clone()), cx);
                 view.set_result(panel.result.clone(), panel.window, cx);
                 view.set_markers(panel.markers.clone().into(), cx);
+                view.set_focused_marker(focus, cx);
                 view
             });
             next.push(ShownChart {

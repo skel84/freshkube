@@ -305,6 +305,7 @@ impl ObservabilityPage {
         }
     }
     pub(super) fn clear_observations(&mut self) {
+        self.focused_revision = None;
         self.live.clear();
         self.incident_observations = self.incident_observations.cleared();
         self.revision_observations = self.revision_observations.cleared();
@@ -387,6 +388,7 @@ impl ObservabilityPage {
         let (Some(access), Some(source)) = (&self.live.access, &self.live.source) else {
             return;
         };
+        self.focused_revision = None;
         self.live.source = Some(source.clone().with_association(
             cluster.map(|cluster| api::Association::new(access.clone(), cluster)),
         ));

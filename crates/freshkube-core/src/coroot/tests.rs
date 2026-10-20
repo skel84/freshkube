@@ -1843,7 +1843,10 @@ async fn a_look_that_hears_nothing_ends_in_a_timeout_on_the_test_clock() {
     let provider = Provider::new(&url, Credentials::None).unwrap();
     let q = query(link_of("cluster-a", "shop-api", "c"));
     let started = tokio::time::Instant::now();
-    let limit = Duration::from_secs(7);
+    // Below the client's 5 s connect timeout: the paused clock jumps ahead
+    // while the connect is still in flight, and a longer limit let that
+    // timeout win as Unreachable.
+    let limit = Duration::from_secs(3);
     let answer = provider
         .outcome_within(limit, &q, None, window(), now())
         .await;
