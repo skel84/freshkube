@@ -438,6 +438,10 @@ async fn monitoring_context_outside_the_workspace_saves_monitoring_json(cx: &mut
     std::fs::write(directory.path().join("freshkube.yaml"), SETUP).unwrap();
     let (_runtime, handle, _pilot, _page) = live(cx, directory.path(), "cluster-outside").await;
     cx.update_window(handle, |_, window, cx| {
+        window.click("monitoring-source-service", cx);
+        window.render_frame(cx);
+        assert!(window.find("monitoring-context-current").visible());
+        assert!(window.find("monitoring-context-name").visible());
         window.click("monitoring-source-url", cx);
         window.render_frame(cx);
         replace(
@@ -740,7 +744,7 @@ fn url_setup() -> String {
     let store = setup.metrics.store.as_mut().unwrap();
     store.entry = None;
     store.service = None;
-    store.url = Some("https://metrics.example.test/".into());
+    store.url = Some("https://metrics.example.test".into());
     store.token = Some(setup::KeysJson);
     setup::to_text(&setup)
 }

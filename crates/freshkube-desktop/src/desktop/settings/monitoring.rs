@@ -97,11 +97,12 @@ pub(super) struct MonitoringForm {
 
 impl MonitoringForm {
     fn kept_token(&self, url: &str) -> bool {
-        self.baseline
-            .store
-            .as_ref()
-            .is_some_and(|store| store.url.as_deref() == Some(url) && store.token.is_some())
-            && !self.forget_token
+        self.baseline.store.as_ref().is_some_and(|store| {
+            store.token.is_some()
+                && store.url.as_deref().is_some_and(|saved| {
+                    monitoring::normalise_url(saved).is_ok_and(|saved| saved == url)
+                })
+        }) && !self.forget_token
     }
 
     fn values(&self, cx: &App) -> Values {
@@ -967,7 +968,7 @@ impl SettingsPage {
         let saved_store = draft.baseline.store.as_ref();
         let url_changed = saved_store
             .and_then(|store| store.url.as_ref())
-            .is_some_and(|saved| Some(saved) != url.as_ref());
+            .is_some_and(|saved| monitoring::normalise_url(saved).ok().as_ref() != url.as_ref());
         let kept = url.as_ref().is_some_and(|url| draft.kept_token(url))
             && draft.token.read(cx).value().is_empty()
             && !draft.replacing_token;

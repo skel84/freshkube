@@ -122,7 +122,7 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
     };
     let mut group = group
         .row(form::row(
-            "monitoring-context-name",
+            "monitoring-context-current",
             "Context",
             context.clone(),
         ))
