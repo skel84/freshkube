@@ -1,1 +1,0 @@
-- **Changes:** each Deployment Stage in a change’s Inspector links to the change page until it has read the outcome this session, then shows the same Coroot status or outcome sentence. Failed refreshes keep the last result marked as stale; the list sends no Coroot requests.

@@ -1,1 +1,0 @@
-- **Tests:** the shell's tests read notices, simulated failures and held Talos reads through the example source, not through test-only fields on the application.

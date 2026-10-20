@@ -1,1 +1,0 @@
-- **Delivery:** the setup file's `delivery.stage_naming` ties an Argo CD Application with no authorized-stage annotation to its Kargo Stage by a name template, with an optional project key; without the key the claim is by name only, shown as Claimed and in its own words.

@@ -1,1 +1,0 @@
-- **Change trail:** Chain reveals selected cards on both scroll axes, keeps List order within columns, shows the thick cursor ring for keyboard focus and navigation, and keeps link pills clear of neighbouring curves.

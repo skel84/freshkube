@@ -4,6 +4,62 @@ Freshkube's history starts at 0.2.0. The entries from 0.1.11 down are talos-pilo
 
 ## Unreleased
 
+## 0.17.0 (2026-10-20)
+
+### Coroot
+
+- **After the deploy:** a Deployment's hop on the change page now says what Coroot
+  found after the deploy, in Coroot's words: its status and findings, the window around
+  the revision's start and the charts of one report split there with the samples counted
+  on each side, and a small Coroot mark on the hop once it is read. It reads over the
+  one Coroot connection the setup file names, only for the selected hop and only while
+  the page shows; every other outcome (no such revision or application, not connected,
+  no cluster linked to the entry, refused, no data, failed) says why. A Deployment on
+  another workspace entry can be read without switching to it.
+  ([#269](https://github.com/skel84/freshkube/issues/269))
+- **Changes:** each Deployment Stage in a change’s Inspector links to the change page until it has read the outcome this session, then shows the same Coroot status or outcome sentence. Failed refreshes keep the last result marked as stale; the list sends no Coroot requests.
+- **Observability's Kubernetes links follow the open entry:** the map's and the
+  reports' links to Kubernetes objects now read the open entry's `clusters[].coroot`
+  key in the setup file (its Coroot cluster, and its project or else the connection's),
+  and the "Link Kubernetes cluster…" action is gone. An entry without the key is
+  not linked, even alone in its workspace, and says to set `clusters[].coroot.cluster`
+  in the setup file. Changing the entry or reloading an edited setup reads again for
+  the new link. ([#269](https://github.com/skel84/freshkube/issues/269))
+- **Show on charts:** open a deployment revision's first finding report from Deployments or the Application page, with its marker emphasized and its label visible; older revisions state when they started without widening the chart window.
+- **Coroot links in the setup file:** two clusters can no longer link the same Coroot cluster of one project, and a cluster that names a Coroot cluster needs a project, its own or the connection's; the setup is refused and the message names the clusters.
+
+### Other changes
+
+- **Build history:** a Tekton Results set by address supplements the live builds, read through a bounded, read-only client with verified TLS, an optional CA file and the address's token from the key store.
+- **Supply chain:** Tekton Chains' attestations are read from a run's annotations and their signature checked (ECDSA P-256 over a DSSE envelope) against the public key `supply_chain.public_key_file` names. A verified signature whose subject carries the build's digest confirms the build's link to its supply chain, and a verified provenance naming the commit confirms the commit's link; without a key nothing is confirmed by signature, and every other case stays Claimed or Unknown with the reason.
+- **Transparency log:** the lookup that checks a verified signature against the transparency log is built, with a client of its own; the setting that turns it on is wired in a later change.
+- **Supply chain design:** [docs/SUPPLY_CHAIN.md](docs/SUPPLY_CHAIN.md) designs signature verification for build → supply chain (a key the person names, never Confirmed by default) and Tekton Results for runs the cluster no longer holds, with the screens, slices and questions for the owner. Nothing is built yet.
+- **Coroot in the delivery chain, design:** COROOT.md now describes a Coroot link per workspace entry, an "After the deploy" section on the change page that shows Coroot's findings and the samples either side of the start, and a way back from a revision to its change (design only; nothing in the app changes yet).
+- **Tests:** the shell's tests read notices, simulated failures and held Talos reads through the example source, not through test-only fields on the application.
+- **Tests:** the workload log view's and the Monitoring panel's test files are split by scenario into directories; no test changed.
+- **Change trail:** switch between List and Chain, with the view remembered, shared selection and Inspector, labelled links and keyboard navigation.
+- **Change trail:** the example explains the unconfirmed links from Freight to dev and from stage to the production Stages.
+- **Kubeconfig retries:** Monitoring's Try again and Resources' Retry pick up edited kubeconfig files on the first press; Refresh waits for configuration inspection before retrying page reads.
+- **Settings:** leaving a section with unsaved changes asks whether to Save, Discard or Stay, and its column row marks the pending changes.
+- **Small windows:** Settings dialogs keep their actions visible, long table cells truncate with full-text tooltips, Clusters' stacked Inspector scrolls on its own, and the rail opens at the top at every text size.
+- **Setup file:** detect same-size edits and editor replacements even when their modification time stays the same, keeping the two-sample debounce and making its Windows regression tests deterministic.
+- **Forms and Inspectors:** validation errors replace useful field hints without shifting later rows, and Inspector bodies keep their padding while scrolling so lines stay clear of the heading.
+- **Settings:** the save status names a hand-edited file's `.bak` backup, and Monitoring's Per entry hint opens Clusters with its first entry selected for editing metrics sources.
+- **Clusters:** the first right-click on an unselected row opens its menu.
+- **Observability:** ordinary connections no longer start while the page is hidden; an explicit Connect in Settings still works.
+- **Settings:** Monitoring's example setup uses portable paths on Windows and logs a failure instead of crashing if the example cannot be read.
+- **Change trail:** keep known unread Applications and Pods as Unknown hops, with their parent and the reason their source could not be read.
+- **Change trail:** unread Pods name their destination once, and workloads Argo CD reports as missing have no Pods placeholder.
+- **Argo CD destinations:** the setup file and Settings accept `https://kubernetes.default.svc` and `in-cluster` as aliases for the selected Argo CD source entry. A conflicting alias names the entry to use.
+- **Changes:** the Changes list and change page warn when `freshkube.yaml` isn't used, with the same reason as Settings; a successful reload or save clears the warning.
+- **Builds by image digest:** a Kargo Freight that names an image and no commit is now joined to its build by the `IMAGE_DIGEST` a PipelineRun, TaskRun or archived Results record reports, in the namespace the new `delivery.build_namespace` setup key names; the Build hop says when the key isn't set.
+- **Delivery:** the setup file's `delivery.stage_naming` ties an Argo CD Application with no authorized-stage annotation to its Kargo Stage by a name template, with an optional project key; without the key the claim is by name only, shown as Claimed and in its own words.
+- **Change trail:** Chain reveals selected cards on both scroll axes, keeps List order within columns, shows the thick cursor ring for keyboard focus and navigation, and keeps link pills clear of neighbouring curves.
+- **Changes:** error and empty states scroll beneath the toolbar so Retry and the full read error remain reachable in short windows with larger text.
+- **Tests:** a second Coroot test no longer fails at random under load: it drops the look once the fake server holds the request, not after a timer on the paused clock.
+- **Tests:** a Coroot timeout test no longer fails at random under load on the paused test clock.
+- **Supply chain in the app:** the change page and Changes list use the setup's public key and evidence record, so matching signed builds can show Confirmed, and read Tekton Results history with the saved address token. Reloading the setup replaces trust and cancels older delivery reads.
+
 ## 0.16.0 (2026-10-20)
 
 ### Settings and the setup file
