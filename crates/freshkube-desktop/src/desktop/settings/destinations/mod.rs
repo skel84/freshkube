@@ -258,40 +258,40 @@ impl Destinations {
         window.open_dialog(cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_key = key.clone();
-            dialog
-                .w(ui::dp_px(420., window))
-                .title("Remove destination mapping?")
-                .child(
-                    v_flex()
-                        .id("settings-destination-remove-dialog")
-                        .test_support()
-                        .role(Role::Dialog)
-                        .aria_label(format!("Remove the mapping for {what}"))
-                        .gap_3()
-                        .text_size(dp(13.))
-                        .child(match &key {
-                            Key::Server(_) => freshkube_ui::url::url_text(
-                                "settings-destination-remove-url",
-                                &body,
-                            )
-                            .into_any_element(),
-                            Key::Name(_) => body.clone().into_any_element(),
-                        })
-                        .child(fields::actions(
-                            fields::Action::new(
-                                "settings-destination-remove-confirm",
-                                "Remove",
-                                move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = confirm_page.update(cx, |page, cx| {
-                                        page.remove_destination(at, &confirm_key, cx)
-                                    });
-                                },
-                            )
-                            .danger(),
-                            fields::Action::cancel("settings-destination-remove-cancel"),
-                        )),
-                )
+            freshkube_ui::dialog::frame(
+                dialog,
+                420.,
+                "Remove destination mapping?",
+                v_flex()
+                    .id("settings-destination-remove-dialog")
+                    .test_support()
+                    .role(Role::Dialog)
+                    .aria_label(format!("Remove the mapping for {what}"))
+                    .gap_3()
+                    .text_size(dp(13.))
+                    .child(match &key {
+                        Key::Server(_) => {
+                            freshkube_ui::url::url_text("settings-destination-remove-url", &body)
+                                .into_any_element()
+                        }
+                        Key::Name(_) => body.clone().into_any_element(),
+                    }),
+                fields::actions(
+                    fields::Action::new(
+                        "settings-destination-remove-confirm",
+                        "Remove",
+                        move |_, window, cx| {
+                            window.close_dialog(cx);
+                            _ = confirm_page.update(cx, |page, cx| {
+                                page.remove_destination(at, &confirm_key, cx)
+                            });
+                        },
+                    )
+                    .danger(),
+                    fields::Action::cancel("settings-destination-remove-cancel"),
+                ),
+                window,
+            )
         });
     }
 

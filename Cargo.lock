@@ -2489,12 +2489,14 @@ dependencies = [
 name = "freshkube-delivery"
 version = "0.16.0"
 dependencies = [
+ "base64",
  "chrono",
  "freshkube-core",
  "futures",
  "http",
  "http-body-util",
  "kube",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

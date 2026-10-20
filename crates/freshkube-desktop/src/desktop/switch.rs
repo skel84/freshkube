@@ -331,6 +331,12 @@ pub(super) fn age_text(elapsed: std::time::Duration) -> String {
     }
 }
 
+/// A notice the shell presents for a link or cluster switch.
+#[derive(Clone, Debug)]
+pub(crate) struct Notice(pub(crate) String);
+
+impl gpui_kit::EventEmitter<Notice> for Pilot {}
+
 impl Pilot {
     /// The entry a launch opens: only when the command line named no source,
     /// the app isn't showing example data or maintenance and the workspace file lists a
@@ -396,11 +402,11 @@ impl Pilot {
             .update(cx, |page, cx| page.set_clusters(clusters, cx));
     }
 
-    /// Says `message` in a notice, and remembers it for tests.
+    /// Presents a notice and tells subscribers what was said.
     pub(super) fn tell(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
-        #[cfg(test)]
-        self.told.push(message.clone());
-        gpui_kit::component::WindowExt::push_notification(window, message, cx);
+        let notice = Notice(message);
+        cx.emit(notice.clone());
+        gpui_kit::component::WindowExt::push_notification(window, notice.0, cx);
     }
 
     /// The window no longer shows an entry as defined: a context or
@@ -734,7 +740,7 @@ impl Pilot {
         if self.mode().is_example() {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
-            self.seed_fixture_history(cx);
+            self.seed_example_history(cx);
             self.refresh(window, cx);
             self.prepare_context_display(window, cx);
             return;

@@ -26,10 +26,7 @@ use crate::screens::{PageSource, ScreenSource};
 pub(super) struct Mode {
     /// Example data and what it never answers (`FRESHKUBE_FIXTURE_HOLD`),
     /// or `None` for a live cluster: a hold is example data's alone.
-    example: Option<Hold>,
-    /// Example data's clock: each refresh of the example cluster takes the
-    /// next tick, so its readings move.
-    tick: u64,
+    example: Option<crate::fixture::Source>,
     kubernetes_only: Option<KubernetesOnly>,
 }
 
@@ -38,8 +35,7 @@ impl Mode {
     /// chose; nothing changes it later.
     pub(super) fn new(example: Option<Hold>) -> Self {
         Self {
-            example,
-            tick: 0,
+            example: example.map(crate::fixture::Source::new),
             kubernetes_only: None,
         }
     }
@@ -51,13 +47,13 @@ impl Mode {
 
     /// Example data and its hold; `None` for a live cluster.
     pub(super) fn example(&self) -> Option<Hold> {
-        self.example
+        self.example.as_ref().map(|source| source.hold)
     }
 
     /// Example data that never answers Talos, so the overview and the
     /// Kubernetes summary stay on their loading rows.
     pub(super) fn holds_talos(&self) -> bool {
-        self.example.is_some_and(|hold| hold.talos)
+        self.example().is_some_and(|hold| hold.talos)
     }
 
     /// Talos is part of the session: false when a kubeconfig is all it
@@ -85,10 +81,16 @@ impl Mode {
         self.kubernetes_only.take()
     }
 
-    /// Advances example data's clock and returns the new tick.
-    pub(super) fn next_tick(&mut self) -> u64 {
-        self.tick += 1;
-        self.tick
+    /// The offline source owns its overview answers and history clock.
+    pub(super) fn example_source_mut(&mut self) -> Option<&mut crate::fixture::Source> {
+        self.example.as_mut()
+    }
+
+    /// An explicit example failure can complete a held overview read.
+    pub(super) fn has_pending_failure(&self) -> bool {
+        self.example
+            .as_ref()
+            .is_some_and(|source| source.has_pending_failure())
     }
 
     /// Turns example data on or off under a test; for the gate, switch,
@@ -98,7 +100,8 @@ impl Mode {
     #[cfg(test)]
     pub(super) fn set_example(&mut self, example: bool) {
         if example {
-            self.example.get_or_insert(Hold::NONE);
+            self.example
+                .get_or_insert_with(|| crate::fixture::Source::new(Hold::NONE));
         } else {
             self.example = None;
         }
@@ -109,15 +112,17 @@ impl Mode {
     /// which all run on example data.
     #[cfg(test)]
     pub(super) fn hold_mut(&mut self) -> &mut Hold {
-        self.example
+        &mut self
+            .example
             .as_mut()
             .expect("a hold is example data's; this test runs on a live cluster")
+            .hold
     }
 
     /// Example data's clock, for the menu and Nodes table tests.
     #[cfg(test)]
     pub(super) fn tick(&self) -> u64 {
-        self.tick
+        self.example.as_ref().map_or(0, |source| source.tick)
     }
 }
 
