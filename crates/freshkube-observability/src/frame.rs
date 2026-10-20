@@ -88,6 +88,11 @@ impl Render for ObservabilityPage {
             .test_support()
             .track_focus(&self.focus)
             .key_context("Observability")
+            .on_action(cx.listener(|this, _: &deployments::ShowOnCharts, _, cx| {
+                if this.destination == Destination::Deployments {
+                    this.show_selected_revision_on_charts(cx);
+                }
+            }))
             .size_full()
             .min_w_0()
             .min_h_0()

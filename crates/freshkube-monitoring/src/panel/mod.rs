@@ -85,6 +85,8 @@ pub struct PanelView {
     /// The page's markers, and those on this chart's window.
     markers: Rc<[Marker]>,
     placed: Rc<[markers::Placed]>,
+    focused_marker: Option<i64>,
+    focused_labels: Vec<SharedString>,
     /// The last answer and its window, kept to draw it again with more or
     /// fewer series without asking again.
     answer: Option<(Frame, TimeWindow)>,
@@ -125,6 +127,8 @@ impl PanelView {
             overlay: None,
             markers: Rc::from([]),
             placed: Rc::from([]),
+            focused_marker: None,
+            focused_labels: Vec::new(),
             answer: None,
             series: SeriesCap::Top,
             named: Rc::from([]),
@@ -235,14 +239,30 @@ impl PanelView {
         cx.notify();
     }
 
+    /// Emphasizes markers at this start second, within the existing window.
+    /// This never changes the chart's range or scroll position.
+    pub fn set_focused_marker(&mut self, at: Option<i64>, cx: &mut Context<Self>) {
+        if self.focused_marker == at {
+            return;
+        }
+        self.focused_marker = at;
+        self.place_markers(cx);
+        cx.notify();
+    }
+
     fn place_markers(&mut self, cx: &mut Context<Self>) {
         let placed = self
             .chart()
-            .map(|chart| markers::place(&self.markers, &chart))
+            .map(|chart| markers::place(&self.markers, &chart, self.focused_marker))
             .unwrap_or_else(|| Rc::from([]));
         if placed == self.placed {
             return;
         }
+        self.focused_labels = placed
+            .iter()
+            .filter(|m| m.focused)
+            .map(|m| m.label.clone())
+            .collect();
         self.placed = placed.clone();
         if let Some(plot) = &self.plot {
             plot.update(cx, |plot, cx| plot.set_markers(placed, cx));
@@ -256,6 +276,12 @@ impl PanelView {
             .iter()
             .map(|marker| marker.label.clone())
             .collect()
+    }
+
+    /// Focused markers that fall in this panel's window, for embedding tests.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn focused_marker_labels(&self) -> &[SharedString] {
+        &self.focused_labels
     }
 
     /// A failed query: the last answer stays, marked stale, else the
@@ -459,6 +485,19 @@ impl PanelView {
         };
         v_flex()
             .size_full()
+            .children(self.focused_labels.iter().enumerate().map(|(ix, label)| {
+                div()
+                    .id(SharedString::from(format!(
+                        "{}-focused-marker-{ix}",
+                        self.id
+                    )))
+                    .test_support()
+                    .px(dp(12.))
+                    .text_size(dp(12.))
+                    .font_weight(ui::HEADING_WEIGHT)
+                    .whitespace_normal()
+                    .child(label.clone())
+            }))
             .child(
                 div().flex_1().min_h(dp(64.)).px(dp(12.)).pt(dp(2.)).child(
                     div()

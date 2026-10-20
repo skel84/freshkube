@@ -7,6 +7,7 @@ use connection::Subject;
 use freshkube_core::coroot as api;
 
 mod charts;
+mod deployments;
 pub(super) mod example;
 mod strip;
 mod table;
@@ -14,6 +15,7 @@ mod table;
 mod tests;
 
 pub(super) use charts::{ChartKey, Charts, ShownChart};
+pub(super) use deployments::FocusedRevision;
 pub(super) use table::ReportTable;
 
 /// The narrowest a chart is drawn before it takes a row of its own.
@@ -22,6 +24,7 @@ const MIN_CHART_WIDTH: f32 = 360.;
 /// What the page shows of one answer and the chosen report.
 pub(super) struct AppPage {
     strip: strip::Strip,
+    revisions: Vec<api::DeploymentRevision>,
     tabs: Vec<Tab>,
     checks: Vec<CheckLine>,
     blocks: Vec<Block>,
@@ -29,6 +32,7 @@ pub(super) struct AppPage {
     /// Why the charts lack their histories, when coroot-rs couldn't read
     /// them; said once for the page, not on every chart.
     history_note: Option<SharedString>,
+    focus_note: Option<SharedString>,
     /// Coroot sent no reports at all.
     empty: bool,
 }
@@ -133,7 +137,14 @@ impl AppPage {
                 )
                 .into()
             }),
+            revisions: view
+                .revisions
+                .as_ref()
+                .and_then(|r| r.as_ref().ok())
+                .cloned()
+                .unwrap_or_default(),
             empty: view.reports.is_empty(),
+            focus_note: None,
         };
         let marks = charts::Marks {
             revisions: match &view.revisions {
@@ -153,7 +164,24 @@ impl AppPage {
                 .enumerate()
                 .map(|(ix, c)| check(ix, c))
                 .collect();
+            let revisions = (report.name == "Deployments")
+                .then_some(view.revisions.as_ref())
+                .flatten()
+                .and_then(|revisions| revisions.as_ref().ok());
+            if let Some(revisions) = revisions {
+                page.tables.push(Rc::new(table::Prepared::revisions(
+                    &view.map.app.id,
+                    revisions,
+                )));
+                page.blocks.push(Block {
+                    width: 1.,
+                    kind: BlockKind::Table(page.tables.len() - 1),
+                });
+            }
             for (ix, widget) in report.widgets.iter().enumerate() {
+                if revisions.is_some() && matches!(widget.kind, api::WidgetKind::Table(_)) {
+                    continue;
+                }
                 let kind = match &widget.kind {
                     api::WidgetKind::Chart(chart) => BlockKind::Charts(Rc::new(
                         charts::Charts::chart(key(ix), &slug, chart, &marks),
@@ -257,7 +285,26 @@ impl ObservabilityPage {
         {
             self.report_name = first.name.clone();
         }
-        self.app_page = Some(AppPage::new(view, &self.report_name));
+        let mut page = AppPage::new(view, &self.report_name);
+        page.focus_note = self
+            .focused_revision
+            .as_ref()
+            .filter(|focus| focus.app == app)
+            .and_then(|focus| {
+                self.live
+                    .range
+                    .from
+                    .filter(|from| focus.started_at < *from)
+                    .map(|_| {
+                        format!(
+                            "Started {}, before this {} h window",
+                            format::local_time(focus.started_at),
+                            self.hours
+                        )
+                        .into()
+                    })
+            });
+        self.app_page = Some(page);
     }
 
     /// Reads the selected application's view from Coroot.
@@ -342,6 +389,7 @@ impl ObservabilityPage {
 
     /// Opens another application on the same report, as Coroot's links do.
     pub(super) fn open_linked_app(&mut self, id: api::AppId, cx: &mut Context<Self>) {
+        self.focused_revision = None;
         self.selected_app = Some(id);
         self.report_snapshot = None;
         self.app_page = None;
@@ -401,6 +449,13 @@ impl ObservabilityPage {
             .gap(dp(14.))
             .child(self.render_strip(&page.strip, cx))
             .child(self.render_tabs(page, cx))
+            .children(page.focus_note.clone().map(|note| {
+                muted(note, cx)
+                    .id("obs-focused-revision-before-window")
+                    .test_support()
+                    .role(Role::Status)
+                    .whitespace_normal()
+            }))
             .when(!page.checks.is_empty(), |this| {
                 this.child(self.render_checks(page, cx))
             })

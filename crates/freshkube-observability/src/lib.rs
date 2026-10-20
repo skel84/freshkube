@@ -193,6 +193,7 @@ pub struct ObservabilityPage {
     report_snapshot: Option<reports::ReportSnapshot>,
     /// Coroot's own view of the selected application, as the page shows it.
     app_page: Option<application::AppPage>,
+    focused_revision: Option<application::FocusedRevision>,
     /// One entity per table the chosen report shows.
     app_tables: Vec<Entity<application::ReportTable>>,
     /// A panel for each chart the chosen report shows, and no other.
@@ -400,6 +401,7 @@ impl ObservabilityPage {
             flame_matches: vec![],
             report_snapshot: None,
             app_page: None,
+            focused_revision: None,
             app_tables: vec![],
             app_charts: vec![],
             app_picks: BTreeMap::new(),
@@ -482,6 +484,7 @@ impl ObservabilityPage {
         report: Report,
         cx: &mut Context<Self>,
     ) {
+        self.focused_revision = None;
         self.selected_app = Some(id);
         self.report = report;
         self.report_name = report.server_name().into();

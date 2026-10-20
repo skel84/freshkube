@@ -155,6 +155,68 @@ mod ui_tests {
     }
 
     #[gpui_kit::test]
+    fn show_on_charts_from_the_row_menu_opens_slo_with_the_revision_focused(
+        cx: &mut TestAppContext,
+    ) {
+        let (_runtime, handle, page) = open_example(cx, 1260., 900.);
+        let first = row_id(cx, &page, 0);
+        let (revision, range) = page.read_with(cx, |page, _| {
+            (
+                page.revision_observations.rows[0].revision.clone(),
+                page.live.range,
+            )
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // Start on another row so the menu must select its own revision.
+            window.click(row_id_from_page(&page, cx, 1), cx);
+            window.render_frame(cx);
+            window.right_click(first, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(
+                window
+                    .within("popup-menu")
+                    .find(0usize)
+                    .label()
+                    .unwrap()
+                    .starts_with("Show on charts")
+            );
+            window.within("popup-menu").click(0usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let page = page.read(cx);
+            assert_eq!(page.destination, Destination::Application);
+            assert_eq!(page.report_name, "SLO", "no findings fall back to SLO");
+            assert_eq!(page.live.range, range);
+            assert_eq!(
+                page.focused_revision.as_ref().unwrap().started_at,
+                revision.started_at
+            );
+            assert!(!page.app_charts.is_empty());
+            assert!(
+                page.app_charts.iter().all(|chart| chart
+                    .view()
+                    .read(cx)
+                    .focused_marker_labels()
+                    .len()
+                    == 1)
+            );
+        })
+        .unwrap();
+    }
+
+    fn row_id_from_page(page: &Page, cx: &gpui_kit::App, ix: usize) -> SharedString {
+        page.read(cx).revision_observations.rows[ix].id.clone()
+    }
+
+    #[gpui_kit::test]
     fn the_newest_revision_opens_with_its_charts_split_at_its_start(cx: &mut TestAppContext) {
         let (_runtime, handle, page) = open_example(cx, 1260., 900.);
         let first = row_id(cx, &page, 0);
