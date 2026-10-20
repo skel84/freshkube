@@ -19,6 +19,7 @@ use super::argocd::{
     Application, DestinationMatch, Destinations, MapHint, StageNaming, match_destination,
     read_applications,
 };
+use super::chains::config::{CHAINS_NAMESPACE, read_config};
 use super::deployments::{
     Deployment, DeploymentSet, current_set, read_deployment_sets, read_deployments,
 };
@@ -30,11 +31,12 @@ use super::join::{
 use super::kargo::read_project;
 use super::pods::{read_deployment_pods, read_namespace_pods, read_rollout_pods};
 use super::read::Reader;
+use super::rekor::{Address, Client as RekorClient, LogRead, read_log};
 use super::rollouts::{
     AnalysisRun, ReplicaSet, Rollout, read_analysis_runs, read_replica_sets, read_rollouts,
 };
 use super::source::Source;
-use super::tekton::{CommitNames, EvidenceResult, read_builds};
+use super::tekton::{Build, CommitNames, EvidenceResult, read_builds};
 use super::verify::{KeyProblem, Trust};
 
 /// Which namespaces to read, all named by the caller.
@@ -74,6 +76,12 @@ pub struct Plan {
     /// The public key signatures are verified against; nothing is verified
     /// unless it is named.
     pub public_key_file: Option<std::path::PathBuf>,
+    /// Whether the transparency log is required for a signature to confirm.
+    /// Off, nothing is fetched from it.
+    pub transparency_log: bool,
+    /// The log's address when the setting names one; else Chains'
+    /// configuration is read for it.
+    pub transparency_url: Option<String>,
     /// Parameter and result names, besides upstream's, under which the
     /// pipelines record the commit they built. Empty unless configured.
     pub commit_names: CommitNames,
@@ -237,12 +245,14 @@ pub(crate) async fn upstream_with_history<K: Reader, A: Reader, T: Reader, G: Gi
         })
         .unwrap_or_default();
     let trust = read_trust(plan).await;
+    let log = read_transparency(clusters.tekton, plan, &trust, &builds).await;
     let mut evidence = Evidence {
         sha: plan.sha.clone(),
         followed: plan.followed.clone(),
         observed_at,
         evidence_result: plan.evidence_result.clone(),
         trust,
+        log,
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
         map_hint: plan.map_hint.clone(),
@@ -420,6 +430,30 @@ pub async fn commit_of_pull_request<G: GitHub>(
                 None => (pr.head_sha, false),
             }),
     )
+}
+
+/// The key the person named, read off the async thread: a file read blocks.
+/// What the transparency log says of the verified attestations, when the
+/// person turned it on. Off, nothing is read or fetched.
+async fn read_transparency<T: Reader>(
+    tekton: &T,
+    plan: &Plan,
+    trust: &Trust,
+    builds: &Source<Vec<Build>>,
+) -> LogRead {
+    if !plan.transparency_log {
+        return LogRead::Off;
+    }
+    // Read only if an attestation verified: until then the address is moot.
+    let address = async {
+        match &plan.transparency_url {
+            Some(url) => Address::Set(url.clone()),
+            None => Address::FromChains(read_config(tekton, CHAINS_NAMESPACE).await),
+        }
+    };
+    let client = RekorClient::new();
+    let builds = builds.read().map_or(&[][..], Vec::as_slice);
+    read_log(client.as_ref(), address, trust, builds).await
 }
 
 /// The key the person named, read off the async thread: a file read blocks.
