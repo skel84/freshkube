@@ -417,9 +417,9 @@ impl Pilot {
         let clusters = self.settings_page.read(cx).workspace().clusters.clone();
         let links = crate::applications::CorootLinks::of(&clusters, project.as_deref());
         // Observability's own pages read the open entry's key as well.
-        self.pages
-            .observability
-            .update(cx, |page, cx| page.set_entries(&clusters, cx));
+        self.pages.observability.update(cx, |page, cx| {
+            page.set_entries(&clusters, project.as_deref(), cx)
+        });
         let reader = crate::observability::OutcomeReader::new(&self.pages.observability);
         self.pages.applications.update(cx, |page, cx| {
             page.set_coroot(

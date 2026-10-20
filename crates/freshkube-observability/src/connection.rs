@@ -253,7 +253,7 @@ impl ObservabilityPage {
         entry: Option<&str>,
         cx: &mut Context<Self>,
     ) {
-        let relinked = self.set_open_entry(entry);
+        let relinked = self.set_open_entry(entry, held.is_some());
         if !self.set_access(access, held, cx) && relinked {
             self.relink(cx);
         }
@@ -273,9 +273,13 @@ impl ObservabilityPage {
             return false;
         }
         self.live.access = access;
-        if let Some(source) = self.live.source.take() {
+        // The entry's linked project is the one to read, before any read.
+        if let Some(project) = self.linked_choice() {
+            self.install_project(&project, false, cx);
+        } else if let Some(source) = self.live.source.take() {
             let association = self.association_for(source.project());
             self.live.source = Some(source.with_association(association));
+            self.sync_note();
         }
         if shown != examples && self.fixture {
             self.forget_examples();
@@ -397,6 +401,16 @@ impl ObservabilityPage {
         self.range_changed(cx);
     }
     pub(super) fn select_project(&mut self, project: &api::ProjectInfo, cx: &mut Context<Self>) {
+        self.select_project_as(project, true, cx);
+    }
+    /// Reads `project`; `remember` keeps it for the next launch, which a
+    /// project an entry's link chose does not.
+    pub(super) fn select_project_as(
+        &mut self,
+        project: &api::ProjectInfo,
+        remember: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(provider) = &self.live.provider else {
             return;
         };
@@ -405,12 +419,28 @@ impl ObservabilityPage {
         }) {
             return;
         }
+        self.install_project(project, remember, cx);
+        self.clear_observations();
+        self.refresh_current(cx);
+    }
+    /// Makes `project` the shown one, with the open entry's link for it, and
+    /// reads nothing.
+    pub(super) fn install_project(
+        &mut self,
+        project: &api::ProjectInfo,
+        remember: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(provider) = &self.live.provider else {
+            return;
+        };
         let association = self.association_for(&project.id);
         self.live.source = Some(provider.source(project).with_association(association));
         self.live.project_label = format!("{} · {}", project.name, project.id);
-        self.remember_project(&project.id, cx);
-        self.clear_observations();
-        self.refresh_current(cx);
+        if remember {
+            self.remember_project(&project.id, cx);
+        }
+        self.sync_note();
     }
     pub(super) fn invalidate_connection(&mut self) {
         self.live.provider = None;
@@ -421,6 +451,7 @@ impl ObservabilityPage {
         self.live.project_labels.clear();
         self.live.project_label = "Choose a project".into();
         self.live.error = None;
+        self.sync_note();
         self.clear_observations();
     }
     pub(super) fn disconnect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -545,6 +576,7 @@ impl ObservabilityPage {
                             .map(|p| format!("{} · {}", p.name, p.id))
                             .collect();
                         this.live.projects = projects;
+                        this.sync_note();
                         this.settings_open = false;
                         this.remember_connection(saved_url, auth, saved_value, cx);
                         this.select_linked_project(cx);
@@ -627,6 +659,7 @@ impl ObservabilityPage {
                             .map(|p| format!("{} · {}", p.name, p.id))
                             .collect();
                         this.live.projects = projects;
+                        this.sync_note();
                         this.settings_open = false;
                         this.remember_connection(url, auth, value, cx);
                         this.select_linked_project(cx);

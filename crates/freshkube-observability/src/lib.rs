@@ -59,8 +59,6 @@ struct ThresholdDialog {
     value: String,
 }
 
-#[cfg(test)]
-mod entry_tests;
 #[cfg(any(test, feature = "testing"))]
 mod testing;
 #[cfg(test)]
@@ -142,6 +140,12 @@ pub struct ObservabilityPage {
     entries: Vec<freshkube_core::workspace::Entry>,
     open_entry: Option<String>,
     entry_link: entry::EntryLink,
+    /// The connection's `coroot.project`, which an entry's link uses when it
+    /// names none.
+    connection_project: Option<String>,
+    /// What the link says of Kubernetes links, derived when it, the shown
+    /// project or the listed projects change.
+    link_note: Option<entry::LinkNote>,
     destination: Destination,
     applications: Vec<Application>,
     matrix: Vec<MatrixRow>,
@@ -369,6 +373,8 @@ impl ObservabilityPage {
             entries: vec![],
             open_entry: None,
             entry_link: entry::EntryLink::Closed,
+            connection_project: None,
+            link_note: None,
             destination: Destination::Applications,
             applications: vec![],
             matrix: vec![],

@@ -174,20 +174,15 @@ impl ObservabilityPage {
     /// The open entry's Coroot link: the cluster its Kubernetes links read,
     /// or why it has none. It is edited in the setup file.
     pub(super) fn render_entry_link(&self, cx: &Context<Self>) -> AnyElement {
-        let note = self.link_note();
-        let linked = match (&note, self.entry_link.link()) {
-            (None, Some(link)) => Some(format!(
-                "Coroot cluster {} is linked to “{}”, so reports open its objects.",
-                link.cluster(),
-                link.entry()
-            )),
-            _ => None,
+        let text = match &self.link_note {
+            Some(note) => Some(note.text.clone()),
+            None => self.linked_line().map(Into::into),
         };
         line()
             .id("obs-entry-link")
             .test_support()
             .flex_wrap()
-            .child(muted(note.or(linked).unwrap_or_default(), cx))
+            .child(muted(text.unwrap_or_default(), cx))
             .into_any_element()
     }
     pub(super) fn render_read_state(&self, cx: &Context<Self>) -> Option<AnyElement> {

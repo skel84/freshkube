@@ -96,12 +96,16 @@ impl ObservabilityPage {
         if snapshot.subject.is_none() {
             // The setup file's key is the first thing to look at; the
             // application's own kind and cluster come after it.
-            let note = self.link_note().or_else(|| {
-                (!self.fixture).then(|| {
-                    "No Kubernetes link: the application is external, of an unsupported kind, or not in the linked Coroot cluster."
-                        .into()
-                })
-            });
+            let note = self
+                .link_note
+                .as_ref()
+                .map(|note| note.text.clone())
+                .or_else(|| {
+                    (!self.fixture).then(|| {
+                        "No Kubernetes link: the application is external, of an unsupported kind, or not in the linked Coroot cluster."
+                            .into()
+                    })
+                });
             if let Some(note) = note {
                 content = content.child(
                     div()

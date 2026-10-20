@@ -250,17 +250,26 @@ impl ObservabilityPage {
                     link.cluster, link.hash
                 ),
             ),
-            Outcome::NoAssociation => (
-                Tone::Warn,
-                format!("No Coroot cluster is linked to {}.", link.cluster),
-                format!(
-                    "{} Without it revision {} of {app} can't be found.",
-                    self.link_note().unwrap_or_else(|| {
-                        "Set clusters[].coroot.cluster in the setup file (freshkube.yaml).".into()
-                    }),
-                    link.hash
-                ),
-            ),
+            Outcome::NoAssociation => {
+                let (lead, body) = self.link_note.as_ref().map_or_else(
+                    || {
+                        (
+                            "No Coroot cluster is linked to the open entry.".into(),
+                            "Set clusters[].coroot.cluster in the setup file (freshkube.yaml)."
+                                .into(),
+                        )
+                    },
+                    |note| (note.lead.to_string(), note.body.to_string()),
+                );
+                (
+                    Tone::Warn,
+                    lead,
+                    format!(
+                        "{body} Revision {} of {app} can't be found without it.",
+                        link.hash
+                    ),
+                )
+            }
         };
         Some(
             div()

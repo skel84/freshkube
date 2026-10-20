@@ -1,7 +1,7 @@
 //! The open entry's Coroot link: a linked entry's links, an unlinked
 //! entry's state, switching the entry, a setup reload and a late answer.
-use super::{ObservabilityPage, tests::mount};
 use crate::connection::{ReadJob, Subject};
+use crate::{ObservabilityPage, tests::mount};
 use freshkube_core::coroot as api;
 use freshkube_core::workspace::{Entry, Role};
 use gpui_kit::test::TestWindowExt;
@@ -35,10 +35,14 @@ fn connected(
                 id: "shop-api".into(),
                 name: "Shop".into(),
             };
+            let other = api::ProjectInfo {
+                id: "shop-web".into(),
+                name: "Web".into(),
+            };
             page.live.source = Some(provider.source(&project));
-            page.live.projects = vec![project];
+            page.live.projects = vec![project, other];
             page.live.provider = Some(provider);
-            page.set_entries(entries, cx);
+            page.set_entries(entries, None, cx);
             page.destination = crate::Destination::Application;
         })
     });
@@ -82,7 +86,12 @@ fn hold(cx: &mut TestAppContext, page: &Entity<ObservabilityPage>) -> ReadJob {
 }
 
 fn note(cx: &mut TestAppContext, page: &Entity<ObservabilityPage>) -> Option<String> {
-    cx.read(|cx| page.read(cx).link_note())
+    cx.read(|cx| {
+        page.read(cx)
+            .link_note
+            .as_ref()
+            .map(|note| note.text.to_string())
+    })
 }
 
 #[gpui_kit::test]
@@ -203,6 +212,7 @@ fn a_setup_reload_that_changes_the_link_reads_again(cx: &mut TestAppContext) {
         page.update(cx, |page, cx| {
             page.set_entries(
                 &[entry("entry-a", Some((Some("shop-api"), "cluster-one")))],
+                None,
                 cx,
             )
         })
@@ -213,6 +223,7 @@ fn a_setup_reload_that_changes_the_link_reads_again(cx: &mut TestAppContext) {
         page.update(cx, |page, cx| {
             page.set_entries(
                 &[entry("entry-a", Some((Some("shop-api"), "cluster-new")))],
+                None,
                 cx,
             )
         })
@@ -228,7 +239,7 @@ fn a_setup_reload_that_changes_the_link_reads_again(cx: &mut TestAppContext) {
     // The key removed from the file.
     cx.update(|cx| {
         page.update(cx, |page, cx| {
-            page.set_entries(&[entry("entry-a", None)], cx)
+            page.set_entries(&[entry("entry-a", None)], None, cx)
         })
     });
     assert_eq!(association(cx, &page), None);
@@ -312,8 +323,10 @@ fn example_data_says_so_when_the_open_entry_is_not_linked(cx: &mut TestAppContex
             page.set_entries(
                 &[
                     entry("entry-a", None),
-                    entry("entry-b", Some((Some("shop-api"), "fixture"))),
+                    // Example data names no project: the cluster links.
+                    entry("entry-b", Some((None, "fixture"))),
                 ],
+                None,
                 cx,
             );
             page.set_source(
@@ -342,4 +355,116 @@ fn example_data_says_so_when_the_open_entry_is_not_linked(cx: &mut TestAppContex
         })
     });
     assert!(!shown(cx));
+}
+
+fn project(cx: &mut TestAppContext, page: &Entity<ObservabilityPage>) -> Option<String> {
+    cx.read(|cx| {
+        page.read(cx)
+            .live
+            .source
+            .as_ref()
+            .map(|source| source.project().to_owned())
+    })
+}
+
+#[gpui_kit::test]
+fn switching_the_entry_shows_the_project_of_its_link(cx: &mut TestAppContext) {
+    let entries = [
+        entry("entry-a", Some((Some("shop-api"), "cluster-one"))),
+        entry("entry-b", Some((Some("shop-web"), "cluster-two"))),
+    ];
+    let (_runtime, _handle, page) = connected(cx, &entries);
+    open(cx, &page, "access:a", "entry-a");
+    assert_eq!(project(cx, &page).as_deref(), Some("shop-api"));
+    assert_eq!(note(cx, &page), None);
+    // Another connection, another entry, another project.
+    open(cx, &page, "access:b", "entry-b");
+    assert_eq!(project(cx, &page).as_deref(), Some("shop-web"));
+    assert_eq!(
+        association(cx, &page),
+        Some(api::Association::new(
+            "access:b".into(),
+            "cluster-two".into()
+        ))
+    );
+    assert_eq!(note(cx, &page), None);
+    // The same entry on the same connection, its project edited in the file.
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_entries(
+                &[
+                    entry("entry-a", Some((Some("shop-api"), "cluster-one"))),
+                    entry("entry-b", Some((Some("shop-api"), "cluster-two"))),
+                ],
+                None,
+                cx,
+            )
+        })
+    });
+    assert_eq!(project(cx, &page).as_deref(), Some("shop-api"));
+    assert_eq!(note(cx, &page), None);
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn an_entry_without_its_own_project_uses_the_connections(cx: &mut TestAppContext) {
+    let entries = [entry("entry-a", Some((None, "cluster-one")))];
+    let (_runtime, _handle, page) = connected(cx, &entries);
+    open(cx, &page, "access:a", "entry-a");
+    assert!(note(cx, &page).unwrap().contains("no project"));
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_entries(&entries, Some("shop-web"), cx)
+        })
+    });
+    assert_eq!(project(cx, &page).as_deref(), Some("shop-web"));
+    assert_eq!(
+        association(cx, &page),
+        Some(api::Association::new(
+            "access:a".into(),
+            "cluster-one".into()
+        ))
+    );
+    assert_eq!(note(cx, &page), None);
+    cx.run_until_parked();
+}
+
+#[gpui_kit::test]
+fn the_note_says_when_the_linked_project_is_not_the_one_shown_or_not_listed(
+    cx: &mut TestAppContext,
+) {
+    let entries = [
+        entry("entry-a", Some((Some("shop-api"), "cluster-one"))),
+        entry("entry-b", Some((Some("shop-gone"), "cluster-two"))),
+    ];
+    let (_runtime, _handle, page) = connected(cx, &entries);
+    open(cx, &page, "access:a", "entry-a");
+    // A person chooses another project in the header.
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            let other = page.live.projects[1].clone();
+            page.select_project(&other, cx)
+        })
+    });
+    let shown = note(cx, &page).unwrap();
+    assert!(
+        shown.contains("This page shows project shop-web"),
+        "{shown}"
+    );
+    assert!(shown.contains("choose shop-api"), "{shown}");
+    assert_eq!(association(cx, &page), None);
+    // The connection lists no such project.
+    open(cx, &page, "access:b", "entry-b");
+    let missing = note(cx, &page).unwrap();
+    assert!(
+        missing.contains("lists no project “shop-gone”"),
+        "{missing}"
+    );
+    assert_eq!(association(cx, &page), None);
+    // Each case has its own words: the lead is not said again in the body.
+    cx.read(|cx| {
+        let note = page.read(cx).link_note.clone().unwrap();
+        assert!(!note.body.contains(note.lead.as_ref()));
+    });
+    cx.run_until_parked();
 }
