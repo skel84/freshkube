@@ -20,6 +20,8 @@ mod detail;
 mod outcome;
 pub(crate) mod read;
 pub(crate) mod table;
+#[cfg(test)]
+mod unread_tests;
 mod view;
 
 use std::collections::BTreeSet;
@@ -45,6 +47,7 @@ pub use changes::Changes;
 #[cfg(any(test, feature = "testing"))]
 pub use changes::LiveChanges;
 pub use outcome::{Coroot, Kind as OutcomeKind, Links, Live, Mark};
+pub(crate) use outcome::{Identity, Key, SessionMemo, Summary, session_memo};
 pub(super) use read::Fetch;
 
 /// The page's id prefix: `change-title`, `change-hop-<key>`, `change-detail`.
