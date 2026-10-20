@@ -169,7 +169,7 @@ impl std::fmt::Display for Malformed {
 }
 
 /// The attestations an object's annotations hold, up to
-/// [`MOST_ATTESTATIONS`], in key order.
+/// [`MOST_ATTESTATIONS`]: the run's own first, then images', each in key order.
 pub(crate) fn parse_attestations(object: &Value) -> Attestations {
     let Some(annotations) = object
         .pointer("/metadata/annotations")
@@ -195,8 +195,13 @@ pub(crate) fn parse_attestations(object: &Value) -> Attestations {
             .and_then(Value::as_str)
             .filter(|value| !value.is_empty())
     };
+    // The run's own keys come first: an image's key starts with hex digits
+    // and sorts before `taskrun-`, so in key order a TaskRun with many image
+    // signatures would lose the one attestation that matters.
+    let (own, images): (Vec<&str>, Vec<&str>) =
+        keys.into_iter().partition(|key| form_of(key) == Form::Run);
     let mut found = Attestations::default();
-    for key in keys {
+    for key in own.into_iter().chain(images) {
         if found.read.len() == MOST_ATTESTATIONS {
             found.omitted += 1;
             continue;
@@ -255,11 +260,15 @@ fn read_envelope(signature: Option<&str>, payload: Option<&str>) -> Result<Envel
             .ok_or(Malformed::NotAnEnvelope("the envelope has no payload"))?,
         "the envelope's payload",
     )?;
-    let signatures: Vec<EnvelopeSignature> = envelope
+    let entries = envelope
         .get("signatures")
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+        .map_or(&[][..], Vec::as_slice);
+    // A signature that is not base64 is dropped; one bad entry beside a good
+    // one does not spoil the envelope, but only bad ones are not "no
+    // signature".
+    let signatures: Vec<EnvelopeSignature> = entries
+        .iter()
         .filter_map(|entry| {
             Some(EnvelopeSignature {
                 key_id: text(entry, "/keyid"),
@@ -268,12 +277,16 @@ fn read_envelope(signature: Option<&str>, payload: Option<&str>) -> Result<Envel
         })
         .collect();
     if signatures.is_empty() {
-        return Err(Malformed::NotAnEnvelope("the envelope has no signature"));
+        return Err(if entries.is_empty() {
+            Malformed::NotAnEnvelope("the envelope has no signature")
+        } else {
+            Malformed::NotBase64("the envelope's signature")
+        });
     }
-    let payload_annotation_agrees = match payload {
-        Some(text) => Some(decode(text, "the payload")? == carried),
-        None => None,
-    };
+    // The annotation only cross-checks: one that cannot be decoded
+    // disagrees, and leaves the envelope readable.
+    let payload_annotation_agrees =
+        payload.map(|text| decode(text, "the payload").is_ok_and(|bytes| bytes == carried));
     if payload_type != IN_TOTO_PAYLOAD_TYPE {
         return Err(Malformed::NotAStatement(
             "the envelope is not an in-toto statement",
@@ -291,13 +304,12 @@ fn read_envelope(signature: Option<&str>, payload: Option<&str>) -> Result<Envel
 }
 
 fn claims_of(statement: &Value) -> Claims {
-    let mut subjects = statement
+    let list = statement
         .get("subject")
         .and_then(Value::as_array)
-        .map(|list| list.iter().map(subject_of).collect::<Vec<_>>())
-        .unwrap_or_default();
-    let subjects_omitted = subjects.len().saturating_sub(MOST_SUBJECTS);
-    subjects.truncate(MOST_SUBJECTS);
+        .map_or(&[][..], Vec::as_slice);
+    let subjects = list.iter().take(MOST_SUBJECTS).map(subject_of).collect();
+    let subjects_omitted = list.len().saturating_sub(MOST_SUBJECTS);
     Claims {
         statement_type: text(statement, "/_type"),
         predicate_type: text(statement, "/predicateType"),
@@ -342,10 +354,14 @@ fn source_commit(statement: &Value) -> Option<String> {
     }
 }
 
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the join reads them in the verification step")
+)]
 impl Attestation {
     /// The annotation the signature was read from, as a JSON pointer into
     /// the run.
-    pub fn signature_field(&self) -> String {
+    pub(crate) fn signature_field(&self) -> String {
         format!(
             "/metadata/annotations/{}",
             pointer_segment(&format!("{SIGNATURE}{}", self.key))
@@ -355,7 +371,7 @@ impl Attestation {
     /// What was read, as a declared observation of the run it is an
     /// annotation of: an annotation is written by whoever can patch the run,
     /// so it is declared however it was signed.
-    pub fn observation(&self, run: ObjectRef) -> Observation {
+    pub(crate) fn observation(&self, run: ObjectRef) -> Observation {
         let value = match &self.stored {
             Stored::Envelope(envelope) => envelope
                 .claims

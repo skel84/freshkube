@@ -250,8 +250,6 @@ fn a_certificate_annotation_is_noted_and_not_kept() {
 #[test]
 fn each_way_an_attestation_is_unreadable_says_why() {
     let sig = format!("chains.tekton.dev/signature-taskrun-{UID}");
-    let payload = format!("chains.tekton.dev/payload-taskrun-{UID}");
-
     let mut no_signature = signed(&statement());
     no_signature["metadata"]["annotations"]
         .as_object_mut()
@@ -265,10 +263,6 @@ fn each_way_an_attestation_is_unreadable_says_why() {
         malformed(&not_base64),
         Malformed::NotBase64("the signature")
     );
-
-    let mut bad_payload = signed(&statement());
-    annotate(&mut bad_payload, &payload, json!("%%%"));
-    assert_eq!(malformed(&bad_payload), Malformed::NotBase64("the payload"));
 
     let mut not_json = signed(&statement());
     annotate(&mut not_json, &sig, json!(b64("plain text")));
@@ -337,6 +331,74 @@ fn each_way_an_attestation_is_unreadable_says_why() {
         malformed(&not_a_statement).to_string(),
         "the payload is not JSON"
     );
+}
+
+#[test]
+fn a_payload_annotation_that_cannot_be_decoded_disagrees_and_leaves_the_envelope_readable() {
+    let payload = format!("chains.tekton.dev/payload-taskrun-{UID}");
+    for bad in ["%%%", &b64(vec![b'x'; MOST_DECODED_BYTES + 1])] {
+        let mut run = signed(&statement());
+        annotate(&mut run, &payload, json!(bad));
+        let attestation = only(&run);
+        assert_eq!(
+            envelope(&attestation).payload_annotation_agrees,
+            Some(false)
+        );
+        assert_eq!(envelope(&attestation).claims.subjects.len(), 1);
+    }
+}
+
+#[test]
+fn signatures_that_are_not_base64_are_named_and_one_bad_beside_a_good_one_is_dropped() {
+    let sig = format!("chains.tekton.dev/signature-taskrun-{UID}");
+    let with = |signatures: Value| {
+        let mut envelope = envelope_of(IN_TOTO_PAYLOAD_TYPE, &statement());
+        envelope["signatures"] = signatures;
+        let mut run = signed(&statement());
+        annotate(&mut run, &sig, json!(b64(envelope.to_string())));
+        run
+    };
+    let only_bad = with(json!([{"keyid": "a", "sig": "%%%"}, {"keyid": "b"}]));
+    assert_eq!(
+        malformed(&only_bad),
+        Malformed::NotBase64("the envelope's signature")
+    );
+    assert_eq!(
+        malformed(&only_bad).to_string(),
+        "the envelope's signature is not base64",
+        "not \"no signature\""
+    );
+    let mixed = with(json!([{"keyid": "a", "sig": "%%%"}, {"keyid": "b", "sig": b64("good")}]));
+    let attestation = only(&mixed);
+    let signatures = &envelope(&attestation).signatures;
+    assert_eq!(signatures.len(), 1);
+    assert_eq!(signatures[0].key_id.as_deref(), Some("b"));
+}
+
+#[test]
+fn twenty_image_signatures_do_not_push_out_the_runs_own_attestation() {
+    let mut run = signed(&statement());
+    for index in 0..20 {
+        // Image keys are hex digits, which sort before `taskrun-`.
+        let key = format!("{index:012x}");
+        annotate(
+            &mut run,
+            &format!("chains.tekton.dev/signature-{key}"),
+            json!(b64("sig")),
+        );
+        annotate(
+            &mut run,
+            &format!("chains.tekton.dev/payload-{key}"),
+            json!(b64("{}")),
+        );
+    }
+    let found = parse_attestations(&run);
+    assert_eq!(found.read.len(), MOST_ATTESTATIONS);
+    assert_eq!(found.omitted, 5);
+    assert_eq!(found.read[0].key, format!("taskrun-{UID}"));
+    assert_eq!(found.read[0].form, Form::Run);
+    assert!(matches!(found.read[0].stored, Stored::Envelope(_)));
+    assert!(found.read[1..].iter().all(|a| a.form == Form::Image));
 }
 
 #[test]
