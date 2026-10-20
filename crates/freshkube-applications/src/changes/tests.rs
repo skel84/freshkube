@@ -1,5 +1,5 @@
 //! Headless UI integration coverage for the session outcome lines.
-use std::{rc::Rc, time::Duration};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use freshkube_core::{
     coroot as api,
@@ -10,7 +10,7 @@ use freshkube_observability::{
 };
 use freshkube_ui::split_size::{MemorySizes, set_store};
 use gpui_kit::{
-    AnyWindowHandle, AppContext, Entity, TestAppContext, component::Root, px, size,
+    AnyWindowHandle, AppContext, ElementId, Entity, TestAppContext, component::Root, px, size,
     test::TestWindowExt,
 };
 
@@ -28,6 +28,14 @@ struct Harness {
     runtime: tokio::runtime::Runtime,
     window: AnyWindowHandle,
     page: Entity<ChangesPage>,
+}
+
+fn part(stage: &str, part: &str) -> ElementId {
+    (
+        ElementId::from(format!("changes-after-{stage}")),
+        part.to_owned(),
+    )
+        .into()
 }
 
 fn open(cx: &mut TestAppContext, kind: OutcomeKind) -> Harness {
@@ -124,7 +132,11 @@ fn label(h: &Harness, cx: &mut TestAppContext) -> String {
 }
 
 fn links() -> Links {
-    let entries = [("dev-fra", "cluster-a"), ("stage-fra", "cluster-b")].map(|(id, cluster)| {
+    links_with_dev_cluster("cluster-a")
+}
+
+fn links_with_dev_cluster(cluster: &str) -> Links {
+    let entries = [("dev-fra", cluster), ("stage-fra", "cluster-b")].map(|(id, cluster)| {
         let mut entry = Entry::new(id, Role::Core, id);
         entry.coroot = Some(Box::new(freshkube_core::setup::EntryCoroot::new(cluster)));
         entry
@@ -170,9 +182,9 @@ fn unread_stage_link_opens_the_change_and_a_read_survives_closing_it(cx: &mut Te
     assert!(cx.read(|cx| h.page.read(cx).change.is_none()));
     assert_ne!(label(&h, cx), UNREAD);
     cx.update_window(h.window, |_, window, cx| {
-        assert!(window.find("changes-after-dev-mark").visible());
+        assert!(window.find(part("dev", "mark")).visible());
         assert_eq!(
-            window.find("changes-after-dev-mark").label(),
+            window.find(part("dev", "mark")).label(),
             Some(tooltip.as_str())
         );
         assert_eq!(window.find("changes-after-stage").label(), Some(UNREAD));
@@ -239,7 +251,7 @@ fn completed_outcome_without_a_status_repeats_the_change_sentence_without_a_mark
             "{kind:?}"
         );
         cx.update_window(h.window, |_, window, _| {
-            assert!(window.try_find("changes-after-dev-mark").is_none());
+            assert!(window.try_find(part("dev", "mark")).is_none());
         })
         .unwrap();
     }
@@ -266,10 +278,10 @@ fn list_makes_no_coroot_read_and_shows_a_completed_read_then_its_stale_refresh(
     let said = label(&h, cx);
     assert!(said.ends_with(" · last read"), "{said}");
     cx.update_window(h.window, |_, window, _| {
-        assert!(window.find("changes-after-dev-mark").visible());
+        assert!(window.find(part("dev", "mark")).visible());
         assert!(
             window
-                .find("changes-after-dev-stale")
+                .find(part("dev", "stale"))
                 .label()
                 .unwrap()
                 .starts_with("Showing the last read at ")
@@ -320,62 +332,251 @@ fn a_foreign_providers_completed_answer_never_shows_its_mark(cx: &mut TestAppCon
     back(&h, cx);
     assert_eq!(label(&h, cx), format!("After the deploy: {sentence}"));
     cx.update_window(h.window, |_, window, _| {
-        assert!(window.try_find("changes-after-dev-mark").is_none())
+        assert!(window.try_find(part("dev", "mark")).is_none())
     })
     .unwrap();
 }
 
 #[gpui_kit::test]
-fn another_hash_entry_link_or_window_cannot_reuse_a_read(cx: &mut TestAppContext) {
+fn changing_the_lists_link_makes_a_completed_read_unread(cx: &mut TestAppContext) {
     let h = open(cx, OutcomeKind::Found);
     let (_observability, script) = live(&h, cx);
-    let _change = read(&h, cx);
+    let change = read(&h, cx);
     assert!(script.answer(0, found()));
     cx.run_until_parked();
     back(&h, cx);
+    drop(change);
     assert_ne!(label(&h, cx), UNREAD);
-    // Change only one identity component at a time in the memo. The list
-    // continues asking its original question and must show the unread link.
-    let memo = cx.read(|cx| h.page.read(cx).outcome_memo.clone());
-    let original = cx.read(|cx| memo.read(cx).answers[0].clone());
-    for part in ["hop", "hash", "entry", "link", "deployment", "window"] {
-        cx.update(|cx| {
-            memo.update(cx, |memo, cx| {
-                let (mut identity, summary) = original.clone();
-                let super::Identity::Live(key) = &mut identity else {
-                    panic!("live")
-                };
-                match part {
-                    "hop" => key.hop = "another-hop".into(),
-                    "hash" => key.query.hash = Some("another-hash".into()),
-                    "deployment" => key.query.name = "another-deployment".into(),
-                    "window" => key.window.before = Duration::from_secs(60),
-                    "entry" | "link" => {
-                        let mut entry = Entry::new(
-                            if part == "entry" {
-                                "other-entry"
-                            } else {
-                                "dev-fra"
-                            },
-                            Role::Core,
-                            "invented",
-                        );
-                        entry.coroot = Some(Box::new(freshkube_core::setup::EntryCoroot::new(
-                            if part == "link" {
-                                "other-cluster"
-                            } else {
-                                "cluster-a"
-                            },
-                        )));
-                        key.query.link = api::Link::of(&entry, Some("shop-api")).unwrap();
-                    }
-                    _ => unreachable!(),
+    cx.update(|cx| {
+        h.page.update(cx, |page, cx| {
+            let Coroot::Live(mut live) = page.coroot.clone() else {
+                panic!("live")
+            };
+            live.links = links_with_dev_cluster("another-invented-cluster");
+            page.set_coroot(Coroot::Live(live), cx);
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(label(&h, cx), UNREAD);
+    assert_eq!(script.asked(), 1);
+    assert_eq!(script.wanting(), 0);
+}
+
+#[gpui_kit::test]
+fn refreshing_the_list_with_a_new_hash_makes_a_completed_read_unread(cx: &mut TestAppContext) {
+    let h = open(cx, OutcomeKind::Found);
+    let (_observability, script) = live(&h, cx);
+    let change = read(&h, cx);
+    assert!(script.answer(0, found()));
+    cx.run_until_parked();
+    back(&h, cx);
+    drop(change);
+    assert_ne!(label(&h, cx), UNREAD);
+    cx.update(|cx| {
+        h.page.update(cx, |page, cx| {
+            let mut refreshed = page.loader.data().unwrap().changes.clone();
+            let row = refreshed
+                .rows
+                .iter_mut()
+                .find(|row| row.project == PROJECT && row.freight == FREIGHT)
+                .unwrap();
+            let change = Arc::make_mut(row.trail.as_mut().unwrap());
+            let hop = change
+                .hops
+                .iter_mut()
+                .find(|hop| hop.key == "dev-deployment")
+                .unwrap();
+            let freshkube_delivery::change::Shows::Hop(detail) = &mut hop.shows else {
+                panic!("Deployment")
+            };
+            for action in &mut detail.actions {
+                if let freshkube_delivery::change::Target::Revision { hash, .. } =
+                    &mut action.target
+                {
+                    *hash = Some("new-invented-hash".into());
                 }
-                memo.answers.clear();
-                memo.keep(identity, summary, cx);
-            })
-        });
-        cx.run_until_parked();
-        assert_eq!(label(&h, cx), UNREAD, "{part}");
+            }
+            page.read_answer(refreshed, cx);
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(label(&h, cx), UNREAD);
+    assert_eq!(script.asked(), 1);
+    assert_eq!(script.wanting(), 0);
+}
+
+#[gpui_kit::test]
+fn a_stage_without_a_deployment_has_no_after_line(cx: &mut TestAppContext) {
+    let h = open(cx, OutcomeKind::Found);
+    cx.update(|cx| {
+        h.page.update(cx, |page, cx| {
+            let mut refreshed = page.loader.data().unwrap().changes.clone();
+            let row = refreshed
+                .rows
+                .iter_mut()
+                .find(|row| row.project == PROJECT && row.freight == FREIGHT)
+                .unwrap();
+            Arc::make_mut(row.trail.as_mut().unwrap())
+                .hops
+                .retain(|hop| hop.key != "dev-deployment");
+            page.read_answer(refreshed, cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(h.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("changes-detail-stage-0").visible());
+        assert!(window.try_find("changes-after-dev").is_none());
+        assert!(window.try_find("changes-after-stage").is_some());
+    })
+    .unwrap();
+}
+
+fn memo_identity(provider: api::ProviderId, index: usize) -> super::Identity {
+    let mut entry = Entry::new("invented-entry", Role::Core, "invented-entry");
+    entry.coroot = Some(Box::new(freshkube_core::setup::EntryCoroot::new(
+        "invented-cluster",
+    )));
+    super::Identity::Live(super::Key {
+        hop: format!("invented-hop-{index}"),
+        query: api::Query {
+            link: api::Link::of(&entry, Some("invented-project")).unwrap(),
+            workload: api::Workload::Deployment,
+            namespace: "invented-namespace".into(),
+            name: "invented-deployment".into(),
+            hash: Some(format!("invented-hash-{index}")),
+        },
+        window: Default::default(),
+        provider: Some(provider),
+    })
+}
+
+fn memo_summary() -> super::Summary {
+    super::Summary {
+        mark: None,
+        words: "Invented outcome".into(),
+        stale: None,
     }
+}
+
+#[gpui_kit::test]
+fn the_session_memo_drops_every_previous_providers_summary(cx: &mut TestAppContext) {
+    let first = Script::new().id();
+    let second = Script::new().id();
+    cx.update(|cx| {
+        let memo = super::session(cx);
+        for index in 0..3 {
+            memo.update(cx, |memo, cx| {
+                memo.keep(memo_identity(first, index), memo_summary(), cx)
+            });
+        }
+        memo.update(cx, |memo, cx| {
+            memo.keep(memo_identity(second, 3), memo_summary(), cx)
+        });
+        for index in 0..3 {
+            assert!(memo.read(cx).get(&memo_identity(first, index)).is_none());
+        }
+        assert!(memo.read(cx).get(&memo_identity(second, 3)).is_some());
+    });
+}
+
+#[gpui_kit::test]
+fn the_session_memo_keeps_256_summaries_and_evicts_the_oldest_read(cx: &mut TestAppContext) {
+    let provider = Script::new().id();
+    cx.update(|cx| {
+        let memo = super::session(cx);
+        for index in 0..257 {
+            memo.update(cx, |memo, cx| {
+                memo.keep(memo_identity(provider, index), memo_summary(), cx)
+            });
+        }
+        assert!(memo.read(cx).get(&memo_identity(provider, 0)).is_none());
+        for index in 1..257 {
+            assert!(memo.read(cx).get(&memo_identity(provider, index)).is_some());
+        }
+        // Refreshing an entry makes it newer than the other kept reads.
+        memo.update(cx, |memo, cx| {
+            memo.keep(memo_identity(provider, 1), memo_summary(), cx)
+        });
+        memo.update(cx, |memo, cx| {
+            memo.keep(memo_identity(provider, 257), memo_summary(), cx)
+        });
+        assert!(memo.read(cx).get(&memo_identity(provider, 1)).is_some());
+        assert!(memo.read(cx).get(&memo_identity(provider, 2)).is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn unchanged_connection_events_and_memo_writes_do_not_notify_the_list(cx: &mut TestAppContext) {
+    let h = open(cx, OutcomeKind::Found);
+    let (observability, script) = live(&h, cx);
+    let change = read(&h, cx);
+    let query = script.pending()[0].0.clone();
+    assert!(script.answer(0, found()));
+    cx.run_until_parked();
+    back(&h, cx);
+    drop(change);
+    let notifications = Rc::new(Cell::new(0));
+    let counted = notifications.clone();
+    let _subscription =
+        cx.update(|cx| cx.observe(&h.page, move |_, _| counted.set(counted.get() + 1)));
+    cx.update(|cx| observability.update(cx, |_, cx| cx.emit(ObservabilityEvent::Connection)));
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let page = h.page.read(cx);
+        let memo = page.outcome_memo.clone();
+        let summary = page.selected_row().unwrap().stages[0]
+            .after
+            .as_ref()
+            .unwrap()
+            .summary
+            .clone()
+            .unwrap();
+        let key = super::Identity::Live(super::Key {
+            hop: "dev-deployment".into(),
+            query,
+            window: Default::default(),
+            provider: Some(script.id()),
+        });
+        memo.update(cx, |memo, cx| memo.keep(key, summary, cx));
+    });
+    cx.run_until_parked();
+    assert_eq!(notifications.get(), 0);
+}
+
+#[gpui_kit::test]
+fn a_mark_id_does_not_collide_with_another_stage_line(cx: &mut TestAppContext) {
+    let h = open(cx, OutcomeKind::Found);
+    let change = read(&h, cx);
+    back(&h, cx);
+    drop(change);
+    cx.update(|cx| {
+        h.page.update(cx, |page, cx| {
+            let mut refreshed = page.loader.data().unwrap().changes.clone();
+            let row = refreshed
+                .rows
+                .iter_mut()
+                .find(|row| row.project == PROJECT && row.freight == FREIGHT)
+                .unwrap();
+            row.stages
+                .iter_mut()
+                .find(|stage| stage.name == "stage")
+                .unwrap()
+                .name = "dev-mark".into();
+            Arc::make_mut(row.trail.as_mut().unwrap())
+                .stages
+                .iter_mut()
+                .find(|stage| stage.name == "stage")
+                .unwrap()
+                .name = "dev-mark".into();
+            page.read_answer(refreshed, cx);
+        })
+    });
+    cx.run_until_parked();
+    cx.update_window(h.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find(part("dev", "mark")).visible());
+        assert_eq!(window.find("changes-after-dev-mark").label(), Some(UNREAD));
+    })
+    .unwrap();
 }

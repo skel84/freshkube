@@ -281,9 +281,8 @@ fn stage_line(ix: usize, cell: &Cell, cx: &mut Context<ChangesPage>) -> AnyEleme
 
 /// A text link before a read, then the change page's exact summary.
 fn outcome_line(line: &super::outcome::Line, cx: &mut Context<ChangesPage>) -> AnyElement {
-    let id = SharedString::from(format!("changes-after-{}", line.stage));
     let Some(summary) = &line.summary else {
-        return Button::new(id)
+        return Button::new(line.id.clone())
             .link()
             .xsmall()
             .h_auto()
@@ -291,37 +290,30 @@ fn outcome_line(line: &super::outcome::Line, cx: &mut Context<ChangesPage>) -> A
             .whitespace_normal()
             .w_full()
             .min_w_0()
-            .accessibility_label("After the deploy: open the change to read it")
+            .accessibility_label(line.label.clone())
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .whitespace_normal()
                     .text_size(dp(12.))
-                    .child("After the deploy: open the change to read it"),
+                    .child(line.label.clone()),
             )
             .on_click(cx.listener(|this, _, window, cx| this.open_selected(window, cx)))
             .into_any_element();
     };
-    let mut label = format!("After the deploy: {}", summary.words);
-    if summary.stale.is_some() {
-        label.push_str(" · last read");
-    }
     h_flex()
-        .id(id)
+        .id(line.id.clone())
         .test_support()
-        .aria_label(label)
+        .aria_label(line.label.clone())
         .gap(dp(4.))
         .flex_wrap()
         .items_center()
-        .child("After the deploy:")
+        .child(super::outcome::AFTER_DEPLOY)
         .children(summary.mark.as_ref().and_then(|mark| {
             ui::status_glyph(mark.tone, cx).map(|glyph| {
                 div()
-                    .id(SharedString::from(format!(
-                        "changes-after-{}-mark",
-                        line.stage
-                    )))
+                    .id(line.mark_id.clone())
                     .test_support()
                     .aria_label(mark.tooltip.clone())
                     .follow_tooltip(mark.tooltip.clone())
@@ -336,10 +328,7 @@ fn outcome_line(line: &super::outcome::Line, cx: &mut Context<ChangesPage>) -> A
         )
         .children(summary.stale.as_ref().map(|why| {
             div()
-                .id(SharedString::from(format!(
-                    "changes-after-{}-stale",
-                    line.stage
-                )))
+                .id(line.stale_id.clone())
                 .test_support()
                 .aria_label(why.clone())
                 .text_color(palette(cx).muted)
