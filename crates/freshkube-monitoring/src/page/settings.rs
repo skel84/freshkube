@@ -244,8 +244,8 @@ pub fn source_section(page: &Entity<MonitoringPage>, narrow: bool, cx: &App) -> 
                 .label("Test")
                 .h(dp(ui::CONTROL_HEIGHT))
                 .disabled(testing)
-                .on_click(move |_, _, cx| {
-                    _ = test.update(cx, |page, cx| page.test_source(cx));
+                .on_click(move |_, window, cx| {
+                    _ = test.update(cx, |page, cx| page.test_source(window, cx));
                 }),
         )
         .child(

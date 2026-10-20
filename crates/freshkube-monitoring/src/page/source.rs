@@ -297,7 +297,7 @@ impl MonitoringPage {
 
     /// Checks the form as typed against the cluster or the URL. Nothing
     /// is saved, and the page's own connection is left alone.
-    pub(super) fn test_source(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn test_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(source) = self.source.clone() else {
             return;
         };
@@ -305,6 +305,9 @@ impl MonitoringPage {
             Ok(draft) => draft,
             Err((field, why)) => return self.form_error(field, why, None, cx),
         };
+        if let Some(form) = &self.form {
+            window.focus(&form.focus, cx);
+        }
         let access = source.access.clone();
         let work: Work = match draft {
             Draft::Automatic => Box::pin(async move {
@@ -442,15 +445,14 @@ impl MonitoringPage {
                 Some(Choice::Url { url, token })
             }
         };
-        // A token for a URL no longer used is forgotten.
+        self.keep_choice(context, choice.clone(), cx);
+        // The other contexts and the setup share this token account.
         if let Some(Choice::Url { url: old, .. }) = &previous
             && !matches!(&choice, Some(Choice::Url { url, .. }) if url == old)
         {
             self.tokens.remove(old);
-            let account = token_account(old);
-            self.secret_step(move |store| store.forget(&account), cx);
+            self.forget_unused_token(old, cx);
         }
-        self.keep_choice(context, choice.clone(), cx);
         if let Some(form) = &mut self.form {
             form.test = Test::Idle;
             form.read.resolve(None, Ok(()));
@@ -477,9 +479,15 @@ impl MonitoringPage {
             return;
         };
         self.tokens.remove(&url);
-        let account = token_account(&url);
-        self.secret_step(move |store| store.forget(&account), cx);
-        self.keep_choice(context, Some(Choice::Url { url, token: false }), cx);
+        self.keep_choice(
+            context,
+            Some(Choice::Url {
+                url: url.clone(),
+                token: false,
+            }),
+            cx,
+        );
+        self.forget_unused_token(&url, cx);
         if let Some(form) = &mut self.form {
             form.note = Some("Token forgotten.".into());
             form.token.update(cx, |input, cx| {
@@ -487,6 +495,17 @@ impl MonitoringPage {
             });
         }
         self.reconnect(cx);
+    }
+
+    fn forget_unused_token(&mut self, url: &str, cx: &mut Context<Self>) {
+        let mut named = self.saved.token_urls();
+        if let Some(setup) = &self.inputs.setup {
+            named.extend(freshkube_core::monitoring::scope::token_urls(setup));
+        }
+        if !named.contains(url) {
+            let account = token_account(url);
+            self.secret_step(move |store| store.forget(&account), cx);
+        }
     }
 
     fn keep_choice(&mut self, context: String, choice: Option<Choice>, cx: &mut Context<Self>) {
