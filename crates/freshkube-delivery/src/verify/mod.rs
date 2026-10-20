@@ -16,15 +16,10 @@
 //! Offline: it reads the attestation already read from the run, and the key
 //! file. No network, no clock, no cluster.
 
-#![cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the join calls the verifier in the next step")
-)]
-
 mod dsse;
 mod key;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::fmt;
 
@@ -77,6 +72,13 @@ pub(crate) enum Verification {
         subjects: Vec<Digest>,
     },
     /// Chains is set to store the attestation where this step does not read.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "Chains' configuration is not read by the join yet"
+        )
+    )]
     NotStoredHere(Vec<Backend>),
     /// Present, and not checked, with why.
     NotRead(NotRead),
@@ -115,6 +117,13 @@ impl Verification {
     }
 
     /// Chains is set to store the attestation only where it is not read.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "Chains' configuration is not read by the join yet"
+        )
+    )]
     pub(crate) fn not_stored_here(backends: &[Backend]) -> Self {
         Self::NotStoredHere(backends.to_vec())
     }
@@ -132,7 +141,9 @@ impl fmt::Display for Verification {
             Self::NoTrust => f.write_str("no key is named to verify with"),
             Self::KeyUnusable(problem) => write!(f, "{problem}"),
             Self::Malformed(problem) => write!(f, "the attestation can't be read: {problem}"),
-            Self::SignatureFailed { key } => write!(f, "doesn't verify with key {key}"),
+            Self::SignatureFailed { key } => {
+                write!(f, "the signature doesn't verify with key {key}")
+            }
             Self::SubjectDiffers { key, built, .. } => write!(
                 f,
                 "signature verifies with key {key}, but no subject is the build's {}",
