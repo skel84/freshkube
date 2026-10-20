@@ -25,6 +25,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{collections::BTreeMap, rc::Rc};
+mod after;
 mod application;
 mod applications;
 use applications::{columns as application_columns, header as applications_header};
@@ -63,6 +64,9 @@ mod testing;
 mod tests;
 mod traces;
 mod view;
+#[cfg(any(test, feature = "testing"))]
+pub use after::Script;
+pub use after::{After, OutcomeReader, ReadConnection, example as after_example};
 pub use deployments::RevisionLink;
 use model::Application;
 pub use model::Destination;
@@ -120,6 +124,11 @@ pub struct ObservabilityPage {
     secret: Entity<InputState>,
     auth: usize,
     settings_open: bool,
+    /// The change pages that are shown and want Coroot connected, though
+    /// this page is hidden, by entity: each writes only its own entry, so
+    /// opening a second change before the first is released leaves the
+    /// provider wanted.
+    wanting: std::collections::BTreeSet<EntityId>,
     /// What the connection remembers between launches; none in fixture
     /// mode or without a preferences folder.
     memory: Option<remember::Memory>,
@@ -291,12 +300,16 @@ impl ObservabilityPage {
             cx.subscribe(&url, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.invalidate_connection();
+                    // A change page reading over the dropped provider hears
+                    // it, so what it read over it is not kept.
+                    cx.emit(ObservabilityEvent::Connection);
                     cx.notify();
                 }
             }),
             cx.subscribe(&secret, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.invalidate_connection();
+                    cx.emit(ObservabilityEvent::Connection);
                     cx.notify();
                 }
             }),
@@ -342,6 +355,7 @@ impl ObservabilityPage {
             secret,
             auth: 0,
             settings_open: false,
+            wanting: Default::default(),
             memory: preferences.map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),

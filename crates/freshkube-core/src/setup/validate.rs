@@ -25,8 +25,23 @@ pub(super) fn entry(entry: &Entry) -> Result<(), Fault> {
 }
 
 fn results_of(results: &Results, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {
+    if results.token.is_some() && results.address.is_none() {
+        return Err(Fault::Only {
+            at: at("results.token"),
+            with: "address",
+        });
+    }
+    if let Some(path) = &results.ca_file {
+        if results.address.is_none() {
+            return Err(Fault::Only {
+                at: at("results.ca_file"),
+                with: "address",
+            });
+        }
+        absolute(path, at("results.ca_file"))?;
+    }
     match (&results.address, &results.forward) {
-        (Some(address), None) => url(address, at("results.address")),
+        (Some(address), None) => results_address(address, at("results.address")),
         (None, Some(forward)) => {
             non_empty(&forward.namespace, at("results.forward.namespace"))?;
             non_empty(&forward.service, at("results.forward.service"))?;
@@ -37,6 +52,21 @@ fn results_of(results: &Results, at: &dyn Fn(&str) -> String) -> Result<(), Faul
             of: "address or forward",
         }),
     }
+}
+
+/// Typed Results addresses use the same literal-loopback HTTP rule as the
+/// client. Other sources retain their existing HTTP(S) validation.
+fn results_address(text: &str, at: String) -> Result<(), Fault> {
+    let address = parse_base_url(text.trim()).map_err(|_| Fault::NotUrl(at.clone()))?;
+    let loopback = match address.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    };
+    if address.scheme() == "http" && !loopback {
+        return Err(Fault::NonLoopbackHttp(at));
+    }
+    Ok(())
 }
 
 fn coroot_of(coroot: &EntryCoroot, at: &dyn Fn(&str) -> String) -> Result<(), Fault> {

@@ -20,7 +20,9 @@ use crate::desktop::app_menu::{self, UseDarkAppearance, UseLightAppearance, UseS
 use crate::desktop::probe;
 use crate::forwards::ForwardsIndicator;
 use freshkube_prefs::{Document, Layout};
-use freshkube_ui::platform::{About, AppMenu, OpenAppMenu, OpenSettings};
+use freshkube_ui::platform::{
+    About, AppMenu, OpenAppMenu, OpenClustersSettings, OpenCorootSettings, OpenSettings,
+};
 use gpui_kit::component::{Theme, ThemeMode};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -228,6 +230,12 @@ impl Chrome {
         root.on_action(cx.listener(|view, _: &OpenSettings, window, cx| {
             view.navigation.settings_open = false;
             view.navigate_from_keyboard(Page::Settings, window, cx)
+        }))
+        .on_action(cx.listener(|view, _: &OpenCorootSettings, window, cx| {
+            view.show_settings(SettingsSection::Coroot, window, cx)
+        }))
+        .on_action(cx.listener(|view, _: &OpenClustersSettings, window, cx| {
+            view.show_settings(SettingsSection::Clusters, window, cx)
         }))
         .on_action(cx.listener(|_, _: &About, window, cx| app_menu::open_about(window, cx)))
         .on_action(cx.listener(|view, _: &UseSystemAppearance, window, cx| {

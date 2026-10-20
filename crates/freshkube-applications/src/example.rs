@@ -55,12 +55,16 @@ pub enum Variant {
     /// `dev-fra`, an Argo CD destination, couldn't be reached: labelled
     /// parts there may be missing.
     Destination,
+    /// Every Deployment hop of a change shows one outcome of what Coroot
+    /// found after its deploy, so a capture can show each.
+    Outcome(crate::change::OutcomeKind),
 }
 
 impl Variant {
     /// `single`, `partial`, `refused`, `unserved`, `failed`, `capped`,
     /// `spread`, `not-found`, `unlabelled`, `stages`, `workloads`,
-    /// `unreachable`, `argo-refused` or `destination` from
+    /// `unreachable`, `argo-refused`, `destination` or `outcome-<name>`
+    /// (`OutcomeKind::ALL` names them) from
     /// `FRESHKUBE_APPLICATIONS`, parsed into `DebugOptions` (debug and
     /// stress builds only); anything else is `Acme`.
     pub fn parse(value: Option<&str>) -> Self {
@@ -79,7 +83,19 @@ impl Variant {
             Some("unreachable") => Self::Unreachable,
             Some("argo-refused") => Self::ArgoRefused,
             Some("destination") => Self::Destination,
-            _ => Self::Acme,
+            Some(other) => other
+                .strip_prefix("outcome-")
+                .and_then(crate::change::OutcomeKind::parse)
+                .map_or(Self::Acme, Self::Outcome),
+            None => Self::Acme,
+        }
+    }
+
+    /// The outcome every Deployment hop shows, in the shape that says one.
+    pub(crate) fn outcome(self) -> Option<crate::change::OutcomeKind> {
+        match self {
+            Self::Outcome(kind) => Some(kind),
+            _ => None,
         }
     }
 }
@@ -129,7 +145,7 @@ pub fn inputs(variant: Variant) -> Inputs {
         }
     }
     match variant {
-        Variant::Acme => {}
+        Variant::Acme | Variant::Outcome(_) => {}
         Variant::Single => {
             let kargo = cicd(&mut inputs).kargo.clone();
             inputs.sessions.retain(|s| s.key.0 == acme::CORE);

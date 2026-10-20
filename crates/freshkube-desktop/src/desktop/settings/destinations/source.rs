@@ -122,7 +122,9 @@ impl TableSource for Destinations {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row = line.data;
-        let cell = table::cell(column);
+        let text_cell = |field: &str, text: &SharedString| {
+            table::word_cell(column, format!("{}-{field}", row.id), text.clone()).test_support()
+        };
         match column.field {
             Field::Glyph => table::glyph_cell(column)
                 .id(SharedString::from(format!("{}-glyph", row.id)))
@@ -136,15 +138,10 @@ impl TableSource for Destinations {
                     ))
                 })
                 .into_any_element(),
-            Field::Destination => cell
-                .id(SharedString::from(format!("{}-destination", row.id)))
-                .test_support()
-                .child(row.destination.clone())
-                .into_any_element(),
-            Field::By => cell.child(row.by.clone()).into_any_element(),
-            Field::Entry => cell
+            Field::Destination => text_cell("destination", &row.destination).into_any_element(),
+            Field::By => text_cell("by", &row.by).into_any_element(),
+            Field::Entry => text_cell("entry", &row.entry)
                 .when(!row.listed, |this| this.text_color(style.p.muted))
-                .child(row.entry.clone())
                 .into_any_element(),
         }
     }

@@ -175,7 +175,7 @@ The window's read has its own identity (application, revision and window) and ge
 
 **Show on charts** opens the Application page on the revision's first finding report, or SLO when there are no findings. It is in the Deployments row's shared context menu, and on each revision in the Application page's Deployments report table. The captured time range stays unchanged. The revision's start second focuses matching markers: their lines draw heavier and their labels stay visible without hovering. A start outside the window does not move or zoom the chart; an older revision says "Started ⟨time⟩, before this ⟨range⟩ window". The before-window line appears only on reports with chart widgets. Another application or source clears that focus. The Deployments Inspector also focuses its selected revision's marker. Each application's fixture answer is dated on its first read and retained for the page's life, so its revision rows, markers and revision windows share stable start times. In the Application page's Deployments report, only the revisions table (identified by Coroot's `Deployment`, `Deployed`, `Summary` header) is replaced; other table widgets remain visible.
 
-The fixture UI tests in `application/deployments.rs`, `deployments/tests.rs` and Monitoring's `panel/tests.rs` prove both navigation paths, the old-revision line, the focused rendering and clearing it.
+The fixture UI tests in `application/deployments.rs`, `deployments/tests.rs` and Monitoring's `panel/tests/` prove both navigation paths, the old-revision line, the focused rendering and clearing it.
 
 ### From the change page
 

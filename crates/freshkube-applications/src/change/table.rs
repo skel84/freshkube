@@ -5,6 +5,7 @@ use super::*;
 use crate::ui::{self, MONO_FONT, dp};
 use freshkube_ui::palette::palette;
 use freshkube_ui::table::{Line, RowStyle, SortOrder, TableColumn, TableRow, TableSource};
+use freshkube_ui::tooltip::FollowTooltip as _;
 use gpui_kit::component::{
     IconName, Sizable,
     button::{Button, ButtonVariants as _},
@@ -87,6 +88,20 @@ pub(super) fn link_mark(confidence: Confidence, cx: &App) -> Div {
         )
 }
 
+/// Coroot's status glyph for a hop whose outcome was read, small, with
+/// "Coroot: ⟨status⟩ · ⟨first finding⟩" in its tooltip.
+fn coroot_mark(key: &str, mark: &Mark, cx: &App) -> AnyElement {
+    div()
+        .id(SharedString::from(format!("{PREFIX}-hop-{key}-coroot")))
+        .test_support()
+        .aria_label(mark.tooltip.clone())
+        .follow_tooltip(mark.tooltip.clone())
+        .ml(dp(6.))
+        .flex_none()
+        .children(ui::status_glyph(mark.tone, cx))
+        .into_any_element()
+}
+
 impl TableSource for ChangePage {
     type Key = SharedString;
     type Sort = ();
@@ -162,6 +177,16 @@ impl TableSource for ChangePage {
                 row.detail.clone(),
             )
             .text_color(p.ink_2)
+            // Coroot's verdict, once read, sits after the words: it is
+            // drawn beside the hop's own glyph and link, never in them. The
+            // cell is a row, so the mark stays on the words' line.
+            .flex()
+            .items_center()
+            .children(
+                row.coroot
+                    .as_ref()
+                    .map(|mark| coroot_mark(&row.key, mark, cx)),
+            )
             .into_any_element(),
             Field::From => text(&row.from)
                 .font_family(MONO_FONT)

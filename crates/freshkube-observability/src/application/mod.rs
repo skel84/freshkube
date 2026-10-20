@@ -6,7 +6,7 @@ use super::*;
 use connection::Subject;
 use freshkube_core::coroot as api;
 
-mod charts;
+pub(super) mod charts;
 mod deployments;
 pub(super) mod example;
 mod strip;
@@ -235,7 +235,7 @@ impl AppPage {
 
     /// The charts of one report of the page around `revision`, each split
     /// at its start, with the page's deployments marked.
-    pub(super) fn revision_charts(
+    pub(crate) fn revision_charts(
         view: &api::AppView,
         report: &api::AppReport,
         revision: &api::DeploymentRevision,
