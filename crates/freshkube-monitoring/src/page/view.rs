@@ -380,16 +380,13 @@ impl MonitoringPage {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let page = cx.entity().downgrade();
+        let focus = self.focus.clone();
         let retry = move |id: &'static str, label: &'static str| {
-            let page = page.clone();
             Button::new(id)
                 .outline()
                 .small()
                 .label(label)
-                .on_click(move |_, _, cx| {
-                    _ = page.update(cx, |page, cx| page.retry(cx));
-                })
+                .on_click(page::dispatch(page::Refresh, &focus))
                 .into_any_element()
         };
         if let Some(error) = self.board.as_ref().and_then(|board| board.error.clone()) {
