@@ -2,6 +2,14 @@
 //! one hop each, grouped Build, Freight, then each Stage the Freight can
 //! reach in promotion order, with that Stage's three gates first.
 
+mod gaps;
+mod reported;
+
+use gaps::missing;
+
+pub(super) use reported::reported_on;
+use reported::{elsewhere, reported_hops};
+
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
@@ -184,13 +192,15 @@ pub fn derive(
             // An Application mapped to another workspace cluster: in place
             // of its links into that cluster, which nothing read, the
             // workloads Argo CD reports there.
-            let reported = elsewhere(place, evidence, &link.subject)
-                .map(|away| reported_hops(&sides, &stage.name, group, away))
-                .unwrap_or_default();
-            if link.from == Joined::Application && !reported.is_empty() {
+            let away = elsewhere(place, evidence, &link.subject);
+            // An unread Application alone doesn't establish any Pods.
+            if link.from == Joined::Application && away.is_some() {
                 placed.push(None);
                 continue;
             }
+            let reported = away
+                .map(|away| reported_hops(&sides, &stage.name, group, away))
+                .unwrap_or_default();
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
             let mut hop = link_hop(
                 &at,
@@ -207,7 +217,9 @@ pub fn derive(
             placed.push(Some(key.clone()));
             if link.to == Joined::Application {
                 hops.extend(reported.into_iter().map(|mut hop| {
-                    hop.after = Some(key.clone());
+                    if hop.after.is_none() {
+                        hop.after = Some(key.clone());
+                    }
                     hop
                 }));
             }
@@ -560,210 +572,6 @@ fn deploys_to(place: &Place, evidence: &Evidence, holds: bool, run: &[&Link]) ->
     }
 }
 
-/// An Application mapped to another workspace cluster that wasn't read.
-struct Away<'a> {
-    app: &'a Application,
-    entry: &'a str,
-    /// Why it wasn't read, when its entry was asked; else nothing asked it,
-    /// as the workspace of one asks no other entry.
-    why: Option<&'a str>,
-}
-
-/// The Application `app_id` names and the workspace cluster it is mapped
-/// to, when that is a cluster the workspace lists other than this one, and
-/// nothing was read there.
-fn elsewhere<'a>(place: &Place, evidence: &'a Evidence, app_id: &str) -> Option<Away<'a>> {
-    let entry = evidence.destination_of(app_id)?;
-    if place.is_here(entry) || !place.mapping.lists(entry) {
-        return None;
-    }
-    let why = match evidence.environments.get(entry) {
-        Some(Ok(_)) => return None,
-        Some(Err(why)) => Some(why.message.as_str()),
-        None => None,
-    };
-    let app = evidence
-        .applications
-        .read()?
-        .iter()
-        .find(|app| format!("{}/{}", app.namespace, app.name) == app_id)?;
-    Some(Away { app, entry, why })
-}
-
-/// Whether Argo CD reports a workload for an Application that deploys to
-/// `context`.
-pub(super) fn reported_on(evidence: &Evidence, context: &str) -> bool {
-    evidence.applications.read().is_some_and(|apps| {
-        apps.iter().any(|app| {
-            reports(app)
-                && evidence.destination_of(&format!("{}/{}", app.namespace, app.name))
-                    == Some(context)
-        })
-    })
-}
-
-/// The workload kinds Argo CD may report for an Application, by group.
-const WORKLOADS: [(&str, &str); 4] = [
-    ("argoproj.io", "Rollout"),
-    ("apps", "Deployment"),
-    ("apps", "StatefulSet"),
-    ("apps", "DaemonSet"),
-];
-
-/// The workloads Argo CD reports for an Application on another workspace
-/// cluster, from its `status.resources`: what Argo CD says, since that
-/// cluster wasn't read, so each link is Argo CD's claim. Each opens on that
-/// cluster.
-fn reported_hops(sides: &Sides, stage: &str, group: usize, away: Away) -> Vec<Hop> {
-    let app = away.app;
-    app.managed
-        .iter()
-        .filter(|object| {
-            WORKLOADS
-                .iter()
-                .any(|(g, kind)| object.group == *g && object.kind == *kind)
-        })
-        .enumerate()
-        .map(|(n, object)| {
-            reported_hop(
-                sides,
-                format!("{stage}-reported-{}-{n}", app.name),
-                group,
-                &away,
-                object,
-            )
-        })
-        .collect()
-}
-
-fn reported_hop(
-    sides: &Sides,
-    key: String,
-    group: usize,
-    away: &Away,
-    object: &ManagedObject,
-) -> Hop {
-    let (app, entry) = (away.app, away.entry);
-    let namespace = object
-        .namespace
-        .clone()
-        .or_else(|| app.destination_namespace.clone())
-        .unwrap_or_default();
-    let reports: Vec<&str> = [object.sync.as_deref(), object.health.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect();
-    let words = if reports.is_empty() {
-        "Argo CD reports no state".to_owned()
-    } else {
-        format!("Argo CD reports {}", reports.join(" · "))
-    };
-    // Argo CD's word for an object nobody read is never Healthy, so a Stage
-    // known only from it doesn't fold as fine.
-    let state = match object.health.as_deref() {
-        Some("Healthy") => Info,
-        Some("Degraded" | "Missing") => Warning,
-        Some("Progressing" | "Suspended") => Info,
-        _ => Unknown,
-    };
-    let mut fields = Vec::new();
-    if !namespace.is_empty() {
-        fields.push(Field {
-            label: "Namespace".into(),
-            value: Value::Mono(namespace.clone()),
-        });
-    }
-    fields.push(Field {
-        label: "Name".into(),
-        value: Value::Mono(object.name.clone()),
-    });
-    fields.push(Field {
-        label: "Cluster".into(),
-        value: Value::Mono(entry.to_owned()),
-    });
-    if let Some(message) = &object.health_message {
-        fields.push(Field {
-            label: "Argo CD says".into(),
-            value: Value::Text(message.clone()),
-        });
-    }
-    fields.push(Field {
-        label: "Read from".into(),
-        value: Value::Mono(format!("Argo CD on {}", sides.argocd.label)),
-    });
-    let shown = if namespace.is_empty() {
-        object.name.clone()
-    } else {
-        format!("{namespace}/{}", object.name)
-    };
-    let target = Object {
-        cluster: String::new(),
-        group: object.group.clone(),
-        version: object.version.clone().unwrap_or_else(|| {
-            if object.group == "apps" {
-                "v1".into()
-            } else {
-                "v1alpha1".into()
-            }
-        }),
-        kind: object.kind.clone(),
-        plural: format!("{}s", object.kind.to_lowercase()),
-        namespace,
-        name: object.name.clone(),
-    };
-    Hop {
-        key,
-        group,
-        state,
-        name: format!("{} {}", object.kind, object.name),
-        detail: format!("Argo CD reports it on {entry}; not read there"),
-        from: sides.argocd.label.clone(),
-        at: None,
-        link: Some(Confidence::Claimed),
-        after: None,
-        shows: Shows::Hop(Box::new(HopDetail {
-            kind: object.kind.clone(),
-            title: object.name.clone(),
-            state: words,
-            notice: Some(Notice {
-                state: Info,
-                lead: "Not read.".into(),
-                body: match away.why {
-                    Some(why) => sentence(&format!(
-                        "{why}, so this is what Argo CD reports, not what was read there"
-                    )),
-                    None => format!(
-                        "{entry} wasn't read for this change, so this is what Argo CD reports, not what was read there."
-                    ),
-                },
-            }),
-            fields,
-            link: Some(LinkDetail {
-                confidence: Confidence::Claimed,
-                by: "name".into(),
-                before: "Application".into(),
-                key: Some(object.name.clone()),
-                before_says: format!("status.resources lists {} {shown}", object.kind),
-                here_says: "not read".into(),
-                why: match away.why {
-                    Some(why) => format!(
-                        "Only Argo CD's status says so: {why}, so nothing there confirms it."
-                    ),
-                    None => format!(
-                        "Only Argo CD's status says so: {entry} isn't read, so nothing there confirms it."
-                    ),
-                },
-            }),
-            unlinked: None,
-            actions: vec![Action::new(Target::OnEntry {
-                what: format!("the {}", object.kind),
-                entry: entry.to_owned(),
-                object: target,
-            })],
-        })),
-    }
-}
-
 fn kind_key(hop: Joined) -> &'static str {
     match hop {
         Joined::PullRequest => "pr",
@@ -922,19 +730,6 @@ fn link_detail(link: &Link) -> LinkDetail {
         here_says: says(&here),
         why: sentence(&link.reason),
     }
-}
-
-/// `text` as a sentence: a capital first and a full stop last.
-fn sentence(text: &str) -> String {
-    let mut chars = text.chars();
-    let Some(first) = chars.next() else {
-        return String::new();
-    };
-    let mut out: String = first.to_uppercase().chain(chars).collect();
-    if !out.ends_with('.') {
-        out.push('.');
-    }
-    out
 }
 
 /// The state of what a link leads to, as far as what was read says.
@@ -1250,6 +1045,9 @@ fn link_hop(
         })),
     };
     history::decorate(&mut hop, evidence, link, &sides.builds.label);
+    if missing && link.to == Joined::Application {
+        gaps::unread_application(&mut hop, &evidence.applications, at);
+    }
     hop
 }
 
@@ -1583,97 +1381,19 @@ fn gate_hop(sides: &Sides, stage: &str, group: usize, ix: usize, gate: &str, row
     }
 }
 
-/// What may be missing from the change, one sentence each, in the words
-/// that name the entry: a part whose entry couldn't be read at all, a
-/// destination that couldn't be, and a kind refused or not served where it
-/// was asked.
-fn missing(place: &Place, evidence: &Evidence, sides: &Sides, reached: &Reached) -> Vec<Missing> {
-    fn kind<T>(source: &Source<T>, what: &str, at: &At) -> Option<Missing> {
-        let entry = &at.label;
-        match source {
-            Source::Refused(why) => Some(Missing::new(
-                Gap::Refused,
-                words::were_refused(what, entry, why),
-            )),
-            Source::NotInstalled(_) => Some(Missing::new(
-                Gap::NotServed,
-                words::arent_served(what, entry),
-            )),
-            Source::Unreadable(why) => Some(Missing::new(
-                Gap::Unreadable,
-                words::unreadable(what, entry, why),
-            )),
-            Source::Read(_) | Source::Capped(..) => None,
-        }
-    }
-    let mut lines: Vec<Missing> = Vec::new();
-    for (unread, kinds) in [
-        (
-            &reached.builds,
-            // No build is looked for without a commit.
-            vec![
-                (!evidence.sha.is_empty())
-                    .then(|| kind(&evidence.builds, "PipelineRuns", &sides.builds))
-                    .flatten(),
-            ],
-        ),
-        (
-            &reached.kargo,
-            vec![
-                kind(&evidence.kargo.stages, "Kargo Stages", &sides.kargo),
-                kind(&evidence.kargo.promotions, "Kargo Promotions", &sides.kargo),
-            ],
-        ),
-        (
-            &reached.argocd,
-            vec![kind(
-                &evidence.applications,
-                "Argo CD Applications",
-                &sides.argocd,
-            )],
-        ),
-    ] {
-        // The Stages and Promotions a change would follow its Freight with.
-        let after = std::ptr::eq(unread, &reached.kargo).then_some("freight");
-        let hang = |line: Missing| match after {
-            Some(key) => line.after(key),
-            None => line,
-        };
-        match unread {
-            Some(unread) => lines.push(hang(Missing::new(Gap::Unreadable, unread.words()))),
-            None => lines.extend(kinds.into_iter().flatten().map(hang)),
-        }
-    }
-    for (context, read) in &evidence.environments {
-        let at = place.at_context(context);
-        match read {
-            Err(why) => lines.push(Missing::new(Gap::Unreadable, why.message.clone())),
-            Ok(workloads) => {
-                let pods = workloads
-                    .pods
-                    .values()
-                    .chain(workloads.deployment_pods.values())
-                    .map(|read| &read.pods)
-                    .chain(workloads.namespace_pods.values())
-                    .find(|pods| matches!(pods, Source::Refused(_) | Source::NotInstalled(_)));
-                // Rollouts not served are only Argo Rollouts not installed.
-                let rollouts = kind(&workloads.rollouts, "Rollouts", &at)
-                    .filter(|line| line.gap != Gap::NotServed);
-                lines.extend(
-                    [
-                        rollouts,
-                        kind(&workloads.deployments, "Deployments", &at),
-                        pods.and_then(|pods| kind(pods, "Pods", &at)),
-                    ]
-                    .into_iter()
-                    .flatten(),
-                );
-            }
-        }
-    }
-    if !evidence.sha.is_empty() {
-        lines.extend(history::missing(evidence, &sides.builds.label));
-    }
-    lines.dedup();
-    lines
+/// An Application mapped to another workspace cluster that wasn't read.
+struct Away<'a> {
+    app: &'a Application,
+    entry: &'a str,
+    /// Why it wasn't read, when its entry was asked; else nothing asked it,
+    /// as the workspace of one asks no other entry.
+    why: Option<&'a str>,
 }
+
+/// The workload kinds Argo CD may report for an Application, by group.
+const WORKLOADS: [(&str, &str); 4] = [
+    ("argoproj.io", "Rollout"),
+    ("apps", "Deployment"),
+    ("apps", "StatefulSet"),
+    ("apps", "DaemonSet"),
+];
