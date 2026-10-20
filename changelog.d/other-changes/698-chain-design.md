@@ -1,1 +1,0 @@
-- **Change page design:** DESIGN.md now describes a List / Chain toggle for the change page, drawing the same hops as cards with their links labelled by the key they joined on (design only; nothing in the app changes yet).

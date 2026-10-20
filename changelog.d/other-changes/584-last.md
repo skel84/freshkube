@@ -1,1 +1,0 @@
-- **Internal:** audit typed read failures and surface-specific wording, and cover refused and unserved summary reads in UI tests.

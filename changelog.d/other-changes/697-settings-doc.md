@@ -1,1 +1,0 @@
-- **Internal:** a feature document for Settings, docs/features/settings.md, describes each section, the shared form rules and how Settings saves to freshkube.yaml, and the roadmap records the Settings rebuild's finished slices; the app behaves as before.

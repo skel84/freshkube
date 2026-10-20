@@ -1,1 +1,0 @@
-- Move Connection settings from the gear to Settings, with Talos Save and Revert and clear storage hints. Correct the Talos auto-refresh hints in General and quick controls.

@@ -1,1 +1,0 @@
-- **Internal:** the contributor guide, AGENTS.md, now holds the rules and a map: how each feature behaves moved to its own document under docs/ (smoke tests, building, diagnostics, Monitoring and the rest), and the roadmap's finished steps are one line each, pointing at a feature document or the release that shipped them; the app behaves as before.

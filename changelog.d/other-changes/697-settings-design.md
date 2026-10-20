@@ -1,1 +1,0 @@
-- **Internal:** the design guide now describes the coming Settings area (its sections, form groups, where each setting is saved, validation at the field and buttons in the platform's order), and the style check refuses new hand-made field labels and button pairs; the app behaves as before.

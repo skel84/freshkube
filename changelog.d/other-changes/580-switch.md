@@ -1,1 +1,0 @@
-- **Shell switcher:** The session registry, the entry and link waiting to open, the restored time, the age label and the header's list of clusters live in one owner, `Switcher`, which `Pilot` holds as `switch`; nothing the app shows or does changes.

@@ -1,1 +1,0 @@
-- **Internal:** document ordinary read ownership through Loader and Watch, with Operations mutations and user-started sessions as the two lifetime exceptions.

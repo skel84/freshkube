@@ -1,1 +1,0 @@
-- **Change trail model:** a hop now records the hop it follows, a link the value it was joined on, and a missing piece the hop it would join, so a chain can be drawn from them; nothing in the app changes yet.

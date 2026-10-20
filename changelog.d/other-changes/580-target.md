@@ -1,1 +1,0 @@
-- **Shell target:** The selected Talos node, the overview's node list, the node's services and the object-link lookup live in one owner, `target::Selected`, which `Pilot` holds as `target`; nothing the app shows or does changes.

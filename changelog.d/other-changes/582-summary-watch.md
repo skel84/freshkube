@@ -1,1 +1,0 @@
-- **Internal:** the Kubernetes summary session uses the shared Watch owner for its driver and delivery.

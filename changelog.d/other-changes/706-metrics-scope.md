@@ -1,1 +1,0 @@
-- **Metrics from the setup file:** with `metrics.mode: central` in `freshkube.yaml`, Monitoring and the pod and node history read one shared store and show only the open cluster's series; an entry's own `source` and `per-entry` mode are read too, and `automatic` is unchanged. See [docs/SETUP_FILE.md](docs/SETUP_FILE.md#metrics).

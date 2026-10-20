@@ -1,1 +1,0 @@
-- **CI:** the required Linux check now also checks the release build, so code that only debug builds include fails its pull request, not main.

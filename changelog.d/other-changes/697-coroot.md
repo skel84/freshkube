@@ -1,1 +1,0 @@
-- **Settings:** the Coroot section holds the connection (server, sign-in, key and project) on the shared form, saves it in freshkube.yaml with Connect, and Observability's connection card becomes a line that opens it.
