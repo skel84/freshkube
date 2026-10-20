@@ -989,6 +989,7 @@ impl SettingsPage {
                 "Cluster label",
                 draft.input("metrics-label", &draft.label, Some(Field::Label), cx),
             )
+            .hint("The store’s label for each cluster, such as cluster.")
             .error(draft.error(Field::Label)),
         );
         group
@@ -1020,6 +1021,7 @@ impl SettingsPage {
                     "URL",
                     draft.input("metrics-url", &draft.url, Some(Field::Url), cx),
                 )
+                .hint("An http:// or https:// address for the store.")
                 .error(draft.error(Field::Url)),
             )
             .row(
@@ -1079,6 +1081,7 @@ impl SettingsPage {
                                 .unwrap_or_else(|| "Choose an entry".into()),
                         ),
                 )
+                .hint("The entry whose cluster runs the store.")
                 .error(draft.error(Field::Entry)),
             )
             .row(
@@ -1092,6 +1095,7 @@ impl SettingsPage {
                         cx,
                     ),
                 )
+                .hint("Where the store’s Service runs.")
                 .error(draft.error(Field::Namespace)),
             )
             .row(
@@ -1100,6 +1104,7 @@ impl SettingsPage {
                     "Service",
                     draft.input("metrics-name", &draft.name, Some(Field::Name), cx),
                 )
+                .hint("The store’s Service in that namespace.")
                 .error(draft.error(Field::Name)),
             )
             .row(
@@ -1108,6 +1113,7 @@ impl SettingsPage {
                     "Port",
                     draft.input("metrics-port", &draft.port, Some(Field::Port), cx),
                 )
+                .hint("The Service’s port, such as 9090.")
                 .error(draft.error(Field::Port)),
             )
             .row(form::row(
