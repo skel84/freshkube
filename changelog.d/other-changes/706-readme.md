@@ -1,0 +1,1 @@
+- **Setup file:** the README now shows an annotated `freshkube.yaml` with the workspace, Argo CD destinations, pins, metrics mode and Coroot connection that the app reads, how Settings saves into it (a `.bak` copy of a hand-edited file, and the refusals), where it lives and how the one-time move from `workspace.json` and `coroot.json` works.
