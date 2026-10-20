@@ -251,13 +251,9 @@ impl ObservabilityPage {
             return false;
         }
         let app = self.selected_app.clone();
-        let example;
         let view = match &app {
             None => None,
-            Some(app) if self.fixture => {
-                example = app_example::app_view(app);
-                Some(&example)
-            }
+            Some(app) if self.fixture => Some(self.example_views.get(app)),
             Some(app) => self.live.view.data().filter(|view| view.map.app.id == *app),
         };
         let revisions = view.and_then(|view| view.revisions.as_ref());
@@ -290,8 +286,11 @@ impl ObservabilityPage {
         let window = state.window();
         if self.fixture {
             if !self.hold {
-                self.revision_observations.example =
-                    Some(app_example::around(&app, &revision, window));
+                self.revision_observations.example = Some(app_example::around(
+                    self.example_views.get(&app),
+                    &revision,
+                    window,
+                ));
                 self.prepare_revision_detail();
             }
             return;

@@ -106,6 +106,16 @@ fn check(ix: usize, check: &api::Check) -> CheckLine {
     }
 }
 
+/// The same header identifies the revisions widget in coroot-rs's decoder.
+/// Other tables in the Deployments report remain ordinary report widgets.
+fn is_revisions_table(table: &api::Table) -> bool {
+    table
+        .header
+        .iter()
+        .map(String::as_str)
+        .eq(["Deployment", "Deployed", "Summary"])
+}
+
 impl AppPage {
     fn new(view: &api::AppView, report: &str) -> Self {
         let tabs = view
@@ -179,7 +189,9 @@ impl AppPage {
                 });
             }
             for (ix, widget) in report.widgets.iter().enumerate() {
-                if revisions.is_some() && matches!(widget.kind, api::WidgetKind::Table(_)) {
+                if revisions.is_some()
+                    && matches!(&widget.kind, api::WidgetKind::Table(table) if is_revisions_table(table))
+                {
                     continue;
                 }
                 let kind = match &widget.kind {
@@ -269,10 +281,8 @@ impl ObservabilityPage {
             self.app_page = None;
             return;
         };
-        let fixture;
         let view = if self.fixture {
-            fixture = example::app_view(&app);
-            Some(&fixture)
+            Some(self.example_views.get(&app))
         } else {
             self.live.view.data().filter(|view| view.map.app.id == app)
         };
@@ -286,10 +296,11 @@ impl ObservabilityPage {
             self.report_name = first.name.clone();
         }
         let mut page = AppPage::new(view, &self.report_name);
+        let has_charts = page.charts().next().is_some();
         page.focus_note = self
             .focused_revision
             .as_ref()
-            .filter(|focus| focus.app == app)
+            .filter(|focus| has_charts && focus.app == app)
             .and_then(|focus| {
                 self.live
                     .range

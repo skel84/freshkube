@@ -109,6 +109,7 @@ impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 pub struct ObservabilityPage {
     /// The shell's source is example data ([`Self::set_source`]).
     fixture: bool,
+    example_views: application::example::Views,
     /// Example data holds its applications, incidents and traces, as its
     /// source's hold says, so their tables stay on their loading rows.
     hold: bool,
@@ -333,6 +334,7 @@ impl ObservabilityPage {
         ];
         let mut this = Self {
             fixture: false,
+            example_views: Default::default(),
             hold: false,
             loading: freshkube_ui::table::TableLoading::new("obs-table", cx),
             live: connection::Live::new(runtime, cx.background_executor().now()),

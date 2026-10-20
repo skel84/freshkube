@@ -117,16 +117,17 @@ fn coroots_404_for_a_window_is_no_data_with_no_charts() {
 #[test]
 fn the_examples_windows_answer_as_coroot_would() {
     let app = crate::example::id(crate::example::WORKER);
-    let revisions = app_example::revisions();
+    let view = app_example::app_view(&app);
+    let revisions = view.revisions.as_ref().unwrap().as_ref().unwrap();
     let window =
         |ix: usize| api::RevisionWindow::both(std::time::Duration::from_secs(WINDOWS[ix].0));
-    let newest = app_example::around(&app, &revisions[0], window(0)).unwrap();
+    let newest = app_example::around(&view, &revisions[0], window(0)).unwrap();
     let api::Around::View(_) = &newest.answer else {
         panic!("the newest revision has data");
     };
     let detail = detail::prepare(&newest, "");
     assert!(!detail.charts().is_empty(), "the first report with charts");
-    let oldest = app_example::around(&app, &revisions[2], window(2)).unwrap();
+    let oldest = app_example::around(&view, &revisions[2], window(2)).unwrap();
     assert!(matches!(oldest.answer, api::Around::NoData));
 }
 

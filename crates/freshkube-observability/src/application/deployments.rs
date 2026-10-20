@@ -53,10 +53,59 @@ mod tests {
     use gpui_kit::{AppContext, TestAppContext};
 
     #[gpui_kit::test]
+    fn first_show_on_charts_after_opening_keeps_focus_across_a_clock_tick(cx: &mut TestAppContext) {
+        let _clock = example::with_clock(cx.background_executor.clone());
+        let (_runtime, handle, page) = mount(cx, true);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                // Open directly on Deployments, without visiting another report.
+                page.selected_app = Some(crate::example::id(crate::example::WORKER));
+                page.report_name = "Deployments".into();
+                page.open(Destination::Application, cx);
+            })
+        });
+        cx.run_until_parked();
+        let revision = page.read_with(cx, |page, _| {
+            page.app_page.as_ref().unwrap().revisions[0].clone()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+        })
+        .unwrap();
+        // The click and the new report read happen on the next clock minute.
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(60));
+        cx.update_window(handle, |_, window, cx| {
+            window.click(format!("obs-show-on-charts-{}", revision.id), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let page = page.read(cx);
+            assert_eq!(page.report_name, "SLO");
+            assert_eq!(
+                page.focused_revision.as_ref().unwrap().started_at,
+                revision.started_at
+            );
+            assert!(!page.app_charts.is_empty());
+            for chart in &page.app_charts {
+                assert_eq!(
+                    chart.view().read(cx).focused_marker_labels().len(),
+                    1,
+                    "the first click must focus the revision on every chart"
+                );
+            }
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
     fn report_button_opens_the_first_findings_report_with_its_marker(cx: &mut TestAppContext) {
         let (_runtime, handle, page) = mount(cx, true);
         let app = crate::example::id(crate::example::WORKER);
-        let mut view = example::app_view(&app);
+        let mut view =
+            cx.update(|cx| page.update(cx, |page, _| page.example_views.get(&app).clone()));
         let revisions = view.revisions.as_mut().unwrap().as_mut().unwrap();
         revisions[0].findings.push(api::RevisionFinding {
             report: "CPU".into(),
@@ -101,6 +150,62 @@ mod tests {
                     .try_find("obs-focused-revision-before-window")
                     .is_none()
             );
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn deployments_report_keeps_another_table_widget(cx: &mut TestAppContext) {
+        let (_runtime, handle, page) = mount(cx, true);
+        let app = crate::example::id(crate::example::WORKER);
+        cx.update(|cx| {
+            page.update(cx, |page, cx| {
+                let mut view = page.example_views.get(&app).clone();
+                let report = view
+                    .reports
+                    .iter_mut()
+                    .find(|r| r.name == "Deployments")
+                    .unwrap();
+                report.widgets.insert(
+                    0,
+                    api::Widget {
+                        width: 1.,
+                        kind: api::WidgetKind::Table(api::Table {
+                            header: vec!["Instance".into(), "State".into()],
+                            rows: vec![vec![
+                                api::Cell {
+                                    value: "checkout-api".into(),
+                                    ..Default::default()
+                                },
+                                api::Cell {
+                                    value: "Ready".into(),
+                                    ..Default::default()
+                                },
+                            ]],
+                        }),
+                    },
+                );
+                page.selected_app = Some(app);
+                page.report_name = "Deployments".into();
+                page.open(Destination::Application, cx);
+                page.app_page = Some(AppPage::new(&view, "Deployments"));
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                page.read(cx).app_tables.len(),
+                2,
+                "only the revisions table is replaced"
+            );
+            assert!(window.find("obs-app-table-1-row-0").visible());
+            assert_eq!(
+                window.find("obs-app-table-1-row-0").label(),
+                Some("checkout-api")
+            );
+            assert!(window.try_find("obs-app-table-2-list").is_none());
         })
         .unwrap();
     }
@@ -156,6 +261,25 @@ mod tests {
             );
         })
         .unwrap();
+        for (report, shown) in [("Deployments", false), ("CPU", true)] {
+            cx.update(|cx| page.update(cx, |page, cx| page.select_report(report.into(), cx)));
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert_eq!(
+                    window
+                        .try_find("obs-focused-revision-before-window")
+                        .is_some(),
+                    shown,
+                    "the before-window note belongs only to reports with charts"
+                );
+                assert!(
+                    page.read(cx).focused_revision.is_some(),
+                    "switching reports keeps the focus"
+                );
+            })
+            .unwrap();
+        }
         cx.update(|cx| {
             page.update(cx, |page, cx| {
                 page.choose_app(crate::example::id(crate::example::CHECKOUT), cx);

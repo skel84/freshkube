@@ -340,6 +340,7 @@ impl TableSource for ReportTable {
                         SharedString::from(format!("obs-show-on-charts-{}", revision.id)),
                         "Show on charts",
                     )
+                    .font_family(gpui_kit::component::Theme::global(cx).font_family.clone())
                     .on_click(cx.listener(move |_, _, _, cx| {
                         _ = page.update(cx, |page, cx| {
                             page.show_revision_on_charts(&app, &revision, cx)
