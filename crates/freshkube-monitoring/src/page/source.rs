@@ -11,25 +11,12 @@ use freshkube_core::monitoring::{
     confirm_url, discover, forget_after, normalise_path, normalise_url,
 };
 use futures::channel::oneshot;
-use gpui_kit::component::{
-    Disableable, Sizable,
-    button::{Button, ButtonGroup, ButtonVariants},
-    checkbox::Checkbox,
-    h_flex,
-    input::{Input, InputState},
-    v_flex,
-};
-use gpui_kit::prelude::*;
-use gpui_kit::{
-    AnyElement, App, AppContext, Context, Entity, FontWeight, SharedString, TestSupportExt, Window,
-    div,
-};
+use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::{App, AppContext, Context, Entity, Focusable, SharedString, Subscription, Window};
 
 use super::connection::describe;
 use super::{MonitoringEvent, MonitoringPage, Read, ReadKind, Request};
-use crate::palette::palette;
 use crate::store::{Choice, token_account};
-use crate::ui::{self, dp};
 use freshkube_core::secrets::{STORE_NAME, SecretStore};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,11 +33,27 @@ pub(super) enum Test {
     Failed(SharedString),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Field {
+    Namespace,
+    Name,
+    Port,
+    Url,
+}
+
+#[derive(PartialEq, Eq)]
+pub(super) struct Values {
+    mode: Mode,
+    https: bool,
+    fields: [String; 6],
+}
+
 /// The form's inputs and what Test last said. The inputs are filled from
 /// what is saved whenever the context changes.
 pub(crate) struct SourceForm {
     /// The context the inputs were filled for; none before the first fill.
     filled: Option<Option<String>>,
+    pub(super) focus: gpui_kit::FocusHandle,
     pub(super) mode: Mode,
     pub(super) namespace: Entity<InputState>,
     pub(super) name: Entity<InputState>,
@@ -58,11 +61,16 @@ pub(crate) struct SourceForm {
     pub(super) path: Entity<InputState>,
     pub(super) url: Entity<InputState>,
     pub(super) token: Entity<InputState>,
-    https: bool,
+    pub(super) https: bool,
     pub(super) test: Test,
+    pub(super) replacing_token: bool,
+    pub(super) dirty: bool,
+    subscriptions: Vec<Subscription>,
+    pub(super) initial: Option<Values>,
+    pub(super) error: Option<(Field, SharedString)>,
     read: Read,
     /// Why the form can't be used as typed, or that it was saved.
-    note: Option<SharedString>,
+    pub(super) note: Option<SharedString>,
 }
 
 /// The form as typed. A URL's token is only what was typed now.
@@ -74,9 +82,48 @@ enum Draft {
 
 type Work = Pin<Box<dyn Future<Output = Result<String, QueryError>> + Send>>;
 
+impl SourceForm {
+    pub(super) fn values(&self, cx: &App) -> Values {
+        Values {
+            mode: self.mode,
+            https: self.https,
+            fields: [
+                &self.namespace,
+                &self.name,
+                &self.port,
+                &self.path,
+                &self.url,
+                &self.token,
+            ]
+            .map(|input| input.read(cx).value().to_string()),
+        }
+    }
+    fn changed(&mut self, cx: &App) {
+        self.dirty = self.initial.as_ref() != Some(&self.values(cx));
+        self.test = Test::Idle;
+        self.read.reset();
+        self.note = None;
+        self.error = None;
+    }
+    pub(super) fn error(&self, field: Field) -> Option<SharedString> {
+        self.error
+            .as_ref()
+            .filter(|(failed, _)| *failed == field)
+            .map(|(_, why)| why.clone())
+    }
+    fn field(&self, field: Field) -> &Entity<InputState> {
+        match field {
+            Field::Namespace => &self.namespace,
+            Field::Name => &self.name,
+            Field::Port => &self.port,
+            Field::Url => &self.url,
+        }
+    }
+}
+
 impl MonitoringPage {
     /// Creates the form on first use and fills it again when the context
-    /// changed since. The Settings popover calls this before it draws.
+    /// changed since. Settings calls this before it draws.
     pub fn source_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.form.is_none() {
             let input = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
@@ -84,6 +131,7 @@ impl MonitoringPage {
             };
             self.form = Some(SourceForm {
                 filled: None,
+                focus: cx.focus_handle(),
                 mode: Mode::Automatic,
                 namespace: input("monitoring", window, cx),
                 name: input("prometheus-operated", window, cx),
@@ -97,9 +145,50 @@ impl MonitoringPage {
                 token: cx.new(|cx| InputState::new(window, cx).masked(true)),
                 https: false,
                 test: Test::Idle,
+                replacing_token: false,
+                dirty: false,
+                subscriptions: Vec::new(),
+                initial: None,
+                error: None,
                 read: Read::default(),
                 note: None,
             });
+        }
+        if let Some(form) = &mut self.form
+            && form.subscriptions.is_empty()
+        {
+            for (input, field) in [
+                (&form.namespace, Some(Field::Namespace)),
+                (&form.name, Some(Field::Name)),
+                (&form.port, Some(Field::Port)),
+                (&form.path, None),
+                (&form.url, Some(Field::Url)),
+                (&form.token, None),
+            ] {
+                form.subscriptions.push(cx.subscribe_in(
+                    input,
+                    window,
+                    move |page, _, event, window, cx| match event {
+                        InputEvent::PressEnter { .. } => page.save_source(window, cx),
+                        InputEvent::Change => {
+                            if let Some(form) = &mut page.form {
+                                form.changed(cx);
+                            }
+                            cx.notify();
+                        }
+                        InputEvent::Blur => {
+                            if let Err((failed, why)) = page.draft(cx)
+                                && field == Some(failed)
+                                && let Some(form) = &mut page.form
+                            {
+                                form.error = Some((failed, why.into()));
+                                cx.notify();
+                            }
+                        }
+                        _ => {}
+                    },
+                ));
+            }
         }
         let context = self.context();
         if self.form.as_ref().and_then(|form| form.filled.as_ref()) != Some(&context) {
@@ -127,6 +216,8 @@ impl MonitoringPage {
         };
         form.filled = Some(context);
         form.mode = mode;
+        form.replacing_token = false;
+        form.dirty = false;
         form.test = Test::Idle;
         form.read.resolve(None, Ok(()));
         form.note = None;
@@ -146,43 +237,50 @@ impl MonitoringPage {
         form.token.update(cx, |input, cx| {
             input.set_placeholder(placeholder, window, cx)
         });
+        form.initial = Some(form.values(cx));
+        form.error = None;
     }
 
     pub(super) fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
         if let Some(form) = &mut self.form {
             form.mode = mode;
-            form.test = Test::Idle;
-            form.read.resolve(None, Ok(()));
-            form.note = None;
+            form.changed(cx);
         }
         cx.notify();
     }
 
-    fn set_https(&mut self, https: bool, cx: &mut Context<Self>) {
+    pub(super) fn set_https(&mut self, https: bool, cx: &mut Context<Self>) {
         if let Some(form) = &mut self.form {
             form.https = https;
-            form.test = Test::Idle;
-            form.read.resolve(None, Ok(()));
+            form.changed(cx);
         }
         cx.notify();
     }
 
     /// The form as typed, or why it can't be used.
-    fn draft(&self, cx: &App) -> Result<Draft, String> {
-        let form = self.form.as_ref().ok_or_else(String::new)?;
+    fn draft(&self, cx: &App) -> Result<Draft, (Field, String)> {
+        let form = self.form.as_ref().ok_or((Field::Url, String::new()))?;
         let text = |input: &Entity<InputState>| input.read(cx).value().trim().to_owned();
         match form.mode {
             Mode::Automatic => Ok(Draft::Automatic),
             Mode::Service => {
                 let (namespace, name) = (text(&form.namespace), text(&form.name));
-                if namespace.is_empty() || name.is_empty() {
-                    return Err("Enter the Service's namespace and name".into());
+                if namespace.is_empty() {
+                    return Err((Field::Namespace, "Enter the Service’s namespace.".into()));
+                }
+                if name.is_empty() {
+                    return Err((Field::Name, "Enter the Service’s name.".into()));
                 }
                 let port = text(&form.port)
                     .parse::<u16>()
                     .ok()
                     .filter(|port| *port > 0)
-                    .ok_or_else(|| "Enter the Service's port as a number".to_owned())?;
+                    .ok_or_else(|| {
+                        (
+                            Field::Port,
+                            "Enter the Service’s port as a number from 1 to 65535.".to_owned(),
+                        )
+                    })?;
                 Ok(Draft::Service(PrometheusService {
                     https: form.https,
                     ..PrometheusService::new(namespace, name, port)
@@ -190,7 +288,7 @@ impl MonitoringPage {
                 }))
             }
             Mode::Url => {
-                let url = normalise_url(&text(&form.url))?;
+                let url = normalise_url(&text(&form.url)).map_err(|why| (Field::Url, why))?;
                 let typed = Some(text(&form.token)).filter(|token| !token.is_empty());
                 Ok(Draft::Url { url, typed })
             }
@@ -205,7 +303,7 @@ impl MonitoringPage {
         };
         let draft = match self.draft(cx) {
             Ok(draft) => draft,
-            Err(why) => return self.form_note(why, cx),
+            Err((field, why)) => return self.form_error(field, why, None, cx),
         };
         let access = source.access.clone();
         let work: Work = match draft {
@@ -275,6 +373,48 @@ impl MonitoringPage {
         cx.notify();
     }
 
+    pub(super) fn revert_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.fill_form(self.context(), window, cx);
+        cx.notify();
+    }
+
+    /// Drops an explicit Settings check when the section hides.
+    pub fn pause_settings(&mut self) {
+        if let Some(form) = &mut self.form {
+            form.read.reset();
+            form.test = Test::Idle;
+        }
+    }
+
+    /// Invalidates a token cached before a setup edit changed its store.
+    pub fn settings_token_changed(&mut self, url: &str) {
+        self.tokens.remove(url);
+    }
+
+    /// The effective choice under automatic mode, as the dashboard reads it.
+    pub fn settings_resolution(
+        &self,
+        resolved: freshkube_core::monitoring::scope::Resolved,
+    ) -> freshkube_core::monitoring::scope::Resolved {
+        use freshkube_core::monitoring::scope::{Place, Resolved};
+        if !resolved.is_discovery() {
+            return resolved;
+        }
+        match self.chosen_source() {
+            Some(Choice::Service(service)) => Resolved::Own(Place::Service(service.clone())),
+            Some(Choice::Url { url, token }) => Resolved::Own(Place::Url {
+                url: url.clone(),
+                token: *token,
+            }),
+            None => resolved,
+        }
+    }
+
+    /// The credential store already used by Monitoring's URL sources.
+    pub fn settings_secrets(&self) -> Option<freshkube_core::secrets::Secrets> {
+        self.secrets.clone()
+    }
+
     /// Keeps the form for the context and connects with it.
     pub(super) fn save_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(context) = self.context() else {
@@ -282,7 +422,7 @@ impl MonitoringPage {
         };
         let draft = match self.draft(cx) {
             Ok(draft) => draft,
-            Err(why) => return self.form_note(why, cx),
+            Err((field, why)) => return self.form_error(field, why, Some(window), cx),
         };
         let previous = self.saved.choices.get(&context).cloned();
         let choice = match draft {
@@ -314,12 +454,16 @@ impl MonitoringPage {
         if let Some(form) = &mut self.form {
             form.test = Test::Idle;
             form.read.resolve(None, Ok(()));
-            form.note = Some("Saved. Monitoring reads from it now.".into());
+            form.dirty = false;
+            form.replacing_token = false;
+            form.note = Some("Saved monitoring.json".into());
             let token = matches!(choice, Some(Choice::Url { token: true, .. }));
             form.token.update(cx, |input, cx| {
                 input.set_value("", window, cx);
                 input.set_placeholder(token_placeholder(token), window, cx);
             });
+            form.initial = Some(form.values(cx));
+            form.error = None;
         }
         self.reconnect(cx);
     }
@@ -372,9 +516,18 @@ impl MonitoringPage {
         cx.notify();
     }
 
-    fn form_note(&mut self, note: String, cx: &mut Context<Self>) {
+    fn form_error(
+        &mut self,
+        field: Field,
+        note: String,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(form) = &mut self.form {
-            form.note = Some(note.into());
+            form.error = Some((field, note.into()));
+            if let Some(window) = window {
+                window.focus(&form.field(field).read(cx).focus_handle(cx), cx);
+            }
             form.test = Test::Idle;
             form.read.resolve(None, Ok(()));
         }
@@ -437,217 +590,4 @@ fn token_placeholder(saved: bool) -> String {
     } else {
         "Bearer token, optional".into()
     }
-}
-
-/// The Metrics source section of Settings, for the shell's context.
-pub fn source_section(page: &Entity<MonitoringPage>, cx: &App) -> AnyElement {
-    let p = palette(cx);
-    let this = page.read(cx);
-    let heading = div()
-        .text_size(dp(12.5))
-        .font_weight(FontWeight::SEMIBOLD)
-        .child("Metrics source");
-    let hint = |text: SharedString| div().text_size(dp(12.)).text_color(p.muted).child(text);
-    let section = v_flex()
-        .id("monitoring-source-settings")
-        .test_support()
-        .gap_1p5();
-    let (Some(context), Some(form)) = (this.context(), this.form.as_ref()) else {
-        return section
-            .child(heading)
-            .child(hint(
-                "Choose a context to set where its metrics come from.".into(),
-            ))
-            .into_any_element();
-    };
-    if this
-        .source
-        .as_ref()
-        .is_some_and(|source| source.access.is_example())
-    {
-        return section
-            .child(heading)
-            .child(hint("Example data answers in example mode.".into()))
-            .into_any_element();
-    }
-    let weak = page.downgrade();
-    let on = |weak: &gpui_kit::WeakEntity<MonitoringPage>| weak.clone();
-    let mode = form.mode;
-    let saved_token = matches!(
-        this.saved.choices.get(&context),
-        Some(Choice::Url { token: true, .. })
-    );
-    let segment = |id: &'static str, label: &'static str, value: Mode| {
-        ui::choice(Button::new(id).label(label), mode == value)
-    };
-    let modes = {
-        let weak = on(&weak);
-        ButtonGroup::new("monitoring-source-mode")
-            .outline()
-            .small()
-            .child(segment(
-                "monitoring-source-automatic",
-                "Automatic",
-                Mode::Automatic,
-            ))
-            .child(segment(
-                "monitoring-source-service",
-                "Service",
-                Mode::Service,
-            ))
-            .child(segment("monitoring-source-url", "URL", Mode::Url))
-            .on_click(move |selected: &Vec<usize>, _, cx| {
-                let mode = match selected.first() {
-                    Some(0) => Mode::Automatic,
-                    Some(1) => Mode::Service,
-                    Some(_) => Mode::Url,
-                    None => return,
-                };
-                _ = weak.update(cx, |page, cx| page.set_mode(mode, cx));
-            })
-    };
-    let field = |label: &'static str, id: &'static str, input: &Entity<InputState>| {
-        v_flex()
-            .flex_1()
-            .min_w_0()
-            .gap(dp(3.))
-            .child(div().text_size(dp(11.)).text_color(p.muted).child(label))
-            .child(Input::new(input).id(id).small())
-    };
-    let fields: AnyElement = match mode {
-        Mode::Automatic => hint(
-            "Finds Prometheus, VictoriaMetrics, Thanos or Mimir in the cluster and reads it through the Kubernetes API's service proxy."
-                .into(),
-        )
-        .into_any_element(),
-        Mode::Service => {
-            let weak = on(&weak);
-            v_flex()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(field("Namespace", "monitoring-source-namespace", &form.namespace))
-                        .child(field("Service", "monitoring-source-name", &form.name)),
-                )
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(div().w(dp(80.)).child(field("Port", "monitoring-source-port", &form.port)))
-                        .child(field("Path prefix", "monitoring-source-path", &form.path)),
-                )
-                .child(
-                    Checkbox::new("monitoring-source-https")
-                        .small()
-                        .label("The port speaks HTTPS")
-                        .checked(form.https)
-                        .on_click(move |checked: &bool, _, cx| {
-                            let checked = *checked;
-                            _ = weak.update(cx, |page, cx| page.set_https(checked, cx));
-                        }),
-                )
-                .child(hint(
-                    "Read through the Kubernetes API's service proxy with this context's credentials. VictoriaMetrics' vmselect uses the prefix select/0/prometheus; Mimir uses prometheus."
-                        .into(),
-                ))
-                .into_any_element()
-        }
-        Mode::Url => {
-            let weak = on(&weak);
-            v_flex()
-                .gap_2()
-                .child(field("URL", "monitoring-source-address", &form.url))
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .items_end()
-                        .child(field("Token", "monitoring-source-token", &form.token))
-                        .when(saved_token, |row| {
-                            row.child(
-                                Button::new("monitoring-source-forget-token")
-                                    .ghost()
-                                    .small()
-                                    .label("Forget")
-                                    .on_click(move |_, window, cx| {
-                                        _ = weak.update(cx, |page, cx| page.forget_token(window, cx));
-                                    }),
-                            )
-                        }),
-                )
-                .child(hint(
-                    if this.secrets.is_some() {
-                        format!("Read from this computer, not through the cluster. A token is sent as a bearer token and kept in {STORE_NAME}.")
-                    } else {
-                        "Read from this computer, not through the cluster. A token is kept until Freshkube quits.".to_owned()
-                    }
-                    .into(),
-                ))
-                .into_any_element()
-        }
-    };
-    let testing = matches!(form.test, Test::Testing(_));
-    let (test_weak, save_weak) = (on(&weak), on(&weak));
-    let outcome: Option<AnyElement> = match &form.test {
-        Test::Idle => form.note.clone().map(|note| hint(note).into_any_element()),
-        Test::Testing(_) => Some(hint("Testing…".into()).into_any_element()),
-        Test::Passed(message) => Some(
-            h_flex()
-                .id("monitoring-source-passed")
-                .gap(dp(6.))
-                .text_size(dp(12.))
-                .children(ui::status_glyph(ui::Tone::Good, cx))
-                .child(message.clone())
-                .into_any_element(),
-        ),
-        Test::Failed(message) => Some(
-            h_flex()
-                .id("monitoring-source-failed")
-                .gap(dp(6.))
-                .items_start()
-                .text_size(dp(12.))
-                .text_color(p.crit_ink)
-                .children(ui::status_glyph(ui::Tone::Crit, cx))
-                .child(div().min_w_0().child(message.clone()))
-                .into_any_element(),
-        ),
-    };
-    section
-        .child(
-            h_flex().justify_between().gap_2().child(heading).child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .font_family(ui::MONO_FONT)
-                    .text_size(dp(11.))
-                    .text_color(p.muted)
-                    .child(context),
-            ),
-        )
-        .child(modes)
-        .child(fields)
-        .child(
-            h_flex()
-                .gap_2()
-                .child(
-                    Button::new("monitoring-source-test")
-                        .outline()
-                        .small()
-                        .label("Test")
-                        .disabled(testing)
-                        .on_click(move |_, _, cx| {
-                            _ = test_weak.update(cx, |page, cx| page.test_source(cx));
-                        }),
-                )
-                .child(
-                    Button::new("monitoring-source-save")
-                        .primary()
-                        .small()
-                        .label("Save")
-                        .on_click(move |_, window, cx| {
-                            _ = save_weak.update(cx, |page, cx| page.save_source(window, cx));
-                        }),
-                ),
-        )
-        .children(outcome)
-        .into_any_element()
 }

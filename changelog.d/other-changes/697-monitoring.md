@@ -1,0 +1,1 @@
+- **Monitoring settings:** choose workspace metrics in Settings, test unsaved sources, and save or revert the group. Per-context sources and dashboard folders move out of the gear; saved files keep unknown keys.
