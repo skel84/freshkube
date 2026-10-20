@@ -19,8 +19,8 @@ use gpui_kit::component::resizable::{
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, AppContext, DispatchPhase, Div, Entity, MouseDownEvent, Pixels, SharedString,
-    Stateful, Subscription, TestSupportExt, Window, canvas, div,
+    AnyElement, App, AppContext, DispatchPhase, Div, Entity, MouseDownEvent, Pixels, ScrollHandle,
+    SharedString, Stateful, Subscription, TestSupportExt, Window, canvas, div,
 };
 
 use crate::page::{PANE_PADDING, SHORT_LIST_HEIGHT};
@@ -70,6 +70,7 @@ pub struct Inspector {
     banner: Option<AnyElement>,
     tabs: Option<(TabStrip, AnyElement)>,
     body: Vec<AnyElement>,
+    scroll: Option<ScrollHandle>,
     content: Option<AnyElement>,
     footer: Option<AnyElement>,
 }
@@ -82,6 +83,7 @@ impl Inspector {
             banner: None,
             tabs: None,
             body: vec![],
+            scroll: None,
             content: None,
             footer: None,
         }
@@ -119,6 +121,13 @@ impl Inspector {
         self
     }
 
+    /// Track the body's scroll position so its owner can reset it when
+    /// the selection changes. Does not apply to self-scrolling content.
+    pub fn track_scroll(mut self, scroll: &ScrollHandle) -> Self {
+        self.scroll = Some(scroll.clone());
+        self
+    }
+
     /// In place of a body: one element that fills the rest and lays itself
     /// out, unpadded and unscrolled, for a view that scrolls itself (a
     /// virtual list, a log, a terminal). The parts given to [`child`] are
@@ -150,15 +159,25 @@ impl Inspector {
                 .min_w_0()
                 .child(content),
             None => v_flex()
-                .id(part("body"))
+                .id(part("body-frame"))
                 .test_support()
                 .flex_1()
                 .min_h_0()
                 .min_w_0()
-                .overflow_y_scroll()
-                .gap(dp(GAP))
                 .p(dp(PANE_PADDING))
-                .children(self.body),
+                .child(
+                    v_flex()
+                        .id(part("body"))
+                        .test_support()
+                        .size_full()
+                        .min_h_0()
+                        .min_w_0()
+                        .overflow_y_scroll()
+                        .restrict_scroll_to_axis()
+                        .when_some(self.scroll, |this, scroll| this.track_scroll(&scroll))
+                        .gap(dp(GAP))
+                        .children(self.body),
+                ),
         };
         v_flex()
             .id(self.id.clone())
