@@ -88,7 +88,9 @@ pub fn cell(column: &impl TableColumn) -> Div {
     if column.flexible() {
         cell.flex_1().min_w(dp(column.width()))
     } else {
-        cell.flex_none().w(dp(column.width()))
+        cell.flex_none()
+            .w(dp(column.width()))
+            .max_w(dp(column.width()))
     }
 }
 

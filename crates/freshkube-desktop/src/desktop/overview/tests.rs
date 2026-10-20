@@ -830,7 +830,9 @@ fn overview_says_connecting_until_talos_answers(cx: &mut TestAppContext) {
     // Connecting…, and so must the Overview's heading.
     let (_runtime, handle, _pilot) = crate::desktop::tests::mount(
         cx,
-        crate::GpuiOptions::fixture().holding_talos(),
+        crate::GpuiOptions::fixture().with_debug(crate::DebugOptions::parse(|name| {
+            (name == "FRESHKUBE_FIXTURE_HOLD").then(|| "talos".into())
+        })),
         1280.,
         880.,
     );

@@ -370,7 +370,7 @@ impl Pilot {
             this.remember_connection(window, cx);
             this.invalidate_target(window, cx);
             if this.mode().is_example() {
-                this.seed_fixture_history(cx);
+                this.seed_example_history(cx);
             }
             this.refresh(window, cx);
             this.prepare_context_display(window, cx);
