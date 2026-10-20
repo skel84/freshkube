@@ -213,6 +213,13 @@ impl PartialEq for Script {
 }
 
 #[cfg(any(test, feature = "testing"))]
+impl Default for Script {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
 impl Script {
     /// A connected script with a connection of its own, that of a server
     /// at an address nobody serves.
