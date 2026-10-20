@@ -58,5 +58,7 @@ impl Pilot {
         self.pages.observability.update(cx, |page, cx| {
             page.set_setup_connection(&connection, reconnect, window, cx)
         });
+        // The connection's project is the entries' when they name none.
+        self.sync_applications_coroot(cx);
     }
 }

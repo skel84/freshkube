@@ -5,6 +5,60 @@ use super::super::{example, model::Report};
 use freshkube_core::coroot as api;
 use std::collections::BTreeMap;
 
+/// Each application's invented answer is dated only on its first read.
+/// Reports, the revision list and revision windows share that same answer.
+#[derive(Default)]
+pub(crate) struct Views {
+    views: BTreeMap<api::AppId, api::AppView>,
+}
+
+impl Views {
+    pub(crate) fn get(&mut self, app: &api::AppId) -> &api::AppView {
+        self.views
+            .entry(app.clone())
+            .or_insert_with(|| app_view(app))
+    }
+}
+
+fn now() -> chrono::DateTime<chrono::Utc> {
+    #[cfg(test)]
+    if let Some(at) = CLOCK.with(|clock| clock.borrow().as_ref().map(|now| now())) {
+        return at;
+    }
+    chrono::Utc::now()
+}
+
+#[cfg(test)]
+type Clock = Box<dyn Fn() -> chrono::DateTime<chrono::Utc>>;
+
+#[cfg(test)]
+thread_local! {
+    static CLOCK: std::cell::RefCell<Option<Clock>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Drives fixture dates with the UI test executor, across read boundaries.
+#[cfg(test)]
+pub(super) fn with_clock(executor: gpui_kit::BackgroundExecutor) -> ClockGuard {
+    let origin = executor.now();
+    let at = chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap();
+    CLOCK.with(|clock| {
+        *clock.borrow_mut() = Some(Box::new(move || {
+            at + chrono::Duration::from_std(executor.now().duration_since(origin)).unwrap()
+        }));
+    });
+    ClockGuard
+}
+
+#[cfg(test)]
+pub(super) struct ClockGuard;
+
+#[cfg(test)]
+impl Drop for ClockGuard {
+    fn drop(&mut self) {
+        CLOCK.with(|clock| *clock.borrow_mut() = None);
+    }
+}
+
 /// Each signal's check: its title, Coroot's condition, threshold and unit.
 const CHECKS: [(Report, &str, &str, f32, &str); 12] = [
     (
@@ -227,7 +281,7 @@ pub(super) fn give_history(chart: &mut api::AppChart, group: Option<&str>) {
 /// began refusing it, inside the charts' hour, 1.8.1 days before it, and
 /// 1.7.4 longer ago than the example keeps data for.
 pub(crate) fn revisions() -> Vec<api::DeploymentRevision> {
-    revisions_at(chrono::Utc::now())
+    revisions_at(now())
 }
 
 fn revisions_at(now: chrono::DateTime<chrono::Utc>) -> Vec<api::DeploymentRevision> {
@@ -278,7 +332,7 @@ fn revisions_at(now: chrono::DateTime<chrono::Utc>) -> Vec<api::DeploymentRevisi
 /// ReplicaSet the change page's example change runs on dev-fra and
 /// stage-fra, an hour into the charts, and 1.42.3 the week before.
 pub(crate) fn checkout_revisions() -> Vec<api::DeploymentRevision> {
-    checkout_revisions_at(chrono::Utc::now())
+    checkout_revisions_at(now())
 }
 
 fn checkout_revisions_at(now: chrono::DateTime<chrono::Utc>) -> Vec<api::DeploymentRevision> {
@@ -318,7 +372,7 @@ const KEPT_MS: i64 = 7 * 24 * 3_600_000;
 /// cuts at its newest data, or no data when the window is older than the
 /// example keeps.
 pub(crate) fn around(
-    app: &api::AppId,
+    view: &api::AppView,
     revision: &api::DeploymentRevision,
     window: api::RevisionWindow,
 ) -> Result<api::RevisionView, api::ReadError> {
@@ -332,7 +386,7 @@ pub(crate) fn around(
     let answer = if from.timestamp_millis() < now_ms - KEPT_MS {
         api::Around::NoData
     } else {
-        let mut view = app_view(app);
+        let mut view = view.clone();
         let from_ms = from.timestamp_millis() / 60_000 * 60_000;
         let to_ms = to.timestamp_millis().min(now_ms) / 60_000 * 60_000;
         for report in &mut view.reports {
@@ -484,7 +538,7 @@ const POINTS: usize = 60;
 /// The example's last hour, ending on the current minute: `POINTS`
 /// minutes, the first and the last included.
 fn hour() -> (i64, i64) {
-    hour_at(chrono::Utc::now())
+    hour_at(now())
 }
 
 fn hour_at(now: chrono::DateTime<chrono::Utc>) -> (i64, i64) {
@@ -785,7 +839,9 @@ fn deployments() -> api::Table {
         ]
     };
     api::Table {
-        header: ["Version", "Deployed", "Summary"].map(String::from).into(),
+        header: ["Deployment", "Deployed", "Summary"]
+            .map(String::from)
+            .into(),
         rows: vec![
             row(
                 "worker:1.8.2",

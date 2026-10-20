@@ -118,7 +118,14 @@ impl TableSource for SettingsPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let row = line.data;
-        let cell = table::cell(column);
+        let text_cell = |field: &str, text: &SharedString| {
+            table::word_cell(
+                column,
+                format!("settings-cluster-{}-{field}", row.id),
+                text.clone(),
+            )
+            .test_support()
+        };
         match column.field {
             Field::Glyph => table::glyph_cell(column)
                 .id(SharedString::from(format!(
@@ -135,12 +142,11 @@ impl TableSource for SettingsPage {
                     ))
                 })
                 .into_any_element(),
-            Field::Name => cell.child(row.id.clone()).into_any_element(),
-            Field::Role => cell.child(row.role.clone()).into_any_element(),
-            Field::Context => cell.child(row.context.clone()).into_any_element(),
-            Field::Talosconfig => cell
+            Field::Name => text_cell("name", &row.id).into_any_element(),
+            Field::Role => text_cell("role", &row.role).into_any_element(),
+            Field::Context => text_cell("context", &row.context).into_any_element(),
+            Field::Talosconfig => text_cell("talosconfig", &row.talosconfig)
                 .text_color(style.p.muted)
-                .child(row.talosconfig.clone())
                 .into_any_element(),
         }
     }

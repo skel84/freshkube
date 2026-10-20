@@ -8,6 +8,8 @@ use crate::application::{AppPage, Charts, example as app_example};
 use crate::connection::{ReadJob, Subject};
 use crate::tables::{ColumnKind, PageColumn, TableKey};
 use freshkube_core::coroot as api;
+gpui_kit::actions!(observability_deployments, [ShowOnCharts]);
+
 mod detail;
 mod table;
 #[cfg(test)]
@@ -217,6 +219,29 @@ fn row(revision: &api::DeploymentRevision) -> Row {
 }
 
 impl ObservabilityPage {
+    pub(crate) fn revision_is_listed(&self, revision: &api::DeploymentRevision) -> bool {
+        self.revision_rows().iter().any(|row| {
+            row.revision.id == revision.id && row.revision.started_at == revision.started_at
+        })
+    }
+
+    pub(crate) fn show_selected_revision_on_charts(&mut self, cx: &mut Context<Self>) {
+        let Some(app) = self.selected_app.clone() else {
+            return;
+        };
+        let Some(row) = self.revision_observations.selected() else {
+            return;
+        };
+        let revision = row.revision.clone();
+        self.show_revision_on_charts(&app, &revision, cx);
+    }
+
+    pub(crate) fn selected_revision_start(&self) -> Option<i64> {
+        self.revision_observations
+            .selected()
+            .map(|row| row.revision.started_at.timestamp())
+    }
+
     /// Derives the rows from the chosen application's page, Coroot's or
     /// the example's, and reads the selected revision's window again when
     /// the selection changed.
@@ -226,13 +251,9 @@ impl ObservabilityPage {
             return false;
         }
         let app = self.selected_app.clone();
-        let example;
         let view = match &app {
             None => None,
-            Some(app) if self.fixture => {
-                example = app_example::app_view(app);
-                Some(&example)
-            }
+            Some(app) if self.fixture => Some(self.example_views.get(app)),
             Some(app) => self.live.view.data().filter(|view| view.map.app.id == *app),
         };
         let revisions = view.and_then(|view| view.revisions.as_ref());
@@ -265,8 +286,11 @@ impl ObservabilityPage {
         let window = state.window();
         if self.fixture {
             if !self.hold {
-                self.revision_observations.example =
-                    Some(app_example::around(&app, &revision, window));
+                self.revision_observations.example = Some(app_example::around(
+                    self.example_views.get(&app),
+                    &revision,
+                    window,
+                ));
                 self.prepare_revision_detail();
             }
             return;

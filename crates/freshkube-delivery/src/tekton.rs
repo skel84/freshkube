@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 
 use serde_json::Value;
 
+use super::chains::{Attestation, Attestations, parse_own_attestations};
 use super::digest::{Digest, is_full_sha, text};
 use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Resource, Scope, label_equals};
@@ -56,6 +57,8 @@ pub struct PipelineRun {
     pub task_runs: Vec<String>,
     /// `chains.tekton.dev/signed`: `true`, `failed`, …
     pub chains_state: Option<String>,
+    /// What Chains stored on the run: claims until verified.
+    pub attestations: Attestations,
     /// The pages PaC recorded for the run, as written: never opened until
     /// [`Address`](super::address::Address) has read them.
     pub pages: RunPages,
@@ -83,6 +86,8 @@ pub struct TaskRun {
     pub pipeline_run: Option<String>,
     pub results: BTreeMap<String, String>,
     pub chains_state: Option<String>,
+    /// What Chains stored on the task: claims until verified.
+    pub attestations: Attestations,
     /// `status.podName`: the pod its steps ran in.
     pub pod: Option<String>,
     /// Its steps' containers, in order, from `status.steps`.
@@ -224,6 +229,7 @@ pub(crate) fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
             .filter_map(|child| text(child, "/name"))
             .collect(),
         chains_state: chains_state(value),
+        attestations: parse_own_attestations(value),
         pages: RunPages {
             repository: annotation(value, "pipelinesascode.tekton.dev/repo-url"),
             commit: annotation(value, "pipelinesascode.tekton.dev/sha-url"),
@@ -242,6 +248,7 @@ pub(crate) fn parse_task_run(value: &Value) -> Option<TaskRun> {
         pipeline_run: label(value, PIPELINE_RUN_LABEL),
         results: results_of(value),
         chains_state: chains_state(value),
+        attestations: parse_own_attestations(value),
         pod: text(value, "/status/podName"),
         steps: value
             .pointer("/status/steps")
@@ -378,9 +385,18 @@ impl Witness {
     }
 }
 
+/// Where the run's manifest was read. The join uses the same facts either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    Cluster,
+    Results,
+}
+
 /// A PipelineRun with the TaskRuns that belong to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Build {
+    pub origin: Origin,
+    pub(crate) archive: Option<crate::results::Archive>,
     pub run: PipelineRun,
     pub tasks: Vec<TaskRun>,
     /// Why the run's TaskRuns could not be read, when they could not. The
@@ -428,6 +444,26 @@ impl Build {
             .find(|state| state.as_str() == "true")
             .or(states.first())
             .map(|state| (*state).clone())
+    }
+
+    /// The attestations of the run Chains stored, the run's own first and
+    /// then each task's in order, each with the object it was read from.
+    pub(crate) fn attestations(&self) -> Vec<(ObjectRef, &Attestation)> {
+        let run = self.run.object_ref();
+        let own = self
+            .run
+            .attestations
+            .read
+            .iter()
+            .map(move |a| (run.clone(), a));
+        let tasks = self.tasks.iter().flat_map(|task| {
+            let object = task.object_ref();
+            task.attestations
+                .read
+                .iter()
+                .map(move |a| (object.clone(), a))
+        });
+        own.chain(tasks).collect()
     }
 
     /// The pipeline's own evidence record, from the configured result.
@@ -596,6 +632,8 @@ pub(crate) async fn read_builds<R: Reader>(
                 Err(failure) => (Vec::new(), Some(printable(&failure))),
             };
             builds.push(Build {
+                origin: Origin::Cluster,
+                archive: None,
                 run,
                 tasks,
                 tasks_unread,

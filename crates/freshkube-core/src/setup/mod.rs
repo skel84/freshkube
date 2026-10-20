@@ -48,6 +48,18 @@ const HEADER: &str = "\
 
 type Extra = serde_json::Map<String, serde_json::Value>;
 
+const EXAMPLE: &str = include_str!("../../../freshkube-prefs/src/examples/freshkube.yaml");
+
+/// Reads and validates the bundled example with absolute paths on this platform.
+pub fn example() -> Result<Setup, Invalid> {
+    // Windows requires a drive for the example's Unix home to be absolute.
+    #[cfg(windows)]
+    let text = EXAMPLE.replace("/home/acme", "C:/home/acme");
+    #[cfg(not(windows))]
+    let text = EXAMPLE;
+    parse(text.as_bytes())
+}
+
 /// Everything `freshkube.yaml` says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Setup {
@@ -81,6 +93,7 @@ impl std::fmt::Display for Place {
 pub enum Fault {
     Empty(String),
     NotUrl(String),
+    NonLoopbackHttp(String),
     RelativePath(String),
     ZeroPort(String),
     /// Exactly one of the keys `of` is set.
@@ -116,6 +129,7 @@ impl std::fmt::Display for Fault {
         match self {
             Fault::Empty(at) => write!(f, "{at} is empty"),
             Fault::NotUrl(at) => write!(f, "{at} isn’t an http:// or https:// URL"),
+            Fault::NonLoopbackHttp(at) => write!(f, "{at}: plain HTTP is allowed only on loopback"),
             Fault::RelativePath(at) => write!(f, "{at} isn’t an absolute path"),
             Fault::ZeroPort(at) => write!(f, "{at} isn’t a port"),
             Fault::OneOf { at, of } => write!(f, "{at} must set exactly one of {of}"),

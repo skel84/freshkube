@@ -17,6 +17,7 @@
 //! object link does; the page never approves, promotes or syncs.
 mod changes;
 mod detail;
+mod outcome;
 pub(crate) mod read;
 pub(crate) mod table;
 mod view;
@@ -43,6 +44,7 @@ use crate::resources::{LogsAt, LogsRequest, ResourceLink, Tab, model::ObjectRef}
 pub use changes::Changes;
 #[cfg(any(test, feature = "testing"))]
 pub use changes::LiveChanges;
+pub use outcome::{Coroot, Kind as OutcomeKind, Links, Live, Mark};
 pub(super) use read::Fetch;
 
 /// The page's id prefix: `change-title`, `change-hop-<key>`, `change-detail`.
@@ -204,6 +206,9 @@ pub struct HopRow {
     pub from: SharedString,
     pub time: SharedString,
     pub link: Option<Confidence>,
+    /// Coroot's verdict on the revision, once the outcome was read. It is
+    /// not the hop's state and not its link, and no chip counts it.
+    pub coroot: Option<Mark>,
     /// The row's accessibility label.
     pub label: SharedString,
 }
@@ -279,6 +284,9 @@ pub struct ChangePage {
     selected: Option<SharedString>,
     /// What the Inspector says of the selection.
     detail: Option<detail::Detail>,
+    /// What Coroot found after each Deployment's deploy, read for the
+    /// selected hop while the page shows.
+    outcomes: outcome::Outcomes,
     /// What the breadcrumb goes back to, when it isn't the project's page.
     parent: Option<SharedString>,
 }
@@ -328,6 +336,7 @@ impl ChangePage {
             page_scroll: ScrollHandle::new(),
             selected: None,
             detail: None,
+            outcomes: outcome::Outcomes::default(),
             parent: None,
         };
         if visible {
@@ -370,6 +379,7 @@ impl ChangePage {
                     label: format!("{}: {}{link}", hop.name, hop.detail).into(),
                     time: time.into(),
                     link: hop.link,
+                    coroot: None,
                 }
             })
             .collect();
@@ -461,6 +471,8 @@ impl ChangePage {
         {
             self.selected = None;
         }
+        self.prune_outcomes();
+        self.sync_marks();
         self.detail = self.derive_detail();
         self.derive();
     }
@@ -511,6 +523,7 @@ impl ChangePage {
         let group = row.group;
         self.selected = Some(row.key.clone());
         self.detail = self.derive_detail();
+        self.read_outcome(false, cx);
         if self.folded.remove(&group) {
             self.derive();
         }
@@ -573,6 +586,7 @@ impl ChangePage {
     fn back(&mut self, cx: &mut Context<Self>) {
         if self.selected.take().is_some() {
             self.detail = None;
+            self.hide_outcomes();
             cx.notify();
         } else {
             cx.emit(ChangeEvent::Back);

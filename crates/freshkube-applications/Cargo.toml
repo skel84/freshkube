@@ -33,7 +33,7 @@ tracing.workspace = true
 [features]
 # Read-outs for desktop's tests, which drive the pages through the shell;
 # turned on from dev-dependencies.
-testing = ["gpui-kit/test-support", "freshkube-core/testing", "freshkube-ui/testing"]
+testing = ["gpui-kit/test-support", "freshkube-core/testing", "freshkube-ui/testing", "freshkube-observability/testing"]
 
 [dev-dependencies]
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }

@@ -1581,6 +1581,29 @@ async fn listed_applications_save_a_request() {
 }
 
 #[tokio::test]
+async fn a_look_hands_back_the_list_it_read_and_none_it_was_given() {
+    let q = query(link_of("cluster-a", "shop-api", "c"));
+    let server = server(vec![
+        (200, shop_apps()),
+        (200, auth_page()),
+        (200, auth_page()),
+        (200, auth_page()),
+        (200, auth_page()),
+    ])
+    .await;
+    let provider = Provider::new(&server.url, Credentials::None).unwrap();
+    let first = provider.outcome(&q, None, window(), now()).await;
+    assert!(matches!(first.outcome, Outcome::Found(_)));
+    let listed = first.listed.expect("the look read the list");
+    assert_eq!(server.requests.lock().unwrap().len(), 3);
+    // Handed back to the next look, it costs two requests and returns none.
+    let second = provider.outcome(&q, Some(&listed), window(), now()).await;
+    assert!(matches!(second.outcome, Outcome::Found(_)));
+    assert!(second.listed.is_none());
+    assert_eq!(server.requests.lock().unwrap().len(), 5);
+}
+
+#[tokio::test]
 async fn a_list_from_another_link_or_connection_is_read_again() {
     let q = query(link_of("cluster-a", "shop-api", "c"));
     let none = serde_json::json!({"applications":[]});
@@ -1784,6 +1807,7 @@ fn an_answer_is_for_its_entry_link_window_and_connection_only() {
         window: window(),
         provider: provider.id(),
         outcome: Outcome::NoRevision,
+        listed: None,
     };
     assert!(answer.is_for(&a, window(), provider.id()));
     // The same Coroot application asked for by another entry.
@@ -1840,7 +1864,7 @@ async fn a_look_that_hears_nothing_ends_in_a_timeout_on_the_test_clock() {
     held.abort();
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn dropping_the_future_cancels_the_look() {
     use std::sync::atomic::{AtomicBool, Ordering};
     // A server that notes when the connection it holds is closed.
@@ -1848,20 +1872,29 @@ async fn dropping_the_future_cancels_the_look() {
     let url = format!("http://{}", listener.local_addr().unwrap());
     let closed = Arc::new(AtomicBool::new(false));
     let flag = closed.clone();
+    let (arrived, request) = tokio::sync::oneshot::channel();
     let held = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut bytes = vec![0; 16384];
+        let mut arrived = Some(arrived);
         // The request, then nothing until the client goes away.
-        while socket.read(&mut bytes).await.is_ok_and(|n| n > 0) {}
+        while socket.read(&mut bytes).await.is_ok_and(|n| n > 0) {
+            if let Some(arrived) = arrived.take() {
+                let _ = arrived.send(());
+            }
+        }
         flag.store(true, Ordering::SeqCst);
     });
     let provider = Provider::new(&url, Credentials::None).unwrap();
     let q = query(link_of("cluster-a", "shop-api", "c"));
     {
         let look = provider.outcome(&q, None, window(), now());
+        // Drop the look once the server holds its request, not after a
+        // timer: a timer could fire before the client had connected, and
+        // then nothing would ever close.
         tokio::select! {
             _ = look => panic!("the server never answers"),
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+            _ = request => {}
         }
     }
     for _ in 0..400 {

@@ -1,7 +1,5 @@
 use super::*;
 
-const EXAMPLE: &str = include_str!("../../../freshkube-prefs/src/examples/freshkube.yaml");
-
 /// The example's paths are Unix ones; a Windows path is absolute only with a
 /// drive, so the tests read them under one.
 fn portable(text: &str) -> String {
@@ -37,8 +35,31 @@ fn with_cluster(rest: &str) -> String {
 }
 
 #[test]
+fn the_example_reader_supplies_absolute_paths() {
+    let setup = example().expect("the bundled example parses and validates on every platform");
+    assert!(setup.workspace.kubeconfig.as_ref().unwrap().is_absolute());
+    assert!(
+        setup.workspace.clusters[0]
+            .talosconfig
+            .as_ref()
+            .unwrap()
+            .is_absolute()
+    );
+    assert!(
+        setup
+            .supply_chain
+            .as_ref()
+            .unwrap()
+            .public_key_file
+            .as_ref()
+            .unwrap()
+            .is_absolute()
+    );
+}
+
+#[test]
 fn the_example_reads_as_the_design_describes() {
-    let setup = ok(EXAMPLE);
+    let setup = example().expect("the bundled example is valid");
     let workspace = &setup.workspace;
     assert_eq!(workspace.kubeconfig, Some(home("/home/acme/.kube/config")));
     let ids: Vec<_> = workspace.clusters.iter().map(|e| e.id.as_str()).collect();
@@ -106,7 +127,7 @@ fn the_example_reads_as_the_design_describes() {
 
 #[test]
 fn the_example_survives_a_round_trip_and_the_text_settles() {
-    let setup = ok(EXAMPLE);
+    let setup = example().expect("the bundled example is valid");
     let text = to_text(&setup);
     assert_eq!(ok(&text), setup);
     // Written again, the same bytes: a save over the app's own output
@@ -116,7 +137,7 @@ fn the_example_survives_a_round_trip_and_the_text_settles() {
 
 #[test]
 fn the_text_starts_with_the_header_and_follows_the_fixed_order() {
-    let text = to_text(&ok(EXAMPLE));
+    let text = to_text(&example().expect("the bundled example is valid"));
     let header: String = EXAMPLE.lines().take(4).map(|l| format!("{l}\n")).collect();
     assert!(text.starts_with(&header), "{text}");
     let order = [
@@ -704,7 +725,7 @@ fn the_workspace_json_shape_is_unchanged_by_the_new_entry_keys() {
 fn commit_writes_a_file_that_reads_back_and_refuses_a_changed_one() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("config").join("freshkube.yaml");
-    let setup = ok(EXAMPLE);
+    let setup = example().expect("the bundled example is valid");
     let seen = commit(&file, &Seen::Missing, &setup).unwrap();
     assert_eq!(seen, Seen::Bytes(std::fs::read(&file).unwrap()));
     assert_eq!(ok(&std::fs::read_to_string(&file).unwrap()), setup);
@@ -744,7 +765,7 @@ fn commit_writes_a_file_that_reads_back_and_refuses_a_changed_one() {
 fn commit_writes_nothing_for_an_invalid_setup() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("freshkube.yaml");
-    let mut setup = ok(EXAMPLE);
+    let mut setup = example().expect("the bundled example is valid");
     setup.coroot.as_mut().unwrap().server = "nonsense".into();
     let result = commit(&file, &Seen::Missing, &setup);
     assert!(
@@ -759,7 +780,7 @@ fn commit_writes_nothing_for_an_invalid_setup() {
 
 #[test]
 fn a_setup_too_large_to_read_back_is_not_written() {
-    let mut setup = ok(EXAMPLE);
+    let mut setup = example().expect("the bundled example is valid");
     setup.extra.insert(
         "padding".into(),
         serde_json::Value::String("x".repeat(MAX_BYTES as usize)),
@@ -863,4 +884,65 @@ fn the_example_links_are_distinct_and_survive_a_save() {
     edited.workspace.clusters[2].coroot = Some(EntryCoroot::new("cluster-a").into());
     assert!(edited.validate().is_err());
     assert!(edited.check_saveable().is_err());
+}
+
+#[test]
+fn results_address_credentials_are_typed_and_round_trip() {
+    let text = with_cluster(
+        "    results:\n      address: https://results.example.test\n      token: keys.json\n      ca_file: /home/acme/results-ca.pem\n      future: kept\n",
+    );
+    let setup = ok(&text);
+    let results = setup.workspace.clusters[0].results.as_ref().unwrap();
+    assert_eq!(results.token, Some(KeysJson));
+    assert_eq!(results.ca_file, Some(home("/home/acme/results-ca.pem")));
+    assert_eq!(setup.unknown_keys(), vec!["cluster-a.results.future"]);
+    assert_eq!(ok(&to_text(&setup)), setup);
+    let invalid = refused(&text.replace("token: keys.json", "token: invented-secret"));
+    assert!(matches!(invalid, Invalid::KeyValue(_)));
+    assert!(!invalid.to_string().contains("invented-secret"));
+    assert_eq!(
+        rule(&text.replace("/home/acme/results-ca.pem", "relative.pem")),
+        "the cluster “cluster-a” results.ca_file isn’t an absolute path"
+    );
+}
+
+#[test]
+fn results_address_settings_do_not_go_with_a_forward() {
+    for (extra, field) in [
+        ("      token: keys.json\n", "token"),
+        ("      ca_file: /home/acme/ca.pem\n", "ca_file"),
+    ] {
+        let text = with_cluster(&format!(
+            "    results:\n      forward: {{namespace: acme, service: results, port: 8080}}\n{extra}"
+        ));
+        assert_eq!(
+            rule(&text),
+            format!("the cluster “cluster-a” results.{field} only goes with address")
+        );
+    }
+}
+
+#[test]
+fn results_plain_http_is_only_saved_for_literal_loopback() {
+    for address in [
+        "http://results.example.test",
+        "http://192.0.2.1",
+        "http://localhost",
+    ] {
+        let text = with_cluster(&format!("    results: {{address: '{address}'}}\n"));
+        assert_eq!(
+            rule(&text),
+            "the cluster “cluster-a” results.address: plain HTTP is allowed only on loopback"
+        );
+    }
+    for address in [
+        "https://results.example.test",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.2",
+        "http://[::1]:8080",
+    ] {
+        ok(&with_cluster(&format!(
+            "    results: {{address: '{address}'}}\n"
+        )));
+    }
 }

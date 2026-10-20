@@ -292,10 +292,6 @@ pub(crate) struct Pilot {
     overview: Snapshot<ClusterOverview, AppliedConfig, String>,
     /// The workspace's entries and what the header's switcher shows of them.
     switch: switch::Switcher,
-    /// What the notices about links and switches said, for tests: the
-    /// window offers no way to read a notice back.
-    #[cfg(test)]
-    pub(crate) told: Vec<String>,
     /// The Talos nodes, the one selected and what is read of it.
     target: target::Selected,
     chrome: shell::Chrome,
@@ -575,7 +571,7 @@ impl Pilot {
                 .map(|name| (*name).into())
                 .collect();
             self.applied.context = Some(self.contexts[0].clone());
-            self.seed_fixture_history(cx);
+            self.seed_example_history(cx);
             self.refresh(window, cx);
         } else if kubernetes_only {
             let kube = kubernetes_only::KubernetesOnly::new(kubeconfig_path, kube_context);
@@ -772,8 +768,6 @@ impl Pilot {
                 )
             }),
             kubeconfig: KubeconfigSelection::Automatic,
-            #[cfg(test)]
-            told: Vec::new(),
             kubeconfig_draft: Default::default(),
             navigation,
             // The one place a hold is set: example data's, from
@@ -1088,32 +1082,38 @@ impl Pilot {
             self.ensure_summary(window, cx);
             return;
         }
-        if self.config_loading || self.overview.is_loading() {
+        let example_failure = self.mode.has_pending_failure();
+        if self.config_loading || (self.overview.is_loading() && !example_failure) {
             return;
         }
-        self.chrome.elapsed = Duration::ZERO;
+        if !example_failure {
+            self.chrome.elapsed = Duration::ZERO;
+        }
         let request = self.overview.begin(self.applied.clone());
-        self.publish_reading(cx);
-        if self.mode().holds_talos() {
-            // Loading until the hold is released, which only a test does.
-            // Coroot's examples don't wait for Talos, so Observability has
-            // its source, and its own hold, at once.
-            if let Some(page) = self.pages.map.get(&PageId::Observability) {
-                page.set_page_source(self.source(), window, cx);
-            }
-            cx.notify();
-            return;
+        if !example_failure {
+            self.publish_reading(cx);
         }
-        if self.mode().is_example() {
-            let tick = self.mode.next_tick();
-            let context = self.applied.context.clone().unwrap_or_default();
-            self.overview
-                .apply(&request, Ok(fixture::cluster(&context, tick)));
-            self.overview_succeeded(cx);
-            self.sync_nodes(window, cx);
-            self.refresh_services(window, cx);
-            self.ensure_summary(window, cx);
-            self.refresh_screen(window, cx);
+        if let Some(source) = self.mode.example_source_mut() {
+            let context = self.applied.context.as_deref().unwrap_or_default();
+            match source.overview(context) {
+                None => {
+                    // Coroot's examples don't wait for the held Talos read.
+                    if let Some(page) = self.pages.map.get(&PageId::Observability) {
+                        page.set_page_source(self.source(), window, cx);
+                    }
+                }
+                Some(Ok(cluster)) => {
+                    self.overview.apply(&request, Ok(cluster));
+                    self.overview_succeeded(cx);
+                    self.sync_nodes(window, cx);
+                    self.refresh_services(window, cx);
+                    self.ensure_summary(window, cx);
+                    self.refresh_screen(window, cx);
+                }
+                Some(Err(error)) => {
+                    self.overview_received(self.epoch, request, Err(error), window, cx);
+                }
+            }
             cx.notify();
             return;
         }
@@ -1155,17 +1155,13 @@ impl Pilot {
         }
     }
 
-    /// Example data starts with five minutes of load history so the
-    /// sparklines show a trend immediately.
-    fn seed_fixture_history(&mut self, cx: &mut App) {
-        let context = self.applied.context.clone().unwrap_or_default();
-        for _ in 1..presentation::LOAD_HISTORY_LEN {
-            let tick = self.mode.next_tick();
-            let nodes = presentation::node_summaries(&fixture::cluster(&context, tick));
-            self.pages
-                .node_workspace
-                .update(cx, |workspace, _| workspace.load_history.record(&nodes));
-        }
+    /// Seeds the context's load history from the example source's clock.
+    fn seed_example_history(&mut self, cx: &mut App) {
+        let source = self.mode.example_source_mut().expect("example source");
+        let context = self.applied.context.as_deref().unwrap_or_default();
+        self.pages.node_workspace.update(cx, |workspace, _| {
+            source.seed_history(context, &mut workspace.load_history);
+        });
     }
 
     /// Records per-refresh history once a snapshot for the applied target lands.
@@ -1189,16 +1185,6 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) {
         self.chrome.set_appearance(appearance, window, cx);
-        cx.notify();
-    }
-
-    fn simulate_failure(&mut self, cx: &mut Context<Self>) {
-        let request = self.overview.begin(self.applied.clone());
-        self.overview.apply(
-            &request,
-            Err("Example: the Talos API didn't answer within 10 s".into()),
-        );
-        self.rebuild_joined_nodes(cx);
         cx.notify();
     }
 

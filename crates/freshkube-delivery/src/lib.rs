@@ -18,6 +18,7 @@
 pub(crate) mod address;
 pub mod applications;
 pub mod argocd;
+pub(crate) mod chains;
 pub mod change;
 pub mod changes;
 pub(crate) mod collect;
@@ -30,13 +31,17 @@ pub mod kargo;
 pub(crate) mod observation;
 pub(crate) mod pods;
 pub mod read;
+pub(crate) mod results;
 pub(crate) mod rollouts;
 pub(crate) mod shared;
 pub mod source;
 pub(crate) mod tekton;
+pub(crate) mod verify;
 pub(crate) mod versions;
 pub mod words;
 
+#[cfg(test)]
+mod attested;
 #[cfg(test)]
 mod deployment_tests;
 #[cfg(test)]

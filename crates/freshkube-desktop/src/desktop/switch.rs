@@ -331,6 +331,12 @@ pub(super) fn age_text(elapsed: std::time::Duration) -> String {
     }
 }
 
+/// A notice the shell presents for a link or cluster switch.
+#[derive(Clone, Debug)]
+pub(crate) struct Notice(pub(crate) String);
+
+impl gpui_kit::EventEmitter<Notice> for Pilot {}
+
 impl Pilot {
     /// The entry a launch opens: only when the command line named no source,
     /// the app isn't showing example data or maintenance and the workspace file lists a
@@ -394,13 +400,41 @@ impl Pilot {
         self.pages
             .applications
             .update(cx, |page, cx| page.set_clusters(clusters, cx));
+        self.sync_applications_coroot(cx);
     }
 
-    /// Says `message` in a notice, and remembers it for tests.
+    /// Hands the Applications page Observability's connection and each
+    /// workspace entry's Coroot link, so a change page reads what Coroot
+    /// found after a deploy over the one connection the setup file names.
+    pub(super) fn sync_applications_coroot(&mut self, cx: &mut Context<Self>) {
+        let project = self
+            .setup_file
+            .read(cx)
+            .setup
+            .as_ref()
+            .and_then(|setup| setup.coroot.as_ref())
+            .and_then(|coroot| coroot.project.clone());
+        let links = crate::applications::CorootLinks::of(
+            &self.settings_page.read(cx).workspace().clusters,
+            project.as_deref(),
+        );
+        let reader = crate::observability::OutcomeReader::new(&self.pages.observability);
+        self.pages.applications.update(cx, |page, cx| {
+            page.set_coroot(
+                crate::applications::CorootLive {
+                    reader: Some(reader),
+                    links,
+                },
+                cx,
+            )
+        });
+    }
+
+    /// Presents a notice and tells subscribers what was said.
     pub(super) fn tell(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
-        #[cfg(test)]
-        self.told.push(message.clone());
-        gpui_kit::component::WindowExt::push_notification(window, message, cx);
+        let notice = Notice(message);
+        cx.emit(notice.clone());
+        gpui_kit::component::WindowExt::push_notification(window, notice.0, cx);
     }
 
     /// The window no longer shows an entry as defined: a context or
@@ -734,7 +768,7 @@ impl Pilot {
         if self.mode().is_example() {
             self.applied.context = Some(entry.context.clone());
             self.invalidate_target(window, cx);
-            self.seed_fixture_history(cx);
+            self.seed_example_history(cx);
             self.refresh(window, cx);
             self.prepare_context_display(window, cx);
             return;

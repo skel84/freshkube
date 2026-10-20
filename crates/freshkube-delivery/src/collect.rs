@@ -35,6 +35,7 @@ use super::rollouts::{
 };
 use super::source::Source;
 use super::tekton::{CommitNames, EvidenceResult, read_builds};
+use super::verify::{KeyProblem, Trust};
 
 /// Which namespaces to read, all named by the caller.
 #[derive(Clone, Debug)]
@@ -70,6 +71,9 @@ pub struct Plan {
     /// Where the pipeline's own evidence record is, if the platform writes
     /// one. Not read unless configured.
     pub evidence_result: Option<EvidenceResult>,
+    /// The public key signatures are verified against; nothing is verified
+    /// unless it is named.
+    pub public_key_file: Option<std::path::PathBuf>,
     /// Parameter and result names, besides upstream's, under which the
     /// pipelines record the commit they built. Empty unless configured.
     pub commit_names: CommitNames,
@@ -173,16 +177,45 @@ pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, 
     observed_at: DateTime<Utc>,
     applications: impl Future<Output = Source<Vec<Application>>>,
 ) -> Evidence {
+    upstream_with_history(
+        clusters,
+        plan,
+        observed_at,
+        applications,
+        Err(crate::results::Error::Off),
+        tokio::time::Instant::now(),
+    )
+    .await
+}
+
+/// The same read, with the pool's Results client and the refresh deadline.
+pub(crate) async fn upstream_with_history<K: Reader, A: Reader, T: Reader, G: GitHub>(
+    clusters: &Upstream<'_, K, A, T, G>,
+    plan: &Plan,
+    observed_at: DateTime<Utc>,
+    applications: impl Future<Output = Source<Vec<Application>>>,
+    history: Result<&crate::results::Client, crate::results::Error>,
+    until: tokio::time::Instant,
+) -> Evidence {
     let builds = async {
-        if plan.sha.is_empty() {
+        let live = if plan.sha.is_empty() {
             Source::Unreadable("the Freight names no commit to find its builds by".into())
         } else {
             read_builds(clusters.tekton, plan.build_namespace.as_deref(), &plan.sha).await
-        }
+        };
+        crate::results::supplement(
+            live,
+            history,
+            plan.build_namespace.as_deref(),
+            &plan.sha,
+            until,
+        )
+        .await
     };
     let kargo = read_project(clusters.kargo, &plan.kargo_project);
     // Each part is asked of its own cluster, so none waits on another's.
-    let (builds, kargo, applications) = futures::join!(builds, kargo, applications);
+    let ((builds, build_history), kargo, applications) =
+        futures::join!(builds, kargo, applications);
     let destinations: BTreeMap<String, DestinationMatch> = applications
         .read()
         .map(|apps| {
@@ -203,16 +236,19 @@ pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, 
                 .collect()
         })
         .unwrap_or_default();
+    let trust = read_trust(plan).await;
     let mut evidence = Evidence {
         sha: plan.sha.clone(),
         followed: plan.followed.clone(),
         observed_at,
         evidence_result: plan.evidence_result.clone(),
+        trust,
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
         map_hint: plan.map_hint.clone(),
         names: plan.names.clone(),
         builds,
+        build_history,
         kargo,
         applications,
         destinations,
@@ -384,4 +420,16 @@ pub async fn commit_of_pull_request<G: GitHub>(
                 None => (pr.head_sha, false),
             }),
     )
+}
+
+/// The key the person named, read off the async thread: a file read blocks.
+async fn read_trust(plan: &Plan) -> Trust {
+    let Some(path) = plan.public_key_file.clone() else {
+        return Trust::Unset;
+    };
+    tokio::task::spawn_blocking(move || Trust::from_key_file(&path))
+        .await
+        .unwrap_or_else(|_| {
+            Trust::Unusable(KeyProblem::Unreadable("the read did not finish".into()))
+        })
 }

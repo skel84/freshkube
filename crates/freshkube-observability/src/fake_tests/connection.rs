@@ -52,6 +52,271 @@ async fn a_setup_connection_reads_its_key_only_when_shown_and_keeps_the_legacy_f
     assert_eq!(std::fs::read_to_string(&legacy).unwrap(), saved);
 }
 
+/// A setup connection with a key file and the project `p2`, for a page
+/// mounted over a server, and where its files are.
+fn setup_connection(server: &Server, directory: &std::path::Path) -> freshkube_core::setup::Coroot {
+    use freshkube_core::setup::{Coroot, SignIn};
+    let key_file = directory.join("coroot.key");
+    std::fs::write(&key_file, "sanitized-key\n").unwrap();
+    let mut connection = Coroot::new(server.url.clone(), SignIn::ApiKey);
+    connection.api_key_file = Some(key_file);
+    connection.project = Some("p2".into());
+    connection
+}
+
+/// A change page that is shown wants Coroot connected though Observability
+/// is hidden: the page makes the provider and nothing else, no request and
+/// no project listed, and showing it later lists the projects over the same
+/// provider.
+#[gpui_kit::test]
+async fn a_shown_change_page_makes_the_provider_alone_while_this_page_is_hidden(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let server = Server::new(&runtime);
+    let connection = setup_connection(&server, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.set_setup_connection(&Some(connection), true, window, cx);
+            // Nobody wants it yet: nothing reads the key or connects.
+            assert!(page.live.provider.is_none());
+            assert!(!page.memory.as_ref().unwrap().reading);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(page.read_with(cx, |page, _| page.live.provider.is_none()));
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.want_connection(cx.entity_id(), true, cx)
+        })
+    });
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
+        .await;
+    let id = cx.update(|cx| {
+        let page = page.read(cx);
+        // The provider and nothing else.
+        assert!(page.live.provider_only);
+        assert!(page.live.projects.is_empty());
+        assert!(page.live.source.is_none());
+        assert!(!page.live.connecting);
+        assert!(page.reader_connection().is_some());
+        // Nothing was asked of Coroot, so Settings doesn't say Connected.
+        assert_eq!(
+            page.connection_state(),
+            crate::ConnectionState::Disconnected
+        );
+        page.live.provider.as_ref().unwrap().id()
+    });
+    cx.run_until_parked();
+    assert!(
+        server.paths.lock().unwrap().is_empty(),
+        "no request: {:?}",
+        server.paths.lock().unwrap()
+    );
+    // A change page that hides doesn't drop the provider.
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.want_connection(cx.entity_id(), false, cx)
+        })
+    });
+    cx.run_until_parked();
+    assert!(page.read_with(cx, |page, _| page.live.provider.is_some()));
+    // Showing the page finishes the connection over the same provider.
+    cx.update(|cx| page.update(cx, |page, cx| page.set_visible(true, cx)));
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.source.is_some())
+        .await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert_eq!(page.live.provider.as_ref().unwrap().id(), id);
+        assert!(!page.live.provider_only);
+        assert_eq!(page.live.source.as_ref().unwrap().project(), "p2");
+    });
+    assert!(!server.paths.lock().unwrap().is_empty());
+}
+
+/// Two change pages want the connection by their own entry: releasing the
+/// first, as opening a second change does, leaves it wanted.
+#[gpui_kit::test]
+fn the_connection_stays_wanted_while_any_change_page_wants_it(cx: &mut TestAppContext) {
+    let (_runtime, _handle, page) = mount(cx, false);
+    let (first, second) = cx.update(|cx| (cx.new(|_| ()).entity_id(), cx.new(|_| ()).entity_id()));
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.want_connection(first, true, cx);
+            page.want_connection(second, true, cx);
+            assert_eq!(page.wanting.len(), 2);
+            // The first is released after the second asked.
+            page.want_connection(first, false, cx);
+            assert!(page.wanting.contains(&second));
+            assert!(!page.wanting.is_empty());
+            page.want_connection(second, false, cx);
+            assert!(page.wanting.is_empty());
+        })
+    });
+}
+
+/// A key read for a change page that lands after the person switched to
+/// Observability connects the shown page, as a show would, rather than
+/// waiting for a show that already happened.
+#[gpui_kit::test]
+async fn a_key_that_lands_after_the_page_was_shown_connects_it(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let server = Server::new(&runtime);
+    let connection = setup_connection(&server, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.set_setup_connection(&Some(connection), true, window, cx);
+            // The key read starts for the change page, which then goes away
+            // (hidden or closed) before the key lands, and Observability is
+            // shown: nothing wants the connection and the page is shown, so
+            // the key connects it as a show does.
+            page.want_connection(cx.entity_id(), true, cx);
+            assert!(page.memory.as_ref().unwrap().reading);
+            page.want_connection(cx.entity_id(), false, cx);
+            page.set_visible(true, cx);
+        });
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.source.is_some())
+        .await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert!(!page.live.provider_only);
+        assert_eq!(page.live.source.as_ref().unwrap().project(), "p2");
+    });
+}
+
+/// Hiding the page before the project list answers cancels the listing and
+/// leaves the provider as it was, to list again on the next show.
+#[gpui_kit::test]
+async fn hiding_the_page_mid_listing_keeps_the_provider_only_state(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let server = Server::new(&runtime);
+    let connection = setup_connection(&server, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.set_setup_connection(&Some(connection), true, window, cx);
+            page.want_connection(cx.entity_id(), true, cx);
+        });
+    })
+    .unwrap();
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.provider.is_some())
+        .await;
+    let id = cx.update(|cx| page.read(cx).live.provider.as_ref().unwrap().id());
+    // Shown, it starts listing; hidden at once, the listing is cancelled.
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(true, cx);
+            assert!(page.live.connecting);
+            page.set_visible(false, cx);
+            assert!(!page.live.connecting);
+            assert!(page.live.provider_only, "still only the provider");
+            assert!(page.live.projects.is_empty());
+        })
+    });
+    cx.run_until_parked();
+    assert!(page.read_with(cx, |page, _| page.live.provider_only));
+    // Shown again, it lists over the same provider.
+    cx.update(|cx| page.update(cx, |page, cx| page.set_visible(true, cx)));
+    cx.wait_for_io(handle, |_, cx| page.read(cx).live.source.is_some())
+        .await;
+    cx.update(|cx| {
+        let page = page.read(cx);
+        assert_eq!(page.live.provider.as_ref().unwrap().id(), id);
+        assert!(!page.live.provider_only);
+    });
+}
+
+/// Editing the address or the key drops the provider and says so, so a
+/// change page that read over it doesn't keep what it read.
+#[gpui_kit::test]
+fn editing_the_form_tells_the_change_pages_the_connection_dropped(cx: &mut TestAppContext) {
+    let (_runtime, handle, page) = mount(cx, false);
+    let heard = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = heard.clone();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&page, move |_, event: &crate::ObservabilityEvent, _| {
+            if matches!(event, crate::ObservabilityEvent::Connection) {
+                seen.set(seen.get() + 1);
+            }
+        })
+    });
+    let before = heard.get();
+    cx.update_window(handle, |_, _, cx| {
+        // A typed edit of the address, as the input announces it.
+        page.update(cx, |page, cx| {
+            page.url.update(cx, |_, cx| {
+                cx.emit(gpui_kit::component::input::InputEvent::Change)
+            });
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(heard.get() > before, "the edit was announced");
+}
+
+/// Someone who chose not to reconnect, or who never opens a change page, is
+/// never connected for one: no key is read and no provider is made.
+#[gpui_kit::test]
+async fn a_change_page_never_connects_what_the_person_chose_not_to_reconnect(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let preferences = directory.path().join("preferences.json");
+    let store = std::sync::Arc::new(freshkube_core::secrets::MemoryStore::default());
+    let (runtime, handle, page) = crate::tests::mount_remembering(cx, &preferences, store);
+    let server = Server::new(&runtime);
+    let connection = setup_connection(&server, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.set_setup_connection(&Some(connection), false, window, cx);
+            page.want_connection(cx.entity_id(), true, cx);
+            assert!(!page.memory.as_ref().unwrap().reading);
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert!(page.read_with(cx, |page, _| page.live.provider.is_none()));
+    assert!(server.paths.lock().unwrap().is_empty());
+}
+
+/// Example data makes no provider, whoever asks, and neither does a page
+/// that nobody asks for.
+#[gpui_kit::test]
+fn example_data_makes_no_provider_for_a_change_page(cx: &mut TestAppContext) {
+    let (_runtime, _handle, page) = mount(cx, true);
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_visible(false, cx);
+            page.want_connection(cx.entity_id(), true, cx);
+            assert!(page.live.provider.is_none());
+            assert!(page.reader_connection().is_none());
+            assert!(!page.live.connecting);
+        })
+    });
+    cx.run_until_parked();
+    assert!(page.read_with(cx, |page, _| page.live.provider.is_none()));
+}
+
 #[gpui_kit::test]
 async fn connection_project_partial_reports_refusal_and_recovery(cx: &mut TestAppContext) {
     cx.executor().allow_parking();

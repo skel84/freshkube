@@ -25,6 +25,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{prelude::*, *};
 use std::{collections::BTreeMap, rc::Rc};
+mod after;
 mod application;
 mod applications;
 use applications::{columns as application_columns, header as applications_header};
@@ -63,6 +64,9 @@ mod testing;
 mod tests;
 mod traces;
 mod view;
+#[cfg(any(test, feature = "testing"))]
+pub use after::Script;
+pub use after::{After, OutcomeReader, ReadConnection, example as after_example};
 pub use deployments::RevisionLink;
 use model::Application;
 pub use model::Destination;
@@ -114,6 +118,7 @@ impl EventEmitter<ObservabilityEvent> for ObservabilityPage {}
 pub struct ObservabilityPage {
     /// The shell's source is example data ([`Self::set_source`]).
     fixture: bool,
+    example_views: application::example::Views,
     /// Example data holds its applications, incidents and traces, as its
     /// source's hold says, so their tables stay on their loading rows.
     hold: bool,
@@ -124,6 +129,11 @@ pub struct ObservabilityPage {
     secret: Entity<InputState>,
     auth: usize,
     settings_open: bool,
+    /// The change pages that are shown and want Coroot connected, though
+    /// this page is hidden, by entity: each writes only its own entry, so
+    /// opening a second change before the first is released leaves the
+    /// provider wanted.
+    wanting: std::collections::BTreeSet<EntityId>,
     /// What the connection remembers between launches; none in fixture
     /// mode or without a preferences folder.
     memory: Option<remember::Memory>,
@@ -198,6 +208,7 @@ pub struct ObservabilityPage {
     report_snapshot: Option<reports::ReportSnapshot>,
     /// Coroot's own view of the selected application, as the page shows it.
     app_page: Option<application::AppPage>,
+    focused_revision: Option<application::FocusedRevision>,
     /// One entity per table the chosen report shows.
     app_tables: Vec<Entity<application::ReportTable>>,
     /// A panel for each chart the chosen report shows, and no other.
@@ -294,12 +305,16 @@ impl ObservabilityPage {
             cx.subscribe(&url, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.invalidate_connection();
+                    // A change page reading over the dropped provider hears
+                    // it, so what it read over it is not kept.
+                    cx.emit(ObservabilityEvent::Connection);
                     cx.notify();
                 }
             }),
             cx.subscribe(&secret, |this, _, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.invalidate_connection();
+                    cx.emit(ObservabilityEvent::Connection);
                     cx.notify();
                 }
             }),
@@ -337,6 +352,7 @@ impl ObservabilityPage {
         ];
         let mut this = Self {
             fixture: false,
+            example_views: Default::default(),
             hold: false,
             loading: freshkube_ui::table::TableLoading::new("obs-table", cx),
             live: connection::Live::new(runtime, cx.background_executor().now()),
@@ -344,6 +360,7 @@ impl ObservabilityPage {
             secret,
             auth: 0,
             settings_open: false,
+            wanting: Default::default(),
             memory: preferences.map(|preferences| remember::Memory::new(preferences, secrets)),
             categories: Default::default(),
             namespaces: Default::default(),
@@ -405,6 +422,7 @@ impl ObservabilityPage {
             flame_matches: vec![],
             report_snapshot: None,
             app_page: None,
+            focused_revision: None,
             app_tables: vec![],
             app_charts: vec![],
             app_picks: BTreeMap::new(),
@@ -487,6 +505,7 @@ impl ObservabilityPage {
         report: Report,
         cx: &mut Context<Self>,
     ) {
+        self.focused_revision = None;
         self.selected_app = Some(id);
         self.report = report;
         self.report_name = report.server_name().into();

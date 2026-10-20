@@ -197,6 +197,20 @@ coverage rules remain separate. Monitoring's
 still receive a hide and retain recovery requested by visible history while
 the dashboard is hidden. See [Monitoring](features/monitoring.md).
 
+### The change page's outcome read
+
+What Coroot found after a deploy
+([`change/outcome/`](../crates/freshkube-applications/src/change/outcome/mod.rs),
+[COROOT.md](COROOT.md#what-its-metrics-did-after-it)) is an ordinary
+page-owned read with one owner, the change page.
+
+| Boundary | Owner and lifetime |
+| --- | --- |
+| The read | One `Loader<(), Key>` per page and one job in flight, for the selected Deployment hop. Its identity is the hop, the entry's link, the Deployment, its hash, the window and the `ProviderId`. Hiding the page, selecting another hop, replacing the reader or a `Connection` that changes the connection drops the job and its delivery. A late answer checks its request and identity, that it is `is_for` the question, and that the reader's connection is still the one it was read over; otherwise it never lands. |
+| What it read | A memo per hop, kept while its question and connection stay the same. A failed read over an answer to the same question keeps it, marked stale. A link edit, a refreshed change that names another revision or a new reader clears it. |
+| The project's applications | Kept for the next look of the same link while the page shows and for 30 s; hiding drops it. |
+| Wanting the connection | Each change page tells Observability, by its own entity, that it wants Coroot connected while it shows (and on release). While any does and Observability is hidden, a reconnecting setup makes the **provider alone** (`Live.provider_only`: no request, no project list, no read; it is built on the I/O worker). Showing Observability lists the projects over that provider. Not wanting it drops no provider, and nothing connects when no change page shows, when the person chose not to reconnect, or for example data. |
+
 ## Exceptions
 
 Only the following two classes follow a lifetime other than ordinary reads.

@@ -37,7 +37,7 @@ Everything else is Claimed at most: Chains' annotation, a Conforma pass, a match
 
 Which key types: **ECDSA over P-256 with SHA-256**, in PKIX (`SubjectPublicKeyInfo`) PEM, which is what `cosign generate-key-pair` writes and what Chains signs with by default. Ed25519 and RSA keys are read, named, and refused with `key type not supported yet`, never accepted without checking. See [the crates](#the-crates).
 
-> The exact bytes Chains stores, and which of them the signature covers, differ between its payload formats. The slice 1 spike settles them from upstream's documentation and source, against fixtures generated inside the tests (study only; nothing is copied), and changes this section if it finds the above wrong. Until then the design commits only to the order: **find the bytes the signature covers, verify them, and only then parse what they say**.
+> **Settled by the slice 1 spike** (read from upstream's documentation and source on 20 October 2026; study only, nothing copied). See [What the spike found](#what-the-spike-found). The order the design commits to stands: **find the bytes the signature covers, verify them, and only then parse what they say**. Slice 1 parses the statement early only to show what it claims, as a declared fact that can never confirm a link.
 
 ### The checks, in order
 
@@ -45,12 +45,13 @@ Offline, from what was already read (no network, no extra permission):
 
 1. **Trust is set.** `supply_chain.public_key_file` is present. Without it nothing is verified and the link is what it is today (`NoTrust`).
 2. **The key loads.** The file is a regular file of at most 8 KiB, PEM, one `PUBLIC KEY` block, P-256. Its fingerprint (SHA-256 of the DER `SubjectPublicKeyInfo`, as `SHA256:` and base64) is what the screens show. A private key block is refused unrepeated: the app reads a public key and nothing more.
-3. **The envelope parses.** Payload and signature are base64 within their caps (below). A payload that doesn't decode, a DSSE envelope without `payloadType` or `payload`, or no signature is `Malformed`.
-4. **The signature verifies** over the exact bytes the format covers, with the key. A wrong key and a tampered payload look the same to the math, so both are `SignatureFailed` and the words say `doesn't verify with key SHA256:…`. A certificate on the object is **not** used to verify: trust is the person's key, not whatever certificate the annotation carries.
-5. **The statement is read only now.** `_type` is an in-toto Statement; `subject` has at most 64 entries.
-6. **A subject carries the build's digest.** Some `subject[*].digest.sha256` equals the digest the build reported (`IMAGE_DIGEST`). The subject's *name* is shown and compared to the image's repository for the note, not for the join: joins use only the commit SHA and the image digest. No match is `SubjectDiffers`, with both digests.
+3. **The attestation is the object's own.** The annotation's key is `pipelinerun-<uid>` or `taskrun-<uid>` of the run or task it was read from. A key naming another uid, or an object with no uid, is `Malformed` (`belongs to another object`): annotations copied from a signed run do not make another run signed.
+4. **The envelope parses.** Payload and signature are base64 within their caps (below). A payload that doesn't decode, a DSSE envelope without `payloadType` or `payload`, or no signature is `Malformed`.
+5. **The signature verifies** over the exact bytes the format covers, with the key. A wrong key and a tampered payload look the same to the math, so both are `SignatureFailed` and the words say `doesn't verify with key SHA256:…`. A certificate on the object is **not** used to verify: trust is the person's key, not whatever certificate the annotation carries.
+6. **The statement is read only now.** `_type` is an in-toto Statement; `subject` has at most 64 entries.
+7. **A subject carries the build's digest.** Some `subject[*].digest.sha256` equals the digest the build reported (`IMAGE_DIGEST`). The subject's *name* is shown and compared to the image's repository for the note, not for the join: joins use only the commit SHA and the image digest. No match is `SubjectDiffers`, with both digests.
 
-Only after all six is the attestation `Verified`. A verified provenance that names the run's commit adds a reported witness to commit → PipelineRun (slice 3); that witness is its own link and can't raise this one.
+Only after all seven is the attestation `Verified`. A verified provenance that names the run's commit adds a reported witness to commit → PipelineRun (slice 3); that witness is its own link and can't raise this one.
 
 ### The transparency log
 
@@ -78,23 +79,37 @@ No Secret is read, not even the Chains signing Secret's public half. The public 
 Constants in `chains.rs`, next to `MOST_TASK_READS`, each with a reason in its comment and a test at the edge:
 
 - a payload or signature annotation: at most 256 KiB decoded; larger is `Malformed: too large`, not truncated and verified;
-- attestations per run: at most 16 (a PipelineRun's tasks each carry their own); more are counted and named;
+- attestations per run: at most 16 (a PipelineRun's tasks each carry their own), the run's own keys read before any image's so a crowd of image signatures can't push it out; more are counted and named;
 - subjects per statement: 64; certificate chain: not read.
 
 ### The crates
 
-[REFERENCES.md](REFERENCES.md#reuse-policy) asks that a dependency be MIT- or Apache-2.0-compatible and listed in `NOTICE`. Surveyed on crates.io on 19 October 2026; slice 2 re-checks the versions and `cargo tree` when slice 2 starts.
+[REFERENCES.md](REFERENCES.md#reuse-policy) asks that a dependency be MIT- or Apache-2.0-compatible and listed in `NOTICE`. The owner's decision ([Decisions](#decisions), 1) is `sigstore-verify` first if it passes that policy and the size, MSRV and no-network checks, and a small check of our own on `p256` and `ecdsa` if it does not.
 
-| Option | Licence | Notes |
+#### The check, 20 October 2026 (slice 2)
+
+Measured with `cargo tree -e normal` in a scratch crate that depends on `freshkube-delivery` and one candidate, against the workspace's `Cargo.lock`. The `ring` column is read from `Cargo.lock` after the change.
+
+|  | `sigstore-verify` 0.15.0 (`aws-lc-rs`, no other default features) | `p256` 0.14.0 and `ecdsa` 0.17.0 (`ecdsa`, `pem`) | `ring` 0.17.14 (chosen) |
+| --- | --- | --- | --- |
+| Licence | Apache-2.0; its crypto backend `aws-lc-sys` is ISC and Apache-2.0, MIT, BSD-3-Clause | Apache-2.0 OR MIT, with `sha2` 0.11 (MIT OR Apache-2.0) | Apache-2.0 AND ISC |
+| `NOTICE` | An entry, with the Apache text we already ship | An entry, same text | An entry, with the crate's own `LICENSE` in `licenses/` |
+| Added to the workspace tree | 31 crate versions, 27 new names, among them `aws-lc-sys` (a C library built with `cmake`) beside `ring`, a second `base64` (0.23), `jiff`, `x509-cert`, `cms` and `tls_codec` | 32 crate versions, 25 new names, all pure Rust (RustCrypto) | None: already built for `rustls`; `Cargo.lock` gains one edge |
+| MSRV | 1.86 (ours: edition 2024, toolchain 1.97): passes | 1.85: passes | Built today |
+| Network and async in the verify path | None: with default features off there is no `tokio`, `reqwest` or `hyper` in the tree, and `Verifier::verify` is synchronous. Passes | None | None |
+| Fit for a bare key and an annotation | Poor. The entry point is `Verifier::verify(artifact, &Bundle, &policy)` with a `TrustedRoot`; for a key it is `PublicKeyVerificationPolicy`, whose only way to accept a bundle with no log entry is `skip_tlog_unsafe()`. Chains' annotations are not a bundle, so the app would build a `Bundle` and an empty `TrustedRoot` to fit, and call a function named *unsafe* on the one path that can say Confirmed. With the `aws-lc-rs` feature off there is no crypto backend at all | Direct. A P-256 key from `SubjectPublicKeyInfo` PEM, an ASN.1 DER signature, a message | Direct for the check; the key's `SubjectPublicKeyInfo` is read here (a fixed prefix and a point) |
+
+**Decision: `ring`, which is already in the build.** The owner decided on 20 October 2026, on the maintainer's answer, after this check. `sigstore-verify` passes on licence, `NOTICE`, MSRV and network, and it is no smaller than the fallback, so those are not why it is not used. It fails on fit and on the native build: the only way to check a bare key against Chains' annotations is to construct a bundle and a trust root it was not made for and to call an `_unsafe` switch on the path that decides Confirmed, and its one working crypto backend is a C library the release builds would compile for every target. It was read from source and measured; it was not built and run end to end. It stays the candidate for keyless identity, where bundles and the trust root are the point.
+
+The fallback, `p256` and `ecdsa`, would have added 32 crate versions for the same check. `ring` (0.17, through `rustls`'s `ring` feature) verifies ECDSA P-256 with `ECDSA_P256_SHA256_ASN1` and adds **no crate**: `Cargo.lock` gains one edge. The cost is a small piece of code here: a P-256 public key in `SubjectPublicKeyInfo` form is a fixed 27-byte prefix, which names the algorithm and pins the curve and the uncompressed point, then 64 bytes; `verify/key.rs` compares the prefix and length whole, so a key of any other shape cannot pass for one, and reads just enough DER to name an Ed25519, RSA or P-384 key it refuses. `ring` checks that the point is on the curve when it verifies, so an off-curve key is accepted as a file and verifies nothing (a test). Everything stays behind `TrustedKey`, so a later change of library touches `key.rs` and the test signer only.
+
+| Other crate | Licence | Notes |
 | --- | --- | --- |
-| **`p256` and `ecdsa`** (RustCrypto), the fallback | Apache-2.0 OR MIT | `p256` 0.14.0, `ecdsa` 0.17.0, Rust 1.85. Small, no network, no async. Verifying a P-256 signature over a SHA-256 digest is what is needed. `sha2` (0.10 is already in the build) and `base64` are in the workspace; the PKIX key is parsed by `x509-parser` (already a direct core dependency) or `spki`. |
-| `sigstore` | Apache-2.0 | 0.14.0, described upstream as experimental; a large tree (`aws-lc-rs`, `oci-client`, `tough`, `openidconnect` behind features) for a feature that needs a few functions. |
-| **`sigstore-verify`**, the first choice | Apache-2.0 | 0.15.0, Rust 1.86; verification-only and more modest than `sigstore`. Built around bundles and the trust root, so slice 2 must show a bare public key and a DSSE envelope can be checked without them. |
+| `sigstore` | Apache-2.0 | 0.14.0, described upstream as experimental; a large tree (`aws-lc-rs`, `oci-client`, `tough`, `openidconnect` behind features) for a few functions. |
 | `ed25519-dalek` | BSD-3-Clause | 3.0.0. Compatible with MIT; wanted only if Ed25519 keys are asked for. |
 | `rsa` | MIT OR Apache-2.0 | 0.9.10. Wanted only if RSA keys are asked for; check the open advisory about its private-key timing before adding it, even though verification touches no private key. |
-| Our own DSSE | | Only on the fallback. The pre-authentication encoding is a few lines (`"DSSEv1" SP len(type) SP type SP len(body) SP body`), written and tested here, not a dependency. |
 
-**Decision: `sigstore-verify` first, `p256` and `ecdsa` as the fallback** ([Decisions](#decisions), 1). `sigstore-verify` is the owner's choice if it passes the reuse policy, and it is verification-only, so it would also serve the later keyless step. Slice 2 checks it and records here, with the date: its licence and `NOTICE` text, the `cargo tree -e normal` crates it adds to the workspace, its MSRV against ours, and whether the key-based verify path is free of network and async. If any fails, the fallback is a small check of our own on `p256` and `ecdsa` with DSSE written here, which keeps the build small and the verifier readable end to end. The same crate goes in `NOTICE` with its licence text, as `alacritty_terminal` is.
+The DSSE pre-authentication encoding is written here (`verify/dsse.rs`, tested against the protocol's own example). `p256`, `ecdsa` and `sha2` are in `NOTICE`.
 
 ## Tekton Results
 
@@ -123,10 +138,32 @@ Everything is a `GET` or a list under the existing 5 s per-request and the read'
 
 1. **Find the runs.** List records across namespaces (`parents/-/results/-/records`, or the one namespace the build side is read from) filtered to PipelineRuns whose `pipelinesascode.tekton.dev/sha` label equals the commit. The record's `data` is the PipelineRun as the cluster served it, so it goes through the same `parse_pipeline_run` as a live run. At most `MOST_RESULT_RUNS` (10, as `MOST_TASK_READS`) per commit; the rest are counted and named.
 2. **Find their tasks.** A PipelineRun's record sits in a *result* that also holds its TaskRuns' records. One list of that result gives them all, so a pruned build costs one request for tasks, not one per build. Parsed with `parse_task_run`; capped.
-3. **Logs.** A step's log is a log record of the same result, read on demand when the person opens Logs for a pruned run, in pages, to at most 1 MiB, with a `Showing the first 1 MiB` note beyond. A step whose log Results didn't keep says so and disables Logs with why.
+3. **Logs.** A TaskRun's log is a Log record of the same result. Log metadata is listed in pages and matched by `spec.resource.uid`; the whole task log is read on demand up to 1 MiB, with a `Showing the first 1 MiB` note beyond. It is not split by step prefixes. A 404 on the content read says `Tekton Results kept no log for this task`; a 404 or 501 on the metadata listing says `this Tekton Results doesn't serve logs`. Refusals and caps keep their own reason. Until slice 9 adds the log target and dock source, the pod-only Logs action stays disabled: `Tekton Results keeps this log; opening it here comes in a later update` when metadata confirms it was stored.
 4. **Attestations come with the record.** A record's `data` carries the run's annotations as they were when it was stored, Chains' among them, so a pruned run is verified the same way a live one is. A record stored before Chains signed has no attestation: that is `no attestation in the record (it may predate signing)`, which is not `unsigned`.
 
-Open for the spike (slice 5), because upstream's filter syntax and result layout vary by version: the exact filter expression for a label, whether the gateway is on by default, and the field that links a TaskRun record to its result. The design needs only that a list can be filtered by the data's SHA label and that one result lists its records.
+The spike settled the REST shape and the filter (see [What the spike found](#what-the-spike-found)); what it could not confirm is listed there. Slice 5 tests the address client against loopback fake servers only; a real Results install remains unchecked.
+
+The crate-private client lives in `freshkube-delivery/src/results/` and
+supplements the build read after the live listing succeeds. One client is
+opened per pool and every request ends by the refresh's deadline. The pool
+accepts the app's optional address key store; handing it from the application
+pages to their read jobs is a follow-up after pull request 791. It keeps up to 10 PipelineRuns or
+1,000 TaskRuns, reads at most five pages of up to 200 records, and bounds
+each response to 32 MiB and each decoded manifest to 4 MiB. Its listing keeps
+the stopping reason (run, task, page or byte cap) and an exact total only if
+the final page was read. A response-byte cap retains records from earlier
+pages and leaves the total unknown. Malformed or out-of-scope records are
+unreadable, never empty history. Record manifests use the existing run
+parsers, including their annotations. The owner's `Snapshot` retains a
+same-identity refresh failure as stale, with its last successful timestamp;
+the identity includes the client's revision and the full query.
+
+The address token account is `Tekton Results <normalized base URL>` in the
+key store. With no `token: keys.json`, the store is not read. A missing key
+allows an anonymous request; an unreadable store or malformed key is named
+and never silently ignored. Redirects are not followed. Plain HTTP requires
+a literal loopback IP, so DNS cannot steer plaintext credentials elsewhere.
+No cluster credential or forward is read or started by this client.
 
 ### Joining a Results record
 
@@ -134,8 +171,8 @@ A Results record joins as the run it records. `Build` gains where it was read fr
 
 - **Deduplicated by UID.** A run read both ways (still on the cluster, still in Results) is one build: the live copy wins, and the record only adds `also in Tekton Results` to Read from. The key is `metadata.uid`, never name and namespace, which a recreated run reuses.
 - **Same links, same rules.** Commit → PipelineRun on the SHA label and witnesses, PipelineRun → supply chain on the digest. A run from Results has the observations of the object it records, and its `Read from` says `Tekton Results · cluster-b` instead of `Tekton · cluster-b`.
-- **Never fresher than the cluster.** Results is read only for what the cluster did not return: the live read goes first; a SHA with no live run, or fewer than the Results copy knows of, adds the rest. A failed or unreachable Results never hides a live run.
-- **A pruned run with no record keeps "Run pruned".** It is still `Run pruned, logs gone`, and the banner adds why Results didn't help (not configured, not reachable, no record). It never reads as a clean history.
+- **Never fresher than the cluster.** Results is read only for what the cluster did not return: the live read goes first; a SHA with no live run, or fewer than the Results copy knows of, adds the rest. A failed or unreachable Results never hides a live run. A failed or capped live build read is not supplemented (including a TaskRun cap, which the current reader folds into the same outcome): a partial listing cannot establish that an unmatched Results run is absent from the cluster; the live builds, cap and reason stay.
+- **A positively named pruned run with no record keeps "Run pruned".** It is still `Run pruned, logs gone`, with why Results didn't help (not configured, not reachable, no record). The live read currently knows only the commit when no run is returned, so it keeps the existing no-run statement and adds a configured Results' reason; it cannot claim pruning without a run identity. The pruned wording stays in example data until such a read exists. It never reads as a clean history.
 
 ### Not reachable, and the other states
 
@@ -143,12 +180,14 @@ Each is its own state with why, on the Changes list's footer, the change page's 
 
 | State | When | Says |
 | --- | --- | --- |
-| Off | The entry has no `results` | `Tekton Results isn't set up for cluster-b`; the change page doesn't offer it. |
+| Off | The entry has no `results` | No Results text on the change page; Read from and no-run wording stay as for the live read alone. |
+| Skipped | The live build read failed or was capped, so Results wasn't asked | A failed live read adds no Results text. A cap says `Tekton Results on cluster-b wasn't read: the live build read stopped at the cap, so absence could not be established.` |
+| Loading | A Results read is in flight | `Reading Tekton Results`; a configured source never reads as off during its first read. |
 | Not forwarded | `forward` is set and no Forward is running | `Not forwarded yet · Forward` (a button on the entry, never started by a read). |
 | Not installed | The forward's Service isn't found | `The Service tekton-results-api-service isn't in tekton-pipelines on cluster-b`. |
 | Unreachable | Connect, TLS or timeout | `Tekton Results at results.example.com didn't answer: …` with the cause (certificate not trusted, timed out, refused). |
 | Refused | 401 or 403 | `Tekton Results refused the request (403)` and, for the address route with no token, `no token is set for this address`. |
-| Capped | More runs than `MOST_RESULT_RUNS` | `Showing 10 of 14 runs in Tekton Results`. |
+| Capped | The run, task, page or response-byte cap stopped the read | `Showing 10 runs; more weren't read`, with the stopping cap. An exact total is shown only when paging finished; it is never estimated. |
 | Stale | A refresh failed | The last answer stays, marked stale with its time, as every read does. |
 | Empty | Read, no record | `Tekton Results has no run for this commit`. Only this one reads as none. |
 
@@ -170,7 +209,8 @@ The Link column says the word and the glyph the DESIGN.md rules give it (Confirm
 | **Claimed, subject differs** | Claimed | **Warn** | `signed for sha256:9e0a…, the build reported sha256:1f4c…` |
 | **Claimed, log** (switch on) | Claimed | ok | `signature verified; the transparency log has no matching entry` / `couldn't be read` |
 | **Claimed, elsewhere** | Claimed | ok | `Chains stores attestations in the registry (and tekton); the registry isn't read in this step` |
-| **Unknown, nothing found** | Unknown | ok | `no attestation found on the run or its tasks; Chains is set to store in tekton (read)`; never `unsigned` |
+| **Claimed, signed but nothing found** | Claimed | ok | `Chains' annotation says signed; no attestation was found to verify` (a key is set, Chains' annotation says `true`, and no attestation of the run was read) |
+| **Unknown, nothing found** | Unknown | ok | `no Chains annotation` or `Chains reports signed=failed`, with no attestation found on the run or its tasks; never `unsigned` |
 | **Unknown, Chains not installed** | Unknown | ok | `Chains' configuration isn't in tekton-chains on cluster-b` |
 | **Unknown, refused** | Unknown | ok | `annotations on TaskRuns refused (403)`; the same reasons the Tekton reads give today |
 | **Unknown, no digest** | Unknown | ok | `the build reported no image digest` (as today) |
@@ -254,7 +294,7 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | 2 | **The verifier.** A pure module: key file (PEM, P-256, fingerprint), DSSE check, statement parse, subject match, `Verification` with its variants. First the dependency check ([The crates](#the-crates)); then `sigstore-verify`, or `p256` and `ecdsa` with DSSE written here if it fails the reuse policy. Tested against `cosign`-made fixtures, committed as invented test data with a README, and not only keys generated in the tests; a negative test for each variant. The chosen crates added, with `NOTICE`. | Claude | new `freshkube-delivery/src/verify/`, `Cargo.toml`, `NOTICE` | 1 |
 | 3 | **Verification in the join.** `supply_chain_links` matches `Verification` exhaustively; the `Attestation` kind and reported observation in `provenance.rs`; a verified provenance adds a reported witness to commit → PipelineRun; the setup's key is handed to `change::live` and the Changes list's read; `KNOWN_GAPS` empty. The tests of the [rule](#the-rule). | Claude | `join/build.rs`, `join/observe.rs`, `provenance.rs`, `change/live` | 2, `setup` types |
 | 4 | **The transparency log.** The entry lookup, the match, the `required when on` rule, the URL from Chains' config or the setting. Off does nothing. | Claude | new `freshkube-delivery/src/rekor.rs`, `join/build.rs` | 3 |
-| 5 | **A Results client.** Address route: GET, TLS and CA, token from the key store, deadline and caps; the record shapes parsed with the existing run parsers; the states of the table. Against a fake server (`RealIo`), never a real address. | Claude | new `freshkube-delivery/src/results.rs`, `Cargo.toml` | 1 |
+| 5 | **A Results client.** Address route: GET, TLS and CA, token from the key store, deadline and caps; the record shapes parsed with the existing run parsers; the states of the table. Against a loopback fake server in Tokio tests with 30-second wait bounds, never a real address. | Claude | `freshkube-delivery/src/results/`, `Cargo.toml` | 1 |
 | 6 | **Results in the build read.** `Origin`, dedupe by UID with the live copy winning, the join, `Read from`, logs on demand, `Run pruned` with its why. | Claude | `collect.rs`, `tekton.rs`, `change/live`, `join/` | 5 |
 | 7 | **The Results forward.** The shell turns an explicit Forward into the address the client reads; Stop; the entry's state. | Claude | `freshkube-resources` `forwards/`, desktop shell wiring | 5, #697 slice 12 for its button |
 | 8 | **Example data.** Invented attestations and Results records for acme's `checkout`, one per state above; a `change::example::Shape` for each, reachable through `FRESHKUBE_APPLICATIONS`; parser and join tests on them. | Codex | `change/example.rs`, `changes/example.rs`, `fixtures.rs`, AGENTS.md knob table | 3, 6 |
@@ -263,6 +303,31 @@ Each slice is one pull request with its changelog fragment. **Claude** marks a d
 | 11 | **Docs and close.** ROADMAP step 5 to Done, `features/applications.md`, the change page rules in DESIGN.md (the replaced sentence), README's "Following a change", PLATFORM.md's pruned-runs line (it says Results is read through the Kubernetes API; this design reads it by address or forward). A read-only live check on a test cluster that runs Chains or Results, if one is available; otherwise it says it wasn't checked. | Claude | docs | 9, 10 |
 
 Slices 1 to 3 are the Confirmed path and can ship without Results; 5 and 6 are independent of them and can run beside. Only slice 10 needs #697's slice 12; slice 7's button and slice 10 land together.
+
+## What the spike found
+
+Read from `tektoncd/chains` and `tektoncd/results` on 20 October 2026. **Confirmed** is read in the source or the docs; **not confirmed** is what a real install must still show.
+
+### Chains' stored formats (confirmed)
+
+- **Annotations.** The `tekton` storage backend adds four annotations per stored artifact: `chains.tekton.dev/payload-<key>`, `signature-<key>`, `cert-<key>` and `chain-<key>`, each the standard base64 of its bytes. Beside them, `chains.tekton.dev/signed` is `true` or `failed`, and when a transparency upload happened `chains.tekton.dev/transparency` holds `<log url>/api/v1/log/entries?logIndex=<n>`.
+- **Keys.** For a run the key is `taskrun-<uid>` or `pipelinerun-<uid>`. For an image Chains signed it is the first 12 digits of the image digest, and that payload is cosign's simple signing, not an attestation of the run. A TaskRun can carry both, so the key decides what is read.
+- **What is wrapped.** The in-toto formats (`in-toto`, `slsa/v1`, `slsa/v2alpha3`, `slsa/v2alpha4`) are wrapped in a DSSE envelope; simple signing is not. For a wrapped format the **`signature-<key>` annotation holds the whole envelope** as JSON (`payloadType`, `payload`, `signatures[{keyid, sig}]`; `keyid` is the signer's SSH-style SHA-256 fingerprint) and the **`payload-<key>` annotation holds the statement** the envelope carries. The signature covers the DSSE pre-authentication encoding of the envelope's own `payload`, so verification reads the envelope and treats the `payload` annotation as a cross-check: a difference is marked, not trusted.
+- **Predicate types.** `slsa/v1` writes `https://slsa.dev/provenance/v0.2` (as `InTotoIte6`); the `v2alpha` formats write `https://slsa.dev/provenance/v1`.
+- **Signers.** `x509` (an ed25519 or ECDSA PKCS8 key), `kms`, or `none`; cosign-format keys in the `signing-secrets` Secret. The Secret is never read here.
+- **Configuration.** One ConfigMap, `chains-config`, with `artifacts.{taskrun,pipelinerun,oci}.{format,storage,signer}` (`storage` is a comma-separated list of `tekton`, `oci`, `gcs`, `docdb`, `grafeas`, `archivista`; the empty string turns it off; the default is `tekton` for runs and `oci` for images), `transparency.enabled` (`true`, `false`, `manual`), `transparency.url` (default `https://rekor.sigstore.dev`) and `storage.oci.*`. A key the ConfigMap leaves out has the default, and the reader says so.
+
+### Tekton Results (confirmed in the docs)
+
+- **REST.** `GET /apis/results.tekton.dev/v1alpha2/parents/{namespace}/results/{result}/records`, with `-` for any namespace or result. A record's `data` is `{type, value}`, `value` the base64 of the object's manifest as the cluster served it. Pagination is `page_size` (default 50, at most 10000) and `page_token`; the response carries a next-page token. Health is `/healthz`.
+- **Filter.** CEL, as `filter=`. The PaC label is reachable as `data.metadata.labels['pipelinesascode.tekton.dev/sha'] == '<sha>'`, and a record kind as `data_type == 'tekton.dev/v1.PipelineRun'` (or `PIPELINE_RUN`). Older records may be `tekton.dev/v1beta1`.
+- **Records.** A run's manifest carries `results.tekton.dev/record` and `results.tekton.dev/result` annotations naming its record and result, so a pruned run's tasks are found by listing that result. RBAC is `get` and `list` on `results` and `records`, per namespace.
+
+### Not confirmed
+
+- **The exact bytes of a live install.** The layout above is the code's; no real Chains output was read, so slice 2's `cosign` fixtures are the first check of the envelope against a real signer.
+- **The commit a provenance names.** Slice 1 reads `predicate.materials[*]` (`digest.sha1`, v0.2) and `predicate.buildDefinition.resolvedDependencies[*]` (`digest.gitCommit`, v1), where the `uri` starts with `git+`, and only when exactly one commit results. The field names are from memory of the SLSA specs, not read from a Chains payload. The run the provenance names is not read at all yet.
+- **Results' gateway.** Whether the REST gateway is on by default in the version a person runs, and whether a TaskRun's record always sits in its PipelineRun's result, need a real install. Slice 5 handles both as states (`not installed`, `empty`), not as errors.
 
 ## Decisions
 

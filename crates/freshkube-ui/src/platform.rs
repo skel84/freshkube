@@ -25,6 +25,12 @@ gpui_kit::actions!(
         About,
         /// Opens the header's Settings.
         OpenSettings,
+        /// Opens Settings on its Coroot section, where the connection and
+        /// its project are.
+        OpenCorootSettings,
+        /// Opens Settings on its Clusters section, where each entry's
+        /// Coroot link is.
+        OpenClustersSettings,
         /// Hides the app (macOS).
         Hide,
         /// Hides every other app (macOS).

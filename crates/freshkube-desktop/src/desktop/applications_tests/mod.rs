@@ -2,6 +2,7 @@
 
 mod change;
 mod changes;
+mod outcome;
 mod page;
 
 use crate::applications::{ApplicationsPage, Variant};
