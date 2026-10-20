@@ -302,14 +302,11 @@ impl ResourcesScreen {
             .into_any_element()
     }
 
-    fn retry(&self, id: &'static str, cx: &mut Context<Self>) -> Button {
+    fn retry(&self, id: &'static str, _: &mut Context<Self>) -> Button {
         Button::new(id)
             .icon(IconName::RefreshCw)
             .label("Retry")
-            .on_click(cx.listener(|view, _, window, cx| {
-                cx.stop_propagation();
-                view.refresh(window, cx)
-            }))
+            .on_click(page::dispatch(page::Refresh, &self.focus))
     }
 
     /// What replaces the table: no connection, a refusal, a failure with

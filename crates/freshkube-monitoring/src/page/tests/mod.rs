@@ -76,6 +76,12 @@ fn mount_with(
         // Uncached, as the shell holds it.
         Root::new(view, window, cx)
     });
+    let refresh = page.as_ref().unwrap().downgrade();
+    cx.update(|cx| {
+        cx.on_action(move |_: &freshkube_ui::page::Refresh, cx| {
+            _ = refresh.update(cx, |page, cx| page.refresh(cx));
+        });
+    });
     cx.run_until_parked();
     (window.into(), page.unwrap())
 }
