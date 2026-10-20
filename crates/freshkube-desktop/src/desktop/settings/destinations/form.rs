@@ -66,10 +66,8 @@ pub(super) fn open(
     let form = cx.new(|cx| DestinationForm::new(page, list, editing, entries, window, cx));
     let value = form.read(cx).value.clone();
     let shown = form.clone();
-    window.open_dialog(cx, move |dialog, window, _| {
-        dialog
-            .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
-            .overlay_closable(false)
+    window.open_dialog(cx, move |dialog, window, cx| {
+        freshkube_ui::dialog::frame(dialog, 460., DestinationForm::actions(&shown, cx), window)
             .title(if by_server {
                 // Kit's dialog close trigger is a small icon button, size_6.
                 // Reserve the same rem width beside the flowing title.
@@ -91,6 +89,18 @@ pub(super) fn open(
 }
 
 impl DestinationForm {
+    fn actions(form: &Entity<Self>, cx: &App) -> impl IntoElement {
+        let pending = form.read(cx).pending.is_some();
+        let form = form.downgrade();
+        fields::actions(
+            fields::Action::new("settings-destination-save", "Save", move |_, window, cx| {
+                _ = form.update(cx, |form, cx| form.submit(window, cx));
+            })
+            .disabled(pending),
+            fields::Action::cancel("settings-destination-cancel"),
+        )
+    }
+
     fn new(
         page: Entity<SettingsPage>,
         list: WeakEntity<Destinations>,
@@ -445,14 +455,5 @@ impl Render for DestinationForm {
                     .aria_label(why.clone())
                     .child(ui::warning_banner(None, why, None, cx))
             }))
-            .child(fields::actions(
-                fields::Action::new(
-                    "settings-destination-save",
-                    "Save",
-                    cx.listener(|form, _, window, cx| form.submit(window, cx)),
-                )
-                .disabled(self.pending.is_some()),
-                fields::Action::cancel("settings-destination-cancel"),
-            ))
     }
 }

@@ -108,32 +108,34 @@ impl SettingsPage {
         window.open_dialog(cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_id = id.clone();
-            dialog
-                .w(ui::dp_px(420., window))
-                .title(format!("Remove {id}?"))
-                .child(
-                    v_flex()
-                        .id("settings-remove-dialog")
-                        .test_support()
-                        .role(Role::Dialog)
-                        .aria_label(format!("Remove {id}"))
-                        .gap_3()
-                        .text_size(dp(13.))
-                        .child(body.clone())
-                        .child(freshkube_ui::form::actions(
-                            freshkube_ui::form::Action::new(
-                                "settings-remove-confirm",
-                                "Remove",
-                                move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = confirm_page
-                                        .update(cx, |page, cx| page.remove(&confirm_id, cx));
-                                },
-                            )
-                            .danger(),
-                            freshkube_ui::form::Action::cancel("settings-remove-cancel"),
-                        )),
-                )
+            freshkube_ui::dialog::frame(
+                dialog,
+                420.,
+                freshkube_ui::form::actions(
+                    freshkube_ui::form::Action::new(
+                        "settings-remove-confirm",
+                        "Remove",
+                        move |_, window, cx| {
+                            window.close_dialog(cx);
+                            _ = confirm_page.update(cx, |page, cx| page.remove(&confirm_id, cx));
+                        },
+                    )
+                    .danger(),
+                    freshkube_ui::form::Action::cancel("settings-remove-cancel"),
+                ),
+                window,
+            )
+            .title(format!("Remove {id}?"))
+            .child(
+                v_flex()
+                    .id("settings-remove-dialog")
+                    .test_support()
+                    .role(Role::Dialog)
+                    .aria_label(format!("Remove {id}"))
+                    .gap_3()
+                    .text_size(dp(13.))
+                    .child(body.clone()),
+            )
         });
     }
 
