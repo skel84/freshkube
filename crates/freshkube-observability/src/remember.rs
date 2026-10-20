@@ -3,6 +3,7 @@
 //! whether to reconnect and whether to keep the key. The key itself goes only
 //! to `keys.json` ([`crate::secrets`]), named by the server.
 use super::*;
+use crate::connection::ConnectOrigin;
 use crate::secrets::{SecretStore, Secrets};
 use freshkube_core::workspace::MAX_BYTES;
 use freshkube_prefs::{Document, Layout};
@@ -216,7 +217,7 @@ impl ObservabilityPage {
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.settings_open = true;
         if self.live.visible {
-            self.restore(cx);
+            self.restore(ConnectOrigin::Page, cx);
         }
         cx.notify();
     }
@@ -292,7 +293,7 @@ impl ObservabilityPage {
 
     /// On the first show, connects again as the last session did: at once
     /// without a key, or once the store returns the key.
-    pub(super) fn restore(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn restore(&mut self, origin: ConnectOrigin, cx: &mut Context<Self>) {
         let Some(memory) = &mut self.memory else {
             return;
         };
@@ -301,7 +302,7 @@ impl ObservabilityPage {
         }
         let saved = memory.saved.clone();
         if saved.auth == 2 {
-            self.connect(cx);
+            self.connect(origin, cx);
             return;
         }
         let key_file = memory
@@ -358,7 +359,13 @@ impl ObservabilityPage {
                             && this.live.provider.is_none()
                             && !this.live.connecting
                         {
-                            this.connect(cx);
+                            if !this.live.visible && origin == ConnectOrigin::Page {
+                                // The key arrived after hiding. Retry on the
+                                // next show, retaining the reconnect choice.
+                                memory.restore = true;
+                            } else {
+                                this.connect(origin, cx);
+                            }
                         }
                     }
                     Ok(None) => {}

@@ -431,6 +431,7 @@ impl Render for DestinationForm {
                             "Workspace cluster",
                             entry,
                         )
+                        .hint("The workspace cluster this destination points to.")
                         .error(self.entry_error.clone()),
                     )
                     .saved_in(fields::SavedIn::file("freshkube.yaml"))

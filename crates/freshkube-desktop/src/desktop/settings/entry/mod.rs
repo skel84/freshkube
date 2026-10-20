@@ -659,7 +659,6 @@ impl SettingsPage {
             .id("settings-detail-groups")
             .test_support()
             .gap(dp(20.))
-            .pb(dp(page::PANE_PADDING))
             .on_key_down(cx.listener(|page, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" && page.leave_inspector(window, cx) {
                     cx.stop_propagation();
@@ -691,29 +690,11 @@ impl SettingsPage {
                     .metrics
                     .render(editable, draft.dirty(Group::Metrics), cx),
             );
-        // The body scrolls inside a padded frame, not padded itself, so a
-        // scrolled line is cut at the gap under the heading instead of
-        // showing in it (the shared body pads inside its scroll).
-        let body = div()
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .px(dp(page::PANE_PADDING))
-            .pt(dp(page::PANE_PADDING))
-            .child(
-                div()
-                    .id("settings-detail-body")
-                    .test_support()
-                    .size_full()
-                    .overflow_y_scroll()
-                    .restrict_scroll_to_axis()
-                    .track_scroll(&self.detail_scroll)
-                    .child(groups),
-            );
         Some(
             Inspector::new("settings-detail")
                 .heading(title)
-                .content(body)
+                .track_scroll(&self.detail_scroll)
+                .child(groups)
                 .render(cx)
                 .into_any_element(),
         )

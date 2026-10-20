@@ -21,7 +21,7 @@ use freshkube_reads::Loader;
 use freshkube_ui::{form, page};
 use gpui_kit::component::{
     Disableable, Sizable,
-    button::{Button, ButtonGroup},
+    button::{Button, ButtonGroup, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState},
@@ -1011,6 +1011,7 @@ impl SettingsPage {
                 "Cluster label",
                 draft.input("metrics-label", &draft.label, Some(Field::Label), cx),
             )
+            .hint("The store’s label for each cluster, such as cluster.")
             .error(draft.error(Field::Label)),
         );
         group
@@ -1042,6 +1043,7 @@ impl SettingsPage {
                     "URL",
                     draft.input("metrics-url", &draft.url, Some(Field::Url), cx),
                 )
+                .hint("An http:// or https:// address for the store.")
                 .error(draft.error(Field::Url)),
             )
             .row(
@@ -1101,6 +1103,7 @@ impl SettingsPage {
                                 .unwrap_or_else(|| "Choose an entry".into()),
                         ),
                 )
+                .hint("The entry whose cluster runs the store.")
                 .error(draft.error(Field::Entry)),
             )
             .row(
@@ -1114,6 +1117,7 @@ impl SettingsPage {
                         cx,
                     ),
                 )
+                .hint("Where the store’s Service runs.")
                 .error(draft.error(Field::Namespace)),
             )
             .row(
@@ -1122,6 +1126,7 @@ impl SettingsPage {
                     "Service",
                     draft.input("metrics-name", &draft.name, Some(Field::Name), cx),
                 )
+                .hint("The store’s Service in that namespace.")
                 .error(draft.error(Field::Name)),
             )
             .row(
@@ -1130,6 +1135,7 @@ impl SettingsPage {
                     "Port",
                     draft.input("metrics-port", &draft.port, Some(Field::Port), cx),
                 )
+                .hint("The Service’s port, such as 9090.")
                 .error(draft.error(Field::Port)),
             )
             .row(form::row(
@@ -1204,8 +1210,36 @@ impl SettingsPage {
         match draft.mode {
             Mode::Automatic => {}
             Mode::PerEntry => {
-                group = group.row(form::row("metrics-per-entry-row", "Entries", div().text_size(dp(12.)).text_color(crate::palette::palette(cx).muted)
-                .child("Each entry names its own source under its clusters entry in freshkube.yaml.")));
+                group = group.row(
+                    form::row("metrics-per-entry-row", "Entries", div()).hint_element(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_start()
+                            .min_w_0()
+                            .w_full()
+                            .child(
+                                div()
+                                    .id("metrics-per-entry-explanation")
+                                    .test_support()
+                                    .w_full()
+                                    .aria_label(
+                                        "Each entry names its own source in freshkube.yaml.",
+                                    )
+                                    .child("Each entry names its own source in freshkube.yaml."),
+                            )
+                            .child(
+                                Button::new("metrics-per-entry-clusters")
+                                    .link()
+                                    .small()
+                                    .px_0()
+                                    .label("Edit it in Clusters")
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(super::SettingsEvent::OpenClusters)
+                                    })),
+                            ),
+                    ),
+                );
             }
             Mode::Central => {
                 group = self.render_central_fields(group, draft, cx);
