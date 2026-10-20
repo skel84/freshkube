@@ -31,6 +31,9 @@ const P256_PREFIX: [u8; 27] = [
 ];
 const P256_DER_LEN: usize = 91;
 
+/// What a well-formed key of an algorithm this build does not name is called.
+const UNKNOWN_TYPE: &str = "an unknown type of";
+
 // The content of the algorithm OIDs, to name a key we refuse.
 const EC_PUBLIC_KEY: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 const PRIME256V1: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
@@ -72,6 +75,9 @@ impl fmt::Display for KeyProblem {
                 f.write_str("the key file does not hold exactly one PUBLIC KEY block")
             }
             Self::Malformed => f.write_str("the key file's public key can't be decoded"),
+            Self::Unsupported(UNKNOWN_TYPE) => {
+                f.write_str("keys of an unknown type are not supported yet; use ECDSA P-256")
+            }
             Self::Unsupported(kind) => {
                 write!(f, "{kind} keys are not supported yet; use ECDSA P-256")
             }
@@ -123,11 +129,13 @@ impl TrustedKey {
     /// From a file: a regular file of at most [`MOST_KEY_FILE_BYTES`].
     pub(crate) fn read(path: &Path) -> Result<Self, KeyProblem> {
         let unreadable = |error: std::io::Error| KeyProblem::Unreadable(error.kind().to_string());
-        let file = std::fs::File::open(path).map_err(unreadable)?;
-        let meta = file.metadata().map_err(unreadable)?;
+        // Checked before opening: Windows refuses to open a directory with
+        // "permission denied", which would hide that it is not a file.
+        let meta = std::fs::metadata(path).map_err(unreadable)?;
         if !meta.is_file() {
             return Err(KeyProblem::Unreadable("not a regular file".into()));
         }
+        let file = std::fs::File::open(path).map_err(unreadable)?;
         let mut text = String::new();
         file.take(MOST_KEY_FILE_BYTES + 1)
             .read_to_string(&mut text)
@@ -179,7 +187,7 @@ fn other_algorithm(der: &[u8]) -> Option<&'static str> {
         (EC_PUBLIC_KEY, _) => Some("ECDSA (another curve)"),
         (ED25519, _) => Some("Ed25519"),
         (RSA_ENCRYPTION, _) => Some("RSA"),
-        _ => Some("an unknown type of"),
+        _ => Some(UNKNOWN_TYPE),
     }
 }
 

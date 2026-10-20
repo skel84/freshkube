@@ -36,7 +36,7 @@ use super::rollouts::{
 };
 use super::source::Source;
 use super::tekton::{CommitNames, EvidenceResult, read_builds};
-use super::verify::Trust;
+use super::verify::{KeyProblem, Trust};
 
 /// Which namespaces to read, all named by the caller.
 #[derive(Clone, Debug)]
@@ -208,15 +208,13 @@ pub(crate) async fn upstream_with_applications<K: Reader, A: Reader, T: Reader, 
                 .collect()
         })
         .unwrap_or_default();
+    let trust = read_trust(plan).await;
     let mut evidence = Evidence {
         sha: plan.sha.clone(),
         followed: plan.followed.clone(),
         observed_at,
         evidence_result: plan.evidence_result.clone(),
-        trust: plan
-            .public_key_file
-            .as_deref()
-            .map_or(Trust::Unset, Trust::from_key_file),
+        trust,
         log: LogRead::Off,
         commit_names: plan.commit_names.clone(),
         stage_naming: plan.stage_naming.clone(),
@@ -394,4 +392,16 @@ pub async fn commit_of_pull_request<G: GitHub>(
                 None => (pr.head_sha, false),
             }),
     )
+}
+
+/// The key the person named, read off the async thread: a file read blocks.
+async fn read_trust(plan: &Plan) -> Trust {
+    let Some(path) = plan.public_key_file.clone() else {
+        return Trust::Unset;
+    };
+    tokio::task::spawn_blocking(move || Trust::from_key_file(&path))
+        .await
+        .unwrap_or_else(|_| {
+            Trust::Unusable(KeyProblem::Unreadable("the read did not finish".into()))
+        })
 }

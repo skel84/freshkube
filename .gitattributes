@@ -2,3 +2,7 @@
 # writes, which ends lines with LF on every platform; keep Windows checkouts
 # from turning them into CRLF.
 crates/freshkube-prefs/src/examples/*.json text eol=lf
+
+# The signed verifier fixtures are compared byte for byte (digests and
+# signatures), so keep Windows checkouts from rewriting their line ends.
+crates/freshkube-delivery/testdata/** -text

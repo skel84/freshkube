@@ -189,6 +189,20 @@ pub(crate) struct Proof<'a> {
     pub(super) log: &'a LogRead,
 }
 
+impl Proof<'static> {
+    /// No key and no log: nothing verifies. The pull request links use it, so
+    /// a verified provenance, which is the commit's own witness, cannot
+    /// raise them.
+    pub(super) fn none() -> Self {
+        static NO_TRUST: Trust = Trust::Unset;
+        static NO_LOG: LogRead = LogRead::Off;
+        Proof {
+            trust: &NO_TRUST,
+            log: &NO_LOG,
+        }
+    }
+}
+
 /// Everything read for one change, each part with its own outcome.
 pub struct Evidence {
     pub sha: String,
