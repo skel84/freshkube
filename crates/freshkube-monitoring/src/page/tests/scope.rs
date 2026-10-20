@@ -14,6 +14,24 @@ type Seen = Arc<Mutex<Vec<String>>>;
 /// as a Prometheus with no series, records what it was asked, and holds its
 /// answers while `hold` is set.
 fn recording_api(runtime: &tokio::runtime::Runtime, hold: Arc<AtomicBool>) -> (String, Seen) {
+    let (url, seen, _) = recording_authorization(runtime, hold);
+    (url, seen)
+}
+
+/// Classify only invented test credentials; never retain header values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Authorization {
+    Missing,
+    InventedBearer,
+    Other,
+}
+
+type Authorizations = Arc<Mutex<Vec<(String, Authorization)>>>;
+
+fn recording_authorization(
+    runtime: &tokio::runtime::Runtime,
+    hold: Arc<AtomicBool>,
+) -> (String, Seen, Authorizations) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = runtime
         .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
@@ -21,9 +39,11 @@ fn recording_api(runtime: &tokio::runtime::Runtime, hold: Arc<AtomicBool>) -> (S
     let address = listener.local_addr().unwrap();
     let seen: Seen = Default::default();
     let log = seen.clone();
+    let authorizations: Authorizations = Default::default();
+    let headers = authorizations.clone();
     runtime.spawn(async move {
         while let Ok((mut socket, _)) = listener.accept().await {
-            let (log, hold) = (log.clone(), hold.clone());
+            let (log, hold, headers) = (log.clone(), hold.clone(), headers.clone());
             tokio::spawn(async move {
                 let mut buffer = vec![0; 16 * 1024];
                 let mut read = 0;
@@ -36,14 +56,24 @@ fn recording_api(runtime: &tokio::runtime::Runtime, hold: Arc<AtomicBool>) -> (S
                 let head = String::from_utf8_lossy(&buffer[..read]);
                 let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
                 log.lock().unwrap().push(path.clone());
+                let authorization = head.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("authorization").then(|| value.trim())
+                });
+                let authorization = match authorization {
+                    None => Authorization::Missing,
+                    Some("Bearer invented-metrics-token") => Authorization::InventedBearer,
+                    Some(_) => Authorization::Other,
+                };
+                headers.lock().unwrap().push((path.clone(), authorization));
                 while hold.load(SeqCst) {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                 }
-                let body = if path.contains("/proxy/api/v1/label/") {
+                let body = if path.contains("/api/v1/label/") {
                     r#"{"status":"success","data":["a"]}"#
-                } else if path.contains("/proxy/api/v1/status/buildinfo") {
+                } else if path.contains("/api/v1/status/buildinfo") {
                     r#"{"status":"success","data":{"version":"2.53.0"}}"#
-                } else if path.contains("/proxy/api/v1/targets") {
+                } else if path.contains("/api/v1/targets") {
                     r#"{"status":"success","data":{"activeTargets":[]}}"#
                 } else {
                     r#"{"status":"success","data":{"resultType":"matrix","result":[]}}"#
@@ -56,7 +86,7 @@ fn recording_api(runtime: &tokio::runtime::Runtime, hold: Arc<AtomicBool>) -> (S
             });
         }
     });
-    (format!("http://{address}"), seen)
+    (format!("http://{address}"), seen, authorizations)
 }
 
 fn central(value: &str) -> Resolved {
@@ -387,4 +417,116 @@ async fn discovery_is_untouched_by_a_scope_that_says_discovery(cx: &mut TestAppC
     settled(cx, handle, &page).await;
     // The live source never builds a client, so discovery fails as it did.
     assert_eq!(cx.read(|cx| page.read(cx).connection_name()), "failed");
+}
+
+/// Exercise the setup resolver and the page's saved-token reader together.
+async fn scoped_authorization(cx: &mut TestAppContext, service: bool, central: bool, token: bool) {
+    use freshkube_core::secrets::{MemoryStore, SecretStore};
+
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (base, _, authorizations) = recording_authorization(&runtime, Default::default());
+    let cluster = FakeCluster::new(base.clone());
+    let endpoint = if service {
+        "service: {namespace: monitoring, name: metrics, port: 9090}".to_owned()
+    } else {
+        format!("url: '{base}/metrics'")
+    };
+    let token_field = if token { ", token: keys.json" } else { "" };
+    let metrics = if central {
+        let entry = if service { "entry: cluster-a, " } else { "" };
+        format!("metrics: {{mode: central, store: {{{entry}{endpoint}{token_field}}}}}\n")
+    } else {
+        String::new()
+    };
+    let own = if central {
+        String::new()
+    } else {
+        format!("  metrics: {{source: {{{endpoint}{token_field}}}}}\n")
+    };
+    let setup = freshkube_core::setup::parse(format!(
+        "version: 1\n{metrics}clusters:\n- id: cluster-a\n  role: core\n  context: cluster-a\n- id: cluster-b\n  role: environment\n  context: cluster-b\n{own}"
+    ).as_bytes()).unwrap();
+    let secrets = Arc::new(MemoryStore::default());
+    if token {
+        // URL sources keep their existing normalized account.
+        secrets
+            .write(
+                &crate::token_account(&format!("{base}/metrics/")),
+                "invented-metrics-token",
+            )
+            .unwrap();
+    } else {
+        // No token reference must not even try the key store.
+        secrets.unavailable.store(true, SeqCst);
+    }
+    let (handle, page) = mount_with(
+        cx,
+        &runtime,
+        Some(open_source(&cluster)),
+        None,
+        Some(secrets),
+    );
+    cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.set_scope(
+                scoped(
+                    freshkube_core::monitoring::scope::resolve(&setup, Some("cluster-b")),
+                    &cluster,
+                ),
+                cx,
+            )
+        })
+    });
+    show(cx, handle, &page);
+    settled(cx, handle, &page).await;
+    assert_eq!(cx.read(|cx| page.read(cx).connection_name()), "ready");
+    let observed = authorizations.clone();
+    cx.wait_for_io(handle, move |_, _| {
+        observed
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(path, _)| path.contains("/query_range"))
+    })
+    .await;
+    let authorizations = authorizations.lock().unwrap();
+    let metrics: Vec<_> = authorizations
+        .iter()
+        .filter(|(path, _)| {
+            if service {
+                path.contains("/proxy/")
+            } else {
+                path.starts_with("/metrics/")
+            }
+        })
+        .collect();
+    assert!(metrics.iter().any(|(path, _)| path.contains("query=1")));
+    let expected = if token {
+        Authorization::InventedBearer
+    } else {
+        Authorization::Missing
+    };
+    assert!(
+        metrics.iter().all(|(_, auth)| *auth == expected),
+        "unexpected metrics authorization: {metrics:?}"
+    );
+}
+
+#[gpui_kit::test]
+async fn scoped_urls_keep_their_saved_tokens_for_entries_and_the_central_store(
+    cx: &mut TestAppContext,
+) {
+    for central in [false, true] {
+        for token in [false, true] {
+            scoped_authorization(cx, false, central, token).await;
+        }
+    }
+}
+
+#[gpui_kit::test]
+async fn scoped_services_without_tokens_send_no_authorization(cx: &mut TestAppContext) {
+    for central in [false, true] {
+        scoped_authorization(cx, true, central, false).await;
+    }
 }
