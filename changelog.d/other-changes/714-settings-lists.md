@@ -1,1 +1,0 @@
-- **Settings lists:** keep the leading status gutter in Argo CD destinations and Delivery sources on purpose, so marks align and Part labels stay whole after a check; truncate Reads within narrow tables.

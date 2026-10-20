@@ -3,11 +3,13 @@
 //! URL or Argo CD's name for the cluster) and the cluster it is. The page
 //! checks and saves what it sends.
 use super::*;
+use freshkube_core::workspace::{Destination, Fault};
+use freshkube_ui::form as fields;
 use gpui_kit::component::{
     IndexPath,
     button::ButtonGroup,
     input::{Input, InputEvent, InputState},
-    select::{Select, SelectState},
+    select::{Select, SelectEvent, SelectState},
 };
 
 /// What the form matches by, in its order.
@@ -39,6 +41,8 @@ pub(super) struct DestinationForm {
     entry: Entity<SelectState<Vec<SharedString>>>,
     /// The picker's placeholder when the mapping's cluster is gone.
     gone: Option<SharedString>,
+    value_error: Option<SharedString>,
+    entry_error: Option<SharedString>,
     error: Option<SharedString>,
     _subscriptions: Vec<Subscription>,
 }
@@ -51,10 +55,14 @@ pub(super) fn open(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<DestinationForm> {
-    let title = match &editing {
+    let by_server = editing
+        .as_ref()
+        .is_some_and(|editing| matches!(editing.key, Key::Server(_)));
+    let title: SharedString = match &editing {
         Some(Editing { key, .. }) => format!("Change the mapping for {}", key.describe()),
         None => "Map an Argo CD destination".to_owned(),
-    };
+    }
+    .into();
     let form = cx.new(|cx| DestinationForm::new(page, list, editing, entries, window, cx));
     let value = form.read(cx).value.clone();
     let shown = form.clone();
@@ -62,7 +70,19 @@ pub(super) fn open(
         dialog
             .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
             .overlay_closable(false)
-            .title(title.clone())
+            .title(if by_server {
+                // Kit's dialog close trigger is a small icon button, size_6.
+                // Reserve the same rem width beside the flowing title.
+                div()
+                    .pr_6()
+                    .child(freshkube_ui::url::url_text(
+                        "settings-destination-edit-url",
+                        &title,
+                    ))
+                    .into_any_element()
+            } else {
+                title.clone().into_any_element()
+            })
             .child(shown.clone())
     });
     // A dialog remembers what had focus when it opened: focus its field after.
@@ -105,16 +125,39 @@ impl DestinationForm {
                 )
                 .into()
             });
-        let subscriptions = vec![
-            cx.subscribe_in(&value, window, |this, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.submit(cx);
-                }
-            }),
-            cx.observe_in(&page, window, |this, page, window, cx| {
-                this.saved(&page, window, cx)
-            }),
-        ];
+        let entry_focus = entry.focus_handle(cx);
+        let subscriptions =
+            vec![
+                cx.subscribe_in(&value, window, |this, _, event: &InputEvent, window, cx| {
+                    match event {
+                        InputEvent::PressEnter { .. } => this.submit(window, cx),
+                        InputEvent::Blur => {
+                            this.value_error = this.inspect_value(cx);
+                            cx.notify();
+                        }
+                        InputEvent::Change => {
+                            this.value_error = None;
+                            cx.notify();
+                        }
+                        _ => {}
+                    }
+                }),
+                cx.subscribe_in(
+                    &entry,
+                    window,
+                    |this, _, _: &SelectEvent<Vec<SharedString>>, _, cx| {
+                        this.entry_error = this.inspect_entry(cx);
+                        cx.notify();
+                    },
+                ),
+                cx.on_blur(&entry_focus, window, |this, _, cx| {
+                    this.entry_error = this.inspect_entry(cx);
+                    cx.notify();
+                }),
+                cx.observe_in(&page, window, |this, page, window, cx| {
+                    this.saved(&page, window, cx)
+                }),
+            ];
         Self {
             page,
             list,
@@ -124,20 +167,89 @@ impl DestinationForm {
             by_server,
             value,
             entry,
+            value_error: None,
+            entry_error: None,
             error: None,
             _subscriptions: subscriptions,
         }
     }
 
-    fn submit(&mut self, cx: &mut Context<Self>) {
+    fn key(&self, cx: &App) -> Key {
+        let value = self.value.read(cx).value().trim().to_owned();
+        if self.by_server {
+            Key::Server(value)
+        } else {
+            Key::Name(value)
+        }
+    }
+
+    /// Core decides what can match; the form only places its words at the field.
+    fn inspect_value(&self, cx: &App) -> Option<SharedString> {
+        let key = self.key(cx);
+        if let Some(fault) = Destination::new(key.clone(), "entry").fault() {
+            return Some(match fault {
+                Fault::EmptyServer => "Enter the server URL the Application names".into(),
+                Fault::EmptyName => "Enter Argo CD's name for the cluster".into(),
+                Fault::NotHttp => "The server must be an http or https address".into(),
+                Fault::ArgoCdOwn => {
+                    "Argo CD knows its own cluster already; it needs no mapping".into()
+                }
+                fault => super::super::edit::capitalized(&format!("the mapping {}", fault.words()))
+                    .into(),
+            });
+        }
+        let workspace = self.page.read(cx).workspace();
+        let other = workspace
+            .destinations
+            .iter()
+            .enumerate()
+            .find(|(at, row)| {
+                self.editing
+                    .as_ref()
+                    .is_none_or(|(editing, _)| at != editing)
+                    && row.key().same(&key)
+            })?;
+        let entry = &other.1.entry;
+        let what = match key {
+            Key::Server(server) => format!("Server {server}"),
+            Key::Name(name) => format!("Argo CD's cluster {name}"),
+        };
+        Some(if workspace.clusters.iter().any(|cluster| cluster.id == *entry) {
+            format!("{what} is already mapped to {entry}")
+        } else {
+            format!("{what} is already mapped to {entry}, which the workspace no longer lists: edit that mapping")
+        }.into())
+    }
+
+    fn inspect_entry(&self, cx: &App) -> Option<SharedString> {
+        let selected = self.entry.read(cx).selected_value();
+        (!self
+            .page
+            .read(cx)
+            .workspace()
+            .clusters
+            .iter()
+            .any(|cluster| selected.is_some_and(|entry| cluster.id == entry.as_ref())))
+        .then(|| "Pick a workspace cluster".into())
+    }
+
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending.is_some() {
             return;
         }
-        let value = self.value.read(cx).value().to_string();
-        let key = match self.by_server {
-            true => Key::Server(value),
-            false => Key::Name(value),
-        };
+        self.error = None;
+        self.value_error = self.inspect_value(cx);
+        self.entry_error = self.inspect_entry(cx);
+        if self.value_error.is_some() || self.entry_error.is_some() {
+            if self.value_error.is_some() {
+                self.value.update(cx, |value, cx| value.focus(window, cx));
+            } else {
+                self.entry.update(cx, |entry, cx| entry.focus(window, cx));
+            }
+            cx.notify();
+            return;
+        }
+        let key = self.key(cx);
         let entry = self
             .entry
             .read(cx)
@@ -206,6 +318,24 @@ impl DestinationForm {
         });
     }
 
+    pub(super) fn field_error(&self, field: &str) -> Option<&str> {
+        match field {
+            "value" => self.value_error.as_deref(),
+            "entry" => self.entry_error.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn focused_field(&self, window: &Window, cx: &App) -> Option<&'static str> {
+        if self.value.focus_handle(cx).is_focused(window) {
+            Some("value")
+        } else if self.entry.focus_handle(cx).is_focused(window) {
+            Some("entry")
+        } else {
+            None
+        }
+    }
+
     pub(super) fn gone(&self) -> Option<&str> {
         self.gone.as_deref()
     }
@@ -214,75 +344,97 @@ impl DestinationForm {
 impl Render for DestinationForm {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
-        let label = |text: &'static str| {
-            div()
-                .text_size(dp(12.5))
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(text)
-        };
         let selected = if self.by_server { 0 } else { 1 };
-        let by = BY.iter().enumerate().fold(
-            ButtonGroup::new("settings-destination-by")
-                .outline()
-                .small(),
-            |group, (ix, by)| {
-                group.child(ui::choice(
-                    Button::new(("settings-destination-by", ix)).label(*by),
-                    selected == ix,
-                ))
-            },
-        );
+        let by = BY
+            .iter()
+            .enumerate()
+            .fold(
+                ButtonGroup::new("settings-destination-by")
+                    .outline()
+                    .small(),
+                |group, (ix, by)| {
+                    group.child(ui::choice(
+                        Button::new(("settings-destination-by", ix)).label(*by),
+                        selected == ix,
+                    ))
+                },
+            )
+            .on_click(move |selected: &Vec<usize>, _, cx| {
+                let Some(ix) = selected.first().copied() else {
+                    return;
+                };
+                _ = this.update(cx, |form, cx| {
+                    form.by_server = ix == 0;
+                    form.value_error = None;
+                    cx.notify();
+                });
+            });
         let hint = if self.by_server {
             "spec.destination.server, such as https://prod.example.test"
         } else {
             "spec.destination.name: Argo CD's name for the cluster"
         };
+        let value = Input::new(&self.value)
+            .id("settings-destination-value")
+            .aria_label(BY[selected])
+            .small()
+            .map(|input| gpui_kit::Styled::h(input, dp(ui::CONTROL_HEIGHT)))
+            .when(self.value_error.is_some(), |input| {
+                fields::invalid(input, cx)
+            });
+        let entry = Select::new(&self.entry)
+            .id("settings-destination-entry")
+            .small()
+            .h(dp(ui::CONTROL_HEIGHT))
+            .placeholder(self.gone.clone().unwrap_or("Pick a cluster".into()))
+            .search_placeholder("Find a cluster");
+        // The select paints its focus border after its style, so paint the
+        // invalid border over it; focus must not hide the field's error.
+        let entry = div()
+            .id("settings-destination-entry-control")
+            .test_support()
+            .relative()
+            .child(entry)
+            .when(self.entry_error.is_some(), |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(px(3.))
+                        .border_1()
+                        .border_color(crate::palette::palette(cx).crit),
+                )
+            });
         v_flex()
             .id("settings-destination-form")
             .test_support()
             .role(Role::Dialog)
             .aria_label("Argo CD destination")
-            .gap_3()
+            .gap(dp(12.))
             .text_size(dp(13.))
             .child(
-                v_flex()
-                    .gap_1p5()
-                    .child(label("Match by"))
-                    .child(by.on_click(move |selected: &Vec<usize>, _, cx| {
-                        let Some(ix) = selected.first().copied() else {
-                            return;
-                        };
-                        _ = this.update(cx, |form, cx| {
-                            form.by_server = ix == 0;
-                            cx.notify();
-                        });
-                    })),
-            )
-            .child(
-                v_flex()
-                    .gap_1p5()
-                    .child(label(BY[selected]))
-                    .child(
-                        Input::new(&self.value)
-                            .id("settings-destination-value")
-                            .aria_label(BY[selected])
-                            .small(),
+                fields::group("settings-destination-fields", "Mapping")
+                    .narrow(true)
+                    .row(fields::row(
+                        "settings-destination-match-field",
+                        "Match by",
+                        by,
+                    ))
+                    .row(
+                        fields::row("settings-destination-value-field", BY[selected], value)
+                            .hint(hint)
+                            .error(self.value_error.clone()),
                     )
-                    .child(
-                        div()
-                            .text_size(dp(11.5))
-                            .text_color(crate::palette::palette(cx).muted)
-                            .child(hint),
-                    ),
-            )
-            .child(
-                v_flex().gap_1p5().child(label("Workspace cluster")).child(
-                    Select::new(&self.entry)
-                        .id("settings-destination-entry")
-                        .small()
-                        .placeholder(self.gone.clone().unwrap_or("Pick a cluster".into()))
-                        .search_placeholder("Find a cluster"),
-                ),
+                    .row(
+                        fields::row(
+                            "settings-destination-entry-field",
+                            "Workspace cluster",
+                            entry,
+                        )
+                        .error(self.entry_error.clone()),
+                    )
+                    .saved_in(fields::SavedIn::file("freshkube.yaml"))
+                    .render(cx),
             )
             .children(self.error.clone().map(|why| {
                 div()
@@ -292,23 +444,14 @@ impl Render for DestinationForm {
                     .aria_label(why.clone())
                     .child(ui::warning_banner(None, why, None, cx))
             }))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .justify_end()
-                    .child(
-                        Button::new("settings-destination-cancel")
-                            .outline()
-                            .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(
-                        Button::new("settings-destination-save")
-                            .primary()
-                            .label("Save")
-                            .disabled(self.pending.is_some())
-                            .on_click(cx.listener(|form, _, _, cx| form.submit(cx))),
-                    ),
-            )
+            .child(fields::actions(
+                fields::Action::new(
+                    "settings-destination-save",
+                    "Save",
+                    cx.listener(|form, _, window, cx| form.submit(window, cx)),
+                )
+                .disabled(self.pending.is_some()),
+                fields::Action::cancel("settings-destination-cancel"),
+            ))
     }
 }

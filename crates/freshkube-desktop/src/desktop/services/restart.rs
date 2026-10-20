@@ -34,8 +34,9 @@ impl Pilot {
     /// service is in now. `None` once any of them is gone.
     fn restart_fingerprint(&self, service_id: &str) -> Option<u64> {
         let cluster = self.overview.data()?;
-        let node = self.selected_summary()?;
+        let node = self.target.summary()?;
         let service = self
+            .target
             .services
             .data()?
             .iter()
@@ -60,12 +61,13 @@ impl Pilot {
     ) {
         let (Some(fingerprint), Some(node), Some(cluster)) = (
             self.restart_fingerprint(&service_id),
-            self.selected_summary().cloned(),
+            self.target.summary().cloned(),
             self.overview.data().map(|cluster| cluster.name.clone()),
         ) else {
             return;
         };
         let Some(state) = self
+            .target
             .services
             .data()
             .and_then(|services| services.iter().find(|service| service.id == service_id))
@@ -123,7 +125,8 @@ impl Pilot {
 
     /// Leaves the notice under the service; the tab hears it itself.
     pub(super) fn set_restart_notice(&self, service: &str, ok: bool, text: String, cx: &mut App) {
-        let (Some(cluster), Some(node)) = (self.overview.data(), self.selected_node.clone()) else {
+        let (Some(cluster), Some(node)) = (self.overview.data(), self.target.selected_node.clone())
+        else {
             return;
         };
         cx.set_global(RestartNotices(Some(RestartNotice {
@@ -139,7 +142,7 @@ impl Pilot {
     /// Example data only simulates it.
     fn start_restart(&mut self, service_id: String, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(node), Some(cluster)) = (
-            self.selected_summary().cloned(),
+            self.target.summary().cloned(),
             self.overview.data().map(|cluster| cluster.name.clone()),
         ) else {
             return;

@@ -20,7 +20,7 @@ type Seen = Arc<Mutex<Vec<String>>>;
 
 /// A fake API server. `route` gets the method, path and query and returns
 /// a status and body; status 0 never answers.
-fn fake(
+pub(super) fn fake(
     route: impl Fn(&http::Method, &str, &str) -> (u16, String) + Send + Sync + 'static,
 ) -> (kube::Client, Seen) {
     let seen: Seen = Default::default();
@@ -59,24 +59,24 @@ fn list(items: Vec<Value>) -> String {
     json!({"kind": "ServiceList", "apiVersion": "v1", "metadata": {}, "items": items}).to_string()
 }
 
-fn success(data: Value) -> String {
+pub(super) fn success(data: Value) -> String {
     json!({"status": "success", "data": data}).to_string()
 }
 
-fn status(code: u16, message: &str) -> String {
+pub(super) fn status(code: u16, message: &str) -> String {
     json!({"kind": "Status", "apiVersion": "v1", "status": "Failure", "message": message, "code": code})
         .to_string()
 }
 
-fn query_one() -> String {
+pub(super) fn query_one() -> String {
     success(json!({"resultType": "scalar", "result": [1700000000, "1"]}))
 }
 
-fn build_info() -> String {
+pub(super) fn build_info() -> String {
     success(json!({"version": "2.53.0", "revision": "abc"}))
 }
 
-fn targets() -> String {
+pub(super) fn targets() -> String {
     success(json!({"activeTargets": [
         {"scrapeInterval": "15s"},
         {"scrapeInterval": "15s"},
@@ -1060,4 +1060,72 @@ async fn a_url_without_buildinfo_is_still_confirmed_and_errors_hide_the_token() 
         .unwrap();
     assert_eq!(error.kind, ErrorKind::Unavailable);
     assert_eq!(error.message, "Couldn't connect to the server");
+}
+
+#[tokio::test]
+async fn a_scoped_prometheus_sends_the_matcher_with_every_dashboard_request() {
+    let (client, seen) = fake(|_, path, _| match path {
+        p if p.ends_with("/label/node/values") => (200, success(json!(["cp-1"]))),
+        p if p.ends_with("/query_range") => (
+            200,
+            success(json!({"resultType": "matrix", "result": [
+                {"metric": {"node": "cp-1"}, "values": [[1_700_000_000, "0.5"]]},
+            ]})),
+        ),
+        _ => (404, status(404, "not found")),
+    });
+    let dashboard = Dashboard::parse(DASHBOARD).unwrap();
+    let source = Source::Prometheus(
+        Prometheus::new(
+            client,
+            PrometheusService::new("monitoring", "central", 9090),
+        )
+        .with_matcher(Matcher::new("cluster", "cluster-a")),
+    );
+    let (variables, _) = source
+        .resolve_variables(&dashboard.variables, &[], window())
+        .await
+        .unwrap();
+    let context = QueryContext {
+        window: window(),
+        variables: variables.context_values(),
+    };
+    let result = source
+        .query_panel(&dashboard.panels[0], &context, &variables)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.expressions,
+        [(
+            "A".to_owned(),
+            r#"sum by (node) (rate(cpu{cluster="cluster-a",node=~"cp-1"}[5m]))"#.to_owned()
+        )]
+    );
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    assert!(
+        seen[0].contains("match%5B%5D=up%7Bcluster%3D%22cluster-a%22%2Cjob%3D%22node%22%7D"),
+        "{seen:?}"
+    );
+    assert!(seen[1].contains("cluster%3D%22cluster-a%22"), "{seen:?}");
+}
+
+#[tokio::test]
+async fn a_scoped_prometheus_never_sends_a_query_it_cannot_scope() {
+    let (client, seen) = fake(|_, _, _| (200, success(json!([]))));
+    let prometheus = Prometheus::new(client, PrometheusService::new("m", "p", 9090))
+        .with_matcher(Matcher::new("cluster", "cluster-a"));
+    let error = prometheus
+        .get(&ApiRequest::new(
+            "query",
+            vec![("query".into(), "sum(".into())],
+        ))
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Unsupported);
+    assert!(
+        error.message.starts_with("Can't scope the query"),
+        "{error}"
+    );
+    assert!(seen.lock().unwrap().is_empty());
 }

@@ -49,6 +49,7 @@ pub enum MenuAction {
     Submenu {
         label: SharedString,
         items: Vec<MenuAction>,
+        enabled: bool,
     },
     Separator,
 }
@@ -65,8 +66,9 @@ impl MenuAction {
 
     /// Shown, but greyed out and inert.
     pub fn enabled(mut self, enabled: bool) -> Self {
-        if let Self::Item { enabled: on, .. } = &mut self {
-            *on = enabled;
+        match &mut self {
+            Self::Item { enabled: on, .. } | Self::Submenu { enabled: on, .. } => *on = enabled,
+            Self::Separator => {}
         }
         self
     }
@@ -76,6 +78,7 @@ impl MenuAction {
         Self::Submenu {
             label: label.into(),
             items,
+            enabled: true,
         }
     }
 
@@ -102,9 +105,14 @@ impl Clone for MenuAction {
                 enabled: *enabled,
                 checked: *checked,
             },
-            Self::Submenu { label, items } => Self::Submenu {
+            Self::Submenu {
+                label,
+                items,
+                enabled,
+            } => Self::Submenu {
                 label: label.clone(),
                 items: items.clone(),
+                enabled: *enabled,
             },
             Self::Separator => Self::Separator,
         }
@@ -155,11 +163,21 @@ fn entries(
         }
         match action {
             MenuAction::Separator => separate = any,
-            MenuAction::Submenu { label, items } => {
-                let (focus, live) = (focus.clone(), live.clone());
-                menu = menu.submenu(label, window, cx, move |menu, window, cx| {
-                    entries(menu, items.clone(), &focus, live.clone(), window, cx)
-                });
+            MenuAction::Submenu {
+                label,
+                items,
+                enabled,
+            } => {
+                if enabled {
+                    let (focus, live) = (focus.clone(), live.clone());
+                    menu = menu.submenu(label, window, cx, move |menu, window, cx| {
+                        entries(menu, items.clone(), &focus, live.clone(), window, cx)
+                    });
+                } else {
+                    // Kit 0.7 still opens disabled submenus on hover. An
+                    // unavailable submenu is an ordinary disabled item.
+                    menu = menu.item(PopupMenuItem::new(label).disabled(true));
+                }
                 any = true;
             }
             MenuAction::Item {
@@ -168,17 +186,29 @@ fn entries(
                 enabled,
                 checked,
             } => {
+                if !enabled {
+                    // Use Kit's native disabled item: it keeps the label and
+                    // shortcut, draws muted and has no application handler.
+                    menu = menu.menu_with_check_and_disabled(
+                        label,
+                        checked.unwrap_or(false),
+                        action,
+                        true,
+                    );
+                    any = true;
+                    continue;
+                }
                 let (live, focus, run) = (live.clone(), focus.clone(), action.boxed_clone());
-                let mut item = PopupMenuItem::new(label)
-                    .action(action)
-                    .disabled(!enabled)
-                    .on_click(move |_, window, cx| {
-                        if live(cx) {
-                            // At once, on the list: the key's own path.
-                            focus.focus(window, cx);
-                            focus.dispatch_action(run.as_ref(), window, cx);
-                        }
-                    });
+                let mut item =
+                    PopupMenuItem::new(label)
+                        .action(action)
+                        .on_click(move |_, window, cx| {
+                            if live(cx) {
+                                // At once, on the list: the key's own path.
+                                focus.focus(window, cx);
+                                focus.dispatch_action(run.as_ref(), window, cx);
+                            }
+                        });
                 if let Some(checked) = checked {
                     item = item.checked(checked);
                 }

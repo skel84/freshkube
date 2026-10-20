@@ -765,3 +765,18 @@ fn a_setup_too_large_to_read_back_is_not_written() {
     );
     assert_eq!(setup.check_saveable(), Err(Invalid::TooLarge));
 }
+
+#[test]
+fn the_first_settings_setup_keeps_legacy_workspace_unknown_keys() {
+    let workspace = workspace::parse(br#"{"version":1,"future":{"enabled":true}}"#).unwrap();
+    let setup = Setup::new(workspace);
+    setup.check_saveable().unwrap();
+    assert_eq!(setup.unknown_keys(), ["future"]);
+    assert_eq!(parse(to_text(&setup).as_bytes()).unwrap(), setup);
+}
+
+#[test]
+fn a_legacy_key_reserved_by_setup_is_refused_before_a_save() {
+    let workspace = workspace::parse(br#"{"version":1,"metrics":{"future":true}}"#).unwrap();
+    assert!(Setup::new(workspace).check_saveable().is_err());
+}

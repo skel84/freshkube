@@ -12,7 +12,7 @@ fn target_picker_and_tiles_change_the_target_node(cx: &mut TestAppContext) {
         assert!(window.try_find("target-node").is_none());
         pick_target(window, cx, 3);
         assert_eq!(
-            view.read(cx).selected_node.as_deref(),
+            view.read(cx).target.selected_node.as_deref(),
             Some("talos-wk-fra1-01")
         );
         window.click("nav-overview", cx);
@@ -26,7 +26,10 @@ fn target_picker_and_tiles_change_the_target_node(cx: &mut TestAppContext) {
         window.render_frame(cx);
         let pilot = view.read(cx);
         assert_eq!(pilot.navigation.page, Page::SystemServices);
-        assert_eq!(pilot.selected_node.as_deref(), Some("talos-wk-fra1-01"));
+        assert_eq!(
+            pilot.target.selected_node.as_deref(),
+            Some("talos-wk-fra1-01")
+        );
         assert!(
             window
                 .find("system-service-talos-wk-fra1-02-kubelet")
@@ -54,7 +57,10 @@ fn silent_node_is_unknown_not_failed(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
-        assert_eq!(view.read(cx).selected_node.as_deref(), Some(SILENT_NODE));
+        assert_eq!(
+            view.read(cx).target.selected_node.as_deref(),
+            Some(SILENT_NODE)
+        );
         assert!(window.find("back-to-overview").visible());
         assert!(window.try_find("services-region").is_none());
         window.click("back-to-overview", cx);
@@ -98,7 +104,7 @@ fn table_view_keeps_node_identity_and_selection(cx: &mut TestAppContext) {
         click_node(window, cx, "node-talos-wk-fra1-01");
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).selected_node.as_deref(),
+            view.read(cx).target.selected_node.as_deref(),
             Some("talos-wk-fra1-01")
         );
         window.click("node-close", cx);

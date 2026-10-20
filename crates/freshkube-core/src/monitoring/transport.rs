@@ -12,7 +12,7 @@ use kube::client::Body;
 use serde_json::Value;
 use tokio::sync::Semaphore;
 
-use super::{Endpoint, ErrorKind, ExampleSource, PrometheusService, QueryError};
+use super::{Endpoint, ErrorKind, ExampleSource, Matcher, PrometheusService, QueryError};
 
 /// How long one request may take, as grafaui's client allows.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -33,6 +33,8 @@ pub struct Prometheus {
     slots: Arc<Semaphore>,
     timeout: Duration,
     limit: usize,
+    /// Scopes every PromQL request to one entry's series in a shared store.
+    matcher: Option<Arc<Matcher>>,
 }
 
 /// How requests travel.
@@ -89,7 +91,19 @@ impl Prometheus {
             slots: Arc::new(Semaphore::new(MAX_CONCURRENT)),
             timeout: REQUEST_TIMEOUT,
             limit: MAX_ANSWER,
+            matcher: None,
         }
+    }
+
+    /// Scopes every request to the series the matcher selects, as a shared
+    /// store needs. A query that can't be scoped is never sent.
+    pub fn with_matcher(mut self, matcher: Matcher) -> Self {
+        self.matcher = Some(Arc::new(matcher));
+        self
+    }
+
+    pub fn matcher(&self) -> Option<&Matcher> {
+        self.matcher.as_deref()
     }
 
     /// The same Service through a new client, after the last one failed.
@@ -139,6 +153,16 @@ impl Prometheus {
     /// Sends one planned request as a GET and returns its JSON. Prometheus'
     /// own error envelopes come back as [`ErrorKind::Rejected`].
     pub async fn get(&self, request: &ApiRequest) -> Result<Value, QueryError> {
+        let scoped;
+        let request = match &self.matcher {
+            Some(matcher) => {
+                scoped = matcher.scope_request(request).map_err(|reason| {
+                    QueryError::unsupported(format!("Can't scope the query: {reason}"))
+                })?;
+                &scoped
+            }
+            None => request,
+        };
         let target = request.get_target().map_err(QueryError::unsupported)?;
         let _slot = self
             .slots
@@ -329,6 +353,20 @@ impl Prometheus {
         Ok(plan.finish())
     }
 
+    /// The expressions as they are sent: scoped, when the store is shared.
+    fn scoped_expressions(&self, expressions: Vec<(String, String)>) -> Vec<(String, String)> {
+        let Some(matcher) = &self.matcher else {
+            return expressions;
+        };
+        expressions
+            .into_iter()
+            .map(|(id, text)| {
+                let text = matcher.scope_query(&text).unwrap_or(text);
+                (id, text)
+            })
+            .collect()
+    }
+
     /// Reads a panel: every target's requests at once, up to the slots.
     pub async fn query_panel(
         &self,
@@ -338,7 +376,7 @@ impl Prometheus {
     ) -> Result<PanelResult, QueryError> {
         let requests = query::requests(panel, context, variables, self.scrape_interval)
             .map_err(QueryError::unsupported)?;
-        let expressions = expressions(&requests);
+        let expressions = self.scoped_expressions(expressions(&requests));
         let answers = try_join_all(requests.iter().map(|request| async move {
             let value = self.get(&request.api()).await.map_err(|error| QueryError {
                 message: format!("{}: {}", request.ref_id(), error.message),

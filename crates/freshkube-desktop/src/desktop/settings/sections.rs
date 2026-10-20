@@ -30,10 +30,12 @@ pub(crate) enum SettingsSection {
 /// What a section that points elsewhere asks of the shell.
 #[derive(Clone, Debug)]
 pub(crate) enum SettingsEvent {
-    /// Open the header's Settings menu, where the section's controls are.
-    OpenMenu,
-    /// Open Observability's Coroot connection.
-    Coroot,
+    /// Connect to Coroot: the block is saved, and Observability reads.
+    Connect(super::coroot::CorootRequest),
+    /// Drop the Coroot connection and stop reconnecting; the block stays.
+    Disconnect,
+    /// The credential store drops the key kept for this server.
+    Forget(String),
 }
 
 impl EventEmitter<SettingsEvent> for SettingsPage {}
@@ -99,31 +101,6 @@ impl SettingsSection {
             .into_iter()
             .flat_map(|(_, sections)| sections.iter().copied())
             .find(|section| section.slug() == slug)
-    }
-
-    /// What the section's page says while its controls are elsewhere, and
-    /// its button; none for a list section.
-    fn pointer(self) -> Option<(&'static str, &'static str, &'static str, SettingsEvent)> {
-        const MENU: &str = "In the Settings menu for now";
-        const OPEN_MENU: &str = "Open the Settings menu";
-        match self {
-            Self::General => None,
-            Self::Connection => None,
-            Self::Monitoring => Some((
-                MENU,
-                "The metrics source and the dashboards folder are in the header’s Settings menu \
-                 until this section holds them.",
-                OPEN_MENU,
-                SettingsEvent::OpenMenu,
-            )),
-            Self::Coroot => Some((
-                "On Observability for now",
-                "The Coroot connection is on Observability until this section holds it.",
-                "Open the Coroot connection",
-                SettingsEvent::Coroot,
-            )),
-            Self::Clusters | Self::Destinations | Self::Sources => None,
-        }
     }
 
     /// Whether the section is one of the workspace's lists.
@@ -251,45 +228,6 @@ impl SettingsPage {
                             .saved_in(saved_in())
                             .render(cx),
                     ),
-            )
-            .into_any_element()
-    }
-
-    /// A section whose controls are elsewhere: its title, and where they
-    /// are with a button that goes there.
-    pub(super) fn render_pointer(
-        &self,
-        section: SettingsSection,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let Some((title, description, action, event)) = section.pointer() else {
-            return page::page("settings-page").into_any_element();
-        };
-        let prefix = format!("settings-{}", section.slug());
-        let header = page::PageHeader::new(prefix.clone(), section.label()).render(window, cx);
-        let button = Button::new(SharedString::from(format!("{prefix}-open")))
-            .outline()
-            .small()
-            .h(dp(ui::CONTROL_HEIGHT))
-            .label(action)
-            .on_click(cx.listener(move |_, _, _, cx| cx.emit(event.clone())));
-        page::padded("settings-page")
-            .child(header)
-            .child(
-                div()
-                    .id(SharedString::from(format!("{prefix}-pointer")))
-                    .test_support()
-                    .flex_1()
-                    .min_h_0()
-                    .child(ui::empty_state(
-                        section.icon(),
-                        title,
-                        description,
-                        None,
-                        vec![button.into_any_element()],
-                        cx,
-                    )),
             )
             .into_any_element()
     }

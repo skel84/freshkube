@@ -119,11 +119,12 @@ impl Pilot {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = palette(cx);
-        let current = self.active_cluster() == Some(item.id.as_ref());
+        let current = self.switch.active_cluster() == Some(item.id.as_ref());
         let chosen = item.id.to_string();
         // A parked cluster says how old the summary it would show is. The
         // list draws only while the popover is open, so this is not per frame.
         let parked = self
+            .switch
             .registry
             .parked_since(&super::session::SessionKey::Entry(chosen.clone()))
             .map(|taken| {

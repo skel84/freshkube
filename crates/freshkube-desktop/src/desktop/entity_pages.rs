@@ -24,13 +24,20 @@ use super::settings::{SettingsEvent, SettingsPage, SettingsSection};
 use super::system_services::{ServiceEvent, SystemServices};
 use super::{Page, Pilot, nodes};
 use crate::applications::{ApplicationsPage, SwitchLink};
-use crate::monitoring::page::{MonitoringEvent, MonitoringPage};
+use crate::monitoring::page::{MonitoringEvent, MonitoringPage, Scope};
 use crate::observability::{ObservabilityEvent, ObservabilityPage, RevisionLink};
 use crate::resources::{self, NodePodsEvent, NotServed, ResourceLink, ResourcesScreen};
 use crate::screens::{
     PageEvent, PageEventFn, PageSource, ScreenEvent, ScreenHandle, ScreenPanel, ScreenSource,
 };
-use freshkube_core::resources::builtin;
+use std::collections::BTreeMap;
+
+use freshkube_core::ConfigurationRevision;
+use freshkube_core::cluster_source::{ClusterAccess, DirectAccess};
+use freshkube_core::monitoring::scope;
+use freshkube_core::resources::{builtin, kubeconfig_sources};
+use freshkube_core::setup::Setup;
+use freshkube_core::workspace::Workspace;
 use freshkube_ui::status::Segment;
 
 /// Hears one event type of a page's and hands it on as a [`PageEvent`].
@@ -144,9 +151,11 @@ impl ScreenPanel for MonitoringPage {
     /// Monitoring reads no Talos target.
     fn set_source(&mut self, _: Option<ScreenSource>, _: &mut Window, _: &mut Context<Self>) {}
 
-    /// The cluster it finds Prometheus in.
+    /// The cluster it finds Prometheus in, and, with the setup file, how.
     fn set_page_source(&mut self, source: PageSource, _: &mut Window, cx: &mut Context<Self>) {
-        MonitoringPage::set_source(self, source.kube, cx)
+        self.inputs_mut().entry = source.entry;
+        MonitoringPage::set_source(self, source.kube, cx);
+        apply_scope(self, cx);
     }
 
     fn set_visible(&mut self, visible: bool, _: &mut Window, cx: &mut Context<Self>) {
@@ -168,6 +177,58 @@ impl ScreenPanel for MonitoringPage {
     fn refresh(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         MonitoringPage::refresh(self, cx)
     }
+}
+
+/// Hands Monitoring the setup file's `metrics` choice for the open entry.
+pub(super) fn set_metrics_setup(monitoring: &Entity<MonitoringPage>, setup: Setup, cx: &mut App) {
+    monitoring.update(cx, |page, cx| {
+        page.inputs_mut().setup = Some(setup);
+        apply_scope(page, cx)
+    });
+}
+
+/// Works out how the open entry's metrics are found, and tells the page.
+fn apply_scope(page: &mut MonitoringPage, cx: &mut Context<MonitoringPage>) {
+    let (setup, entry) = (
+        page.inputs_mut().setup.clone(),
+        page.inputs_mut().entry.clone(),
+    );
+    let Some(setup) = setup else {
+        page.set_scope(Scope::default(), cx);
+        return;
+    };
+    let resolved = scope::resolve(&setup, entry.as_deref());
+    let host = match resolved.host() {
+        Some(host) if entry.as_deref() == Some(host) => page.open_access(),
+        Some(host) => hosted_by(&setup.workspace, host, &mut page.inputs_mut().hosts)
+            .map(ClusterAccess::Direct),
+        None => None,
+    };
+    page.set_scope(Scope { resolved, host }, cx);
+}
+
+/// How a store's Service is reached through another entry: its context, in
+/// the kubeconfig the workspace names, or else the ambient one, as opening
+/// that entry does. A context the files lack is a failure to connect, said
+/// as such, never another context's client.
+pub(super) fn hosted_by(
+    workspace: &Workspace,
+    host: &str,
+    kept: &mut BTreeMap<String, DirectAccess>,
+) -> Option<DirectAccess> {
+    let entry = workspace.clusters.iter().find(|entry| entry.id == host)?;
+    let sources = kubeconfig_sources(workspace.kubeconfig.as_deref());
+    let revision = ConfigurationRevision::from_kubeconfig_sources(&sources);
+    if let Some(access) = kept.get(host)
+        && access.context() == entry.context
+        && access.sources() == sources
+        && access.revision() == revision
+    {
+        return Some(access.clone());
+    }
+    let access = DirectAccess::new(sources, entry.context.clone(), revision);
+    kept.insert(host.to_owned(), access.clone());
+    Some(access)
 }
 
 impl EventEmitter<ScreenEvent> for ObservabilityPage {}
@@ -386,15 +447,25 @@ impl Pilot {
             }
             PageEvent::Service(event) => self.service_event(event, window, cx),
             PageEvent::Overview(event) => self.overview_event(event, window, cx),
-            PageEvent::Settings(SettingsEvent::OpenMenu) => {
-                self.navigation.settings_open = true;
-                cx.notify();
+            PageEvent::Settings(SettingsEvent::Connect(request)) => {
+                let (server, auth, key) = (
+                    request.server.clone(),
+                    request.auth,
+                    request.key.clone().into_string(),
+                );
+                self.pages.observability.update(cx, |page, cx| {
+                    page.connect_from_settings(&server, auth, key, window, cx)
+                });
             }
-            PageEvent::Settings(SettingsEvent::Coroot) => {
+            PageEvent::Settings(SettingsEvent::Disconnect) => {
                 self.pages
                     .observability
-                    .update(cx, |page, cx| page.show_connection(cx));
-                self.navigate_from_keyboard(Page::Observability, window, cx);
+                    .update(cx, |page, cx| page.disconnect_from_settings(window, cx));
+            }
+            PageEvent::Settings(SettingsEvent::Forget(server)) => {
+                self.pages
+                    .observability
+                    .update(cx, |page, cx| page.forget_key_from_settings(server, cx));
             }
         }
     }
@@ -434,6 +505,18 @@ impl Pilot {
     ) {
         match event {
             ObservabilityEvent::Navigation => cx.notify(),
+            ObservabilityEvent::OpenSettings => {
+                self.show_settings(SettingsSection::Coroot, window, cx)
+            }
+            ObservabilityEvent::Connection => {
+                let state = self.pages.observability.read(cx).connection_state();
+                self.settings_page
+                    .update(cx, |page, cx| page.set_coroot_state(state, cx));
+            }
+            ObservabilityEvent::KeyKept(server) => {
+                self.settings_page
+                    .update(cx, |page, cx| page.coroot_key_kept(server, window, cx));
+            }
             ObservabilityEvent::Dashboards => {
                 self.navigate_from_keyboard(Page::Monitoring, window, cx)
             }

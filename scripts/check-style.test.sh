@@ -400,20 +400,12 @@ echo "label crates/freshkube-desktop/src/gone.rs 9" >"$work/pending.txt"
 expect 1 "a pending file that is gone fails until its line goes" "label crates/freshkube-desktop/src/gone.rs (#697 slice 9)"
 
 tree
-rm "$work/pending.txt"
-mkdir -p "$work/tree/crates/freshkube-desktop/src/desktop/settings"
-page desktop/settings/edit.rs <<'EOF'
+page pending.rs <<'EOF'
 fn cancel() -> Button { Button::new("x").label("Cancel").on_click(|_, w, cx| w.close_dialog(cx)) }
 EOF
-out="$("$work/tree/scripts/check-style.sh" --root "$work/tree" 2>&1)" || true
-if grep -qF "label crates/freshkube-monitoring/src/page/source.rs (#697 slice 9)" <<<"$out" &&
-  ! grep -qF "buttons crates/freshkube-desktop/src/desktop/settings/edit.rs:" <<<"$out"; then
-  echo "ok: the script's own pending list names #697's files and their slices"
-else
-  echo "FAIL: the script's own pending list names #697's files and their slices"
-  sed 's/^/    /' <<<"$out"
-  failures=$((failures + 1))
-fi
+expect 1 "an empty pending list refuses a fresh offence" "buttons crates/freshkube-desktop/src/pending.rs:1:"
+echo "buttons crates/freshkube-desktop/src/pending.rs 9" >"$work/pending.txt"
+expect 0 "a fresh temporary pending line still covers its offence" "1 pending #697"
 
 if [ "$failures" -gt 0 ]; then
   echo "check-style.test: $failures failed"

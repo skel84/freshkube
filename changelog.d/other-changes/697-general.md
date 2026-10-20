@@ -1,1 +1,0 @@
-- General now holds appearance, text size and Talos auto-refresh, with appearance and auto-refresh remembered between launches. The header gear keeps the same quick controls.

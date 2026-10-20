@@ -4,7 +4,7 @@
 //! preferences, so its writes never overwrite theirs. Nothing in it is a
 //! credential: a URL's token lives in the system's credential store, and
 //! this file only says whether one was saved.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -56,7 +56,7 @@ pub(crate) enum Choice {
 }
 
 /// The credential store account that holds a URL's token.
-pub(crate) fn token_account(url: &str) -> String {
+pub fn token_account(url: &str) -> String {
     format!("Prometheus {url}")
 }
 
@@ -118,11 +118,27 @@ fn document(path: &Path) -> Document<Saved> {
 /// Reads what was saved; anything unreadable is left out. A file that exists
 /// but can't be used is logged.
 pub(crate) fn load(preferences: &Path) -> Saved {
-    let loaded = document(&file(preferences)).load();
-    if let Some(problem) = &loaded.problem {
-        tracing::warn!("monitoring preferences not used: {problem}");
+    match load_checked(preferences) {
+        Ok(saved) => saved,
+        Err(problem) => {
+            tracing::warn!("monitoring preferences not used: {problem}");
+            Saved::default()
+        }
     }
-    loaded.value
+}
+
+fn load_checked(preferences: &Path) -> Result<Saved, String> {
+    let loaded = document(&file(preferences)).load();
+    match loaded.problem {
+        Some(problem) => Err(problem),
+        None => Ok(loaded.value),
+    }
+}
+
+/// Token URLs named by persisted per-context sources. Read off the UI thread;
+/// an unreadable file cannot establish that an account is unused.
+pub fn saved_token_urls(preferences: &Path) -> Result<BTreeSet<String>, String> {
+    load_checked(preferences).map(|saved| saved.token_urls())
 }
 
 /// `{dashboards, prometheus, sources}`, the last two by context name.
@@ -170,6 +186,16 @@ impl<'de> Deserialize<'de> for Saved {
 }
 
 impl Saved {
+    pub(crate) fn token_urls(&self) -> BTreeSet<String> {
+        self.choices
+            .values()
+            .filter_map(|choice| match choice {
+                Choice::Url { url, token: true } => Some(url.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn from_json(value: &Value) -> Self {
         let folder = value
             .get("dashboards")
@@ -261,6 +287,60 @@ impl MonitoringStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_token_urls_read_normalized_token_references_through_the_typed_store() {
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-monitoring-token-urls-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        assert!(saved_token_urls(&preferences).unwrap().is_empty());
+        let value = json!({"sources": {
+            "outside-a": {"kind": "url", "url": "https://metrics.example.test", "token": true},
+            "outside-b": {"kind": "url", "url": "https://metrics.example.test/", "token": true},
+            "anonymous": {"kind": "url", "url": "https://anonymous.example.test", "token": false},
+            "service": {"kind": "service", "namespace": "metrics", "name": "prometheus", "port": 9090}
+        }});
+        std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(
+            saved_token_urls(&preferences).unwrap(),
+            ["https://metrics.example.test/".to_owned()].into()
+        );
+        std::fs::write(file(&preferences), "{").unwrap();
+        assert!(saved_token_urls(&preferences).is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn a_folder_edit_keeps_unknown_keys_in_monitoring_json() {
+        let directory = std::env::temp_dir().join(format!(
+            "freshkube-monitoring-folder-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let preferences = directory.join("preferences.json");
+        let mut value = json!({
+            "dashboards": null,
+            "prometheus": {"cluster-a": {"namespace": "metrics", "name": "prometheus", "port": 9090, "https": false, "path": "", "future": [false, null, 7]}},
+            "sources": {"cluster-b": {"kind": "url", "url": "https://metrics.example.test/", "token": false, "future": {"label": "example"}}},
+            "future": {"options": [true, null, "example"]}
+        });
+        std::fs::write(file(&preferences), serde_json::to_vec(&value).unwrap()).unwrap();
+        let store = MonitoringStore::new(&preferences, load(&preferences));
+        let folder = directory.join("dashboards");
+        store.update(|saved| saved.folder = Some(folder.clone()));
+        store.save_latest().unwrap();
+        value["dashboards"] = serde_json::to_value(folder).unwrap();
+        let written: Value =
+            serde_json::from_slice(&std::fs::read(file(&preferences)).unwrap()).unwrap();
+        assert_eq!(written, value);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn unknown_keys_round_trip_unchanged() {

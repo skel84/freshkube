@@ -8,7 +8,7 @@ fn header_chips_filter_health_without_changing_the_talos_target(cx: &mut TestApp
         window.render_frame(cx);
         window.click("nav-nodes", cx);
         window.render_frame(cx);
-        let target = pilot.read(cx).selected_node.clone();
+        let target = pilot.read(cx).target.selected_node.clone();
         let nodes = &pilot.read(cx).pages.node_workspace.read(cx);
         let not_ready = nodes
             .rows
@@ -47,7 +47,7 @@ fn header_chips_filter_health_without_changing_the_talos_target(cx: &mut TestApp
                 .iter()
                 .all(|ix| nodes.rows[*ix].ready == "NotReady")
         );
-        assert_eq!(pilot.read(cx).selected_node, target);
+        assert_eq!(pilot.read(cx).target.selected_node, target);
         assert!(!nodes.open);
         window.click("nodes-tally-failing", cx);
         window.render_frame(cx);
@@ -60,7 +60,7 @@ fn header_chips_filter_health_without_changing_the_talos_target(cx: &mut TestApp
             super::super::NodeView::Cards
         );
         assert!(window.find("nodes-title").visible());
-        assert_eq!(pilot.read(cx).selected_node, target);
+        assert_eq!(pilot.read(cx).target.selected_node, target);
     })
     .unwrap();
 }
@@ -334,7 +334,7 @@ fn groups_tallies_and_glyphs_agree_and_arrows_skip_folded_healthy_rows(cx: &mut 
 #[gpui_kit::test]
 fn text_filter_and_cards_empty_state_preserve_selection_and_target(cx: &mut TestAppContext) {
     let (_runtime, handle, pilot) = fixture(cx, 1280., 880.);
-    let target = pilot.read_with(cx, |pilot, _| pilot.selected_node.clone());
+    let target = pilot.read_with(cx, |pilot, _| pilot.target.selected_node.clone());
     cx.update_window(handle, |_, window, cx| {
         window.click("nav-nodes", cx);
         window.render_frame(cx);
@@ -377,7 +377,7 @@ fn text_filter_and_cards_empty_state_preserve_selection_and_target(cx: &mut Test
             Some("No matching nodes")
         );
         assert!(window.try_find("nodes-cards").is_none());
-        assert_eq!(pilot.read(cx).selected_node, target);
+        assert_eq!(pilot.read(cx).target.selected_node, target);
         assert!(
             pilot
                 .read(cx)
@@ -447,7 +447,7 @@ fn text_filter_and_cards_empty_state_preserve_selection_and_target(cx: &mut Test
                 .iter()
                 .all(|ix| nodes.rows[*ix].role == presentation::Role::Worker)
         );
-        assert_eq!(pilot.read(cx).selected_node, target);
+        assert_eq!(pilot.read(cx).target.selected_node, target);
     })
     .unwrap();
 }
@@ -618,7 +618,7 @@ fn opening_a_folded_healthy_node_from_overview_expands_and_reveals_it_on_return(
         );
         assert!(window.find("node-talos-cp-fra1-01").visible());
         assert_eq!(
-            pilot.read(cx).selected_node.as_deref(),
+            pilot.read(cx).target.selected_node.as_deref(),
             Some("talos-cp-fra1-01")
         );
     })
@@ -674,6 +674,9 @@ fn a_row_click_opens_its_node_once_the_shell_hears_it(cx: &mut TestAppContext) {
     cx.run_until_parked();
     pilot.read_with(cx, |pilot, cx| {
         assert!(pilot.pages.node_workspace.read(cx).open);
-        assert_eq!(pilot.selected_node.as_deref(), Some("talos-wk-fra1-02"));
+        assert_eq!(
+            pilot.target.selected_node.as_deref(),
+            Some("talos-wk-fra1-02")
+        );
     });
 }

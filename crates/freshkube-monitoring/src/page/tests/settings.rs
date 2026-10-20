@@ -1,5 +1,108 @@
 use super::*;
 
+#[gpui_kit::test]
+async fn replacing_a_context_source_keeps_tokens_named_by_the_setup_or_another_context(
+    cx: &mut TestAppContext,
+) {
+    use freshkube_core::secrets::{MemoryStore, SecretStore};
+    cx.executor().allow_parking();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    for owner in ["central", "entry", "context", "none"] {
+        for action in ["automatic", "service", "url", "forget"] {
+            let directory = std::env::temp_dir().join(format!(
+                "freshkube-monitoring-shared-token-{}-{owner}-{action}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&directory);
+            std::fs::create_dir_all(&directory).unwrap();
+            let preferences = directory.join("preferences.json");
+            let old = serde_json::json!({"kind": "url", "url": "https://metrics.example.test", "token": true});
+            let mut value = serde_json::json!({"sources": {"prod-ams": old.clone()}});
+            if owner == "context" {
+                value["sources"]["outside-example"] = old;
+            }
+            let file = directory.join("monitoring.json");
+            std::fs::write(&file, serde_json::to_vec(&value).unwrap()).unwrap();
+            let setup = freshkube_core::setup::parse(match owner {
+                "central" => b"version: 1\nmetrics: {mode: automatic, store: {url: 'https://metrics.example.test', token: keys.json}}\n".as_slice(),
+                "entry" => b"version: 1\nclusters:\n- id: cluster-a\n  role: core\n  context: cluster-a\n  metrics: {source: {url: 'https://metrics.example.test', token: keys.json}}\n".as_slice(),
+                _ => b"version: 1\n".as_slice(),
+            }).unwrap();
+            let store = std::sync::Arc::new(MemoryStore::default());
+            let account = crate::token_account("https://metrics.example.test/");
+            store.write(&account, "invented-token").unwrap();
+            let (handle, page) = mount_with(
+                cx,
+                &runtime,
+                Some(live_source()),
+                Some(&preferences),
+                Some(store.clone()),
+            );
+            cx.update_window(handle, |_, window, cx| {
+                page.update(cx, |page, cx| {
+                    page.inputs_mut().setup = Some(setup);
+                    page.source_form(window, cx);
+                    match action {
+                        "automatic" => page.set_mode(source::Mode::Automatic, cx),
+                        "service" => {
+                            page.set_mode(source::Mode::Service, cx);
+                            let form = page.form.as_ref().unwrap();
+                            for (state, value) in [
+                                (&form.namespace, "metrics"),
+                                (&form.name, "prometheus"),
+                                (&form.port, "9090"),
+                            ] {
+                                state.update(cx, |state, cx| state.set_value(value, window, cx));
+                            }
+                        }
+                        "url" => {
+                            page.form.as_ref().unwrap().url.update(cx, |state, cx| {
+                                state.set_value("https://other-metrics.example.test", window, cx)
+                            });
+                        }
+                        "forget" => {
+                            page.forget_token(window, cx);
+                            return;
+                        }
+                        _ => unreachable!(),
+                    }
+                    page.save_source(window, cx);
+                });
+            })
+            .unwrap();
+            // Drain the actual secret queue before asserting that a shared
+            // token survived; an early read could miss a queued deletion.
+            if let Some(mut done) =
+                cx.update(|cx| page.update(cx, |page, _| page.secret_queue.take()))
+            {
+                freshkube_ui::real_io::until_io(cx, "the context token cleanup", |_| {
+                    done.try_recv().is_ok()
+                });
+            }
+            cx.wait_for_io(handle, |_, _| {
+                serde_json::from_slice::<serde_json::Value>(&std::fs::read(&file).unwrap())
+                    .is_ok_and(|value| match action {
+                        "automatic" => value["sources"]["prod-ams"].is_null(),
+                        "service" => value["sources"]["prod-ams"]["kind"] == "service",
+                        "url" => {
+                            value["sources"]["prod-ams"]["url"]
+                                == "https://other-metrics.example.test/"
+                        }
+                        "forget" => value["sources"]["prod-ams"]["token"] == false,
+                        _ => unreachable!(),
+                    })
+            })
+            .await;
+            assert_eq!(
+                store.read(&account).unwrap().is_some(),
+                owner != "none",
+                "{owner}, {action}"
+            );
+            std::fs::remove_dir_all(directory).unwrap();
+        }
+    }
+}
+
 /// A Prometheus API on loopback that wants `Bearer s3cret` and answers
 /// only the confirming query.
 fn metrics_server(runtime: &tokio::runtime::Runtime) -> String {
@@ -100,7 +203,7 @@ async fn a_url_chosen_in_settings_is_tested_saved_and_read_with_its_token_from_t
                     .update(cx, |input, cx| input.set_value(url, window, cx));
                 form.token
                     .update(cx, |input, cx| input.set_value(token, window, cx));
-                page.test_source(cx);
+                page.test_source(window, cx);
             })
         })
         .unwrap();

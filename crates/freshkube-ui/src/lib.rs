@@ -30,3 +30,4 @@ pub mod text_size;
 pub mod theme;
 pub mod tooltip;
 pub mod ui;
+pub mod url;

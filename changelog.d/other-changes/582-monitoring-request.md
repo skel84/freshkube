@@ -1,1 +1,0 @@
-- **Monitoring:** dashboard, connection, marker and source-test reads use the shared read owner; page and history share one dispatch path, preserving their timing and late-answer handling.

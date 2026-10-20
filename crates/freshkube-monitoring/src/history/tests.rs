@@ -399,3 +399,76 @@ fn a_recent_failed_answer_keeps_the_ask_time_on_showing(cx: &mut TestAppContext)
     cx.run_until_parked();
     assert_eq!(answered(cx, &history), 2);
 }
+
+/// A loopback server that answers every request as a Prometheus with no
+/// series and records the path and query it was asked for.
+fn recording_server(
+    runtime: &tokio::runtime::Runtime,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let log = seen.clone();
+    runtime.spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let log = log.clone();
+            tokio::spawn(async move {
+                let mut buffer = vec![0; 16 * 1024];
+                let mut read = 0;
+                while !buffer[..read].windows(4).any(|w| w == b"\r\n\r\n") {
+                    match socket.read(&mut buffer[read..]).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => read += n,
+                    }
+                }
+                let head = String::from_utf8_lossy(&buffer[..read]);
+                let path = head.split_whitespace().nth(1).unwrap_or("").to_owned();
+                log.lock().unwrap().push(path);
+                let body = r#"{"status":"success","data":{"resultType":"matrix","result":[]}}"#;
+                let answer = format!(
+                    "HTTP/1.1 200 X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(answer.as_bytes()).await;
+            });
+        }
+    });
+    (format!("http://{address}/"), seen)
+}
+
+#[gpui_kit::test]
+async fn the_history_of_a_scoped_store_sends_the_entrys_matcher(cx: &mut TestAppContext) {
+    use freshkube_ui::real_io::RealIo;
+    cx.executor().allow_parking();
+    let (runtime, handle, history) = mount(cx);
+    let (url, seen) = recording_server(&runtime);
+    let prometheus = Prometheus::direct(url, None).unwrap().with_matcher(
+        freshkube_core::monitoring::Matcher::new("cluster", "cluster-b"),
+    );
+    update(cx, &history, |view, cx| {
+        view.set_source(
+            Some(HistorySource {
+                id: "open".into(),
+                kind: HistoryKind::Ready(prometheus),
+                client: 0,
+                owner: None,
+            }),
+            cx,
+        );
+        view.set_subject(pod("api-7f9c6d-2xk4p"), cx);
+        view.set_visible(true, cx);
+    });
+    let observed = seen.clone();
+    cx.wait_for_io(handle, move |_, _| observed.lock().unwrap().len() >= 2)
+        .await;
+    let asked = seen.lock().unwrap().clone();
+    assert!(
+        asked
+            .iter()
+            .all(|path| path.contains("cluster%3D%22cluster-b%22")),
+        "an unscoped history read: {asked:?}"
+    );
+}

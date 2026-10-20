@@ -1,5 +1,5 @@
 //! Settings › Argo CD destinations: the workspace's Argo CD destinations,
-//! each mapped to one of its clusters (`workspace.json`'s `destinations`).
+//! each mapped to one of its clusters (`freshkube.yaml`'s `destinations`).
 //! It keeps its own selection, keys and toolbar, draws the page's banners
 //! under it, and saves through the page, as the clusters do. It derives its
 //! rows when the page's workspace changes, so `render` only reads them.
@@ -16,12 +16,8 @@ mod tests;
 use super::SettingsPage;
 use crate::ui::{self, dp};
 use freshkube_core::workspace::Key;
-use freshkube_ui::{menu, page, table, table::TableSource as _};
-use gpui_kit::component::{
-    Disableable, Sizable, WindowExt,
-    button::{Button, ButtonVariants},
-    h_flex, v_flex,
-};
+use freshkube_ui::{form as fields, menu, page, table, table::TableSource as _};
+use gpui_kit::component::{Disableable, Sizable, WindowExt, button::Button, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use source::Column;
@@ -254,12 +250,17 @@ impl Destinations {
         self.focus(window, cx);
         let page = self.page.clone();
         let what = key.describe();
+        let body: SharedString = format!(
+            "Argo CD Applications with destination {what} show it as Unknown \
+             again. Nothing on a cluster is touched."
+        )
+        .into();
         window.open_dialog(cx, move |dialog, window, _| {
             let confirm_page = page.clone();
             let confirm_key = key.clone();
             dialog
                 .w(ui::dp_px(420., window))
-                .title(format!("Remove the mapping for {what}?"))
+                .title("Remove destination mapping?")
                 .child(
                     v_flex()
                         .id("settings-destination-remove-dialog")
@@ -268,32 +269,28 @@ impl Destinations {
                         .aria_label(format!("Remove the mapping for {what}"))
                         .gap_3()
                         .text_size(dp(13.))
-                        .child(
-                            "Argo CD Applications with this destination show it as Unknown \
-                             again. Nothing on a cluster is touched.",
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .justify_end()
-                                .child(
-                                    Button::new("settings-destination-remove-cancel")
-                                        .outline()
-                                        .label("Cancel")
-                                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                                )
-                                .child(
-                                    Button::new("settings-destination-remove-confirm")
-                                        .danger()
-                                        .label("Remove")
-                                        .on_click(move |_, window, cx| {
-                                            window.close_dialog(cx);
-                                            _ = confirm_page.update(cx, |page, cx| {
-                                                page.remove_destination(at, &confirm_key, cx)
-                                            });
-                                        }),
-                                ),
-                        ),
+                        .child(match &key {
+                            Key::Server(_) => freshkube_ui::url::url_text(
+                                "settings-destination-remove-url",
+                                &body,
+                            )
+                            .into_any_element(),
+                            Key::Name(_) => body.clone().into_any_element(),
+                        })
+                        .child(fields::actions(
+                            fields::Action::new(
+                                "settings-destination-remove-confirm",
+                                "Remove",
+                                move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = confirm_page.update(cx, |page, cx| {
+                                        page.remove_destination(at, &confirm_key, cx)
+                                    });
+                                },
+                            )
+                            .danger(),
+                            fields::Action::cancel("settings-destination-remove-cancel"),
+                        )),
                 )
         });
     }

@@ -139,7 +139,7 @@ impl Pages {
                     .preferences
                     .as_deref()
                     .filter(|_| !options.starts_with_examples()),
-                secrets,
+                secrets.clone(),
                 window,
                 cx,
             )
@@ -152,7 +152,7 @@ impl Pages {
                 cx,
             )
         });
-        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), cx));
+        let settings_page = cx.new(|cx| settings::SettingsPage::new(runtime.clone(), secrets, cx));
         let system_services = cx.new(|cx| system_services::SystemServices::new(window, cx));
         let search = cx.new(|cx| search::Search::new(runtime.clone(), window, cx));
         pages.extend(page_handles(
@@ -286,6 +286,12 @@ fn page_handles(
 }
 
 impl Pages {
+    /// The setup file's last good setup, from the shell: Monitoring finds its
+    /// metrics as its `metrics` block says.
+    pub(super) fn set_setup(&self, setup: freshkube_core::setup::Setup, cx: &mut App) {
+        super::entity_pages::set_metrics_setup(&self.monitoring, setup, cx);
+    }
+
     /// The service selected on the node pane's tab.
     pub(super) fn selected_service(&self, cx: &App) -> Option<String> {
         self.node_workspace

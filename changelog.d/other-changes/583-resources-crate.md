@@ -1,1 +1,0 @@
-- **Internal:** the Resources page (the kind lists, the detail pane, pod shells and port forwards) moved out of the desktop crate into a new `freshkube-resources` crate, so it builds apart from the shell; the app behaves as before.

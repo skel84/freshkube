@@ -9,7 +9,10 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
         window.click("nav-nodes", cx);
         window.render_frame(cx);
         expand_healthy_nodes(window, cx);
-        assert_eq!(view.read(cx).selected_node.as_deref(), Some(FIRST_NODE));
+        assert_eq!(
+            view.read(cx).target.selected_node.as_deref(),
+            Some(FIRST_NODE)
+        );
         window
             .within("nodes-page")
             .click("node-talos-cp-fra1-01", cx);
@@ -23,7 +26,7 @@ fn overview_keyboard_selection_updates_target_node(cx: &mut TestAppContext) {
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert_eq!(
-            view.read(cx).selected_node.as_deref(),
+            view.read(cx).target.selected_node.as_deref(),
             Some("talos-cp-fra1-02")
         );
         assert_eq!(
@@ -133,19 +136,28 @@ fn refused_summary_events_leave_health_and_other_parts_loaded(cx: &mut TestAppCo
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     cx.update_window(handle, |_, window, cx| {
         view.update(cx, |view, cx| {
-            let mut summary = (**view.registry.active().kubernetes_summary.data().unwrap()).clone();
+            let mut summary = (**view
+                .switch
+                .registry
+                .active()
+                .kubernetes_summary
+                .data()
+                .unwrap())
+            .clone();
             summary.events = Part::Refused("Can't list events: forbidden".into());
             let health = crate::screens::WorkloadData::from_outcome(&summary.workloads);
             let request = view
+                .switch
                 .registry
                 .active_mut()
                 .kubernetes_summary
                 .begin(view.applied.clone());
-            view.registry
+            view.switch
+                .registry
                 .active_mut()
                 .kubernetes_summary
                 .apply(&request, Ok(std::sync::Arc::new(summary)));
-            view.registry.active_mut().summary_health = Some(health.clone());
+            view.switch.registry.active_mut().summary_health = Some(health.clone());
             view.deliver_workloads(health, cx);
             cx.notify();
         });
@@ -155,6 +167,7 @@ fn refused_summary_events_leave_health_and_other_parts_loaded(cx: &mut TestAppCo
         window.find("workload-list");
         let summary = view
             .read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -174,6 +187,7 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
     let (_runtime, handle, view) = fixture(cx, 1280., 820.);
     let previous = cx.update(|cx| {
         view.read(cx)
+            .switch
             .registry
             .active()
             .kubernetes_summary
@@ -193,6 +207,7 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
         assert!(!std::sync::Arc::ptr_eq(
             &previous,
             view.read(cx)
+                .switch
                 .registry
                 .active()
                 .kubernetes_summary
@@ -201,6 +216,7 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
         ));
         view.update(cx, |view, cx| {
             let request = view
+                .switch
                 .registry
                 .active_mut()
                 .kubernetes_summary
@@ -208,6 +224,7 @@ fn health_refreshes_the_shared_summary_and_old_context_answers_are_ignored(
             view.select_context("staging-eu".into(), window, cx);
             assert!(
                 !view
+                    .switch
                     .registry
                     .active_mut()
                     .kubernetes_summary

@@ -189,7 +189,7 @@ fn a_launch_reads_the_workspace_file_beside_the_preferences(cx: &mut TestAppCont
 
 const SETUP: &str = "version: 1\nclusters:\n- {id: cluster-a, role: core, context: cluster-a}\n- {id: cluster-b, role: cicd, context: cluster-b}\nsources: {kargo: cluster-b}\ncoroot: {server: 'https://observations.example.test', sign_in: anonymous}\n";
 
-fn poll_setup(cx: &mut TestAppContext) {
+pub(super) fn poll_setup(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(2));
     cx.run_until_parked();
@@ -223,32 +223,15 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
                 .unwrap()
                 .contains("freshkube.yaml")
         );
-        assert!(
-            window
-                .find("settings-banner")
-                .label()
-                .unwrap()
-                .contains(super::HAND_EDITED)
-        );
+        assert!(window.try_find("settings-banner").is_none());
         assert_eq!(
             view.read(cx).pages.observability.read(cx).coroot_url(cx),
             "https://observations.example.test"
         );
-        window.click("settings-add", cx);
-        window.render_frame(cx);
-        assert!(window.try_find("settings-form-context").is_none());
-        let page = view.read(cx).settings_page.clone();
-        page.update(cx, |page, cx| {
-            assert!(!page.editable());
-            page.commit(workspace::Workspace::default(), "Changed".into(), cx);
-        });
+        assert!(view.read(cx).settings_page.read(cx).editable());
     })
     .unwrap();
     assert_eq!(std::fs::read_to_string(&path).unwrap(), SETUP);
-    assert_eq!(
-        std::fs::read_to_string(directory.path().join("workspace.json")).unwrap(),
-        r#"{"version":1,"clusters":[]}"#
-    );
 
     let changed = SETUP
         .replace("cluster-a", "cluster-c")
@@ -260,7 +243,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         let pilot = view.read(cx);
-        assert_eq!(pilot.switcher[0].id.as_ref(), "cluster-c");
+        assert_eq!(pilot.switch.switcher[0].id.as_ref(), "cluster-c");
         assert!(window.find("settings-cluster-cluster-c").visible());
         assert!(
             window
@@ -292,6 +275,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
             "{words}"
         );
         assert!(words.contains("The last good setup stays in use."));
+        assert!(window.try_find("setup-reload-status").is_none());
         assert!(window.find("settings-cluster-cluster-c").visible());
     })
     .unwrap();
@@ -300,13 +284,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         assert!(window.find("settings-cluster-cluster-a").visible());
-        assert!(
-            !window
-                .find("settings-banner")
-                .label()
-                .unwrap()
-                .contains("invalid YAML")
-        );
+        assert!(window.try_find("settings-banner").is_none());
     })
     .unwrap();
     std::fs::remove_file(&path).unwrap();
@@ -321,6 +299,7 @@ fn setup_reloads_settings_the_switcher_delivery_and_coroot(cx: &mut TestAppConte
                 .contains("is gone")
         );
         assert!(window.find("settings-cluster-cluster-a").visible());
+        assert!(window.try_find("setup-reload-status").is_none());
     })
     .unwrap();
 }
@@ -486,7 +465,7 @@ fn the_gear_panels_dividers_keep_their_pixel_in_a_short_window(cx: &mut TestAppC
                 divider.bounds()
             );
         }
-        assert_eq!(found, 3, "Connection’s two dividers left the gear");
+        assert_eq!(found, 1, "Monitoring’s two dividers left the gear");
     })
     .unwrap();
 }
@@ -650,46 +629,6 @@ fn open_settings_and_all_settings_open_the_section_shown_last(cx: &mut TestAppCo
     .unwrap();
 }
 
-/// A section whose controls aren't here yet says where they are, on a
-/// padded page, and its button goes there: the gear's menu, or Coroot's
-/// connection on Observability. It has no line in the status bar.
-#[gpui_kit::test]
-fn a_pointer_section_goes_where_its_controls_are(cx: &mut TestAppContext) {
-    let (_runtime, handle, view) = fixture(cx, 1280., 880.);
-    for (slug, section, title) in SECTIONS.into_iter().take(4).skip(2) {
-        cx.update_window(handle, |_, window, cx| {
-            view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
-            window.render_frame(cx);
-            layout_check::assert_page_frame(
-                window,
-                cx,
-                &layout_check::PageFrame {
-                    page: "settings-page",
-                    title: Box::leak(format!("settings-{slug}-title").into_boxed_str()),
-                    title_text: title,
-                    content: Box::leak(format!("settings-{slug}-pointer").into_boxed_str()),
-                },
-            );
-            assert!(window.try_find("settings-scope").is_none(), "{slug}");
-            window.click(format!("settings-{slug}-open"), cx);
-        })
-        .unwrap();
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            let pilot = view.read(cx);
-            if section == SettingsSection::Coroot {
-                assert_eq!(pilot.navigation.page, Page::Observability);
-            } else {
-                assert_eq!(pilot.navigation.page, Page::Settings, "{slug}");
-                assert!(pilot.navigation.settings_open, "{slug}");
-            }
-            view.update(cx, |pilot, _| pilot.navigation.settings_open = false);
-        })
-        .unwrap();
-    }
-}
-
 #[gpui_kit::test]
 fn connection_is_a_settings_form_at_each_window_and_text_size(cx: &mut TestAppContext) {
     use crate::{text_size, ui};
@@ -776,7 +715,7 @@ fn general_and_quick_controls_describe_auto_refresh_when_off(cx: &mut TestAppCon
         assert!(window.find("settings-quick-refresh-hint").visible());
         assert!(window.try_find("browse-config").is_none());
         assert!(window.try_find("kubeconfig-mode").is_none());
-        assert!(window.find("monitoring-source-settings").visible());
+        assert!(window.try_find("monitoring-source-settings").is_none());
         window.click("auto-refresh", cx);
         window.render_frame(cx);
         assert!(window.find("settings-quick-refresh-hint").visible());
@@ -786,4 +725,188 @@ fn general_and_quick_controls_describe_auto_refresh_when_off(cx: &mut TestAppCon
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn the_reload_receipt_tooltip_keeps_its_full_text_on_workspace_sections(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("freshkube.yaml");
+    std::fs::write(&path, SETUP).unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.show_settings(SettingsSection::Clusters, window, cx)
+        });
+    })
+    .unwrap();
+    std::fs::write(&path, SETUP.replace("cluster-a", "cluster-c")).unwrap();
+    poll_setup(cx);
+    for section in [
+        SettingsSection::Clusters,
+        SettingsSection::Destinations,
+        SettingsSection::Sources,
+    ] {
+        let receipt = cx.update(|cx| view.read(cx).setup_file.read(cx).receipt.clone().unwrap());
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
+            window.render_frame(cx);
+            window.hover("setup-reload-status", cx);
+        })
+        .unwrap();
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(600));
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let tooltip = window.find("setup-receipt-text");
+            assert!(tooltip.visible());
+            assert_eq!(tooltip.label(), Some(receipt.as_str()));
+            assert!(receipt.starts_with("Reloaded freshkube.yaml · "));
+            window.hover(
+                match section {
+                    SettingsSection::Clusters => "settings-title",
+                    SettingsSection::Destinations => "settings-destinations-title",
+                    SettingsSection::Sources => "settings-sources-title",
+                    _ => unreachable!(),
+                },
+                cx,
+            );
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+}
+
+#[gpui_kit::test]
+fn a_false_coroot_reconnect_preference_keeps_the_next_launch_disconnected(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("freshkube.yaml"), SETUP).unwrap();
+    std::fs::write(
+        directory.path().join("preferences.json"),
+        r#"{"coroot_reconnect":false}"#,
+    )
+    .unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.update(cx, |pilot, cx| {
+            pilot.navigate_from_keyboard(Page::Observability, window, cx)
+        });
+        window.render_frame(cx);
+        let page = view.read(cx).pages.observability.read(cx);
+        assert_eq!(page.coroot_url(cx), "https://observations.example.test");
+        assert_eq!(
+            window.find("obs-open-settings").label(),
+            Some("Open Settings")
+        );
+        assert!(!view.read(cx).setup_file.read(cx).coroot_reconnect);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    poll_setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("obs-open-settings").label(),
+            Some("Open Settings")
+        );
+    })
+    .unwrap();
+}
+
+/// A disabled row command must stay inert through the real popup, including
+/// Delivery sources' submenu. Checking the toolbar alone misses this path.
+#[gpui_kit::test]
+fn example_row_menus_cannot_edit_the_workspace(cx: &mut TestAppContext) {
+    use gpui_kit::component::{Theme, ThemeMode, WindowExt};
+
+    let guard = tempfile::tempdir().unwrap();
+    let options =
+        GpuiOptions::fixture().with_preferences(Some(guard.path().join("preferences.json")));
+    let (_runtime, handle, view) = mount(cx, options, 1280., 880.);
+    let original = cx.update(|cx| view.read(cx).settings_page.read(cx).workspace.clone());
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for (section, row, disabled) in [
+            (
+                SettingsSection::Clusters,
+                "settings-cluster-prod-fra",
+                vec![0usize, 1, 3, 4],
+            ),
+            (
+                SettingsSection::Destinations,
+                "settings-destination-0",
+                vec![0, 1, 2],
+            ),
+            (
+                SettingsSection::Sources,
+                "settings-source-kargo",
+                vec![2, 3],
+            ),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                Theme::change(mode, Some(window), cx);
+                view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(row, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                for _ in 0..24 {
+                    if window.simulate_next_frame(cx) == 0 {
+                        break;
+                    }
+                    window.render_frame(cx);
+                }
+                window.right_click(row, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            for index in disabled {
+                let menus = cx
+                    .update_window(handle, |_, window, cx| {
+                        window.render_frame(cx);
+                        assert!(
+                            window.try_find("popup-menu").is_some(),
+                            "{section:?} row menu"
+                        );
+                        let menus = gpui_kit::base::test_support::snapshots(window)
+                            .iter()
+                            .filter(|element| element.role() == Some(gpui_kit::Role::Menu))
+                            .count();
+                        window.within("popup-menu").click(index, cx);
+                        menus
+                    })
+                    .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    assert!(!window.has_active_dialog(cx));
+                    // Disabled Pin to entry must not open a second menu.
+                    assert_eq!(
+                        gpui_kit::base::test_support::snapshots(window)
+                            .iter()
+                            .filter(|element| element.role() == Some(gpui_kit::Role::Menu))
+                            .count(),
+                        menus,
+                        "{section:?} item {index} opened another menu"
+                    );
+                    let page = view.read(cx).settings_page.read(cx);
+                    assert_eq!(page.workspace, original);
+                    assert!(page.saving.is_none() && page.notice.is_none());
+                })
+                .unwrap();
+            }
+            cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+    assert_eq!(std::fs::read_dir(guard.path()).unwrap().count(), 0);
 }

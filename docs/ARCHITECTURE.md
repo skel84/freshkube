@@ -164,3 +164,4 @@ Behaviour that does not belong in the rules lives in one doc per feature, each s
 - [docs/features/nodes.md](features/nodes.md): the Nodes table, its node pane and their keys.
 - [docs/features/shell.md](features/shell.md): the app frame, the Overview and Attention, and the Kubernetes summary session.
 - [docs/features/monitoring.md](features/monitoring.md): the Monitoring page, its markers and the CPU and memory history charts.
+- [docs/features/settings.md](features/settings.md): the Settings area, its seven sections, the shared form rules and the setup file's saves.
