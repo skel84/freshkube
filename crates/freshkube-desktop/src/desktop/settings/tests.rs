@@ -814,3 +814,99 @@ fn a_false_coroot_reconnect_preference_keeps_the_next_launch_disconnected(cx: &m
     })
     .unwrap();
 }
+
+/// A disabled row command must stay inert through the real popup, including
+/// Delivery sources' submenu. Checking the toolbar alone misses this path.
+#[gpui_kit::test]
+fn example_row_menus_cannot_edit_the_workspace(cx: &mut TestAppContext) {
+    use gpui_kit::component::{Theme, ThemeMode, WindowExt};
+
+    let guard = tempfile::tempdir().unwrap();
+    let options =
+        GpuiOptions::fixture().with_preferences(Some(guard.path().join("preferences.json")));
+    let (_runtime, handle, view) = mount(cx, options, 1280., 880.);
+    let original = cx.update(|cx| view.read(cx).settings_page.read(cx).workspace.clone());
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        for (section, row, disabled) in [
+            (
+                SettingsSection::Clusters,
+                "settings-cluster-prod-fra",
+                vec![0usize, 1, 3, 4],
+            ),
+            (
+                SettingsSection::Destinations,
+                "settings-destination-0",
+                vec![0, 1, 2],
+            ),
+            (
+                SettingsSection::Sources,
+                "settings-source-kargo",
+                vec![2, 3],
+            ),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                Theme::change(mode, Some(window), cx);
+                view.update(cx, |pilot, cx| pilot.show_settings(section, window, cx));
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(row, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                for _ in 0..24 {
+                    if window.simulate_next_frame(cx) == 0 {
+                        break;
+                    }
+                    window.render_frame(cx);
+                }
+                window.right_click(row, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            for index in disabled {
+                let menus = cx
+                    .update_window(handle, |_, window, cx| {
+                        window.render_frame(cx);
+                        assert!(
+                            window.try_find("popup-menu").is_some(),
+                            "{section:?} row menu"
+                        );
+                        let menus = gpui_kit::base::test_support::snapshots(window)
+                            .iter()
+                            .filter(|element| element.role() == Some(gpui_kit::Role::Menu))
+                            .count();
+                        window.within("popup-menu").click(index, cx);
+                        menus
+                    })
+                    .unwrap();
+                cx.run_until_parked();
+                cx.update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    assert!(!window.has_active_dialog(cx));
+                    // Disabled Pin to entry must not open a second menu.
+                    assert_eq!(
+                        gpui_kit::base::test_support::snapshots(window)
+                            .iter()
+                            .filter(|element| element.role() == Some(gpui_kit::Role::Menu))
+                            .count(),
+                        menus,
+                        "{section:?} item {index} opened another menu"
+                    );
+                    let page = view.read(cx).settings_page.read(cx);
+                    assert_eq!(page.workspace, original);
+                    assert!(page.saving.is_none() && page.notice.is_none());
+                })
+                .unwrap();
+            }
+            cx.update_window(handle, |_, window, cx| window.press("escape", cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+    assert_eq!(std::fs::read_dir(guard.path()).unwrap().count(), 0);
+}

@@ -322,7 +322,35 @@ fn example_data_shows_the_example_connection_and_saves_nothing(cx: &mut TestAppC
             "https://coroot.acme.example"
         );
         assert!(window.find("coroot-credential-kept").visible());
-        // Connect does nothing in example data.
+        // Every key action stays inert, in both appearances.
+        for mode in [
+            gpui_kit::component::ThemeMode::Light,
+            gpui_kit::component::ThemeMode::Dark,
+        ] {
+            gpui_kit::component::Theme::change(mode, Some(window), cx);
+            window.render_frame(cx);
+            for button in ["coroot-credential-replace", "coroot-credential-forget"] {
+                window.click(button, cx);
+                window.render_frame(cx);
+                assert!(window.find("coroot-credential-kept").visible());
+                assert!(window.try_find("coroot-credential-input").is_none());
+                let page = view.read(cx).settings_page.read(cx);
+                assert!(page.saving.is_none());
+                assert!(
+                    page.coroot
+                        .as_ref()
+                        .unwrap()
+                        .credential
+                        .read(cx)
+                        .value()
+                        .is_empty()
+                );
+                assert_eq!(
+                    window.find("coroot-state-text").label(),
+                    Some("Not connected")
+                );
+            }
+        }
         window.click("coroot-connect", cx);
         assert!(view.read(cx).settings_page.read(cx).saving.is_none());
     })
@@ -392,6 +420,11 @@ fn coroot_is_a_settings_form_at_each_window_and_text_size(cx: &mut TestAppContex
                 let dp = |n| ui::dp_px(n, window);
                 let group = window.find("coroot-connection").bounds();
                 assert!(group.size.width <= dp(form::MAX_WIDTH) + px(1.));
+                let hint = window.find("coroot-server-hint").bounds();
+                let scheme = window.find("coroot-server-hint-chunk-7").bounds();
+                let word = window.find("coroot-server-hint-chunk-0").bounds();
+                assert!((scheme.size.height - word.size.height).abs() <= px(1.));
+                assert!(scheme.left() >= hint.left() && scheme.right() <= hint.right() + px(1.));
                 let control = window.find(("coroot-sign-in", 0usize)).bounds();
                 assert!(control.size.height > px(0.));
                 let content = window.find("settings-coroot-form").bounds();
@@ -466,4 +499,36 @@ async fn once_the_key_is_stored_the_block_names_it_and_the_field_lets_go(cx: &mu
         );
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+async fn a_kept_key_cannot_be_replaced_or_forgotten_without_somewhere_to_save(
+    cx: &mut TestAppContext,
+) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        &SETUP.replace("sign_in: anonymous", "sign_in: api-key, key: keys.json"),
+    );
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    open(cx, handle, &view).await;
+    let original = read(directory.path());
+    cx.update_window(handle, |_, window, cx| {
+        view.read(cx).settings_page.clone().update(cx, |page, cx| {
+            page.file = None;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        for button in ["coroot-credential-replace", "coroot-credential-forget"] {
+            window.click(button, cx);
+            window.render_frame(cx);
+            assert!(window.find("coroot-credential-kept").visible());
+            assert!(window.try_find("coroot-credential-input").is_none());
+            assert!(view.read(cx).settings_page.read(cx).saving.is_none());
+        }
+    })
+    .unwrap();
+    cx.run_until_parked();
+    assert_eq!(read(directory.path()), original);
 }

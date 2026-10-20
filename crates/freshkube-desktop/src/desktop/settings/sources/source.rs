@@ -71,7 +71,7 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
     (columns, width)
 }
 
-/// Fit the table's own room: shrink Entry, Chosen by and State together
+/// Fit the table's own room: shrink Entry and Chosen by together
 /// when narrow, then give spare room to their fitted values before Reads.
 pub(super) fn fit_columns(columns: &mut [Column], room: f32) -> f32 {
     for column in columns.iter_mut() {
@@ -85,12 +85,17 @@ pub(super) fn fit_columns(columns: &mut [Column], room: f32) -> f32 {
     if base > room {
         let fixed: f32 = columns
             .iter()
-            .filter(|column| matches!(column.field, Field::Glyph | Field::Part | Field::Reads))
+            .filter(|column| {
+                matches!(
+                    column.field,
+                    Field::Glyph | Field::Part | Field::State | Field::Reads
+                )
+            })
             .map(|column| column.width)
             .sum();
         let scale = ((room - fixed).max(0.) / (base - fixed)).min(1.);
         for column in columns.iter_mut() {
-            if matches!(column.field, Field::Entry | Field::Why | Field::State) {
+            if matches!(column.field, Field::Entry | Field::Why) {
                 column.width *= scale;
             }
         }
@@ -255,10 +260,10 @@ impl TableSource for SourcesList {
         ];
         if matches!(key, Read::Part(_)) {
             actions.push(menu::MenuAction::Separator);
-            actions.push(menu::MenuAction::submenu(
-                "Pin to entry",
-                self.pin_entries(cx),
-            ));
+            actions.push(
+                menu::MenuAction::submenu("Pin to entry", self.pin_entries(cx))
+                    .enabled(self.editable(cx)),
+            );
             actions.push(self.follow_roles(cx));
         }
         actions

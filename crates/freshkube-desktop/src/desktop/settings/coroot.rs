@@ -323,6 +323,9 @@ impl SettingsPage {
     }
 
     fn replace_coroot_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.coroot_editable() || self.coroot.as_ref().is_none_or(|form| form.saving) {
+            return;
+        }
         let Some(form) = self.coroot.as_mut() else {
             return;
         };
@@ -379,7 +382,7 @@ impl SettingsPage {
 
     /// Forget: the block no longer names a key, and the store drops it.
     fn forget_coroot_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.origin == Origin::Example || self.coroot.as_ref().is_none_or(|form| form.saving) {
+        if !self.coroot_editable() || self.coroot.as_ref().is_none_or(|form| form.saving) {
             return;
         }
         let Some(server) = self.coroot_block(cx).map(|block| block.server) else {
@@ -535,6 +538,7 @@ impl SettingsPage {
 
     pub(super) fn render_coroot(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let header = page::PageHeader::new("settings-coroot", "Coroot").render(window, cx);
+        let banners = self.render_banners(cx);
         let mut content = div()
             .id("settings-coroot-form")
             .test_support()
@@ -560,14 +564,16 @@ impl SettingsPage {
             .overflow_y_scroll()
             .restrict_scroll_to_axis()
             .child(header)
-            .child(
-                div()
-                    .w_full()
-                    .max_w(dp(form::MAX_WIDTH))
-                    .flex()
-                    .flex_col()
-                    .children(self.render_banners(cx)),
-            )
+            .when(!banners.is_empty(), |page| {
+                page.child(
+                    div()
+                        .w_full()
+                        .max_w(dp(form::MAX_WIDTH))
+                        .flex()
+                        .flex_col()
+                        .children(banners),
+                )
+            })
             .child(content)
             .into_any_element()
     }
@@ -581,6 +587,7 @@ impl SettingsPage {
         let example = self.origin == Origin::Example;
         let dirty = form.dirty(cx);
         let busy = form.saving || self.coroot_state == ConnectionState::Connecting;
+        let key_disabled = !self.coroot_editable() || busy;
         let p = palette(cx);
         let anonymous = form.sign_in == SignIn::Anonymous;
 
@@ -653,6 +660,7 @@ impl SettingsPage {
                 .store_name(freshkube_core::secrets::STORE_NAME)
                 .on_replace(cx.listener(|page, _, window, cx| page.replace_coroot_key(window, cx)))
                 .on_forget(cx.listener(|page, _, window, cx| page.forget_coroot_key(window, cx)))
+                .disabled(key_disabled)
                 .into_any_element()
         } else {
             form::secret(
@@ -660,6 +668,7 @@ impl SettingsPage {
                 form::Secret::Typing(form.credential.clone()),
                 cx,
             )
+            .disabled(key_disabled)
             .into_any_element()
         };
 
@@ -722,7 +731,10 @@ impl SettingsPage {
             .dirty(dirty)
             .row(
                 form::row("coroot-server-row", "Server", server)
-                    .hint("The address of your Coroot, such as https://coroot.acme.example.")
+                    .hint_element(freshkube_ui::url::url_text(
+                        "coroot-server-hint",
+                        "The address of your Coroot, such as https://coroot.acme.example.",
+                    ))
                     .error(form.server_error.clone()),
             )
             .row(form::row("coroot-sign-in-row", "Sign in with", track));

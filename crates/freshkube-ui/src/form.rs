@@ -145,13 +145,19 @@ pub struct Row {
     id: SharedString,
     label: SharedString,
     control: AnyElement,
-    hint: Option<SharedString>,
+    hint: Option<AnyElement>,
     error: Option<SharedString>,
 }
 
 impl Row {
     pub fn hint(mut self, text: impl Into<SharedString>) -> Self {
-        self.hint = Some(text.into());
+        self.hint = Some(text.into().into_any_element());
+        self
+    }
+
+    /// A hint with its own wrapping, such as a paragraph containing a URL.
+    pub fn hint_element(mut self, hint: impl IntoElement) -> Self {
+        self.hint = Some(hint.into_any_element());
         self
     }
 
@@ -185,17 +191,20 @@ impl Row {
                     .min_w_0()
                     .gap(dp(4.))
                     .child(self.control)
-                    .when_some(self.error.or(self.hint), |this, text| {
-                        this.child(
-                            div()
-                                .id(part(&self.id, if error { "error" } else { "hint" }))
-                                .test_support()
-                                .when(error, |this| this.role(Role::Alert))
-                                .text_size(dp(12.))
-                                .text_color(if error { p.crit_ink } else { p.muted })
-                                .child(text),
-                        )
-                    }),
+                    .when_some(
+                        self.error.map(IntoElement::into_any_element).or(self.hint),
+                        |this, text| {
+                            this.child(
+                                div()
+                                    .id(part(&self.id, if error { "error" } else { "hint" }))
+                                    .test_support()
+                                    .when(error, |this| this.role(Role::Alert))
+                                    .text_size(dp(12.))
+                                    .text_color(if error { p.crit_ink } else { p.muted })
+                                    .child(text),
+                            )
+                        },
+                    ),
             )
     }
 }
@@ -253,6 +262,7 @@ pub struct SecretField {
     store_name: SharedString,
     replace: Option<Button>,
     forget: Option<Button>,
+    disabled: bool,
 }
 
 pub fn secret(id: impl Into<SharedString>, secret: Secret, _: &App) -> SecretField {
@@ -262,10 +272,16 @@ pub fn secret(id: impl Into<SharedString>, secret: Secret, _: &App) -> SecretFie
         store_name: platform::credential_store().into(),
         replace: None,
         forget: None,
+        disabled: false,
     }
 }
 
 impl SecretField {
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     /// Names the secret's store, overriding the platform credential store.
     pub fn store_name(mut self, name: impl Into<SharedString>) -> Self {
         self.store_name = name.into();
@@ -300,6 +316,7 @@ impl RenderOnce for SecretField {
                     .small()
                     .id(part(&self.id, "input"))
                     .content_type(InputContentType::Password)
+                    .disabled(self.disabled)
                     .map(|input| gpui_kit::Styled::h(input, dp(CONTROL_HEIGHT)))
                     .into_any_element()
             }
@@ -319,6 +336,7 @@ impl RenderOnce for SecretField {
                     )
                     .child(
                         self.replace
+                            .map(|button| button.disabled(self.disabled))
                             .unwrap_or_else(|| {
                                 Button::new(part(&self.id, "replace")).disabled(true)
                             })
@@ -328,6 +346,7 @@ impl RenderOnce for SecretField {
                     )
                     .child(
                         self.forget
+                            .map(|button| button.disabled(self.disabled))
                             .unwrap_or_else(|| Button::new(part(&self.id, "forget")).disabled(true))
                             .xsmall()
                             .outline()
