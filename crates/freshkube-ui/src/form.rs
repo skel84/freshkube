@@ -38,6 +38,16 @@ pub fn group(id: impl Into<SharedString>, heading: impl Into<SharedString>) -> G
     }
 }
 
+/// The accent dot shared by a changed group and its navigation row.
+pub fn dirty_marker(id: impl Into<SharedString>, cx: &App) -> impl IntoElement {
+    div()
+        .id(id.into())
+        .test_support()
+        .aria_label("Unsaved changes")
+        .text_color(palette(cx).accent)
+        .child("•")
+}
+
 pub struct Group {
     id: SharedString,
     heading: SharedString,
@@ -96,14 +106,7 @@ impl Group {
                     .text_color(p.ink)
                     .child(self.heading)
                     .when(self.dirty, |this| {
-                        this.child(
-                            div()
-                                .id(part(&self.id, "dirty"))
-                                .test_support()
-                                .aria_label("Unsaved changes")
-                                .text_color(p.accent)
-                                .child("•"),
-                        )
+                        this.child(dirty_marker(part(&self.id, "dirty"), cx))
                     }),
             )
             .child(
@@ -465,23 +468,37 @@ impl Action {
 
 /// A trailing-aligned pair in the platform's default-button order.
 pub fn actions(default: Action, other: Action) -> Actions {
-    Actions { default, other }
+    Actions {
+        default,
+        other,
+        extra: None,
+    }
 }
 
 #[derive(IntoElement)]
 pub struct Actions {
     default: Action,
     other: Action,
+    extra: Option<Action>,
 }
 
 impl Actions {
+    /// Adds an alternative before the pair on trailing-default platforms.
+    pub fn extra(mut self, extra: Action) -> Self {
+        self.extra = Some(extra);
+        self
+    }
+
     fn render_on(self, side: Side) -> impl IntoElement {
         let default = self.default.render(true);
         let other = self.other.render(false);
+        let extra = self.extra.map(|action| action.render(false));
         let pair = match side {
-            Side::Leading => [default, other],
-            Side::Trailing => [other, default],
-        };
+            Side::Leading => [Some(default), extra, Some(other)],
+            Side::Trailing => [extra, Some(other), Some(default)],
+        }
+        .into_iter()
+        .flatten();
         h_flex().w_full().justify_end().gap(dp(8.)).children(pair)
     }
 }

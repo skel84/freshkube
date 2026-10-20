@@ -683,6 +683,8 @@ impl Pilot {
             &self.settings_page,
             window,
             |this, _, window, cx| {
+                this.navigation.column_changed();
+                this.finish_settings_leave(window, cx);
                 this.rebuild_switcher(cx);
                 this.sync_setup_connection(window, cx);
                 cx.notify();

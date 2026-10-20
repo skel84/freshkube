@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 
 pub(in crate::desktop) struct Navigation {
     pub(in crate::desktop) page: Page,
+    pub(super) settings_leave: Option<super::settings_guard::Leave>,
     /// The rail's area, whose pages or kinds the column lists.
     pub(in crate::desktop) area: Area,
     /// The Kubernetes kind the Resources page shows.
@@ -67,6 +68,7 @@ impl Navigation {
         let default_kind = || builtin(kinds::DEFAULT_KIND).expect("the default kind is built in");
         Self {
             page: Page::Overview,
+            settings_leave: None,
             area: Area::Overview,
             resource_kind: default_kind(),
             last_kind: default_kind(),

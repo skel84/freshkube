@@ -315,6 +315,28 @@ impl MonitoringForm {
 }
 
 impl SettingsPage {
+    pub(super) fn save_monitoring_source(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(draft) = &self.monitoring {
+            draft.page.update(cx, |page, cx| {
+                if page.has_unsaved_source() {
+                    page.save_source(window, cx);
+                }
+            });
+        }
+    }
+
+    pub(super) fn monitoring_has_unsaved(&self, cx: &App) -> bool {
+        self.monitoring
+            .as_ref()
+            .is_some_and(|draft| draft.dirty || draft.page.read(cx).has_unsaved_source())
+    }
+
+    pub(super) fn monitoring_is_saving(&self) -> bool {
+        self.monitoring
+            .as_ref()
+            .is_some_and(|draft| draft.saving.is_some())
+    }
+
     pub(in crate::desktop) fn reveal_monitoring_folder(
         &mut self,
         window: &mut Window,
@@ -452,6 +474,9 @@ impl SettingsPage {
                 },
             ));
         }
+        draft
+            ._subscriptions
+            .push(cx.observe(&page, |_, _, cx| cx.notify()));
         draft._subscriptions.push(cx.subscribe(
             &entry,
             |page, _, _: &SelectEvent<Vec<SharedString>>, cx| {
@@ -589,7 +614,7 @@ impl SettingsPage {
         }
     }
 
-    fn revert_monitoring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn revert_monitoring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let entries = self.metric_entries();
         if let Some(draft) = &mut self.monitoring {
             if draft.saving.is_some() {
@@ -607,12 +632,12 @@ impl SettingsPage {
             };
             draft.reset(metrics, model.seen.clone(), entries, window, cx);
             let page = draft.page.clone();
-            page.update(cx, |page, cx| page.source_form(window, cx));
+            page.update(cx, |page, cx| page.revert_source(window, cx));
             cx.notify();
         }
     }
 
-    fn save_monitoring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn save_monitoring(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.origin == super::Origin::Example
             || self
                 .monitoring

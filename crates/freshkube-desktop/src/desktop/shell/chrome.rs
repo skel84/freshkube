@@ -420,7 +420,9 @@ impl ChromeParts {
             pilot.pages.observability.clone(),
         );
         let applications = pilot.pages.applications.clone();
+        let settings = pilot.settings_page.clone();
         self.column.update(cx, |column, cx| {
+            column.watch(&settings, |area| area == Area::Settings, cx);
             column.watch(&services, |area| area == Area::ControlPlane, cx);
             column.watch(&monitoring, |area| area == Area::Monitoring, cx);
             column.watch(&observability, |area| area == Area::Observability, cx);

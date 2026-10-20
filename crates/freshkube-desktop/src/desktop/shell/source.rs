@@ -470,6 +470,7 @@ impl Pilot {
                     section.label(),
                 )
                 .icon(section.icon())
+                .unsaved(self.settings_page.read(cx).has_unsaved(*section, cx))
                 .current(shown == Some(*section))
                 .into()
             }));

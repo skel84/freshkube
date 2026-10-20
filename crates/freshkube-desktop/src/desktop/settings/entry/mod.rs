@@ -244,6 +244,16 @@ impl SettingsPage {
         self.entry_key = None;
     }
 
+    pub(super) fn save_entry_unsaved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_groups(self.dirty_groups(), None, window, cx);
+    }
+
+    pub(super) fn discard_entry_unsaved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for group in self.dirty_groups() {
+            self.revert_group(group, window, cx);
+        }
+    }
+
     /// Whether the selected entry has a group with unsaved changes.
     pub(in crate::desktop) fn has_unsaved_edits(&self, _: &App) -> bool {
         !self.dirty_groups().is_empty()
