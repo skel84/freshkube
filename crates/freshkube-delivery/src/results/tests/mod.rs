@@ -152,10 +152,13 @@ async fn archived_annotations_preserve_the_bytes_checked_by_the_verifier() {
     let mut pipeline = manifest("PipelineRun", "v1");
     pipeline["metadata"]["annotations"]["chains.tekton.dev/signature-pipelinerun-run-uid"] =
         json!(STANDARD.encode(include_bytes!("../../../testdata/cosign/checkout.att.json")));
+    // The payload annotation must contain the exact signed bytes, independent
+    // of how a checkout represents line endings in the readable statement.
+    let envelope: Value =
+        serde_json::from_slice(include_bytes!("../../../testdata/cosign/checkout.att.json"))
+            .unwrap();
     pipeline["metadata"]["annotations"]["chains.tekton.dev/payload-pipelinerun-run-uid"] =
-        json!(STANDARD.encode(include_bytes!(
-            "../../../testdata/cosign/checkout.statement.json"
-        )));
+        envelope["payload"].clone();
     let server = Server::new(false, vec![page(vec![record(pipeline.clone())])]);
     let client = client(&server).await;
     let answer = runs(&client).await.unwrap();
