@@ -21,6 +21,10 @@ url = "2"
 rustls.workspace = true
 serde.workspace = true
 base64.workspace = true
+# The check that can make a link Confirmed: ECDSA over P-256, the key type
+# `cosign generate-key-pair` writes. See docs/SUPPLY_CHAIN.md, "The crates".
+p256 = { version = "0.14", default-features = false, features = ["ecdsa", "pem"] }
+sha2 = "0.11"
 chrono.workspace = true
 
 [features]

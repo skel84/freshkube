@@ -83,18 +83,32 @@ Constants in `chains.rs`, next to `MOST_TASK_READS`, each with a reason in its c
 
 ### The crates
 
-[REFERENCES.md](REFERENCES.md#reuse-policy) asks that a dependency be MIT- or Apache-2.0-compatible and listed in `NOTICE`. Surveyed on crates.io on 19 October 2026; slice 2 re-checks the versions and `cargo tree` when slice 2 starts.
+[REFERENCES.md](REFERENCES.md#reuse-policy) asks that a dependency be MIT- or Apache-2.0-compatible and listed in `NOTICE`. The owner's decision ([Decisions](#decisions), 1) is `sigstore-verify` first if it passes that policy and the size, MSRV and no-network checks, and a small check of our own on `p256` and `ecdsa` if it does not.
 
-| Option | Licence | Notes |
+#### The check, 20 October 2026 (slice 2)
+
+Measured with `cargo tree -e normal` in a scratch crate that depends on `freshkube-delivery` and one candidate, against the workspace's `Cargo.lock`.
+
+| | `sigstore-verify` 0.15.0 (`aws-lc-rs`, no other default features) | `p256` 0.14.0 and `ecdsa` 0.17.0 (`ecdsa`, `pem`) |
 | --- | --- | --- |
-| **`p256` and `ecdsa`** (RustCrypto), the fallback | Apache-2.0 OR MIT | `p256` 0.14.0, `ecdsa` 0.17.0, Rust 1.85. Small, no network, no async. Verifying a P-256 signature over a SHA-256 digest is what is needed. `sha2` (0.10 is already in the build) and `base64` are in the workspace; the PKIX key is parsed by `x509-parser` (already a direct core dependency) or `spki`. |
-| `sigstore` | Apache-2.0 | 0.14.0, described upstream as experimental; a large tree (`aws-lc-rs`, `oci-client`, `tough`, `openidconnect` behind features) for a feature that needs a few functions. |
-| **`sigstore-verify`**, the first choice | Apache-2.0 | 0.15.0, Rust 1.86; verification-only and more modest than `sigstore`. Built around bundles and the trust root, so slice 2 must show a bare public key and a DSSE envelope can be checked without them. |
+| Licence | Apache-2.0; its crypto backend `aws-lc-sys` is ISC and Apache-2.0, MIT, BSD-3-Clause | Apache-2.0 OR MIT, with `sha2` 0.11 (MIT OR Apache-2.0) |
+| `NOTICE` | An entry, with the Apache text we already ship | An entry, same text |
+| Added to the workspace tree | 31 crate versions, 27 new names, among them `aws-lc-sys` (a C library built with `cmake`) beside `ring`, a second `base64` (0.23), `jiff`, `x509-cert`, `cms` and `tls_codec` | 32 crate versions, 25 new names, all pure Rust (RustCrypto) |
+| MSRV | 1.86 (ours: edition 2024, toolchain 1.97): passes | 1.85: passes |
+| Network and async in the verify path | None: with default features off there is no `tokio`, `reqwest` or `hyper` in the tree, and `Verifier::verify` is synchronous. Passes | None |
+| Fit for a bare key and an annotation | Poor. The entry point is `Verifier::verify(artifact, &Bundle, &policy)` with a `TrustedRoot`; for a key it is `PublicKeyVerificationPolicy`, whose only way to accept a bundle with no log entry is `skip_tlog_unsafe()`. Chains' annotations are not a bundle, so the app would build a `Bundle` and an empty `TrustedRoot` to fit, and call a function named *unsafe* on the one path that can say Confirmed. With the `aws-lc-rs` feature off there is no crypto backend at all | Direct. A P-256 key from `SubjectPublicKeyInfo` PEM, an ASN.1 DER signature, a message |
+
+**Decision: `p256` and `ecdsa`, the fallback.** `sigstore-verify` passes on licence, `NOTICE`, MSRV and network, and it is no smaller than the fallback, so those are not why it fails. It fails on fit and on the native build: the only way to check a bare key against Chains' annotations is to construct a bundle and a trust root it was not made for and to call an `_unsafe` switch on the path that decides Confirmed, and its one working crypto backend is a C library the release builds would compile for every target. It was read from source and measured; it was not built and run end to end. It stays the candidate for keyless identity, where bundles and the trust root are the point.
+
+One cheaper option the owner did not name: `ring` is already in the build (through `rustls`) and verifies ECDSA P-256 with `ring::signature::ECDSA_P256_SHA256_ASN1`, which would add no crate. It would mean checking the fixed `SubjectPublicKeyInfo` prefix of a P-256 key by hand. The verifier keeps the key behind its own `TrustedKey`, so it can change later without touching the join.
+
+| Other crate | Licence | Notes |
+| --- | --- | --- |
+| `sigstore` | Apache-2.0 | 0.14.0, described upstream as experimental; a large tree (`aws-lc-rs`, `oci-client`, `tough`, `openidconnect` behind features) for a few functions. |
 | `ed25519-dalek` | BSD-3-Clause | 3.0.0. Compatible with MIT; wanted only if Ed25519 keys are asked for. |
 | `rsa` | MIT OR Apache-2.0 | 0.9.10. Wanted only if RSA keys are asked for; check the open advisory about its private-key timing before adding it, even though verification touches no private key. |
-| Our own DSSE | | Only on the fallback. The pre-authentication encoding is a few lines (`"DSSEv1" SP len(type) SP type SP len(body) SP body`), written and tested here, not a dependency. |
 
-**Decision: `sigstore-verify` first, `p256` and `ecdsa` as the fallback** ([Decisions](#decisions), 1). `sigstore-verify` is the owner's choice if it passes the reuse policy, and it is verification-only, so it would also serve the later keyless step. Slice 2 checks it and records here, with the date: its licence and `NOTICE` text, the `cargo tree -e normal` crates it adds to the workspace, its MSRV against ours, and whether the key-based verify path is free of network and async. If any fails, the fallback is a small check of our own on `p256` and `ecdsa` with DSSE written here, which keeps the build small and the verifier readable end to end. The same crate goes in `NOTICE` with its licence text, as `alacritty_terminal` is.
+The DSSE pre-authentication encoding is written here (`verify/dsse.rs`, tested against the protocol's own example). `p256`, `ecdsa` and `sha2` are in `NOTICE`.
 
 ## Tekton Results
 
