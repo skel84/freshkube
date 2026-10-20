@@ -191,6 +191,9 @@ impl ChangePage {
             if let Some(stage) = self.stage.take() {
                 self.select_stage(&stage, window, cx);
             }
+            // The refreshed change may name another revision: the selected
+            // hop's outcome is asked again if what is kept isn't fresh.
+            self.read_outcome(false, cx);
         }
         cx.notify();
     }
@@ -204,12 +207,18 @@ impl ChangePage {
         self.visible = visible;
         let reads_again = self.loader.set_visible(visible, ON_SHOW, cx);
         if !visible {
+            // Hidden, nothing is read: the outcome's read is dropped with
+            // the change's, and a late answer never lands.
+            self.hide_outcomes();
+            self.want_coroot(false, cx);
             cx.notify();
             return;
         }
         if reads_again {
             self.read(None, cx);
         }
+        self.want_coroot(true, cx);
+        self.read_outcome(false, cx);
     }
 
     /// The workspace's entries or destination mappings changed, as a save
@@ -287,6 +296,11 @@ fn deliver(
 impl ChangePage {
     pub fn is_reading(&self) -> bool {
         self.loader.is_loading()
+    }
+
+    /// Shows or hides the page, as the shell does.
+    pub fn set_shown(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.set_visible(visible, cx);
     }
 
     /// Whether an answer was shown.

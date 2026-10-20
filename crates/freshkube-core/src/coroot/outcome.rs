@@ -180,6 +180,9 @@ pub struct Answer {
     /// The connection it was read over; a reconnected server has another.
     pub provider: ProviderId,
     pub outcome: Outcome,
+    /// The project's applications, when this look read them itself, so a
+    /// caller can hand them to the next look of the same link.
+    pub listed: Option<Listed>,
 }
 
 impl Answer {
@@ -218,16 +221,17 @@ impl Provider {
         window: RevisionWindow,
         now: DateTime<Utc>,
     ) -> Answer {
-        let outcome = match tokio::time::timeout(limit, self.look(query, listed, window, now)).await
-        {
-            Ok(outcome) => outcome,
-            Err(_) => Outcome::Failed(ReadError::Timeout),
-        };
+        let (outcome, read) =
+            match tokio::time::timeout(limit, self.look(query, listed, window, now)).await {
+                Ok(looked) => looked,
+                Err(_) => (Outcome::Failed(ReadError::Timeout), None),
+            };
         Answer {
             query: query.clone(),
             window,
             provider: self.id(),
             outcome,
+            listed: read,
         }
     }
 
@@ -237,12 +241,12 @@ impl Provider {
         listed: Option<&Listed>,
         window: RevisionWindow,
         now: DateTime<Utc>,
-    ) -> Outcome {
+    ) -> (Outcome, Option<Listed>) {
         if query.workload != Workload::Deployment {
-            return Outcome::NotDeployment;
+            return (Outcome::NotDeployment, None);
         }
         let Some(hash) = query.hash.as_deref().filter(|hash| !hash.is_empty()) else {
-            return Outcome::NotLooked;
+            return (Outcome::NotLooked, None);
         };
         let source = self.linked_source(&query.link.project);
         let survey = TimeRange::between(
@@ -250,40 +254,43 @@ impl Provider {
             now,
         );
         let app = query.app();
-        let applications;
+        let mut read = None;
         let listed = match listed.filter(|l| l.holds_for(self.id(), &query.link)) {
-            Some(listed) => listed.apps.as_slice(),
+            Some(listed) => listed,
             None => {
-                applications = match self.applications(&source, survey).await {
+                let applications = match self.applications(&source, survey).await {
                     Ok(applications) => applications,
                     // The list belongs to the project: its 404 is no project.
-                    Err(ReadError::Missing) => return Outcome::NoProject,
-                    Err(error) => return failed(error, Refused::Application),
+                    Err(ReadError::Missing) => return (Outcome::NoProject, None),
+                    Err(error) => return (failed(error, Refused::Application), None),
                 };
-                &applications
+                &*read.insert(Listed::new(self.id(), query.link.clone(), applications))
             }
         };
-        if !listed.iter().any(|a| a.id == app) {
-            return Outcome::NoApplication;
-        }
-        let page = match self.app_view(&source, survey, &app).await {
-            Ok(page) => page,
-            Err(ReadError::Missing) => return Outcome::NoApplication,
-            Err(error) => return failed(error, Refused::Application),
+        let rest = async {
+            if !listed.apps.iter().any(|a| a.id == app) {
+                return Outcome::NoApplication;
+            }
+            let page = match self.app_view(&source, survey, &app).await {
+                Ok(page) => page,
+                Err(ReadError::Missing) => return Outcome::NoApplication,
+                Err(error) => return failed(error, Refused::Application),
+            };
+            let revisions = match page.revisions {
+                Some(Ok(revisions)) => revisions,
+                Some(Err(error)) => return failed(error, Refused::Application),
+                None => return Outcome::Failed(ReadError::InvalidResponse),
+            };
+            let Some(revision) = revisions.iter().find(|revision| revision.hash == hash) else {
+                return Outcome::NoRevision;
+            };
+            match self.revision_view(&source, &app, revision, window).await {
+                Ok(view) => Outcome::of_window(view),
+                Err(error) => failed(error, Refused::Window),
+            }
         };
-        let revisions = match page.revisions {
-            Some(Ok(revisions)) => revisions,
-            Some(Err(error)) => return failed(error, Refused::Application),
-            None => return Outcome::Failed(ReadError::InvalidResponse),
-        };
-        let Some(revision) = revisions.iter().find(|revision| revision.hash == hash) else {
-            return Outcome::NoRevision;
-        };
-        let view = match self.revision_view(&source, &app, revision, window).await {
-            Ok(view) => view,
-            Err(error) => return failed(error, Refused::Window),
-        };
-        found(view)
+        let outcome = rest.await;
+        (outcome, read)
     }
 }
 
@@ -294,8 +301,15 @@ fn failed(error: ReadError, read: Refused) -> Outcome {
     }
 }
 
-/// What the window holds: Coroot's page with histories, none at all, or
-/// histories that stop before the window's end.
+impl Outcome {
+    /// What the window around a revision holds: Coroot's page with
+    /// histories, none at all, or histories that stop before the window's
+    /// end.
+    pub fn of_window(view: RevisionView) -> Self {
+        found(view)
+    }
+}
+
 fn found(view: RevisionView) -> Outcome {
     let Around::View(page) = &view.answer else {
         return Outcome::NoData;

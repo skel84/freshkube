@@ -29,6 +29,24 @@ pub(crate) struct Charts {
     group: bool,
 }
 
+impl Charts {
+    /// The chart that shows when nobody picked another.
+    pub(crate) fn featured(&self) -> usize {
+        self.featured
+    }
+
+    /// The samples on each side of the revision's start of the chart at
+    /// `shown`, in one line, when it is around a revision.
+    pub(crate) fn sides(&self, shown: usize) -> Option<&SharedString> {
+        self.choices.get(shown)?.sides.as_ref()
+    }
+
+    /// The panel of the chart at `shown`, when Coroot sent points for it.
+    pub(crate) fn panel(&self, shown: usize) -> Option<&Rc<ChartPanel>> {
+        self.choices.get(shown)?.panel.as_ref()
+    }
+}
+
 struct Choice {
     /// What the picker calls it.
     name: SharedString,
@@ -163,7 +181,8 @@ fn sides_line(
     }
     let split = history.split_at(at);
     let (mut before, mut after) = (Side::default(), Side::default());
-    for series in &history.series {
+    // The threshold is drawn and in the legend with the rest, so it counts.
+    for series in history.series.iter().chain(history.threshold.as_ref()) {
         let (b, a) = series.sides(&split);
         before.add(b, split.before);
         after.add(a, split.after);
@@ -250,6 +269,54 @@ impl Charts {
             .and_then(|name| self.choices.iter().position(|c| c.name == *name))
             .unwrap_or(self.featured)
     }
+}
+
+/// The chart `charts` shows at `shown`: its panel when one is kept, else
+/// the empty card with why, and the coverage and side lines under it.
+pub(crate) fn chart_element(
+    charts: &Charts,
+    shown: usize,
+    view: Option<&Entity<PanelView>>,
+    cx: &App,
+) -> AnyElement {
+    let choice = &charts.choices[shown];
+    let chart = match view {
+        Some(view) => div()
+            .id(charts.id.clone())
+            .test_support()
+            .relative()
+            .h(dp(HEIGHT))
+            .child(view.clone().cached(StyleRefinement::default().size_full()))
+            .children(view.read(cx).cursor_overlay())
+            .into_any_element(),
+        None => card(choice.title.clone(), cx)
+            .id(charts.empty_id.clone())
+            .test_support()
+            .h(dp(HEIGHT))
+            .child(body().child(muted(choice.empty.clone(), cx)))
+            .into_any_element(),
+    };
+    let note = |words: &SharedString, id: &SharedString| {
+        muted(words.clone(), cx)
+            .id(id.clone())
+            .test_support()
+            .text_size(dp(12.))
+            .whitespace_normal()
+    };
+    if choice.coverage.is_none() && choice.sides.is_none() {
+        return chart;
+    }
+    v_flex()
+        .gap(dp(4.))
+        .child(chart)
+        .children(
+            choice
+                .coverage
+                .as_ref()
+                .map(|c| note(c, &charts.coverage_id)),
+        )
+        .children(choice.sides.as_ref().map(|s| note(s, &charts.sides_id)))
+        .into_any_element()
 }
 
 /// A heatmap, prepared when Coroot answers.
@@ -412,53 +479,12 @@ impl ObservabilityPage {
 
     pub(crate) fn render_charts(&self, charts: &Rc<Charts>, cx: &mut Context<Self>) -> AnyElement {
         let shown = charts.shown(&self.app_picks);
-        let choice = &charts.choices[shown];
-        let chart = match self
+        let kept = self
             .app_charts
             .iter()
             .find(|k| Rc::ptr_eq(&k.charts, charts) && k.shown == shown)
-        {
-            Some(kept) => div()
-                .id(charts.id.clone())
-                .test_support()
-                .relative()
-                .h(dp(HEIGHT))
-                .child(
-                    kept.view
-                        .clone()
-                        .cached(StyleRefinement::default().size_full()),
-                )
-                .children(kept.view.read(cx).cursor_overlay())
-                .into_any_element(),
-            None => card(choice.title.clone(), cx)
-                .id(charts.empty_id.clone())
-                .test_support()
-                .h(dp(HEIGHT))
-                .child(body().child(muted(choice.empty.clone(), cx)))
-                .into_any_element(),
-        };
-        let note = |words: &SharedString, id: &SharedString| {
-            muted(words.clone(), cx)
-                .id(id.clone())
-                .test_support()
-                .text_size(dp(12.))
-                .whitespace_normal()
-        };
-        let chart = if choice.coverage.is_none() && choice.sides.is_none() {
-            chart
-        } else {
-            v_flex()
-                .gap(dp(4.))
-                .child(chart)
-                .children(
-                    choice
-                        .coverage
-                        .as_ref()
-                        .map(|c| note(c, &charts.coverage_id)),
-                )
-                .children(choice.sides.as_ref().map(|s| note(s, &charts.sides_id)))
-                .into_any_element()
-        };
+            .map(|kept| &kept.view);
+        let chart = chart_element(charts, shown, kept, cx);
         if !charts.group {
             return chart;
         }
