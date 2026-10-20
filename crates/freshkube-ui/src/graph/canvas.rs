@@ -16,6 +16,31 @@ use super::{
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claimed_and_unknown_lines_are_stroked_differently_and_auto_is_the_maps_rule() {
+        assert_eq!(dash(EdgeStyle::Solid, None), Dash::Solid);
+        assert_eq!(dash(EdgeStyle::Dashed, None), Dash::Dashed);
+        assert_eq!(dash(EdgeStyle::Dotted, None), Dash::Dotted);
+        // Whatever the tone, an explicit style wins.
+        assert_eq!(dash(EdgeStyle::Solid, Some(Tone::Crit)), Dash::Solid);
+        assert_eq!(dash(EdgeStyle::Dotted, Some(Tone::Good)), Dash::Dotted);
+        // Auto is solid only for a healthy call, as the service map draws.
+        assert_eq!(dash(EdgeStyle::Auto, Some(Tone::Good)), Dash::Solid);
+        for tone in [
+            None,
+            Some(Tone::Warn),
+            Some(Tone::Crit),
+            Some(Tone::Unknown),
+        ] {
+            assert_eq!(dash(EdgeStyle::Auto, tone), Dash::Dashed);
+        }
+    }
+}
+
 /// Calls under the boxes, the selected one last and in the accent; a
 /// marker on each call that has one; then the boxes.
 pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> AnyElement {
@@ -46,15 +71,10 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                     }
                 };
                 let mut path = PathBuilder::stroke(unit * edge.width);
-                match (edge.style, edge.tone) {
-                    (EdgeStyle::Solid, _) | (EdgeStyle::Auto, Some(Tone::Good)) => {}
-                    (EdgeStyle::Dotted, _) => {
-                        path = path.dash_array(&[unit * 1.5, unit * 3.5]);
-                    }
-                    _ => {
-                        let dash = unit * 5.;
-                        path = path.dash_array(&[dash, dash * 0.6]);
-                    }
+                match dash(edge.style, edge.tone) {
+                    Dash::Solid => {}
+                    Dash::Dotted => path = path.dash_array(&[unit * 1.5, unit * 3.5]),
+                    Dash::Dashed => path = path.dash_array(&[unit * 5., unit * 3.]),
                 }
                 path.move_to(at(route.segments[0][0]));
                 for &[_, b, c, d] in &route.segments {
@@ -77,6 +97,8 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
     )
     .size_full();
     let highlighted = source.highlighted();
+    // With keys the graph is one Tab stop; its boxes and calls are not.
+    let keyed = state.focus.is_some();
     div()
         .id(state.ids.graph.clone())
         .test_support()
@@ -98,6 +120,7 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
             let (x, y) = display.shown[ix].route.mid;
             let (from, to) = (edge.from.clone(), edge.to.clone());
             Button::new(edge.marker_id.clone())
+                .tab_stop(!keyed)
                 .ghost()
                 .group("fog-control")
                 .absolute()
@@ -147,7 +170,16 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                         } else {
                             p.line_strong
                         })
-                        .child(mono(edge.pill.clone().unwrap_or_default()).text_size(dp(11.)))
+                        .max_w(dp(PILL_W))
+                        .tab_stop(!keyed)
+                        .child(
+                            mono(edge.pill.clone().unwrap_or_default())
+                                .text_size(dp(11.))
+                                .truncate(),
+                        )
+                        .when(edge.tooltip.is_empty(), |this| {
+                            this.tooltip(edge.pill.clone().unwrap_or_default())
+                        })
                         .when(!edge.tooltip.is_empty(), |this| {
                             this.tooltip(edge.tooltip.clone())
                         })
@@ -161,6 +193,7 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
             let node = &state.nodes[placed.node];
             let key = node.key.clone();
             Button::new(node.id.clone())
+                .tab_stop(!keyed)
                 .outline()
                 .group("fog-control")
                 .absolute()
@@ -200,6 +233,24 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 )
         }))
         .into_any_element()
+}
+
+/// How a line is stroked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Dash {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+/// The stroke for a call's style: `Auto` is solid only when the call is
+/// `Good`, and dashed otherwise.
+pub(super) fn dash(style: EdgeStyle, tone: Option<Tone>) -> Dash {
+    match (style, tone) {
+        (EdgeStyle::Solid, _) | (EdgeStyle::Auto, Some(Tone::Good)) => Dash::Solid,
+        (EdgeStyle::Dotted, _) => Dash::Dotted,
+        (EdgeStyle::Dashed | EdgeStyle::Auto, _) => Dash::Dashed,
+    }
 }
 
 /// The size of a pill on a line, in dp: wide enough for a short key in

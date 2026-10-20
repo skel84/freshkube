@@ -41,7 +41,7 @@ pub const MARKERS: usize = 24;
 gpui_kit::actions!(graph, [WalkBack, WalkForward, WalkPrevious, WalkNext]);
 
 /// The key context of a graph drawn with [`GraphState::with_keys`].
-pub const CONTEXT: &str = "Graph";
+pub(super) const CONTEXT: &str = "Graph";
 
 /// Binds the arrow keys in [`CONTEXT`]. A graph answers them only once it
 /// has keys; the app calls this where it draws such a graph.
@@ -359,7 +359,7 @@ impl<K: Clone + Ord> GraphState<K> {
 
     /// Where `step` goes from `from`, among the boxes and calls on this
     /// page. `None` where the key goes nowhere.
-    pub fn step(&self, from: Option<&Cursor<K>>, step: Step) -> Option<Cursor<K>> {
+    pub(super) fn step(&self, from: Option<&Cursor<K>>, step: Step) -> Option<Cursor<K>> {
         let nodes: Vec<_> = self
             .placed()
             .map(|(node, x, y)| (node.key.clone(), x, y))
@@ -381,12 +381,16 @@ impl<K: Clone + Ord> GraphState<K> {
     /// Scrolls the graph sideways so the box `key` is in view, with a
     /// little room beside it. It does nothing while the graph fits or the
     /// box isn't on this page.
-    pub fn reveal_node(&self, key: &K, window: &Window) {
+    pub(super) fn reveal_node(&self, key: &K, window: &Window) {
         let Some((_, x, _)) = self.placed().find(|(node, ..)| node.key == *key) else {
             return;
         };
         let unit = ui::dp_px(1., window);
         let view = self.pan.bounds().size.width;
+        // Before the first layout the pan has no width to scroll within.
+        if view <= gpui_kit::px(0.) {
+            return;
+        }
         let offset = self.pan.offset();
         let shown = keys::scroll_to_show(
             -offset.x / unit,
@@ -602,11 +606,13 @@ impl<K: Clone + Ord> GraphState<K> {
                 })
             })
             .collect();
-        let pills: Vec<_> = (0..shown.len())
-            .filter(|&ix| self.edges[shown[ix].edge].pill.is_some())
+        let has_pill: Vec<bool> = shown
+            .iter()
+            .map(|shown| self.edges[shown.edge].pill.is_some())
             .collect();
+        let pills: Vec<_> = (0..shown.len()).filter(|&ix| has_pill[ix]).collect();
         let mut markers: Vec<_> = (0..shown.len())
-            .filter(|ix| !pills.contains(ix))
+            .filter(|&ix| !has_pill[ix])
             .take(MARKERS)
             .collect();
         let selected = self.selected.as_ref().and_then(|key| {
@@ -616,7 +622,7 @@ impl<K: Clone + Ord> GraphState<K> {
         });
         if let Some(ix) = selected
             && !markers.contains(&ix)
-            && !pills.contains(&ix)
+            && !has_pill[ix]
         {
             markers.push(ix);
         }

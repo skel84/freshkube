@@ -1128,3 +1128,92 @@ fn a_key_scrolls_a_far_box_into_view_at_large_text(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+/// Presses Tab `presses` times from the start and returns, for each press,
+/// whether focus is inside the graph's canvas and whether it is on the
+/// graph itself.
+fn tab_through(
+    map: &Entity<Map>,
+    window: &mut Window,
+    cx: &mut gpui_kit::App,
+    presses: usize,
+) -> Vec<(bool, bool)> {
+    let focus = map.read(cx).graph.focus_handle().cloned();
+    (0..presses)
+        .map(|_| {
+            window.focus_next(cx);
+            match &focus {
+                Some(focus) => (focus.contains_focused(window, cx), focus.is_focused(window)),
+                None => (false, false),
+            }
+        })
+        .collect()
+}
+
+#[gpui_kit::test]
+fn a_graph_with_keys_is_one_tab_stop_and_boxes_and_pills_are_not(cx: &mut TestAppContext) {
+    let (handle, map) = open_chain(cx, 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        // The toolbar's button comes first; the graph is one stop after it.
+        let steps = tab_through(&map, window, cx, 4);
+        let inside: Vec<_> = steps.iter().filter(|s| s.0).collect();
+        assert_eq!(inside.len(), 1, "{steps:?}");
+        assert!(inside[0].1, "the one stop is the graph: {steps:?}");
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn a_graph_without_keys_keeps_its_boxes_and_markers_as_tab_stops(cx: &mut TestAppContext) {
+    let (handle, map) = open(cx, chain(), 1280., None);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let before = window.find("map-problems").focused();
+        window.focus_next(cx);
+        // Tabbing past the toolbar enters the graph's buttons one by one.
+        let moved = (0..4).any(|_| {
+            window.focus_next(cx);
+            window.render_frame(cx);
+            (0..6).any(|ix| window.find(format!("map-node-{ix}")).focused() == Some(true))
+                || (0..5).any(|ix| {
+                    let edge = &map.read(cx).graph.edges()[ix];
+                    window.find(edge.marker_id.clone()).focused() == Some(true)
+                })
+        });
+        assert!(
+            moved,
+            "a box or a pill takes the Tab (problems was {before:?})"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn each_pill_sits_in_its_gutter_and_a_long_key_is_cut_to_fit_at_text_20(cx: &mut TestAppContext) {
+    let mut graph = chain();
+    let (nodes, mut edges) = (graph.nodes().to_vec(), graph.edges().to_vec());
+    edges[1].pill =
+        Some("sha256:9f3a7c1d0b2e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a".into());
+    graph.set(nodes, edges);
+    let graph = cx.update(|cx| graph.with_keys(cx));
+    let (handle, _) = open(cx, graph, 1280., Some(20.));
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let unit = crate::ui::dp_px(1., window);
+        for (from, to) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5)] {
+            let pill = window.find(format!("map-edge-{from}--{to}")).bounds();
+            let (a, b) = (
+                window.find(format!("map-node-{from}")).bounds(),
+                window.find(format!("map-node-{to}")).bounds(),
+            );
+            assert!(pill.left() >= a.right(), "{from}->{to} clear of its caller");
+            assert!(pill.right() <= b.left(), "{from}->{to} clear of its callee");
+            assert!(
+                pill.size.width <= unit * 76. + px(1.),
+                "{from}->{to} fits 76 dp"
+            );
+        }
+    })
+    .unwrap();
+}

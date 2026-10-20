@@ -41,8 +41,16 @@ impl<K: Clone + Ord> Walk<'_, K> {
     /// nowhere. With no cursor yet, any step lands on the first box.
     pub(super) fn step(&self, from: Option<&Cursor<K>>, step: Step) -> Option<Cursor<K>> {
         let order = self.order();
-        let Some(from) = from else {
-            return order.first().cloned().map(Cursor::Node);
+        // A cursor on a box or call that isn't drawn (after a filter or a
+        // page change) starts again at the first box, as no cursor does.
+        let drawn = match from {
+            Some(Cursor::Node(key)) => order.contains(key),
+            Some(Cursor::Link(from, to)) => self.calls.iter().any(|(f, t)| f == from && t == to),
+            None => false,
+        };
+        let from = match from {
+            Some(from) if drawn => from,
+            _ => return order.first().cloned().map(Cursor::Node),
         };
         match (from, step) {
             (Cursor::Node(key), Step::Previous | Step::Next) => {
@@ -267,6 +275,16 @@ mod tests {
         assert_eq!(scroll_to_show(300., 400., 200., 348., 24.), 176.);
         // Never before the start.
         assert_eq!(scroll_to_show(50., 400., 10., 158., 24.), 0.);
+    }
+
+    #[test]
+    fn a_cursor_on_something_not_drawn_starts_again_at_the_first_box() {
+        let (nodes, calls) = chain();
+        let w = walk(&nodes, &calls);
+        for step in [Back, Forward, Previous, Next] {
+            assert_eq!(w.step(Some(&Node("gone")), step), Some(Node("a")));
+            assert_eq!(w.step(Some(&Link("a", "gone")), step), Some(Node("a")));
+        }
     }
 
     #[test]
