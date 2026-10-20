@@ -27,6 +27,7 @@ mod across_tests;
 mod after_tests;
 mod derive;
 mod gates;
+mod history;
 mod links;
 pub(crate) mod pages;
 #[cfg(test)]
@@ -43,7 +44,7 @@ use crate::applications::read::{
     argo_namespace_note, argo_namespaces, read_applications_in, read_argo_workloads,
 };
 use crate::argocd::MapHint;
-use crate::collect::{Plan, Upstream, read_environment, upstream_with_applications};
+use crate::collect::{Plan, Upstream, read_environment, upstream_with_history};
 use crate::entry::pool::{Open, Pool, PoolReader, Read, Unread, Until};
 use crate::github::{GitHub, PullRequest};
 use crate::join::{Evidence, candidate_applications, candidate_deployments, candidate_rollouts};
@@ -413,13 +414,24 @@ where
         tekton: &builds,
         github: &NoGitHub,
     };
+    let history_until = until
+        .at()
+        .unwrap_or_else(|| tokio::time::Instant::now() + BUDGET);
+    let history = pool.results(history_until).await;
     let mut scope = (Vec::new(), ArgoFound::Default);
     let applications = async {
         scope = argo_namespaces(&read_argo_workloads(&argocd).await);
         read_applications_in(&argocd, &scope.0).await
     };
     let (mut evidence, pages) = futures::join!(
-        upstream_with_applications(&upstream_readers, &plan, observed_at, applications),
+        upstream_with_history(
+            &upstream_readers,
+            &plan,
+            observed_at,
+            applications,
+            history,
+            history_until
+        ),
         pages::read(&kargo, &argocd, &place.argocd_namespace),
     );
     read_environments(pool, place, &mut evidence).await;
@@ -631,7 +643,7 @@ fn clusters<R: Reader>(reader: &R) -> crate::collect::Clusters<'_, R, R, R, R, N
     }
 }
 
-/// What [`upstream_with_applications`] reads for `freight` at `place`.
+/// What [`upstream_with_history`] reads for `freight` at `place`.
 fn plan(place: &Place, freight: &Freight) -> Plan {
     let (contexts, cluster_names) = place.mapping.pairs();
     Plan {

@@ -385,9 +385,18 @@ impl Witness {
     }
 }
 
+/// Where the run's manifest was read. The join uses the same facts either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    Cluster,
+    Results,
+}
+
 /// A PipelineRun with the TaskRuns that belong to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Build {
+    pub origin: Origin,
+    pub(crate) archive: Option<crate::results::Archive>,
     pub run: PipelineRun,
     pub tasks: Vec<TaskRun>,
     /// Why the run's TaskRuns could not be read, when they could not. The
@@ -623,6 +632,8 @@ pub(crate) async fn read_builds<R: Reader>(
                 Err(failure) => (Vec::new(), Some(printable(&failure))),
             };
             builds.push(Build {
+                origin: Origin::Cluster,
+                archive: None,
                 run,
                 tasks,
                 tasks_unread,
