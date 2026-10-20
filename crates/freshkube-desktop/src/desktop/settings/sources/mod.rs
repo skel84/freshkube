@@ -85,7 +85,7 @@ impl Read {
             Read::Part(part) => part.label(),
             Read::Workloads => "Workloads",
             Read::SetupFile => "Setup file",
-            Read::StageNaming => "Stage naming",
+            Read::StageNaming => "Naming",
         }
     }
 }
