@@ -45,12 +45,13 @@ Offline, from what was already read (no network, no extra permission):
 
 1. **Trust is set.** `supply_chain.public_key_file` is present. Without it nothing is verified and the link is what it is today (`NoTrust`).
 2. **The key loads.** The file is a regular file of at most 8 KiB, PEM, one `PUBLIC KEY` block, P-256. Its fingerprint (SHA-256 of the DER `SubjectPublicKeyInfo`, as `SHA256:` and base64) is what the screens show. A private key block is refused unrepeated: the app reads a public key and nothing more.
-3. **The envelope parses.** Payload and signature are base64 within their caps (below). A payload that doesn't decode, a DSSE envelope without `payloadType` or `payload`, or no signature is `Malformed`.
-4. **The signature verifies** over the exact bytes the format covers, with the key. A wrong key and a tampered payload look the same to the math, so both are `SignatureFailed` and the words say `doesn't verify with key SHA256:…`. A certificate on the object is **not** used to verify: trust is the person's key, not whatever certificate the annotation carries.
-5. **The statement is read only now.** `_type` is an in-toto Statement; `subject` has at most 64 entries.
-6. **A subject carries the build's digest.** Some `subject[*].digest.sha256` equals the digest the build reported (`IMAGE_DIGEST`). The subject's *name* is shown and compared to the image's repository for the note, not for the join: joins use only the commit SHA and the image digest. No match is `SubjectDiffers`, with both digests.
+3. **The attestation is the object's own.** The annotation's key is `pipelinerun-<uid>` or `taskrun-<uid>` of the run or task it was read from. A key naming another uid, or an object with no uid, is `Malformed` (`belongs to another object`): annotations copied from a signed run do not make another run signed.
+4. **The envelope parses.** Payload and signature are base64 within their caps (below). A payload that doesn't decode, a DSSE envelope without `payloadType` or `payload`, or no signature is `Malformed`.
+5. **The signature verifies** over the exact bytes the format covers, with the key. A wrong key and a tampered payload look the same to the math, so both are `SignatureFailed` and the words say `doesn't verify with key SHA256:…`. A certificate on the object is **not** used to verify: trust is the person's key, not whatever certificate the annotation carries.
+6. **The statement is read only now.** `_type` is an in-toto Statement; `subject` has at most 64 entries.
+7. **A subject carries the build's digest.** Some `subject[*].digest.sha256` equals the digest the build reported (`IMAGE_DIGEST`). The subject's *name* is shown and compared to the image's repository for the note, not for the join: joins use only the commit SHA and the image digest. No match is `SubjectDiffers`, with both digests.
 
-Only after all six is the attestation `Verified`. A verified provenance that names the run's commit adds a reported witness to commit → PipelineRun (slice 3); that witness is its own link and can't raise this one.
+Only after all seven is the attestation `Verified`. A verified provenance that names the run's commit adds a reported witness to commit → PipelineRun (slice 3); that witness is its own link and can't raise this one.
 
 ### The transparency log
 
@@ -208,7 +209,8 @@ The Link column says the word and the glyph the DESIGN.md rules give it (Confirm
 | **Claimed, subject differs** | Claimed | **Warn** | `signed for sha256:9e0a…, the build reported sha256:1f4c…` |
 | **Claimed, log** (switch on) | Claimed | ok | `signature verified; the transparency log has no matching entry` / `couldn't be read` |
 | **Claimed, elsewhere** | Claimed | ok | `Chains stores attestations in the registry (and tekton); the registry isn't read in this step` |
-| **Unknown, nothing found** | Unknown | ok | `no attestation found on the run or its tasks; Chains is set to store in tekton (read)`; never `unsigned` |
+| **Claimed, signed but nothing found** | Claimed | ok | `Chains' annotation says signed; no attestation was found to verify` (a key is set, Chains' annotation says `true`, and no attestation of the run was read) |
+| **Unknown, nothing found** | Unknown | ok | `no Chains annotation` or `Chains reports signed=failed`, with no attestation found on the run or its tasks; never `unsigned` |
 | **Unknown, Chains not installed** | Unknown | ok | `Chains' configuration isn't in tekton-chains on cluster-b` |
 | **Unknown, refused** | Unknown | ok | `annotations on TaskRuns refused (403)`; the same reasons the Tekton reads give today |
 | **Unknown, no digest** | Unknown | ok | `the build reported no image digest` (as today) |

@@ -41,6 +41,7 @@ use super::pods::RunningImage;
 use super::rollouts::{AnalysisRun, ReplicaSet, Rollout};
 use super::source::{Source, cap_note};
 use super::tekton::{Build, CommitNames, EvidenceResult};
+use super::verify::Trust;
 use freshkube_core::resources::Failure;
 
 /// How sure a link is.
@@ -136,6 +137,13 @@ pub struct Link {
     /// digest while a build of the commit reports another; empty otherwise.
     /// Never a failure: rebuilds of one commit report different digests.
     pub conflicts: Vec<DigestConflict>,
+    /// Whether the supply-chain link's signature is marked failing: true
+    /// exactly when the key the person named can't be used, the signature
+    /// doesn't verify with it, the attestation can't be read, or no subject
+    /// of it is the build's digest. A link with no key, no attestation found,
+    /// or a verified signature leaves it false. Shown as the hop's Warn
+    /// status, the way a digest conflict is.
+    pub signature_warn: bool,
 }
 
 impl Link {
@@ -156,7 +164,14 @@ impl Link {
             reason: reason.into(),
             evidence: Vec::new(),
             conflicts: Vec::new(),
+            signature_warn: false,
         }
+    }
+
+    /// The link with its signature marked failing, or not.
+    fn warned(mut self, warn: bool) -> Self {
+        self.signature_warn = warn;
+        self
     }
 
     /// The link with what it was read from.
@@ -177,6 +192,9 @@ pub struct Evidence {
     /// Where the pipeline's own evidence record is; `None` when the caller
     /// configured none.
     pub evidence_result: Option<EvidenceResult>,
+    /// What signatures are verified against. [`Trust::Unset`] verifies
+    /// nothing.
+    pub(crate) trust: Trust,
     /// Parameter and result names, besides upstream's, that name a build's
     /// commit.
     pub commit_names: CommitNames,
@@ -697,11 +715,12 @@ pub fn join(evidence: &Evidence) -> Trail {
                 ));
             }
             for build in builds {
-                links.push(commit_link(sha, build, names));
+                links.push(commit_link(sha, build, names, &evidence.trust));
                 links.extend(supply_chain_links(
                     build,
                     evidence.evidence_result.as_ref(),
                     names,
+                    &evidence.trust,
                 ));
             }
             builds

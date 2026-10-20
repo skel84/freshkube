@@ -16,6 +16,7 @@ use crate::observation::{Meta, ObjectRef, Observation, pointer_segment, role};
 use crate::pods::RunningImage;
 use crate::rollouts::{POD_HASH_LABEL, ReplicaSet, Rollout};
 use crate::tekton::{Build, CHAINS_SIGNED, CommitNames, SHA_LABEL, WitnessSource, built_images};
+use crate::verify::Verified;
 
 use super::Key;
 
@@ -157,6 +158,33 @@ pub(super) fn chains_signed(build: &Build) -> Option<Observation> {
             Observation::declared(role::TEKTON, task.object_ref(), &field, Some(state))
         })
     })
+}
+
+/// What a verified attestation reports of the image it signed: its subject
+/// digest. Reported: the signature verified with the person's key.
+pub(super) fn attested_digest(object: &ObjectRef, digest: &Digest) -> Observation {
+    Observation::reported(
+        role::TEKTON,
+        object.clone(),
+        "/subject/*/digest/sha256",
+        Some(digest.as_str()),
+    )
+}
+
+/// The commit a verified provenance names among its materials.
+pub(super) fn attested_commit(object: &ObjectRef, verified: &Verified) -> Observation {
+    let field = match verified.predicate_type.as_deref() {
+        Some(kind) if kind.ends_with("/provenance/v1") => {
+            "/predicate/buildDefinition/resolvedDependencies/*/digest/gitCommit"
+        }
+        _ => "/predicate/materials/*/digest/sha1",
+    };
+    Observation::reported(
+        role::TEKTON,
+        object.clone(),
+        field,
+        verified.commit.as_deref(),
+    )
 }
 
 /// The PipelineRun side of a link on `key`: what the builds that carry it

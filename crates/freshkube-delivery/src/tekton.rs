@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 
 use serde_json::Value;
 
-use super::chains::{Attestations, parse_attestations};
+use super::chains::{Attestation, Attestations, parse_own_attestations};
 use super::digest::{Digest, is_full_sha, text};
 use super::observation::{Meta, ObjectRef};
 use super::read::{ListRequest, Reader, Resource, Scope, label_equals};
@@ -229,7 +229,7 @@ pub(crate) fn parse_pipeline_run(value: &Value) -> Option<PipelineRun> {
             .filter_map(|child| text(child, "/name"))
             .collect(),
         chains_state: chains_state(value),
-        attestations: parse_attestations(value),
+        attestations: parse_own_attestations(value),
         pages: RunPages {
             repository: annotation(value, "pipelinesascode.tekton.dev/repo-url"),
             commit: annotation(value, "pipelinesascode.tekton.dev/sha-url"),
@@ -248,7 +248,7 @@ pub(crate) fn parse_task_run(value: &Value) -> Option<TaskRun> {
         pipeline_run: label(value, PIPELINE_RUN_LABEL),
         results: results_of(value),
         chains_state: chains_state(value),
-        attestations: parse_attestations(value),
+        attestations: parse_own_attestations(value),
         pod: text(value, "/status/podName"),
         steps: value
             .pointer("/status/steps")
@@ -444,6 +444,26 @@ impl Build {
             .find(|state| state.as_str() == "true")
             .or(states.first())
             .map(|state| (*state).clone())
+    }
+
+    /// The attestations of the run Chains stored, the run's own first and
+    /// then each task's in order, each with the object it was read from.
+    pub(crate) fn attestations(&self) -> Vec<(ObjectRef, &Attestation)> {
+        let run = self.run.object_ref();
+        let own = self
+            .run
+            .attestations
+            .read
+            .iter()
+            .map(move |a| (run.clone(), a));
+        let tasks = self.tasks.iter().flat_map(|task| {
+            let object = task.object_ref();
+            task.attestations
+                .read
+                .iter()
+                .map(move |a| (object.clone(), a))
+        });
+        own.chain(tasks).collect()
     }
 
     /// The pipeline's own evidence record, from the configured result.
