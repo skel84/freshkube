@@ -225,12 +225,6 @@ impl SavedIn {
         )
     }
 
-    /// For a credential that lives in a store of the app's own, such as
-    /// `keys.json`, rather than the system's.
-    pub fn and_credential_in(self, what: impl Into<SharedString>, store: &str) -> Self {
-        Self(format!("{}; {} in {store}", self.0, what.into()).into())
-    }
-
     pub fn session() -> Self {
         Self("Not saved; resets at launch".into())
     }
@@ -256,7 +250,6 @@ pub enum Secret {
 pub struct SecretField {
     id: SharedString,
     secret: Secret,
-    store: Option<SharedString>,
     replace: Option<Button>,
     forget: Option<Button>,
 }
@@ -265,19 +258,12 @@ pub fn secret(id: impl Into<SharedString>, secret: Secret, _: &App) -> SecretFie
     SecretField {
         id: id.into(),
         secret,
-        store: None,
         replace: None,
         forget: None,
     }
 }
 
 impl SecretField {
-    /// Names the store that keeps the secret, when it isn't the system's.
-    pub fn kept_in(mut self, store: impl Into<SharedString>) -> Self {
-        self.store = Some(store.into());
-        self
-    }
-
     pub fn on_replace(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -318,12 +304,7 @@ impl RenderOnce for SecretField {
                         .test_support()
                         .text_size(dp(12.))
                         .text_color(palette(cx).muted)
-                        .child(format!(
-                            "Kept in {}",
-                            self.store
-                                .clone()
-                                .unwrap_or_else(|| platform::credential_store().into())
-                        )),
+                        .child(format!("Kept in {}", platform::credential_store())),
                 )
                 .child(
                     self.replace

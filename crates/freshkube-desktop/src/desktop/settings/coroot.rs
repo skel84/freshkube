@@ -160,12 +160,9 @@ impl CorootForm {
         block.sign_in = self.sign_in;
         let project = self.project.read(cx).value().trim().to_owned();
         block.project = (!project.is_empty()).then_some(project);
-        if self.sign_in == SignIn::Anonymous {
-            block.key = None;
-        } else if block.api_key_file.is_none() && (self.keeps_key(cx) || !self.typed(cx).is_empty())
-        {
-            block.key = Some(KeysJson);
-        } else if !self.keeps_key(cx) {
+        // A key typed now is named in the block only once it is stored
+        // (`coroot_key_kept`); until then the block keeps what it had.
+        if self.sign_in == SignIn::Anonymous || !self.keeps_key(cx) {
             block.key = None;
         }
         block
@@ -442,11 +439,18 @@ impl SettingsPage {
                 let baseline = Baseline::of(self.coroot_block(cx).as_ref());
                 if let Some(form) = self.coroot.as_mut() {
                     form.saving = false;
-                    let keep_typed = request.is_none();
-                    if keep_typed {
-                        form.baseline = baseline;
-                    } else {
+                    let typed = request.as_ref().map(|r| r.key.0.clone());
+                    if let Some(typed) = typed {
+                        // A key typed now stays in its field until it is
+                        // stored and the block names it.
                         form.reset(baseline, window, cx);
+                        if !typed.is_empty() {
+                            form.credential
+                                .update(cx, |input, cx| input.set_value(typed, window, cx));
+                            form.replacing = true;
+                        }
+                    } else {
+                        form.baseline = baseline;
                     }
                 }
                 if let Some(request) = request {
@@ -462,6 +466,66 @@ impl SettingsPage {
                 }
             }
         }
+        cx.notify();
+    }
+
+    /// The credential store holds the key just typed for `server`: the block
+    /// names it now, and the field lets go of the text.
+    pub(in crate::desktop) fn coroot_key_kept(
+        &mut self,
+        server: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.origin == Origin::Example || self.coroot.as_ref().is_none_or(|form| form.saving) {
+            return;
+        }
+        let Some(block) = self.coroot_block(cx) else {
+            return;
+        };
+        if block.server != server
+            || block.key.is_some()
+            || block.sign_in == SignIn::Anonymous
+            || block.api_key_file.is_some()
+        {
+            return;
+        }
+        let why_not = self.why_not_editable();
+        let Some(file) = self.setup_file.clone().filter(|_| self.coroot_editable()) else {
+            if let Some(form) = self.coroot.as_mut() {
+                form.save_error = Some(why_not.into());
+            }
+            cx.notify();
+            return;
+        };
+        if let Some(form) = self.coroot.as_mut() {
+            form.saving = true;
+        }
+        let seen = self.seen.clone();
+        let save = file.update(cx, |file, cx| {
+            file.save_with(
+                seen,
+                |setup| {
+                    if let Some(block) = &mut setup.coroot {
+                        block.key.get_or_insert(KeysJson);
+                    }
+                },
+                cx,
+            )
+        });
+        self.saving = Some(cx.spawn_in(window, async move |this, cx| {
+            let outcome = save.await;
+            _ = this.update_in(cx, |page, window, cx| {
+                let kept = outcome.is_ok();
+                page.coroot_saved(outcome, None, window, cx);
+                if kept && let Some(form) = page.coroot.as_mut() {
+                    form.credential
+                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    form.replacing = false;
+                }
+                cx.notify();
+            });
+        }));
         cx.notify();
     }
 
@@ -586,7 +650,6 @@ impl SettingsPage {
                 .into_any_element()
         } else if kept {
             form::secret("coroot-credential", form::Secret::Kept, cx)
-                .kept_in(freshkube_core::secrets::STORE_NAME)
                 .on_replace(cx.listener(|page, _, window, cx| page.replace_coroot_key(window, cx)))
                 .on_forget(cx.listener(|page, _, window, cx| page.forget_coroot_key(window, cx)))
                 .into_any_element()
@@ -646,8 +709,11 @@ impl SettingsPage {
         } else if anonymous || form.baseline.key_file {
             form::SavedIn::file("freshkube.yaml")
         } else {
-            form::SavedIn::file("freshkube.yaml")
-                .and_credential_in("the key", freshkube_core::secrets::STORE_NAME)
+            // The key is in `keys.json`, beside the file.
+            form::SavedIn::file(format!(
+                "freshkube.yaml, the key in {}",
+                freshkube_core::secrets::STORE_NAME
+            ))
         };
 
         let mut group = form::group("coroot-connection", "Connection")

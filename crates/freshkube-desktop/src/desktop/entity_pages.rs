@@ -517,6 +517,10 @@ impl Pilot {
                 self.settings_page
                     .update(cx, |page, cx| page.set_coroot_state(state, cx));
             }
+            ObservabilityEvent::KeyKept(server) => {
+                self.settings_page
+                    .update(cx, |page, cx| page.coroot_key_kept(server, window, cx));
+            }
             ObservabilityEvent::Dashboards => {
                 self.navigate_from_keyboard(Page::Monitoring, window, cx)
             }

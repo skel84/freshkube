@@ -467,11 +467,25 @@ impl ObservabilityPage {
         saving: bool,
         cx: &mut Context<Self>,
     ) {
+        self.run_key_step_then(step, saving, None, cx);
+    }
+
+    /// [`Self::run_key_step`], and `kept` is announced once the store has it.
+    fn run_key_step_then(
+        &mut self,
+        step: impl FnOnce(&Path, Option<&dyn SecretStore>) -> Result<(), String> + Send + 'static,
+        saving: bool,
+        kept: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(task) = self.queue(step, cx) else {
             return;
         };
         cx.spawn(async move |this, cx| {
             let Err(error) = task.await else {
+                if let Some(server) = kept {
+                    _ = this.update(cx, |_, cx| cx.emit(ObservabilityEvent::KeyKept(server)));
+                }
                 return;
             };
             _ = this.update(cx, |this, cx| {
@@ -564,9 +578,11 @@ impl ObservabilityPage {
         }
         memory.key = Some((server.to_owned(), key.to_owned()));
         let (account, key) = (account(server), key.to_owned());
-        self.run_key_step(
+        let server = server.to_owned();
+        self.run_key_step_then(
             move |_, store| store.map_or(Ok(()), |store| store.write(&account, &key)),
             true,
+            Some(server),
             cx,
         );
     }

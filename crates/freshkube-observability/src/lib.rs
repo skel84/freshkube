@@ -91,6 +91,8 @@ pub enum ObservabilityEvent {
     /// The connection started, finished, failed or was dropped; read it with
     /// [`ObservabilityPage::connection_state`].
     Connection,
+    /// The credential store holds the key typed in Settings for this server.
+    KeyKept(String),
 }
 
 /// Where the Coroot connection stands, for Settings' Coroot section.

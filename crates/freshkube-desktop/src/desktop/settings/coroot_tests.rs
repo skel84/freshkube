@@ -401,3 +401,69 @@ fn coroot_is_a_settings_form_at_each_window_and_text_size(cx: &mut TestAppContex
         }
     }
 }
+
+#[gpui_kit::test]
+async fn a_failed_connect_writes_no_key_and_keeps_the_typed_text(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), SETUP);
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    open(cx, handle, &view).await;
+    fill(cx, handle, &view, "server", "http://127.0.0.1:9");
+    cx.update_window(handle, |_, window, cx| {
+        window.click(("coroot-sign-in", 0usize), cx);
+    })
+    .unwrap();
+    fill(cx, handle, &view, "credential", "invented-key");
+    cx.update_window(handle, |_, window, cx| window.click("coroot-connect", cx))
+        .unwrap();
+    saved(cx, handle, &view).await;
+    let block = read(directory.path()).coroot.unwrap();
+    assert_eq!(block.sign_in, SignIn::ApiKey);
+    assert!(block.key.is_none(), "the block names no key yet");
+    let text = std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap();
+    assert!(!text.contains("invented-key"), "{text}");
+    cx.update(|cx| {
+        let page = view.read(cx).settings_page.read(cx);
+        let form = page.coroot.as_ref().unwrap();
+        assert_eq!(form.credential.read(cx).value().as_ref(), "invented-key");
+    });
+}
+
+#[gpui_kit::test]
+async fn once_the_key_is_stored_the_block_names_it_and_the_field_lets_go(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    write(
+        directory.path(),
+        &SETUP.replace("sign_in: anonymous", "sign_in: api-key"),
+    );
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    open(cx, handle, &view).await;
+    fill(cx, handle, &view, "credential", "invented-key");
+    cx.update_window(handle, |_, window, cx| {
+        view.read(cx).settings_page.clone().update(cx, |page, cx| {
+            page.coroot_key_kept("https://observations.example.test", window, cx)
+        });
+    })
+    .unwrap();
+    saved(cx, handle, &view).await;
+    let text = std::fs::read_to_string(directory.path().join("freshkube.yaml")).unwrap();
+    assert!(text.contains("key: keys.json"), "{text}");
+    assert!(!text.contains("invented-key"), "{text}");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("coroot-credential-kept").visible());
+        let page = view.read(cx).settings_page.read(cx);
+        assert!(
+            page.coroot
+                .as_ref()
+                .unwrap()
+                .credential
+                .read(cx)
+                .value()
+                .is_empty()
+        );
+    })
+    .unwrap();
+}
