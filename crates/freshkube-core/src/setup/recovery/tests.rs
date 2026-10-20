@@ -140,7 +140,7 @@ fn every_cluster_fault_skips_one_whole_row_with_original_indexes() {
             [1, 2]
         );
         assert_eq!(read.warnings[0].field, field, "{bad}");
-        assert!(!read.all_clusters_skipped);
+        assert!(!read.source_recovery.all_clusters_skipped);
         assert!(
             super::super::parse(text.as_bytes()).is_err(),
             "strict parse must refuse {bad}"
@@ -338,25 +338,25 @@ fn all_skipped_is_used_but_unavailable_and_pins_and_mappings_never_retarget() {
     let read = recover(
         "version: 1\nclusters: [{id: broken, role: core, context: ''}]\nsources: {argocd: broken}\ndestinations: [{name: remote, entry: broken}, {name: in-cluster, entry: broken}]",
     );
-    assert!(read.all_clusters_skipped);
+    assert!(read.source_recovery.all_clusters_skipped);
     assert_eq!(read.setup.workspace.destinations.len(), 1);
     assert_eq!(read.warnings.len(), 2);
-    let sources = Sources::of_recovered(&read.setup.workspace, read.all_clusters_skipped);
+    let sources = Sources::of_recovered(&read.setup.workspace, &read.source_recovery);
     assert_eq!(sources.get(Part::ArgoCd), &Chosen::Gone("broken".into()));
-    assert!(matches!(sources.get(Part::Builds), Chosen::NoEntry(_)));
+    assert!(matches!(sources.get(Part::Builds), Chosen::Skipped(_)));
     assert_eq!(sources.workloads(), &[Chosen::Gone("broken".into())]);
     for text in ["version: 1", "version: 1\nclusters: []"] {
         let empty = recover(text);
-        assert!(!empty.all_clusters_skipped);
+        assert!(!empty.source_recovery.all_clusters_skipped);
         assert_eq!(empty.setup, Setup::default());
         assert_eq!(
-            Sources::of_recovered(&empty.setup.workspace, false).get(Part::ArgoCd),
+            Sources::of_recovered(&empty.setup.workspace, &empty.source_recovery).get(Part::ArgoCd),
             &Chosen::Open
         );
     }
     let read = recover("version: 1\nclusters: [[]]\ndestinations: [[]]");
     assert!(
-        Sources::of_recovered(&read.setup.workspace, true)
+        Sources::of_recovered(&read.setup.workspace, &read.source_recovery)
             .workloads()
             .is_empty()
     );
@@ -392,4 +392,80 @@ fn warning_order_follows_collections_and_original_rows_in_the_input() {
             (Row::Cluster, 1)
         ]
     );
+}
+
+#[test]
+fn skipping_a_role_choice_never_selects_a_later_row_or_another_role() {
+    use crate::workspace::SkippedRow;
+    // Core fallback and CI/CD precedence both use the original input rows.
+    for (rows, selected) in [
+        (
+            "[{id: bad-core, role: core, context: ''}, {id: next-core, role: core, context: good}]",
+            [0, 0, 0],
+        ),
+        (
+            "[{id: bad-core, role: core, context: ''}, {id: next-core, role: core, context: good}, {id: bad-ci, role: cicd, context: ''}, {id: next-ci, role: cicd, context: good}]",
+            [2, 2, 0],
+        ),
+        (
+            "[{id: bad-core, role: core, context: bad, results: []}, {id: next-core, role: core, context: good}, {id: bad-ci, role: cicd, context: bad, metrics: []}, {id: next-ci, role: cicd, context: good}]",
+            [2, 2, 0],
+        ),
+    ] {
+        let read = recover(&format!("version: 1\nclusters: {rows}"));
+        let sources = Sources::of_recovered(&read.setup.workspace, &read.source_recovery);
+        for (part, index) in Part::ALL.into_iter().zip(selected) {
+            let id = if index == 0 { "bad-core" } else { "bad-ci" };
+            assert_eq!(
+                sources.get(part),
+                &Chosen::Skipped(SkippedRow {
+                    index,
+                    id: Some(id.into())
+                }),
+                "{part:?}: {rows}"
+            );
+            let words = sources.get(part).missing().unwrap();
+            assert!(words.contains(&format!("clusters[{index}] ({id}) was skipped")));
+        }
+        assert!(sources.entry("next-core").is_none());
+        assert!(sources.entry("next-ci").is_none());
+    }
+}
+
+#[test]
+fn unreadable_role_choice_names_its_index_and_pins_still_take_precedence() {
+    let text = "version: 1\nclusters: [{role: core, context: bad}, {id: usable, role: core, context: good}]\ndestinations: [{name: in-cluster, entry: usable}]\n";
+    let read = recover(text);
+    let sources = Sources::of_recovered(&read.setup.workspace, &read.source_recovery);
+    for part in Part::ALL {
+        assert_eq!(
+            sources.get(part).missing().as_deref(),
+            Some("clusters[0] was skipped in freshkube.yaml")
+        );
+    }
+    assert!(read.setup.workspace.destinations.is_empty());
+    assert_eq!(
+        read.warnings[1].reason,
+        RowReason::Destination(workspace::Fault::ArgoCdUnknown)
+    );
+    let pinned = recover(&format!(
+        "{text}sources: {{kargo: usable, builds: absent, argocd: usable}}\n"
+    ));
+    let sources = Sources::of_recovered(&pinned.setup.workspace, &pinned.source_recovery);
+    assert_eq!(sources.get(Part::Kargo).entry().unwrap().id, "usable");
+    assert_eq!(sources.get(Part::ArgoCd).entry().unwrap().id, "usable");
+    assert_eq!(sources.get(Part::Builds), &Chosen::Gone("absent".into()));
+    assert_eq!(pinned.setup.workspace.destinations.len(), 1);
+}
+
+#[test]
+fn an_unrelated_skip_does_not_make_a_healthy_role_choice_unavailable() {
+    let read = recover(
+        "version: 1\nclusters: [{id: chosen, role: core, context: good}, {id: later, role: core, context: ''}, {id: env, role: environment, context: ''}]\ndestinations: [{name: in-cluster, entry: chosen}]\n",
+    );
+    let sources = Sources::of_recovered(&read.setup.workspace, &read.source_recovery);
+    for part in Part::ALL {
+        assert_eq!(sources.get(part).entry().unwrap().id, "chosen");
+    }
+    assert_eq!(read.setup.workspace.destinations.len(), 1);
 }

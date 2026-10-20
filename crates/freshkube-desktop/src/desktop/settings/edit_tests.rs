@@ -1039,3 +1039,35 @@ async fn recovered_setup_warns_keeps_unknown_keys_and_blocks_settings_writes(
     );
     assert!(!directory.path().join("freshkube.yaml.bak").exists());
 }
+
+#[gpui_kit::test]
+fn destination_credentials_cannot_be_saved_from_settings(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    write(directory.path(), TWO);
+    let before = std::fs::read(directory.path().join("freshkube.yaml")).unwrap();
+    let (_runtime, handle, view) = launch(cx, directory.path());
+    cx.update_window(handle, |_, _, cx| {
+        let page = view.read(cx).settings_page.clone();
+        let error = page
+            .update(cx, |page, cx| {
+                page.map_destination(
+                    None,
+                    workspace::Key::Server(
+                        "https://user:invented-private-marker@example.test".into(),
+                    ),
+                    "mgmt",
+                    cx,
+                )
+            })
+            .unwrap_err();
+        assert!(error.contains("URL credentials"));
+        assert!(!error.contains("invented-private-marker"));
+        assert!(page.read(cx).saving.is_none());
+    })
+    .unwrap();
+    assert_eq!(
+        std::fs::read(directory.path().join("freshkube.yaml")).unwrap(),
+        before
+    );
+}

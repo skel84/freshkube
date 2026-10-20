@@ -61,12 +61,61 @@ impl Part {
         }
     }
 
+    /// Select once in input order, preserving role precedence over file order.
+    pub(crate) fn role_index<T>(
+        self,
+        rows: &[T],
+        role_of: impl Fn(&T) -> Option<Role>,
+    ) -> Option<usize> {
+        self.roles()
+            .iter()
+            .find_map(|role| rows.iter().position(|row| role_of(row) == Some(*role)))
+    }
+
     /// The roles that hold it, in the order they are tried.
     pub fn roles(self) -> &'static [Role] {
         match self {
             Part::Kargo | Part::Builds => &[Role::Cicd, Role::Core],
             Part::ArgoCd => &[Role::Core],
         }
+    }
+}
+
+/// Recovery information that affects source availability, kept beside Setup.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SourceRecovery {
+    pub all_clusters_skipped: bool,
+    skipped_roles: Vec<(Part, SkippedRow)>,
+}
+
+impl SourceRecovery {
+    pub(crate) fn new(all_clusters_skipped: bool) -> Self {
+        Self {
+            all_clusters_skipped,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn skip_role(&mut self, part: Part, row: SkippedRow) {
+        self.skipped_roles.push((part, row));
+    }
+}
+
+/// A role's original input row, whose configuration could not be used.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkippedRow {
+    pub index: usize,
+    pub id: Option<String>,
+}
+
+impl SkippedRow {
+    pub fn label(&self) -> String {
+        let id = self
+            .id
+            .as_ref()
+            .map(|id| format!(" ({id})"))
+            .unwrap_or_default();
+        format!("clusters[{}]{id}", self.index)
     }
 }
 
@@ -103,6 +152,8 @@ pub enum Chosen {
     NoEntry(&'static [Role]),
     /// `sources` pins the part to an entry the workspace no longer lists.
     Gone(String),
+    /// The role selected this input row; recovery must not select another.
+    Skipped(SkippedRow),
 }
 
 impl Chosen {
@@ -123,6 +174,7 @@ impl Chosen {
                 Some(format!("No {} entry in the workspace", roles.join(" or ")))
             }
             Chosen::Gone(id) => Some(format!("{id} is no longer in the workspace")),
+            Chosen::Skipped(row) => Some(format!("{} was skipped in freshkube.yaml", row.label())),
             Chosen::Entry { .. } | Chosen::Open => None,
         }
     }
@@ -146,18 +198,18 @@ impl Default for Sources {
 
 impl Sources {
     pub fn of(workspace: &Workspace) -> Self {
-        Self::of_recovered(workspace, false)
+        Self::of_recovered(workspace, &SourceRecovery::default())
     }
 
     /// A configured list whose rows were all skipped is unavailable, even
     /// though its effective cluster list is empty.
-    pub fn of_recovered(workspace: &Workspace, all_clusters_skipped: bool) -> Self {
-        let choose = |part| choose_recovered(workspace, part, all_clusters_skipped);
+    pub fn of_recovered(workspace: &Workspace, recovery: &SourceRecovery) -> Self {
+        let choose = |part| choose_recovered(workspace, part, recovery);
         Self {
             kargo: choose(Part::Kargo),
             builds: choose(Part::Builds),
             argocd: choose(Part::ArgoCd),
-            workloads: workloads(workspace, all_clusters_skipped),
+            workloads: workloads(workspace, recovery.all_clusters_skipped),
         }
     }
 
@@ -222,11 +274,11 @@ fn workloads(workspace: &Workspace, all_clusters_skipped: bool) -> Vec<Chosen> {
 }
 
 pub(super) fn choose(workspace: &Workspace, part: Part) -> Chosen {
-    choose_recovered(workspace, part, false)
+    choose_recovered(workspace, part, &SourceRecovery::default())
 }
 
-fn choose_recovered(workspace: &Workspace, part: Part, all_clusters_skipped: bool) -> Chosen {
-    if workspace.clusters.is_empty() && !all_clusters_skipped {
+fn choose_recovered(workspace: &Workspace, part: Part, recovery: &SourceRecovery) -> Chosen {
+    if workspace.clusters.is_empty() && !recovery.all_clusters_skipped {
         return Chosen::Open;
     }
     if let Some(pinned) = workspace.sources.pin(part) {
@@ -238,14 +290,20 @@ fn choose_recovered(workspace: &Workspace, part: Part, all_clusters_skipped: boo
             None => Chosen::Gone(pinned.to_owned()),
         };
     }
-    part.roles()
+    if let Some((_, row)) = recovery
+        .skipped_roles
         .iter()
-        .find_map(|&role| {
-            let entry = workspace.clusters.iter().find(|entry| entry.role == role)?;
-            Some(Chosen::Entry {
+        .find(|(selected, _)| *selected == part)
+    {
+        return Chosen::Skipped(row.clone());
+    }
+    part.role_index(&workspace.clusters, |entry| Some(entry.role))
+        .map(|index| {
+            let entry = &workspace.clusters[index];
+            Chosen::Entry {
                 entry: entry.clone(),
-                why: Why::Role(role),
-            })
+                why: Why::Role(entry.role),
+            }
         })
         .unwrap_or(Chosen::NoEntry(part.roles()))
 }

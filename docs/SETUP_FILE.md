@@ -204,7 +204,7 @@ Then `Workspace::validate` and the new rules run, and their errors name an entry
 ### Row recovery on disk reads
 
 YAML disk reads use `setup::read`, returning an effective `Setup`, structured
-warnings and a separate `all_clusters_skipped` flag. `setup::parse`, Settings
+warnings and separate `SourceRecovery` state. `setup::parse`, Settings
 writes and legacy JSON migration input stay strict. Reading never rewrites YAML.
 
 A bad `clusters[i]` or `destinations[i]` row is skipped as a whole, including a
@@ -212,7 +212,7 @@ cluster whose optional Results, metrics or Coroot block is invalid. Healthy
 neighbors and unrelated sections remain usable. Warnings keep the original
 zero-based index, a readable bounded id (the target entry for a destination),
 the field and a typed reason. They never include endpoints, path values,
-rejected YAML or parser messages. A later duplicate Coroot link is skipped;
+rejected YAML or parser messages. Destination server userinfo is refused by both the recovery reader and strict validation, including Settings saves, without quoting the endpoint. A later duplicate Coroot link is skipped;
 the first otherwise-valid link wins, comparing projects after inheritance.
 
 File-fatal faults still refuse the entire file: unreadable/non-regular or
@@ -240,7 +240,7 @@ next accepted read and disappear when repaired.
 All-skipped arrays still yield an accepted setup and retain their original
 bytes for conflict detection. An all-skipped cluster list resolves sources as
 unavailable, preserving dangling pins and mappings; it never reads from the
-open connection. An intentionally empty valid setup retains its existing
+open connection. Role selection also runs over the original input rows, using the same role precedence as strict selection. If the selected row was skipped, that part is unavailable and names its original index and readable id; it never moves to a later row or a fallback role. Explicit pins still take precedence, and in-cluster alias validation uses that same recovered source selection. An intentionally empty valid setup retains its existing
 workspace-of-one behavior. Switching between those states changes effective
 source availability even when the two `Setup` values compare equal.
 

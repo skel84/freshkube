@@ -204,11 +204,11 @@ impl SourcesList {
     pub(super) fn set_recovered_workspace(
         &mut self,
         workspace: &freshkube_core::workspace::Workspace,
-        all_clusters_skipped: bool,
+        recovery: &freshkube_core::workspace::SourceRecovery,
         example: bool,
         cx: &mut Context<Self>,
     ) {
-        self.sources = Sources::of_recovered(workspace, all_clusters_skipped);
+        self.sources = Sources::of_recovered(workspace, recovery);
         self.checked_at = None;
         self.kubeconfig = workspace.kubeconfig.clone();
         self.example = example;
@@ -376,7 +376,7 @@ impl SourcesList {
     /// otherwise for an entry.
     fn example_check(&self) -> Checked {
         let reach = |chosen: &Chosen, read: Read| match chosen {
-            Chosen::NoEntry(_) | Chosen::Gone(_) => {
+            Chosen::NoEntry(_) | Chosen::Gone(_) | Chosen::Skipped(_) => {
                 Reach::missing(chosen.missing().unwrap_or_default())
             }
             Chosen::Open => Reach::Readable,

@@ -396,7 +396,7 @@ impl Pilot {
             ),
             sources: freshkube_core::workspace::Sources::of_recovered(
                 workspace,
-                self.settings_page.read(cx).all_clusters_skipped,
+                &self.settings_page.read(cx).source_recovery,
             ),
             kubeconfig: workspace.kubeconfig.clone(),
         };

@@ -61,7 +61,7 @@ pub(crate) struct SetupFile {
     pub(crate) seen: Seen,
     pub(crate) problem: Option<String>,
     pub(crate) warnings: Vec<setup::Warning>,
-    pub(crate) all_clusters_skipped: bool,
+    pub(crate) source_recovery: freshkube_core::workspace::SourceRecovery,
     setup_revision: u64,
     pub(crate) receipt: Option<String>,
     receipt_label: String,
@@ -70,9 +70,6 @@ pub(crate) struct SetupFile {
     pub(crate) coroot_reconnect: bool,
     stat: FileStat,
     write_generation: u64,
-    /// Setup or problem changes and successful explicit reloads, including
-    /// identical bytes: referenced key files can change independently.
-    read_revision: u64,
     writing: bool,
     _poll: Option<Task<()>>,
 }
@@ -91,7 +88,7 @@ impl SetupFile {
             seen: Seen::Missing,
             problem: None,
             warnings: Vec::new(),
-            all_clusters_skipped: false,
+            source_recovery: Default::default(),
             setup_revision: 0,
             receipt: None,
             receipt_label: String::new(),
@@ -103,7 +100,6 @@ impl SetupFile {
             coroot_reconnect: true,
             stat: FileStat::Missing,
             write_generation: 0,
-            read_revision: 0,
             writing: false,
             _poll: None,
         };
@@ -228,19 +224,13 @@ impl SetupFile {
 
     /// Invalidates an in-flight read as well as suppressing the next poll.
     fn record_write(&mut self, setup: Setup, seen: Seen, stat: FileStat) {
-        if self.setup.as_ref() != Some(&setup) || self.all_clusters_skipped {
+        if self.setup.as_ref() != Some(&setup) || self.source_recovery != Default::default() {
             self.setup_revision += 1;
-        }
-        if self.setup.as_ref() != Some(&setup)
-            || self.problem.is_some()
-            || !self.warnings.is_empty()
-        {
-            self.read_revision += 1;
         }
         self.setup = Some(setup);
         self.problem = None;
         self.warnings.clear();
-        self.all_clusters_skipped = false;
+        self.source_recovery = Default::default();
         self.last_written = Some(seen.clone());
         self.seen = seen;
         self.stat = stat;
@@ -380,12 +370,6 @@ impl SetupFile {
         })
     }
 
-    /// The delivery hand-off consumes each accepted read only once.
-    #[cfg(test)]
-    pub(crate) fn read_revision(&self) -> u64 {
-        self.read_revision
-    }
-
     fn apply(
         &mut self,
         stat: FileStat,
@@ -403,9 +387,9 @@ impl SetupFile {
                 let read = *setup;
                 let setup = read.setup;
                 setup_changed = self.setup.as_ref() != Some(&setup)
-                    || self.all_clusters_skipped != read.all_clusters_skipped;
+                    || self.source_recovery != read.source_recovery;
                 self.warnings = read.warnings;
-                self.all_clusters_skipped = read.all_clusters_skipped;
+                self.source_recovery = read.source_recovery;
                 // Recognize canonical output from a prior save or migration.
                 if initial && setup::to_text(&setup).as_bytes() == bytes {
                     self.last_written = Some(Seen::Bytes(bytes.clone()));
@@ -432,9 +416,6 @@ impl SetupFile {
         }
         if setup_changed || reloaded {
             self.setup_revision += 1;
-        }
-        if setup_changed || reloaded || old_notice != self.notice() {
-            self.read_revision += 1;
         }
         if initial {
             cx.emit(Event::Ready);

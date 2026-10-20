@@ -5,15 +5,16 @@ use serde_yaml::Value;
 
 use super::{Fault, Invalid, Read, Setup, place, validate};
 use crate::workspace::{
-    self, Destination, Entry, MAX_BYTES, MAX_DESTINATIONS, MAX_ENTRIES, Workspace,
+    self, Destination, Entry, MAX_BYTES, MAX_DESTINATIONS, MAX_ENTRIES, Part, Role, SkippedRow,
+    SourceRecovery, Sources, Workspace,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recovered {
     pub setup: Setup,
     pub warnings: Vec<Warning>,
-    /// An explicit, unusable cluster list must never become an open connection.
-    pub all_clusters_skipped: bool,
+    /// Preserve original role choices and distinguish an unusable list from an empty one.
+    pub source_recovery: SourceRecovery,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,13 +172,34 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
             }),
         }
     }
-    let all_clusters_skipped = !clusters.is_empty() && setup.workspace.clusters.is_empty();
+    let mut source_recovery =
+        SourceRecovery::new(!clusters.is_empty() && setup.workspace.clusters.is_empty());
+    for part in Part::ALL {
+        if setup.workspace.sources.pin(part).is_none()
+            && let Some(index) = part.role_index(&clusters, |row| {
+                row.get("role")
+                    .and_then(|role| serde_yaml::from_value::<Role>(role.clone()).ok())
+            })
+            && warnings
+                .iter()
+                .any(|warning| warning.row == Row::Cluster && warning.index == index)
+        {
+            source_recovery.skip_role(
+                part,
+                SkippedRow {
+                    index,
+                    id: safe_id(&clusters[index], "id"),
+                },
+            );
+        }
+    }
+    let sources = Sources::of_recovered(&setup.workspace, &source_recovery);
     for (index, row) in destinations.into_iter().enumerate() {
         let id = safe_id(&row, "entry");
         let result = serde_yaml::from_value::<Destination>(row.clone())
             .map_err(|_| (destination_shape_field(&row).into(), RowReason::Shape))
             .and_then(|destination| {
-                if let Some(fault) = destination.fault_in(&setup.workspace) {
+                if let Some(fault) = destination.fault_for(sources.get(Part::ArgoCd)) {
                     let field = match &fault {
                         workspace::Fault::ServerAndName | workspace::Fault::Neither => {
                             "server/name"
@@ -218,7 +240,7 @@ pub fn read(bytes: &[u8]) -> Result<Recovered, Invalid> {
     Ok(Recovered {
         setup,
         warnings,
-        all_clusters_skipped,
+        source_recovery,
     })
 }
 
@@ -295,11 +317,7 @@ fn credential_preflight(value: &Value) -> Result<(), Invalid> {
             return Err(Invalid::KeyValue(None));
         }
         if let Some(address) = block.get(endpoint).and_then(Value::as_str) {
-            // Check authority even if the rest of a malformed URL won't parse.
-            let authority = address
-                .split_once("://")
-                .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or_default());
-            if authority.is_some_and(|authority| authority.contains('@')) {
+            if workspace::has_userinfo(address) {
                 return Err(Invalid::KeyValue(None));
             }
         }

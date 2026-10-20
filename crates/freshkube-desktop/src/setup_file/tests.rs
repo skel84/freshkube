@@ -380,40 +380,40 @@ async fn problem_changes_and_same_setup_recovery_advance_once(cx: &mut TestAppCo
     std::fs::write(&path, "version: [").unwrap();
     let (_, reader) = mount(cx, directory.path(), false);
     let file = model(&reader, cx);
-    let revision = cx.read(|cx| file.read(cx).read_revision());
+    let revision = cx.read(|cx| reader.read(cx).changes);
     assert_eq!(
-        revision, 1,
-        "an initial problem reaches delivery without a setup"
+        revision, 0,
+        "initial diagnostics publish through Ready, before any change event"
     );
     file.update(cx, |file, cx| file.reload(cx)).await;
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision);
+    assert_eq!(cx.read(|cx| reader.read(cx).changes), revision);
 
     std::fs::write(&path, "version: 999").unwrap();
     file.update(cx, |file, cx| file.reload(cx)).await;
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 1);
+    assert_eq!(cx.read(|cx| reader.read(cx).changes), revision + 1);
     assert!(cx.read(|cx| file.read(cx).setup.is_none()));
 
     std::fs::write(&path, FIRST).unwrap();
     file.update(cx, |file, cx| file.reload(cx)).await;
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 2);
+    assert_eq!(cx.read(|cx| reader.read(cx).changes), revision + 2);
     std::fs::write(&path, "version: [").unwrap();
     advance(cx, POLL);
     advance(cx, DEBOUNCE);
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 3);
+    assert_eq!(cx.read(|cx| reader.read(cx).changes), revision + 3);
 
     // Polling the exact last-good setup clears the problem even though
     // neither the parsed setup nor its last-good bytes have changed.
     std::fs::write(&path, FIRST).unwrap();
     advance(cx, POLL);
     advance(cx, DEBOUNCE);
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 4);
+    assert_eq!(cx.read(|cx| reader.read(cx).changes), revision + 4);
     assert!(cx.read(|cx| file.read(cx).problem.is_none()));
     advance(cx, POLL);
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), revision + 4);
+    assert_eq!(cx.read(|cx| reader.read(cx).changes), revision + 4);
 }
 
 #[gpui_kit::test]
-async fn saving_the_same_setup_after_deletion_advances_the_revision(cx: &mut TestAppContext) {
+async fn saving_the_same_setup_after_deletion_clears_the_notice(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("freshkube.yaml");
@@ -422,45 +422,45 @@ async fn saving_the_same_setup_after_deletion_advances_the_revision(cx: &mut Tes
     let file = model(&reader, cx);
     std::fs::remove_file(&path).unwrap();
     file.update(cx, |file, cx| file.reload(cx)).await;
-    let before = cx.read(|cx| file.read(cx).read_revision());
+    let before = cx.read(|cx| file.read(cx).setup_revision());
     assert!(cx.read(|cx| file.read(cx).problem.is_some()));
     file.update(cx, |file, cx| file.save_with(Seen::Missing, |_| {}, cx))
         .await
         .unwrap();
     cx.read(|cx| {
-        assert_eq!(file.read(cx).read_revision(), before + 1);
+        assert_eq!(file.read(cx).setup_revision(), before);
         assert!(file.read(cx).problem.is_none());
     });
 }
 
 #[gpui_kit::test]
-async fn an_identical_explicit_reload_advances_the_read_revision(cx: &mut TestAppContext) {
+async fn an_identical_explicit_reload_advances_the_setup_revision(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("freshkube.yaml");
     std::fs::write(&path, FIRST).unwrap();
     let (_, reader) = mount(cx, directory.path(), false);
     let file = model(&reader, cx);
-    let before = cx.read(|cx| file.read(cx).read_revision());
+    let before = cx.read(|cx| file.read(cx).setup_revision());
     assert!(before > 0);
     let reload = file.update(cx, |file, cx| file.reload(cx));
     reload.await;
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 1);
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before + 1);
     assert_eq!(
         cx.read(|cx| file.read(cx).setup.clone()),
         Some(setup::parse(FIRST.as_bytes()).unwrap())
     );
-    // A quiet poll leaves the revision alone; a new problem advances it.
+    // Quiet polls and a fatal refusal preserve the effective setup revision.
     advance(cx, POLL * 2);
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 1);
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before + 1);
     std::fs::write(&path, "version: [broken").unwrap();
     file.update(cx, |file, cx| file.reload(cx)).await;
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 2);
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before + 1);
     // A changed successful reload advances once, rather than once for
     // the changed bytes and again for the explicit action.
     std::fs::write(&path, SECOND).unwrap();
     file.update(cx, |file, cx| file.reload(cx)).await;
-    assert_eq!(cx.read(|cx| file.read(cx).read_revision()), before + 3);
+    assert_eq!(cx.read(|cx| file.read(cx).setup_revision()), before + 2);
 }
 #[gpui_kit::test]
 async fn recovery_keeps_bytes_refuses_saves_and_updates_notices_without_read_invalidation(
@@ -536,7 +536,7 @@ async fn all_skipped_and_deliberately_empty_have_distinct_effective_revisions(
     let before = cx.read(|cx| {
         let file = file.read(cx);
         assert_eq!(file.setup, Some(Setup::default()));
-        assert!(file.all_clusters_skipped);
+        assert!(file.source_recovery.all_clusters_skipped);
         file.setup_revision()
     });
     std::fs::write(&path, "version: 1\nclusters: []").unwrap();
@@ -545,7 +545,7 @@ async fn all_skipped_and_deliberately_empty_have_distinct_effective_revisions(
     cx.read(|cx| {
         let file = file.read(cx);
         assert_eq!(file.setup, Some(Setup::default()));
-        assert!(!file.all_clusters_skipped);
+        assert!(!file.source_recovery.all_clusters_skipped);
         assert!(file.warnings.is_empty());
         assert_eq!(file.setup_revision(), before + 1);
     });

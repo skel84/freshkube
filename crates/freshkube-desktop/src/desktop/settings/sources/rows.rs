@@ -31,6 +31,7 @@ pub(super) fn workload_id(chosen: &Chosen) -> String {
     match chosen {
         Chosen::Entry { entry, .. } => entry.id.clone(),
         Chosen::Gone(id) => id.clone(),
+        Chosen::Skipped(row) => row.label(),
         Chosen::Open | Chosen::NoEntry(_) => entry::OPEN.to_owned(),
     }
 }
@@ -143,6 +144,7 @@ impl SourcesList {
                 false,
             ),
             Chosen::Gone(id) => (id.clone(), "Pinned, not listed".to_owned(), false),
+            Chosen::Skipped(row) => (row.label(), "Selected row skipped".to_owned(), false),
         };
         // In a sentence, the open cluster isn't a name.
         let named = match chosen {

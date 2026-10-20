@@ -129,7 +129,7 @@ pub(crate) struct SettingsPage {
     metrics_secrets: Option<freshkube_core::secrets::Secrets>,
     setup_refusal: bool,
     setup_skips: bool,
-    pub(in crate::desktop) all_clusters_skipped: bool,
+    pub(in crate::desktop) source_recovery: workspace::SourceRecovery,
     pending_setup: bool,
     uses_setup: bool,
     /// `freshkube.yaml`; none without a preferences folder.
@@ -200,7 +200,7 @@ impl SettingsPage {
         let model = file.read(cx);
         let setup = model.setup.clone();
         let problem = model.notice();
-        let all_clusters_skipped = model.all_clusters_skipped;
+        let source_recovery = model.source_recovery.clone();
         self.setup_skips = !model.warnings.is_empty();
         let seen = if model.is_missing() {
             workspace::Seen::Missing
@@ -218,9 +218,9 @@ impl SettingsPage {
                 self.seen = seen;
                 if !self.uses_setup
                     || self.workspace != setup.workspace
-                    || self.all_clusters_skipped != all_clusters_skipped
+                    || self.source_recovery != source_recovery
                 {
-                    self.all_clusters_skipped = all_clusters_skipped;
+                    self.source_recovery = source_recovery;
                     self.uses_setup = true;
                     self.set_workspace(&Loaded::Workspace(setup.workspace), false, cx);
                 }
@@ -328,7 +328,7 @@ impl SettingsPage {
             metrics_secrets,
             setup_refusal: false,
             setup_skips: false,
-            all_clusters_skipped: false,
+            source_recovery: Default::default(),
             pending_setup: false,
             uses_setup: false,
             file: None,
@@ -439,7 +439,7 @@ impl SettingsPage {
         (self.columns, self.width) = source::columns(&self.rows);
         let example = origin == Origin::Example;
         self.sources.update(cx, |list, cx| {
-            list.set_recovered_workspace(&workspace, self.all_clusters_skipped, example, cx)
+            list.set_recovered_workspace(&workspace, &self.source_recovery, example, cx)
         });
         self.origin = origin;
         let kubeconfig = match &workspace.kubeconfig {

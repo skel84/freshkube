@@ -299,10 +299,8 @@ impl Pages {
         cx: &mut App,
     ) {
         // Diagnostic changes publish without invalidating effective reads.
-        if self.applications.read(cx).setup_problem_words() != problem.as_deref() {
-            self.applications
-                .update(cx, |page, cx| page.set_setup_problem(problem, cx));
-        }
+        self.applications
+            .update(cx, |page, cx| page.set_setup_problem(problem, cx));
         // Settings notifications repeat this hand-off; only a new effective
         // setup or an explicit Reload invalidates delivery.
         if self.delivery_revision.replace(Some(revision)) != Some(revision) {
