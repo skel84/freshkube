@@ -1069,6 +1069,8 @@ fn small_window_destination_dialogs_keep_save_outside_the_scroll(cx: &mut TestAp
             });
             super::form::open(page.clone(), list.downgrade(), edit, vec!["prod".into()], window, cx);
             super::super::small_window_tests::assert_dialog(window, cx, "settings-destination-save");
+            let surface = window.within("dialog").find(0usize).bounds();
+            assert!(surface.top() >= crate::ui::dp_px(freshkube_ui::page::APP_HEADER_HEIGHT, window), "{surface:?}");
             let before = window.find("settings-destination-save").bounds();
             window.scroll("settings-destination-form", gpui_kit::ScrollDelta::Pixels(gpui_kit::point(gpui_kit::px(0.), gpui_kit::px(-4000.))), cx);
             window.render_frame(cx);

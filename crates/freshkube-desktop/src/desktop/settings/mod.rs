@@ -913,7 +913,16 @@ impl SettingsPage {
         page::page("settings-page")
             .overflow_hidden()
             .child(page::toolbar(cx).child(header))
-            .children(self.render_banners(cx))
+            .child(
+                div()
+                    .id("settings-banners")
+                    .test_support()
+                    .min_h_0()
+                    .when(page::is_short(window), |banners| banners.max_h(dp(48.)))
+                    .overflow_y_scroll()
+                    .restrict_scroll_to_axis()
+                    .children(self.render_banners(cx)),
+            )
             .child(split)
             .into_any_element()
     }

@@ -67,12 +67,11 @@ pub(super) fn open(
     let value = form.read(cx).value.clone();
     let shown = form.clone();
     window.open_dialog(cx, move |dialog, window, cx| {
-        freshkube_ui::dialog::frame(dialog, 460., DestinationForm::actions(&shown, cx), window)
-            .title(if by_server {
-                // Kit's dialog close trigger is a small icon button, size_6.
-                // Reserve the same rem width beside the flowing title.
+        freshkube_ui::dialog::frame(
+            dialog,
+            460.,
+            if by_server {
                 div()
-                    .pr_6()
                     .child(freshkube_ui::url::url_text(
                         "settings-destination-edit-url",
                         &title,
@@ -80,8 +79,11 @@ pub(super) fn open(
                     .into_any_element()
             } else {
                 title.clone().into_any_element()
-            })
-            .child(shown.clone())
+            },
+            shown.clone(),
+            DestinationForm::actions(&shown, cx),
+            window,
+        )
     });
     // A dialog remembers what had focus when it opened: focus its field after.
     value.update(cx, |state, cx| state.focus(window, cx));

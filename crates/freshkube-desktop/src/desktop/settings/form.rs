@@ -27,9 +27,14 @@ pub(super) fn open(page: Entity<SettingsPage>, window: &mut Window, cx: &mut App
     let form = cx.new(|cx| ClusterForm::new(page, window, cx));
     let context = form.read(cx).context.clone();
     window.open_dialog(cx, move |dialog, window, cx| {
-        freshkube_ui::dialog::frame(dialog, 460., ClusterForm::actions(&form, cx), window)
-            .title("Add a cluster")
-            .child(form.clone())
+        freshkube_ui::dialog::frame(
+            dialog,
+            460.,
+            "Add a cluster",
+            form.clone(),
+            ClusterForm::actions(&form, cx),
+            window,
+        )
     });
     // A dialog remembers what had focus when it opened: focus its field after.
     context.update(cx, |state, cx| state.focus(window, cx));

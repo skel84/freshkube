@@ -188,3 +188,67 @@ fn small_window_long_cells_keep_their_column_width(cx: &mut TestAppContext) {
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+async fn a_saved_banner_keeps_the_stacked_panes_and_added_row_visible(cx: &mut TestAppContext) {
+    use super::edit_tests::{saved, write};
+    cx.executor().allow_parking();
+    let directory = tempfile::tempdir().unwrap();
+    let clusters: Vec<_> = (0..12).map(|i| serde_json::json!({
+        "id": format!("cluster-{i}"), "role": "environment", "context": format!("example-{i}")
+    })).collect();
+    write(
+        directory.path(),
+        &serde_json::json!({"version": 1, "clusters": clusters}).to_string(),
+    );
+    let options = GpuiOptions::new(Some(directory.path().join("missing")), None, 100)
+        .with_preferences(Some(directory.path().join("preferences.json")))
+        .with_debug(DebugOptions::default().with_page("settings-clusters"));
+    let (_runtime, handle, pilot) = mount(cx, options, 760., 560.);
+    cx.update_window(handle, |_, window, cx| {
+        crate::text_size::set(20., cx);
+        window.render_frame(cx);
+        window.click("settings-cluster-cluster-0", cx);
+        pilot
+            .read(cx)
+            .settings_page
+            .clone()
+            .update(cx, |page, cx| page.open_form(window, cx));
+        window.render_frame(cx);
+        window.click("settings-form-context", cx);
+        window.input("new-cluster", cx);
+        window.click("settings-form-save", cx);
+    })
+    .unwrap();
+    saved(cx, handle, &pilot).await;
+    cx.run_until_parked();
+    for _ in 0..8 {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-saved").visible());
+        let table = window.find("settings-table").bounds();
+        let pane = window.find("settings-detail").bounds();
+        assert!(
+            table.size.height + px(1.) >= crate::ui::dp_px(54., window),
+            "{table:?}"
+        );
+        assert!(
+            pane.size.height + px(1.) >= crate::ui::dp_px(80., window),
+            "{pane:?}"
+        );
+        assert!(pane.bottom() <= window.find("settings-page").bounds().bottom() + px(1.));
+        let row = window.find("settings-cluster-new-cluster").bounds();
+        let list = window.find("settings-list").bounds();
+        assert!(
+            row.top() >= list.top() - px(1.) && row.bottom() <= list.bottom() + px(1.),
+            "{row:?} in {list:?}"
+        );
+    })
+    .unwrap();
+}

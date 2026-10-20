@@ -15,8 +15,8 @@ use std::{
 use gpui_kit::component::{menu::PopupMenu, tooltip::Tooltip};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyView, Bounds, Context, DismissEvent, ElementId, Pixels, SharedString, WeakEntity, Window,
-    canvas, div,
+    AnyView, Bounds, Context, DismissEvent, ElementId, Pixels, SharedString, TestSupportExt,
+    WeakEntity, Window, canvas, div,
 };
 
 /// Where an element was drawn this frame, clipped to what shows of it.
@@ -55,7 +55,20 @@ pub trait FollowTooltip: ParentElement + StatefulInteractiveElement + Sized {
             .size_full()
         };
         self.child(anchor).tooltip(move |window, cx| {
-            let tip = Tooltip::new(text.clone()).build(window, cx);
+            let content = text.clone();
+            let tip = Tooltip::element(move |window, _| {
+                div()
+                    .id("follow-tooltip-text")
+                    .test_support()
+                    .min_w_0()
+                    .max_w(
+                        crate::ui::dp_px(360., window)
+                            .min(window.viewport_size().width - crate::ui::dp_px(48., window)),
+                    )
+                    .whitespace_normal()
+                    .child(content.clone())
+            })
+            .build(window, cx);
             let placed = slot.borrow().clone();
             let text = text.clone();
             cx.new(|_| Follow { tip, placed, text }).into()
@@ -150,4 +163,69 @@ pub fn drawn(text: &str) -> usize {
 #[cfg(any(test, feature = "testing"))]
 pub fn drawn_total() -> usize {
     DRAWN.with(|drawn| drawn.borrow().values().sum())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui_kit::component::Root;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AppContext, TestAppContext, px, size};
+
+    struct Host(SharedString);
+
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().relative().child(
+                div().absolute().right_0().top(px(200.)).child(
+                    div()
+                        .id("tooltip-trigger")
+                        .test_support()
+                        .w(crate::ui::dp(80.))
+                        .h(crate::ui::dp(26.))
+                        .follow_tooltip(self.0.clone())
+                        .child("Cut off…"),
+                ),
+            )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn long_tooltips_wrap_inside_the_window(cx: &mut TestAppContext) {
+        for text in [
+            "https://example.test/".to_owned() + &"long-value".repeat(20),
+            "long value ".repeat(20),
+        ] {
+            cx.update(|cx| {
+                gpui_kit::init(cx);
+                crate::theme::install(cx);
+                crate::text_size::install(None, cx);
+                crate::text_size::set(20., cx);
+                cx.set_reduce_motion(true);
+            });
+            let window = cx.open_window(size(px(760.), px(560.)), |window, cx| {
+                let host = cx.new(|_| Host(text.into()));
+                Root::new(host, window, cx)
+            });
+            cx.update_window(window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                window.hover("tooltip-trigger", cx);
+            })
+            .unwrap();
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(600));
+            cx.run_until_parked();
+            cx.update_window(window.into(), |_, window, cx| {
+                window.render_frame(cx);
+                let text = window.find("follow-tooltip-text").bounds();
+                assert!(
+                    text.left() >= px(0.) && text.right() <= window.viewport_size().width,
+                    "{text:?}"
+                );
+                assert!(text.size.width <= crate::ui::dp_px(360., window) + px(1.));
+                assert!(text.size.height > crate::ui::dp_px(26., window), "{text:?}");
+            })
+            .unwrap();
+        }
+    }
 }
