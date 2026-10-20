@@ -124,6 +124,57 @@ async fn records_reuse_the_live_run_parsers_and_get_only() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn recreated_runs_retain_distinct_uids_even_when_their_names_match() {
+    let old = manifest("PipelineRun", "v1");
+    let mut recreated = old.clone();
+    recreated["metadata"]["uid"] = json!("recreated-run-uid");
+    let mut newer = record(recreated);
+    newer["name"] = json!(format!("{RESULT}/records/record-b"));
+    let server = Server::new(false, vec![page(vec![record(old), newer])]);
+    let client = client(&server).await;
+    let answer = runs(&client).await.unwrap();
+    assert_eq!(answer.records.len(), 2);
+    let old = &answer.records[0].run;
+    let recreated = &answer.records[1].run;
+    assert_eq!(old.namespace, recreated.namespace);
+    assert_eq!(old.name, recreated.name);
+    assert_eq!(old.meta.uid.as_deref(), Some("run-uid"));
+    assert_eq!(recreated.meta.uid.as_deref(), Some("recreated-run-uid"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn archived_annotations_preserve_the_bytes_checked_by_the_verifier() {
+    use crate::digest::Digest;
+    use crate::verify::{Trust, TrustedKey, Verification, verify};
+
+    let mut pipeline = manifest("PipelineRun", "v1");
+    pipeline["metadata"]["annotations"]["chains.tekton.dev/signature-pipelinerun-run-uid"] =
+        json!(STANDARD.encode(include_bytes!("../../../testdata/cosign/checkout.att.json")));
+    pipeline["metadata"]["annotations"]["chains.tekton.dev/payload-pipelinerun-run-uid"] =
+        json!(STANDARD.encode(include_bytes!(
+            "../../../testdata/cosign/checkout.statement.json"
+        )));
+    let server = Server::new(false, vec![page(vec![record(pipeline.clone())])]);
+    let client = client(&server).await;
+    let answer = runs(&client).await.unwrap();
+    let archived = &answer.records[0].run;
+    let live = crate::tekton::parse_pipeline_run(&pipeline).unwrap();
+    assert_eq!(archived.attestations, live.attestations);
+    assert_eq!(archived.attestations.read.len(), 1);
+    let trust = Trust::Key(
+        TrustedKey::from_pem(include_str!("../../../testdata/cosign/checkout.pub")).unwrap(),
+    );
+    let digest =
+        Digest::parse("sha256:f4f5ecadeff863529ffa5690e4f100ee235e9a2b9cd19733697b2106ebdc2aa6")
+            .unwrap();
+    assert!(matches!(
+        verify(&trust, &archived.attestations.read[0], &digest),
+        Verification::Verified(_)
+    ));
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn off_and_not_forwarded_do_no_io() {
     let store = Arc::new(MemoryStore::default());
     store.unavailable.store(true, Ordering::SeqCst);
