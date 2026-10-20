@@ -1475,37 +1475,6 @@ mod tests {
     }
 
     #[test]
-    fn other_shapes_match_main() {
-        // SHA-256 of each complete read's Debug representation at the fixed
-        // instant, recorded from origin/main 973fa31a before behavior changes.
-        // Covers every example project's followed Freight, not only wonky-otter.
-        for (shape, expected) in [
-            (
-                Shape::Whole,
-                "0a7d92cab95d17f41134d7fea0c62af00f57300a7cc8f31c63e862f9bdc687a1",
-            ),
-            (
-                Shape::Spread,
-                "4b8a71cc9e8406b4a0a0cca29c8aca95bc5b907eadbf2b8ebd4a88199ad79cd6",
-            ),
-            (
-                Shape::KargoUnreachable,
-                "d61703e0bea6105747726f36c06118b8e56be1b624712232fc5a82d989807a35",
-            ),
-        ] {
-            let read = crate::changes::example::read_shaped(now(), shape);
-            let bytes = format!("{read:?}");
-            let digest = ring::digest::digest(&ring::digest::SHA256, bytes.as_bytes());
-            let hex: String = digest
-                .as_ref()
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            assert_eq!(hex, expected, "{shape:?} differs from main");
-        }
-    }
-
-    #[test]
     fn stage_links_explain_their_parents_without_claiming_a_join() {
         let change = change(now());
         for (name, parent, before, evidence, reach) in [

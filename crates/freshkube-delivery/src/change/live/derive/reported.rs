@@ -63,6 +63,7 @@ pub(super) fn reported_hops(sides: &Sides, stage: &str, group: usize, away: Away
             );
             let pods = away
                 .why
+                .filter(|_| object.health.as_deref() != Some("Missing"))
                 .map(|why| crate::change::unread::pods(&workload, away.entry, why));
             std::iter::once(workload).chain(pods)
         })

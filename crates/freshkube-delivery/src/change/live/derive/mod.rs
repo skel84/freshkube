@@ -192,13 +192,15 @@ pub fn derive(
             // An Application mapped to another workspace cluster: in place
             // of its links into that cluster, which nothing read, the
             // workloads Argo CD reports there.
-            let reported = elsewhere(place, evidence, &link.subject)
-                .map(|away| reported_hops(&sides, &stage.name, group, away))
-                .unwrap_or_default();
-            if link.from == Joined::Application && !reported.is_empty() {
+            let away = elsewhere(place, evidence, &link.subject);
+            // An unread Application alone doesn't establish any Pods.
+            if link.from == Joined::Application && away.is_some() {
                 placed.push(None);
                 continue;
             }
+            let reported = away
+                .map(|away| reported_hops(&sides, &stage.name, group, away))
+                .unwrap_or_default();
             let key = format!("{}-{}-{n}", stage.name, kind_key(link.to));
             let mut hop = link_hop(
                 &at,
@@ -728,19 +730,6 @@ fn link_detail(link: &Link) -> LinkDetail {
         here_says: says(&here),
         why: sentence(&link.reason),
     }
-}
-
-/// `text` as a sentence: a capital first and a full stop last.
-fn sentence(text: &str) -> String {
-    let mut chars = text.chars();
-    let Some(first) = chars.next() else {
-        return String::new();
-    };
-    let mut out: String = first.to_uppercase().chain(chars).collect();
-    if !out.ends_with('.') {
-        out.push('.');
-    }
-    out
 }
 
 /// The state of what a link leads to, as far as what was read says.
