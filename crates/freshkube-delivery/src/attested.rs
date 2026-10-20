@@ -352,7 +352,8 @@ async fn with_the_log_off_confirmation_does_not_wait_for_it() {
     let trail = trail_with_log(|_| LogRead::Off).await;
     let link = supply(&trail);
     assert_eq!(link.confidence, Confidence::Confirmed, "{}", link.reason);
-    assert!(link.reason.contains("transparency log not read (off)"));
+    // Off, the log says nothing: the words are as they were without it.
+    assert!(!link.reason.contains("transparency"), "{}", link.reason);
 }
 
 #[tokio::test]
@@ -385,6 +386,10 @@ async fn with_the_log_on_anything_but_a_matching_entry_is_a_claim() {
                 kind: "rfc3161".into(),
             },
             "rfc3161 entry, which this version doesn't read",
+        ),
+        (
+            Outcome::TooLarge { index: 42 },
+            "larger than this version reads",
         ),
         (Outcome::NoIndex, "names no transparency log entry"),
         (Outcome::Unreachable("timed out".into()), "didn't answer"),

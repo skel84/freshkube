@@ -16,6 +16,8 @@ pub(super) struct Reply {
     pub status: u16,
     pub headers: String,
     pub body: Vec<u8>,
+    /// Read the request and never answer.
+    pub hold: bool,
 }
 
 pub(super) struct Log {
@@ -67,6 +69,9 @@ impl Log {
                             .lock()
                             .unwrap()
                             .push(String::from_utf8_lossy(&request).into_owned());
+                        if reply.hold {
+                            std::future::pending::<()>().await;
+                        }
                         let head = format!(
                             "HTTP/1.1 {} X\r\ncontent-length: {}\r\nconnection: close\r\n{}\r\n",
                             reply.status,

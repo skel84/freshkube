@@ -70,6 +70,8 @@ pub(crate) enum Outcome {
     /// The entry is of a kind this build does not read. That says nothing of
     /// tampering, and it keeps the link from standing all the same.
     Unread { index: u64, kind: String },
+    /// The entry is there and is larger than this version reads.
+    TooLarge { index: u64 },
     /// The log did not answer.
     Unreachable(String),
     /// The log answered, and refused.
@@ -98,6 +100,10 @@ impl std::fmt::Display for Outcome {
             Self::Differs { index, why } => {
                 write!(f, "the transparency log's entry {index} differs: {why}")
             }
+            Self::TooLarge { index } => write!(
+                f,
+                "the transparency log's entry {index} is larger than this version reads"
+            ),
             Self::Unread { index, kind } => write!(
                 f,
                 "the transparency log's entry {index} is a {kind} entry, which this version doesn't read"
@@ -144,6 +150,11 @@ pub(crate) enum Standing {
 }
 
 impl LogRead {
+    /// Whether the switch is off: nothing was read and nothing is said.
+    pub(crate) fn is_off(&self) -> bool {
+        matches!(self, Self::Off)
+    }
+
     /// With the switch on the log is required: only a matching entry lets a
     /// verified signature stand.
     pub(crate) fn standing(&self, key: &EntryKey) -> Standing {
@@ -211,7 +222,7 @@ pub(crate) async fn look_up<F: Fetch>(
 fn entry_outcome(body: &[u8], index: u64, verified: &Verified) -> Outcome {
     let differs = |why| Outcome::Differs { index, why };
     if body.len() >= MOST_ENTRY_BYTES {
-        return differs("the answer is larger than this build reads");
+        return Outcome::TooLarge { index };
     }
     let Ok(Value::Object(entries)) = serde_json::from_slice::<Value>(body) else {
         return differs("the answer is not a log entry");

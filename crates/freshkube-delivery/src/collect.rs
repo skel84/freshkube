@@ -19,7 +19,7 @@ use super::argocd::{
     Application, DestinationMatch, Destinations, MapHint, StageNaming, match_destination,
     read_applications,
 };
-use super::chains::config::read_config;
+use super::chains::config::{CHAINS_NAMESPACE, read_config};
 use super::deployments::{
     Deployment, DeploymentSet, current_set, read_deployment_sets, read_deployments,
 };
@@ -433,9 +433,6 @@ pub async fn commit_of_pull_request<G: GitHub>(
 }
 
 /// The key the person named, read off the async thread: a file read blocks.
-/// The namespace Chains runs in, where its configuration is.
-const CHAINS_NAMESPACE: &str = "tekton-chains";
-
 /// What the transparency log says of the verified attestations, when the
 /// person turned it on. Off, nothing is read or fetched.
 async fn read_transparency<T: Reader>(
@@ -447,15 +444,19 @@ async fn read_transparency<T: Reader>(
     if !plan.transparency_log {
         return LogRead::Off;
     }
-    let address = match &plan.transparency_url {
-        Some(url) => Address::Set(url.clone()),
-        None => Address::FromChains(read_config(tekton, CHAINS_NAMESPACE).await),
+    // Read only if an attestation verified: until then the address is moot.
+    let address = async {
+        match &plan.transparency_url {
+            Some(url) => Address::Set(url.clone()),
+            None => Address::FromChains(read_config(tekton, CHAINS_NAMESPACE).await),
+        }
     };
     let client = RekorClient::new();
     let builds = builds.read().map_or(&[][..], Vec::as_slice);
     read_log(client.as_ref(), address, trust, builds).await
 }
 
+/// The key the person named, read off the async thread: a file read blocks.
 async fn read_trust(plan: &Plan) -> Trust {
     let Some(path) = plan.public_key_file.clone() else {
         return Trust::Unset;

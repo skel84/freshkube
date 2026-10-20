@@ -212,7 +212,7 @@ async fn an_answer_cut_at_the_cap_never_matches() {
         status: 200,
         body: vec![b' '; MOST_ENTRY_BYTES],
     };
-    assert!(matches!(outcome(Ok(reply)).await, Outcome::Differs { .. }));
+    assert_eq!(outcome(Ok(reply)).await, Outcome::TooLarge { index: 42 });
 }
 
 #[tokio::test]
@@ -325,6 +325,7 @@ mod served {
             status: 200,
             headers: String::new(),
             body,
+            hold: false,
         }
     }
 
@@ -359,6 +360,7 @@ mod served {
                 elsewhere.address
             ),
             body: Vec::new(),
+            hold: false,
         });
         assert!(matches!(ask(&log, Some(42)).await, Outcome::Refused(_)));
         assert!(elsewhere.requests.lock().unwrap().is_empty());
@@ -367,16 +369,33 @@ mod served {
     #[tokio::test(flavor = "multi_thread")]
     async fn an_answer_past_the_cap_is_cut_and_never_matches() {
         let log = Log::new(ok(vec![b' '; MOST_ENTRY_BYTES * 2]));
-        assert!(matches!(ask(&log, Some(42)).await, Outcome::Differs { .. }));
+        assert_eq!(ask(&log, Some(42)).await, Outcome::TooLarge { index: 42 });
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_log_that_is_not_trusted_is_unreachable() {
-        // The system roots do not hold the fake's certificate.
+        // The bundled public roots do not hold the fake's certificate.
         let log = Log::new(ok(Vec::new()));
         let client = Client::new().unwrap();
         let found = within(look_up(&client, &log.address, Some(42), &verified())).await;
         assert!(matches!(found, Outcome::Unreachable(_)), "{found}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_log_is_unreachable_after_its_deadline_only() {
+        let log = Log::new(Reply {
+            status: 200,
+            headers: String::new(),
+            body: Vec::new(),
+            hold: true,
+        });
+        let client = Client::trusting(CERT).unwrap();
+        let started = tokio::time::Instant::now();
+        let found = look_up(&client, &log.address, Some(42), &verified()).await;
+        assert!(matches!(found, Outcome::Unreachable(_)), "{found}");
+        let took = started.elapsed();
+        assert!(took >= Duration::from_secs(5), "{took:?}");
+        assert!(took < Duration::from_secs(10), "{took:?}");
     }
 
     #[tokio::test]
@@ -429,5 +448,56 @@ mod read {
         let refused = resolve(Address::FromChains(Err(failure))).unwrap_err();
         assert!(refused.starts_with("chains-config"), "{refused}");
         assert!(!refused.contains("sigstore"));
+    }
+}
+
+mod asked {
+    //! One log that doesn't answer is asked once.
+
+    use super::super::read::{Wanted, ask};
+    use super::*;
+
+    struct Down {
+        asked: RefCell<u32>,
+    }
+
+    impl Fetch for Down {
+        async fn get(&self, _: &str) -> Result<Fetched, Failure> {
+            *self.asked.borrow_mut() += 1;
+            Err(Failure::new(FailureKind::Timeout, "timed out"))
+        }
+    }
+
+    fn wanted(name: &str) -> Wanted {
+        Wanted {
+            key: (None, name.to_owned(), "taskrun-x".to_owned()),
+            index: Some(7),
+            verified: verified(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_log_that_did_not_answer_is_not_asked_again() {
+        let down = Down {
+            asked: RefCell::new(0),
+        };
+        let entries = ask(Ok(&down), LOG, vec![wanted("a"), wanted("b"), wanted("c")]).await;
+        assert_eq!(*down.asked.borrow(), 1);
+        assert_eq!(entries.len(), 3);
+        assert!(
+            entries
+                .values()
+                .all(|o| matches!(o, Outcome::Unreachable(_)))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_that_could_not_be_made_asks_nothing() {
+        let failure = Failure::new(FailureKind::Config, "no client");
+        let entries = ask::<Down>(Err(&failure), LOG, vec![wanted("a")]).await;
+        assert!(matches!(
+            entries.values().next(),
+            Some(Outcome::Unreachable(_))
+        ));
     }
 }

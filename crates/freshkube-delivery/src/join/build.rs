@@ -620,10 +620,13 @@ fn standing(build: &Build, proof: &Proof, digest: &Digest) -> Standing {
                 }
                 None => String::new(),
             };
-            (
-                format!("{}; {log}; {annotation}", chosen.outcome),
-                vec![attested_digest(&object, &verified.subject)],
-            )
+            // With the log off the words are as they were before it existed.
+            let words = if proof.log.is_off() {
+                format!("{}; {annotation}", chosen.outcome)
+            } else {
+                format!("{}; {log}; {annotation}", chosen.outcome)
+            };
+            (words, vec![attested_digest(&object, &verified.subject)])
         }
         Verification::NoTrust
         | Verification::KeyUnusable(_)

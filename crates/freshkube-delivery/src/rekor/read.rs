@@ -2,12 +2,14 @@
 
 use std::collections::BTreeMap;
 
+use std::future::Future;
+
 use freshkube_core::resources::Failure;
 
 use super::{EntryKey, Fetch, LogRead, Outcome, entry_key, log_index, look_up};
 use crate::chains::{Form, config::ChainsConfig};
 use crate::tekton::Build;
-use crate::verify::{Trust, Verification, verify};
+use crate::verify::{Trust, Verification, Verified, verify};
 
 /// Where the log is, as far as it is known.
 pub(crate) enum Address {
@@ -31,27 +33,21 @@ pub(super) fn resolve(address: Address) -> Result<String, String> {
     }
 }
 
-/// Asks `fetch`, or says why there is none, for the entry of each attestation of `builds` that verifies
-/// against `trust`. Nothing is fetched for one that doesn't.
-pub(crate) async fn read_log<F: Fetch>(
-    fetch: Result<&F, &Failure>,
-    address: Address,
-    trust: &Trust,
-    builds: &[Build],
-) -> LogRead {
-    let log = match resolve(address) {
-        Ok(log) => log,
-        Err(why) => return LogRead::NoUrl(why),
-    };
-    let mut entries = BTreeMap::new();
+/// An attestation that verified, and the entry its run names for it.
+pub(super) struct Wanted {
+    pub(super) key: EntryKey,
+    pub(super) index: Option<u64>,
+    pub(super) verified: Verified,
+}
+
+/// The attestations of `builds` that verify against `trust`, once each.
+fn wanted(trust: &Trust, builds: &[Build]) -> Vec<Wanted> {
+    let mut wanted: Vec<Wanted> = Vec::new();
     for build in builds {
         let images = build.images();
         for (object, attestation) in build.attestations() {
-            if attestation.form != Form::Run {
-                continue;
-            }
-            let key: EntryKey = entry_key(&object, attestation);
-            if entries.contains_key(&key) {
+            let key = entry_key(&object, attestation);
+            if attestation.form != Form::Run || wanted.iter().any(|w| w.key == key) {
                 continue;
             }
             let verified =
@@ -61,14 +57,62 @@ pub(crate) async fn read_log<F: Fetch>(
                         Verification::Verified(verified) => Some(verified),
                         _ => None,
                     });
-            let Some(verified) = verified else { continue };
-            let index = attestation.log_entry.as_deref().and_then(log_index);
-            let outcome = match fetch {
-                Ok(fetch) => look_up(fetch, &log, index, &verified).await,
-                Err(failure) => Outcome::Unreachable(failure.to_string()),
-            };
-            entries.insert(key, outcome);
+            if let Some(verified) = verified {
+                let index = attestation.log_entry.as_deref().and_then(log_index);
+                wanted.push(Wanted {
+                    key,
+                    index,
+                    verified,
+                });
+            }
         }
     }
-    LogRead::Read(entries)
+    wanted
+}
+
+/// Asks the log for each entry in turn. One that didn't answer is the
+/// answer for the rest: a silent log costs one deadline, not one each.
+pub(super) async fn ask<F: Fetch>(
+    fetch: Result<&F, &Failure>,
+    log: &str,
+    wanted: Vec<Wanted>,
+) -> BTreeMap<EntryKey, Outcome> {
+    let mut down: Option<String> = fetch.err().map(ToString::to_string);
+    let mut entries = BTreeMap::new();
+    for Wanted {
+        key,
+        index,
+        verified,
+    } in wanted
+    {
+        let outcome = match (&down, fetch) {
+            (Some(why), _) => Outcome::Unreachable(why.clone()),
+            (None, Ok(fetch)) => look_up(fetch, log, index, &verified).await,
+            (None, Err(_)) => unreachable!("`down` holds a failed client"),
+        };
+        if let Outcome::Unreachable(why) = &outcome {
+            down = Some(why.clone());
+        }
+        entries.insert(key, outcome);
+    }
+    entries
+}
+
+/// Asks `fetch`, or says why there is none, for each attestation of
+/// `builds` that verifies against `trust`. Nothing is fetched for one that
+/// doesn't, and `address` is not resolved unless one does.
+pub(crate) async fn read_log<F: Fetch>(
+    fetch: Result<&F, &Failure>,
+    address: impl Future<Output = Address>,
+    trust: &Trust,
+    builds: &[Build],
+) -> LogRead {
+    let wanted = wanted(trust, builds);
+    if wanted.is_empty() {
+        return LogRead::Read(BTreeMap::new());
+    }
+    match resolve(address.await) {
+        Ok(log) => LogRead::Read(ask(fetch, &log, wanted).await),
+        Err(why) => LogRead::NoUrl(why),
+    }
 }
