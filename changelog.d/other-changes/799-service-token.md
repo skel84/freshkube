@@ -1,0 +1,1 @@
+- **Monitoring:** metrics sources given as a Service send their configured token, for both entry sources and the central store.
