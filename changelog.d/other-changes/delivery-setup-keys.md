@@ -1,0 +1,1 @@
+- The change page and Changes list now use the setup’s supply-chain public key and evidence record, so matching signed builds can show Confirmed, and read Tekton Results history with the app’s saved address token. Reloading the setup replaces trust and cancels older delivery reads.

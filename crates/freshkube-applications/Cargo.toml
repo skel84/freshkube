@@ -36,6 +36,7 @@ tracing.workspace = true
 testing = ["gpui-kit/test-support", "freshkube-core/testing", "freshkube-ui/testing", "freshkube-observability/testing"]
 
 [dev-dependencies]
+freshkube-observability = { workspace = true, features = ["testing"] }
 gpui-kit = { version = "=0.7.0", features = ["test-support"] }
 freshkube-probe = { workspace = true, features = ["counting"] }
 freshkube-core = { workspace = true, features = ["testing"] }
@@ -43,3 +44,7 @@ freshkube-delivery = { workspace = true, features = ["testing"] }
 freshkube-ui = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["test-util"] }
 rustls.workspace = true
+base64.workspace = true
+http.workspace = true
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

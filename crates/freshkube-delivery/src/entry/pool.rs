@@ -412,14 +412,7 @@ where
     }
 
     /// The address-specific store supplied by the app, never a cluster credential.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the app supplies the Results store in a follow-up"
-        )
-    )]
-    pub(crate) fn with_secrets(mut self, secrets: Option<Secrets>) -> Self {
+    pub fn with_secrets(mut self, secrets: Option<Secrets>) -> Self {
         self.secrets = secrets;
         self
     }

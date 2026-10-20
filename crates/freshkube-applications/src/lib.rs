@@ -286,6 +286,9 @@ type Identity = (String, Option<String>);
 
 pub struct ApplicationsPage {
     runtime: tokio::runtime::Handle,
+    secrets: Option<freshkube_core::secrets::Secrets>,
+    public_key_file: Option<std::path::PathBuf>,
+    evidence_result: Option<freshkube_core::setup::Evidence>,
     source: Option<ClusterSource>,
     /// The workspace entry the source's connection is, handed with it, so
     /// a read never names one entry's cluster with another's.
@@ -374,6 +377,7 @@ impl ApplicationsPage {
     pub fn new(
         runtime: tokio::runtime::Handle,
         variant: Variant,
+        secrets: Option<freshkube_core::secrets::Secrets>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -387,7 +391,8 @@ impl ApplicationsPage {
         let loading = kit::LoadingRows::new(PREFIX);
         let loading_motion = cx.new(|_| loading.motion(kit::Look::Pulse));
         let split = InspectorSplit::new(PREFIX, cx);
-        let changes = cx.new(|cx| ChangesPage::new(runtime.clone(), variant.shape(), cx));
+        let changes =
+            cx.new(|cx| ChangesPage::new(runtime.clone(), variant.shape(), secrets.clone(), cx));
         // The page starts hidden, and so does its read.
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
@@ -402,6 +407,9 @@ impl ApplicationsPage {
         });
         Self {
             runtime,
+            secrets,
+            public_key_file: None,
+            evidence_result: None,
             source: None,
             visible: false,
             variant,
@@ -517,6 +525,35 @@ impl ApplicationsPage {
         }
     }
 
+    /// The setup owner calls this after each reload. Even the same path can
+    /// hold a replacement key; old reads must never publish under new trust.
+    pub fn set_setup(&mut self, setup: &freshkube_core::setup::Setup, cx: &mut Context<Self>) {
+        self.public_key_file = setup
+            .supply_chain
+            .as_ref()
+            .and_then(|chain| chain.public_key_file.clone());
+        self.evidence_result = setup
+            .supply_chain
+            .as_ref()
+            .and_then(|chain| chain.evidence.clone());
+        if let Some((change, _)) = &self.change {
+            change.update(cx, |page, cx| {
+                page.reload_setup(
+                    self.public_key_file.clone(),
+                    self.evidence_result.clone(),
+                    cx,
+                )
+            });
+        }
+        self.changes.update(cx, |page, cx| {
+            page.reload_setup(
+                self.public_key_file.clone(),
+                self.evidence_result.clone(),
+                cx,
+            )
+        });
+    }
+
     /// Where the change pages get what Coroot found after a deploy: the
     /// example's answers in example data, else Observability's connection
     /// and the entries' links.
@@ -562,6 +599,8 @@ impl ApplicationsPage {
             mapping: self.clusters.mapping.clone(),
             sources: self.clusters.sources.clone(),
             kubeconfig: self.clusters.kubeconfig.clone(),
+            public_key_file: self.public_key_file.clone(),
+            evidence_result: self.evidence_result.clone(),
         }
     }
 
@@ -924,6 +963,7 @@ impl ApplicationsPage {
             stage,
             &self.runtime,
             &source.access,
+            self.secrets.clone(),
             self.across(),
             self.example_delay,
         ) else {
@@ -1220,3 +1260,6 @@ impl ApplicationsPage {
 fn marks() -> impl Iterator<Item = Mark> {
     MARKS.into_iter()
 }
+
+#[cfg(test)]
+mod wire_tests;
