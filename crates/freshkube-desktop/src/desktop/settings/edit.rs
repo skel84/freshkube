@@ -40,79 +40,39 @@ impl SettingsPage {
             .find(|entry| entry.id.as_str() == key.as_ref())
     }
 
-    pub(super) fn open_form(
-        &mut self,
-        editing: Option<Entry>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn open_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.editable() || window.has_active_dialog(cx) {
             return;
         }
-        form::open(cx.entity(), editing, window, cx);
+        form::open(cx.entity(), window, cx);
     }
 
-    pub(super) fn edit_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(entry) = self.selected_entry().cloned() {
-            self.open_form(Some(entry), window, cx);
-        }
-    }
-
-    /// Applies the form: adds a cluster, or changes the one being edited.
-    /// Returns why not, for the form to show; the file is untouched then.
-    pub(super) fn upsert(
+    /// Adds a cluster to the workspace, its id derived from the context.
+    /// Everything else about it is edited in the Inspector. Returns why not,
+    /// for the dialog to show; the file is untouched then.
+    pub(super) fn add_cluster(
         &mut self,
-        editing: Option<&str>,
         role: workspace::Role,
         context: &str,
-        talosconfig: &str,
-        talos_context: &str,
         cx: &mut Context<Self>,
     ) -> Result<(), SharedString> {
         if !self.editable() {
             return Err(self.why_not_editable().into());
         }
         let context = context.trim();
-        let talosconfig = talosconfig.trim();
-        let talos_context = Some(talos_context.trim().to_owned()).filter(|name| !name.is_empty());
-        if talos_context.is_some() && talosconfig.is_empty() {
-            return Err("A Talos context needs a talosconfig".into());
-        }
         if context.is_empty() {
             return Err("Enter the kubeconfig context this cluster opens".into());
         }
         let mut next = self.workspace.clone();
-        let talosconfig = (!talosconfig.is_empty()).then(|| PathBuf::from(talosconfig));
-        if talosconfig.as_ref().is_some_and(|path| !path.is_absolute()) {
-            return Err("Talosconfig must be an absolute path".into());
+        let id = next.fresh_id(context);
+        next.clusters.push(Entry::new(id.clone(), role, context));
+        // The new row is the selected one once it is saved.
+        self.select_on_save = Some(id.clone().into());
+        if let Err(why) = next.check_saveable() {
+            self.select_on_save = None;
+            return Err(capitalized(&why.to_string()).into());
         }
-        let what = match editing {
-            Some(id) => {
-                let entry = next
-                    .clusters
-                    .iter_mut()
-                    .find(|entry| entry.id == id)
-                    .ok_or_else(|| SharedString::from("That cluster is no longer listed"))?;
-                entry.role = role;
-                entry.context = context.to_owned();
-                entry.talosconfig = talosconfig;
-                entry.talos_context = talos_context;
-                format!("Changed {id}.")
-            }
-            None => {
-                let id = next.fresh_id(context);
-                let mut entry = Entry::new(id.clone(), role, context);
-                entry.talosconfig = talosconfig;
-                entry.talos_context = talos_context;
-                next.clusters.push(entry);
-                // The new row is the selected one once it is saved.
-                self.select_on_save = Some(id.clone().into());
-                format!("Added {id}.")
-            }
-        };
-        next.check_saveable()
-            .map_err(|why| SharedString::from(capitalized(&why.to_string())))?;
-        self.commit(next, what, cx);
+        self.commit(next, format!("Added {id}."), cx);
         Ok(())
     }
 
@@ -160,28 +120,19 @@ impl SettingsPage {
                         .gap_3()
                         .text_size(dp(13.))
                         .child(body.clone())
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .justify_end()
-                                .child(
-                                    Button::new("settings-remove-cancel")
-                                        .outline()
-                                        .label("Cancel")
-                                        .on_click(|_, window, cx| window.close_dialog(cx)),
-                                )
-                                .child(
-                                    Button::new("settings-remove-confirm")
-                                        .danger()
-                                        .label("Remove")
-                                        .on_click(move |_, window, cx| {
-                                            window.close_dialog(cx);
-                                            _ = confirm_page.update(cx, |page, cx| {
-                                                page.remove(&confirm_id, cx)
-                                            });
-                                        }),
-                                ),
-                        ),
+                        .child(freshkube_ui::form::actions(
+                            freshkube_ui::form::Action::new(
+                                "settings-remove-confirm",
+                                "Remove",
+                                move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = confirm_page
+                                        .update(cx, |page, cx| page.remove(&confirm_id, cx));
+                                },
+                            )
+                            .danger(),
+                            freshkube_ui::form::Action::cancel("settings-remove-cancel"),
+                        )),
                 )
         });
     }
@@ -298,6 +249,26 @@ impl SettingsPage {
         );
     }
 
+    /// Chooses the workspace's own kubeconfig, or `None` for automatic. It
+    /// stands alone, so it saves at once.
+    pub(super) fn set_kubeconfig(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
+        if !self.editable() {
+            return;
+        }
+        let mut next = self.workspace.clone();
+        let what = match &path {
+            Some(_) => "Chose the kubeconfig.",
+            None => "The kubeconfig is automatic again.",
+        };
+        next.kubeconfig = path;
+        if let Err(why) = next.check_saveable() {
+            self.notice = Some(Notice::Failed(capitalized(&why.to_string()).into()));
+            cx.notify();
+            return;
+        }
+        self.commit(next, what.to_owned(), cx);
+    }
+
     /// Moves the selected cluster one place; the first and last stay put.
     pub(super) fn move_selected(&mut self, delta: isize, cx: &mut Context<Self>) {
         if !self.editable() {
@@ -362,12 +333,20 @@ impl SettingsPage {
                 if let Some(id) = self.select_on_save.take() {
                     self.select(id, cx);
                 }
+                if std::mem::take(&mut self.deselect_on_save) {
+                    self.selected = None;
+                }
+                if std::mem::take(&mut self.open_form_on_save) {
+                    self.open_form_after_save(cx);
+                }
                 if let Some(receipt) = &file.read(cx).receipt {
                     self.notice = Some(Notice::Saved(format!("{what} {receipt}").into()));
                 }
             }
             Err(error) => {
                 self.select_on_save = None;
+                self.deselect_on_save = false;
+                self.open_form_on_save = false;
                 self.pending_setup |= matches!(error, crate::setup_file::SaveError::Changed);
                 self.sync_setup(file, self.pending_setup, cx);
                 self.notice = Some(Notice::Failed(error.to_string().into()));
@@ -385,12 +364,18 @@ impl SettingsPage {
             return;
         };
         let read = file.update(cx, |file, cx| file.reload(cx));
+        // Reload drops unsaved changes only to take a change made on disk,
+        // as the banner says; otherwise they are rebased on the new file.
+        let drops = self.pending_setup;
         self.saving = Some(cx.spawn(async move |this, cx| {
             read.await;
             _ = this.update(cx, |this, cx| {
                 this.saving = None;
                 this.notice = None;
                 this.pending_setup = false;
+                if drops {
+                    this.drop_entry();
+                }
                 this.sync_setup(file, false, cx);
             });
         }));

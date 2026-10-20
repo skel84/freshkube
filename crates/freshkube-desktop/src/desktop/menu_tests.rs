@@ -367,9 +367,10 @@ fn a_folded_refresh_works_on_a_placeholder_and_escape_gives_the_keyboard_back(
     assert_eq!(focused(filter, cx), Some(true));
 }
 
-/// Edit and Remove from Settings' "…" leave the keyboard in the dialog they
-/// open, not on the list the menu ran them on: the form's field takes what
-/// is typed, and Escape closes the confirmation.
+/// Edit and Remove from Settings' "…" leave the keyboard where they open,
+/// not on the list the menu ran them on: Edit in the Inspector's first field,
+/// which takes what is typed, and Remove in its confirmation, which Escape
+/// closes.
 #[gpui_kit::test]
 fn settings_dialogs_from_the_menu_keep_the_keyboard(cx: &mut TestAppContext) {
     // Tokio wakes GPUI from its own threads.
@@ -404,12 +405,12 @@ fn settings_dialogs_from_the_menu_keep_the_keyboard(cx: &mut TestAppContext) {
     pick("Edit", cx);
     cx.update_window(handle, |_, window, _| {
         assert!(window.try_find("popup-menu").is_none(), "the menu closed");
-        assert_eq!(window.find("settings-form-context").focused(), Some(true));
+        assert_eq!(
+            window.find("settings-identity-context").focused(),
+            Some(true)
+        );
     })
     .unwrap();
-    on(handle, cx, |window, cx| {
-        window.click("settings-form-cancel", cx)
-    });
 
     pick("Remove", cx);
     cx.update_window(handle, |_, window, _| {

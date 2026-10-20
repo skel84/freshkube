@@ -15,7 +15,9 @@ pub(super) mod destinations;
 mod edit;
 #[cfg(test)]
 mod edit_tests;
+mod entry;
 mod form;
+mod kubeconfig_row;
 mod monitoring;
 mod sections;
 mod source;
@@ -25,13 +27,10 @@ pub(super) mod tests;
 
 use crate::ui::{self, dp};
 use freshkube_core::workspace::{self, Loaded, Workspace};
+use freshkube_ui::inspector::{self, InspectorSplit};
 use freshkube_ui::status::{Part, Segment};
 use freshkube_ui::{menu, page, table};
-use gpui_kit::component::{
-    Disableable, Sizable, WindowExt,
-    button::{Button, ButtonVariants},
-    h_flex, v_flex,
-};
+use gpui_kit::component::{Disableable, Sizable, WindowExt, button::Button, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 pub(crate) use sections::{SettingsEvent, SettingsSection};
@@ -82,6 +81,8 @@ pub(crate) struct ClusterRow {
     tooltip: SharedString,
     /// The tooltip without the note.
     plain_tooltip: SharedString,
+    /// How the entry opened when it did not open as defined.
+    note: Option<SharedString>,
 }
 
 /// What the last save did, under the table's banners.
@@ -142,7 +143,22 @@ pub(crate) struct SettingsPage {
     revision: u64,
     /// The cluster to select once the save in flight has landed.
     select_on_save: Option<SharedString>,
+    /// Whether the selection clears once the save in flight has landed.
+    deselect_on_save: bool,
+    /// Whether the Add dialog opens once the save in flight has landed.
+    open_form_on_save: bool,
+    /// The window the page was last drawn in, for what follows a save.
+    window: Option<AnyWindowHandle>,
     selected: Option<SharedString>,
+    /// The selected cluster's groups in the Inspector.
+    entry: Option<entry::EntryDraft>,
+    /// The Inspector's scroll, which starts at the top for each cluster.
+    detail_scroll: ScrollHandle,
+    /// The selection and workspace revision the drafts were built for.
+    entry_key: Option<(Option<SharedString>, u64)>,
+    split: InspectorSplit,
+    /// The workspace's own kubeconfig as the header row shows it.
+    kubeconfig_path: Option<SharedString>,
     /// A list section's frame, which scrolls in a short window.
     page_scroll: ScrollHandle,
     focus: FocusHandle,
@@ -245,6 +261,7 @@ impl SettingsPage {
             return;
         }
         if let Some(row) = self.rows.iter_mut().find(|row| row.id == id) {
+            row.note = note.clone().map(Into::into);
             row.tooltip = match &note {
                 Some(note) => format!("{}\nNote: {note}", row.plain_tooltip).into(),
                 None => row.plain_tooltip.clone(),
@@ -295,7 +312,15 @@ impl SettingsPage {
             notes: Default::default(),
             revision: 0,
             select_on_save: None,
+            deselect_on_save: false,
+            open_form_on_save: false,
+            window: None,
             selected: None,
+            entry: None,
+            detail_scroll: ScrollHandle::new(),
+            entry_key: None,
+            kubeconfig_path: None,
+            split: InspectorSplit::new(PREFIX, cx),
             page_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             section: SettingsSection::default(),
@@ -326,6 +351,10 @@ impl SettingsPage {
             ),
         };
         self.workspace = workspace.clone();
+        self.kubeconfig_path = workspace
+            .kubeconfig
+            .as_ref()
+            .map(|path| path.display().to_string().into());
         self.revision = self.revision.wrapping_add(1);
         self.set_unknown_warning(cx);
         self.rows = workspace
@@ -351,6 +380,7 @@ impl SettingsPage {
                     tooltip.push_str(&format!("\nNote: {note}"));
                 }
                 ClusterRow {
+                    note: self.notes.get(entry.id.as_str()).cloned(),
                     plain_tooltip,
                     id: entry.id.clone().into(),
                     role: entry.role.label().into(),
@@ -436,6 +466,7 @@ impl SettingsPage {
             .is_some_and(|key| !self.rows.iter().any(|row| &row.id == key))
         {
             self.selected = None;
+            self.drop_entry();
         }
         cx.notify();
     }
@@ -547,15 +578,16 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
+    fn step(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(key) = table::step(self, delta, cx) {
-            self.select(key, cx);
+            self.request_select(Some(key), window, cx);
+            table::reveal(self, ScrollStrategy::Nearest);
         }
     }
 
-    fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        if self.selected.take().is_some() {
-            cx.notify();
+    fn clear_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected.is_some() {
+            self.request_select(None, window, cx);
         } else {
             cx.propagate();
         }
@@ -651,14 +683,14 @@ impl SettingsPage {
             editable,
             "Add a cluster to the workspace",
             AddCluster,
-            |this, window, cx| this.open_form(None, window, cx),
+            |this, window, cx| this.request_add(window, cx),
             cx,
         );
         let (edit, edit_fold) = self.render_action(
             "edit",
             "Edit",
             editable && selected,
-            "Change the selected cluster",
+            "Edit the selected cluster in the Inspector",
             EditCluster,
             |this, window, cx| this.edit_selected(window, cx),
             cx,
@@ -708,6 +740,7 @@ impl SettingsPage {
             .foldable(up, up_fold)
             .foldable(down, down_fold)
             .foldable(reload, reload_fold)
+            .secondary(self.render_kubeconfig(cx))
             .render(window, cx)
     }
 
@@ -781,45 +814,58 @@ impl SettingsPage {
             })
     }
 
-    /// Clusters: the toolbar, the banners and the workspace's clusters.
+    /// Clusters: the toolbar, the banners, and the workspace's clusters edge
+    /// to edge with the selected one's groups in the Inspector, beside the
+    /// table on a wide page and under it on a narrow one.
     fn render_clusters(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.sync_entry_after_frame(window, cx);
         let header = self.render_header(window, cx);
-        let short = page::is_short(window);
-        self.list_frame(window)
+        let table = div()
+            .key_context(CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &NextCluster, window, cx| this.step(1, window, cx)))
+            .on_action(
+                cx.listener(|this, _: &PreviousCluster, window, cx| this.step(-1, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ClearCluster, window, cx| this.clear_selection(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &AddCluster, window, cx| this.request_add(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &EditCluster, window, cx| this.edit_selected(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &RemoveCluster, window, cx| {
+                this.ask_remove_selected(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &MoveClusterUp, _, cx| this.move_selected(-1, cx)))
+            .on_action(cx.listener(|this, _: &MoveClusterDown, _, cx| this.move_selected(1, cx)))
+            .on_action(cx.listener(|this, _: &ReloadWorkspace, _, cx| this.reload(cx)))
+            .id("settings-table")
+            .test_support()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .child(table::data_table(self, window, cx).flex_1().min_h_0())
+            .into_any_element();
+        let beside = crate::screens::page_width(window) >= inspector::SPLIT_WIDTH;
+        let details = self.render_entry(cx);
+        let split = inspector::split(
+            "settings-split",
+            &self.split,
+            beside,
+            table,
+            details,
+            window,
+        );
+        page::page("settings-page")
+            .track_scroll(&self.page_scroll)
+            .overflow_y_scroll()
+            .restrict_scroll_to_axis()
             .child(page::toolbar(cx).child(header))
             .children(self.render_banners(cx))
-            .child(
-                div()
-                    .key_context(CONTEXT)
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|this, _: &NextCluster, _, cx| this.step(1, cx)))
-                    .on_action(cx.listener(|this, _: &PreviousCluster, _, cx| this.step(-1, cx)))
-                    .on_action(
-                        cx.listener(|this, _: &ClearCluster, _, cx| this.clear_selection(cx)),
-                    )
-                    .on_action(cx.listener(|this, _: &AddCluster, window, cx| {
-                        this.open_form(None, window, cx)
-                    }))
-                    .on_action(cx.listener(|this, _: &EditCluster, window, cx| {
-                        this.edit_selected(window, cx)
-                    }))
-                    .on_action(cx.listener(|this, _: &RemoveCluster, window, cx| {
-                        this.ask_remove_selected(window, cx)
-                    }))
-                    .on_action(
-                        cx.listener(|this, _: &MoveClusterUp, _, cx| this.move_selected(-1, cx)),
-                    )
-                    .on_action(
-                        cx.listener(|this, _: &MoveClusterDown, _, cx| this.move_selected(1, cx)),
-                    )
-                    .on_action(cx.listener(|this, _: &ReloadWorkspace, _, cx| this.reload(cx)))
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .when(short, |this| this.min_h(dp(page::SHORT_LIST_HEIGHT)))
-                    .child(table::data_table(self, window, cx).flex_1().min_h_0()),
-            )
+            .child(split)
             .into_any_element()
     }
 }

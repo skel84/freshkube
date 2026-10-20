@@ -368,6 +368,12 @@ impl Path {
         self.chosen_only = true;
         self
     }
+
+    /// Browse… takes no click, as the field beside it takes no typing.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.browse = self.browse.disabled(disabled);
+        self
+    }
 }
 
 impl RenderOnce for Path {
