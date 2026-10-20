@@ -74,6 +74,8 @@ fn place(workspace: &Workspace) -> Place {
         argocd_namespace: "argocd".into(),
         mapping: Mapping::of(workspace, None),
         sources: Sources::of(workspace),
+        public_key_file: None,
+        evidence_result: None,
     }
 }
 
@@ -554,6 +556,8 @@ async fn the_changes_list_confirms_a_destination_on_its_own_entry() {
         argocd_namespace: "argocd".into(),
         mapping: Mapping::of(&workspace, None),
         sources: Sources::of(&workspace),
+        public_key_file: None,
+        evidence_result: None,
     };
     let world = || {
         let mut world = on_deployment_at(ENV, |_| {});

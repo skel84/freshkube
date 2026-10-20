@@ -21,6 +21,10 @@ pub struct Across {
     pub mapping: Mapping,
     /// Where Kargo, the builds and Argo CD are read.
     pub sources: Sources,
+    /// The top-level setup's public key, opened afresh off the UI thread.
+    pub public_key_file: Option<std::path::PathBuf>,
+    /// The pipeline record configured in the same setup.
+    pub evidence_result: Option<freshkube_core::setup::Evidence>,
     /// The workspace's kubeconfig, `None` for the automatic one.
     pub kubeconfig: Option<PathBuf>,
 }
