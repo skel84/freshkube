@@ -258,6 +258,8 @@ pub struct ChangePage {
     /// entry, and its words for assistive technology, derived with the
     /// change.
     missing: Option<(SharedString, SharedString)>,
+    /// The setup owner's sanitized warning; composed with source notices.
+    setup_problem: Option<SharedString>,
     loading: kit::LoadingRows,
     loading_motion: Entity<kit::LoadingMotion>,
     /// The change shown: the last answer, or before one only its name.
@@ -323,6 +325,7 @@ impl ChangePage {
             stage: stage.map(str::to_owned),
             stale: None,
             missing: None,
+            setup_problem: None,
             loading,
             loading_motion,
             connections,
@@ -348,21 +351,46 @@ impl ChangePage {
         page
     }
 
+    pub(crate) fn set_setup_problem(
+        &mut self,
+        problem: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.setup_problem == problem {
+            return;
+        }
+        self.setup_problem = problem;
+        self.update_missing();
+        cx.notify();
+    }
+
+    /// Keep the file's warning beside source warnings, including before a
+    /// first answer and after a refresh. Only pre-sanitized text comes here.
+    fn update_missing(&mut self) {
+        let text = self
+            .setup_problem
+            .iter()
+            .map(|text| text.as_ref())
+            .chain(self.change.missing.iter().map(|line| line.text.as_str()))
+            .map(|line| line.trim_end_matches('.'))
+            .collect::<Vec<_>>()
+            .join(". ");
+        self.missing = (!text.is_empty()).then(|| {
+            let text = if self.setup_problem.is_some() {
+                format!("{text}.")
+            } else {
+                text
+            };
+            let label = format!("May be missing: {text}");
+            (text.into(), label.into())
+        });
+    }
+
     /// Derives the rows, groups and chips from a change. The first answer
     /// folds the Stages that are fine; a later one keeps the folds, the
     /// filter and the selection where their rows still are.
     pub fn show(&mut self, change: Change) {
         let first = self.rows.is_empty();
-        self.missing = (!change.missing.is_empty()).then(|| {
-            let text = change
-                .missing
-                .iter()
-                .map(|line| line.text.trim_end_matches('.'))
-                .collect::<Vec<_>>()
-                .join(". ");
-            let label = format!("May be missing: {text}");
-            (text.into(), label.into())
-        });
         let rows: Vec<HopRow> = change
             .hops
             .iter()
@@ -464,6 +492,7 @@ impl ChangePage {
         self.copied &= link == self.page_link;
         self.page_link = link;
         self.change = change;
+        self.update_missing();
         self.rows = rows;
         self.groups = groups;
         self.counts = counts;
