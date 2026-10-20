@@ -21,6 +21,9 @@ url = "2"
 rustls.workspace = true
 serde.workspace = true
 base64.workspace = true
+# The check that can make a link Confirmed: ECDSA over P-256 through `ring`,
+# already in the build for rustls. See docs/SUPPLY_CHAIN.md, "The crates".
+ring = "0.17"
 chrono.workspace = true
 
 [features]

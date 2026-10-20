@@ -2496,6 +2496,7 @@ dependencies = [
  "http",
  "http-body-util",
  "kube",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
