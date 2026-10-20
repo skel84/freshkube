@@ -788,10 +788,9 @@ fn checking_uses_loading_rows_and_completion_publishes_the_status_time(cx: &mut 
         let checked = list(&view, cx).read(cx).checked_at.clone().unwrap();
         let page = view.read(cx).settings_page.read(cx);
         let status = page.status().unwrap();
-        assert!(
-            status
-                .text(None)
-                .contains(&format!("Last checked {checked}"))
+        assert_eq!(
+            status.text(None).as_ref(),
+            format!("Delivery sources · Last checked {checked}")
         );
     })
     .unwrap();
@@ -856,6 +855,28 @@ fn dispatch_pin_from_menu(
         .dispatch_action(action.as_ref(), window, cx);
 }
 
+/// Count receipts only inside the status bar; the Saved banner stays on
+/// the page, as it does on the other workspace sections.
+fn assert_single_save_receipt(window: &gpui_kit::Window) {
+    assert!(window.find("setup-reload-status").visible());
+    let receipts = gpui_kit::base::test_support::snapshots(window)
+        .into_iter()
+        .filter(|snapshot| {
+            snapshot.visible()
+                && snapshot
+                    .path()
+                    .contains(&gpui_kit::ElementId::from("status-bar"))
+                && snapshot
+                    .label()
+                    .is_some_and(|label| label.starts_with("Saved"))
+        })
+        .count();
+    assert_eq!(
+        receipts, 1,
+        "the shell owns the only status-bar save receipt"
+    );
+}
+
 #[gpui_kit::test]
 async fn pin_and_follow_roles_keep_other_parts_and_unknown_keys(cx: &mut TestAppContext) {
     use super::super::edit_tests::{read_workspace, saved};
@@ -914,9 +935,31 @@ async fn pin_and_follow_roles_keep_other_parts_and_unknown_keys(cx: &mut TestApp
         assert_eq!(after, expected);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            assert!(window.try_find("settings-saved").is_none());
+            assert!(window.find("settings-saved").visible());
             let status = view.read(cx).settings_page.read(cx).status().unwrap();
-            assert!(status.text(None).contains("Saved"), "{}", status.text(None));
+            assert_eq!(status.text(None).as_ref(), "Delivery sources");
+            assert_single_save_receipt(window);
+            // Complete a check without cluster I/O: its time belongs to
+            // the Sources segment while the shell keeps the save receipt.
+            list(&view, cx).update(cx, |list, cx| {
+                let request = list.read.start(list.identity());
+                list.answer(&request, Ok(list.example_check()), cx);
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let checked = list(&view, cx).read(cx).checked_at.clone().unwrap();
+            let expected = format!("Delivery sources · Last checked {checked}");
+            let status = view.read(cx).settings_page.read(cx).status().unwrap();
+            assert_eq!(status.text(None).as_ref(), expected);
+            assert_eq!(
+                window.find("settings-scope").label(),
+                Some(expected.as_str())
+            );
+            assert!(window.find("settings-saved").visible());
+            assert_single_save_receipt(window);
         })
         .unwrap();
     }

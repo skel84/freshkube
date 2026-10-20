@@ -149,7 +149,6 @@ pub(crate) struct SettingsPage {
     /// `6 clusters · Kubeconfig: …`, in the status bar.
     pub(super) status: Segment,
     sources_status: Segment,
-    sources_saved_status: Segment,
 }
 
 impl SettingsPage {
@@ -300,7 +299,6 @@ impl SettingsPage {
             },
             status: Segment::default(),
             sources_status: Segment::default(),
-            sources_saved_status: Segment::default(),
         }
     }
 
@@ -516,11 +514,7 @@ impl SettingsPage {
     pub(in crate::desktop) fn status(&self) -> Option<Segment> {
         self.section.is_list().then(|| {
             if self.section == SettingsSection::Sources {
-                if matches!(self.notice, Some(Notice::Saved(_))) {
-                    self.sources_saved_status.clone()
-                } else {
-                    self.sources_status.clone()
-                }
+                self.sources_status.clone()
             } else {
                 self.status.clone()
             }
@@ -604,10 +598,13 @@ impl SettingsPage {
                 body.clone(),
                 ui::Tone::Crit,
             )),
-            Some(Notice::Saved(body)) if self.section != SettingsSection::Sources => banners.push(
-                banner("settings-saved", "Saved", body.clone(), ui::Tone::Good),
-            ),
-            _ => {}
+            Some(Notice::Saved(body)) => banners.push(banner(
+                "settings-saved",
+                "Saved",
+                body.clone(),
+                ui::Tone::Good,
+            )),
+            None => {}
         }
         banners
     }

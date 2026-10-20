@@ -413,29 +413,7 @@ impl SourcesList {
                 if running {
                     parts.push(status::Part::new("Reading sources"));
                 }
-                page.sources_status = status::Segment::new(None::<SharedString>, parts.clone());
-                if let Some(super::Notice::Saved(_)) = &page.notice
-                    && let Some(file) = &page.setup_file
-                {
-                    parts.insert(
-                        0,
-                        status::Part::new(file.read(cx).receipt_label().replacen(
-                            "Saved",
-                            "Saved freshkube.yaml",
-                            1,
-                        )),
-                    );
-                }
-                let mut segment = status::Segment::new(None::<SharedString>, parts);
-                if let Some(super::Notice::Saved(_)) = &page.notice
-                    && let Some(receipt) = page
-                        .setup_file
-                        .as_ref()
-                        .and_then(|file| file.read(cx).receipt.clone())
-                {
-                    segment = segment.note(receipt);
-                }
-                page.sources_saved_status = segment;
+                page.sources_status = status::Segment::new(None::<SharedString>, parts);
                 cx.notify();
             });
         });
