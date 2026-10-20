@@ -17,6 +17,7 @@
 //! no state reads as fine.
 mod example;
 mod section;
+mod session;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -32,12 +33,12 @@ use freshkube_ui::ui::Tone;
 use gpui_kit::*;
 
 use super::{ChangePage, Fetch};
-use crate::changes::outcome::{self as session, Identity, Key, Summary};
 
 pub use example::Kind;
 #[cfg(any(test, feature = "testing"))]
 pub(super) use section::Act;
 pub(super) use section::Section;
+pub(crate) use session::{SessionMemo, session as session_memo};
 
 /// An outcome read this recent is shown again without reading.
 const FRESH_FOR: Duration = Duration::from_secs(30);
@@ -100,6 +101,65 @@ pub enum Coroot {
     /// Example data's answers, or the one outcome every hop shows.
     Example(Option<Kind>),
     Live(Live),
+}
+
+/// Slice 4's exact read identity, shared by the read owner and the memo.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Key {
+    pub(crate) hop: String,
+    pub(crate) query: api::Query,
+    pub(crate) window: api::RevisionWindow,
+    pub(crate) provider: Option<api::ProviderId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Identity {
+    Live(Key),
+    Example {
+        hop: String,
+        deployment: Object,
+        hash: Option<String>,
+        window: api::RevisionWindow,
+        kind: Option<Kind>,
+    },
+}
+
+impl Identity {
+    fn provider(&self) -> Option<api::ProviderId> {
+        match self {
+            Self::Live(key) => key.provider,
+            Self::Example { .. } => None,
+        }
+    }
+
+    pub(crate) fn example(
+        change: &Change,
+        hop: &str,
+        kind: Option<Kind>,
+        window: api::RevisionWindow,
+    ) -> Option<Self> {
+        let ask = ask_of(change, hop)?;
+        if ask.object.kind != "Deployment" {
+            return None;
+        }
+        let (deployment, hash) = (ask.object, ask.hash);
+        Some(Self::Example {
+            hop: hop.to_owned(),
+            deployment,
+            hash,
+            window,
+            kind,
+        })
+    }
+}
+
+/// A status uses the change page's mark and word; other outcomes use its
+/// complete sentence. Staleness describes the read, never a new verdict.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Summary {
+    pub(crate) mark: Option<Mark>,
+    pub(crate) words: SharedString,
+    pub(crate) stale: Option<SharedString>,
 }
 
 /// An outcome kept for a hop while its question stays the same.
@@ -486,7 +546,7 @@ impl ChangePage {
                 .into()
             }),
         };
-        session::session(cx).update(cx, |memo, cx| memo.keep(identity, summary, cx));
+        session_memo(cx).update(cx, |memo, cx| memo.keep(identity, summary, cx));
     }
 
     /// Drops what was read for a question the change no longer asks: a

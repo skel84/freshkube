@@ -117,7 +117,7 @@ pub struct ChangesPage {
     across: Across,
     /// Where an opened change gets what Coroot found after a deploy.
     coroot: Coroot,
-    outcome_memo: Entity<outcome::Memo>,
+    outcome_memo: Entity<crate::change::SessionMemo>,
     _outcomes: Subscription,
     _connection: Option<Subscription>,
     /// Where Argo CD's Applications are read, as the Applications read
@@ -178,7 +178,7 @@ impl ChangesPage {
         // The list starts hidden, and so does its read.
         let mut loader = Loader::default();
         loader.set_visible(false, ON_SHOW, cx);
-        let outcome_memo = outcome::session(cx);
+        let outcome_memo = crate::change::session_memo(cx);
         let outcomes = cx.observe(&outcome_memo, |page, _, cx| page.sync_outcomes(cx));
         Self {
             runtime,

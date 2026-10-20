@@ -464,7 +464,7 @@ fn the_session_memo_drops_every_previous_providers_summary(cx: &mut TestAppConte
     let first = Script::new().id();
     let second = Script::new().id();
     cx.update(|cx| {
-        let memo = super::session(cx);
+        let memo = crate::change::session_memo(cx);
         for index in 0..3 {
             memo.update(cx, |memo, cx| {
                 memo.keep(memo_identity(first, index), memo_summary(), cx)
@@ -484,7 +484,7 @@ fn the_session_memo_drops_every_previous_providers_summary(cx: &mut TestAppConte
 fn the_session_memo_keeps_256_summaries_and_evicts_the_oldest_read(cx: &mut TestAppContext) {
     let provider = Script::new().id();
     cx.update(|cx| {
-        let memo = super::session(cx);
+        let memo = crate::change::session_memo(cx);
         for index in 0..257 {
             memo.update(cx, |memo, cx| {
                 memo.keep(memo_identity(provider, index), memo_summary(), cx)

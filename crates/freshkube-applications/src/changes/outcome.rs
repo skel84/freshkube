@@ -1,43 +1,13 @@
-//! Session-only summaries of outcomes read by change pages. The list observes
-//! this memo; looking up a summary never wants a connection or starts a read.
-use std::collections::VecDeque;
-
+//! Inspector lines derived from the completed reads in the app session.
+//! Looking up a summary never wants a connection or starts a Coroot read.
 use freshkube_core::coroot as api;
 use freshkube_delivery::change::{Change, Hop, Object, Phase, Shows, Target};
 use gpui_kit::*;
 
 use super::ChangesPage;
-use crate::change::{Coroot, Mark, OutcomeKind};
-
-/// Slice 4's exact read identity, shared by the read owner and the memo.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Key {
-    pub(crate) hop: String,
-    pub(crate) query: api::Query,
-    pub(crate) window: api::RevisionWindow,
-    pub(crate) provider: Option<api::ProviderId>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Identity {
-    Live(Key),
-    Example {
-        hop: String,
-        deployment: Object,
-        hash: Option<String>,
-        window: api::RevisionWindow,
-        kind: Option<OutcomeKind>,
-    },
-}
+use crate::change::{Coroot, Identity, Key, SessionMemo, Summary};
 
 impl Identity {
-    fn provider(&self) -> Option<api::ProviderId> {
-        match self {
-            Self::Live(key) => key.provider,
-            Self::Example { .. } => None,
-        }
-    }
-
     fn of(
         change: &Change,
         hop: &Hop,
@@ -84,74 +54,6 @@ impl Identity {
                 }))
             }
         }
-    }
-
-    pub(crate) fn example(
-        change: &Change,
-        hop: &str,
-        kind: Option<OutcomeKind>,
-        window: api::RevisionWindow,
-    ) -> Option<Self> {
-        let (deployment, hash) = deployment(change, hop)?;
-        Some(Self::Example {
-            hop: hop.to_owned(),
-            deployment,
-            hash,
-            window,
-            kind,
-        })
-    }
-}
-
-/// A status uses the change page's mark and word; other outcomes use its
-/// complete sentence. Staleness describes the read, never a new verdict.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Summary {
-    pub(crate) mark: Option<Mark>,
-    pub(crate) words: SharedString,
-    pub(crate) stale: Option<SharedString>,
-}
-
-#[derive(Default)]
-pub(crate) struct Memo {
-    answers: VecDeque<(Identity, Summary)>,
-}
-
-struct Session(Entity<Memo>);
-impl Global for Session {}
-
-pub(crate) fn session(cx: &mut App) -> Entity<Memo> {
-    if let Some(session) = cx.try_global::<Session>() {
-        return session.0.clone();
-    }
-    let memo = cx.new(|_| Memo::default());
-    cx.set_global(Session(memo.clone()));
-    memo
-}
-
-/// At most this many completed summaries survive in one app session.
-const MAX_ANSWERS: usize = 256;
-
-impl Memo {
-    pub(crate) fn keep(&mut self, identity: Identity, summary: Summary, cx: &mut Context<Self>) {
-        let provider = identity.provider();
-        self.answers.retain(|(key, _)| key.provider() == provider);
-        // A completed refresh is the newest summary, too.
-        if let Some(index) = self.answers.iter().position(|(key, _)| key == &identity) {
-            self.answers.remove(index);
-        }
-        self.answers.push_back((identity, summary));
-        if self.answers.len() > MAX_ANSWERS {
-            self.answers.pop_front();
-        }
-        cx.notify();
-    }
-
-    pub(crate) fn get(&self, identity: &Identity) -> Option<&Summary> {
-        self.answers
-            .iter()
-            .find(|(key, _)| key == identity)
-            .map(|(_, summary)| summary)
     }
 }
 
@@ -218,7 +120,7 @@ fn lines(
     stages: &[super::display::Cell],
     coroot: &Coroot,
     open: (Option<&str>, Option<&str>),
-    memo: &Memo,
+    memo: &SessionMemo,
     cx: &App,
 ) -> Vec<Option<Line>> {
     stages
