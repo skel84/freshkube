@@ -16,16 +16,34 @@ const TWO: &str = r#"{"version":1,"clusters":[
 
 /// Two entries, each with keys this build doesn't know, and every other
 /// part of the setup: a save of one entry's group must keep all of them.
-const RICH: &str = r#"{"version":1,"kubeconfig":"/acme/kube.yaml","future":{"on":true},
-    "clusters":[
-      {"id":"mgmt","role":"core","context":"acme-mgmt","talosconfg":"/typo",
-       "metrics":{"value":"acme-core","extra":1}},
-      {"id":"prod","role":"environment","context":"acme-prod",
-       "talosconfig":"/acme/talosconfig","talos_context":"acme-prod-talos",
-       "metrics":{"source":{"url":"https://metrics.example.test","token":"keys.json","note":"kept"}}}],
-    "metrics":{"mode":"per-entry","label":"site"},
-    "coroot":{"server":"https://reports.example.test","sign_in":"anonymous"},
-    "supply_chain":{"transparency_log":false}}"#;
+fn rich() -> String {
+    serde_json::json!({
+        "version": 1,
+        "kubeconfig": abs("kube.yaml"),
+        "future": {"on": true},
+        "clusters": [
+            {"id": "mgmt", "role": "core", "context": "acme-mgmt", "talosconfg": "/typo",
+             "metrics": {"value": "acme-core", "extra": 1}},
+            {"id": "prod", "role": "environment", "context": "acme-prod",
+             "talosconfig": abs("talosconfig"), "talos_context": "acme-prod-talos",
+             "metrics": {"source": {"url": "https://metrics.example.test",
+                                    "token": "keys.json", "note": "kept"}}}
+        ],
+        "metrics": {"mode": "per-entry", "label": "site"},
+        "coroot": {"server": "https://reports.example.test", "sign_in": "anonymous"},
+        "supply_chain": {"transparency_log": false}
+    })
+    .to_string()
+}
+
+/// A path that is absolute on every platform the tests run on.
+fn abs(name: &str) -> String {
+    std::env::temp_dir()
+        .join("acme")
+        .join(name)
+        .display()
+        .to_string()
+}
 
 type Pilot = Entity<crate::desktop::Pilot>;
 
@@ -99,7 +117,7 @@ fn entry<'a>(workspace: &'a freshkube_core::workspace::Workspace, id: &str) -> &
 async fn selecting_a_cluster_fills_both_groups(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
-    write(guard.path(), RICH);
+    write(guard.path(), &rich());
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
     cx.update_window(handle, |_, window, cx| {
@@ -111,7 +129,7 @@ async fn selecting_a_cluster_fills_both_groups(cx: &mut TestAppContext) {
     let (identity, metrics) = values(cx, handle, &view);
     assert_eq!(identity.role, Role::Environment);
     assert_eq!(identity.context, "acme-prod");
-    assert_eq!(identity.talosconfig, "/acme/talosconfig");
+    assert_eq!(identity.talosconfig, abs("talosconfig"));
     assert_eq!(identity.talos_context, "acme-prod-talos");
     assert_eq!(metrics.kind, metrics::Kind::Url);
     assert_eq!(metrics.url, "https://metrics.example.test");
@@ -152,7 +170,7 @@ async fn selecting_a_cluster_fills_both_groups(cx: &mut TestAppContext) {
 async fn saving_identity_changes_only_that_entrys_identity_keys(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
-    write(guard.path(), RICH);
+    write(guard.path(), &rich());
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
     select(cx, handle, "prod");
@@ -162,7 +180,7 @@ async fn saving_identity_changes_only_that_entrys_identity_keys(cx: &mut TestApp
         handle,
         &view,
         Field::Talosconfig,
-        "/acme/other-talosconfig",
+        &abs("other-talosconfig"),
     );
     cx.update_window(handle, |_, window, cx| {
         assert!(window.find("settings-identity-dirty").visible());
@@ -172,7 +190,7 @@ async fn saving_identity_changes_only_that_entrys_identity_keys(cx: &mut TestApp
     })
     .unwrap();
     saved(cx, handle, &view).await;
-    let mut expected = setup::parse(RICH.as_bytes()).unwrap();
+    let mut expected = setup::parse(rich().as_bytes()).unwrap();
     let prod = expected
         .workspace
         .clusters
@@ -181,7 +199,7 @@ async fn saving_identity_changes_only_that_entrys_identity_keys(cx: &mut TestApp
         .unwrap();
     prod.role = Role::Cicd;
     prod.context = "acme-prod-2".into();
-    prod.talosconfig = Some("/acme/other-talosconfig".into());
+    prod.talosconfig = Some(abs("other-talosconfig").into());
     let written =
         setup::parse(&std::fs::read(guard.path().join("freshkube.yaml")).unwrap()).unwrap();
     // The other entry, its unknown keys, the kubeconfig, the metrics mode,
@@ -219,7 +237,7 @@ async fn a_clean_group_saves_nothing_and_revert_restores_the_file(cx: &mut TestA
         before
     );
     set(cx, handle, &view, Field::Context, "typed");
-    set(cx, handle, &view, Field::Talosconfig, "/typed");
+    set(cx, handle, &view, Field::Talosconfig, &abs("typed"));
     to_top(cx, handle);
     cx.update_window(handle, |_, window, cx| {
         window.click(("settings-identity-role", 0usize), cx);
@@ -398,7 +416,7 @@ async fn a_field_is_checked_when_it_loses_the_keyboard(cx: &mut TestAppContext) 
 async fn metrics_saves_a_value_and_a_service_of_its_own(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
-    write(guard.path(), RICH);
+    write(guard.path(), &rich());
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
     select(cx, handle, "mgmt");
@@ -419,7 +437,7 @@ async fn metrics_saves_a_value_and_a_service_of_its_own(cx: &mut TestAppContext)
     })
     .unwrap();
     saved(cx, handle, &view).await;
-    let mut expected = setup::parse(RICH.as_bytes()).unwrap();
+    let mut expected = setup::parse(rich().as_bytes()).unwrap();
     let mgmt = expected
         .workspace
         .clusters
@@ -514,7 +532,7 @@ async fn a_service_needs_a_namespace_a_name_and_a_port_and_a_url_an_address(
 async fn changing_a_url_keeps_its_token_and_choosing_none_drops_the_store(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
     let guard = tempfile::tempdir().unwrap();
-    write(guard.path(), RICH);
+    write(guard.path(), &rich());
     let (_runtime, handle, view) = launch(cx, guard.path());
     open_settings(cx, handle, &view).await;
     select(cx, handle, "prod");
@@ -677,14 +695,14 @@ async fn the_workspace_kubeconfig_is_chosen_and_cleared_at_once(cx: &mut TestApp
         assert!(window.find("settings-kubeconfig-browse").visible());
         assert!(window.try_find("settings-kubeconfig-clear").is_none());
         view.read(cx).settings_page.clone().update(cx, |page, cx| {
-            page.set_kubeconfig(Some("/acme/kubeconfig".into()), cx)
+            page.set_kubeconfig(Some(abs("kubeconfig").into()), cx)
         });
     })
     .unwrap();
     saved(cx, handle, &view).await;
     assert_eq!(
         read_workspace(guard.path()).kubeconfig.as_deref(),
-        Some(std::path::Path::new("/acme/kubeconfig"))
+        Some(std::path::Path::new(&abs("kubeconfig")))
     );
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -1087,7 +1105,7 @@ fn identity_applies_its_keys_and_nothing_else() {
     let values = identity::Values {
         role: Role::Cicd,
         context: " acme-ci ".into(),
-        talosconfig: "/acme/talosconfig".into(),
+        talosconfig: abs("talosconfig"),
         talos_context: "".into(),
     };
     assert!(values.check().first().is_none());
@@ -1096,7 +1114,7 @@ fn identity_applies_its_keys_and_nothing_else() {
     assert_eq!(entry.context, "acme-ci");
     assert_eq!(
         entry.talosconfig.as_deref(),
-        Some(std::path::Path::new("/acme/talosconfig"))
+        Some(std::path::Path::new(&abs("talosconfig")))
     );
     assert_eq!(entry.talos_context, None);
     assert!(entry.metrics.is_some());
