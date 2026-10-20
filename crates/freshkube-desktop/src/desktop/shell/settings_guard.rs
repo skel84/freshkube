@@ -43,10 +43,8 @@ impl Pilot {
             let busy = pilot.upgrade().is_some_and(|pilot| pilot.read(cx).settings_page.read(cx).unsaved_save_in_progress());
             let (save, discard, stay, cancel, enter) =
                 (pilot.clone(), pilot.clone(), pilot.clone(), pilot.clone(), pilot.clone());
-            dialog
-                .w(ui::dp_px(460., window).min(window.viewport_size().width - ui::dp_px(32., window)))
-                .title(format!("Save changes to {}?", section.label()))
-                .overlay_closable(false)
+            let title = format!("Save changes to {}?", section.label());
+            let dialog = dialog
                 .on_ok(move |_, window, cx| {
                     _ = enter.update(cx, |pilot, cx| pilot.save_settings_leave(window, cx));
                     // The shared save handler closes before validation, so a
@@ -56,37 +54,44 @@ impl Pilot {
                 .on_cancel(move |_, _, cx| {
                     _ = cancel.update(cx, |pilot, _| pilot.navigation.settings_leave = None);
                     true
-                })
-                .child(
-                    v_flex()
-                        .id("settings-unsaved-dialog")
-                        .test_support()
-                        .role(Role::Dialog)
-                        .aria_label("Unsaved changes")
-                        .track_focus(&content_focus)
-                        .gap(dp(12.))
-                        .text_size(dp(13.))
-                        .child("Save your changes before leaving this section, discard them, or stay to keep editing.")
-                        .child(form::actions(
-                            form::Action::new("settings-unsaved-save", "Save", move |_, window, cx| {
-                                _ = save.update(cx, |pilot, cx| pilot.save_settings_leave(window, cx));
-                            }).disabled(busy),
-                            form::Action::new("settings-unsaved-stay", "Stay", move |_, window, cx| {
-                                window.close_dialog(cx);
-                                _ = stay.update(cx, |pilot, _| pilot.navigation.settings_leave = None);
-                            }),
-                        ).extra(
-                            form::Action::new("settings-unsaved-discard", "Discard", move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    _ = discard.update(cx, |pilot, cx| {
-                                        pilot.settings_page.update(cx, |page, cx| page.discard_unsaved(window, cx));
-                                        if let Some(leave) = pilot.navigation.settings_leave.take() {
-                                            (leave.destination)(pilot, window, cx);
-                                        }
-                                    });
-                                }).disabled(busy),
-                        )),
+                });
+            freshkube_ui::dialog::frame(
+                dialog,
+                460.,
+                title,
+                v_flex()
+                    .id("settings-unsaved-dialog")
+                    .test_support()
+                    .role(Role::Dialog)
+                    .aria_label("Unsaved changes")
+                    .track_focus(&content_focus)
+                    .gap(dp(12.))
+                    .text_size(dp(13.))
+                    .child("Save your changes before leaving this section, discard them, or stay to keep editing."),
+                form::actions(
+                    form::Action::new("settings-unsaved-save", "Save", move |_, window, cx| {
+                        _ = save.update(cx, |pilot, cx| pilot.save_settings_leave(window, cx));
+                    })
+                    .disabled(busy),
+                    form::Action::new("settings-unsaved-stay", "Stay", move |_, window, cx| {
+                        window.close_dialog(cx);
+                        _ = stay.update(cx, |pilot, _| pilot.navigation.settings_leave = None);
+                    }),
                 )
+                .extra(
+                    form::Action::new("settings-unsaved-discard", "Discard", move |_, window, cx| {
+                        window.close_dialog(cx);
+                        _ = discard.update(cx, |pilot, cx| {
+                            pilot.settings_page.update(cx, |page, cx| page.discard_unsaved(window, cx));
+                            if let Some(leave) = pilot.navigation.settings_leave.take() {
+                                (leave.destination)(pilot, window, cx);
+                            }
+                        });
+                    })
+                    .disabled(busy),
+                ),
+                window,
+            )
         });
         // Kit remembers the previous focus on open, so move it afterwards.
         window.focus(&focus, cx);
