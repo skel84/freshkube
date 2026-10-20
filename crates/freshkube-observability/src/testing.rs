@@ -53,3 +53,14 @@ impl ObservabilityPage {
         }
     }
 }
+
+impl crate::ObservabilityPage {
+    /// Installs a temporary store without a system credential-store fallback.
+    pub fn set_settings_secrets_for_test(
+        &mut self,
+        preferences: &std::path::Path,
+        secrets: freshkube_core::secrets::Secrets,
+    ) {
+        self.memory = Some(crate::remember::Memory::new(preferences, Some(secrets)));
+    }
+}

@@ -679,9 +679,23 @@ impl Pilot {
             &self.settings_page,
             window,
             |this, _, window, cx| {
+                let page = this.settings_page.read(cx);
+                let unsaved = settings::SettingsSection::GROUPS
+                    .iter()
+                    .flat_map(|(_, sections)| sections.iter())
+                    .map(|section| page.has_unsaved(*section, cx))
+                    .collect();
+                let flipped = this
+                    .navigation
+                    .settings_unsaved_changed(page.section(), unsaved);
+                this.finish_settings_leave(window, cx);
                 this.rebuild_switcher(cx);
                 this.sync_setup_connection(window, cx);
-                cx.notify();
+                // The shell and its cached column draw again only when the
+                // section shown changes or a section's dot appears or clears.
+                if flipped {
+                    cx.notify();
+                }
             },
         ));
         self.watch_menus(window, cx);

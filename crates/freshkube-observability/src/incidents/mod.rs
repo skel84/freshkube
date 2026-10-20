@@ -210,24 +210,6 @@ impl ObservabilityPage {
                     .apply(&request, result.map_err(|e| e.to_string()))
                 {
                     if succeeded {
-                        let clusters = this
-                            .live
-                            .incidents
-                            .data()
-                            .expect("successful list")
-                            .iter()
-                            .map(|i| &i.app)
-                            .filter(|id| !id.is_external())
-                            .map(|id| id.cluster_id().to_string());
-                        this.cluster_ids = this
-                            .cluster_ids
-                            .iter()
-                            .cloned()
-                            .chain(clusters)
-                            .filter(|id| !id.is_empty())
-                            .collect::<std::collections::BTreeSet<_>>()
-                            .into_iter()
-                            .collect();
                         let changed = this
                             .incident_observations
                             .prepare_list(this.live.incidents.data().expect("successful list"));

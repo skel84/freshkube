@@ -249,7 +249,7 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
         promoters: Some(promoters.into()),
         steps,
         verification,
-        link: None,
+        link: stage_link(name),
         reach: Reach::Linked(Confidence::Confirmed),
         object: stage_object(name),
     };
@@ -345,6 +345,39 @@ fn stages(now: DateTime<Utc>) -> Vec<Stage> {
             ],
         ),
     ]
+}
+
+/// Why an example Stage follows its parent without a confirmed join key.
+fn stage_link(stage: &str) -> Option<LinkDetail> {
+    match stage {
+        "dev" => link(
+            Confidence::Unknown,
+            "eligibility",
+            &format!("Freight {FREIGHT}"),
+            "the Freight is from checkout-images",
+            "dev is eligible from the Warehouse",
+            "The Freight is eligible for dev from checkout-images, but no join key between the Freight and dev was read.",
+        ),
+        "prod-ams" => link(
+            Confidence::Unknown,
+            "eligibility",
+            "Stage stage",
+            "stage passed its three analyses",
+            "prod-ams is eligible and waiting for promotion",
+            &format!(
+                "Not reached yet: prod-ams still runs {PREVIOUS}; {FREIGHT} is eligible after stage's verification and waits for promotion."
+            ),
+        ),
+        "prod-lon" => link(
+            Confidence::Unknown,
+            "eligibility",
+            "Stage stage",
+            "stage verified the Freight",
+            "jon approved prod-lon past stage's verification",
+            "Verification in stage and jon's approval make the Freight eligible for prod-lon, but the Stage-to-Stage join key wasn't read.",
+        ),
+        _ => None,
+    }
 }
 
 /// A Stage's three gate rows, which show its gates in the Inspector.
@@ -1439,6 +1472,62 @@ mod tests {
             changed.hops_of(group).collect::<Vec<_>>(),
             original.hops_of(group).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn stage_links_explain_their_parents_without_claiming_a_join() {
+        let change = change(now());
+        let Shows::Hop(freight) = &change.hop("freight").unwrap().shows else {
+            panic!("Freight detail");
+        };
+        let warehouse = freight
+            .fields
+            .iter()
+            .find(|field| field.label == "Warehouse")
+            .unwrap();
+        let Value::Mono(warehouse) = &warehouse.value else {
+            panic!("Warehouse name");
+        };
+        for (name, parent, before, evidence, reach) in [
+            (
+                "dev",
+                "freight",
+                format!("Freight {FREIGHT}"),
+                warehouse.as_str(),
+                Reach::Linked(Confidence::Confirmed),
+            ),
+            (
+                "prod-ams",
+                "stage-eligible",
+                "Stage stage".into(),
+                PREVIOUS,
+                Reach::NotReached,
+            ),
+            (
+                "prod-lon",
+                "stage-eligible",
+                "Stage stage".into(),
+                "jon's approval",
+                Reach::Linked(Confidence::Confirmed),
+            ),
+        ] {
+            let stage = change
+                .stages
+                .iter()
+                .find(|stage| stage.name == name)
+                .unwrap();
+            let detail = stage.link.as_ref().expect("the example explains its link");
+            assert_eq!(detail.confidence, Confidence::Unknown);
+            assert_eq!(detail.key, None);
+            assert_eq!(detail.before, before);
+            assert!(!detail.before_says.is_empty() && !detail.here_says.is_empty());
+            assert!(detail.why.contains(name) && detail.why.contains(evidence));
+            assert!(detail.why.ends_with('.'));
+            assert_eq!(stage.reach, reach, "a link reason doesn't change reach");
+            let gate = change.hop(&format!("{name}-eligible")).unwrap();
+            assert_eq!(gate.after.as_deref(), Some(parent));
+            assert_eq!(gate.link, None, "a gate remains a gate, not a new join");
+        }
     }
 
     #[test]

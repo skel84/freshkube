@@ -175,7 +175,7 @@ impl Live {
         self.revision_job = None;
         self.connecting = false;
     }
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.cancel();
         self.apps = Snapshot::default();
         self.map = Snapshot::default();
@@ -230,29 +230,56 @@ impl ObservabilityPage {
     /// unless its hold keeps back the applications, incidents and traces
     /// (`FRESHKUBE_FIXTURE_HOLD=coroot`), so their tables stay on their
     /// loading rows.
-    pub fn set_source(&mut self, source: Option<&ClusterSource>, cx: &mut Context<Self>) {
+    /// The workspace entry the connection is rides with it: its `coroot`
+    /// key says which Coroot cluster the Kubernetes links read.
+    pub fn set_source(
+        &mut self,
+        source: Option<&ClusterSource>,
+        entry: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
         let held = match source.map(|source| &source.access) {
             Some(ClusterAccess::Example(hold)) => Some(hold.coroot),
             _ => None,
         };
-        self.set_access(source.map(|source| source.id.clone()), held, cx)
+        self.set_access_and_entry(source.map(|source| source.id.clone()), held, entry, cx);
+    }
+    /// The connection's id and the entry it is: the link follows both, and
+    /// the page reads again once, whichever of them changed.
+    pub(super) fn set_access_and_entry(
+        &mut self,
+        access: Option<String>,
+        held: Option<bool>,
+        entry: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        let relinked = self.set_open_entry(entry, held.is_some());
+        if !self.set_access(access, held, cx) && relinked {
+            self.relink(cx);
+        }
     }
     /// The connection's id and, for example data, whether its examples are
     /// held.
+    /// Whether it changed anything, and so read again.
     pub(super) fn set_access(
         &mut self,
         access: Option<String>,
         held: Option<bool>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let examples = (held.is_some(), held.unwrap_or_default());
         let shown = (self.fixture, self.hold);
         if self.live.access == access && shown == examples {
-            return;
+            return false;
         }
         self.live.access = access;
-        if let Some(source) = self.live.source.take() {
-            self.live.source = Some(source.with_association(None));
+        // The entry's linked project is the one to read, before any read.
+        if let Some(project) = self.linked_choice() {
+            self.install_project(&project, false, cx);
+        } else if let Some(source) = self.live.source.take() {
+            let association = self.association_for(source.project());
+            self.live.source = Some(source.with_association(association));
+            self.sync_note();
         }
         if shown != examples && self.fixture {
             self.forget_examples();
@@ -263,6 +290,7 @@ impl ObservabilityPage {
             self.show_examples();
         }
         self.refresh(cx);
+        true
     }
     /// What example data shows before its first read: the map and the
     /// flame graph, and the applications with the worker chosen unless they
@@ -334,7 +362,6 @@ impl ObservabilityPage {
         self.report_snapshot = None;
         self.categories = Default::default();
         self.namespaces = Default::default();
-        self.cluster_ids.clear();
         self.counts = [0; 7];
         self.active_categories = Rc::new(["application".into()].into());
         self.all_categories = false;
@@ -374,6 +401,16 @@ impl ObservabilityPage {
         self.range_changed(cx);
     }
     pub(super) fn select_project(&mut self, project: &api::ProjectInfo, cx: &mut Context<Self>) {
+        self.select_project_as(project, true, cx);
+    }
+    /// Reads `project`; `remember` keeps it for the next launch, which a
+    /// project an entry's link chose does not.
+    pub(super) fn select_project_as(
+        &mut self,
+        project: &api::ProjectInfo,
+        remember: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(provider) = &self.live.provider else {
             return;
         };
@@ -382,27 +419,28 @@ impl ObservabilityPage {
         }) {
             return;
         }
-        self.live.source = Some(provider.source(project));
-        self.live.project_label = format!("{} · {}", project.name, project.id);
-        self.remember_project(&project.id, cx);
+        self.install_project(project, remember, cx);
         self.clear_observations();
         self.refresh_current(cx);
     }
-    pub(super) fn associate(&mut self, cluster: Option<String>, cx: &mut Context<Self>) {
-        let (Some(access), Some(source)) = (&self.live.access, &self.live.source) else {
+    /// Makes `project` the shown one, with the open entry's link for it, and
+    /// reads nothing.
+    pub(super) fn install_project(
+        &mut self,
+        project: &api::ProjectInfo,
+        remember: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(provider) = &self.live.provider else {
             return;
         };
-        self.focused_revision = None;
-        self.live.source = Some(source.clone().with_association(
-            cluster.map(|cluster| api::Association::new(access.clone(), cluster)),
-        ));
-        self.live.clear();
-        self.incident_observations.clear_evidence();
-        self.revision_observations.clear_evidence();
-        self.revision_observations.seek_again();
-        self.live_traces.reset();
-        self.report_snapshot = None;
-        self.refresh(cx);
+        let association = self.association_for(&project.id);
+        self.live.source = Some(provider.source(project).with_association(association));
+        self.live.project_label = format!("{} · {}", project.name, project.id);
+        if remember {
+            self.remember_project(&project.id, cx);
+        }
+        self.sync_note();
     }
     pub(super) fn invalidate_connection(&mut self) {
         self.live.provider = None;
@@ -413,6 +451,7 @@ impl ObservabilityPage {
         self.live.project_labels.clear();
         self.live.project_label = "Choose a project".into();
         self.live.error = None;
+        self.sync_note();
         self.clear_observations();
     }
     pub(super) fn disconnect(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -537,8 +576,10 @@ impl ObservabilityPage {
                             .map(|p| format!("{} · {}", p.name, p.id))
                             .collect();
                         this.live.projects = projects;
+                        this.sync_note();
                         this.settings_open = false;
                         this.remember_connection(saved_url, auth, saved_value, cx);
+                        this.select_linked_project(cx);
                     }
                     Err(error) => {
                         this.live.provider = None;
@@ -618,8 +659,10 @@ impl ObservabilityPage {
                             .map(|p| format!("{} · {}", p.name, p.id))
                             .collect();
                         this.live.projects = projects;
+                        this.sync_note();
                         this.settings_open = false;
                         this.remember_connection(url, auth, value, cx);
+                        this.select_linked_project(cx);
                     }
                     Err(error) => {
                         this.live.provider = None;
@@ -771,15 +814,6 @@ impl ObservabilityPage {
                         {
                             if let Some(raw) = this.live.map.data() {
                                 (this.nodes, this.connections) = projection::map(raw);
-                                this.cluster_ids = raw
-                                    .nodes
-                                    .iter()
-                                    .filter(|n| !n.id.is_external())
-                                    .map(|n| n.id.cluster_id().to_string())
-                                    .filter(|id| !id.is_empty())
-                                    .collect::<std::collections::BTreeSet<_>>()
-                                    .into_iter()
-                                    .collect();
                                 this.prepare_map();
                             }
                             cx.notify();

@@ -214,6 +214,7 @@ pub(super) use rail::RailMarks;
 mod column_state;
 pub(super) use column_state::ColumnState;
 mod navigation;
+mod settings_guard;
 pub(super) use navigation::Navigation;
 mod fog_column;
 mod source;
