@@ -5,12 +5,14 @@
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Context, PathBuilder, TestSupportExt, canvas, div, point};
+use gpui_kit::{AnyElement, Context, PathBuilder, TestSupportExt, Window, canvas, div, point};
 
 use freshkube_graph::layout::{NODE_H, NODE_W};
 
-use super::GraphSource;
 use super::view::{glyph, mono, muted};
+use super::{
+    CONTEXT, Cursor, EdgeStyle, GraphSource, Step, WalkBack, WalkForward, WalkNext, WalkPrevious,
+};
 use crate::palette::palette;
 use crate::ui::{self, Tone, dp};
 
@@ -44,9 +46,15 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                     }
                 };
                 let mut path = PathBuilder::stroke(unit * edge.width);
-                if edge.tone != Some(Tone::Good) {
-                    let dash = unit * 5.;
-                    path = path.dash_array(&[dash, dash * 0.6]);
+                match (edge.style, edge.tone) {
+                    (EdgeStyle::Solid, _) | (EdgeStyle::Auto, Some(Tone::Good)) => {}
+                    (EdgeStyle::Dotted, _) => {
+                        path = path.dash_array(&[unit * 1.5, unit * 3.5]);
+                    }
+                    _ => {
+                        let dash = unit * 5.;
+                        path = path.dash_array(&[dash, dash * 0.6]);
+                    }
                 }
                 path.move_to(at(route.segments[0][0]));
                 for &[_, b, c, d] in &route.segments {
@@ -72,6 +80,14 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
     div()
         .id(state.ids.graph.clone())
         .test_support()
+        .when_some(state.focus.as_ref(), |this, focus| {
+            this.track_focus(focus)
+                .key_context(CONTEXT)
+                .on_action(walk::<S, WalkBack>(Step::Back, cx))
+                .on_action(walk::<S, WalkForward>(Step::Forward, cx))
+                .on_action(walk::<S, WalkPrevious>(Step::Previous, cx))
+                .on_action(walk::<S, WalkNext>(Step::Next, cx))
+        })
         .relative()
         .flex_none()
         .w(dp(display.width))
@@ -100,6 +116,47 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                     cx.notify();
                 }))
         }))
+        .children(display.pills.iter().map(|&ix| {
+            let edge = &state.edges[display.shown[ix].edge];
+            let (x, y) = display.shown[ix].route.mid;
+            let (from, to) = (edge.from.clone(), edge.to.clone());
+            // A fixed-width box centred on the line's middle, so the pill
+            // sits on the line whatever its label.
+            div()
+                .absolute()
+                .left(dp(x - PILL_W / 2.))
+                .top(dp(y - PILL_H / 2.))
+                .w(dp(PILL_W))
+                .h(dp(PILL_H))
+                .flex()
+                .justify_center()
+                .child(
+                    Button::new(edge.marker_id.clone())
+                        .outline()
+                        .group("fog-control")
+                        .h(dp(PILL_H))
+                        .px(dp(8.))
+                        .rounded_full()
+                        .bg(if display.selected == Some(ix) {
+                            p.accent_soft
+                        } else {
+                            p.surface
+                        })
+                        .border_color(if display.selected == Some(ix) {
+                            p.accent_line
+                        } else {
+                            p.line_strong
+                        })
+                        .child(mono(edge.pill.clone().unwrap_or_default()).text_size(dp(11.)))
+                        .when(!edge.tooltip.is_empty(), |this| {
+                            this.tooltip(edge.tooltip.clone())
+                        })
+                        .on_click(cx.listener(move |this: &mut S, _, _, cx| {
+                            this.graph_mut().select(&from, &to);
+                            cx.notify();
+                        })),
+                )
+        }))
         .children(display.placed.iter().map(|placed| {
             let node = &state.nodes[placed.node];
             let key = node.key.clone();
@@ -119,6 +176,7 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 } else {
                     p.line_strong
                 })
+                .when(node.ghost, |this| this.border_dashed())
                 .justify_start()
                 .child(glyph(node.tone, cx))
                 .child(
@@ -142,4 +200,31 @@ pub(super) fn render_graph<S: GraphSource>(source: &S, cx: &mut Context<S>) -> A
                 )
         }))
         .into_any_element()
+}
+
+/// The size of a pill on a line, in dp: wide enough for a short key in
+/// monospace, and the box that centres it.
+const PILL_W: f32 = 76.;
+const PILL_H: f32 = 22.;
+
+/// The listener for one arrow key: ask the graph where it goes from the
+/// source's cursor, hand the answer to the source and scroll to it.
+fn walk<S: GraphSource, A: 'static>(
+    step: Step,
+    cx: &mut Context<S>,
+) -> impl Fn(&A, &mut Window, &mut gpui_kit::App) + 'static {
+    let this = cx.entity().downgrade();
+    move |_, window, cx| {
+        let _ = this.update(cx, |this: &mut S, cx| {
+            let Some(cursor) = this.graph().step(this.cursor().as_ref(), step) else {
+                return;
+            };
+            let end = match &cursor {
+                Cursor::Node(key) | Cursor::Link(_, key) => key.clone(),
+            };
+            this.step_to(cursor, window, cx);
+            this.graph().reveal_node(&end, window);
+            cx.notify();
+        });
+    }
 }
