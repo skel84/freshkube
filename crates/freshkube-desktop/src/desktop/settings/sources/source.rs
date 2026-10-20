@@ -59,27 +59,46 @@ pub(super) fn columns(rows: &[SourceRow]) -> (Vec<Column>, f32) {
             fit("Chosen by", rows.iter().map(|row| &row.why), table::WIDEST),
         ),
         // Leave room for the glyph column and Reads in the narrow page.
-        column(Field::State, "State", 128.),
+        column(
+            Field::State,
+            "State",
+            fit("State", rows.iter().map(|row| &row.state), table::WIDEST).max(128.),
+        ),
         // Fit identity columns before Reads takes the remaining room.
         column(Field::Reads, "Reads", 64.),
     ];
-    let width = fit_columns(&mut columns, 0.);
+    let width = fit_columns(&mut columns, f32::INFINITY);
     (columns, width)
 }
 
-/// Keep the narrow table's widths, then give spare room to the fitted
-/// Entry and Chosen by values before Reads takes the remainder.
+/// Fit the table's own room: shrink Entry, Chosen by and State together
+/// when narrow, then give spare room to their fitted values before Reads.
 pub(super) fn fit_columns(columns: &mut [Column], room: f32) -> f32 {
     for column in columns.iter_mut() {
         column.width = match column.field {
             Field::Entry | Field::Why => column.fitted.min(160.),
+            Field::State => column.fitted.min(128.),
             _ => column.fitted,
         };
     }
     let base: f32 = columns.iter().map(|column| column.width).sum();
+    if base > room {
+        let fixed: f32 = columns
+            .iter()
+            .filter(|column| matches!(column.field, Field::Glyph | Field::Part | Field::Reads))
+            .map(|column| column.width)
+            .sum();
+        let scale = ((room - fixed).max(0.) / (base - fixed)).min(1.);
+        for column in columns.iter_mut() {
+            if matches!(column.field, Field::Entry | Field::Why | Field::State) {
+                column.width *= scale;
+            }
+        }
+        return columns.iter().map(|column| column.width).sum();
+    }
     let mut spare = (room - base).max(0.);
     for column in columns.iter_mut() {
-        if matches!(column.field, Field::Entry | Field::Why) {
+        if matches!(column.field, Field::Entry | Field::Why | Field::State) {
             let give = (column.fitted - column.width).min(spare);
             column.width += give;
             spare -= give;
@@ -222,8 +241,14 @@ impl TableSource for SourcesList {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<menu::MenuAction> {
+        // Keep the table in place while its row owns the popup. Moving
+        // it into the split would drop the popup's element state.
+        let inspecting = self.selected.is_some() && !self.menu_holds_inspector;
+        self.menu_had_focus = false;
         self.focus(window, cx);
-        self.select(*key, window, cx);
+        self.selected = Some(*key);
+        self.menu_holds_inspector = !inspecting;
+        cx.notify();
         let mut actions = vec![
             menu::MenuAction::new("Check sources", CheckSources)
                 .enabled(self.check != Check::Running),

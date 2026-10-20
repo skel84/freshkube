@@ -11,6 +11,8 @@ pub(super) struct PinSource {
 
 impl SourcesList {
     pub(super) fn select(&mut self, key: Read, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_holds_inspector = false;
+        self.menu_had_focus = false;
         self.selected = Some(key);
         table::reveal_when_settled(
             cx.entity().downgrade(),
@@ -22,6 +24,8 @@ impl SourcesList {
 
     pub(super) fn step(&mut self, delta: isize, cx: &mut Context<Self>) {
         if let Some(key) = table::step(self, delta, cx) {
+            self.menu_holds_inspector = false;
+            self.menu_had_focus = false;
             self.selected = Some(key);
             table::reveal(self, ScrollStrategy::Nearest);
             cx.notify();
@@ -104,6 +108,9 @@ impl SourcesList {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if self.menu_holds_inspector {
+            return None;
+        }
         let row = self
             .rows
             .iter()

@@ -111,6 +111,9 @@ struct CheckIdentity {
 pub(crate) struct SourcesList {
     rows: Vec<SourceRow>,
     selected: Option<Read>,
+    /// A row popup keeps the table's ancestry until focus returns.
+    menu_holds_inspector: bool,
+    menu_had_focus: bool,
     split: InspectorSplit,
     loading: table::LoadingRows,
     checked_at: Option<SharedString>,
@@ -148,6 +151,8 @@ impl SourcesList {
         let mut list = Self {
             rows: Vec::new(),
             selected: None,
+            menu_holds_inspector: false,
+            menu_had_focus: false,
             split: InspectorSplit::new(PREFIX, cx),
             loading: table::LoadingRows::new(PREFIX),
             checked_at: None,
@@ -475,6 +480,21 @@ impl SourcesList {
 
 impl Render for SourcesList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The row owns its popup element state. Keep the table's ancestry
+        // until the menu has had focus and returned it to this list.
+        if self.menu_holds_inspector {
+            if !self.focus.is_focused(window) {
+                self.menu_had_focus = true;
+            } else if self.menu_had_focus {
+                self.menu_holds_inspector = false;
+                self.menu_had_focus = false;
+                table::reveal_when_settled(
+                    cx.entity().downgrade(),
+                    |list| list.selected.is_some(),
+                    window,
+                );
+            }
+        }
         let header = self.render_header(window, cx);
         let banners = self
             .page
@@ -489,7 +509,7 @@ impl Render for SourcesList {
             } else {
                 0.
             };
-        self.width = source::fit_columns(&mut self.columns, room);
+        self.width = source::fit_columns(&mut self.columns, (room - 2.).max(0.));
         let table = div()
             .id("settings-sources-table")
             .test_support()
