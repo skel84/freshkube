@@ -20,12 +20,12 @@
 //! kind is `Unread`, which is not a difference and never a match.
 
 mod client;
-mod read;
 #[cfg(test)]
 mod fake;
+mod read;
 
 pub(crate) use client::Client;
-pub(crate) use read::read_log;
+pub(crate) use read::{Address, read_log};
 
 use std::collections::BTreeMap;
 use std::future::Future;
@@ -254,7 +254,13 @@ fn kind_named(kind: Option<&str>, version: Option<&str>) -> String {
         let text: String = text
             .chars()
             .take(24)
-            .map(|c| if c.is_ascii_alphanumeric() || c == '.' { c } else { '?' })
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '.' {
+                    c
+                } else {
+                    '?'
+                }
+            })
             .collect();
         (!text.is_empty()).then_some(text)
     };

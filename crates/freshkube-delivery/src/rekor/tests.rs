@@ -269,10 +269,19 @@ async fn a_run_without_an_index_asks_nothing() {
 #[tokio::test]
 async fn an_entry_of_a_kind_not_read_is_unread_never_a_difference() {
     for (body, named) in [
-        (json!({"apiVersion": "0.0.1", "kind": "rfc3161", "spec": {}}), "rfc3161 0.0.1"),
+        (
+            json!({"apiVersion": "0.0.1", "kind": "rfc3161", "spec": {}}),
+            "rfc3161 0.0.1",
+        ),
         // A known kind at a version this build does not read.
-        (json!({"apiVersion": "0.0.1", "kind": "intoto", "spec": {}}), "intoto 0.0.1"),
-        (json!({"apiVersion": "0.0.2", "kind": "hashedrekord", "spec": {}}), "hashedrekord 0.0.2"),
+        (
+            json!({"apiVersion": "0.0.1", "kind": "intoto", "spec": {}}),
+            "intoto 0.0.1",
+        ),
+        (
+            json!({"apiVersion": "0.0.2", "kind": "hashedrekord", "spec": {}}),
+            "hashedrekord 0.0.2",
+        ),
         (json!({"spec": {}}), "unnamed"),
         // The log's text is repeated only as plain characters.
         (json!({"kind": "a\nb<c>"}), "a?b?c?"),
@@ -302,8 +311,8 @@ mod served {
 
     use std::time::Duration;
 
-    use crate::rekor::fake::{CERT, Log, Reply};
     use super::*;
+    use crate::rekor::fake::{CERT, Log, Reply};
 
     async fn within<T>(work: impl Future<Output = T>) -> T {
         tokio::time::timeout(Duration::from_secs(30), work)
@@ -345,7 +354,10 @@ mod served {
         let elsewhere = Log::new(ok(Vec::new()));
         let log = Log::new(Reply {
             status: 301,
-            headers: format!("location: {}/api/v1/log/entries?logIndex=42\r\n", elsewhere.address),
+            headers: format!(
+                "location: {}/api/v1/log/entries?logIndex=42\r\n",
+                elsewhere.address
+            ),
             body: Vec::new(),
         });
         assert!(matches!(ask(&log, Some(42)).await, Outcome::Refused(_)));
@@ -377,7 +389,10 @@ mod served {
             "not a url",
         ] {
             let found = within(look_up(&client, address, Some(42), &verified())).await;
-            assert!(matches!(found, Outcome::Unreachable(_)), "{address}: {found}");
+            assert!(
+                matches!(found, Outcome::Unreachable(_)),
+                "{address}: {found}"
+            );
         }
     }
 }

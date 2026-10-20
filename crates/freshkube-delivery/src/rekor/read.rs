@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use freshkube_core::resources::Failure;
 
-use super::{EntryKey, Fetch, LogRead, entry_key, log_index, look_up};
+use super::{EntryKey, Fetch, LogRead, Outcome, entry_key, log_index, look_up};
 use crate::chains::{Form, config::ChainsConfig};
 use crate::tekton::Build;
 use crate::verify::{Trust, Verification, verify};
@@ -26,17 +26,15 @@ pub(super) fn resolve(address: Address) -> Result<String, String> {
         Address::FromChains(Ok(config)) if config.transparency.url_set => {
             Ok(config.transparency.url)
         }
-        Address::FromChains(Ok(_)) => {
-            Err("chains-config names no transparency.url".to_owned())
-        }
+        Address::FromChains(Ok(_)) => Err("chains-config names no transparency.url".to_owned()),
         Address::FromChains(Err(failure)) => Err(format!("chains-config {failure}")),
     }
 }
 
-/// Asks `fetch` for the entry of each attestation of `builds` that verifies
+/// Asks `fetch`, or says why there is none, for the entry of each attestation of `builds` that verifies
 /// against `trust`. Nothing is fetched for one that doesn't.
 pub(crate) async fn read_log<F: Fetch>(
-    fetch: &F,
+    fetch: Result<&F, &Failure>,
     address: Address,
     trust: &Trust,
     builds: &[Build],
@@ -56,15 +54,20 @@ pub(crate) async fn read_log<F: Fetch>(
             if entries.contains_key(&key) {
                 continue;
             }
-            let verified = images.iter().find_map(|image| {
-                match verify(trust, attestation, &image.digest) {
-                    Verification::Verified(verified) => Some(verified),
-                    _ => None,
-                }
-            });
+            let verified =
+                images
+                    .iter()
+                    .find_map(|image| match verify(trust, attestation, &image.digest) {
+                        Verification::Verified(verified) => Some(verified),
+                        _ => None,
+                    });
             let Some(verified) = verified else { continue };
             let index = attestation.log_entry.as_deref().and_then(log_index);
-            entries.insert(key, look_up(fetch, &log, index, &verified).await);
+            let outcome = match fetch {
+                Ok(fetch) => look_up(fetch, &log, index, &verified).await,
+                Err(failure) => Outcome::Unreachable(failure.to_string()),
+            };
+            entries.insert(key, outcome);
         }
     }
     LogRead::Read(entries)
