@@ -660,7 +660,7 @@ fn in_cluster_aliases_follow_the_existing_argo_cd_source_selection() {
         for key in &keys {
             assert_eq!(
                 Destination::new(key.clone(), "other-core").fault_in(&workspace),
-                Some(Fault::ArgoCdOther),
+                Some(Fault::ArgoCdOther(host.into())),
                 "an alias cannot select another host"
             );
         }
@@ -670,9 +670,9 @@ fn in_cluster_aliases_follow_the_existing_argo_cd_source_selection() {
     assert!(matches!(
         workspace.validate(),
         Err(Invalid::Destination {
-            fault: Fault::ArgoCdOther,
+            fault: Fault::ArgoCdOther(id),
             ..
-        })
+        }) if id == "mgmt"
     ));
     workspace
         .destinations
@@ -683,9 +683,9 @@ fn in_cluster_aliases_follow_the_existing_argo_cd_source_selection() {
     assert!(matches!(
         workspace.validate(),
         Err(Invalid::Destination {
-            fault: Fault::ArgoCdOther,
+            fault: Fault::ArgoCdOther(id),
             ..
-        })
+        }) if id == "other-core"
     ));
 }
 

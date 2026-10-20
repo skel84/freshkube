@@ -242,7 +242,7 @@ impl DestinationForm {
         }
         let row = Destination::new(self.key(cx), selected?.to_string());
         match row.fault_in(workspace) {
-            Some(fault @ (Fault::ArgoCdOther | Fault::ArgoCdUnknown)) => Some(
+            Some(fault @ (Fault::ArgoCdOther(_) | Fault::ArgoCdUnknown)) => Some(
                 super::super::edit::capitalized(&format!("the mapping {}", fault.words())).into(),
             ),
             _ => None,

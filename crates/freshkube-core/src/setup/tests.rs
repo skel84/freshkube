@@ -203,15 +203,21 @@ destinations:
     assert_eq!(setup.metrics.mode, Mode::PerEntry);
     assert_eq!(setup.unknown_keys(), vec!["destinations[0].note"]);
     assert_eq!(ok(&to_text(&setup)), setup);
-    for changed in [
-        text.replace("sources: {argocd: env-b}", "sources: {argocd: missing}"),
-        text.replace("sources: {argocd: env-b}", "sources: {argocd: core-a}"),
-    ] {
-        assert!(matches!(
-            refused(&changed),
-            Invalid::Workspace(workspace::Invalid::Destination { .. })
-        ));
-    }
+    assert!(matches!(
+        refused(&text.replace("sources: {argocd: env-b}", "sources: {argocd: missing}")),
+        Invalid::Workspace(workspace::Invalid::Destination {
+            fault: workspace::Fault::ArgoCdUnknown,
+            ..
+        })
+    ));
+    assert_eq!(
+        refused(&text.replace("sources: {argocd: env-b}", "sources: {argocd: core-a}")).to_string(),
+        "destinations[0] (server https://Kubernetes.Default.Svc:443/) names Argo CD's own cluster but maps it to another entry; use core-a, the selected Argo CD source entry"
+    );
+    assert_eq!(
+        refused(&text.replace("entry: env-b, note: kept", "entry: core-a, note: kept")).to_string(),
+        "destinations[0] (server https://Kubernetes.Default.Svc:443/) names Argo CD's own cluster but maps it to another entry; use env-b, the selected Argo CD source entry"
+    );
     assert!(
         matches!(
             refused(&text.replace("role: core", "role: unknown")),

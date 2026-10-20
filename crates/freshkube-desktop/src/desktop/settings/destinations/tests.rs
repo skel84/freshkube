@@ -478,7 +478,7 @@ async fn in_cluster_aliases_save_only_to_the_selected_argo_cd_host(cx: &mut Test
             form.update(cx, |form, cx| form.pick("mgmt", window, cx));
             window.click("settings-destination-save", cx);
             window.render_frame(cx);
-            assert_field_error(window, &view, "entry", "The mapping names Argo CD's own cluster but maps it to another entry; use the selected Argo CD source entry", cx);
+            assert_field_error(window, &view, "entry", "The mapping names Argo CD's own cluster but maps it to another entry; use prod, the selected Argo CD source entry", cx);
         }).unwrap();
         assert_eq!(
             std::fs::read(guard.path().join("freshkube.yaml")).unwrap(),
