@@ -1,5 +1,4 @@
 use super::*;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 
 impl ObservabilityPage {
     pub(super) fn read_placeholder(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -125,31 +124,7 @@ impl ObservabilityPage {
             }
             return content.into_any_element();
         }
-        if let Some(source) = &self.live.source {
-            let linked = source.association().map(|association| {
-                format!(
-                    "Coroot cluster {} is linked to the selected Kubernetes access, so reports open its objects.",
-                    association.cluster()
-                )
-            });
-            content = content.child(
-                line()
-                    .flex_wrap()
-                    .child(muted(
-                        linked.unwrap_or_else(|| {
-                            "Kubernetes links are unmapped: reports can't open objects.".into()
-                        }),
-                        cx,
-                    ))
-                    .when(source.association().is_some(), |row| {
-                        row.child(
-                            action("obs-unmap", "Remove link")
-                                .on_click(cx.listener(|this, _, _, cx| this.associate(None, cx))),
-                        )
-                    })
-                    .children(self.associate_menu(cx)),
-            );
-        }
+        content = content.child(self.render_entry_link(cx));
         if self.live.projects.is_empty() {
             content = content.child(text("No accessible projects were returned."));
         }
@@ -196,31 +171,19 @@ impl ObservabilityPage {
             })
             .into_any_element()
     }
-    /// Links a Coroot cluster to the Kubernetes access Freshkube uses.
-    fn associate_menu(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        self.live.access.as_ref()?;
-        let owner = cx.entity().downgrade();
-        let clusters = self.cluster_ids.clone();
-        Some(
-            action("obs-associate", "Link Kubernetes cluster…")
-                .disabled(clusters.is_empty())
-                .dropdown_caret(true)
-                .dropdown_menu(move |mut menu, _, _| {
-                    for cluster in &clusters {
-                        let (owner, cluster) = (owner.clone(), cluster.clone());
-                        menu = menu.item(
-                            PopupMenuItem::new(format!("{cluster} → selected Freshkube cluster"))
-                                .on_click(move |_, _, cx| {
-                                    _ = owner.update(cx, |this, cx| {
-                                        this.associate(Some(cluster.clone()), cx)
-                                    });
-                                }),
-                        );
-                    }
-                    menu
-                })
-                .into_any_element(),
-        )
+    /// The open entry's Coroot link: the cluster its Kubernetes links read,
+    /// or why it has none. It is edited in the setup file.
+    pub(super) fn render_entry_link(&self, cx: &Context<Self>) -> AnyElement {
+        let text = match &self.link_note {
+            Some(note) => Some(note.text.clone()),
+            None => self.linked_line().map(Into::into),
+        };
+        line()
+            .id("obs-entry-link")
+            .test_support()
+            .flex_wrap()
+            .child(muted(text.unwrap_or_default(), cx))
+            .into_any_element()
     }
     pub(super) fn render_read_state(&self, cx: &Context<Self>) -> Option<AnyElement> {
         if self.fixture {

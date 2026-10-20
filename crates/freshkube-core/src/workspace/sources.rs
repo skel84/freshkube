@@ -215,7 +215,7 @@ fn workloads(workspace: &Workspace) -> Vec<Chosen> {
     chosen
 }
 
-fn choose(workspace: &Workspace, part: Part) -> Chosen {
+pub(super) fn choose(workspace: &Workspace, part: Part) -> Chosen {
     if workspace.clusters.is_empty() {
         return Chosen::Open;
     }

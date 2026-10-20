@@ -293,17 +293,24 @@ impl Pages {
     /// Applications replaces delivery trust and cancels older reads.
     pub(super) fn set_setup(
         &self,
-        setup: freshkube_core::setup::Setup,
+        setup: Option<freshkube_core::setup::Setup>,
+        problem: Option<String>,
         revision: u64,
         cx: &mut App,
     ) {
-        // Settings notifications also repeat this hand-off. Only an accepted
-        // setup read invalidates delivery jobs, including same-path reloads.
+        // Settings notifications also repeat this hand-off. Deliver the setup
+        // and its current problem only once per read revision.
         if self.delivery_revision.replace(Some(revision)) != Some(revision) {
-            self.applications
-                .update(cx, |page, cx| page.set_setup(&setup, cx));
+            self.applications.update(cx, |page, cx| {
+                page.set_setup_problem(problem, cx);
+                if let Some(setup) = &setup {
+                    page.set_setup(setup, cx);
+                }
+            });
         }
-        super::entity_pages::set_metrics_setup(&self.monitoring, setup, cx);
+        if let Some(setup) = setup {
+            super::entity_pages::set_metrics_setup(&self.monitoring, setup, cx);
+        }
     }
 
     /// The service selected on the node pane's tab.
@@ -400,7 +407,9 @@ mod tests {
                 };
             });
             let setup = freshkube_core::setup::Setup::default();
-            pilot.update(cx, |pilot, cx| pilot.pages.set_setup(setup.clone(), 1, cx));
+            pilot.update(cx, |pilot, cx| {
+                pilot.pages.set_setup(Some(setup.clone()), None, 1, cx)
+            });
             change.update(cx, |page, _| {
                 page.loader
                     .start("invented-connection/checkout/freight-a/setup/1".into());
@@ -409,10 +418,14 @@ mod tests {
             assert!(change.read(cx).is_reading());
             // Simulate an unrelated Settings notification repeating the
             // same owner's read. It must not cancel or expire delivery.
-            pilot.update(cx, |pilot, cx| pilot.pages.set_setup(setup.clone(), 1, cx));
+            pilot.update(cx, |pilot, cx| {
+                pilot.pages.set_setup(Some(setup.clone()), None, 1, cx)
+            });
             assert_eq!(change.read(cx).loader.revision(), before);
             assert!(change.read(cx).is_reading());
-            pilot.update(cx, |pilot, cx| pilot.pages.set_setup(setup, 2, cx));
+            pilot.update(cx, |pilot, cx| {
+                pilot.pages.set_setup(Some(setup), None, 2, cx)
+            });
             assert!(change.read(cx).loader.revision() > before);
         })
         .unwrap();
